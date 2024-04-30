@@ -1,3 +1,82 @@
+wpewebkit (2.44.1-1) unstable; urgency=high
+
+  * New upstream release.
+  * The WPE WebKit security advisory WSA-2024-0002 lists the following
+    security fixes in the latest versions of WPE WebKit:
+    - CVE-2024-23252, CVE-2024-23254, CVE-2024-23263, CVE-2024-23280,
+      CVE-2024-23284, CVE-2023-42950, CVE-2023-42956, CVE-2023-42843
+      (fixed in 2.44.0).
+  * Refresh all patches.
+  * debian/rules:
+    - Stop setting USE_LD_GOLD, it has been removed upstream so it no
+      longer has any effect (see webkit bug #235476).
+    - Unify the sh3 and sh4 build flags.
+    - Don't copy CFLAGS to CXXFLAGS: -Werror=implicit-function-declaration
+      (default since dpkg 1.22.6) causes a FTBFS when added to the latter
+      (see #1066411).
+    - Stop using -DENABLE_WEBGL=OFF on armel and powerpc.
+    - Build with -DUSE_LIBBACKTRACE=OFF.
+  * debian/control:
+    - Enable the bubblewrap sandbox only in the architectures where
+      libseccomp is working.
+  * debian/patches/fix-ftbfs-riscv64.patch:
+    - Treat riscv64 as an unknown CPU to fix a FTBFS in JavaScriptCore
+      (webkit bug #271371).
+  * debian/patches/fix-ftbfs-i386.patch:
+    - Drop this patch, it is included in this release.
+  * debian/debian/libwpewebkit-doc.*
+    - Update debhelper scripts to reflect the upstream changes of the
+      installation paths.
+  * debian/source/lintian-overrides:
+    - Update source-is-missing overrides.
+  * Update copyright information of all files.
+
+ -- Alberto Garcia <berto@igalia.com>  Thu, 11 Apr 2024 15:35:46 +0200
+
+wpewebkit (2.42.5-2~exp) experimental; urgency=medium
+
+  * Replace the 1.1 API build with the 2.0 one.
+    - Rename all packages from 1.1 -> 2.0.
+    - Rename libwpewebkit-1.0-doc to libwpewebkit-doc and add a
+      transitional package.
+    - Simplify debian/rules to only allow building the 2.0 API packages.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 04 Mar 2024 13:32:41 +0100
+
+wpewebkit (2.42.5-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Rename libraries for 64-bit time_t transition.  Closes: #1063223
+
+ -- Steve Langasek <vorlon@debian.org>  Thu, 29 Feb 2024 09:23:10 +0000
+
+wpewebkit (2.42.5-1) unstable; urgency=high
+
+  * New upstream release.
+  * Update copyright information of all files.
+  * debian/patches/fix-ftbfs-i386.patch:
+    - i386 build fix.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 05 Feb 2024 17:36:25 +0100
+
+wpewebkit (2.42.4-1) unstable; urgency=high
+
+  * New upstream release.
+
+ -- Alberto Garcia <berto@igalia.com>  Thu, 14 Dec 2023 16:43:01 +0100
+
+wpewebkit (2.42.3-1) unstable; urgency=high
+
+  * New upstream release.
+  * Drop support for some arches that are unsupported or haven't worked in
+    a long time: m68k, mips and mipsel.
+  * debian/control.in:
+    - Set the debhelper compatibility level to 13.
+  * debian/rules:
+    - Stop overriding dh_missing, no longer needed with dh compat 13.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 04 Dec 2023 19:55:50 +0100
+
 wpewebkit (2.42.2-1) unstable; urgency=high
 
   * New upstream release.
