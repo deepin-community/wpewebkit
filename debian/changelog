@@ -1,6 +1,76 @@
+wpewebkit (2.46.3-1) unstable; urgency=medium
+
+  * New upstream release.
+  * debian/rules:
+    - Disable Skia on loong64 (Closes: #1085312).
+
+ -- Alberto Garcia <berto@igalia.com>  Wed, 30 Oct 2024 22:57:37 +0100
+
+wpewebkit (2.46.2-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Alberto Garcia <berto@igalia.com>  Tue, 22 Oct 2024 13:22:44 +0200
+
+wpewebkit (2.46.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Remove the following patches:
+    - prefer-pthread.patch: this should not be needed anymore.
+    - reduce-memory-overheads.patch: Override LDFLAGS instead.
+  * debian/patches/dont-detect-sse2.patch:
+    - Update this patch.
+  * Update copyright information of all files.
+  * debian/libwpewebkit-2.0-1.symbols:
+    - Update symbols.
+  * debian/source/lintian-overrides:
+    - Update source-is-missing overrides.
+  * debian/rules:
+    - Remove compiler overrides for sh4 (see #1082305).
+    - Stop limiting parallel builds on Ubuntu.
+
+ -- Alberto Garcia <berto@igalia.com>  Wed, 02 Oct 2024 18:54:49 +0200
+
+wpewebkit (2.44.4-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Drop fix-clang-build.patch and fix-webasm-crash.patch.
+  * debian/rules:
+    - Disable dh_dwz, it breaks the build in at least i386 and amd64
+      (see #1081000).
+
+ -- Alberto Garcia <berto@igalia.com>  Fri, 06 Sep 2024 16:59:28 +0200
+
+wpewebkit (2.44.3-1) unstable; urgency=high
+
+  * New upstream release.
+  * The WPE WebKit security advisory WSA-2024-0004 lists the following
+    security fixes in the latest versions of WPE WebKit:
+    - CVE-2024-40776, CVE-2024-40779, CVE-2024-40780, CVE-2024-40782,
+      CVE-2024-40785, CVE-2024-40789, CVE-2024-40794, CVE-2024-4558
+      (fixed in 2.44.3).
+  * debian/control:
+    - Update Standards-Version to 4.7.0 (no changes).
+  * debian/libwpewebkit-2.0-1.symbols:
+    - Update symbols.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 26 Aug 2024 17:14:46 +0200
+
+wpewebkit (2.44.2-2) experimental; urgency=medium
+
+  * debian/control:
+    - Put the transitional package libwpewebkit-1.0-doc in oldlibs.
+  * Rename wpewebkit-driver to wpewebkit-webdriver and add a transitional
+    package.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 15 Jul 2024 11:58:35 +0200
+
 wpewebkit (2.44.2-1) unstable; urgency=medium
 
   * New upstream release.
+  * debian/patches/fix-clang-build.patch,
+    debian/patches/fix-webasm-crash.patch:
+    - Patches recommended by upstream after 2.44.3 was released.
 
  -- Alberto Garcia <berto@igalia.com>  Wed, 15 May 2024 11:05:32 +0200
 
