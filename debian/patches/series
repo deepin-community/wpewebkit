@@ -1,3 +1,4 @@
 fix-ftbfs-sparc64.patch
 fix-ftbfs-x32.patch
 fix-ftbfs-riscv64.patch
+0001-deepin-sw_64-support.diff

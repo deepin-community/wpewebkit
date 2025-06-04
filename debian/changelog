@@ -1,3 +1,10 @@
+wpewebkit (2.48.6-2deepin1) unstable; urgency=medium
+
+  * Apply patch from hudeng:
+    + feat: add sw64 support
+
+ -- Tianyu Chen <sweetyfish@deepin.org>  Thu, 18 Sep 2025 13:40:07 +0800
+
 wpewebkit (2.48.6-2) unstable; urgency=medium
 
   * Disable clang in mips64el, it still fails with "error in backend:
