@@ -1,3 +1,9 @@
+wpewebkit (2.46.3-1deepin1) unstable; urgency=medium
+
+  * feat: add sw64 support.
+
+ -- hudeng <hudeng@deepin.org>  Wed, 04 Jun 2025 18:17:52 +0800
+
 wpewebkit (2.46.3-1) unstable; urgency=medium
 
   * New upstream release.
