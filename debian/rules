@@ -18,6 +18,14 @@ EXTRA_CMAKE_ARGUMENTS = -DPORT=WPE \
 	   -DENABLE_MINIBROWSER=ON
 DH_GENCONTROL_ARGS =
 
+# Skia strongly recommends using clang
+# https://skia.org/docs/user/build/#supported-and-preferred-compilers
+ifneq (,$(filter $(DEB_HOST_ARCH),amd64 arm64 armel armhf i386 ppc64el riscv64 s390x))
+	EXTRA_CMAKE_ARGUMENTS += \
+	   -DCMAKE_C_COMPILER=clang \
+	   -DCMAKE_CXX_COMPILER=clang++
+endif
+
 # Sacrifice speed in order to make it more likely resource limits
 # won't be hit.
 ifeq ($(DEB_BUILD_ARCH_BITS),32)
@@ -36,10 +44,10 @@ LDFLAGS += -Wl,--reduce-memory-overheads
 # Don't build with -gsplit-dwarf (see #1016936)
 EXTRA_CMAKE_ARGUMENTS += -DDEBUG_FISSION=OFF
 
-# Use the CLoop Javascript interpreter and disable the JIT. This is
-# slow but it is the most compatible solution for old (non-SSE2) CPUs.
-ifneq (,$(filter $(DEB_HOST_ARCH),i386))
-	EXTRA_CMAKE_ARGUMENTS += -DENABLE_JIT=OFF -DENABLE_C_LOOP=ON
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1104703
+ifneq (,$(filter $(DEB_HOST_ARCH),arm64))
+	CFLAGS := $(patsubst -mbranch-protection=%,-mbranch-protection=pac-ret,$(CFLAGS))
+	CXXFLAGS := $(patsubst -mbranch-protection=%,-mbranch-protection=pac-ret,$(CXXFLAGS))
 endif
 
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1085312
@@ -47,9 +55,9 @@ ifneq (,$(filter $(DEB_HOST_ARCH),loong64))
 	EXTRA_CMAKE_ARGUMENTS += -DUSE_SKIA=OFF
 endif
 
-# See https://bugs.webkit.org/show_bug.cgi?id=197192
-ifneq (,$(filter $(DEB_HOST_ARCH),arm64))
-	EXTRA_CMAKE_ARGUMENTS += -DWTF_CPU_ARM64_CORTEXA53=OFF
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1101547
+ifneq (,$(filter $(DEB_HOST_ARCH),alpha))
+	CPPFLAGS += -mlarge-data -mlarge-text
 endif
 
 ifneq (,$(filter noopt,$(DEB_BUILD_OPTIONS)))

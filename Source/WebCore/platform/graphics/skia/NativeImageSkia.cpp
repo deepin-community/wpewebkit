@@ -27,17 +27,12 @@
 #include "NativeImage.h"
 
 #if USE(SKIA)
-
 #include "GLContext.h"
 #include "GraphicsContextSkia.h"
-#include "NotImplemented.h"
 #include "PlatformDisplay.h"
-#include <skia/core/SkData.h>
-#include <skia/core/SkImage.h>
-
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win ports
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
@@ -65,6 +60,11 @@ DestinationColorSpace PlatformImageNativeImageBackend::colorSpace() const
         return DestinationColorSpace(colorSpace);
     // No color space means the default - SRGB.
     return DestinationColorSpace::SRGB();
+}
+
+Headroom PlatformImageNativeImageBackend::headroom() const
+{
+    return Headroom::None;
 }
 
 std::optional<Color> NativeImage::singlePixelSolidColor() const
@@ -102,6 +102,15 @@ void NativeImage::draw(GraphicsContext& context, const FloatRect& destinationRec
 void NativeImage::clearSubimages()
 {
 }
+
+#if USE(COORDINATED_GRAPHICS)
+uint64_t NativeImage::uniqueID() const
+{
+    if (auto& image = platformImage())
+        return image->uniqueID();
+    return 0;
+}
+#endif
 
 } // namespace WebCore
 

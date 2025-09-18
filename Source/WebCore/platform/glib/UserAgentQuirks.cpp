@@ -66,10 +66,6 @@ static bool urlRequiresChromeBrowser(const String& domain, const String& baseDom
     if (baseDomain == "soundcloud.com"_s)
         return true;
 
-    // Seeking in fullscreen Youtube is broken.
-    if (baseDomain == "youtube.com"_s)
-        return true;
-
     // https://webcompat.com/issues/123672
     if (domain == "www.apple.com"_s)
         return true;
@@ -86,6 +82,11 @@ static bool urlRequiresFirefoxBrowser(const String& domain)
     // Red Hat Bugzilla displays a warning page when performing searches with WebKitGTK's standard
     // user agent.
     if (domain == "bugzilla.redhat.com"_s)
+        return true;
+
+    // www.bilibili.com uses "NativePlayer" which only supports 720P with
+    // WebKitGTK's standard user agent.
+    if (domain == "www.bilibili.com"_s)
         return true;
 
 #if ENABLE(THUNDER)
@@ -123,6 +124,7 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     // agent to use the light version. Earlier versions even block users from
     // accessing the calendar.
     if (domain == "outlook.office.com"_s
+        || domain == "outlook.office365.com"_s
         || domain == "mail.ntu.edu.tw"_s
         || domain == "exchange.tu-berlin.de"_s)
         return true;

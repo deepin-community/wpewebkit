@@ -27,7 +27,9 @@
 #include "Font.h"
 
 #include "GlyphBuffer.h"
+#include "NotImplemented.h"
 #include "PathSkia.h"
+#include "SkiaHarfBuzzFont.h"
 #include <skia/core/SkFont.h>
 #include <skia/core/SkFontMetrics.h>
 
@@ -108,6 +110,13 @@ void Font::platformInit()
 
     m_fontMetrics.setUnitsPerEm(font.getTypeface()->getUnitsPerEm());
 
+    // FIXME: add support for SomeEmojiGlyphs once Skia provides API for that.
+    // See https://issues.skia.org/issues/374078818.
+    if (m_platformData.isColorBitmapFont())
+        m_emojiType = AllEmojiGlyphs { };
+    else
+        m_emojiType = NoEmojiGlyphs { };
+
     SkString familyName;
     font.getTypeface()->getFamilyName(&familyName);
     if (equalIgnoringASCIICase(familyName.c_str(), "Ahem"_s))
@@ -134,6 +143,13 @@ RefPtr<Font> Font::platformCreateScaledFont(const FontDescription&, float scaleF
         origin(), IsInterstitial::No);
 }
 
+RefPtr<Font> Font::platformCreateHalfWidthFont() const
+{
+    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=281333 : implement half width font for this platform.
+    notImplemented();
+    return nullptr;
+}
+
 void Font::determinePitch()
 {
     m_treatAsFixedPitch = m_platformData.isFixedPitch();
@@ -153,8 +169,11 @@ bool Font::variantCapsSupportedForSynthesis(FontVariantCaps fontVariantCaps) con
     }
 }
 
-bool Font::platformSupportsCodePoint(char32_t character, std::optional<char32_t>) const
+bool Font::platformSupportsCodePoint(char32_t character, std::optional<char32_t> variation) const
 {
+    if (auto* skiaHarfBuzzFont = m_platformData.skiaHarfBuzzFont())
+        return !!skiaHarfBuzzFont->glyph(character, variation);
+
     return m_platformData.skFont().getTypeface()->unicharToGlyph(character);
 }
 

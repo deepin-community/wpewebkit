@@ -25,13 +25,13 @@
 
 #pragma once
 
+#include "FrameInfoData.h"
 #include "NetworkResourceLoadIdentifier.h"
 #include "PolicyDecision.h"
 #include "SandboxExtension.h"
 #include "UserData.h"
 #include "WebsitePoliciesData.h"
 #include <WebCore/AdvancedPrivacyProtections.h>
-#include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/OwnerPermissionsPolicyData.h>
@@ -43,8 +43,9 @@
 OBJC_CLASS NSDictionary;
 
 namespace WebCore {
-using SandboxFlags = int;
 class SharedBuffer;
+enum class SandboxFlag : uint16_t;
+using SandboxFlags = OptionSet<SandboxFlag>;
 }
 
 namespace WebKit {
@@ -67,6 +68,7 @@ struct LoadParameters {
     String provisionalLoadErrorURLString;
 
     std::optional<WebsitePoliciesData> websitePolicies;
+    std::optional<FrameInfoData> originatingFrame;
 
     WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy { WebCore::ShouldOpenExternalURLsPolicy::ShouldNotAllow };
     WebCore::ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad { WebCore::ShouldTreatAsContinuingLoad::No };
@@ -75,7 +77,7 @@ struct LoadParameters {
     WebCore::LockBackForwardList lockBackForwardList { WebCore::LockBackForwardList::No };
     WebCore::SubstituteData::SessionHistoryVisibility sessionHistoryVisibility { WebCore::SubstituteData::SessionHistoryVisibility::Visible };
     String clientRedirectSourceForHistory;
-    WebCore::SandboxFlags effectiveSandboxFlags { 0 };
+    WebCore::SandboxFlags effectiveSandboxFlags;
     std::optional<WebCore::OwnerPermissionsPolicyData> ownerPermissionsPolicy;
     std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
     std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume;

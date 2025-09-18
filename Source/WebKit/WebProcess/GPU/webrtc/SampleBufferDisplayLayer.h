@@ -52,9 +52,7 @@ public:
 
     WebCore::LayerHostingContextID hostingContextID() const final { return m_hostingContextID.value_or(0); }
 
-    void ref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebCore::SampleBufferDisplayLayer, WTF::DestructionThread::MainRunLoop>::ref(); }
-    void deref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebCore::SampleBufferDisplayLayer, WTF::DestructionThread::MainRunLoop>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebCore::SampleBufferDisplayLayer, WTF::DestructionThread::MainRunLoop>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:
     SampleBufferDisplayLayer(SampleBufferDisplayLayerManager&, WebCore::SampleBufferDisplayLayerClient&);
@@ -62,7 +60,7 @@ private:
     // WebCore::SampleBufferDisplayLayer
     void initialize(bool hideRootLayer, WebCore::IntSize, bool shouldMaintainAspectRatio, CompletionHandler<void(bool)>&&) final;
 #if !RELEASE_LOG_DISABLED
-    void setLogIdentifier(String&&) final;
+    void setLogIdentifier(uint64_t) final;
 #endif
     bool didFail() const final;
     void updateDisplayMode(bool hideDisplayLayer, bool hideRootLayer) final;

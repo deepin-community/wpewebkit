@@ -1,4 +1,6 @@
 list(APPEND WTF_SOURCES
+    android/LoggingAndroid.cpp
+
     generic/MainThreadGeneric.cpp
     generic/MemoryFootprintGeneric.cpp
     generic/WorkQueueGeneric.cpp
@@ -8,6 +10,7 @@ list(APPEND WTF_SOURCES
     glib/FileSystemGlib.cpp
     glib/GRefPtr.cpp
     glib/GSocketMonitor.cpp
+    glib/GSpanExtras.cpp
     glib/RunLoopGLib.cpp
     glib/Sandbox.cpp
     glib/SocketConnection.cpp
@@ -35,6 +38,7 @@ list(APPEND WTF_PUBLIC_HEADERS
     glib/GMutexLocker.h
     glib/GRefPtr.h
     glib/GSocketMonitor.h
+    glib/GSpanExtras.h
     glib/GThreadSafeWeakPtr.h
     glib/GTypedefs.h
     glib/GUniquePtr.h
@@ -49,6 +53,8 @@ list(APPEND WTF_PUBLIC_HEADERS
     linux/ProcessMemoryFootprint.h
     linux/RealTimeThreads.h
 
+    posix/SocketPOSIX.h
+
     unix/UnixFileDescriptor.h
 )
 
@@ -62,6 +68,10 @@ list(APPEND WTF_LIBRARIES
 
 if (ENABLE_JOURNALD_LOG)
     list(APPEND WTF_LIBRARIES Journald::Journald)
+endif ()
+
+if (ANDROID)
+    list(APPEND WTF_LIBRARIES Android::Log)
 endif ()
 
 list(APPEND WTF_SYSTEM_INCLUDE_DIRECTORIES

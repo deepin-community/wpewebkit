@@ -36,7 +36,6 @@
 #include "RemoteSampleBufferDisplayLayerMessages.h"
 #include "RemoteVideoFrameProxy.h"
 #include "SampleBufferDisplayLayerManager.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 
 namespace WebKit {
@@ -69,7 +68,7 @@ void SampleBufferDisplayLayer::initialize(bool hideRootLayer, IntSize size, bool
 }
 
 #if !RELEASE_LOG_DISABLED
-void SampleBufferDisplayLayer::setLogIdentifier(String&& logIdentifier)
+void SampleBufferDisplayLayer::setLogIdentifier(uint64_t logIdentifier)
 {
     ASSERT(m_hostingContextID);
     m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetLogIdentifier { logIdentifier }, identifier());
@@ -79,8 +78,8 @@ void SampleBufferDisplayLayer::setLogIdentifier(String&& logIdentifier)
 SampleBufferDisplayLayer::~SampleBufferDisplayLayer()
 {
     m_connection->send(Messages::RemoteSampleBufferDisplayLayerManager::ReleaseLayer { identifier() }, 0);
-    if (m_manager)
-        m_manager->removeLayer(*this);
+    if (RefPtr manager = m_manager.get())
+        manager->removeLayer(*this);
 }
 
 bool SampleBufferDisplayLayer::didFail() const

@@ -1,8 +1,132 @@
-wpewebkit (2.46.3-1deepin1) unstable; urgency=medium
+wpewebkit (2.48.6-2deepin1) unstable; urgency=medium
 
-  * feat: add sw64 support.
+  * Apply patch from hudeng:
+    + feat: add sw64 support
 
- -- hudeng <hudeng@deepin.org>  Wed, 04 Jun 2025 18:17:52 +0800
+ -- Tianyu Chen <sweetyfish@deepin.org>  Thu, 18 Sep 2025 13:40:07 +0800
+
+wpewebkit (2.48.6-2) unstable; urgency=medium
+
+  * Disable clang in mips64el, it still fails with "error in backend:
+    failed to perform tail call elimination on a call site marked
+    musttail".
+
+ -- Alberto Garcia <berto@igalia.com>  Thu, 04 Sep 2025 10:50:04 +0200
+
+wpewebkit (2.48.6-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Drop fix-ftbfs-armv7.patch.
+  * Stop supporting non-SSE2 i386 CPUs since SSE2 is required starting
+    from trixie.
+    - Drop dont-detect-sse2.patch.
+    - Enable the JIT again and disable CLoop.
+  * Enable clang in all release architectures.
+
+ -- Alberto Garcia <berto@igalia.com>  Wed, 03 Sep 2025 21:06:31 +0200
+
+wpewebkit (2.48.5-1) unstable; urgency=high
+
+  * New upstream release.
+  * The WPE WebKit security advisory WSA-2025-0005 lists the following
+    security fixes in the latest versions of WPE WebKit:
+    - CVE-2025-24189 (fixed in 2.48.0).
+    - CVE-2025-31273, CVE-2025-31278, CVE-2025-43211, CVE-2025-43212,
+      CVE-2025-43216, CVE-2025-43227, CVE-2025-43228, CVE-2025-43240,
+      CVE-2025-43265, CVE-2025-6558 (fixed in 2.48.5).
+  * debian/upstream/signing-key.asc:
+    - Update upstream's PGP keyring.
+  * debian/patches/fix-ftbfs-armv7.patch:
+    - Fix arm build.
+
+ -- Alberto Garcia <berto@igalia.com>  Sun, 10 Aug 2025 18:19:22 +0200
+
+wpewebkit (2.48.3-1) unstable; urgency=high
+
+  * New upstream release.
+    - This fixes a crash in Skia, see #1106164.
+
+ -- Alberto Garcia <berto@igalia.com>  Fri, 30 May 2025 10:14:05 +0200
+
+wpewebkit (2.48.2-1) unstable; urgency=high
+
+  * New upstream release.
+  * The WPE WebKit security advisory WSA-2025-0004 lists the following
+    security fixes in the latest versions of WPE WebKit:
+    - CVE-2023-42875, CVE-2023-42970 (fixed in 2.42.0).
+    - CVE-2025-24223, CVE-2025-31204, CVE-2025-31205, CVE-2025-31206,
+      CVE-2025-31215, CVE-2025-31257 (fixed in 2.48.2).
+  * debian/rules:
+    - Stop building with HAVE_DENORMAL=0 on armel, WebKit bug #290994 has
+      been fixed in this release.
+
+ -- Alberto Garcia <berto@igalia.com>  Fri, 16 May 2025 10:17:25 +0200
+
+wpewebkit (2.48.1-2) unstable; urgency=high
+
+  * debian/rules:
+    - Build with -mbranch-protection=pac-ret on arm64 (see #1104703).
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 05 May 2025 17:28:28 +0200
+
+wpewebkit (2.48.1-1) unstable; urgency=high
+
+  * New upstream release.
+  * debian/rules:
+    - Build with -mlarge-data and -mlarge-text on alpha (see #1101547).
+    - Build with HAVE_DENORMAL=0 on armel (WebKit bug #290994).
+  * Refresh all patches and drop fix-soname.patch.
+  * debian/control:
+    - Update Standards-Version to 4.7.2 (no changes).
+
+ -- Alberto Garcia <berto@igalia.com>  Thu, 03 Apr 2025 19:27:40 +0200
+
+wpewebkit (2.48.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Refresh all patches.
+  * Update copyright information of all files.
+  * debian/control:
+    - Add build dependency on flite1-dev (for speech synthesis).
+  * libWPEWebInspectorResources.so is now inspector.gresource.
+    - Update libwpewebkit-2.0-1.{install,symbols}.
+    - Update libwpewebkit-2.0-1.lintian-overrides.
+  * debian/libwpewebkit-2.0-1.symbols:
+    - Update symbols.
+  * debian/source/lintian-overrides:
+    - Update source-is-missing overrides.
+  * debian/patches/fix-soname.patch
+    - Cherry pick patch to fix WPE WebKit's shared library soname.
+
+ -- Alberto Garcia <berto@igalia.com>  Mon, 17 Mar 2025 01:50:25 +0100
+
+wpewebkit (2.46.6-1) unstable; urgency=high
+
+  * New upstream release.
+  * Update copyright information of all files.
+  * debian/rules:
+    - Stop using -DWTF_CPU_ARM64_CORTEXA53=OFF, this was fixed upstream a
+      long time ago (WebKit bug #197192).
+  * debian/upstream/signing-key.asc:
+    - sq complains about multiple concatenated ASCII Armor blocks, so put
+      all keys in the same block.
+
+ -- Alberto Garcia <berto@igalia.com>  Sun, 09 Feb 2025 18:32:24 +0100
+
+wpewebkit (2.46.5-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Alberto Garcia <berto@igalia.com>  Thu, 19 Dec 2024 01:18:46 +0100
+
+wpewebkit (2.46.4-1) unstable; urgency=high
+
+  * New upstream release.
+  * The WPE WebKit security advisory WSA-2024-0007 lists the following
+    security fixes in the latest versions of WPE WebKit:
+    - CVE-2024-44308, CVE-2024-44309 (fixed in 2.46.4).
+
+ -- Alberto Garcia <berto@igalia.com>  Wed, 27 Nov 2024 14:43:44 +0100
 
 wpewebkit (2.46.3-1) unstable; urgency=medium
 

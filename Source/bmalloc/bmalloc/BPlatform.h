@@ -177,6 +177,7 @@
 || defined(__ARM_ARCH_6J__) \
 || defined(__ARM_ARCH_6K__) \
 || defined(__ARM_ARCH_6Z__) \
+|| defined(__ARM_ARCH_6KZ__) \
 || defined(__ARM_ARCH_6ZK__) \
 || defined(__ARM_ARCH_6T2__) \
 || defined(__ARMV6__)
@@ -375,7 +376,7 @@
 #endif
 
 #if !defined(BUSE_TZONE)
-#if BUSE(LIBPAS) && BOS(DARWIN) && BCPU(ARM64)
+#if BUSE(LIBPAS) && BOS(DARWIN) && (BCPU(ARM64) || BCPU(X86_64))
 #define BUSE_TZONE 1
 #else
 #define BUSE_TZONE 0

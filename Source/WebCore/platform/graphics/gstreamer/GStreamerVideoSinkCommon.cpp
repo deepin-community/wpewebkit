@@ -23,6 +23,7 @@
 
 #include "MediaPlayerPrivateGStreamer.h"
 #include <gst/app/gstappsink.h>
+#include <wtf/TZoneMallocInlines.h>
 
 using namespace WebCore;
 
@@ -30,7 +31,7 @@ GST_DEBUG_CATEGORY(webkit_gst_video_sink_common_debug);
 #define GST_CAT_DEFAULT webkit_gst_video_sink_common_debug
 
 class WebKitVideoSinkProbe {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebKitVideoSinkProbe);
 public:
 
     WebKitVideoSinkProbe(MediaPlayerPrivateGStreamer* player)
@@ -43,28 +44,56 @@ public:
         delete static_cast<WebKitVideoSinkProbe*>(userData);
     }
 
+    void handleFlushEvent([[maybe_unused]] GstPad* pad, GstPadProbeInfo* info)
+    {
+        // We need to operate from the main thread, this is a requirement for usage of
+        // AbortableTaskQueue start/finishAborting.
+        ASSERT(isMainThread());
+
+        if (GST_EVENT_TYPE(GST_PAD_PROBE_INFO_EVENT(info)) == GST_EVENT_FLUSH_START) {
+            if (!m_isFlushing) {
+                GST_DEBUG_OBJECT(pad, "FLUSH_START received, aborting all pending tasks in the player sinkTaskQueue.");
+                m_isFlushing = true;
+                m_player->sinkTaskQueue().startAborting();
+#if USE(GSTREAMER_GL)
+                    GST_DEBUG_OBJECT(pad, "Flushing current buffer in response to %" GST_PTR_FORMAT, info->data);
+                    m_player->flushCurrentBuffer();
+#endif
+            } else
+                GST_DEBUG_OBJECT(pad, "Received FLUSH_START while already flushing, ignoring.");
+            return;
+        }
+
+        RELEASE_ASSERT(GST_EVENT_TYPE(GST_PAD_PROBE_INFO_EVENT(info)) == GST_EVENT_FLUSH_STOP);
+        if (m_isFlushing) {
+            GST_DEBUG_OBJECT(pad, "FLUSH_STOP received, allowing operation in the player sinkTaskQueue again.");
+            m_isFlushing = false;
+            m_player->sinkTaskQueue().finishAborting();
+            return;
+        }
+
+        GST_DEBUG_OBJECT(pad, "Received FLUSH_STOP without a FLUSH_START, ignoring.");
+    }
+
     static GstPadProbeReturn doProbe([[maybe_unused]] GstPad* pad, GstPadProbeInfo* info, gpointer userData)
     {
         auto* self = static_cast<WebKitVideoSinkProbe*>(userData);
         auto* player = self->m_player;
 
+        // Usually flushes propagate in the main thread as a synchronous consequence of a seek.
+        // However, this doesn't have to be the case:
+        //
+        // As a notable example, when matroskademux receives a seek before it has parsed the
+        // entire file header, it stores the event and returns without flushing anything.
+        // Later, the streaming thread finishes parsing the file header and handles the stored
+        // seek event from that same thread. This sends a flush from the streaming thread.
         if (info->type & GST_PAD_PROBE_TYPE_EVENT_FLUSH) {
-            if (GST_EVENT_TYPE(GST_PAD_PROBE_INFO_EVENT(info)) == GST_EVENT_FLUSH_START) {
-                if (!self->m_isFlushing) {
-                    GST_DEBUG_OBJECT(pad, "FLUSH_START received, aborting all pending tasks in the player sinkTaskQueue.");
-                    self->m_isFlushing = true;
-                    player->sinkTaskQueue().startAborting();
-                } else
-                    GST_DEBUG_OBJECT(pad, "Received FLUSH_START while already flushing, ignoring.");
-            } else if (GST_EVENT_TYPE(GST_PAD_PROBE_INFO_EVENT(info)) == GST_EVENT_FLUSH_STOP) {
-                if (self->m_isFlushing) {
-                    GST_DEBUG_OBJECT(pad, "FLUSH_STOP received, allowing operation in the player sinkTaskQueue again.");
-                    self->m_isFlushing = false;
-                    player->sinkTaskQueue().finishAborting();
-                } else
-                    GST_DEBUG_OBJECT(pad, "Received FLUSH_STOP without a FLUSH_START, ignoring.");
-            }
+            callOnMainThreadAndWait([&] {
+                self->handleFlushEvent(pad, info);
+            });
         }
+        if (self->m_isFlushing)
+            return GST_PAD_PROBE_OK; // do not process regular (non-flush) events during a flush
 
         if (info->type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM && GST_EVENT_TYPE(GST_PAD_PROBE_INFO_EVENT(info)) == GST_EVENT_TAG) {
             GstTagList* tagList;
@@ -102,24 +131,11 @@ public:
         }
 
 #if USE(GSTREAMER_GL)
-        // FIXME: Verify the following comment. Investigate what actually should be done here.
-        //
         // In some platforms (e.g. OpenMAX on the Raspberry Pi) when a resolution change occurs the
         // pipeline has to be drained before a frame with the new resolution can be decoded.
         // In this context, it's important that we don't hold references to any previous frame
         // (e.g. m_sample) so that decoding can continue.
         // We are also not supposed to keep the original frame after a flush.
-        //
-        // FIXME: We used to have code to call flushCurrentBuffer() on FLUSH_START. That code became
-        // accidentally unreachable in r287349. The current code doesn't preserve that call, partly
-        // because of a refactor of this probe function, partly because it seemed to caused test
-        // regressions that were out of the scope of that change.
-        //
-        // FIXME: flushCurrentBuffer(), when called, causes the video element to become blank for the
-        // user, and has been having this issue for a long time. This is definitely a bug, and needs
-        // to be fixed eventually.
-        //
-        // For more info: https://github.com/WebKit/WebKit/pull/3802#issuecomment-1234529142
         if (info->type & GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM && GST_QUERY_TYPE(GST_PAD_PROBE_INFO_QUERY(info)) == GST_QUERY_DRAIN) {
             GST_DEBUG_OBJECT(pad, "Flushing current buffer in response to %" GST_PTR_FORMAT, info->data);
             player->flushCurrentBuffer();
@@ -165,6 +181,13 @@ void webKitVideoSinkSetMediaPlayerPrivate(GstElement* appSink, MediaPlayerPrivat
     gst_pad_add_probe(pad.get(), static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_PUSH | GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM
         | GST_PAD_PROBE_TYPE_EVENT_FLUSH | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
         WebKitVideoSinkProbe::doProbe, new WebKitVideoSinkProbe(player), WebKitVideoSinkProbe::deleteUserData);
+
+    if (!player->requiresVideoSinkCapsNotifications())
+        return;
+
+    g_signal_connect(pad.get(), "notify::caps", G_CALLBACK(+[](GstPad* videoSinkPad, GParamSpec*, MediaPlayerPrivateGStreamer* player) {
+        player->videoSinkCapsChanged(videoSinkPad);
+    }), player);
 }
 
 #undef GST_CAT_DEFAULT
