@@ -67,7 +67,7 @@ enum {
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 static void wpeToplevelSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -113,7 +113,7 @@ static void wpe_toplevel_class_init(WPEToplevelClass* toplevelClass)
             WPE_TYPE_DISPLAY,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 }
 
 void wpeToplevelAddView(WPEToplevel* toplevel, WPEView* view)
@@ -525,8 +525,10 @@ WPEBufferDMABufFormats* wpe_toplevel_get_preferred_dma_buf_formats(WPEToplevel* 
 #endif
 
     auto* toplevelClass = WPE_TOPLEVEL_GET_CLASS(toplevel);
-    if (toplevelClass->get_preferred_dma_buf_formats)
-        return toplevelClass->get_preferred_dma_buf_formats(toplevel);
+    if (toplevelClass->get_preferred_dma_buf_formats) {
+        if (auto* formats = toplevelClass->get_preferred_dma_buf_formats(toplevel))
+            return formats;
+    }
 
     return priv->display ? wpe_display_get_preferred_dma_buf_formats(priv->display.get()) : nullptr;
 }

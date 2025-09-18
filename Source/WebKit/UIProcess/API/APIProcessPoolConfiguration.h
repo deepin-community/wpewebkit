@@ -164,6 +164,11 @@ public:
     void setMemoryFootprintNotificationThresholds(Vector<size_t>&& thresholds) { m_memoryFootprintNotificationThresholds = WTFMove(thresholds); }
     const Vector<size_t>& memoryFootprintNotificationThresholds() const { return m_memoryFootprintNotificationThresholds; }
 
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
+    void setSuspendsWebProcessesAggressivelyOnMemoryPressure(bool enabled) { m_suspendsWebProcessesAggressivelyOnMemoryPressure = enabled; }
+    bool suspendsWebProcessesAggressivelyOnMemoryPressure() { return m_suspendsWebProcessesAggressivelyOnMemoryPressure; }
+#endif
+
 private:
     WTF::String m_injectedBundlePath;
     Vector<WTF::String> m_cachePartitionedURLSchemes;
@@ -188,7 +193,7 @@ private:
     bool m_shouldConfigureJSCForTesting { false };
     bool m_isJITEnabled { true };
     bool m_usesSingleWebProcess { false };
-#if PLATFORM(GTK) && !USE(GTK4)
+#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
     bool m_useSystemAppearanceForScrollbars { false };
 #endif
 #if PLATFORM(PLAYSTATION)
@@ -206,6 +211,9 @@ private:
     WTF::String m_timeZoneOverride;
     Seconds m_memoryFootprintPollIntervalForTesting;
     Vector<size_t> m_memoryFootprintNotificationThresholds;
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
+    bool m_suspendsWebProcessesAggressivelyOnMemoryPressure { false };
+#endif
 };
 
 } // namespace API

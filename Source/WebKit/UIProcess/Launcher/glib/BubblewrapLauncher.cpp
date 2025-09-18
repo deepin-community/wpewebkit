@@ -40,6 +40,8 @@
 #include "Display.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
+
 #if !defined(MFD_ALLOW_SEALING) && HAVE(LINUX_MEMFD_H)
 #include <linux/memfd.h>
 #endif
@@ -288,6 +290,9 @@ static void bindPulse(Vector<CString>& args)
     GUniquePtr<char> asoundHomeConfigDir(g_build_filename(homeDir, ".asoundrc", nullptr));
     bindIfExists(args, pulseHomeConfigDir.get());
     bindIfExists(args, asoundHomeConfigDir.get());
+
+    // Pulseaudio service ran as system daemon, allows multi-user setups
+    bindIfExists(args, "/run/pulse", BindFlags::ReadWrite);
 
     // This is the ultimate fallback to raw ALSA
     bindIfExists(args, "/dev/snd", BindFlags::Device);
@@ -955,5 +960,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 }
 
 };
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(BUBBLEWRAP_SANDBOX)

@@ -84,7 +84,8 @@ TEST(WTF, StringViewEmptyVsNull)
     else
         SUCCEED();
 
-    StringView viewWithCharacters(String("hello"_s));
+    String string { "hello"_s };
+    StringView viewWithCharacters(string);
     EXPECT_FALSE(viewWithCharacters.isNull());
     EXPECT_FALSE(viewWithCharacters.isEmpty());
 
@@ -982,7 +983,7 @@ TEST(WTF, StringViewContainsOnlyASCII)
     EXPECT_FALSE(StringView(String::fromLatin1("📱")).containsOnlyASCII());
     EXPECT_FALSE(StringView(String::fromLatin1("\u0080")).containsOnlyASCII());
     constexpr size_t zeroLength = 0;
-    EXPECT_TRUE(StringView(String({ bitwise_cast<const UChar*>(u"Hello"), zeroLength })).containsOnlyASCII());
+    EXPECT_TRUE(StringView(String({ reinterpret_cast<const UChar*>(u"Hello"), zeroLength })).containsOnlyASCII());
 }
 
 TEST(WTF, StringViewUpconvert)

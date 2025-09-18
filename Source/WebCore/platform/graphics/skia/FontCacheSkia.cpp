@@ -29,18 +29,22 @@
 #include "Font.h"
 #include "FontDescription.h"
 #include "StyleFontSizeFunctions.h"
-#if defined(__ANDROID__) || defined(ANDROID)
-#include <skia/ports/SkFontMgr_android.h>
-#else
-#include <skia/ports/SkFontMgr_fontconfig.h>
-#endif
 #include <wtf/Assertions.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/unicode/CharacterNames.h>
 
-#if PLATFORM(GTK)
-#include "GtkUtilities.h"
+#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
+#include "SystemSettings.h"
+#endif
+
+#if OS(ANDROID)
+#include <skia/ports/SkFontMgr_android.h>
+#elif PLATFORM(WIN)
+#include <dwrite.h>
+#include <skia/ports/SkTypeface_win.h>
+#else
+#include <skia/ports/SkFontMgr_fontconfig.h>
 #endif
 
 namespace WebCore {
@@ -52,8 +56,11 @@ void FontCache::platformInit()
 SkFontMgr& FontCache::fontManager() const
 {
     if (!m_fontManager) {
-#if defined(__ANDROID__) || defined(ANDROID)
+#if OS(ANDROID)
         m_fontManager = SkFontMgr_New_Android(nullptr);
+#elif OS(WINDOWS)
+        auto result = createDWriteFactory();
+        m_fontManager = SkFontMgr_New_DirectWrite(result.factory.get(), result.fontCollection.get());
 #else
         m_fontManager = SkFontMgr_New_FontConfig(FcConfigReference(nullptr));
 #endif
@@ -70,22 +77,22 @@ static SkFontStyle skiaFontStyle(const FontDescription& fontDescription)
         skWeight = static_cast<int>(weight);
 
     int skWidth = SkFontStyle::kNormal_Width;
-    auto stretch = fontDescription.stretch();
-    if (stretch <= ultraCondensedStretchValue())
+    auto width = fontDescription.width();
+    if (width <= ultraCondensedWidthValue())
         skWidth = SkFontStyle::kUltraCondensed_Width;
-    else if (stretch <= extraCondensedStretchValue())
+    else if (width <= extraCondensedWidthValue())
         skWidth = SkFontStyle::kExtraCondensed_Width;
-    else if (stretch <= condensedStretchValue())
+    else if (width <= condensedWidthValue())
         skWidth = SkFontStyle::kCondensed_Width;
-    else if (stretch <= semiCondensedStretchValue())
+    else if (width <= semiCondensedWidthValue())
         skWidth = SkFontStyle::kSemiCondensed_Width;
-    else if (stretch >= semiExpandedStretchValue())
+    else if (width >= semiExpandedWidthValue())
         skWidth = SkFontStyle::kSemiExpanded_Width;
-    else if (stretch >= expandedStretchValue())
+    else if (width >= expandedWidthValue())
         skWidth = SkFontStyle::kExpanded_Width;
-    if (stretch >= extraExpandedStretchValue())
+    if (width >= extraExpandedWidthValue())
         skWidth = SkFontStyle::kExtraExpanded_Width;
-    if (stretch >= ultraExpandedStretchValue())
+    if (width >= ultraExpandedWidthValue())
         skWidth = SkFontStyle::kUltraExpanded_Width;
 
     SkFontStyle::Slant skSlant = SkFontStyle::kUpright_Slant;
@@ -97,6 +104,15 @@ static SkFontStyle skiaFontStyle(const FontDescription& fontDescription)
     }
 
     return SkFontStyle(skWeight, skWidth, skSlant);
+}
+
+static std::pair<bool, bool> computeSynthesisProperties(const SkTypeface& typeface, const FontDescription& fontDescription, OptionSet<FontLookupOptions> synthesisOptions)
+{
+    bool allowsSyntheticBold = fontDescription.hasAutoFontSynthesisWeight() && !synthesisOptions.contains(FontLookupOptions::DisallowBoldSynthesis);
+    bool syntheticBold = allowsSyntheticBold && isFontWeightBold(fontDescription.weight()) && !typeface.isBold();
+    bool allowsSyntheticOblique = fontDescription.hasAutoFontSynthesisStyle() && !synthesisOptions.contains(FontLookupOptions::DisallowObliqueSynthesis);
+    bool syntheticOblique = allowsSyntheticOblique && isItalic(fontDescription.italic()) && !typeface.isItalic();
+    return { syntheticBold, syntheticOblique };
 }
 
 RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription& description, const Font&, IsForPlatformFont, PreferColoredFont, StringView stringView)
@@ -116,10 +132,13 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     if (isEmoji)
         bcp47.append("und-Zsye");
 
-    // FIXME: handle synthetic properties.
     auto features = computeFeatures(description, { });
     auto typeface = fontManager().matchFamilyStyleCharacter(nullptr, skiaFontStyle(description), bcp47.data(), bcp47.size(), baseCharacter);
-    FontPlatformData alternateFontData(WTFMove(typeface), description.computedSize(), false /* syntheticBold */, false /* syntheticOblique */, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTFMove(features));
+    if (!typeface)
+        return nullptr;
+
+    auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, description, { });
+    FontPlatformData alternateFontData(WTFMove(typeface), description.computedSize(), syntheticBold, syntheticOblique, description.orientation(), description.widthVariant(), description.textRenderingMode(), WTFMove(features));
     return fontForPlatformData(alternateFontData);
 }
 
@@ -144,7 +163,12 @@ bool FontCache::isSystemFontForbiddenForEditing(const String&)
 
 Ref<Font> FontCache::lastResortFallbackFont(const FontDescription& fontDescription)
 {
-    if (RefPtr<Font> font = fontForFamily(fontDescription, "serif"_s))
+#if PLATFORM(WIN)
+    const auto defaultFontName = "Times New Roman"_s;
+#else
+    const auto defaultFontName = "serif"_s;
+#endif
+    if (RefPtr<Font> font = fontForFamily(fontDescription, defaultFontName))
         return font.releaseNonNull();
 
     // Passing nullptr as family name makes Skia use a weak match.
@@ -154,7 +178,8 @@ Ref<Font> FontCache::lastResortFallbackFont(const FontDescription& fontDescripti
         typeface = SkTypeface::MakeEmpty();
     }
 
-    FontPlatformData platformData(WTFMove(typeface), fontDescription.computedSize(), false /* syntheticBold */, false /* syntheticOblique */,
+    auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, { });
+    FontPlatformData platformData(WTFMove(typeface), fontDescription.computedSize(), syntheticBold, syntheticOblique,
         fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), computeFeatures(fontDescription, { }));
     return fontForPlatformData(platformData);
 }
@@ -182,9 +207,9 @@ static String getFamilyNameStringFromFamily(const String& family)
     if (family == familyNamesData->at(FamilyNamesIndex::FantasyFamily))
         return "fantasy"_s;
 
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
     if (family == familyNamesData->at(FamilyNamesIndex::SystemUiFamily) || family == "-webkit-system-font"_s)
-        return defaultGtkSystemFont();
+        return SystemSettings::singleton().defaultSystemFont();
 #endif
 
     return emptyString();
@@ -351,14 +376,15 @@ Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescr
 std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription, const AtomString& family, const FontCreationContext& fontCreationContext, OptionSet<FontLookupOptions> options)
 {
     auto familyName = getFamilyNameStringFromFamily(family);
-    auto typeface = fontManager().matchFamilyStyle(familyName.utf8().data(), skiaFontStyle(fontDescription));
+    auto skFontStyle = skiaFontStyle(fontDescription);
+    auto typeface = fontManager().matchFamilyStyle(familyName.utf8().data(), skFontStyle);
     if (!typeface)
         return nullptr;
 
     auto size = fontDescription.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = computeFeatures(fontDescription, fontCreationContext);
-    UNUSED_PARAM(options);
-    FontPlatformData platformData(WTFMove(typeface), size, false /* syntheticBold */, false /* syntheticOblique */, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTFMove(features));
+    auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, options);
+    FontPlatformData platformData(WTFMove(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTFMove(features));
 
     platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.computedSize());
     auto platformDataUniquePtr = makeUnique<FontPlatformData>(platformData);
@@ -366,9 +392,9 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
     return platformDataUniquePtr;
 }
 
-std::optional<ASCIILiteral> FontCache::platformAlternateFamilyName(const String&)
+ASCIILiteral FontCache::platformAlternateFamilyName(const String&)
 {
-    return std::nullopt;
+    return { };
 }
 
 void FontCache::platformInvalidate()

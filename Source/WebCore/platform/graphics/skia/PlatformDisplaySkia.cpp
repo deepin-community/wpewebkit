@@ -29,27 +29,25 @@
 #if USE(SKIA)
 #include "FontRenderOptions.h"
 #include "GLContext.h"
+
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
-#include <skia/gpu/GrBackendSurface.h>
+#include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
-#include <skia/gpu/gl/GrGLInterface.h>
-#include <skia/gpu/gl/GrGLTypes.h>
-#include <wtf/NeverDestroyed.h>
-#include <wtf/RunLoop.h>
-#include <wtf/ThreadSafeWeakPtr.h>
-#include <wtf/text/StringToIntegerConversion.h>
-#include <wtf/threads/BinarySemaphore.h>
-
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
-#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
-IGNORE_CLANG_WARNINGS_END
+#include <skia/gpu/ganesh/gl/GrGLInterface.h>
 
 #if USE(LIBEPOXY)
-#include <skia/gpu/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
+#include <skia/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
 #else
-#include <skia/gpu/gl/egl/GrGLMakeEGLInterface.h>
+#include <skia/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h>
 #endif
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+
+#include <wtf/NeverDestroyed.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
@@ -71,7 +69,7 @@ static const unsigned s_defaultSampleCount = 0;
 #if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
 static sk_sp<const GrGLInterface> skiaGLInterface()
 {
-    static NeverDestroyed<sk_sp<const GrGLInterface>> interface {
+    static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
 #if USE(LIBEPOXY)
         GrGLInterfaces::MakeEpoxyEGL()
 #else
@@ -79,7 +77,7 @@ static sk_sp<const GrGLInterface> skiaGLInterface()
 #endif
     };
 
-    return interface.get();
+    return grGLInterface.get();
 }
 
 static thread_local RefPtr<SkiaGLContext> s_skiaGLContext;
@@ -125,21 +123,6 @@ public:
 
     ~SkiaGLContext() = default;
 
-    void invalidate()
-    {
-        if (&RunLoop::current() == m_runLoop) {
-            invalidateOnCurrentThread();
-            return;
-        }
-
-        BinarySemaphore semaphore;
-        m_runLoop->dispatch([&semaphore, this] {
-            invalidateOnCurrentThread();
-            semaphore.signal();
-        });
-        semaphore.wait();
-    }
-
     GLContext* skiaGLContext() const
     {
         Locker locker { m_lock };
@@ -159,7 +142,6 @@ public:
 
 private:
     explicit SkiaGLContext(PlatformDisplay& display)
-        : m_runLoop(&RunLoop::current())
     {
         auto glContext = GLContext::createOffscreen(display);
         if (!glContext || !glContext->makeContextCurrent())
@@ -173,14 +155,6 @@ private:
         }
     }
 
-    void invalidateOnCurrentThread()
-    {
-        Locker locker { m_lock };
-        m_skiaGrContext = nullptr;
-        m_skiaGLContext = nullptr;
-    }
-
-    RunLoop* m_runLoop { nullptr };
     std::unique_ptr<GLContext> m_skiaGLContext WTF_GUARDED_BY_LOCK(m_lock);
     sk_sp<GrDirectContext> m_skiaGrContext WTF_GUARDED_BY_LOCK(m_lock);
     mutable Lock m_lock;
@@ -190,7 +164,7 @@ private:
 
 GLContext* PlatformDisplay::skiaGLContext()
 {
-#if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
+#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
     if (!s_skiaGLContext) {
         s_skiaGLContext = SkiaGLContext::create(*this);
         m_skiaGLContexts.add(*s_skiaGLContext);
@@ -214,12 +188,9 @@ unsigned PlatformDisplay::msaaSampleCount() const
     return s_skiaGLContext->sampleCount();
 }
 
-void PlatformDisplay::invalidateSkiaGLContexts()
+void PlatformDisplay::clearSkiaGLContext()
 {
-    auto contexts = WTFMove(m_skiaGLContexts);
-    contexts.forEach([](auto& context) {
-        context.invalidate();
-    });
+    s_skiaGLContext = nullptr;
 }
 
 } // namespace WebCore

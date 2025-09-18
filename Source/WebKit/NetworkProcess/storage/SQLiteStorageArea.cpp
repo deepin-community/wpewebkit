@@ -33,9 +33,14 @@
 #include <WebCore/SQLiteStatementAutoResetScope.h>
 #include <WebCore/SQLiteTransaction.h>
 #include <WebCore/StorageMap.h>
+#include <wtf/Assertions.h>
 #include <wtf/FileSystem.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/Vector.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SQLiteStorageArea);
 
 constexpr Seconds transactionDuration { 500_ms };
 constexpr unsigned maximumSizeForValuesKeptInMemory { 1 * KB };
@@ -63,6 +68,11 @@ ASCIILiteral SQLiteStorageArea::statementString(StatementType type) const
 
     ASSERT_NOT_REACHED();
     return ""_s;
+}
+
+Ref<SQLiteStorageArea> SQLiteStorageArea::create(unsigned quota, const WebCore::ClientOrigin& origin, const String& path, Ref<WorkQueue>&& workQueue)
+{
+    return adoptRef(*new SQLiteStorageArea(quota, origin, path, WTFMove(workQueue)));
 }
 
 SQLiteStorageArea::SQLiteStorageArea(unsigned quota, const WebCore::ClientOrigin& origin, const String& path, Ref<WorkQueue>&& workQueue)
@@ -210,8 +220,8 @@ void SQLiteStorageArea::startTransactionIfNecessary()
     m_transaction->begin();
 
     m_queue->dispatchAfter(transactionDuration, [weakThis = WeakPtr { *this }] {
-        if (weakThis)
-            weakThis->commitTransactionIfNecessary();
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->commitTransactionIfNecessary();
     });
 }
 
@@ -287,15 +297,28 @@ HashMap<String, String> SQLiteStorageArea::allItems()
     HashMap<String, String> items;
     if (m_cache) {
         items.reserveInitialCapacity(m_cache->size());
-        for (auto& [key, value] : *m_cache) {
-            if (auto* valueString = std::get_if<String>(&value)) {
+        for (auto& key : copyToVector(m_cache->keys())) {
+            if (!m_cache) {
+                RELEASE_LOG_ERROR(Storage, "SQLiteStorageArea::allItems cache deleted during read from cache");
+                return { };
+            }
+
+            auto iterator = m_cache->find(key);
+            RELEASE_ASSERT(iterator != m_cache->end());
+
+            if (auto* valueString = std::get_if<String>(&iterator->value)) {
                 ASSERT(!valueString->isNull());
                 items.add(key, *valueString);
                 continue;
             }
 
-            if (auto result = getItemFromDatabase(key))
+            auto result = getItemFromDatabase(key);
+            if (result.has_value())
                 items.add(key, result.value());
+            else {
+                RELEASE_LOG_ERROR(Storage, "SQLiteStorageArea::allItems failed during read from cache (%hhu)" PUBLIC_LOG_STRING, result.error());
+                return { };
+            }
         }
         return items;
     }
@@ -333,7 +356,7 @@ HashMap<String, String> SQLiteStorageArea::allItems()
     return items;
 }
 
-Expected<void, StorageError> SQLiteStorageArea::setItem(IPC::Connection::UniqueID connection, StorageAreaImplIdentifier storageAreaImplID, String&& key, String&& value, const String& urlString)
+Expected<void, StorageError> SQLiteStorageArea::setItem(std::optional<IPC::Connection::UniqueID> connection, std::optional<StorageAreaImplIdentifier> storageAreaImplID, String&& key, String&& value, const String& urlString)
 {
     ASSERT(!isMainRunLoop());
 
@@ -371,7 +394,8 @@ Expected<void, StorageError> SQLiteStorageArea::setItem(IPC::Connection::UniqueI
         return makeUnexpected(StorageError::Database);
     }
 
-    dispatchEvents(connection, storageAreaImplID, key, oldValue, value, urlString);
+    if (connection && storageAreaImplID)
+        dispatchEvents(*connection, *storageAreaImplID, key, oldValue, value, urlString);
     updateCacheIfNeeded(key, value);
 
     return { };

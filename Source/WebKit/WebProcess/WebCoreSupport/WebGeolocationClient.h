@@ -34,12 +34,9 @@ namespace WebKit {
 
 class WebGeolocationClient final : public WebCore::GeolocationClient {
     WTF_MAKE_TZONE_ALLOCATED(WebGeolocationClient);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebGeolocationClient);
 public:
-    WebGeolocationClient(WebPage& page)
-        : m_page(page)
-    {
-    }
-
+    explicit WebGeolocationClient(WebPage&);
     virtual ~WebGeolocationClient();
 
 private:
@@ -55,7 +52,7 @@ private:
     void requestPermission(WebCore::Geolocation&) final;
     void cancelPermissionRequest(WebCore::Geolocation&) final;
 
-    WeakRef<WebPage> m_page;
+    WeakPtr<WebPage> m_page;
 };
 
 } // namespace WebKit

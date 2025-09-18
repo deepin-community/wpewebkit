@@ -36,6 +36,10 @@
 #include <systemd/sd-journal.h>
 #endif
 
+#if OS(ANDROID)
+#include <android/log.h>
+#endif
+
 namespace WTF {
 
 template<typename T>
@@ -55,6 +59,7 @@ struct LogArgument {
     template<typename U = T> static std::enable_if_t<std::is_same_v<typename std::remove_reference_t<U>, AtomString>, String> toString(const AtomString& argument) { return argument.string(); }
     template<typename U = T> static std::enable_if_t<std::is_same_v<typename std::remove_reference_t<U>, String>, String> toString(String argument) { return argument; }
     template<typename U = T> static std::enable_if_t<std::is_same_v<typename std::remove_reference_t<U>, StringBuilder*>, String> toString(StringBuilder* argument) { return argument->toString(); }
+    template<typename U = T> static std::enable_if_t<std::is_same_v<typename std::remove_reference_t<U>, StringView>, String> toString(const StringView& argument) { return argument.toString(); }
     template<typename U = T> static std::enable_if_t<std::is_same_v<U, const char*>, String> toString(const char* argument) { return String::fromLatin1(argument); }
     template<typename U = T> static std::enable_if_t<std::is_same_v<U, ASCIILiteral>, String> toString(ASCIILiteral argument) { return argument; }
 #ifdef __OBJC__
@@ -123,6 +128,7 @@ struct ConsoleLogValue<Argument, false> {
 };
 
 WTF_EXPORT_PRIVATE extern Lock loggerObserverLock;
+WTF_EXPORT_PRIVATE extern Lock messageHandlerLoggerObserverLock;
 
 class Logger : public ThreadSafeRefCounted<Logger> {
     WTF_MAKE_NONCOPYABLE(Logger);
@@ -134,6 +140,12 @@ public:
         virtual ~Observer() = default;
         // Can be called on any thread.
         virtual void didLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
+    };
+
+    class MessageHandlerObserver {
+    public:
+        virtual ~MessageHandlerObserver() = default;
+        virtual void handleLogMessage(const WTFLogChannel&, WTFLogLevel, Vector<JSONLogValue>&&) = 0;
     };
 
     static Ref<Logger> create(const void* owner)
@@ -149,7 +161,7 @@ public:
         //  on some systems, so don't allow it.
         UNUSED_PARAM(channel);
 #else
-        if (!willLog(channel, WTFLogLevel::Always))
+        if (!willLog(channel, WTFLogLevel::Always, arguments...))
             return;
 
         log(channel, WTFLogLevel::Always, arguments...);
@@ -159,7 +171,7 @@ public:
     template<typename... Arguments>
     inline void error(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error))
+        if (!willLog(channel, WTFLogLevel::Error, arguments...))
             return;
 
         log(channel, WTFLogLevel::Error, arguments...);
@@ -168,7 +180,7 @@ public:
     template<typename... Arguments>
     inline void warning(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning))
+        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
             return;
 
         log(channel, WTFLogLevel::Warning, arguments...);
@@ -177,7 +189,7 @@ public:
     template<typename... Arguments>
     inline void info(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info))
+        if (!willLog(channel, WTFLogLevel::Info, arguments...))
             return;
 
         log(channel, WTFLogLevel::Info, arguments...);
@@ -186,7 +198,7 @@ public:
     template<typename... Arguments>
     inline void debug(WTFLogChannel& channel, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug))
+        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
             return;
 
         log(channel, WTFLogLevel::Debug, arguments...);
@@ -203,7 +215,7 @@ public:
         UNUSED_PARAM(function);
         UNUSED_PARAM(line);
 #else
-        if (!willLog(channel, WTFLogLevel::Always))
+        if (!willLog(channel, WTFLogLevel::Always, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Always, file, function, line, arguments...);
@@ -213,7 +225,7 @@ public:
     template<typename... Arguments>
     inline void errorVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Error))
+        if (!willLog(channel, WTFLogLevel::Error, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Error, file, function, line, arguments...);
@@ -222,7 +234,7 @@ public:
     template<typename... Arguments>
     inline void warningVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Warning))
+        if (!willLog(channel, WTFLogLevel::Warning, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Warning, file, function, line, arguments...);
@@ -231,7 +243,7 @@ public:
     template<typename... Arguments>
     inline void infoVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Info))
+        if (!willLog(channel, WTFLogLevel::Info, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Info, file, function, line, arguments...);
@@ -240,18 +252,28 @@ public:
     template<typename... Arguments>
     inline void debugVerbose(WTFLogChannel& channel, const char* file, const char* function, int line, const Arguments&... arguments) const
     {
-        if (!willLog(channel, WTFLogLevel::Debug))
+        if (!willLog(channel, WTFLogLevel::Debug, arguments...))
             return;
 
         logVerbose(channel, WTFLogLevel::Debug, file, function, line, arguments...);
     }
 
-    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level) const
+    template<typename... Argument>
+    inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level, const Argument&... arguments) const
     {
+        {
+            if (!messageHandlerObserverLock().tryLock())
+                return false;
+
+            Locker locker { AdoptLock, messageHandlerObserverLock() };
+            for (MessageHandlerObserver& observer : messageHandlerObservers())
+                observer.handleLogMessage(channel, level, { ConsoleLogValue<Argument>::toValue(arguments)... });
+        }
+
         if (!m_enabled)
             return false;
 
-#if ENABLE(JOURNALD_LOG)
+#if ENABLE(JOURNALD_LOG) || OS(ANDROID)
         if (channel.state == WTFLogChannelState::Off)
             return false;
 #endif
@@ -274,16 +296,16 @@ public:
     }
 
     struct LogSiteIdentifier {
-        LogSiteIdentifier(const char* methodName, const void* objectPtr)
+        LogSiteIdentifier(const char* methodName, uint64_t objectIdentifier)
             : methodName { methodName }
-            , objectPtr { reinterpret_cast<uintptr_t>(objectPtr) }
+            , objectIdentifier { objectIdentifier }
         {
         }
 
-        LogSiteIdentifier(ASCIILiteral className, const char* methodName, const void* objectPtr)
+        LogSiteIdentifier(ASCIILiteral className, const char* methodName, uint64_t objectIdentifier)
             : className { className }
             , methodName { methodName }
-            , objectPtr { reinterpret_cast<uintptr_t>(objectPtr) }
+            , objectIdentifier { objectIdentifier }
         {
         }
 
@@ -291,7 +313,7 @@ public:
 
         ASCIILiteral className;
         const char* methodName { nullptr };
-        const uintptr_t objectPtr { 0 };
+        const uint64_t objectIdentifier { 0 };
     };
 
     static inline void addObserver(Observer& observer)
@@ -303,6 +325,19 @@ public:
     {
         Locker locker { observerLock() };
         observers().removeFirstMatching([&observer](auto anObserver) {
+            return &anObserver.get() == &observer;
+        });
+    }
+
+    static inline void addMessageHandlerObserver(MessageHandlerObserver& observer)
+    {
+        Locker locker { messageHandlerObserverLock() };
+        messageHandlerObservers().append(observer);
+    }
+    static inline void removeMessageHandlerObserver(MessageHandlerObserver& observer)
+    {
+        Locker locker { messageHandlerObserverLock() };
+        messageHandlerObservers().removeFirstMatching([&observer](auto anObserver) {
             return &anObserver.get() == &observer;
         });
     }
@@ -325,6 +360,8 @@ private:
         WTFLog(&channel, "%s", logMessage.utf8().data());
 #elif USE(OS_LOG)
         os_log(channel.osLogChannel, "%{public}s", logMessage.utf8().data());
+#elif OS(ANDROID)
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().data());
 #elif ENABLE(JOURNALD_LOG)
         sd_journal_send("WEBKIT_SUBSYSTEM=%s", channel.subsystem, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
 #else
@@ -354,8 +391,10 @@ private:
         UNUSED_PARAM(file);
         UNUSED_PARAM(line);
         UNUSED_PARAM(function);
+#elif OS(ANDROID)
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().data(), file, line, function);
 #elif ENABLE(JOURNALD_LOG)
-        auto fileString = makeString("CODE_FILE="_s, span(file));
+        auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
         auto lineString = makeString("CODE_LINE="_s, line);
         sd_journal_send_with_location(fileString.utf8().data(), lineString.utf8().data(), function, "WEBKIT_SUBSYSTEM=%s", channel.subsystem, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
 #else
@@ -380,6 +419,12 @@ private:
         return loggerObserverLock;
     }
 
+    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
+
+    static Lock& messageHandlerObserverLock() WTF_RETURNS_LOCK(messageHandlerLoggerObserverLock)
+    {
+        return messageHandlerLoggerObserverLock;
+    }
 
     bool m_enabled { true };
     const void* m_owner;
