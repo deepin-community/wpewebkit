@@ -8,31 +8,28 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLEVENTVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLEVENTVK_H_
 
+#include "libANGLE/renderer/CLEventImpl.h"
+#include "libANGLE/renderer/serial_utils.h"
+
+#include "libANGLE/CLEvent.h"
+
 #include <condition_variable>
 #include <mutex>
-
-#include "libANGLE/renderer/vulkan/CLContextVk.h"
-#include "libANGLE/renderer/vulkan/cl_types.h"
-#include "libANGLE/renderer/vulkan/vk_resource.h"
-
-#include "libANGLE/renderer/CLEventImpl.h"
-
-#include "libANGLE/CLCommandQueue.h"
-#include "libANGLE/CLContext.h"
-#include "libANGLE/CLEvent.h"
 
 namespace rx
 {
 
-class CLEventVk : public CLEventImpl, public vk::Resource
+class CLEventVk : public CLEventImpl
 {
   public:
-    CLEventVk(const cl::Event &event);
+    CLEventVk(const cl::Event &event, const cl::ExecutionStatus initialStatus);
     ~CLEventVk() override;
 
     cl_int getCommandType() const { return mEvent.getCommandType(); }
-    bool isUserEvent() const { return getCommandType() == CL_COMMAND_USER; }
+    bool isUserEvent() const { return mEvent.isUserEvent(); }
     cl::Event &getFrontendObject() { return const_cast<cl::Event &>(mEvent); }
+    const QueueSerial &getQueueSerial() { return mQueueSerial; }
+    void setQueueSerial(QueueSerial queueSerial);
 
     angle::Result getCommandExecutionStatus(cl_int &executionStatus) override;
 
@@ -65,6 +62,7 @@ class CLEventVk : public CLEventImpl, public vk::Resource
         cl_ulong commandCompleteTS;
     };
     angle::SynchronizedValue<ProfilingTimestamps> mProfilingTimestamps;
+    QueueSerial mQueueSerial;
 };
 
 }  // namespace rx

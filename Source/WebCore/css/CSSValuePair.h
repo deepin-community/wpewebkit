@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Tyler Wilcock <twilco.o@protonmail.com>.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,27 +26,27 @@
 
 #pragma once
 
-#include "CSSValue.h"
+#include <WebCore/CSSValue.h>
 #include <wtf/Function.h>
 
 namespace WebCore {
 
 class CSSValuePair final : public CSSValue {
 public:
-    static Ref<CSSValuePair> create(Ref<CSSValue>, Ref<CSSValue>);
-    static Ref<CSSValuePair> createSlashSeparated(Ref<CSSValue>, Ref<CSSValue>);
-    static Ref<CSSValuePair> createNoncoalescing(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE create(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE createSlashSeparated(Ref<CSSValue>, Ref<CSSValue>);
+    static Ref<CSSValuePair> NODELETE createNoncoalescing(Ref<CSSValue>, Ref<CSSValue>);
 
     const CSSValue& first() const { return m_first; }
+    CSSValue& first() { return m_first; }
     const CSSValue& second() const { return m_second; }
-    Ref<CSSValue> protectedFirst() const { return m_first; }
-    Ref<CSSValue> protectedSecond() const { return m_second; }
+    CSSValue& second() { return m_second; }
 
-    String customCSSText() const;
+    String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSValuePair&) const;
     bool canBeCoalesced() const;
 
-    IterationStatus customVisitChildren(const Function<IterationStatus(CSSValue&)>& func) const
+    IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
     {
         if (func(m_first.get()) == IterationStatus::Done)
             return IterationStatus::Done;
@@ -53,6 +54,8 @@ public:
             return IterationStatus::Done;
         return IterationStatus::Continue;
     }
+
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
 private:
     friend bool CSSValue::addHash(Hasher&) const;
@@ -64,8 +67,8 @@ private:
 
     // FIXME: Store coalesce bit in CSSValue to cut down on object size.
     bool m_coalesceIdenticalValues { true };
-    Ref<CSSValue> m_first;
-    Ref<CSSValue> m_second;
+    const Ref<CSSValue> m_first;
+    const Ref<CSSValue> m_second;
 };
 
 inline const CSSValue& CSSValue::first() const
@@ -73,19 +76,9 @@ inline const CSSValue& CSSValue::first() const
     return downcast<CSSValuePair>(*this).first();
 }
 
-inline Ref<CSSValue> CSSValue::protectedFirst() const
-{
-    return downcast<CSSValuePair>(*this).protectedFirst();
-}
-
 inline const CSSValue& CSSValue::second() const
 {
     return downcast<CSSValuePair>(*this).second();
-}
-
-inline Ref<CSSValue> CSSValue::protectedSecond() const
-{
-    return downcast<CSSValuePair>(*this).protectedSecond();
 }
 
 } // namespace WebCore

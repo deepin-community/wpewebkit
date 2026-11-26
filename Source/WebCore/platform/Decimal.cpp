@@ -39,6 +39,7 @@
 #include <wtf/Int128.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
@@ -78,7 +79,7 @@ SpecialValueHandler::SpecialValueHandler(const Decimal& lhs, const Decimal& rhs)
 {
 }
 
-SpecialValueHandler::HandleResult SpecialValueHandler::handle()
+SpecialValueHandler::HandleResult NODELETE SpecialValueHandler::handle()
 {
     if (m_lhs.isFinite() && m_rhs.isFinite())
         return BothFinite;
@@ -119,7 +120,7 @@ Decimal SpecialValueHandler::value() const
     }
 }
 
-static int countDigits(uint64_t x)
+static int NODELETE countDigits(uint64_t x)
 {
     int numberOfDigits = 0;
     for (uint64_t powerOfTen = 1; x >= powerOfTen; powerOfTen *= 10) {
@@ -130,7 +131,7 @@ static int countDigits(uint64_t x)
     return numberOfDigits;
 }
 
-static uint64_t scaleDown(uint64_t x, int n)
+static uint64_t NODELETE scaleDown(uint64_t x, int n)
 {
     ASSERT(n >= 0);
     while (n > 0 && x) {
@@ -140,7 +141,7 @@ static uint64_t scaleDown(uint64_t x, int n)
     return x;
 }
 
-static uint64_t scaleUp(uint64_t x, int n)
+static uint64_t NODELETE scaleUp(uint64_t x, int n)
 {
     ASSERT(n >= 0);
     ASSERT(n < Decimal::Precision);
@@ -162,6 +163,8 @@ static uint64_t scaleUp(uint64_t x, int n)
 } // namespace DecimalPrivate
 
 using namespace DecimalPrivate;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Decimal);
 
 Decimal& Decimal::operator+=(const Decimal& other)
 {
@@ -373,52 +376,6 @@ Decimal Decimal::operator/(const Decimal& rhs) const
     return Decimal(resultSign, resultExponent, result);
 }
 
-bool Decimal::operator!=(const Decimal& rhs) const
-{
-    if (m_data == rhs.m_data)
-        return false;
-    const Decimal result = compareTo(rhs);
-    if (result.isNaN())
-        return false;
-    return !result.isZero();
-}
-
-bool Decimal::operator<(const Decimal& rhs) const
-{
-    const Decimal result = compareTo(rhs);
-    if (result.isNaN())
-        return false;
-    return !result.isZero() && result.isNegative();
-}
-
-bool Decimal::operator<=(const Decimal& rhs) const
-{
-    if (m_data == rhs.m_data)
-        return true;
-    const Decimal result = compareTo(rhs);
-    if (result.isNaN())
-        return false;
-    return result.isZero() || result.isNegative();
-}
-
-bool Decimal::operator>(const Decimal& rhs) const
-{
-    const Decimal result = compareTo(rhs);
-    if (result.isNaN())
-        return false;
-    return !result.isZero() && result.isPositive();
-}
-
-bool Decimal::operator>=(const Decimal& rhs) const
-{
-    if (m_data == rhs.m_data)
-        return true;
-    const Decimal result = compareTo(rhs);
-    if (result.isNaN())
-        return false;
-    return result.isZero() || !result.isNegative();
-}
-
 Decimal Decimal::abs() const
 {
     Decimal result(*this);
@@ -473,7 +430,7 @@ Decimal::AlignedOperands Decimal::alignOperands(const Decimal& lhs, const Decima
     return alignedOperands;
 }
 
-static bool isMultiplePowersOfTen(uint64_t coefficient, int n)
+static bool NODELETE isMultiplePowersOfTen(uint64_t coefficient, int n)
 {
     return !coefficient || !(coefficient % scaleUp(1, n));
 }
@@ -544,8 +501,7 @@ Decimal Decimal::fromDouble(double doubleValue)
 {
     if (std::isfinite(doubleValue)) {
         NumberToStringBuffer buffer;
-        auto* result = numberToString(doubleValue, buffer);
-        return fromString(span8(result));
+        return fromString(StringView { numberToStringAndSize(doubleValue, buffer) });
     }
 
     if (std::isinf(doubleValue))

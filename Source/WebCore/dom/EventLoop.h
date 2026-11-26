@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,23 @@
 
 #pragma once
 
-#include "TaskSource.h"
-#include <optional>
+#include <WebCore/TaskSource.h>
 #include <wtf/ApproximateTime.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/Markable.h>
 #include <wtf/MonotonicTime.h>
-#include <wtf/RefCounted.h>
-#include <wtf/StdLibExtras.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
-#include <wtf/WeakPtr.h>
+
+namespace JSC {
+class JSGlobalObject;
+class JSMicrotaskDispatcher;
+class QueuedTask;
+class MicrotaskDispatcher;
+class VM;
+}
 
 namespace WebCore {
 
@@ -48,8 +54,8 @@ class ScriptExecutionContext;
 class TimerAlignment;
 
 class EventLoopTask {
+    WTF_MAKE_TZONE_ALLOCATED(EventLoopTask);
     WTF_MAKE_NONCOPYABLE(EventLoopTask);
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     virtual ~EventLoopTask() = default;
@@ -68,7 +74,7 @@ private:
 };
 
 class EventLoopTimerHandle {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventLoopTimerHandle);
 public:
     EventLoopTimerHandle();
     EventLoopTimerHandle(EventLoopTimer&);
@@ -95,8 +101,10 @@ private:
 enum class HasReachedMaxNestingLevel : bool { No, Yes };
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#event-loop
-class EventLoop : public RefCounted<EventLoop>, public CanMakeWeakPtr<EventLoop> {
+class EventLoop : public RefCountedAndCanMakeWeakPtr<EventLoop> {
 public:
+    using TaskVector = Vector<std::unique_ptr<EventLoopTask>, 4>;
+
     virtual ~EventLoop();
 
     typedef Function<void ()> TaskFunction;
@@ -109,10 +117,10 @@ public:
     void removeRepeatingTimer(EventLoopTimer&);
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#queue-a-microtask
-    void queueMicrotask(std::unique_ptr<EventLoopTask>&&);
+    void queueMicrotask(JSC::QueuedTask&&);
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#perform-a-microtask-checkpoint
-    void performMicrotaskCheckpoint();
+    void performMicrotaskCheckpoint(JSC::VM&);
     virtual MicrotaskQueue& microtaskQueue() = 0;
 
     void resumeGroup(EventLoopTaskGroup&);
@@ -122,18 +130,19 @@ public:
     void unregisterGroup(EventLoopTaskGroup&);
     void stopAssociatedGroupsIfNecessary();
 
-    void forEachAssociatedContext(const Function<void(ScriptExecutionContext&)>&);
-    bool findMatchingAssociatedContext(const Function<bool(ScriptExecutionContext&)>&);
+    void forEachAssociatedContext(NOESCAPE const Function<void(ScriptExecutionContext&)>&);
+    bool findMatchingAssociatedContext(NOESCAPE const Function<bool(ScriptExecutionContext&)>&);
     void addAssociatedContext(ScriptExecutionContext&);
     void removeAssociatedContext(ScriptExecutionContext&);
 
     void invalidateNextTimerFireTimeCache() { m_nextTimerFireTimeCache = std::nullopt; }
     Markable<MonotonicTime> nextTimerFireTime() const;
 
+    void scheduleToRunIfNeeded();
+
 protected:
     EventLoop();
-    void scheduleToRunIfNeeded();
-    void run(std::optional<ApproximateTime> deadline = std::nullopt);
+    void run(JSC::VM&, std::optional<ApproximateTime> deadline = std::nullopt);
     void clearAllTasks();
 
     bool hasTasksForFullyActiveDocument() const;
@@ -143,32 +152,22 @@ private:
     virtual bool isContextThread() const = 0;
 
     // Use a global queue instead of multiple task queues since HTML5 spec allows UA to pick arbitrary queue.
-    Vector<std::unique_ptr<EventLoopTask>> m_tasks;
+    TaskVector m_tasks;
     WeakHashSet<EventLoopTimer> m_scheduledTasks;
     WeakHashSet<EventLoopTimer> m_repeatingTasks;
     WeakHashSet<EventLoopTaskGroup> m_associatedGroups;
     WeakHashSet<EventLoopTaskGroup> m_groupsWithSuspendedTasks;
     WeakHashSet<ScriptExecutionContext> m_associatedContexts;
-    bool m_isScheduledToRun { false };
     mutable Markable<MonotonicTime> m_nextTimerFireTimeCache;
 };
 
 class EventLoopTaskGroup final : public CanMakeWeakPtr<EventLoopTaskGroup>, public CanMakeCheckedPtr<EventLoopTaskGroup> {
+    WTF_MAKE_TZONE_ALLOCATED(EventLoopTaskGroup);
     WTF_MAKE_NONCOPYABLE(EventLoopTaskGroup);
-    WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventLoopTaskGroup);
 public:
-    EventLoopTaskGroup(EventLoop& eventLoop)
-        : m_eventLoop(eventLoop)
-    {
-        eventLoop.registerGroup(*this);
-    }
-
-    ~EventLoopTaskGroup()
-    {
-        if (auto* eventLoop = m_eventLoop.get())
-            eventLoop->unregisterGroup(*this);
-    }
+    EventLoopTaskGroup(EventLoop&);
+    ~EventLoopTaskGroup();
 
     bool hasSameEventLoopAs(EventLoopTaskGroup& otherGroup)
     {
@@ -187,13 +186,7 @@ public:
     void markAsReadyToStop();
 
     // This gets called by the event loop when all groups in the EventLoop as ready to stop.
-    void stopAndDiscardAllTasks()
-    {
-        ASSERT(isReadyToStop());
-        m_state = State::Stopped;
-        if (auto* eventLoop = m_eventLoop.get())
-            eventLoop->stopGroup(*this);
-    }
+    void stopAndDiscardAllTasks();
 
     void suspend();
     void resume();
@@ -206,11 +199,12 @@ public:
     WEBCORE_EXPORT void queueTask(TaskSource, EventLoop::TaskFunction&&);
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#queue-a-microtask
-    WEBCORE_EXPORT void queueMicrotask(EventLoop::TaskFunction&&);
-    MicrotaskQueue& microtaskQueue() { return m_eventLoop->microtaskQueue(); }
+    WEBCORE_EXPORT void queueMicrotask(JSC::VM&, EventLoop::TaskFunction&&);
+    WEBCORE_EXPORT void queueMicrotask(JSC::QueuedTask&&);
+    MicrotaskQueue& microtaskQueue() { return protect(m_eventLoop)->microtaskQueue(); }
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#perform-a-microtask-checkpoint
-    void performMicrotaskCheckpoint();
+    void performMicrotaskCheckpoint(JSC::VM&);
 
     void runAtEndOfMicrotaskCheckpoint(EventLoop::TaskFunction&&);
 
@@ -231,13 +225,15 @@ public:
     void didAddTimer(EventLoopTimer&);
     void didRemoveTimer(EventLoopTimer&);
 
+    void NODELETE setScriptExecutionContext(ScriptExecutionContext&);
+
 private:
     enum class State : uint8_t { Running, Suspended, ReadyToStop, Stopped };
 
-    RefPtr<EventLoop> protectedEventLoop() const;
 
     WeakPtr<EventLoop> m_eventLoop;
     WeakHashSet<EventLoopTimer> m_timers;
+    WeakPtr<ScriptExecutionContext> m_context;
     State m_state { State::Running };
 };
 

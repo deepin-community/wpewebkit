@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,19 +28,29 @@
 
 #include "Filter.h"
 #include "GraphicsContext.h"
+#include <ranges>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TransparencyLayerContextSwitcher);
+
 TransparencyLayerContextSwitcher::TransparencyLayerContextSwitcher(GraphicsContext& destinationContext, const FloatRect& sourceImageRect, RefPtr<Filter>&& filter)
-    : GraphicsContextSwitcher(WTFMove(filter))
+    : GraphicsContextSwitcher(WTF::move(filter))
 {
     if (m_filter)
-        m_filterStyles = m_filter->createFilterStyles(destinationContext, sourceImageRect);
+        m_filterStyles = protect(m_filter)->createFilterStyles(destinationContext, sourceImageRect);
 }
 
-void TransparencyLayerContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect&, const FloatRect& clipRect)
+void TransparencyLayerContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect&, const FloatRect& clipRect, NOESCAPE const Function<void(GraphicsContext&)>& applyAdditionalDestinationClip)
 {
     destinationContext.save();
+
+    // Workaround for a CG accelerated-drawing bug rdar://177036180: CGStyle filters fail if there's a
+    // non-rectangular clip, so apply the rounded clip in its own wrapping transparency layer.
+    if (applyAdditionalDestinationClip)
+        applyAdditionalDestinationClip(destinationContext);
+
     destinationContext.beginTransparencyLayer(1);
 
     for (auto& filterStyle : m_filterStyles) {
@@ -66,7 +76,7 @@ void TransparencyLayerContextSwitcher::beginDrawSourceImage(GraphicsContext& des
 
 void TransparencyLayerContextSwitcher::endDrawSourceImage(GraphicsContext& destinationContext, const DestinationColorSpace&)
 {
-    for ([[maybe_unused]] auto& filterStyle : makeReversedRange(m_filterStyles)) {
+    for ([[maybe_unused]] auto& filterStyle : m_filterStyles) {
         destinationContext.endTransparencyLayer();
         destinationContext.restore();
     }

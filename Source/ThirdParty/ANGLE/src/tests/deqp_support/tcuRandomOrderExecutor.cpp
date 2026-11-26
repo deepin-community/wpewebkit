@@ -80,7 +80,7 @@ void RandomOrderExecutor::pruneStack(size_t newStackSize)
             else
                 DE_ASSERT(curEntry.children.empty());
 
-            curEntry.node = DE_NULL;
+            curEntry.node = nullptr;
             curEntry.children.clear();
         }
 
@@ -93,13 +93,15 @@ void RandomOrderExecutor::pruneStack(size_t newStackSize)
 
 static TestNode *findNodeByName(vector<TestNode *> &nodes, const std::string &name)
 {
-    for (vector<TestNode *>::const_iterator node = nodes.begin(); node != nodes.end(); ++node)
+    for (TestNode *node : nodes)
     {
-        if (name == (*node)->getName())
-            return *node;
+        if (name == node->getName())
+        {
+            return node;
+        }
     }
 
-    return DE_NULL;
+    return nullptr;
 }
 
 TestCase *RandomOrderExecutor::seekToCase(const string &path)

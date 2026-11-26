@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2019 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -24,6 +24,7 @@
 #include "ContentSecurityPolicy.h"
 #include "DocumentInlines.h"
 #include "Element.h"
+#include "FrameDestructionObserverInlines.h"
 #include "JSDOMWindow.h"
 #include "JSDOMWindowBase.h"
 #include "JSHTMLElement.h"
@@ -31,20 +32,18 @@
 #include "QualifiedName.h"
 #include "SVGElement.h"
 #include "ScriptController.h"
-#include <JavaScriptCore/CatchScope.h>
+#include "Settings.h"
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/RefCountedLeakCounter.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
-
-DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, eventListenerCounter, ("JSLazyEventListener"));
 
 struct JSLazyEventListener::CreationArguments {
     const QualifiedName& attributeName;
@@ -62,7 +61,7 @@ static const String& functionParameters(bool shouldUseSVGEventName)
     return shouldUseSVGEventName ? evtString : eventString;
 }
 
-static TextPosition convertZeroToOne(const TextPosition& position)
+static TextPosition NODELETE convertZeroToOne(const TextPosition& position)
 {
     // A JSLazyEventListener can be created with a line number of zero when it is created with
     // a setAttribute call from JavaScript, so make the line number 1 in that case.
@@ -72,18 +71,15 @@ static TextPosition convertZeroToOne(const TextPosition& position)
 }
 
 JSLazyEventListener::JSLazyEventListener(CreationArguments&& arguments, const URL& sourceURL, const TextPosition& sourcePosition)
-    : JSEventListener(nullptr, arguments.wrapper, true, CreatedFromMarkup::Yes, mainThreadNormalWorld())
+    : JSEventListener(nullptr, arguments.wrapper, true, CreatedFromMarkup::Yes, mainThreadNormalWorldSingleton())
     , m_functionName(arguments.attributeName.localName().string())
     , m_functionParameters(functionParameters(arguments.shouldUseSVGEventName))
     , m_code(arguments.attributeValue)
     , m_sourceURL(sourceURL)
     , m_sourcePosition(convertZeroToOne(sourcePosition))
-    , m_originalNode(WTFMove(arguments.node))
-    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(arguments.document.vm(), arguments.document.vm().topCallFrame))
+    , m_originalNode(WTF::move(arguments.node))
+    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(protect(arguments.document)->vm(), protect(arguments.document)->vm().topCallFrame))
 {
-#ifndef NDEBUG
-    eventListenerCounter.increment();
-#endif
 }
 
 #if ASSERT_ENABLED
@@ -108,12 +104,7 @@ void JSLazyEventListener::checkValidityForEventTarget(EventTarget& eventTarget)
 }
 #endif
 
-JSLazyEventListener::~JSLazyEventListener()
-{
-#ifndef NDEBUG
-    eventListenerCounter.decrement();
-#endif
-}
+JSLazyEventListener::~JSLazyEventListener() = default;
 
 JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& executionContext) const
 {
@@ -128,7 +119,7 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
         return nullptr;
 
     RefPtr element = dynamicDowncast<Element>(m_originalNode.get());
-    if (!document->checkedContentSecurityPolicy()->allowInlineEventHandlers(m_sourceURL.string(), m_sourcePosition.m_line, m_code, element.get()))
+    if (!protect(document->contentSecurityPolicy())->allowInlineEventHandlers(m_sourceURL.string(), m_sourcePosition.m_line, m_code, element.get()))
         return nullptr;
 
     RefPtr frame = document->frame();
@@ -137,23 +128,23 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
         return nullptr;
 
     ASSERT_WITH_MESSAGE(document->settings().scriptMarkupEnabled(), "Scripting element attributes should have been stripped during parsing");
-    if (UNLIKELY(!document->settings().scriptMarkupEnabled()))
+    if (!document->settings().scriptMarkupEnabled()) [[unlikely]]
         return nullptr;
 
     if (!executionContextDocument->frame())
         return nullptr;
 
     RefPtr isolatedWorld = this->isolatedWorld();
-    if (UNLIKELY(!isolatedWorld))
+    if (!isolatedWorld) [[unlikely]]
         return nullptr;
 
-    auto* globalObject = toJSDOMWindow(*executionContextDocument->protectedFrame(), *isolatedWorld);
+    auto* globalObject = toJSDOMWindow(*protect(executionContextDocument->frame()), *isolatedWorld);
     if (!globalObject)
         return nullptr;
 
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSGlobalObject* lexicalGlobalObject = globalObject;
 
     static NeverDestroyed<const String> functionPrefix(MAKE_STATIC_STRING_IMPL("function "));
@@ -168,10 +159,10 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
     int overrideLineNumber = m_sourcePosition.m_line.oneBasedInt();
 
     JSObject* jsFunction = constructFunctionSkippingEvalEnabledCheck(
-        lexicalGlobalObject, WTFMove(code), lexicallyScopedFeatures, Identifier::fromString(vm, m_functionName),
+        lexicalGlobalObject, WTF::move(code), lexicallyScopedFeatures, Identifier::fromString(vm, m_functionName),
         SourceOrigin { m_sourceURL, CachedScriptFetcher::create(document->charset()) },
         m_sourceURL.string(), m_sourceTaintedOrigin, m_sourcePosition, overrideLineNumber, functionConstructorParametersEndPosition);
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         reportCurrentException(lexicalGlobalObject);
         scope.clearException();
         return nullptr;
@@ -181,14 +172,13 @@ JSObject* JSLazyEventListener::initializeJSFunction(ScriptExecutionContext& exec
         if (!wrapper()) {
             // Ensure that 'node' has a JavaScript wrapper to mark the event listener we're creating.
             // FIXME: Should pass the global object associated with the node
-            setWrapperWhenInitializingJSFunction(vm, asObject(toJS(lexicalGlobalObject, globalObject, *m_originalNode)));
+            setWrapperWhenInitializingJSFunction(vm, asObject(toJS(lexicalGlobalObject, globalObject, protect(*m_originalNode))));
         }
 
         if (listenerHasEventHandlerScope) {
-            ASSERT(wrapper()->inherits<JSHTMLElement>());
             // Add the event's home element to the scope (and the document, and the form - see JSHTMLElement::eventHandlerScope)
-            JSFunction* listenerAsFunction = jsCast<JSFunction*>(jsFunction);
-            listenerAsFunction->setScope(vm, jsCast<JSHTMLElement*>(wrapper())->pushEventHandlerScope(lexicalGlobalObject, listenerAsFunction->scope()));
+            JSFunction* listenerAsFunction = downcast<JSFunction>(jsFunction);
+            listenerAsFunction->setScope(vm, uncheckedDowncast<JSHTMLElement>(wrapper())->pushEventHandlerScope(lexicalGlobalObject, listenerAsFunction->scope()));
         }
     }
 
@@ -203,14 +193,15 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(CreationArguments&& argu
     // FIXME: We should be able to provide source information for frameless documents too (e.g. for importing nodes from XMLHttpRequest.responseXML).
     TextPosition position;
     URL sourceURL;
-    if (auto* frame = arguments.document.frame()) {
+    if (RefPtr frame = arguments.document.frame()) {
         if (!frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToCreateEventListener))
             return nullptr;
         position = frame->script().eventHandlerPosition();
         sourceURL = arguments.document.url();
     }
 
-    return adoptRef(*new JSLazyEventListener(WTFMove(arguments), sourceURL, position));
+    JSLockHolder locker(protect(arguments.document)->vm());
+    return adoptRef(*new JSLazyEventListener(WTF::move(arguments), sourceURL, position));
 }
 
 RefPtr<JSLazyEventListener> JSLazyEventListener::create(Element& element, const QualifiedName& attributeName, const AtomString& attributeValue)
@@ -228,9 +219,9 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(Document& document, cons
 RefPtr<JSLazyEventListener> JSLazyEventListener::create(LocalDOMWindow& window, const QualifiedName& attributeName, const AtomString& attributeValue)
 {
     ASSERT(window.document());
-    auto& document = *window.document();
-    ASSERT(document.frame());
-    return create({ attributeName, attributeValue, document, nullptr, toJSDOMWindow(document.frame(), mainThreadNormalWorld()), document.isSVGDocument() });
+    CheckedRef document = *window.document();
+    ASSERT(document->frame());
+    return create({ attributeName, attributeValue, document, nullptr, toJSDOMWindow(protect(document->frame()), mainThreadNormalWorldSingleton()), document->isSVGDocument() });
 }
 
 } // namespace WebCore

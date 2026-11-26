@@ -31,21 +31,12 @@
 
 #pragma once
 
-#include "CachedResource.h"
-#include "CachedResourceClient.h"
-#include "CachedResourceHandle.h"
-#include "LinkLoaderClient.h"
-#include "LinkRelAttribute.h"
-#include "ReferrerPolicy.h"
-
-namespace WebCore {
-class LinkLoader;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::LinkLoader> : std::true_type { };
-}
+#include <WebCore/CachedResource.h>
+#include <WebCore/CachedResourceClient.h>
+#include <WebCore/CachedResourceHandle.h>
+#include <WebCore/LinkLoaderClient.h>
+#include <WebCore/LinkRelAttribute.h>
+#include <WebCore/ReferrerPolicy.h>
 
 namespace WebCore {
 
@@ -63,17 +54,18 @@ struct LinkLoadParameters {
     String imageSizes;
     String nonce;
     ReferrerPolicy referrerPolicy { ReferrerPolicy::EmptyString };
-    RequestPriority fetchPriorityHint { RequestPriority::Auto };
+    RequestPriority fetchPriority { RequestPriority::Auto };
 };
 
-class LinkLoader : public CachedResourceClient {
+class LinkLoader : public CachedResourceClient, public RefCounted<LinkLoader> {
 public:
-    explicit LinkLoader(LinkLoaderClient&);
+    static Ref<LinkLoader> create(LinkLoaderClient&);
     virtual ~LinkLoader();
 
     void loadLink(const LinkLoadParameters&, Document&);
     enum class ShouldLog : bool { No, Yes };
-    static std::optional<CachedResource::Type> resourceTypeFromAsAttribute(const String&, Document&, ShouldLog = ShouldLog::No);
+    enum class IsModulePreload : bool { No, Yes };
+    static std::optional<CachedResource::Type> resourceTypeFromAsAttribute(const String&, Document&, ShouldLog = ShouldLog::No, IsModulePreload = IsModulePreload::No);
 
     enum class MediaAttributeCheck { MediaAttributeEmpty, MediaAttributeNotEmpty, SkipMediaAttributeCheck };
     static void loadLinksFromHeader(const String& headerValue, const URL& baseURL, Document&, MediaAttributeCheck);
@@ -83,15 +75,21 @@ public:
     void triggerError();
     void cancelLoad();
 
+    // CachedResourceClient.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
 private:
+    explicit LinkLoader(LinkLoaderClient&);
+
     void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) override;
     static void preconnectIfNeeded(const LinkLoadParameters&, Document&);
-    static std::unique_ptr<LinkPreloadResourceClient> preloadIfNeeded(const LinkLoadParameters&, Document&, LinkLoader*);
+    static RefPtr<LinkPreloadResourceClient> preloadIfNeeded(const LinkLoadParameters&, Document&, LinkLoader*);
     void prefetchIfNeeded(const LinkLoadParameters&, Document&);
 
-    WeakRef<LinkLoaderClient> m_client;
+    WeakPtr<LinkLoaderClient> m_client;
     CachedResourceHandle<CachedResource> m_cachedLinkResource;
-    std::unique_ptr<LinkPreloadResourceClient> m_preloadResourceClient;
+    RefPtr<LinkPreloadResourceClient> m_preloadResourceClient;
 };
 
 }

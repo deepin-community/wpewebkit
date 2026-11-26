@@ -29,7 +29,6 @@
 #include "Decoder.h" // NOLINT
 #include "HandleMessage.h" // NOLINT
 #include "TestWithImageDataMessages.h" // NOLINT
-#include "WebCoreArgumentCoders.h" // NOLINT
 #include <WebCore/ImageData.h> // NOLINT
 #include <wtf/RefCounted.h> // NOLINT
 
@@ -41,18 +40,17 @@ namespace WebKit {
 
 void TestWithImageData::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    Ref protectedThis { *this };
-    if (decoder.messageName() == Messages::TestWithImageData::SendImageData::name())
-        return IPC::handleMessage<Messages::TestWithImageData::SendImageData>(connection, decoder, this, &TestWithImageData::sendImageData);
-    if (decoder.messageName() == Messages::TestWithImageData::ReceiveImageData::name())
-        return IPC::handleMessageAsync<Messages::TestWithImageData::ReceiveImageData>(connection, decoder, this, &TestWithImageData::receiveImageData);
-    UNUSED_PARAM(connection);
-    UNUSED_PARAM(decoder);
-#if ENABLE(IPC_TESTING_API)
-    if (connection.ignoreInvalidMessageForTesting())
+    if (decoder.messageName() == Messages::TestWithImageData::SendImageData::name()) {
+        IPC::handleMessage<Messages::TestWithImageData::SendImageData>(connection, decoder, this, &TestWithImageData::sendImageData);
         return;
-#endif // ENABLE(IPC_TESTING_API)
-    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
+    }
+    if (decoder.messageName() == Messages::TestWithImageData::ReceiveImageData::name()) {
+        IPC::handleMessageAsync<Messages::TestWithImageData::ReceiveImageData>(connection, decoder, this, &TestWithImageData::receiveImageData);
+        return;
+    }
+    UNUSED_PARAM(connection);
+    RELEASE_LOG_ERROR(IPC, "Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
+    decoder.markInvalid();
 }
 
 } // namespace WebKit
@@ -72,6 +70,10 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::Tes
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithImageData_ReceiveImageData>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithImageData::ReceiveImageData::ReplyArguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithImageData_ReceiveImageDataReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithImageData::ReceiveImageDataReply::Arguments>(globalObject, decoder);
 }
 
 }

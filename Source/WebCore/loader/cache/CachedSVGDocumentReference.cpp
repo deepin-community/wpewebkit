@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012 Google Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,14 +35,19 @@
 
 namespace WebCore {
 
-CachedSVGDocumentReference::CachedSVGDocumentReference(const String& url)
-    : m_url(url)
+Ref<CachedSVGDocumentReference> CachedSVGDocumentReference::create(const Style::URL& location)
+{
+    return adoptRef(*new CachedSVGDocumentReference(location));
+}
+
+CachedSVGDocumentReference::CachedSVGDocumentReference(const Style::URL& location)
+    : m_location { location }
 {
 }
 
 CachedSVGDocumentReference::~CachedSVGDocumentReference()
 {
-    if (CachedResourceHandle document = m_document)
+    if (RefPtr document = m_document)
         document->removeClient(*this);
 }
 
@@ -52,13 +58,16 @@ void CachedSVGDocumentReference::load(CachedResourceLoader& loader, const Resour
 
     auto fetchOptions = options;
     fetchOptions.mode = FetchOptions::Mode::SameOrigin;
-    CachedResourceRequest request(ResourceRequest(loader.document()->completeURL(m_url)), fetchOptions);
+    CachedResourceRequest request(ResourceRequest(URL { m_location.resolved }), fetchOptions);
     request.setInitiatorType(cachedResourceRequestInitiatorTypes().css);
-    m_document = loader.requestSVGDocument(WTFMove(request)).value_or(nullptr);
-    if (CachedResourceHandle document = m_document)
+    if (auto result = loader.requestSVGDocument(WTF::move(request)))
+        m_document = WTF::move(result.value());
+    else
+        m_document = nullptr;
+    if (RefPtr document = m_document)
         document->addClient(*this);
 
     m_loadRequested = true;
 }
 
-}
+} // namespace WebCore

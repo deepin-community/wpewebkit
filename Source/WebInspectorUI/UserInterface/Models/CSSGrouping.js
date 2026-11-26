@@ -52,7 +52,15 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
 
     get editable()
     {
-        return !!this._id && !!this.ownerStyleSheet;
+        if (!this._id && !this._ownerStyleSheet)
+            return false;
+
+        switch (this._type) {
+        case WI.CSSGrouping.Type.StartingStyleRule:
+            return false;
+        }
+
+        return true;
     }
 
     get text()
@@ -70,10 +78,11 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
 
         this._nodeStyles.ignoreNextContentDidChangeForStyleSheet = this._ownerStyleSheet;
 
-        let target = WI.assumingMainTarget();
+        let owningTarget = this._nodeStyles.node.owningTarget;
+        let target = owningTarget || WI.assumingMainTarget();
         let {grouping: groupingPayload} = await target.CSSAgent.setGroupingHeaderText(this._id, newText);
 
-        target.DOMAgent.markUndoableState();
+        WI.domUndoCoordinator.markUndoableState(target);
         await this._nodeStyles.refresh();
 
         console.assert(groupingPayload.type == this._type);
@@ -92,7 +101,7 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         }
 
         let groupingSourceCodeLocation = WI.DOMNodeStyles.createSourceCodeLocation(groupingPayload.sourceURL, location);
-        this._sourceCodeLocation = WI.cssManager.styleSheetForIdentifier(this._id.styleSheetId).offsetSourceCodeLocation(groupingSourceCodeLocation);
+        this._sourceCodeLocation = WI.cssManager.styleSheetForIdentifier(this._id.styleSheetId, owningTarget).offsetSourceCodeLocation(groupingSourceCodeLocation);
 
         this.dispatchEventToListeners(WI.CSSGrouping.Event.TextChanged);
     }
@@ -105,43 +114,39 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
             || this._type === WI.CSSGrouping.Type.MediaStyleNode;
     }
 
-    get isSupports()
+    get isStartingStyle()
     {
-        return this._type === WI.CSSGrouping.Type.SupportsRule;
-    }
-
-    get isLayer()
-    {
-        return this._type === WI.CSSGrouping.Type.LayerRule
-            || this._type === WI.CSSGrouping.Type.LayerImportRule;
-    }
-
-    get isContainer()
-    {
-        return this._type === WI.CSSGrouping.Type.ContainerRule;
-    }
-
-    get isStyle()
-    {
-        return this._type === WI.CSSGrouping.Type.StyleRule;
+        return this._type === WI.CSSGrouping.Type.StartingStyleRule;
     }
 
     get prefix()
     {
-        if (this.isSupports)
+        switch (this._type) {
+        case WI.CSSGrouping.Type.MediaRule:
+        case WI.CSSGrouping.Type.MediaImportRule:
+        case WI.CSSGrouping.Type.MediaLinkNode:
+        case WI.CSSGrouping.Type.MediaStyleNode:
+            return "@media";
+
+        case WI.CSSGrouping.Type.SupportsRule:
             return "@supports";
 
-        if (this.isLayer)
+        case WI.CSSGrouping.Type.LayerRule:
+        case WI.CSSGrouping.Type.LayerImportRule:
             return "@layer";
 
-        if (this.isContainer)
+        case WI.CSSGrouping.Type.ContainerRule:
             return "@container";
 
-        if (this.isStyle)
-            return null;
+        case WI.CSSGrouping.Type.ScopeRule:
+            return "@scope";
 
-        console.assert(this.isMedia);
-        return "@media";
+        case WI.CSSGrouping.Type.StartingStyleRule:
+            return "@starting-style";
+        }
+
+        console.assert(this._type === WI.CSSGrouping.Type.StyleRule, this._type);
+        return "";
     }
 };
 
@@ -154,6 +159,8 @@ WI.CSSGrouping.Type = {
     LayerRule: "layer-rule",
     LayerImportRule: "layer-import-rule",
     ContainerRule: "container-rule",
+    ScopeRule: "scope-rule",
+    StartingStyleRule: "starting-style-rule",
     StyleRule: "style-rule",
 };
 

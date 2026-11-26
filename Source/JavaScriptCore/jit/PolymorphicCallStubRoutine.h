@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include "CallEdge.h"
-#include "CallLinkInfoBase.h"
-#include "CallVariant.h"
-#include "GCAwareJITStubRoutine.h"
+#include <JavaScriptCore/CallEdge.h>
+#include <JavaScriptCore/CallLinkInfoBase.h>
+#include <JavaScriptCore/CallVariant.h>
+#include <JavaScriptCore/GCAwareJITStubRoutine.h>
 #include <wtf/ButterflyArray.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/UniqueArray.h>
@@ -55,9 +55,9 @@ public:
 
     void unlinkOrUpgradeImpl(VM&, CodeBlock*, CodeBlock*);
 
-    void clear();
+    void NODELETE unlinkForcefully();
 
-    PolymorphicCallStubRoutine* owner();
+    PolymorphicCallStubRoutine* NODELETE owner();
 
 private:
     uint8_t m_index { 0 };
@@ -91,10 +91,10 @@ public:
     friend class JITStubRoutine;
 
     CallVariantList variants() const;
-    bool hasEdges() const;
+    bool NODELETE hasEdges() const;
     CallEdgeList edges() const;
 
-    void clearCallNodesFor(CallLinkInfo*);
+    void unlinkForcefully();
 
     template<typename Functor>
     void forEachDependentCell(const Functor& functor) const
@@ -121,7 +121,7 @@ public:
     bool isClosureCall() const { return m_isClosureCall; }
 
 private:
-    void markRequiredObjectsImpl(AbstractSlotVisitor&);
+    void NODELETE markRequiredObjectsImpl(AbstractSlotVisitor&);
     void markRequiredObjectsImpl(SlotVisitor&);
 
     bool visitWeakImpl(VM&);

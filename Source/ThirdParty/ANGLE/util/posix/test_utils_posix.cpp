@@ -6,6 +6,10 @@
 
 // test_utils_posix.cpp: Implementation of OS-specific functions for Posix systems
 
+#ifdef UNSAFE_BUFFERS_BUILD
+#    pragma allow_unsafe_buffers
+#endif
+
 #include "util/test_utils.h"
 
 #include <dlfcn.h>
@@ -18,6 +22,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <array>
 #include <cstdarg>
 #include <cstring>
 #include <iostream>
@@ -63,7 +68,7 @@ struct ScopedPipe
 
     bool valid() const { return fds[0] != -1 || fds[1] != -1; }
 
-    int fds[2] = {
+    std::array<int, 2> fds = {
         -1,
         -1,
     };
@@ -75,6 +80,7 @@ enum class ReadResult
     GotData,
 };
 
+#if !defined(ANGLE_PLATFORM_APPLETV)
 ReadResult ReadFromFile(int fd, std::string *out)
 {
     constexpr size_t kBufSize = 2048;
@@ -123,7 +129,7 @@ class PosixProcess : public Process
         // Create pipes for stdout and stderr.
         if (captureStdout)
         {
-            if (pipe(mStdoutPipe.fds) != 0)
+            if (pipe(mStdoutPipe.fds.data()) != 0)
             {
                 std::cerr << "Error calling pipe: " << errno << "\n";
                 return;
@@ -136,7 +142,7 @@ class PosixProcess : public Process
         }
         if (captureStderr && !pipeStderrToStdout)
         {
-            if (pipe(mStderrPipe.fds) != 0)
+            if (pipe(mStderrPipe.fds.data()) != 0)
             {
                 std::cerr << "Error calling pipe: " << errno << "\n";
                 return;
@@ -321,6 +327,7 @@ class PosixProcess : public Process
     int mExitCode = 0;
     pid_t mPID    = -1;
 };
+#endif
 }  // anonymous namespace
 
 void Sleep(unsigned int milliseconds)
@@ -354,7 +361,9 @@ void WriteDebugMessage(const char *format, ...)
 {
     va_list vararg;
     va_start(vararg, format);
+    ANGLE_DISABLE_NONLITERAL_FORMAT_WARNING
     vfprintf(stderr, format, vararg);
+    ANGLE_REENABLE_NONLITERAL_FORMAT_WARNING
     va_end(vararg);
 }
 
@@ -400,7 +409,11 @@ bool DeleteSystemFile(const char *path)
 
 Process *LaunchProcess(const std::vector<const char *> &args, ProcessOutputCapture captureOutput)
 {
+#if !defined(ANGLE_PLATFORM_APPLETV)
     return new PosixProcess(args, captureOutput);
+#else
+    return nullptr;
+#endif
 }
 
 int NumberOfProcessors()

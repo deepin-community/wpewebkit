@@ -26,11 +26,14 @@
 #include "config.h"
 #include "WPECursorTheme.h"
 
+#include <array>
 #include <stdio.h>
 #include <wtf/FileSystem.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WPE {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CursorTheme);
 
 static GUniquePtr<char> cursorsPath(const char* basePath, Vector<GUniquePtr<char>>& inherited)
 {
@@ -61,7 +64,7 @@ static GUniquePtr<char> cursorsPath(const char* basePath, Vector<GUniquePtr<char
                 return !g_strcmp0(item.get(), path.get());
             });
             if (path && !exists)
-                inherited.append(WTFMove(path));
+                inherited.append(WTF::move(path));
         }
     }
 
@@ -71,44 +74,59 @@ static GUniquePtr<char> cursorsPath(const char* basePath, Vector<GUniquePtr<char
     return nullptr;
 }
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(CursorTheme);
+static std::unique_ptr<CursorTheme> tryCreateTheme(const char* basePath, uint32_t size)
+{
+    if (!g_file_test(basePath, G_FILE_TEST_IS_DIR))
+        return nullptr;
+
+    Vector<GUniquePtr<char>> inheritedThemes;
+    auto path = cursorsPath(basePath, inheritedThemes);
+    if (!path && inheritedThemes.isEmpty())
+        return nullptr;
+
+    if (!path) {
+        // If there's no cursors path, use the first inherited theme.
+        path = WTF::move(inheritedThemes[0]);
+        inheritedThemes.removeAt(0);
+    }
+
+    return makeUnique<CursorTheme>(WTF::move(path), size, WTF::move(inheritedThemes));
+}
 
 std::unique_ptr<CursorTheme> CursorTheme::create(const char* name, uint32_t size)
 {
-    auto findThemePath = [](const char* name) -> GUniquePtr<char> {
+    auto tryLoadTheme = [](const char* name, uint32_t size) -> std::unique_ptr<CursorTheme> {
         GUniquePtr<char> path(g_build_filename(g_get_user_data_dir(), "icons", name, nullptr));
-        if (g_file_test(path.get(), G_FILE_TEST_IS_DIR))
-            return path;
+        if (auto theme = tryCreateTheme(path.get(), size))
+            return theme;
 
         path.reset(g_build_filename(g_get_home_dir(), ".icons", name, nullptr));
-        if (g_file_test(path.get(), G_FILE_TEST_IS_DIR))
-            return path;
+        if (auto theme = tryCreateTheme(path.get(), size))
+            return theme;
 
         auto* dataDirs = g_get_system_data_dirs();
         for (unsigned i = 0; dataDirs[i]; ++i) {
             path.reset(g_build_filename(dataDirs[i], "icons", name, nullptr));
-            if (g_file_test(path.get(), G_FILE_TEST_IS_DIR))
-                return path;
+            if (auto theme = tryCreateTheme(path.get(), size))
+                return theme;
         }
+
         return nullptr;
     };
 
-    if (auto basePath = findThemePath(name)) {
-        Vector<GUniquePtr<char>> inheritedThemes;
-        auto path = cursorsPath(basePath.get(), inheritedThemes);
-        if (path || !inheritedThemes.isEmpty()) {
-            if (!path) {
-                // If there's no cursors path, use the first inherited theme.
-                path = WTFMove(inheritedThemes[0]);
-                inheritedThemes.remove(0);
-            }
+    bool isFallback = false;
+    for (const char* themeName : { name, "default", "Adwaita" }) {
+        if (isFallback && (themeName == name || !g_strcmp0(themeName, name)))
+            continue;
 
-            return makeUnique<CursorTheme>(WTFMove(path), size, WTFMove(inheritedThemes));
-        }
-        g_warning("Could not find any cursors (search started from '%s')", basePath.get());
-    } else
-        g_warning("Could not find any base paths for cursors search");
+        if (auto theme = tryLoadTheme(themeName, size))
+            return theme;
 
+        isFallback = true;
+    }
+
+    // FIXME: add builtin cursors to always have a valid fallback.
+    g_warning("Could not create cursor theme for '%s'", name);
     return nullptr;
 }
 
@@ -118,9 +136,9 @@ std::unique_ptr<CursorTheme> CursorTheme::create()
 }
 
 CursorTheme::CursorTheme(GUniquePtr<char>&& path, uint32_t size, Vector<GUniquePtr<char>>&& inherited)
-    : m_path(WTFMove(path))
+    : m_path(WTF::move(path))
     , m_size(size)
-    , m_inherited(WTFMove(inherited))
+    , m_inherited(WTF::move(inherited))
 {
 }
 
@@ -152,8 +170,8 @@ struct XcursorChunkHeader {
 
 static bool readUint32(FILE* file, uint32_t* value)
 {
-    unsigned char bytes[4];
-    if (fread(&bytes, 1, 4, file) != 4)
+    std::array<unsigned char, 4> bytes;
+    if (fread(bytes.data(), 1, 4, file) != 4)
         return false;
 
     *value = ((bytes[0] << 0) | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24));
@@ -240,7 +258,7 @@ static std::optional<CursorTheme::CursorImage> readImage(FILE* file, const Xcuso
 
     auto imageSize = image.width * image.height;
     image.pixels.grow(imageSize);
-    auto* pixels = image.pixels.data();
+    auto* pixels = image.pixels.mutableSpan().data();
     while (imageSize--) {
         if (!readUint32(file, pixels))
             return std::nullopt;
@@ -290,7 +308,7 @@ Vector<CursorTheme::CursorImage> CursorTheme::loadCursor(const char* name, uint3
         if (!image)
             break;
 
-        cursorImages.append(WTFMove(*image));
+        cursorImages.append(WTF::move(*image));
         if (cursorImages.size() == header->imageCount)
             break;
     }

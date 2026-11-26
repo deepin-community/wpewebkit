@@ -8,6 +8,7 @@
 //
 
 #include "libANGLE/renderer/vulkan/linux/xcb/DisplayVkXcb.h"
+#include "common/unsafe_buffers.h"
 
 #include <xcb/xcb.h>
 
@@ -58,7 +59,7 @@ egl::Error DisplayVkXcb::initialize(egl::Display *display)
             ERR() << "xcb_connect() failed, error " << xcb_connection_error;
             xcb_disconnect(mXcbConnection);
             mXcbConnection = nullptr;
-            return egl::EglNotInitialized();
+            return egl::Error(EGL_NOT_INITIALIZED);
         }
     }
     return DisplayVk::initialize(display);
@@ -104,7 +105,8 @@ egl::ConfigSet DisplayVkXcb::generateConfigs()
 
     std::vector<GLenum> depthStencilFormats(
         egl_vk::kConfigDepthStencilFormats,
-        egl_vk::kConfigDepthStencilFormats + ArraySize(egl_vk::kConfigDepthStencilFormats));
+        ANGLE_UNSAFE_TODO(egl_vk::kConfigDepthStencilFormats +
+                          ArraySize(egl_vk::kConfigDepthStencilFormats)));
 
     if (getCaps().stencil8)
     {

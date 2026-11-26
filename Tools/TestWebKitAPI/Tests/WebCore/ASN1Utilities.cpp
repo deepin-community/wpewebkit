@@ -32,7 +32,7 @@
 namespace ASN1 {
 
 struct Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Object);
     virtual size_t encodedLengthBytes() const = 0;
     virtual void serializeTo(Vector<uint8_t>&) const = 0;
     virtual ~Object() = default;
@@ -56,7 +56,7 @@ protected:
 };
 
 struct ObjectIdentifier : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ObjectIdentifier);
     enum class Type : uint8_t {
         RsaEncryption,
         Rsapss,
@@ -91,14 +91,14 @@ private:
 };
 
 struct Sequence : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Sequence);
     template<typename... Types>
     static UniqueRef<Sequence> create(Types... types)
     {
         return makeUniqueRef<Sequence>(Vector<UniqueRef<Object>>::from(std::forward<Types>(types)...));
     }
     Sequence(Vector<UniqueRef<Object>>&& elements)
-        : elements(WTFMove(elements)) { }
+        : elements(WTF::move(elements)) { }
 private:
     const Vector<UniqueRef<Object>> elements;
     size_t encodedLengthBytes() const final
@@ -123,7 +123,7 @@ private:
 };
 
 struct Null : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Null);
 private:
     size_t encodedLengthBytes() const final { return 2; }
     void serializeTo(Vector<uint8_t>& vector) const final
@@ -134,9 +134,9 @@ private:
 };
 
 struct IndexWrapper : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(IndexWrapper);
     IndexWrapper(uint8_t index, UniqueRef<Object>&& wrapped)
-        : index(index), wrapped(WTFMove(wrapped)) { }
+        : index(index), wrapped(WTF::move(wrapped)) { }
 private:
     const uint8_t index;
     UniqueRef<Object> wrapped;
@@ -166,7 +166,7 @@ private:
 };
 
 struct Integer : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Integer);
     Integer(uint8_t value)
         : value(value) { }
 private:
@@ -184,9 +184,9 @@ private:
 };
 
 struct BitString : Object {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(BitString);
     BitString(Vector<uint8_t>&& bytes)
-        : bytes(WTFMove(bytes)) { }
+        : bytes(WTF::move(bytes)) { }
 private:
     const Vector<uint8_t> bytes;
     size_t encodedLengthBytes() const final
@@ -226,7 +226,7 @@ Vector<uint8_t> wrapPublicKeyWithRSAPSSOID(Vector<uint8_t>&& publicKey)
                 makeUniqueRef<ASN1::IndexWrapper>(2, makeUniqueRef<ASN1::Integer>(48))
             )
         ),
-        makeUniqueRef<ASN1::BitString>(WTFMove(publicKey))
+        makeUniqueRef<ASN1::BitString>(WTF::move(publicKey))
     );
 #else
     auto sequence = ASN1::Sequence::create(
@@ -234,7 +234,7 @@ Vector<uint8_t> wrapPublicKeyWithRSAPSSOID(Vector<uint8_t>&& publicKey)
             makeUniqueRef<ASN1::ObjectIdentifier>(ASN1::ObjectIdentifier::Type::RsaEncryption),
             makeUniqueRef<ASN1::Null>()
         ),
-        makeUniqueRef<ASN1::BitString>(WTFMove(publicKey))
+        makeUniqueRef<ASN1::BitString>(WTF::move(publicKey))
     );
 #endif
 

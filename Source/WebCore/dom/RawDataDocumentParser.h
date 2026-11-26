@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,7 @@ protected:
     void finish() override
     {
         if (!isStopped())
-            protectedDocument()->finishedParsing();
+            protect(document())->finishedParsing();
     }
 
 private:

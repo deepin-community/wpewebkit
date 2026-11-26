@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,17 +36,21 @@
 #include <WebCore/ShareableResource.h>
 #include <pal/SessionID.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/CrossThreadCopier.h>
 #include <wtf/Hasher.h>
+#include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+class FragmentedSharedBuffer;
 class LowPowerModeNotifier;
 class ResourceRequest;
-class FragmentedSharedBuffer;
+class ThermalMitigationNotifier;
 enum class AdvancedPrivacyProtections : uint16_t;
 }
 
@@ -57,6 +61,8 @@ struct GlobalFrameID {
     WebPageProxyIdentifier webPageProxyID;
     WebCore::PageIdentifier webPageID;
     WebCore::FrameIdentifier frameID;
+
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 };
 
 inline void add(Hasher& hasher, const GlobalFrameID& identifier)
@@ -76,21 +82,14 @@ inline bool operator==(const GlobalFrameID& a, const GlobalFrameID& b)
 
 namespace WTF {
 
-struct GlobalFrameIDHash {
-    static unsigned hash(const WebKit::NetworkCache::GlobalFrameID& key) { return computeHash(key); }
-    static bool equal(const WebKit::NetworkCache::GlobalFrameID& a, const WebKit::NetworkCache::GlobalFrameID& b) { return a == b; }
-    static const bool safeToCompareToEmptyOrDeleted = true;
-};
-
 template<> struct HashTraits<WebKit::NetworkCache::GlobalFrameID> : GenericHashTraits<WebKit::NetworkCache::GlobalFrameID> {
-    static WebKit::NetworkCache::GlobalFrameID emptyValue() { return { }; }
+    static WebKit::NetworkCache::GlobalFrameID emptyValue() { return { HashTraits<WebKit::WebPageProxyIdentifier>::emptyValue(), HashTraits<WebCore::PageIdentifier>::emptyValue(), HashTraits<WebCore::FrameIdentifier>::emptyValue() }; }
+    static bool isEmptyValue(const WebKit::NetworkCache::GlobalFrameID& slot) { return slot.webPageID.isHashTableEmptyValue(); }
 
     static void constructDeletedValue(WebKit::NetworkCache::GlobalFrameID& slot) { new (NotNull, &slot.webPageID) WebCore::PageIdentifier(WTF::HashTableDeletedValue); }
 
     static bool isDeletedValue(const WebKit::NetworkCache::GlobalFrameID& slot) { return slot.webPageID.isHashTableDeletedValue(); }
 };
-
-template<> struct DefaultHash<WebKit::NetworkCache::GlobalFrameID> : GlobalFrameIDHash { };
 
 }
 
@@ -119,16 +118,23 @@ enum class RetrieveDecision {
     NoDueToStreamingMedia
 };
 
+enum class SpeculativeLoadDecision {
+    Yes,
+    NoDueToVaryingHeaderMismatch,
+    NoDueToCannotUse,
+};
+
 enum class StoreDecision {
     Yes,
     NoDueToProtocol,
     NoDueToHTTPMethod,
     NoDueToNoStoreResponse,
-    NoDueToHTTPStatusCode,
+    NoDueToMissingExpirationHeaders,
     NoDueToNoStoreRequest,
     NoDueToUnlikelyToReuse,
     NoDueToStreamingMedia,
-    NoDueToRequestContainingFragments
+    NoDueToRequestContainingFragments,
+    NoDueToHTTPStatusCode
 };
 
 enum class UseDecision {
@@ -146,31 +152,54 @@ enum class CacheOption : uint8_t {
     // In testing mode we try to eliminate sources of randomness. Cache does not shrink and there are no read timeouts.
     TestingMode = 1 << 0,
     RegisterNotify = 1 << 1,
-#if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
     SpeculativeRevalidation = 1 << 2,
-#endif
 };
 
-class Cache : public RefCounted<Cache> {
+class Cache : public RefCountedAndCanMakeWeakPtr<Cache> {
 public:
     ~Cache();
     static RefPtr<Cache> open(NetworkProcess&, const String& cachePath, OptionSet<CacheOption>, PAL::SessionID);
 
-    size_t capacity() const;
+    size_t NODELETE capacity() const;
     void updateCapacity();
 
     // Completion handler may get called back synchronously on failure.
     struct RetrieveInfo {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(RetrieveInfo);
+
+        URL url;
         MonotonicTime startTime;
         MonotonicTime completionTime;
         unsigned priority;
         Storage::Timings storageTimings;
-        bool wasSpeculativeLoad { false };
+        Markable<RetrieveDecision> retrieveDecision;
+        Markable<SpeculativeLoadDecision> speculativeLoadDecision;
+        Markable<UseDecision> useDecision;
 
-        WTF_MAKE_TZONE_ALLOCATED(RetrieveInfo);
+        RetrieveInfo isolatedCopy() && { return {
+            crossThreadCopy(WTF::move(url)),
+            startTime,
+            completionTime,
+            priority,
+            storageTimings,
+            retrieveDecision,
+            speculativeLoadDecision,
+            useDecision
+        }; }
+
+        RetrieveInfo isolatedCopy() const & { return {
+            crossThreadCopy(url),
+            startTime,
+            completionTime,
+            priority,
+            storageTimings,
+            retrieveDecision,
+            speculativeLoadDecision,
+            useDecision
+        }; }
     };
     using RetrieveCompletionHandler = Function<void(std::unique_ptr<Entry>, const RetrieveInfo&)>;
-    void retrieve(const WebCore::ResourceRequest&, const GlobalFrameID&, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, RetrieveCompletionHandler&&);
+    void retrieve(const WebCore::ResourceRequest&, std::optional<GlobalFrameID>, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, RetrieveCompletionHandler&&);
     std::unique_ptr<Entry> store(const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, PrivateRelayed, RefPtr<WebCore::FragmentedSharedBuffer>&&, Function<void(MappedBody&&)>&& = nullptr);
     std::unique_ptr<Entry> storeRedirect(const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, const WebCore::ResourceRequest& redirectRequest, std::optional<Seconds> maxAgeCap);
     std::unique_ptr<Entry> update(const WebCore::ResourceRequest&, const Entry&, const WebCore::ResourceResponse& validatingResponse, PrivateRelayed);
@@ -195,20 +224,17 @@ public:
 
     String recordsPathIsolatedCopy() const;
 
-#if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
     SpeculativeLoadManager* speculativeLoadManager() { return m_speculativeLoadManager.get(); }
-#endif
 
-#if ENABLE(NETWORK_CACHE_STALE_WHILE_REVALIDATE)
     void startAsyncRevalidationIfNeeded(const WebCore::ResourceRequest&, const NetworkCache::Key&, std::unique_ptr<Entry>&&, const GlobalFrameID&, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>);
-#endif
 
     void browsingContextRemoved(WebPageProxyIdentifier, WebCore::PageIdentifier, WebCore::FrameIdentifier);
 
     NetworkProcess& networkProcess() { return m_networkProcess.get(); }
     PAL::SessionID sessionID() const { return m_sessionID; }
-    const String& storageDirectory() const { return m_storageDirectory; }
+    const String& storageDirectory() const LIFETIME_BOUND { return m_storageDirectory; }
     void fetchData(bool shouldComputeSize, CompletionHandler<void(Vector<WebsiteData::Entry>&&)>&&);
+    void fetchOriginAccessTimes(CompletionHandler<void(HashMap<WebCore::RegistrableDomain, WallTime>&&)>&&);
     void deleteData(const Vector<WebCore::SecurityOriginData>&, CompletionHandler<void()>&&);
     void deleteDataForRegistrableDomains(const Vector<WebCore::RegistrableDomain>&, CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&);
 
@@ -224,18 +250,18 @@ private:
 
     std::optional<Seconds> maxAgeCap(Entry&, const WebCore::ResourceRequest&, PAL::SessionID);
 
-    Ref<Storage> m_storage;
-    Ref<NetworkProcess> m_networkProcess;
+    const Ref<Storage> m_storage;
+    const Ref<NetworkProcess> m_networkProcess;
 
-#if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
+    bool shouldUseSpeculativeLoadManager() const;
+    void updateSpeculativeLoadManagerEnabledState();
+
     std::unique_ptr<WebCore::LowPowerModeNotifier> m_lowPowerModeNotifier;
+    RefPtr<WebCore::ThermalMitigationNotifier> m_thermalMitigationNotifier;
     std::unique_ptr<SpeculativeLoadManager> m_speculativeLoadManager;
-#endif
 
-#if ENABLE(NETWORK_CACHE_STALE_WHILE_REVALIDATE)
-    HashMap<Key, std::unique_ptr<AsyncRevalidation>> m_pendingAsyncRevalidations;
+    HashMap<Key, Ref<AsyncRevalidation>> m_pendingAsyncRevalidations;
     HashMap<GlobalFrameID, WeakHashSet<AsyncRevalidation>> m_pendingAsyncRevalidationByPage;
-#endif
 
     unsigned m_traverseCount { 0 };
     PAL::SessionID m_sessionID;

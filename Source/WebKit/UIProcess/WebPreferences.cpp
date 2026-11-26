@@ -43,6 +43,13 @@
 
 namespace WebKit {
 
+static bool forceSiteIsolationAlwaysOnForTesting;
+
+bool WebPreferences::forcedSiteIsolationAlwaysOnForTesting()
+{
+    return WebKit::forceSiteIsolationAlwaysOnForTesting;
+}
+
 Ref<WebPreferences> WebPreferences::create(const String& identifier, const String& keyPrefix, const String& globalDebugKeyPrefix)
 {
     return adoptRef(*new WebPreferences(identifier, keyPrefix, globalDebugKeyPrefix));
@@ -63,6 +70,9 @@ WebPreferences::WebPreferences(const String& identifier, const String& keyPrefix
     , m_globalDebugKeyPrefix(globalDebugKeyPrefix)
 {
     platformInitializeStore();
+
+    if (WebKit::forceSiteIsolationAlwaysOnForTesting)
+        setSiteIsolationEnabled(true);
 }
 
 WebPreferences::WebPreferences(const WebPreferences& other)
@@ -72,6 +82,9 @@ WebPreferences::WebPreferences(const WebPreferences& other)
     , m_store(other.m_store)
 {
     platformInitializeStore();
+
+    if (WebKit::forceSiteIsolationAlwaysOnForTesting)
+        setSiteIsolationEnabled(true);
 }
 
 WebPreferences::~WebPreferences()
@@ -79,12 +92,17 @@ WebPreferences::~WebPreferences()
     ASSERT(m_pages.isEmptyIgnoringNullReferences());
 }
 
+void WebPreferences::forceSiteIsolationAlwaysOnForTesting()
+{
+    WebKit::forceSiteIsolationAlwaysOnForTesting = true;
+}
+
 const Vector<RefPtr<API::Object>>& WebPreferences::experimentalFeatures()
 {
     static auto experimentalFeatures = NeverDestroyed([]() {
         Vector<RefPtr<API::Object>> result;
         for (auto& object : features()) {
-            API::FeatureStatus status = static_pointer_cast<API::Feature>(object)->status();
+            API::FeatureStatus status = downcast<API::Feature>(object)->status();
             if (status == API::FeatureStatus::Developer || status == API::FeatureStatus::Testable || status == API::FeatureStatus::Preview || status == API::FeatureStatus::Stable)
                 result.append(object);
         }
@@ -98,7 +116,7 @@ const Vector<RefPtr<API::Object>>& WebPreferences::internalDebugFeatures()
     static auto internalDebugFeatures = NeverDestroyed([]() {
         Vector<RefPtr<API::Object>> result;
         for (auto& object : features()) {
-            API::FeatureStatus status = static_pointer_cast<API::Feature>(object)->status();
+            API::FeatureStatus status = downcast<API::Feature>(object)->status();
             if (status == API::FeatureStatus::Unstable || status == API::FeatureStatus::Internal)
                 result.append(object);
         }
@@ -130,9 +148,9 @@ void WebPreferences::update()
         m_needUpdateAfterBatch = true;
         return;
     }
-        
-    for (auto& webPageProxy : m_pages)
-        webPageProxy.preferencesDidChange();
+
+    for (Ref page : m_pages)
+        page->preferencesDidChange();
 }
 
 void WebPreferences::startBatchingUpdates()
@@ -191,16 +209,11 @@ void WebPreferences::updateBoolValueForKey(const String& key, bool value, bool e
         platformUpdateBoolValueForKey(key, value);
     
     if (key == WebPreferencesKey::processSwapOnCrossSiteNavigationEnabledKey()) {
-        for (auto& page : m_pages)
-            page.configuration().processPool().configuration().setProcessSwapsOnNavigation(value);
+        for (Ref page : m_pages)
+            page->configuration().processPool().configuration().setProcessSwapsOnNavigation(value);
 
         return;
     }
-
-#if ENABLE(WEB_PUSH_NOTIFICATIONS)
-    if (key == WebPreferencesKey::builtInNotificationsEnabledKey())
-        WebCore::DeprecatedGlobalSettings::setBuiltInNotificationsEnabled(value);
-#endif
 
     update(); // FIXME: Only send over the changed key and value.
 }
@@ -246,7 +259,7 @@ void WebPreferences::registerDefaultUInt32ValueForKey(const String& key, uint32_
         m_store.setUInt32ValueForKey(key, userValue);
 }
 
-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE)
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE) && !PLATFORM(PLAYSTATION)
 void WebPreferences::platformInitializeStore()
 {
     notImplemented();

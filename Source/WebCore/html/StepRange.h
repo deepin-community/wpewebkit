@@ -22,6 +22,7 @@
 
 #include "Decimal.h"
 #include <wtf/Forward.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -30,22 +31,23 @@ enum class AnyStepHandling : bool { Reject, Default };
 enum class RangeLimitations : bool { Valid, Invalid };
 
 class StepRange {
+    WTF_MAKE_TZONE_ALLOCATED(StepRange);
 public:
-    enum StepValueShouldBe {
-        StepValueShouldBeReal,
-        ParsedStepValueShouldBeInteger,
-        ScaledStepValueShouldBeInteger,
+    enum class StepValueShouldBe : uint8_t {
+        Real,
+        ParsedInteger,
+        ScaledInteger,
     };
 
     struct StepDescription {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED(StepDescription);
     public:
         int defaultStep { 1 };
         int defaultStepBase { 0 };
         int stepScaleFactor { 1 };
-        StepValueShouldBe stepValueShouldBe { StepValueShouldBeReal };
+        StepValueShouldBe stepValueShouldBe { StepValueShouldBe::Real };
 
-        constexpr StepDescription(int defaultStep, int defaultStepBase, int stepScaleFactor, StepValueShouldBe stepValueShouldBe = StepValueShouldBeReal)
+        constexpr StepDescription(int defaultStep, int defaultStepBase, int stepScaleFactor, StepValueShouldBe stepValueShouldBe = StepValueShouldBe::Real)
             : defaultStep(defaultStep)
             , defaultStepBase(defaultStepBase)
             , stepScaleFactor(stepScaleFactor)
@@ -66,7 +68,7 @@ public:
     StepRange();
     StepRange(const StepRange&);
     StepRange(const Decimal& stepBase, RangeLimitations, const Decimal& minimum, const Decimal& maximum, const Decimal& step, const StepDescription&, IsReversible = IsReversible::No);
-    Decimal acceptableError() const;
+    Decimal NODELETE acceptableError() const;
     Decimal alignValueForStep(const Decimal& currentValue, const Decimal& newValue) const;
     Decimal clampValue(const Decimal& value) const;
     bool hasStep() const { return m_hasStep; }

@@ -3,7 +3,7 @@
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2014 Adobe Systems Incorporated. All rights reserved.
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,19 +23,21 @@
 
 #pragma once
 
-#include "FilterEffect.h"
-#include "GraphicsTypes.h"
+#include <WebCore/FilterEffect.h>
+#include <WebCore/GraphicsTypes.h>
 
 namespace WebCore {
 
-class FEBlend : public FilterEffect {
+class FEBlend final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEBlend);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEBlend);
 public:
     WEBCORE_EXPORT static Ref<FEBlend> create(BlendMode, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FEBlend&) const;
 
     BlendMode blendMode() const { return m_mode; }
-    bool setBlendMode(BlendMode);
+    bool NODELETE setBlendMode(BlendMode);
 
 private:
     FEBlend(BlendMode, DestinationColorSpace);
@@ -44,6 +46,8 @@ private:
 
     unsigned numberOfEffectInputs() const override { return 2; }
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode>) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;

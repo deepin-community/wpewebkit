@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,11 +25,14 @@
 
 #pragma once
 
-#include "HeapAnalyzer.h"
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/JSExportMacros.h>
 #include <functional>
+#include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/OverflowPolicy.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -111,7 +114,7 @@ public:
     HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot);
     ~HeapSnapshotBuilder() final;
 
-    static void resetNextAvailableObjectIdentifier();
+    static void NODELETE resetNextAvailableObjectIdentifier();
 
     // Performs a garbage collection that builds a snapshot of all live cells.
     void buildSnapshot();
@@ -130,34 +133,51 @@ public:
     void setLabelForCell(JSCell*, const String&) final;
 
     String json();
-    String json(Function<bool (const HeapSnapshotNode&)> allowNodeCallback);
+    void dumpToStream(PrintStream&);
+
+    bool hasOverflowed() const { return m_hasOverflowed; }
+
+    class Client : public CanMakeCheckedPtr<Client> {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Client);
+        WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Client);
+    public:
+        virtual ~Client() = default;
+
+        virtual bool heapSnapshotBuilderIgnoreNode(const HeapSnapshotBuilder&, JSCell*) { return false; }
+        virtual String heapSnapshotBuilderOverrideClassName(const HeapSnapshotBuilder&, JSCell*, const String& currentClassName) { return currentClassName; }
+        virtual bool heapSnapshotBuilderIsElement(const HeapSnapshotBuilder&, JSCell*) { return false; }
+    };
+    void setClient(Client* client) { m_client = client; }
 
 private:
     static NodeIdentifier nextAvailableObjectIdentifier;
-    static NodeIdentifier getNextObjectIdentifier();
+    static NodeIdentifier NODELETE getNextObjectIdentifier();
 
     // Finalized snapshots are not modified during building. So searching them
     // for an existing node can be done concurrently without a lock.
-    bool previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
-    
-    String descriptionForCell(JSCell*) const;
-    
+    bool NODELETE previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
+
+    String descriptionForNode(const HeapSnapshotNode&);
+
     struct RootData {
         ASCIILiteral reachabilityFromOpaqueRootReasons;
         RootMarkReason markReason { RootMarkReason::None };
     };
-    
+
     HeapProfiler& m_profiler;
+    CheckedPtr<Client> m_client;
+
+    bool m_hasOverflowed { false };
 
     // SlotVisitors run in parallel.
     Lock m_buildingNodeMutex;
     std::unique_ptr<HeapSnapshot> m_snapshot;
     Lock m_buildingEdgeMutex;
     Vector<HeapSnapshotEdge> m_edges;
-    HashMap<JSCell*, RootData> m_rootData;
-    HashMap<JSCell*, void*> m_wrappedObjectPointers;
-    HashMap<JSCell*, String> m_cellLabels;
-    HashSet<JSCell*> m_appendedCells;
+    UncheckedKeyHashMap<JSCell*, RootData> m_rootData;
+    UncheckedKeyHashMap<JSCell*, void*> m_wrappedObjectPointers;
+    UncheckedKeyHashMap<JSCell*, String> m_cellLabels;
+    UncheckedKeyHashSet<JSCell*> m_appendedCells;
     SnapshotType m_snapshotType;
 };
 

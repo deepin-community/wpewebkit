@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc.  All rights reserved.
+ * Copyright (C) 2011 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include "ContextDestructionObserver.h"
 #include "Event.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "MediaControllerInterface.h"
 #include "Timer.h"
 #include <wtf/Vector.h>
@@ -47,10 +48,15 @@ class MediaController final
     , public MediaControllerInterface
     , public ContextDestructionObserver
     , public EventTarget {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(MediaController);
+    WTF_MAKE_TZONE_ALLOCATED(MediaController);
 public:
     static Ref<MediaController> create(ScriptExecutionContext&);
     virtual ~MediaController();
+
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     Ref<TimeRanges> buffered() const final;
     Ref<TimeRanges> seekable() const final;
@@ -79,9 +85,6 @@ public:
 
     const AtomString& playbackState() const;
 
-    using RefCounted::ref;
-    using RefCounted::deref;
-
 private:
     explicit MediaController(ScriptExecutionContext&);
 
@@ -92,7 +95,7 @@ private:
     void bringElementUpToSpeed(HTMLMediaElement&);
     void scheduleEvent(const AtomString& eventName);
     void asyncEventTimerFired();
-    void clearPositionTimerFired();
+    void NODELETE clearPositionTimerFired();
     bool hasEnded() const;
     void scheduleTimeupdateEvent();
     void startTimeupdateTimer();
@@ -100,7 +103,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MediaController; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); };
+    ScriptExecutionContext* scriptExecutionContext() const final;
 
     void addMediaElement(HTMLMediaElement&);
     void removeMediaElement(HTMLMediaElement&);
@@ -130,12 +133,16 @@ private:
 
     ReadyState readyState() const final { return m_readyState; }
 
+    void forEachElement(Function<void(Ref<HTMLMediaElement>&&)>&&) const;
+    bool anyElement(Function<bool(Ref<HTMLMediaElement>&&)>&&) const;
+    bool everyElement(Function<bool(Ref<HTMLMediaElement>&&)>&&) const;
+
     enum PlaybackState { WAITING, PLAYING, ENDED };
 
     friend class HTMLMediaElement;
     friend class MediaControllerEventListener;
 
-    Vector<HTMLMediaElement*> m_mediaElements;
+    Vector<CheckedPtr<HTMLMediaElement>> m_mediaElements;
     bool m_paused;
     double m_defaultPlaybackRate;
     double m_volume;
@@ -154,5 +161,7 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(MediaController)
 
 #endif

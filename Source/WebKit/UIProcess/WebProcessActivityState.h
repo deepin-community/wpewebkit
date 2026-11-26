@@ -29,25 +29,39 @@
 
 namespace WebKit {
 
+class ProcessAssertion;
 class ProcessThrottlerActivity;
+class ProcessThrottlerTimedActivity;
+class RemotePageProxy;
+class WebPageProxy;
 class WebProcessProxy;
 
 class WebProcessActivityState {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WebProcessActivityState);
 public:
-    explicit WebProcessActivityState(WebProcessProxy&);
+    explicit WebProcessActivityState(WebPageProxy&);
+    explicit WebProcessActivityState(RemotePageProxy&);
+
     void takeVisibleActivity();
     void takeAudibleActivity();
     void takeCapturingActivity();
+    void takeMutedCaptureAssertion();
+    void takeNetworkActivity();
+    void takeTextExtractionAssertion();
 
     void reset();
     void dropVisibleActivity();
     void dropAudibleActivity();
     void dropCapturingActivity();
+    void dropMutedCaptureAssertion();
+    void dropNetworkActivity();
+    void dropTextExtractionAssertion();
 
-    bool hasValidVisibleActivity() const;
-    bool hasValidAudibleActivity() const;
-    bool hasValidCapturingActivity() const;
+    bool NODELETE hasValidVisibleActivity() const;
+    bool NODELETE hasValidAudibleActivity() const;
+    bool NODELETE hasValidCapturingActivity() const;
+    bool NODELETE hasValidMutedCaptureAssertion() const;
+    bool NODELETE hasValidNetworkActivity() const;
 
 #if PLATFORM(IOS_FAMILY)
     void takeOpeningAppLinkActivity();
@@ -55,18 +69,34 @@ public:
     bool hasValidOpeningAppLinkActivity() const;
 #endif
 
-private:
-    WeakRef<WebProcessProxy> m_process;
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
+    void updateWebProcessSuspensionDelay();
+    void takeAccessibilityActivityWhenInWindow();
+    void takeAccessibilityActivity();
+    bool NODELETE hasAccessibilityActivityForTesting() const;
+    void viewDidEnterWindow();
+    void viewDidLeaveWindow();
+#endif
 
-    std::unique_ptr<ProcessThrottlerActivity> m_isVisibleActivity;
-#if PLATFORM(MAC)
-    UniqueRef<ProcessThrottlerTimedActivity> m_wasRecentlyVisibleActivity;
+private:
+    WebProcessProxy& process() const;
+
+    Variant<WeakRef<WebPageProxy>, WeakRef<RemotePageProxy>> m_page;
+
+    RefPtr<ProcessThrottlerActivity> m_isVisibleActivity;
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
+    const Ref<ProcessThrottlerTimedActivity> m_wasRecentlyVisibleActivity;
+    RefPtr<ProcessThrottlerActivity> m_accessibilityActivity;
+    bool m_takeAccessibilityActivityWhenInWindow { false };
 #endif
-    std::unique_ptr<ProcessThrottlerActivity> m_isAudibleActivity;
-    std::unique_ptr<ProcessThrottlerActivity> m_isCapturingActivity;
+    RefPtr<ProcessThrottlerActivity> m_isAudibleActivity;
+    RefPtr<ProcessThrottlerActivity> m_isCapturingActivity;
+    RefPtr<ProcessAssertion> m_isMutedCaptureAssertion;
 #if PLATFORM(IOS_FAMILY)
-    std::unique_ptr<ProcessThrottlerActivity> m_openingAppLinkActivity;
+    RefPtr<ProcessThrottlerActivity> m_openingAppLinkActivity;
 #endif
+    RefPtr<ProcessThrottlerActivity> m_networkActivity;
+    RefPtr<ProcessAssertion> m_textExtractionAssertion;
 };
 
 } // namespace WebKit

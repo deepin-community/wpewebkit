@@ -25,12 +25,13 @@
 
 #pragma once
 
-#include "BufferSource.h"
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-#include "JSDOMWrapperCache.h"
-#include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
+#include <JavaScriptCore/JSGenericTypedArrayViewInlinesLight.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/TypedArrays.h>
+#include <WebCore/BufferSource.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMConvertBase.h>
+#include <WebCore/JSDOMWrapperCache.h>
 
 namespace WebCore {
 
@@ -47,63 +48,61 @@ struct IDLFloat64Array : IDLTypedArray<JSC::Float64Array> { };
 struct IDLBigInt64Array : IDLTypedArray<JSC::BigInt64Array> { };
 struct IDLBigUint64Array : IDLTypedArray<JSC::BigUint64Array> { };
 
-inline RefPtr<JSC::Int8Array> toPossiblySharedInt8Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Int8Adaptor>(vm, value); }
-inline RefPtr<JSC::Int16Array> toPossiblySharedInt16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Int16Adaptor>(vm, value); }
-inline RefPtr<JSC::Int32Array> toPossiblySharedInt32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Int32Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint8Array> toPossiblySharedUint8Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint8Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint8ClampedArray> toPossiblySharedUint8ClampedArray(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint8ClampedAdaptor>(vm, value); }
-inline RefPtr<JSC::Uint16Array> toPossiblySharedUint16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint16Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint32Array> toPossiblySharedUint32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint32Adaptor>(vm, value); }
-inline RefPtr<JSC::Float16Array> toPossiblySharedFloat16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float16Adaptor>(vm, value); }
-inline RefPtr<JSC::Float32Array> toPossiblySharedFloat32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float32Adaptor>(vm, value); }
-inline RefPtr<JSC::Float64Array> toPossiblySharedFloat64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float64Adaptor>(vm, value); }
-inline RefPtr<JSC::BigInt64Array> toPossiblySharedBigInt64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::BigInt64Adaptor>(vm, value); }
-inline RefPtr<JSC::BigUint64Array> toPossiblySharedBigUint64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::BigUint64Adaptor>(vm, value); }
+WEBCORE_EXPORT RefPtr<JSC::Int8Array> toPossiblySharedInt8Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Int16Array> toPossiblySharedInt16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Int32Array> toPossiblySharedInt32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint8Array> toPossiblySharedUint8Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint8ClampedArray> toPossiblySharedUint8ClampedArray(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint16Array> toPossiblySharedUint16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint32Array> toPossiblySharedUint32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float16Array> toPossiblySharedFloat16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float32Array> toPossiblySharedFloat32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float64Array> toPossiblySharedFloat64Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::BigInt64Array> toPossiblySharedBigInt64Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::BigUint64Array> toPossiblySharedBigUint64Array(JSC::VM&, JSC::JSValue);
 
-inline RefPtr<JSC::Int8Array> toUnsharedInt8Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Int8Adaptor>(vm, value); }
-inline RefPtr<JSC::Int16Array> toUnsharedInt16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Int16Adaptor>(vm, value); }
-inline RefPtr<JSC::Int32Array> toUnsharedInt32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Int32Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint8Array> toUnsharedUint8Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint8Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint8ClampedArray> toUnsharedUint8ClampedArray(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint8ClampedAdaptor>(vm, value); }
-inline RefPtr<JSC::Uint16Array> toUnsharedUint16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint16Adaptor>(vm, value); }
-inline RefPtr<JSC::Uint32Array> toUnsharedUint32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint32Adaptor>(vm, value); }
-inline RefPtr<JSC::Float16Array> toUnsharedFloat16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float16Adaptor>(vm, value); }
-inline RefPtr<JSC::Float32Array> toUnsharedFloat32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float32Adaptor>(vm, value); }
-inline RefPtr<JSC::Float64Array> toUnsharedFloat64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float64Adaptor>(vm, value); }
-inline RefPtr<JSC::BigInt64Array> toUnsharedBigInt64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::BigInt64Adaptor>(vm, value); }
-inline RefPtr<JSC::BigUint64Array> toUnsharedBigUint64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::BigUint64Adaptor>(vm, value); }
+WEBCORE_EXPORT RefPtr<JSC::Int8Array> toUnsharedInt8Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Int16Array> toUnsharedInt16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Int32Array> toUnsharedInt32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint8Array> toUnsharedUint8Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint8ClampedArray> toUnsharedUint8ClampedArray(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint16Array> toUnsharedUint16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Uint32Array> toUnsharedUint32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float16Array> toUnsharedFloat16Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float32Array> toUnsharedFloat32Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::Float64Array> toUnsharedFloat64Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::BigInt64Array> toUnsharedBigInt64Array(JSC::VM&, JSC::JSValue);
+WEBCORE_EXPORT RefPtr<JSC::BigUint64Array> toUnsharedBigUint64Array(JSC::VM&, JSC::JSValue);
 
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
-{
-    if (auto result = getCachedWrapper(globalObject->world(), buffer))
-        return result;
-
-    // The JSArrayBuffer::create function will register the wrapper in finishCreation.
-    return JSC::JSArrayBuffer::create(JSC::getVM(lexicalGlobalObject), globalObject->arrayBufferStructure(buffer.sharingMode()), &buffer);
-}
+WEBCORE_EXPORT JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, JSC::ArrayBuffer&);
 
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBufferView& view)
 {
     return view.wrap(lexicalGlobalObject, globalObject);
 }
 
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, JSC::ArrayBuffer* buffer)
-{
-    if (!buffer)
-        return JSC::jsNull();
-    return toJS(lexicalGlobalObject, globalObject, *buffer);
-}
+template<> struct JSConverter<IDLBufferSource> {
+    static constexpr bool needsState = true;
+    static constexpr bool needsGlobalObject = false;
 
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBufferView* view)
-{
-    if (!view)
-        return JSC::jsNull();
-    return toJS(lexicalGlobalObject, globalObject, *view);
-}
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const BufferSource& bufferSource)
+    {
+        auto* jsDOMGlobalObject = uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
+
+        return WTF::switchOn(bufferSource.variant(),
+            [&](const Ref<JSC::ArrayBufferView>& buffer) {
+                return toJS(&lexicalGlobalObject, &lexicalGlobalObject, const_cast<Ref<JSC::ArrayBufferView>&>(buffer));
+            },
+            [&](const Ref<JSC::ArrayBuffer>& buffer)  {
+                return toJS(&lexicalGlobalObject, jsDOMGlobalObject, const_cast<Ref<JSC::ArrayBuffer>&>(buffer));
+            }
+        );
+    }
+};
 
 inline RefPtr<JSC::ArrayBufferView> toPossiblySharedArrayBufferView(JSC::VM&, JSC::JSValue value)
 {
-    auto* wrapper = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value);
+    auto* wrapper = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!wrapper)
         return nullptr;
     return wrapper->possiblySharedImpl();
@@ -133,20 +132,42 @@ struct BufferSourceConverter {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if constexpr (mode == BufferSourceConverterAllowSharedMode::Allow) {
             RefPtr object = WrapperType::toWrappedAllowShared(vm, value);
-            if (UNLIKELY(!object)) {
+            if (!object) [[unlikely]] {
                 exceptionThrower(lexicalGlobalObject, scope);
                 return Result::exception();
             }
             return Result { object.releaseNonNull() };
         } else {
             RefPtr object = WrapperType::toWrapped(vm, value);
-            if (UNLIKELY(!object)) {
+            if (!object) [[unlikely]] {
                 exceptionThrower(lexicalGlobalObject, scope);
                 return Result::exception();
             }
             return Result { object.releaseNonNull() };
         }
+    }
 
+    static std::optional<Result> tryConvert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+
+        RefPtr object = WrapperType::toWrappedAllowSharedAndResizable(vm, value);
+        if (!object)
+            return std::nullopt;
+
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if constexpr (mode == BufferSourceConverterAllowSharedMode::Disallow) {
+            if (object->isShared()) {
+                throwTypeError(&lexicalGlobalObject, scope, "SharedArrayBuffer is not allowed"_s);
+                return Result::exception();
+            }
+        }
+        // FIXME: Add an AllowResizable mode and make this conditional once [AllowResizable] is supported.
+        if (object->isResizableOrGrowableShared()) {
+            throwTypeError(&lexicalGlobalObject, scope, "Resizable ArrayBuffer is not allowed"_s);
+            return Result::exception();
+        }
+        return Result { object.releaseNonNull() };
     }
 };
 
@@ -166,16 +187,78 @@ struct JSTypedArrayConverter {
     static constexpr bool needsState = true;
     static constexpr bool needsGlobalObject = true;
 
-    template <typename U>
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    using T = typename IDL::RawType;
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U& value)
     {
-        return toJS(&lexicalGlobalObject, &globalObject, Detail::getPtrOrRef(value));
+        return toJS(&lexicalGlobalObject, &globalObject, value);
     }
 
-    template<typename U>
-    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U&& value)
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
     {
-        return convert(lexicalGlobalObject, globalObject, std::forward<U>(value));
+        return toJS(&lexicalGlobalObject, &globalObject, const_cast<U&>(value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, std::reference_wrapper<U> value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, const_cast<Ref<U>&>(value).get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>&& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value);
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, const_cast<U&>(value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, std::reference_wrapper<U> value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, const_cast<Ref<U>&>(value).get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>&& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value.get());
     }
 };
 
@@ -202,7 +285,7 @@ template<> struct JSConverter<IDLDataView> : Detail::JSTypedArrayConverter<IDLDa
 template<> struct JSConverter<IDLInt8Array> : Detail::JSTypedArrayConverter<IDLInt8Array> { };
 template<> struct JSConverter<IDLInt16Array> : Detail::JSTypedArrayConverter<IDLInt16Array> { };
 template<> struct JSConverter<IDLInt32Array> : Detail::JSTypedArrayConverter<IDLInt32Array> { };
-template<> struct JSConverter<IDLUint8Array> : Detail::JSTypedArrayConverter<IDLInt8Array> { };
+template<> struct JSConverter<IDLUint8Array> : Detail::JSTypedArrayConverter<IDLUint8Array> { };
 template<> struct JSConverter<IDLUint16Array> : Detail::JSTypedArrayConverter<IDLUint16Array> { };
 template<> struct JSConverter<IDLUint32Array> : Detail::JSTypedArrayConverter<IDLUint32Array> { };
 template<> struct JSConverter<IDLUint8ClampedArray> : Detail::JSTypedArrayConverter<IDLUint8ClampedArray> { };

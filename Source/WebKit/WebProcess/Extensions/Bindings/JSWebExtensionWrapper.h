@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,36 +25,29 @@
 
 #pragma once
 
-#include "Logging.h"
-#include "WebFrame.h"
-#include "WebPage.h"
+#if ENABLE(WK_WEB_EXTENSIONS)
+
+#include "Protected.h"
+#include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCJSValuePropertyInlines.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#if PLATFORM(COCOA)
 #include <JavaScriptCore/JavaScriptCore.h>
+#else
+#include <JavaScriptCore/JavaScript.h>
+#endif
+#include <WebCore/JSDOMExceptionHandling.h>
+#include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/ScriptExecutionContext.h>
+#include <wtf/JSONValues.h>
 #include <wtf/WeakPtr.h>
-
-OBJC_CLASS NSString;
-
-#if JSC_OBJC_API_ENABLED && defined(__OBJC__)
-
-@interface JSValue (WebKitExtras)
-- (NSString *)_toJSONString;
-- (NSString *)_toSortedJSONString;
-
-@property (nonatomic, readonly, getter=_isFunction) BOOL _function;
-@property (nonatomic, readonly, getter=_isDictionary) BOOL _dictionary;
-@property (nonatomic, readonly, getter=_isRegularExpression) BOOL _regularExpression;
-@property (nonatomic, readonly, getter=_isThenable) BOOL _thenable;
-
-- (void)_awaitThenableResolutionWithCompletionHandler:(void (^)(JSValue *result, JSValue *error))completionHandler;
-@end
-
-#endif // JSC_OBJC_API_ENABLED && defined(__OBJC__)
 
 namespace WebKit {
 
+class WebFrame;
 class WebPage;
-
-#if ENABLE(WK_WEB_EXTENSIONS)
 
 class JSWebExtensionWrappable;
 class WebExtensionAPIRuntimeBase;
@@ -71,29 +64,23 @@ public:
 
 class WebExtensionCallbackHandler : public RefCounted<WebExtensionCallbackHandler> {
 public:
-    template<typename... Args>
-    static Ref<WebExtensionCallbackHandler> create(Args&&... args)
-    {
-        return adoptRef(*new WebExtensionCallbackHandler(std::forward<Args>(args)...));
-    }
+    static Ref<WebExtensionCallbackHandler> create(JSContextRef, JSObjectRef resolveFunction, JSObjectRef rejectFunction);
+    static Ref<WebExtensionCallbackHandler> create(JSContextRef, JSObjectRef callbackFunction, WebExtensionAPIRuntimeBase&);
+    static Ref<WebExtensionCallbackHandler> create(JSContextRef, WebExtensionAPIRuntimeBase&);
 
     ~WebExtensionCallbackHandler();
 
-#if PLATFORM(COCOA)
     JSGlobalContextRef globalContext() const { return m_globalContext.get(); }
-    JSValue *callbackFunction() const;
+    JSValueRef NODELETE callbackFunction() const;
 
-    void reportError(NSString *);
+    void reportError(const String&);
 
-    id call();
-    id call(id argument);
-    id call(id argumentOne, id argumentTwo);
-    id call(id argumentOne, id argumentTwo, id argumentThree);
-#endif
+    JSValueRef call();
+    JSValueRef call(JSValueRef argument);
+    JSValueRef call(JSValueRef argumentOne, JSValueRef argumentTwo);
+    JSValueRef call(JSValueRef argumentOne, JSValueRef argumentTwo, JSValueRef argumentThree);
 
 private:
-#if PLATFORM(COCOA)
-    WebExtensionCallbackHandler(JSValue *callbackFunction);
     WebExtensionCallbackHandler(JSContextRef, JSObjectRef resolveFunction, JSObjectRef rejectFunction);
     WebExtensionCallbackHandler(JSContextRef, JSObjectRef callbackFunction, WebExtensionAPIRuntimeBase&);
     WebExtensionCallbackHandler(JSContextRef, WebExtensionAPIRuntimeBase&);
@@ -102,10 +89,7 @@ private:
     JSObjectRef m_rejectFunction = nullptr;
     JSRetainPtr<JSGlobalContextRef> m_globalContext;
     RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
-#endif
 };
-
-#endif // ENABLE(WK_WEB_EXTENSIONS)
 
 enum class NullStringPolicy : uint8_t {
     NoNullString,
@@ -128,23 +112,12 @@ enum class ValuePolicy : bool {
     StopAtTopLevel,
 };
 
-inline RefPtr<WebFrame> toWebFrame(JSContextRef context)
-{
-    ASSERT(context);
-    return WebFrame::frameForContext(JSContextGetGlobalContext(context));
-}
+RefPtr<WebFrame> toWebFrame(JSContextRef);
+RefPtr<WebPage> toWebPage(JSContextRef);
 
-inline RefPtr<WebPage> toWebPage(JSContextRef context)
+inline JSRetainPtr<JSStringRef> toJSString(const String& string)
 {
-    ASSERT(context);
-    auto frame = toWebFrame(context);
-    return frame ? frame->page() : nullptr;
-}
-
-inline JSRetainPtr<JSStringRef> toJSString(const char* string)
-{
-    ASSERT(string);
-    return JSRetainPtr<JSStringRef>(Adopt, JSStringCreateWithUTF8CString(string));
+    return JSRetainPtr(Adopt, JSStringCreateWithUTF8CString(!string.isEmpty() ? string.utf8().data() : ""));
 }
 
 inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, JSValueRef value)
@@ -152,8 +125,6 @@ inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, JSValueRef value)
     ASSERT(context);
     return value ? value : JSValueMakeNull(context);
 }
-
-#if ENABLE(WK_WEB_EXTENSIONS)
 
 inline JSValueRef toJS(JSContextRef context, JSWebExtensionWrappable* impl)
 {
@@ -170,100 +141,90 @@ inline Ref<WebExtensionCallbackHandler> toJSErrorCallbackHandler(JSContextRef co
     return WebExtensionCallbackHandler::create(context, runtime);
 }
 
+template<size_t ArgumentCount>
+JSValueRef callObjectWithArguments(JSValueRef callbackFunction, JSContextRef context, std::array<JSValueRef, ArgumentCount>&& arguments, JSValueRef* exception = nullptr, bool reportException = true)
+{
+    if (!context || !callbackFunction)
+        return nullptr;
+
+    if (!JSValueIsObject(context, callbackFunction))
+        return nullptr;
+
+    JSObjectRef callbackObject = JSValueToObject(context, callbackFunction, exception);
+    if (!callbackObject)
+        return nullptr;
+
+    auto* globalObject = toJS(JSContextGetGlobalContext(context));
+    RefPtr executionContext = globalObject ? downcast<WebCore::JSDOMGlobalObject>(globalObject)->scriptExecutionContext() : nullptr;
+    if (!executionContext || executionContext->activeDOMObjectsAreStopped())
+        return nullptr;
+
+    JSValueRef internalException = nullptr;
+    JSValueRef result = JSObjectCallAsFunction(context, callbackObject, nullptr, ArgumentCount, arguments.data(), &internalException);
+    if (internalException && reportException) {
+        JSC::JSLockHolder lock(globalObject->vm());
+        auto exceptionValue = toJS(globalObject, internalException);
+        WebCore::reportException(globalObject, exceptionValue);
+    }
+
+    if (exception && internalException)
+        *exception = internalException;
+
+    return result;
+}
+
+template<typename T> Vector<T> toVector(JSContextRef, JSValueRef);
+
+template<> Vector<Protected<JSValueRef>> toVector<Protected<JSValueRef>>(JSContextRef, JSValueRef);
+
 RefPtr<WebExtensionCallbackHandler> toJSCallbackHandler(JSContextRef, JSValueRef callback, WebExtensionAPIRuntimeBase&);
 
-#endif // ENABLE(WK_WEB_EXTENSIONS)
+String toString(JSContextRef, JSValueRef, NullStringPolicy = NullStringPolicy::NullAndUndefinedAsNullString);
+
+String toString(JSStringRef);
+
+JSObjectRef toJSError(JSContextRef, const String&);
+
+JSValueRef deserializeJSONString(JSContextRef, const String& jsonString);
+String serializeJSObject(JSContextRef, JSValueRef, JSValueRef* exception);
+
+String toJSONString(JSContextRef, JSValueRef);
+String toSortedJSONString(JSContextRef, JSValueRef);
+bool isFunction(JSContextRef, JSValueRef);
+bool isDictionary(JSContextRef, JSValueRef);
+bool isRegularExpression(JSContextRef, JSValueRef);
+bool isThenable(JSContextRef, JSValueRef);
+
+JSValueRef fromArray(JSContextRef, Vector<Protected<JSValueRef>>&&);
+JSValueRef fromArray(JSContextRef, Vector<size_t>&&);
+JSValueRef fromArray(JSContextRef, Vector<String>&&);
+
+JSValueRef fromJSON(JSContextRef, RefPtr<JSON::Value>);
+JSValueRef fromObject(JSContextRef, HashMap<String, Protected<JSValueRef>>&&);
+
+JSValueRef toJSValueRef(JSContextRef, const String&, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
+
+JSValueRef toWindowObject(JSContextRef, WebFrame&);
+JSValueRef toWindowObject(JSContextRef, WebPage&);
 
 #ifdef __OBJC__
 
-id toNSObject(JSContextRef, JSValueRef, Class containingObjectsOfClass = Nil);
-NSString *toNSString(JSContextRef, JSValueRef, NullStringPolicy = NullStringPolicy::NullAndUndefinedAsNullString);
+id toNSObject(JSContextRef, JSValueRef, Class containingObjectsOfClass = Nil, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 NSDictionary *toNSDictionary(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 
-inline NSArray *toNSArray(JSContextRef context, JSValueRef value, Class containingObjectsOfClass = NSObject.class)
-{
-    ASSERT(containingObjectsOfClass);
-    return toNSObject(context, value, containingObjectsOfClass);
-}
+JSContext *toJSContext(JSContextRef);
 
-inline JSContext *toJSContext(JSContextRef context)
-{
-    ASSERT(context);
-    return [JSContext contextWithJSGlobalContextRef:JSContextGetGlobalContext(context)];
-}
+NSArray *toNSArray(JSContextRef, JSValueRef, Class containingObjectsOfClass = NSObject.class);
+JSValue *toJSValue(JSContextRef, JSValueRef);
 
-inline JSValue *toJSValue(JSContextRef context, JSValueRef value)
-{
-    ASSERT(context);
+JSValueRef toJSValueRef(JSContextRef, id);
 
-    if (!value)
-        return nil;
-
-    return [JSValue valueWithJSValueRef:value inContext:toJSContext(context)];
-}
-
-inline JSValue *toWindowObject(JSContextRef context, WebFrame& frame)
-{
-    ASSERT(context);
-
-    auto frameContext = frame.jsContext();
-    if (!frameContext)
-        return nil;
-
-    return toJSValue(context, JSContextGetGlobalObject(frameContext));
-}
-
-inline JSValue *toWindowObject(JSContextRef context, WebPage& page)
-{
-    ASSERT(context);
-
-    return toWindowObject(context, page.mainWebFrame());
-}
-
-inline JSValueRef toJSValueRef(JSContextRef context, id object)
-{
-    ASSERT(context);
-
-    if (!object)
-        return JSValueMakeUndefined(context);
-
-    if (JSValue *value = dynamic_objc_cast<JSValue>(object))
-        return value.JSValueRef;
-
-    return [JSValue valueWithObject:object inContext:toJSContext(context)].JSValueRef;
-}
-
-JSValueRef toJSValueRef(JSContextRef, NSString *, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
 JSValueRef toJSValueRef(JSContextRef, NSURL *, NullOrEmptyString = NullOrEmptyString::NullStringAsEmptyString);
 
-NSString *toNSString(JSStringRef);
-
-inline JSObjectRef toJSError(JSContextRef context, NSString *string)
-{
-    ASSERT(context);
-
-    RELEASE_LOG_ERROR(Extensions, "Exception thrown: %{public}@", string);
-
-    JSValueRef messageArgument = toJSValueRef(context, string, NullOrEmptyString::NullStringAsEmptyString);
-    return JSObjectMakeError(context, 1, &messageArgument, nullptr);
-}
-
-inline JSRetainPtr<JSStringRef> toJSString(NSString *string)
-{
-    return JSRetainPtr<JSStringRef>(Adopt, JSStringCreateWithCFString(string ? (__bridge CFStringRef)string : CFSTR("")));
-}
-
-inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, id object)
-{
-    ASSERT(context);
-    return object ? toJSValueRef(context, object) : JSValueMakeNull(context);
-}
-
-JSValueRef deserializeJSONString(JSContextRef, NSString *jsonString);
-NSString *serializeJSObject(JSContextRef, JSValueRef, JSValueRef* exception);
-
-inline bool isDictionary(JSContextRef context, JSValueRef value) { return toJSValue(context, value)._isDictionary; }
+JSValueRef toJSValueRefOrJSNull(JSContextRef, id);
 
 #endif // __OBJC__
 
 } // namespace WebKit
+
+#endif // ENABLE(WK_WEB_EXTENSIONS)

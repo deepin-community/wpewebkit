@@ -60,7 +60,7 @@ public:
     }
 
     static ObjCCallbackFunction* create(VM&, JSGlobalObject*, const String& name, std::unique_ptr<ObjCCallbackFunctionImpl>);
-    static constexpr bool needsDestruction = true;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -71,7 +71,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    ObjCCallbackFunctionImpl* impl() const { return m_impl.get(); }
+    ObjCCallbackFunctionImpl* impl() const LIFETIME_BOUND { return m_impl.get(); }
 
 protected:
     ObjCCallbackFunction(VM&, Structure*, JSObjectCallAsFunctionCallback, JSObjectCallAsConstructorCallback, std::unique_ptr<ObjCCallbackFunctionImpl>);

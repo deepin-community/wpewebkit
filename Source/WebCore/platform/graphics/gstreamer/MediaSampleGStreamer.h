@@ -34,12 +34,11 @@ class MediaSampleGStreamer : public MediaSample {
 public:
     static Ref<MediaSampleGStreamer> create(GRefPtr<GstSample>&& sample, const FloatSize& presentationSize, TrackID id)
     {
-        return adoptRef(*new MediaSampleGStreamer(WTFMove(sample), presentationSize, id));
+        return adoptRef(*new MediaSampleGStreamer(WTF::move(sample), presentationSize, id));
     }
 
     static Ref<MediaSampleGStreamer> createFakeSample(GstCaps*, const MediaTime& pts, const MediaTime& dts, const MediaTime& duration, const FloatSize& presentationSize, TrackID);
 
-    void extendToTheBeginning();
     MediaTime presentationTime() const override { return m_pts; }
     MediaTime decodeTime() const override { return m_dts; }
     MediaTime duration() const override { return m_duration; }
@@ -49,9 +48,10 @@ public:
     void offsetTimestampsBy(const MediaTime&) override;
     void setTimestamps(const MediaTime&, const MediaTime&) override;
     Ref<MediaSample> createNonDisplayingCopy() const override;
+    Ref<MediaSample> createCopyWithAdjustedStartTime(const MediaTime& offset) const override;
     SampleFlags flags() const override { return m_flags; }
     PlatformSample platformSample() const override;
-    PlatformSample::Type platformSampleType() const override { return PlatformSample::GStreamerSampleType; }
+    Type type() const override { return Type::GStreamerSample; }
     void dump(PrintStream&) const override;
 
     const GRefPtr<GstSample>& sample() const { return m_sample; }
@@ -62,6 +62,8 @@ protected:
 
 private:
     MediaSampleGStreamer(const FloatSize& presentationSize, TrackID);
+
+    void updateSampleTimestamps(const String&);
 
     MediaTime m_pts;
     MediaTime m_dts;

@@ -4,6 +4,8 @@
 // found in the LICENSE file.
 //
 
+#include "compiler/translator/null/TranslatorNULL.h"
+
 #ifdef ANGLE_ENABLE_ESSL
 #    include "compiler/translator/glsl/TranslatorESSL.h"
 #endif  // ANGLE_ENABLE_ESSL
@@ -24,13 +26,9 @@
 #    include "compiler/translator/msl/TranslatorMSL.h"
 #endif  // ANGLE_ENABLE_METAL
 
-#ifdef ANGLE_ENABLE_WEBGPU
-#    include "compiler/translator/msl/TranslatorMSL.h"
-#endif  // ANGLE_ENABLE_METAL
-
 #ifdef ANGLE_ENABLE_WGPU
 #    include "compiler/translator/wgsl/TranslatorWGSL.h"
-#endif
+#endif  // ANGLE_ENABLE_WGPU
 
 #include "compiler/translator/util.h"
 
@@ -44,6 +42,11 @@ namespace sh
 //
 TCompiler *ConstructCompiler(sh::GLenum type, ShShaderSpec spec, ShShaderOutput output)
 {
+    if (IsOutputNULL(output))
+    {
+        return new TranslatorNULL(type, spec);
+    }
+
 #ifdef ANGLE_ENABLE_ESSL
     if (IsOutputESSL(output))
     {

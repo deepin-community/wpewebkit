@@ -29,7 +29,10 @@
 
 #include "APIObject.h"
 #include "WebExtensionPortChannelIdentifier.h"
+#include <wtf/CanMakeWeakPtr.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
+#include <wtf/WeakPtr.h>
 
 OBJC_CLASS NSError;
 OBJC_CLASS WKWebExtensionMessagePort;
@@ -38,7 +41,7 @@ namespace WebKit {
 
 class WebExtensionContext;
 
-class WebExtensionMessagePort : public API::ObjectImpl<API::Object::Type::WebExtensionMessagePort> {
+class WebExtensionMessagePort : public API::ObjectImpl<API::Object::Type::WebExtensionMessagePort>, public CanMakeWeakPtr<WebExtensionMessagePort> {
     WTF_MAKE_NONCOPYABLE(WebExtensionMessagePort);
 
 public:
@@ -60,18 +63,20 @@ public:
 
     using Error = std::optional<std::pair<ErrorType, std::optional<String>>>;
 
-    bool operator==(const WebExtensionMessagePort&) const;
+    bool NODELETE operator==(const WebExtensionMessagePort&) const;
 
-    const String& applicationIdentifier() const { return m_applicationIdentifier; }
+    const String& applicationIdentifier() const LIFETIME_BOUND { return m_applicationIdentifier; }
     WebExtensionPortChannelIdentifier channelIdentifier() const { return m_channelIdentifier; }
-    WebExtensionContext* extensionContext() const;
+    WebExtensionContext* NODELETE extensionContext() const;
 
-    void disconnect(Error);
+    void disconnect(Error = std::nullopt);
     void reportDisconnection(Error);
-    bool isDisconnected() const;
+    bool NODELETE isDisconnected() const;
 
-    void sendMessage(id message, CompletionHandler<void(Error)>&&);
+#if PLATFORM(COCOA)
+    void sendMessage(id message, CompletionHandler<void(Error)>&& = { });
     void receiveMessage(id message, Error);
+#endif
 
 #ifdef __OBJC__
     WKWebExtensionMessagePort *wrapper() const { return (WKWebExtensionMessagePort *)API::ObjectImpl<API::Object::Type::WebExtensionMessagePort>::wrapper(); }

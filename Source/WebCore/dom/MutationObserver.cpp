@@ -33,36 +33,51 @@
 
 #include "MutationObserver.h"
 
+#include "ContextDestructionObserverInlines.h"
+#include "DOMWrapperWorld.h"
 #include "Document.h"
 #include "GCReachableRef.h"
 #include "HTMLSlotElement.h"
 #include "InspectorInstrumentation.h"
+#include "JSDOMGlobalObject.h"
+#include "JSMutationCallback.h"
 #include "MutationCallback.h"
 #include "MutationObserverRegistration.h"
 #include "MutationRecord.h"
 #include "WindowEventLoop.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/NoTailCalls.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(MutationObserver);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MutationObserver);
 
 static unsigned s_observerPriority = 0;
 
 Ref<MutationObserver> MutationObserver::create(Ref<MutationCallback>&& callback)
 {
     ASSERT(isMainThread());
-    return adoptRef(*new MutationObserver(WTFMove(callback)));
+    return adoptRef(*new MutationObserver(WTF::move(callback)));
 }
 
 MutationObserver::MutationObserver(Ref<MutationCallback>&& callback)
-    : m_callback(WTFMove(callback))
+    : m_callback(WTF::move(callback))
     , m_priority(s_observerPriority++)
+    , m_isInNonNormalWorld(false)
+    , m_isAutoFillWorld(false)
 {
+    if (auto* jsCallback = dynamicDowncast<JSMutationCallback>(m_callback.get())) {
+        if (auto* globalObject = jsCallback->callbackData()->globalObject()) {
+            auto& world = globalObject->world();
+            m_isInNonNormalWorld = !world.isNormal();
+            m_isAutoFillWorld = world.allowAutofill();
+        }
+    }
 }
 
 MutationObserver::~MutationObserver()
@@ -98,10 +113,10 @@ ExceptionOr<void> MutationObserver::observe(Node& node, const Init& init)
         options.add(OptionType::AttributeFilter);
     }
 
-    if (init.attributes ? init.attributes.value() : options.containsAny({ OptionType::AttributeFilter, OptionType::AttributeOldValue }))
+    if (init.attributes ? init.attributes.value() : (init.attributeOldValue.has_value() || init.attributeFilter.has_value()))
         options.add(OptionType::Attributes);
 
-    if (init.characterData ? init.characterData.value() : options.contains(OptionType::CharacterDataOldValue))
+    if (init.characterData ? init.characterData.value() : init.characterDataOldValue.has_value())
         options.add(OptionType::CharacterData);
 
     if (!validateOptions(options))
@@ -114,7 +129,7 @@ ExceptionOr<void> MutationObserver::observe(Node& node, const Init& init)
 
 auto MutationObserver::takeRecords() -> TakenRecords
 {
-    return { WTFMove(m_records), WTFMove(m_pendingTargets) };
+    return { WTF::move(m_records), WTF::move(m_pendingTargets) };
 }
 
 void MutationObserver::disconnect()
@@ -122,10 +137,8 @@ void MutationObserver::disconnect()
     m_pendingTargets.clear();
     m_records.clear();
     WeakHashSet registrations { m_registrations };
-    for (auto& registration : registrations) {
-        Ref nodeRef { registration.node() };
-        nodeRef->unregisterMutationObserver(registration);
-    }
+    for (Ref registration : registrations)
+        protect(registration->node())->unregisterMutationObserver(registration.get());
 }
 
 void MutationObserver::observationStarted(MutationObserverRegistration& registration)
@@ -143,14 +156,13 @@ void MutationObserver::observationEnded(MutationObserverRegistration& registrati
 void MutationObserver::enqueueMutationRecord(Ref<MutationRecord>&& mutation)
 {
     ASSERT(isMainThread());
-    ASSERT(mutation->target());
-    Ref document = mutation->target()->document();
+    Ref document = mutation->target().document();
 
-    m_pendingTargets.add(*mutation->target());
-    m_records.append(WTFMove(mutation));
+    m_pendingTargets.add(mutation->target());
+    m_records.append(WTF::move(mutation));
 
     Ref eventLoop = document->windowEventLoop();
-    eventLoop->activeMutationObservers().add(this);
+    eventLoop->activeMutationObservers().add(*this);
     eventLoop->queueMutationObserverCompoundMicrotask();
 }
 
@@ -168,13 +180,14 @@ void MutationObserver::enqueueSlotChangeEvent(HTMLSlotElement& slot)
 void MutationObserver::setHasTransientRegistration(Document& document)
 {
     Ref eventLoop = document.windowEventLoop();
-    eventLoop->activeMutationObservers().add(this);
+    eventLoop->activeMutationObservers().add(*this);
     eventLoop->queueMutationObserverCompoundMicrotask();
 }
 
 bool MutationObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
-    for (auto& registration : m_registrations) {
+    // We cannot use Ref here since this gets called on a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL for (auto& registration : m_registrations) {
         if (registration.isReachableFromOpaqueRoots(visitor))
             return true;
     }
@@ -192,13 +205,13 @@ void MutationObserver::deliver()
 
     // Calling takeTransientRegistrations() can modify m_registrations, so it's necessary
     // to make a copy of the transient registrations before operating on them.
-    Vector<WeakPtr<MutationObserverRegistration>, 1> transientRegistrations;
+    Vector<Ref<MutationObserverRegistration>, 1> transientRegistrations;
     Vector<HashSet<GCReachableRef<Node>>, 1> nodesToKeepAlive;
     HashSet<GCReachableRef<Node>> pendingTargets;
     pendingTargets.swap(m_pendingTargets);
-    for (auto& registration : m_registrations) {
-        if (registration.hasTransientRegistrations())
-            transientRegistrations.append(registration);
+    for (Ref registration : m_registrations) {
+        if (registration->hasTransientRegistrations())
+            transientRegistrations.append(WTF::move(registration));
     }
     for (auto& registration : transientRegistrations)
         nodesToKeepAlive.append(registration->takeTransientRegistrations());
@@ -218,14 +231,14 @@ void MutationObserver::deliver()
             return;
 
         InspectorInstrumentation::willFireObserverCallback(*context, "MutationObserver"_s);
-        protectedCallback()->handleEvent(*this, records, *this);
+        if (!m_isInNonNormalWorld) [[likely]]
+            m_callback->invoke(*this, records, *this);
+        else if (m_isAutoFillWorld)
+            m_callback->invokeInAutoFillWorld(*this, records, *this);
+        else
+            m_callback->invokeInNonNormalWorld(*this, records, *this);
         InspectorInstrumentation::didFireObserverCallback(*context);
     }
-}
-
-Ref<MutationCallback> MutationObserver::protectedCallback() const
-{
-    return m_callback;
 }
 
 // https://dom.spec.whatwg.org/#notify-mutation-observers
@@ -245,7 +258,7 @@ void MutationObserver::notifyMutationObservers(WindowEventLoop& eventLoop)
         // 2. Let notify list be a copy of unit of related similar-origin browsing contexts' list of MutationObserver objects.
         auto notifyList = copyToVector(eventLoop.activeMutationObservers());
         eventLoop.activeMutationObservers().clear();
-        std::sort(notifyList.begin(), notifyList.end(), [](auto& lhs, auto& rhs) {
+        std::ranges::sort(notifyList, [](auto& lhs, auto& rhs) {
             return lhs->m_priority < rhs->m_priority;
         });
 
@@ -270,6 +283,18 @@ void MutationObserver::notifyMutationObservers(WindowEventLoop& eventLoop)
         for (auto& slot : slotList)
             slot->dispatchSlotChangeEvent();
     }
+}
+
+NEVER_INLINE CallbackResult<void> MutationCallback::invokeInNonNormalWorld(MutationObserver& thisObject, const Vector<Ref<MutationRecord>>& records, MutationObserver& observer)
+{
+    NO_TAIL_CALLS();
+    return invoke(thisObject, records, observer);
+}
+
+NEVER_INLINE CallbackResult<void> MutationCallback::invokeInAutoFillWorld(MutationObserver& thisObject, const Vector<Ref<MutationRecord>>& records, MutationObserver& observer)
+{
+    NO_TAIL_CALLS();
+    return invoke(thisObject, records, observer);
 }
 
 } // namespace WebCore

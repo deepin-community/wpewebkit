@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,13 +26,26 @@
 #include "config.h"
 #include "WebHistoryItemClient.h"
 
+#include "MessageSenderInlines.h"
 #include "SessionState.h"
 #include "SessionStateConversion.h"
-#include "WebProcess.h"
-#include "WebProcessProxyMessages.h"
+#include "WebBackForwardListMessages.h"
+#include "WebPage.h"
+#include "WebPageProxyMessages.h"
+#include <WebCore/DocumentPage.h>
 #include <WebCore/HistoryItem.h>
+#include <WebCore/LocalFrame.h>
+#include <WebCore/Page.h>
+#include <WebCore/Settings.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebHistoryItemClient);
+
+WebHistoryItemClient::WebHistoryItemClient(WebPage& page)
+    : m_page(page)
+{
+}
 
 ScopeExit<CompletionHandler<void()>> WebHistoryItemClient::ignoreChangesForScope()
 {
@@ -42,11 +55,28 @@ ScopeExit<CompletionHandler<void()>> WebHistoryItemClient::ignoreChangesForScope
     } });
 }
 
+ScopeExit<CompletionHandler<void()>> WebHistoryItemClient::ignoreChangesForScopeDuringRedirect(const WebCore::LocalFrame& frame)
+{
+    RefPtr page = frame.page();
+    if (!page || !page->settings().useUIProcessForBackForwardItemLoading() || frame.isMainFrame())
+        return HistoryItemClient::ignoreChangesForScopeDuringRedirect(frame);
+    return ignoreChangesForScope();
+}
+
 void WebHistoryItemClient::historyItemChanged(const WebCore::HistoryItem& item)
 {
     if (m_shouldIgnoreChanges)
         return;
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebProcessProxy::UpdateBackForwardItem(toBackForwardListItemState(item)), 0);
+    if (RefPtr page = m_page.get())
+        page->send(Messages::WebBackForwardList::BackForwardUpdateItem(toFrameState(item)));
+}
+
+void WebHistoryItemClient::clearChildren(const WebCore::HistoryItem& item) const
+{
+    if (m_shouldIgnoreChanges)
+        return;
+    if (RefPtr page = m_page.get())
+        page->send(Messages::WebBackForwardList::BackForwardClearChildren(item.itemID(), item.frameItemID()));
 }
 
 }

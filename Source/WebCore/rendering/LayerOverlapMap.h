@@ -45,7 +45,7 @@ public:
     ~LayerOverlapMap();
     
     struct LayerAndBounds {
-        RenderLayer& layer;
+        CheckedRef<RenderLayer> layer;
         LayoutRect bounds;
     };
 
@@ -62,16 +62,16 @@ public:
     void confirmSpeculativeCompositingContainer();
     bool maybePopSpeculativeCompositingContainer();
 
-    const RenderGeometryMap& geometryMap() const { return m_geometryMap; }
-    RenderGeometryMap& geometryMap() { return m_geometryMap; }
+    const RenderGeometryMap& geometryMap() const LIFETIME_BOUND { return m_geometryMap; }
+    RenderGeometryMap& geometryMap() LIFETIME_BOUND { return m_geometryMap; }
 
-    const Vector<std::unique_ptr<OverlapMapContainer>>& overlapStack() const { return m_overlapStack; }
+    const Vector<std::unique_ptr<OverlapMapContainer>>& overlapStack() const LIFETIME_BOUND { return m_overlapStack; }
 
 private:
     Vector<std::unique_ptr<OverlapMapContainer>> m_overlapStack;
     Vector<std::unique_ptr<OverlapMapContainer>> m_speculativeOverlapStack;
     RenderGeometryMap m_geometryMap;
-    const RenderLayer& m_rootLayer;
+    const CheckedRef<const RenderLayer> m_rootLayer;
     bool m_isEmpty { true };
 };
 

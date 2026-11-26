@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include "InlineIteratorBox.h"
 #include "InlineIteratorLineBox.h"
+#include "InlineIteratorLineBoxLegacyPathInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 
 namespace WebCore {
@@ -38,9 +40,30 @@ inline float previousLineBoxContentBottomOrBorderAndPadding(const LineBox& lineB
 
 inline float contentStartInBlockDirection(const LineBox& lineBox)
 {
-    if (!lineBox.formattingContextRoot().style().isFlippedBlocksWritingMode())
+    if (!lineBox.formattingContextRoot().writingMode().isBlockFlipped())
         return std::max(lineBox.contentLogicalTop(), previousLineBoxContentBottomOrBorderAndPadding(lineBox));
     return std::min(lineBox.contentLogicalBottom(), lineBox.contentLogicalBottomAdjustedForFollowingLineBox());
+}
+
+inline LeafBoxIterator LineBox::logicalLeftmostLeafBox() const
+{
+    return formattingContextRoot().writingMode().isLogicalLeftLineLeft()
+        ? lineLeftmostLeafBox()
+        : lineRightmostLeafBox();
+}
+
+inline LeafBoxIterator LineBox::logicalRightmostLeafBox() const
+{
+    return formattingContextRoot().writingMode().isLogicalLeftLineLeft()
+        ? lineRightmostLeafBox()
+        : lineLeftmostLeafBox();
+}
+
+inline size_t LineBox::lineIndex() const
+{
+    return WTF::switchOn(m_pathVariant, [](const auto& path) {
+        return path.lineIndex();
+    });
 }
 
 }

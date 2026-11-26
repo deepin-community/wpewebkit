@@ -10,6 +10,7 @@
 #include "compiler/translator/Symbol.h"
 #include "compiler/translator/SymbolTable.h"
 #include "compiler/translator/tree_util/BuiltIn.h"
+#include "compiler/translator/tree_util/DriverUniform.h"
 
 namespace sh
 {
@@ -22,81 +23,44 @@ constexpr const ImmutableString kGlVertexIDString("gl_VertexID");
 class TBuiltinsWorkaround : public TIntermTraverser
 {
   public:
-    TBuiltinsWorkaround(TSymbolTable *symbolTable, const ShCompileOptions &options);
+    TBuiltinsWorkaround(TSymbolTable *symbolTable,
+                        const DriverUniform *driverUniforms)
+        : TIntermTraverser(true, false, false, symbolTable),
+          mDriverUniforms(driverUniforms)
+    {}
 
     void visitSymbol(TIntermSymbol *node) override;
-    bool visitDeclaration(Visit, TIntermDeclaration *node) override;
 
   private:
     void ensureVersionIsAtLeast(int version);
 
-    const ShCompileOptions &mCompileOptions;
-
-    bool isBaseInstanceDeclared = false;
+    const DriverUniform *mDriverUniforms;
 };
-
-TBuiltinsWorkaround::TBuiltinsWorkaround(TSymbolTable *symbolTable, const ShCompileOptions &options)
-    : TIntermTraverser(true, false, false, symbolTable), mCompileOptions(options)
-{}
 
 void TBuiltinsWorkaround::visitSymbol(TIntermSymbol *node)
 {
-    if (node->variable().symbolType() == SymbolType::BuiltIn)
+    if (node->variable().symbolType() == SymbolType::BuiltIn &&
+        node->getName() == kGlInstanceIDString)
     {
-        if (node->getName() == kGlInstanceIDString)
-        {
-            TIntermSymbol *instanceIndexRef =
-                new TIntermSymbol(BuiltInVariable::gl_InstanceIndex());
-
-            if (isBaseInstanceDeclared)
-            {
-                TIntermSymbol *baseInstanceRef =
-                    new TIntermSymbol(BuiltInVariable::angle_BaseInstance());
-
-                TIntermBinary *subBaseInstance =
-                    new TIntermBinary(EOpSub, instanceIndexRef, baseInstanceRef);
-                queueReplacement(subBaseInstance, OriginalNode::IS_DROPPED);
-            }
-            else
-            {
-                queueReplacement(instanceIndexRef, OriginalNode::IS_DROPPED);
-            }
-        }
-        else if (node->getName() == kGlVertexIDString)
-        {
-            TIntermSymbol *vertexIndexRef = new TIntermSymbol(BuiltInVariable::gl_VertexIndex());
-            queueReplacement(vertexIndexRef, OriginalNode::IS_DROPPED);
-        }
+        TIntermSymbol *instanceIndexRef = new TIntermSymbol(BuiltInVariable::gl_InstanceIndex());
+        TIntermBinary *subBaseInstance =
+            new TIntermBinary(EOpSub, instanceIndexRef, mDriverUniforms->getBaseInstance());
+        queueReplacement(subBaseInstance, OriginalNode::IS_DROPPED);
+    }
+    else if (node->getName() == kGlVertexIDString)
+    {
+        TIntermSymbol *vertexIndexRef = new TIntermSymbol(BuiltInVariable::gl_VertexIndex());
+        queueReplacement(vertexIndexRef, OriginalNode::IS_DROPPED);
     }
 }
-
-bool TBuiltinsWorkaround::visitDeclaration(Visit, TIntermDeclaration *node)
-{
-    const TIntermSequence &sequence = *(node->getSequence());
-    ASSERT(!sequence.empty());
-
-    for (TIntermNode *variableNode : sequence)
-    {
-        TIntermSymbol *variable = variableNode->getAsSymbolNode();
-        if (variable && variable->variable().symbolType() == SymbolType::BuiltIn)
-        {
-            if (variable->getName() == "angle_BaseInstance")
-            {
-                isBaseInstanceDeclared = true;
-            }
-        }
-    }
-    return true;
-}
-
 }  // anonymous namespace
 
 [[nodiscard]] bool ShaderBuiltinsWorkaround(TCompiler *compiler,
                                             TIntermBlock *root,
-                                            TSymbolTable *symbolTable,
-                                            const ShCompileOptions &compileOptions)
+                                            const DriverUniform *driverUniforms,
+                                            TSymbolTable *symbolTable)
 {
-    TBuiltinsWorkaround builtins(symbolTable, compileOptions);
+    TBuiltinsWorkaround builtins(symbolTable, driverUniforms);
     root->traverse(&builtins);
     if (!builtins.updateTree(compiler, root))
     {

@@ -8,8 +8,14 @@
 #ifndef LIBANGLE_CLKERNEL_H_
 #define LIBANGLE_CLKERNEL_H_
 
+#include <angle_cl.h>
+
 #include "libANGLE/CLObject.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/renderer/CLKernelImpl.h"
+
+#include <cstddef>
+#include <string>
 
 namespace cl
 {
@@ -32,11 +38,29 @@ class Kernel final : public _cl_kernel, public Object
                                    void *value,
                                    size_t *valueSizeRet) const;
 
+    angle::Result getSubWorkGroupInfo(cl_device_id in_device,
+                                      KernelSubGroupInfo param_namePacked,
+                                      size_t input_value_size,
+                                      const void *input_value,
+                                      size_t param_value_size,
+                                      void *param_value,
+                                      size_t *param_value_size_ret) const;
+
     angle::Result getArgInfo(cl_uint argIndex,
                              KernelArgInfo name,
                              size_t valueSize,
                              void *value,
                              size_t *valueSizeRet) const;
+
+    const std::string &getName() const { return mInfo.functionName; }
+
+    bool areAllArgsSet() const
+    {
+        return std::all_of(mSetArguments.begin(), mSetArguments.end(),
+                           [](KernelArg arg) { return arg.isSet == true; });
+    }
+
+    Kernel *clone() const;
 
   public:
     ~Kernel() override;
@@ -51,9 +75,13 @@ class Kernel final : public _cl_kernel, public Object
     Kernel(Program &program, const char *name);
     Kernel(Program &program, const rx::CLKernelImpl::CreateFunc &createFunc);
 
+    void initImpl();
+
     const ProgramPtr mProgram;
     rx::CLKernelImpl::Ptr mImpl;
     rx::CLKernelImpl::Info mInfo;
+
+    std::vector<KernelArg> mSetArguments;
 
     friend class Object;
     friend class Program;

@@ -25,6 +25,9 @@
 
 #pragma once
 
+#include <WebCore/PlatformExportMacros.h>
+#include <optional>
+#include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
@@ -39,10 +42,8 @@ public:
     virtual ~AbstractRange() = default;
 
     virtual Node& startContainer() const = 0;
-    Ref<Node> protectedStartContainer() const;
     virtual unsigned startOffset() const = 0;
     virtual Node& endContainer() const = 0;
-    Ref<Node> protectedEndContainer() const;
     virtual unsigned endOffset() const = 0;
     virtual bool collapsed() const = 0;
 
@@ -50,7 +51,7 @@ public:
 };
 
 WEBCORE_EXPORT SimpleRange makeSimpleRange(const AbstractRange&);
-SimpleRange makeSimpleRange(const Ref<AbstractRange>&);
+WEBCORE_EXPORT SimpleRange makeSimpleRange(const Ref<AbstractRange>&);
 std::optional<SimpleRange> makeSimpleRange(const AbstractRange*);
 std::optional<SimpleRange> makeSimpleRange(const RefPtr<AbstractRange>&);
 

@@ -39,9 +39,7 @@ static const size_t maximumSnapshotCacheSize = 400 * (1024 * 1024);
 namespace WebKit {
 using namespace WebCore;
 
-ViewSnapshotStore::ViewSnapshotStore()
-{
-}
+ViewSnapshotStore::ViewSnapshotStore() = default;
 
 ViewSnapshotStore::~ViewSnapshotStore()
 {
@@ -77,7 +75,7 @@ void ViewSnapshotStore::pruneSnapshots(WebPageProxy& webPageProxy)
 
     // FIXME: We have enough information to do smarter-than-LRU eviction (making use of the back-forward lists, etc.)
 
-    m_snapshotsWithImages.first()->clearImage();
+    Ref { m_snapshotsWithImages.first().get() }->clearImage();
 }
 
 void ViewSnapshotStore::recordSnapshot(WebPageProxy& webPageProxy, WebBackForwardListItem& item)
@@ -96,19 +94,22 @@ void ViewSnapshotStore::recordSnapshot(WebPageProxy& webPageProxy, WebBackForwar
 #if PLATFORM(MAC)
     snapshot->setVolatile(true);
 #endif
+#if PLATFORM(IOS_FAMILY)
+    snapshot->setComputedObscuredInset(webPageProxy.computedObscuredInset());
+#endif
     snapshot->setRenderTreeSize(webPageProxy.renderTreeSize());
     snapshot->setDeviceScaleFactor(webPageProxy.deviceScaleFactor());
     snapshot->setBackgroundColor(webPageProxy.pageExtendedBackgroundColor());
     snapshot->setViewScrollPosition(WebCore::roundedIntPoint(webPageProxy.viewScrollPosition()));
     snapshot->setOrigin(WebCore::SecurityOriginData::fromURL(URL(item.url())));
 
-    item.setSnapshot(WTFMove(snapshot));
+    item.setSnapshot(WTF::move(snapshot));
 }
 
 void ViewSnapshotStore::discardSnapshotImages()
 {
     while (!m_snapshotsWithImages.isEmpty())
-        m_snapshotsWithImages.first()->clearImage();
+        Ref { m_snapshotsWithImages.first().get() }->clearImage();
 }
 
 void ViewSnapshotStore::discardSnapshotImagesForOrigin(const WebCore::SecurityOriginData& origin)

@@ -27,6 +27,8 @@
 
 #if ENABLE(IPC_TESTING_API)
 
+#include <wtf/Compiler.h>
+
 #include "Decoder.h"
 #include "HandleMessage.h"
 #include <JavaScriptCore/JSArray.h>
@@ -75,6 +77,7 @@ template<> JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, Web
 template<typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>
 JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, T)
 {
+    return JSC::JSValue();
 }
 
 template<typename E, std::enable_if_t<std::is_enum<E>::value>* = nullptr>
@@ -96,18 +99,6 @@ template<> JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, uin
 template<> JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, uint32_t);
 template<> JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, uint64_t);
 template<> JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject*, size_t);
-
-template<typename U>
-JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject* globalObject, LegacyNullableObjectIdentifier<U>&& value)
-{
-    return jsValueForDecodedArgumentValue(globalObject, value.toUInt64());
-}
-
-template<typename U>
-JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject* globalObject, LegacyNullableAtomicObjectIdentifier<U>&& value)
-{
-    return jsValueForDecodedArgumentValue(globalObject, value.toUInt64());
-}
 
 template<typename U>
 JSC::JSValue jsValueForDecodedArgumentValue(JSC::JSGlobalObject* globalObject, ObjectIdentifier<U>&& value)
@@ -158,20 +149,19 @@ template<typename T, typename... Elements>
 std::optional<JSC::JSValue> putJSValueForDecodeArgumentInArray(JSC::JSGlobalObject* globalObject, IPC::Decoder& decoder, JSC::JSArray* array, size_t currentIndex, std::tuple<T, Elements...>*)
 {
     auto startingBufferOffset = decoder.currentBufferOffset();
-    std::optional<T> value;
-    decoder >> value;
+    std::optional<T> value = decoder.decode<T>();
     if (!value)
         return std::nullopt;
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto jsValue = jsValueForDecodedArgumentValue(globalObject, WTFMove(*value));
+    auto jsValue = jsValueForDecodedArgumentValue(globalObject, WTF::move(*value));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (jsValue.isEmpty()) {
         // Create array buffers out of types we don't recognize.
         auto span = decoder.span().subspan(startingBufferOffset, decoder.currentBufferOffset() - startingBufferOffset);
         auto arrayBuffer = JSC::ArrayBuffer::create(span);
         if (auto* structure = globalObject->arrayBufferStructure(arrayBuffer->sharingMode()))
-            jsValue = JSC::JSArrayBuffer::create(Ref { globalObject->vm() }, structure, WTFMove(arrayBuffer));
+            jsValue = JSC::JSArrayBuffer::create(Ref { globalObject->vm() }, structure, WTF::move(arrayBuffer));
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     array->putDirectIndex(globalObject, currentIndex, jsValue);

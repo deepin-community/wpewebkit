@@ -26,7 +26,8 @@
 #include "GenericMediaQuerySerialization.h"
 
 #include "CSSMarkup.h"
-#include "CSSValue.h"
+#include "CSSPrimitiveNumericTypes+Serialization.h"
+#include "CSSSerializationContext.h"
 
 namespace WebCore {
 namespace MQ {
@@ -62,6 +63,18 @@ void serialize(StringBuilder& builder, const Condition& condition)
     }
 }
 
+static void serialize(StringBuilder& builder, const Value& value)
+{
+    WTF::switchOn(value,
+        [&](const auto& value) {
+            CSS::serializationForCSS(builder, CSS::defaultSerializationContext(), value);
+        },
+        [&](const Ref<CSSCustomPropertyValue>& value) {
+            builder.append(protect(value)->cssText(CSS::defaultSerializationContext()));
+        }
+    );
+}
+
 void serialize(StringBuilder& builder, const Feature& feature)
 {
     auto serializeRangeComparisonOperator = [&](ComparisonOperator op) {
@@ -88,7 +101,7 @@ void serialize(StringBuilder& builder, const Feature& feature)
 
     switch (feature.syntax) {
     case Syntax::Boolean:
-        serializeIdentifier(feature.name, builder);
+        serializeIdentifier(builder, feature.name);
         break;
 
     case Syntax::Plain:
@@ -106,22 +119,26 @@ void serialize(StringBuilder& builder, const Feature& feature)
             ASSERT_NOT_REACHED();
             break;
         }
-        serializeIdentifier(feature.name, builder);
+        serializeIdentifier(builder, feature.name);
 
-        builder.append(": "_s, feature.rightComparison->value->cssText());
+        builder.append(": "_s);
+        serialize(builder, *feature.rightComparison->value);
         break;
 
     case Syntax::Range:
         if (feature.leftComparison) {
-            builder.append(feature.leftComparison->value->cssText());
+            serialize(builder, *feature.leftComparison->value);
             serializeRangeComparisonOperator(feature.leftComparison->op);
         }
 
-        serializeIdentifier(feature.name, builder);
+        if (feature.subject)
+            serialize(builder, *feature.subject);
+        else
+            serializeIdentifier(builder, feature.name);
 
         if (feature.rightComparison) {
             serializeRangeComparisonOperator(feature.rightComparison->op);
-            builder.append(feature.rightComparison->value->cssText());
+            serialize(builder, *feature.rightComparison->value);
         }
         break;
     }

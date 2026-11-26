@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 #include "SimpleRange.h"
 
 #include "CharacterData.h"
+#include "BoundaryPointInlines.h"
 #include "HTMLFrameOwnerElement.h"
 #include "LocalFrame.h"
 #include "NodeTraversal.h"
@@ -41,9 +42,14 @@ SimpleRange::SimpleRange(const BoundaryPoint& start, const BoundaryPoint& end)
 }
 
 SimpleRange::SimpleRange(BoundaryPoint&& start, BoundaryPoint&& end)
-    : start(WTFMove(start))
-    , end(WTFMove(end))
+    : start(WTF::move(start))
+    , end(WTF::move(end))
 {
+}
+
+String SimpleRange::debugDescription() const
+{
+    return makeString("{start: "_s, start.debugDescription(), ", end: "_s, end.debugDescription(), '}');
 }
 
 WeakSimpleRange::WeakSimpleRange(const WeakBoundaryPoint& start, const WeakBoundaryPoint& end)
@@ -53,8 +59,8 @@ WeakSimpleRange::WeakSimpleRange(const WeakBoundaryPoint& start, const WeakBound
 }
 
 WeakSimpleRange::WeakSimpleRange(WeakBoundaryPoint&& start, WeakBoundaryPoint&& end)
-    : start(WTFMove(start))
-    , end(WTFMove(end))
+    : start(WTF::move(start))
+    , end(WTF::move(end))
 {
 }
 
@@ -78,7 +84,7 @@ OffsetRange characterDataOffsetRange(const SimpleRange& range, const Node& node)
         &node == range.end.container.ptr() ? range.end.offset : std::numeric_limits<unsigned>::max() };
 }
 
-static RefPtr<Node> firstIntersectingNode(const SimpleRange& range)
+static RefPtr<Node> NODELETE firstIntersectingNode(const SimpleRange& range)
 {
     if (range.start.container->isCharacterDataNode())
         return range.start.container.ptr();
@@ -87,7 +93,7 @@ static RefPtr<Node> firstIntersectingNode(const SimpleRange& range)
     return NodeTraversal::nextSkippingChildren(range.start.container);
 }
 
-static RefPtr<Node> nodePastLastIntersectingNode(const SimpleRange& range)
+static RefPtr<Node> NODELETE nodePastLastIntersectingNode(const SimpleRange& range)
 {
     if (range.end.container->isCharacterDataNode())
         return NodeTraversal::nextSkippingChildren(range.end.container);
@@ -96,7 +102,7 @@ static RefPtr<Node> nodePastLastIntersectingNode(const SimpleRange& range)
     return NodeTraversal::nextSkippingChildren(range.end.container);
 }
 
-static RefPtr<Node> firstIntersectingNodeWithDeprecatedZeroOffsetStartQuirk(const SimpleRange& range)
+static RefPtr<Node> NODELETE firstIntersectingNodeWithDeprecatedZeroOffsetStartQuirk(const SimpleRange& range)
 {
     if (range.start.container->isCharacterDataNode())
         return range.start.container.ptr();
@@ -130,7 +136,7 @@ void IntersectingNodeIterator::advance()
 
 void IntersectingNodeIterator::advanceSkippingChildren()
 {
-    auto node = protectedNode();
+    RefPtr node = m_node;
     ASSERT(node);
     m_node = node->contains(m_pastLastNode.get()) ? nullptr : NodeTraversal::nextSkippingChildren(*node);
     enforceEndInvariant();
@@ -177,6 +183,8 @@ bool contains(TreeType type, const SimpleRange& range, const BoundaryPoint& poin
         return contains<ShadowIncludingTree>(range, point);
     case ComposedTree:
         return contains<ComposedTree>(range, point);
+    case ComposedTreeIncludingPseudoElements:
+        return contains<ComposedTreeIncludingPseudoElements>(range, point);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -220,6 +228,8 @@ bool contains(TreeType type, const SimpleRange& outerRange, const SimpleRange& i
         return contains<ShadowIncludingTree>(outerRange, innerRange);
     case ComposedTree:
         return contains<ComposedTree>(outerRange, innerRange);
+    case ComposedTreeIncludingPseudoElements:
+        return contains<ComposedTreeIncludingPseudoElements>(outerRange, innerRange);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -242,6 +252,8 @@ bool intersectsForTesting(TreeType type, const SimpleRange& a, const SimpleRange
         return intersects<ShadowIncludingTree>(a, b);
     case ComposedTree:
         return intersects<ComposedTree>(a, b);
+    case ComposedTreeIncludingPseudoElements:
+        return contains<ComposedTreeIncludingPseudoElements>(a, b);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -285,6 +297,8 @@ bool contains(TreeType type, const SimpleRange& range, const Node& node)
         return contains<ShadowIncludingTree>(range, node);
     case ComposedTree:
         return contains<ComposedTree>(range, node);
+    case ComposedTreeIncludingPseudoElements:
+        return contains<ComposedTreeIncludingPseudoElements>(range, node);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -292,7 +306,7 @@ bool contains(TreeType type, const SimpleRange& range, const Node& node)
 
 template<TreeType treeType> bool contains(const Node& outer, const Node& inner)
 {
-    for (auto inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
+    for (RefPtr inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
         if (inclusiveAncestor == &outer)
             return true;
     }
@@ -327,6 +341,8 @@ bool intersectsForTesting(TreeType type, const SimpleRange& range, const Node& n
         return intersects<ShadowIncludingTree>(range, node);
     case ComposedTree:
         return intersects<ComposedTree>(range, node);
+    case ComposedTreeIncludingPseudoElements:
+        return contains<ComposedTreeIncludingPseudoElements>(range, node);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -334,7 +350,7 @@ bool intersectsForTesting(TreeType type, const SimpleRange& range, const Node& n
 
 bool containsCrossingDocumentBoundaries(const SimpleRange& range, Node& node)
 {
-    auto* ancestor = &node;
+    RefPtr ancestor = &node;
     while (&range.start.document() != &ancestor->document()) {
         ancestor = ancestor->document().ownerElement();
         if (!ancestor)

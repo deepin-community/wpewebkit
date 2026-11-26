@@ -33,8 +33,9 @@
 #include "CachedResource.h"
 #include "CachedSVGDocument.h"
 #include "Document.h"
+#include "ExceptionOr.h"
 #include "FrameDestructionObserverInlines.h"
-#include "InspectorPageAgent.h"
+#include "InspectorResourceUtilities.h"
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
@@ -49,12 +50,18 @@ using namespace Inspector;
 
 InspectorAuditResourcesObject::InspectorAuditResourcesObject(InspectorAuditAgent& auditAgent)
     : m_auditAgent(auditAgent)
+    , m_cachedResourceClient(*this)
+    , m_cachedFontClient(*this)
+    , m_cachedImageClient(*this)
+    , m_cachedRawResourceClient(*this)
+    , m_cachedSVGDocumentClient(*this)
+    , m_cachedStyleSheetClient(*this)
 {
 }
 
 InspectorAuditResourcesObject::~InspectorAuditResourcesObject()
 {
-    for (auto* cachedResource : m_resources.values())
+    for (RefPtr cachedResource : m_resources.values())
         cachedResource->removeClient(clientForResource(*cachedResource));
 }
 
@@ -64,11 +71,11 @@ ExceptionOr<Vector<InspectorAuditResourcesObject::Resource>> InspectorAuditResou
 
     Vector<Resource> resources;
 
-    auto* frame = document.frame();
+    RefPtr frame = document.frame();
     if (!frame)
         return Exception { ExceptionCode::NotAllowedError, "Cannot be called with a detached document"_s };
 
-    for (auto* cachedResource : InspectorPageAgent::cachedResourcesForFrame(frame)) {
+    for (RefPtr cachedResource : ResourceUtilities::cachedResourcesForFrame(frame)) {
         Resource resource;
         resource.url = cachedResource->url().string();
         resource.mimeType = cachedResource->mimeType();
@@ -88,7 +95,7 @@ ExceptionOr<Vector<InspectorAuditResourcesObject::Resource>> InspectorAuditResou
             m_resources.add(resource.id, cachedResource);
         }
 
-        resources.append(WTFMove(resource));
+        resources.append(WTF::move(resource));
     }
 
     return resources;
@@ -98,24 +105,24 @@ ExceptionOr<InspectorAuditResourcesObject::ResourceContent> InspectorAuditResour
 {
     ERROR_IF_NO_ACTIVE_AUDIT();
 
-    auto* frame = document.frame();
+    RefPtr frame = document.frame();
     if (!frame)
         return Exception { ExceptionCode::NotAllowedError, "Cannot be called with a detached document"_s };
 
-    auto* cachedResource = m_resources.get(id);
+    RefPtr cachedResource = m_resources.get(id);
     if (!cachedResource)
         return Exception { ExceptionCode::NotFoundError, makeString("Unknown identifier "_s, id) };
 
     Inspector::Protocol::ErrorString errorString;
     ResourceContent resourceContent;
-    InspectorPageAgent::resourceContent(errorString, frame, cachedResource->url(), &resourceContent.data, &resourceContent.base64Encoded);
+    ResourceUtilities::resourceContent(errorString, frame, cachedResource->url(), &resourceContent.data, &resourceContent.base64Encoded);
     if (!errorString.isEmpty())
         return Exception { ExceptionCode::NotFoundError, errorString };
 
     return resourceContent;
 }
 
-CachedResourceClient& InspectorAuditResourcesObject::clientForResource(const CachedResource& cachedResource)
+Ref<CachedResourceClient> InspectorAuditResourcesObject::clientForResource(const CachedResource& cachedResource)
 {
     if (is<CachedCSSStyleSheet>(cachedResource))
         return m_cachedStyleSheetClient;

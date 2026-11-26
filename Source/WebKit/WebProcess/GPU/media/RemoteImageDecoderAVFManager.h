@@ -35,6 +35,7 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/HashMap.h>
+#include <wtf/MainThread.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
@@ -56,9 +57,7 @@ public:
     void setUseGPUProcess(bool);
     GPUProcessConnection& ensureGPUProcessConnection();
 
-    void ref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteImageDecoderAVFManager>::ref(); }
-    void deref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteImageDecoderAVFManager>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteImageDecoderAVFManager>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:
     RemoteImageDecoderAVFManager();
@@ -68,9 +67,9 @@ private:
     void gpuProcessConnectionDidClose(GPUProcessConnection&) final;
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    void encodedDataStatusChanged(const WebCore::ImageDecoderIdentifier&, size_t frameCount, const WebCore::IntSize&, bool hasTrack);
+    void encodedDataStatusChanged(const WebCore::ImageDecoderIdentifier&, uint64_t frameCount, const WebCore::IntSize&, bool hasTrack);
 
-    HashMap<WebCore::ImageDecoderIdentifier, WeakPtr<RemoteImageDecoderAVF>> m_remoteImageDecoders;
+    HashMap<WebCore::ImageDecoderIdentifier, WeakPtr<RemoteImageDecoderAVF>> m_remoteImageDecoders WTF_GUARDED_BY_CAPABILITY(mainRunLoop);
 
     ThreadSafeWeakPtr<GPUProcessConnection> m_gpuProcessConnection;
 };

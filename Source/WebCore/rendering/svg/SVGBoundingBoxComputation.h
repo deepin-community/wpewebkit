@@ -19,13 +19,13 @@
 
 #pragma once
 
-#include "RenderLayerModelObject.h"
+#include <WebCore/FloatRect.h>
+#include <WebCore/RenderLayerModelObject.h>
+#include <wtf/Markable.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
-
-class FloatRect;
 
 class SVGBoundingBoxComputation {
     WTF_MAKE_NONCOPYABLE(SVGBoundingBoxComputation);
@@ -53,6 +53,7 @@ public:
     static constexpr DecorationOptions strokeBoundingBoxDecoration = { DecorationOption::IncludeFillShape, DecorationOption::IncludeStrokeShape };
     static constexpr DecorationOptions filterBoundingBoxDecoration = { DecorationOption::OverrideBoxWithFilterBox, DecorationOption::OverrideBoxWithFilterBoxForChildren };
     static constexpr DecorationOptions repaintBoundingBoxDecoration = { DecorationOption::IncludeFillShape, DecorationOption::IncludeStrokeShape, DecorationOption::IncludeMarkers, DecorationOption::IncludeClippers, DecorationOption::IncludeMaskers, DecorationOption::OverrideBoxWithFilterBox, DecorationOption::CalculateFastRepaintRect };
+    static constexpr DecorationOptions decoratedBoundingBoxDecoration = { DecorationOption::IncludeFillShape, DecorationOption::IncludeStrokeShape, DecorationOption::IncludeMarkers };
 
     FloatRect computeDecoratedBoundingBox(const DecorationOptions&, bool* boundingBoxValid = nullptr) const;
 
@@ -67,7 +68,17 @@ public:
         return computeDecoratedBoundingBox(renderer, repaintBoundingBoxDecoration);
     }
 
+    static FloatRect computeDecoratedBoundingBox(const RenderLayerModelObject& renderer)
+    {
+        return computeDecoratedBoundingBox(renderer, decoratedBoundingBoxDecoration);
+    }
+
     static LayoutRect computeVisualOverflowRect(const RenderLayerModelObject&);
+
+    // Recompute the transform-dependent bounding boxes shared by RenderSVGContainer and
+    // RenderSVGRoot after a descendant transform changed outside layout. Pass objectBoundingBoxValid
+    // where the caller tracks it (RenderSVGContainer), else omit it (RenderSVGRoot).
+    static void recomputeTransformDependentBoundingBoxes(const RenderLayerModelObject& renderer, bool& dirty, FloatRect& objectBoundingBox, Markable<FloatRect>& strokeBoundingBox, bool* objectBoundingBoxValid = nullptr);
 
 private:
     FloatRect handleShapeOrTextOrInline(const DecorationOptions&, bool* boundingBoxValid = nullptr) const;

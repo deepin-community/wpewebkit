@@ -27,6 +27,7 @@
 #include "StreamServerConnection.h"
 
 #include "Connection.h"
+#include "MessageLog.h"
 #include "StreamConnectionWorkQueue.h"
 #include <mutex>
 #include <wtf/NeverDestroyed.h>
@@ -35,23 +36,23 @@ namespace IPC {
 
 RefPtr<StreamServerConnection> StreamServerConnection::tryCreate(Handle&& handle, const StreamServerConnectionParameters& params)
 {
-    auto buffer = StreamServerConnectionBuffer::map(WTFMove(handle.buffer));
+    auto buffer = StreamServerConnectionBuffer::map(WTF::move(handle.buffer));
     if (!buffer)
         return { };
 
-    auto connection = IPC::Connection::createClientConnection(IPC::Connection::Identifier { WTFMove(handle.outOfStreamConnection) });
+    auto connection = IPC::Connection::createClientConnection(IPC::Connection::Identifier { WTF::move(handle.outOfStreamConnection) });
 
 #if ENABLE(IPC_TESTING_API)
     if (params.ignoreInvalidMessageForTesting)
         connection->setIgnoreInvalidMessageForTesting();
 #endif
 
-    return adoptRef(*new StreamServerConnection(WTFMove(connection), WTFMove(*buffer)));
+    return adoptRef(*new StreamServerConnection(WTF::move(connection), WTF::move(*buffer)));
 }
 
 StreamServerConnection::StreamServerConnection(Ref<Connection> connection, StreamServerConnectionBuffer&& stream)
-    : m_connection(WTFMove(connection))
-    , m_buffer(WTFMove(stream))
+    : m_connection(WTF::move(connection))
+    , m_buffer(WTF::move(stream))
 {
 }
 
@@ -60,13 +61,14 @@ StreamServerConnection::~StreamServerConnection()
     ASSERT(!m_connection->isValid());
 }
 
-void StreamServerConnection::open(StreamConnectionWorkQueue& workQueue)
+void StreamServerConnection::open(Client& client, StreamConnectionWorkQueue& workQueue)
 {
-    m_workQueue = &workQueue;
+    m_client = &client;
+    m_workQueue = workQueue;
     // FIXME(http://webkit.org/b/238986): Workaround for not being able to deliver messages from the dedicated connection to the work queue the client uses.
-    Ref connection = m_connection;
-    connection->addMessageReceiveQueue(*this, { });
-    connection->open(*this, workQueue);
+    // This delivers both valid and invalid messages to *this.
+    m_connection->addMessageReceiveQueue(*this, { });
+    m_connection->open(*this, workQueue);
     workQueue.addStreamConnection(*this);
 }
 
@@ -77,10 +79,11 @@ void StreamServerConnection::invalidate()
         connection->invalidate();
         return;
     }
-    protectedWorkQueue()->removeStreamConnection(*this);
+    protect(m_workQueue)->removeStreamConnection(*this);
     connection->invalidate();
     connection->removeMessageReceiveQueue({ });
     m_workQueue = nullptr;
+    m_client = nullptr;
     Locker locker { m_outOfStreamMessagesLock };
     m_outOfStreamMessages.clear();
 }
@@ -105,10 +108,10 @@ void StreamServerConnection::enqueueMessage(Connection&, UniqueRef<Decoder>&& me
 {
     {
         Locker locker { m_outOfStreamMessagesLock };
-        m_outOfStreamMessages.append(WTFMove(message));
+        m_outOfStreamMessages.append(WTF::move(message));
     }
     ASSERT(m_workQueue);
-    protectedWorkQueue()->wakeUp();
+    protect(m_workQueue)->wakeUp();
 }
 
 void StreamServerConnection::didReceiveMessage(Connection&, Decoder&)
@@ -116,11 +119,10 @@ void StreamServerConnection::didReceiveMessage(Connection&, Decoder&)
     // All messages go to message queue.
     ASSERT_NOT_REACHED();
 }
-bool StreamServerConnection::didReceiveSyncMessage(Connection&, Decoder&, UniqueRef<Encoder>&)
+void StreamServerConnection::didReceiveSyncMessage(Connection&, Decoder&, UniqueRef<Encoder>&)
 {
     // All messages go to message queue.
     ASSERT_NOT_REACHED();
-    return false;
 }
 
 void StreamServerConnection::didClose(Connection&)
@@ -128,9 +130,9 @@ void StreamServerConnection::didClose(Connection&)
     // Client is expected to listen to didClose from the main connection.
 }
 
-void StreamServerConnection::didReceiveInvalidMessage(Connection&, MessageName, int32_t)
+void StreamServerConnection::didReceiveInvalidMessage(Connection&, MessageName, const Vector<uint32_t>&)
 {
-    // The sender is expected to be trusted, so all invalid messages are programming errors.
+    // All messages go to message queue.
     ASSERT_NOT_REACHED();
 }
 
@@ -146,16 +148,16 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
             return DispatchResult::HasNoMessages;
         IPC::Decoder decoder { *span, m_currentDestinationID };
         if (!decoder.isValid()) {
-            protectedConnection()->dispatchDidReceiveInvalidMessage(decoder.messageName(), decoder.indexOfObjectFailingDecoding());
+            dispatchDidReceiveInvalidMessage(decoder);
             return DispatchResult::HasNoMessages;
         }
         if (decoder.messageName() == MessageName::SetStreamDestinationID) {
-            if (!processSetStreamDestinationID(WTFMove(decoder), currentReceiver))
+            if (!processSetStreamDestinationID(decoder, currentReceiver))
                 return DispatchResult::HasNoMessages;
             continue;
         }
         if (decoder.messageName() == MessageName::ProcessOutOfStreamMessage) {
-            if (!dispatchOutOfStreamMessage(WTFMove(decoder)))
+            if (!processOutOfStreamMessage(decoder))
                 return DispatchResult::HasNoMessages;
             continue;
         }
@@ -166,7 +168,7 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
         if (!currentReceiver) {
             auto key = std::make_pair(static_cast<uint8_t>(currentReceiverName), m_currentDestinationID);
             if (!ReceiversMap::isValidKey(key)) {
-                protectedConnection()->dispatchDidReceiveInvalidMessage(decoder.messageName(), decoder.indexOfObjectFailingDecoding());
+                dispatchDidReceiveInvalidMessage(decoder);
                 return DispatchResult::HasNoMessages;
             }
             Locker locker { m_receiversLock };
@@ -182,17 +184,17 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
             ASSERT(m_receivers.isEmpty());
             return DispatchResult::HasNoMessages;
         }
-        if (!dispatchStreamMessage(WTFMove(decoder), *currentReceiver))
+        if (!processStreamMessage(decoder, *currentReceiver))
             return DispatchResult::HasNoMessages;
     }
     return DispatchResult::HasMoreMessages;
 }
 
-bool StreamServerConnection::processSetStreamDestinationID(Decoder&& decoder, RefPtr<StreamMessageReceiver>& currentReceiver)
+bool StreamServerConnection::processSetStreamDestinationID(Decoder& decoder, RefPtr<StreamMessageReceiver>& currentReceiver)
 {
     auto destinationID = decoder.decode<uint64_t>();
     if (!destinationID) {
-        protectedConnection()->dispatchDidReceiveInvalidMessage(decoder.messageName(), decoder.indexOfObjectFailingDecoding());
+        dispatchDidReceiveInvalidMessage(decoder);
         return false;
     }
     if (m_currentDestinationID != *destinationID) {
@@ -205,32 +207,27 @@ bool StreamServerConnection::processSetStreamDestinationID(Decoder&& decoder, Re
     return true;
 }
 
-bool StreamServerConnection::dispatchStreamMessage(Decoder&& decoder, StreamMessageReceiver& receiver)
+bool StreamServerConnection::processStreamMessage(Decoder& decoder, StreamMessageReceiver& receiver)
 {
-    ASSERT(!m_isDispatchingStreamMessage);
-    m_isDispatchingStreamMessage = true;
-    receiver.didReceiveStreamMessage(*this, decoder);
-    m_isDispatchingStreamMessage = false;
-    if (!decoder.isValid()) {
-        Ref connection = m_connection;
-#if ENABLE(IPC_TESTING_API)
-        if (connection->ignoreInvalidMessageForTesting())
-            return false;
-#endif // ENABLE(IPC_TESTING_API)
-        connection->dispatchDidReceiveInvalidMessage(decoder.messageName(), decoder.indexOfObjectFailingDecoding());
+    ASSERT(!m_isProcessingStreamMessage);
+    m_isProcessingStreamMessage = true;
+    bool didSucceed = dispatchStreamMessage(decoder, receiver);
+    m_isProcessingStreamMessage = false;
+    if (!didSucceed)
         return false;
-    }
     WakeUpClient result = WakeUpClient::No;
-    if (decoder.isSyncMessage())
+    if (decoder.isSyncMessage()) {
         result = m_buffer.releaseAll();
-    else
+        if (m_syncReplyToDispatch)
+            protect(connection())->sendSyncReply(makeUniqueRefFromNonNullUniquePtr(WTF::move(m_syncReplyToDispatch)));
+    } else
         result = m_buffer.release(decoder.currentBufferOffset());
     if (result == WakeUpClient::Yes)
         m_clientWaitSemaphore.signal();
     return true;
 }
 
-bool StreamServerConnection::dispatchOutOfStreamMessage(Decoder&& decoder)
+bool StreamServerConnection::processOutOfStreamMessage(Decoder& decoder)
 {
     std::unique_ptr<Decoder> message;
     {
@@ -240,24 +237,25 @@ bool StreamServerConnection::dispatchOutOfStreamMessage(Decoder&& decoder)
         message = m_outOfStreamMessages.takeFirst().moveToUniquePtr();
     }
 
+    auto key = std::make_pair(static_cast<uint8_t>(message->messageReceiverName()), static_cast<uint64_t>(message->destinationID()));
+
+    if (!message->isValid() || !m_receivers.isValidKey(key)) {
+        // The ignoreInvalidMessageForTesting() path for sync messages that dispatchStreamMessage() has
+        //  is not supported here because it is likely we don't have a id to reply to. No clients for this.
+        dispatchDidReceiveInvalidMessage(*message);
+        return false;
+    }
+
     RefPtr<StreamMessageReceiver> receiver;
     {
-        auto key = std::make_pair(static_cast<uint8_t>(message->messageReceiverName()), static_cast<uint64_t>(message->destinationID()));
         Locker locker { m_receiversLock };
         receiver = m_receivers.get(key);
     }
     if (receiver) {
-        receiver->didReceiveStreamMessage(*this, *message);
-        if (!message->isValid()) {
-            Ref connection = m_connection;
-#if ENABLE(IPC_TESTING_API)
-            if (connection->ignoreInvalidMessageForTesting())
-                return false;
-#endif // ENABLE(IPC_TESTING_API)
-            connection->dispatchDidReceiveInvalidMessage(message->messageName(), message->indexOfObjectFailingDecoding());
+        if (!dispatchStreamMessage(*message, *receiver))
             return false;
-        }
     }
+
     // If receiver does not exist if it has been removed but messages are still pending to be
     // processed. It's ok to skip such messages.
     // FIXME: Note, corresponding skip is not possible at the moment for stream messages.
@@ -267,19 +265,49 @@ bool StreamServerConnection::dispatchOutOfStreamMessage(Decoder&& decoder)
     return true;
 }
 
-RefPtr<StreamConnectionWorkQueue> StreamServerConnection::protectedWorkQueue() const
+bool StreamServerConnection::dispatchStreamMessage(Decoder& message, StreamMessageReceiver& receiver)
 {
-    return m_workQueue;
-}
-
-#if ENABLE(IPC_TESTING_API)
-void StreamServerConnection::sendDeserializationErrorSyncReply(Connection::SyncRequestID syncRequestID)
-{
-    auto encoder = makeUniqueRef<Encoder>(MessageName::SyncMessageReply, syncRequestID.toUInt64());
-    encoder->setSyncMessageDeserializationFailure();
-    protectedConnection()->sendSyncReply(WTFMove(encoder));
-}
+#if ASSERT_ENABLED
+    m_isDispatchingMessage = true;
 #endif
+    IPC::messageLog().add(message.messageName());
+    receiver.didReceiveStreamMessage(*this, message);
+#if ASSERT_ENABLED
+    m_isDispatchingMessage = false;
+#endif
+    auto didReceiveInvalidMessage = std::exchange(m_didReceiveInvalidMessage, false);
+    if (!didReceiveInvalidMessage && message.isValid())
+        return true;
 
+    Ref connection = m_connection;
+#if ENABLE(IPC_TESTING_API)
+    if (connection->ignoreInvalidMessageForTesting()) {
+        // Typically failed decodes are not expected, and thus they cause an assertion and stream
+        // timeout.
+        // Sync message decode error on IPC testing API is a special case. IPC testing API sends only
+        // out of stream messages and thus only expects out of stream replies.
+        if (!m_isProcessingStreamMessage && message.isSyncMessage()) {
+            connection->sendSyncReply(makeUniqueRef<Encoder>(MessageName::CancelSyncMessageReply, message.syncRequestID().toUInt64()));
+            return true;
+        }
+        return false;
+    }
+#endif
+    dispatchDidReceiveInvalidMessage(message);
+    return false;
+}
+
+void StreamServerConnection::dispatchDidReceiveInvalidMessage(Decoder& message)
+{
+    CheckedPtr { m_client }->didReceiveInvalidMessage(*this, message.messageName(), message.indicesOfObjectsFailingDecoding());
+    invalidate();
+}
+
+void StreamServerConnection::markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error)
+{
+    UNUSED_PARAM(error);
+    ASSERT(m_isDispatchingMessage);
+    m_didReceiveInvalidMessage = true;
+}
 
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2022 Apple Inc.  All rights reserved.
+* Copyright (C) 2022 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -24,16 +24,16 @@
 */
 
 typedef (double or CSSNumericValue) CSSNumberish;
-typedef (DOMString or CSSKeywordValue) CSSKeywordish;
-typedef (CSSNumberish or CSSKeywordish) CSSColorAngle;
-typedef (CSSNumberish or CSSKeywordish) CSSColorPercent;
+typedef (DOMString or CSSOMKeywordValue) CSSOMKeywordish;
+typedef (CSSNumberish or CSSOMKeywordish) CSSColorAngle;
+typedef (CSSNumberish or CSSOMKeywordish) CSSColorPercent;
 
 // https://drafts.css-houdini.org/css-typed-om/#csslch
 [
     EnabledBySetting=CSSTypedOMColorEnabled,
     Exposed=(Window,Worker,PaintWorklet/*,LayoutWorklet*/),
     JSGenerateToNativeObject,
-] interface CSSLCH : CSSColorValue {
+] interface CSSLCH : CSSOMColorValue {
     constructor(CSSColorPercent l, CSSColorPercent c, CSSColorAngle h, optional CSSColorPercent alpha = 1.0);
     attribute CSSColorPercent l;
     attribute CSSColorPercent c;

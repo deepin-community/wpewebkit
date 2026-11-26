@@ -29,18 +29,10 @@
 #include "DocumentMarker.h"
 #include "EventLoop.h"
 #include "Position.h"
-#include <variant>
+#include <wtf/CheckedRef.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
-
-namespace WebCore {
-class AlternativeTextController;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::AlternativeTextController> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -66,9 +58,10 @@ struct TextCheckingResult;
 #define UNLESS_ENABLED(functionBody) functionBody
 #endif
 
-class AlternativeTextController : public CanMakeWeakPtr<AlternativeTextController> {
+class AlternativeTextController final : public CanMakeWeakPtr<AlternativeTextController>, public CanMakeCheckedPtr<AlternativeTextController> {
+    WTF_MAKE_TZONE_ALLOCATED(AlternativeTextController);
     WTF_MAKE_NONCOPYABLE(AlternativeTextController);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AlternativeTextController);
 public:
     explicit AlternativeTextController(Document& document) UNLESS_ENABLED(: m_document(document) { })
     ~AlternativeTextController() UNLESS_ENABLED({ })
@@ -93,10 +86,11 @@ public:
     void handleAlternativeTextUIResult(const String& result) UNLESS_ENABLED({ UNUSED_PARAM(result); })
     void handleCancelOperation() UNLESS_ENABLED({ })
 
-    bool hasPendingCorrection() const UNLESS_ENABLED({ return false; })
+    bool NODELETE hasPendingCorrection() const UNLESS_ENABLED({ return false; })
     bool isSpellingMarkerAllowed(const SimpleRange& misspellingRange) const UNLESS_ENABLED({ UNUSED_PARAM(misspellingRange); return true; })
     bool isAutomaticSpellingCorrectionEnabled() UNLESS_ENABLED({ return false; })
     bool canEnableAutomaticSpellingCorrection() const UNLESS_ENABLED({ return false; })
+    bool isAlternativeTextUIActive() const UNLESS_ENABLED({ return false; })
     bool shouldRemoveMarkersUponEditing();
 
     void recordAutocorrectionResponse(AutocorrectionResponse, const String& replacedString, const SimpleRange& replacementRange) UNLESS_ENABLED({ UNUSED_PARAM(replacedString); UNUSED_PARAM(replacementRange); })
@@ -123,7 +117,7 @@ private:
     bool shouldStartTimerFor(const DocumentMarker&, int endOffset) const;
     bool respondToMarkerAtEndOfWord(const DocumentMarker&, const Position& endOfWordPosition);
 
-    EditorClient* editorClient();
+    EditorClient* NODELETE editorClient();
     
     TextCheckerClient* textChecker();
     FloatRect rootViewRectForRange(const SimpleRange&) const;
@@ -135,18 +129,16 @@ private:
     bool m_isDismissedByEditing { };
     AlternativeTextType m_type;
     String m_originalText;
-    std::variant<AutocorrectionReplacement, DictationContext> m_details;
+    Variant<AutocorrectionReplacement, DictationContext> m_details;
 
     String m_originalStringForLastDeletedAutocorrection;
     Position m_positionForLastDeletedAutocorrection;
 #endif
 #if USE(DICTATION_ALTERNATIVES) || USE(AUTOCORRECTION_PANEL)
-    String markerDescriptionForAppliedAlternativeText(AlternativeTextType, DocumentMarker::Type);
-    void applyAlternativeTextToRange(const SimpleRange&, const String&, AlternativeTextType, OptionSet<DocumentMarker::Type>);
-    AlternativeTextClient* alternativeTextClient();
+    String NODELETE markerDescriptionForAppliedAlternativeText(AlternativeTextType, DocumentMarkerType);
+    void applyAlternativeTextToRange(const SimpleRange&, const String&, AlternativeTextType, OptionSet<DocumentMarkerType>);
+    AlternativeTextClient* NODELETE alternativeTextClient();
 #endif
-    Ref<Document> protectedDocument() const { return m_document.get(); }
-
     void removeCorrectionIndicatorMarkers();
 
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;

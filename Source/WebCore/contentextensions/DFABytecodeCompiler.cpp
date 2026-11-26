@@ -31,6 +31,7 @@
 #include "ContentExtensionRule.h"
 #include "DFA.h"
 #include "DFANode.h"
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore::ContentExtensions {
 
@@ -38,7 +39,7 @@ template <typename IntType>
 void append(Vector<DFABytecode>& bytecode, IntType value)
 {
     bytecode.grow(bytecode.size() + sizeof(IntType));
-    memcpy(&bytecode[bytecode.size() - sizeof(IntType)], &value, sizeof(IntType));
+    memcpySpan(bytecode.mutableSpan().last(sizeof(IntType)), asByteSpan(value));
 }
 
 static void append24BitUnsignedInteger(Vector<DFABytecode>& bytecode, uint32_t value)
@@ -67,24 +68,25 @@ static void appendZeroes(Vector<DFABytecode>& bytecode, DFABytecodeJumpSize jump
 }
 
 template <typename IntType>
-void setBits(Vector<DFABytecode>& bytecode, uint32_t index, IntType value)
+void NODELETE setBits(Vector<DFABytecode>& bytecode, uint32_t index, IntType value)
 {
     RELEASE_ASSERT(index + sizeof(IntType) <= bytecode.size());
     ASSERT_WITH_MESSAGE(!*reinterpret_cast<IntType*>(&bytecode[index]), "Right now we should only be using setBits to overwrite values that were zero as a placeholder.");
     *reinterpret_cast<IntType*>(&bytecode[index]) = value;
 }
 
-static DFABytecodeFlagsSize bytecodeFlagsSize(ResourceFlags flags)
+static DFABytecodeFlagsSize NODELETE bytecodeFlagsSize(ResourceFlags flags)
 {
     if (flags <= std::numeric_limits<uint8_t>::max())
         return DFABytecodeFlagsSize::UInt8;
     if (flags <= std::numeric_limits<uint16_t>::max())
         return DFABytecodeFlagsSize::UInt16;
-    RELEASE_ASSERT(flags <= UInt24Max);
-    return DFABytecodeFlagsSize::UInt24;
+    if (flags <= UInt24Max)
+        return DFABytecodeFlagsSize::UInt24;
+    return DFABytecodeFlagsSize::UInt32;
 }
 
-static DFABytecodeActionSize bytecodeActionSize(uint32_t actionWithoutFlags)
+static DFABytecodeActionSize NODELETE bytecodeActionSize(uint32_t actionWithoutFlags)
 {
     if (actionWithoutFlags <= std::numeric_limits<uint8_t>::max())
         return DFABytecodeActionSize::UInt8;
@@ -95,7 +97,7 @@ static DFABytecodeActionSize bytecodeActionSize(uint32_t actionWithoutFlags)
     return DFABytecodeActionSize::UInt32;
 }
 
-static size_t toSizeT(DFABytecodeFlagsSize size)
+static size_t NODELETE toSizeT(DFABytecodeFlagsSize size)
 {
     switch (size) {
     case DFABytecodeFlagsSize::UInt8:
@@ -104,11 +106,13 @@ static size_t toSizeT(DFABytecodeFlagsSize size)
         return sizeof(uint16_t);
     case DFABytecodeFlagsSize::UInt24:
         return UInt24Size;
+    case DFABytecodeFlagsSize::UInt32:
+        return sizeof(uint32_t);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static size_t toSizeT(DFABytecodeActionSize size)
+static size_t NODELETE toSizeT(DFABytecodeActionSize size)
 {
     switch (size) {
     case DFABytecodeActionSize::UInt8:
@@ -123,7 +127,7 @@ static size_t toSizeT(DFABytecodeActionSize size)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static size_t appendActionBytecodeSize(uint64_t action)
+static size_t NODELETE appendActionBytecodeSize(uint64_t action)
 {
     auto flags = static_cast<ResourceFlags>((action & ActionFlagMask) >> 32);
     return sizeof(DFABytecodeInstruction)
@@ -181,7 +185,7 @@ int32_t DFABytecodeCompiler::longestPossibleJump(uint32_t instructionLocation, u
     return m_nodeStartOffsets[destinationNodeIndex] - instructionLocation;
 }
 
-static DFABytecodeJumpSize smallestPossibleJumpSize(int32_t longestPossibleJump)
+static DFABytecodeJumpSize NODELETE smallestPossibleJumpSize(int32_t longestPossibleJump)
 {
     if (longestPossibleJump <= std::numeric_limits<int8_t>::max() && longestPossibleJump >= std::numeric_limits<int8_t>::min())
         return DFABytecodeJumpSize::Int8;
@@ -300,7 +304,7 @@ DFABytecodeCompiler::JumpTable DFABytecodeCompiler::extractJumpTable(Vector<DFAB
         return range.destination;
     });
 
-    ranges.remove(firstRange, size);
+    ranges.removeAt(firstRange, size);
 
     return jumpTable;
 }
@@ -309,9 +313,9 @@ auto DFABytecodeCompiler::transitions(const DFANode& node) -> Transitions
 {
     Transitions transitions;
 
-    uint32_t destinations[128];
-    memset(destinations, 0xff, sizeof(destinations));
-    const uint32_t noDestination = std::numeric_limits<uint32_t>::max();
+    constexpr uint32_t noDestination = std::numeric_limits<uint32_t>::max();
+    std::array<uint32_t, 128> destinations;
+    destinations.fill(noDestination);
 
     transitions.useFallbackTransition = node.canUseFallbackTransition(m_dfa);
     if (transitions.useFallbackTransition)

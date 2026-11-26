@@ -28,23 +28,25 @@
 #if ENABLE(MEDIA_STREAM) && ENABLE(WEB_CODECS)
 
 #include "Exception.h"
+#include "ExceptionCode.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsVideoFrame.h"
 #include "MediaStreamTrack.h"
 #include "VideoFrame.h"
 #include "WritableStream.h"
 #include "WritableStreamSink.h"
-
+#include <JavaScriptCore/JSCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(VideoTrackGenerator);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VideoTrackGenerator);
 
 ExceptionOr<Ref<VideoTrackGenerator>> VideoTrackGenerator::create(ScriptExecutionContext& context)
 {
     auto source = Source::create(context.identifier());
     auto sink = Sink::create(Ref { source });
-    auto writableOrException = WritableStream::create(*JSC::jsCast<JSDOMGlobalObject*>(context.globalObject()), Ref { sink });
+    auto writableOrException = WritableStream::create(*downcast<JSDOMGlobalObject>(context.globalObject()), Ref { sink });
 
     if (writableOrException.hasException())
         return writableOrException.releaseException();
@@ -58,11 +60,10 @@ ExceptionOr<Ref<VideoTrackGenerator>> VideoTrackGenerator::create(ScriptExecutio
     });
 
     auto logger = Logger::create(&context);
-    if (auto sessionID = context.sessionID())
-        logger->setEnabled(&context, sessionID->isAlwaysOnLoggingAllowed());
+    logger->setEnabled(&context, context.isAlwaysOnLoggingAllowed());
 
-    auto privateTrack = MediaStreamTrackPrivate::create(WTFMove(logger), WTFMove(source), [identifier = context.identifier()](Function<void()>&& task) {
-        ScriptExecutionContext::postTaskTo(identifier, [task = WTFMove(task)] (auto&) mutable {
+    auto privateTrack = MediaStreamTrackPrivate::create(WTF::move(logger), WTF::move(source), [identifier = context.identifier()](Function<void()>&& task) {
+        ScriptExecutionContext::postTaskTo(identifier, [task = WTF::move(task)] (auto&) mutable {
             task();
         });
     });
@@ -80,16 +81,16 @@ ExceptionOr<Ref<VideoTrackGenerator>> VideoTrackGenerator::create(ScriptExecutio
     capabilities.setWidth({ 0, 0 });
     capabilities.setHeight({ 0, 0 });
 
-    privateTrack->initializeSettings(WTFMove(settings));
-    privateTrack->initializeCapabilities(WTFMove(capabilities));
+    privateTrack->initializeSettings(WTF::move(settings));
+    privateTrack->initializeCapabilities(WTF::move(capabilities));
 
-    return adoptRef(*new VideoTrackGenerator(WTFMove(sink), WTFMove(writable), MediaStreamTrack::create(context, WTFMove(privateTrack))));
+    return adoptRef(*new VideoTrackGenerator(WTF::move(sink), WTF::move(writable), MediaStreamTrack::create(context, WTF::move(privateTrack))));
 }
 
 VideoTrackGenerator::VideoTrackGenerator(Ref<Sink>&& sink, Ref<WritableStream>&& writable, Ref<MediaStreamTrack>&& track)
-    : m_sink(WTFMove(sink))
-    , m_writable(WTFMove(writable))
-    , m_track(WTFMove(track))
+    : m_sink(WTF::move(sink))
+    , m_writable(WTF::move(writable))
+    , m_track(WTF::move(track))
 {
 }
 
@@ -182,13 +183,13 @@ void VideoTrackGenerator::Source::writeVideoFrame(VideoFrame& frame, VideoFrameT
 }
 
 VideoTrackGenerator::Sink::Sink(Ref<Source>&& source)
-    : m_source(WTFMove(source))
+    : m_source(WTF::move(source))
 {
 }
 
 void VideoTrackGenerator::Sink::write(ScriptExecutionContext&, JSC::JSValue value, DOMPromiseDeferred<void>&& promise)
 {
-    auto* jsFrameObject = JSC::jsDynamicCast<JSWebCodecsVideoFrame*>(value);
+    auto* jsFrameObject = dynamicDowncast<JSWebCodecsVideoFrame>(value);
     RefPtr frameObject = jsFrameObject ? &jsFrameObject->wrapped() : nullptr;
     if (!frameObject) {
         promise.reject(Exception { ExceptionCode::TypeError, "Expected a VideoFrame object"_s });
@@ -208,16 +209,17 @@ void VideoTrackGenerator::Sink::write(ScriptExecutionContext&, JSC::JSValue valu
     promise.resolve();
 }
 
-void VideoTrackGenerator::Sink::close()
+void VideoTrackGenerator::Sink::close(JSDOMGlobalObject&)
 {
     callOnMainThread([source = m_source] {
         source->endImmediatly();
     });
 }
 
-void VideoTrackGenerator::Sink::error(String&&)
+void VideoTrackGenerator::Sink::abort(JSDOMGlobalObject& globalObject, JSC::JSValue, DOMPromiseDeferred<void>&& promise)
 {
-    close();
+    close(globalObject);
+    promise.resolve();
 }
 
 } // namespace WebCore

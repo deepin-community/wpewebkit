@@ -24,11 +24,15 @@
 
 #pragma once
 
-#include "CSSToLengthConversionData.h"
-#include "CSSValue.h"
-#include "CSSValueKeywords.h"
+#include <WebCore/CSSCustomPropertyValue.h>
+#include <WebCore/CSSKeyword.h>
+#include <WebCore/CSSPrimitiveNumeric.h>
+#include <WebCore/CSSRatio.h>
+#include <WebCore/CSSToLengthConversionData.h>
+#include <WebCore/CSSValueKeywords.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Variant.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -41,19 +45,64 @@ enum class LogicalOperator : uint8_t { And, Or, Not };
 enum class ComparisonOperator : uint8_t { LessThan, LessThanOrEqual, Equal, GreaterThan, GreaterThanOrEqual };
 enum class Syntax : uint8_t { Boolean, Plain, Range };
 
+template<typename T>
+bool compare(ComparisonOperator op, T left, T right)
+{
+    switch (op) {
+    case ComparisonOperator::LessThan:
+        return left < right;
+    case ComparisonOperator::LessThanOrEqual:
+        return left <= right;
+    case ComparisonOperator::Equal:
+        return left == right;
+    case ComparisonOperator::GreaterThan:
+        return left > right;
+    case ComparisonOperator::GreaterThanOrEqual:
+        return left >= right;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The two comparisons of a three-operand range must point the same direction and neither may be '='.
+inline bool isConsistentThreeWayComparison(ComparisonOperator first, ComparisonOperator second)
+{
+    auto isLessFamily = [](ComparisonOperator op) {
+        return op == ComparisonOperator::LessThan || op == ComparisonOperator::LessThanOrEqual;
+    };
+    auto isGreaterFamily = [](ComparisonOperator op) {
+        return op == ComparisonOperator::GreaterThan || op == ComparisonOperator::GreaterThanOrEqual;
+    };
+    return (isLessFamily(first) && isLessFamily(second)) || (isGreaterFamily(first) && isGreaterFamily(second));
+}
+
 struct Condition;
 struct FeatureSchema;
 
+using Value = Variant<
+    CSS::Integer<>,
+    CSS::Number<>,
+    CSS::Length<CSS::AllUnzoomed>,
+    CSS::Resolution<>,
+    CSS::Ratio,
+    CSS::Keyword,
+    Ref<CSSCustomPropertyValue>
+>;
+
 struct Comparison {
     ComparisonOperator op;
-    RefPtr<CSSValue> value;
+    std::optional<Value> value;
 };
 
 struct Feature {
     AtomString name;
     Syntax syntax;
-    std::optional<Comparison> leftComparison;
-    std::optional<Comparison> rightComparison;
+    std::optional<Comparison> leftComparison { };
+    std::optional<Comparison> rightComparison { };
+
+    // The center operand of a style range, used when it is not a bare <custom-property-name>
+    // (those are stored in `name`, matching the plain/size feature model). For example, the
+    // subject of `style(10px < 10em)` or `style(calc(1px + 1px) > --foo)`.
+    std::optional<Value> subject { };
 
     std::optional<CSSValueID> functionId { };
 
@@ -65,7 +114,7 @@ struct GeneralEnclosed {
     String text;
 };
 
-using QueryInParens = std::variant<Condition, Feature, GeneralEnclosed>;
+using QueryInParens = Variant<Condition, Feature, GeneralEnclosed>;
 
 struct Condition {
     LogicalOperator logicalOperator { LogicalOperator::And };
@@ -76,6 +125,12 @@ struct Condition {
 
 enum class EvaluationResult : uint8_t { False, True, Unknown };
 
+enum class MediaQueryDynamicDependency : uint8_t  {
+    Viewport = 1 << 0,
+    Appearance = 1 << 1,
+    Accessibility = 1 << 2,
+};
+
 struct FeatureEvaluationContext {
     WeakRef<const Document, WeakPtrImplWithEventTargetData> document;
     CSSToLengthConversionData conversionData { };
@@ -83,7 +138,7 @@ struct FeatureEvaluationContext {
 };
 
 struct FeatureSchema {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FeatureSchema);
 
     enum class Type : uint8_t { Discrete, Range };
     enum class ValueType : uint8_t { Integer, Number, Length, Ratio, Resolution, Identifier, CustomProperty };
@@ -91,15 +146,17 @@ struct FeatureSchema {
     AtomString name;
     Type type;
     ValueType valueType;
+    OptionSet<MediaQueryDynamicDependency> dependencies;
     FixedVector<CSSValueID> valueIdentifiers;
 
     virtual EvaluationResult evaluate(const Feature&, const FeatureEvaluationContext&) const { return EvaluationResult::Unknown; }
 
-    FeatureSchema(const AtomString& name, Type type, ValueType valueType, FixedVector<CSSValueID>&& valueIdentifiers = { })
+    FeatureSchema(const AtomString& name, Type type, ValueType valueType, OptionSet<MediaQueryDynamicDependency> dependencies, FixedVector<CSSValueID>&& valueIdentifiers = { })
         : name(name)
         , type(type)
         , valueType(valueType)
-        , valueIdentifiers(WTFMove(valueIdentifiers))
+        , dependencies(dependencies)
+        , valueIdentifiers(WTF::move(valueIdentifiers))
     { }
     virtual ~FeatureSchema() = default;
 };

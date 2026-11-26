@@ -23,8 +23,12 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-messages -> SpeechRecognitionRealtimeMediaSourceManager NotRefCounted {
-    CreateSource(WebCore::RealtimeMediaSourceIdentifier identifier, WebCore::CaptureDevice device, WebCore::PageIdentifier pageIdentifier)
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
+messages -> SpeechRecognitionRealtimeMediaSourceManager {
+    CreateSource(WebCore::RealtimeMediaSourceIdentifier identifier, WebCore::CaptureDevice device, WebCore::PageIdentifier pageIdentifier, WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier)
     DeleteSource(WebCore::RealtimeMediaSourceIdentifier identifier)
     Start(WebCore::RealtimeMediaSourceIdentifier identifier);
     Stop(WebCore::RealtimeMediaSourceIdentifier identifier);

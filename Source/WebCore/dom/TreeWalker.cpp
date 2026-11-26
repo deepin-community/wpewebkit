@@ -27,26 +27,38 @@
 
 #include "ContainerNode.h"
 #include "NodeTraversal.h"
+#include "ScriptWrappableInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(TreeWalker);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TreeWalker);
 
 TreeWalker::TreeWalker(Node& rootNode, unsigned long whatToShow, RefPtr<NodeFilter>&& filter)
-    : NodeIteratorBase(rootNode, whatToShow, WTFMove(filter))
+    : NodeIteratorBase(rootNode, whatToShow, WTF::move(filter))
     , m_current(root())
 {
 }
 
+WebCoreOpaqueRoot TreeWalker::opaqueRootForCurrentNodeInGCThread() const
+{
+    Locker locker { m_currentLock };
+    // Cannot ref in a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL return m_current->opaqueRoot();
+}
+
 void TreeWalker::setCurrentNode(Node& node)
 {
+    Locker locker { m_currentLock };
     m_current = node;
 }
 
 inline Node* TreeWalker::setCurrent(Ref<Node>&& node)
 {
-    m_current = WTFMove(node);
+    {
+        Locker locker { m_currentLock };
+        m_current = WTF::move(node);
+    }
     return m_current.ptr();
 }
 
@@ -77,8 +89,7 @@ ExceptionOr<Node*> TreeWalker::firstChild()
 
         switch (filterResult.returnValue()) {
             case NodeFilter::FILTER_ACCEPT:
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
+                return setCurrent(node.releaseNonNull());
             case NodeFilter::FILTER_SKIP:
                 if (node->firstChild()) {
                     node = node->firstChild();
@@ -96,7 +107,7 @@ ExceptionOr<Node*> TreeWalker::firstChild()
             RefPtr parent = node->parentNode();
             if (!parent || parent == &root() || parent == m_current.ptr())
                 return nullptr;
-            node = WTFMove(parent);
+            node = WTF::move(parent);
         } while (node);
     }
     return nullptr;
@@ -111,8 +122,7 @@ ExceptionOr<Node*> TreeWalker::lastChild()
 
         switch (filterResult.returnValue()) {
             case NodeFilter::FILTER_ACCEPT:
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
+                return setCurrent(node.releaseNonNull());
             case NodeFilter::FILTER_SKIP:
                 if (node->lastChild()) {
                     node = node->lastChild();
@@ -130,7 +140,7 @@ ExceptionOr<Node*> TreeWalker::lastChild()
             RefPtr parent = node->parentNode();
             if (!parent || parent == &root() || parent == m_current.ptr())
                 return nullptr;
-            node = WTFMove(parent);
+            node = WTF::move(parent);
         } while (node);
     }
     return nullptr;
@@ -149,10 +159,8 @@ template<TreeWalker::SiblingTraversalType type> ExceptionOr<Node*> TreeWalker::t
             if (filterResult.hasException())
                 return filterResult.releaseException();
 
-            if (filterResult.returnValue() == NodeFilter::FILTER_ACCEPT) {
-                m_current = sibling.releaseNonNull();
-                return m_current.ptr();
-            }
+            if (filterResult.returnValue() == NodeFilter::FILTER_ACCEPT)
+                return setCurrent(sibling.releaseNonNull());
             node = sibling;
             sibling = isNext ? sibling->firstChild() : sibling->lastChild();
             if (filterResult.returnValue() == NodeFilter::FILTER_REJECT || !sibling)
@@ -197,7 +205,7 @@ ExceptionOr<Node*> TreeWalker::previousNode()
     RefPtr node = m_current.ptr();
     while (node != &root()) {
         while (RefPtr previousSibling = node->previousSibling()) {
-            node = WTFMove(previousSibling);
+            node = WTF::move(previousSibling);
 
             auto filterResult = acceptNode(*node);
             if (filterResult.hasException())
@@ -207,7 +215,7 @@ ExceptionOr<Node*> TreeWalker::previousNode()
             if (acceptNodeResult == NodeFilter::FILTER_REJECT)
                 continue;
             while (RefPtr lastChild = node->lastChild()) {
-                node = WTFMove(lastChild);
+                node = WTF::move(lastChild);
 
                 auto filterResult = acceptNode(*node);
                 if (filterResult.hasException())
@@ -217,17 +225,15 @@ ExceptionOr<Node*> TreeWalker::previousNode()
                 if (acceptNodeResult == NodeFilter::FILTER_REJECT)
                     break;
             }
-            if (acceptNodeResult == NodeFilter::FILTER_ACCEPT) {
-                m_current = node.releaseNonNull();
-                return m_current.ptr();
-            }
+            if (acceptNodeResult == NodeFilter::FILTER_ACCEPT)
+                return setCurrent(node.releaseNonNull());
         }
         if (node == &root())
             return nullptr;
         RefPtr parent = node->parentNode();
         if (!parent)
             return nullptr;
-        node = WTFMove(parent);
+        node = WTF::move(parent);
 
         auto filterResult = acceptNode(*node);
         if (filterResult.hasException())
@@ -251,7 +257,7 @@ ExceptionOr<Node*> TreeWalker::nextNode()
     RefPtr node = m_current.ptr();
 Children:
     while (RefPtr firstChild = node->firstChild()) {
-        node = WTFMove(firstChild);
+        node = WTF::move(firstChild);
 
         auto filterResult = acceptNode(*node);
         if (filterResult.hasException())
@@ -263,7 +269,7 @@ Children:
             break;
     }
     while (RefPtr nextSibling = NodeTraversal::nextSkippingChildren(*node, &root())) {
-        node = WTFMove(nextSibling);
+        node = WTF::move(nextSibling);
 
         auto filterResult = acceptNode(*node);
         if (filterResult.hasException())

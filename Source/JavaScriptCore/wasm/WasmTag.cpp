@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WasmTag.h"
 
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if ENABLE(WEBASSEMBLY)
@@ -34,6 +35,18 @@ namespace JSC {
 namespace Wasm {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Tag);
+
+
+Tag& Tag::jsExceptionTag()
+{
+    static std::once_flag onceKey;
+    static LazyNeverDestroyed<Ref<Tag>> result;
+    std::call_once(onceKey, [] {
+        Ref rtt = TypeInformation::signatureForJSException();
+        result.construct(Tag::create(WTF::move(rtt)));
+    });
+    return result.get();
+}
 
 } } // namespace JSC::Wasm
 

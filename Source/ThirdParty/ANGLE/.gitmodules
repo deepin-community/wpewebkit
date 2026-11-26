@@ -53,7 +53,7 @@
 [submodule "third_party/clspv/src"]
 	path = third_party/clspv/src
 	url = https://chromium.googlesource.com/external/github.com/google/clspv
-	gclient-condition = not build_with_chromium
+	gclient-condition = checkout_angle_cl_deps and not build_with_chromium
 [submodule "third_party/cpu_features/src"]
 	path = third_party/cpu_features/src
 	url = https://chromium.googlesource.com/external/github.com/google/cpu_features
@@ -61,11 +61,15 @@
 [submodule "third_party/dawn"]
 	path = third_party/dawn
 	url = https://dawn.googlesource.com/dawn
-	gclient-condition = not build_with_chromium
+	gclient-condition = checkout_angle_dawn_deps and not build_with_chromium
 [submodule "third_party/depot_tools"]
 	path = third_party/depot_tools
 	url = https://chromium.googlesource.com/chromium/tools/depot_tools
 	gclient-condition = not build_with_chromium
+[submodule "third_party/expat/src"]
+	path = third_party/expat/src
+	url = https://chromium.googlesource.com/external/github.com/libexpat/libexpat
+	gclient-condition = not build_with_chromium and host_os == "linux"
 [submodule "third_party/EGL-Registry/src"]
 	path = third_party/EGL-Registry/src
 	url = https://chromium.googlesource.com/external/github.com/KhronosGroup/EGL-Registry
@@ -81,16 +85,16 @@
 [submodule "third_party/glmark2/src"]
 	path = third_party/glmark2/src
 	url = https://chromium.googlesource.com/external/github.com/glmark2/glmark2
-[submodule "third_party/googletest"]
-	path = third_party/googletest
-	url = https://chromium.googlesource.com/chromium/src/third_party/googletest
+[submodule "third_party/googletest/src"]
+	path = third_party/googletest/src
+	url = https://chromium.googlesource.com/external/github.com/google/googletest
 	gclient-condition = not build_with_chromium
 [submodule "third_party/ijar"]
 	path = third_party/ijar
 	url = https://chromium.googlesource.com/chromium/src/third_party/ijar
 	gclient-condition = checkout_android and not build_with_chromium
-[submodule "third_party/libdrm"]
-	path = third_party/libdrm
+[submodule "third_party/libdrm/src"]
+	path = third_party/libdrm/src
 	url = https://chromium.googlesource.com/chromiumos/third_party/libdrm
 	gclient-condition = checkout_angle_mesa or not build_with_chromium
 [submodule "third_party/libjpeg_turbo"]
@@ -104,7 +108,7 @@
 [submodule "third_party/llvm/src"]
 	path = third_party/llvm/src
 	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project
-	gclient-condition = not build_with_chromium
+	gclient-condition = checkout_angle_cl_deps and not build_with_chromium
 [submodule "third_party/jinja2"]
 	path = third_party/jinja2
 	url = https://chromium.googlesource.com/chromium/src/third_party/jinja2
@@ -120,6 +124,10 @@
 [submodule "third_party/libc++abi/src"]
 	path = third_party/libc++abi/src
 	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxxabi
+	gclient-condition = not build_with_chromium
+[submodule "third_party/llvm-libc/src"]
+	path = third_party/llvm-libc/src
+	url = https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc
 	gclient-condition = not build_with_chromium
 [submodule "third_party/libunwind/src"]
 	path = third_party/libunwind/src
@@ -144,7 +152,7 @@
 [submodule "third_party/OpenCL-CTS/src"]
 	path = third_party/OpenCL-CTS/src
 	url = https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenCL-CTS
-	gclient-condition = not build_with_chromium
+	gclient-condition = checkout_angle_cl_deps and not build_with_chromium
 [submodule "third_party/OpenCL-Docs/src"]
 	path = third_party/OpenCL-Docs/src
 	url = https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenCL-Docs
@@ -152,15 +160,19 @@
 [submodule "third_party/OpenCL-ICD-Loader/src"]
 	path = third_party/OpenCL-ICD-Loader/src
 	url = https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenCL-ICD-Loader
-	gclient-condition = not build_with_chromium
+	gclient-condition = checkout_angle_cl_deps and not build_with_chromium
 [submodule "third_party/OpenGL-Registry/src"]
 	path = third_party/OpenGL-Registry/src
 	url = https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenGL-Registry
 	gclient-condition = not build_with_chromium
 [submodule "third_party/perfetto"]
 	path = third_party/perfetto
-	url = https://android.googlesource.com/platform/external/perfetto
-	gclient-condition = not build_with_chromium and checkout_angle_perfetto
+	url = https://chromium.googlesource.com/external/github.com/google/perfetto
+	gclient-condition = not build_with_chromium
+[submodule "third_party/partition_alloc"]
+	path = third_party/partition_alloc
+	url = https://chromium.googlesource.com/chromium/src/base/allocator/partition_allocator
+	gclient-condition = not build_with_chromium and checkout_angle_partition_alloc
 [submodule "third_party/protobuf"]
 	path = third_party/protobuf
 	url = https://chromium.googlesource.com/chromium/src/third_party/protobuf
@@ -172,10 +184,18 @@
 [submodule "third_party/rapidjson/src"]
 	path = third_party/rapidjson/src
 	url = https://chromium.googlesource.com/external/github.com/Tencent/rapidjson
+[submodule "third_party/re2/src"]
+	path = third_party/re2/src
+	url = https://chromium.googlesource.com/external/github.com/google/re2
+	gclient-condition = not build_with_chromium
 [submodule "third_party/requests/src"]
 	path = third_party/requests/src
 	url = https://chromium.googlesource.com/external/github.com/kennethreitz/requests
 	gclient-condition = checkout_android and not build_with_chromium
+[submodule "third_party/rust"]
+	path = third_party/rust
+	url = https://chromium.googlesource.com/chromium/src/third_party/rust
+	gclient-condition = not build_with_chromium
 [submodule "third_party/six"]
 	path = third_party/six
 	url = https://chromium.googlesource.com/chromium/src/third_party/six
@@ -235,9 +255,13 @@
 	path = third_party/vulkan_memory_allocator
 	url = https://chromium.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
 	gclient-condition = not build_with_chromium
-[submodule "third_party/wayland"]
-	path = third_party/wayland
+[submodule "third_party/wayland/src"]
+	path = third_party/wayland/src
 	url = https://chromium.googlesource.com/external/anongit.freedesktop.org/git/wayland/wayland
+	gclient-condition = not build_with_chromium and host_os == "linux"
+[submodule "third_party/wayland-protocols/src"]
+	path = third_party/wayland-protocols/src
+	url = https://chromium.googlesource.com/external/anongit.freedesktop.org/git/wayland/wayland-protocols
 	gclient-condition = not build_with_chromium and host_os == "linux"
 [submodule "third_party/zlib"]
 	path = third_party/zlib
@@ -283,3 +307,7 @@
 	path = tools/valgrind
 	url = https://chromium.googlesource.com/chromium/src/tools/valgrind
 	gclient-condition = not build_with_chromium
+[submodule "tools/win"]
+	path = tools/win
+	url = https://chromium.googlesource.com/chromium/src/tools/win
+	gclient-condition = checkout_win and not build_with_chromium

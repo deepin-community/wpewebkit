@@ -20,6 +20,7 @@
 #pragma once
 
 #if USE(ATSPI)
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
@@ -41,14 +42,19 @@ class AccessibilityRootAtspi;
 enum class AccessibilityRole : uint8_t;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessibilityAtspi);
-class AccessibilityAtspi {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AccessibilityAtspi);
+class AccessibilityAtspi : public CanMakeWeakPtr<AccessibilityAtspi> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AccessibilityAtspi, AccessibilityAtspi);
     WTF_MAKE_NONCOPYABLE(AccessibilityAtspi);
     friend NeverDestroyed<AccessibilityAtspi>;
 public:
     WEBCORE_EXPORT static AccessibilityAtspi& singleton();
 
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
+
     void connect(const String&, const String&);
+    WEBCORE_EXPORT void disconnect();
 
     const char* uniqueName() const;
     GVariant* nullReference() const;
@@ -64,6 +70,12 @@ public:
     void parentChanged(AccessibilityObjectAtspi&);
     void parentChanged(AccessibilityRootAtspi&);
     enum class ChildrenChanged { Added, Removed };
+
+    struct PendingRootRegistration {
+        Ref<AccessibilityRootAtspi> root;
+        Vector<std::pair<GDBusInterfaceInfo*, GDBusInterfaceVTable*>> interfaces;
+        CompletionHandler<void(const String&)> completionHandler;
+    };
     void childrenChanged(AccessibilityObjectAtspi&, AccessibilityObjectAtspi&, ChildrenChanged);
     void childrenChanged(AccessibilityRootAtspi&, AccessibilityObjectAtspi&, ChildrenChanged);
 
@@ -85,7 +97,7 @@ public:
     static const char* localizedRoleName(AccessibilityRole);
 
 #if ENABLE(DEVELOPER_MODE)
-    using NotificationObserverParameter = std::variant<std::nullptr_t, String, bool, unsigned, Ref<AccessibilityObjectAtspi>>;
+    using NotificationObserverParameter = Variant<std::nullptr_t, String, bool, unsigned, Ref<AccessibilityObjectAtspi>>;
     using NotificationObserver = Function<void(AccessibilityObjectAtspi&, const char*, NotificationObserverParameter)>;
     WEBCORE_EXPORT void addNotificationObserver(void*, NotificationObserver&&);
     WEBCORE_EXPORT void removeNotificationObserver(void*);
@@ -94,12 +106,7 @@ public:
 private:
     AccessibilityAtspi();
 
-    struct PendingRootRegistration {
-        Ref<AccessibilityRootAtspi> root;
-        Vector<std::pair<GDBusInterfaceInfo*, GDBusInterfaceVTable*>> interfaces;
-        CompletionHandler<void(const String&)> completionHandler;
-    };
-
+    bool isConnected() const { return m_connection && !m_isConnecting; }
     void didConnect(GRefPtr<GDBusConnection>&&);
     void didOwnName();
     void initializeRegistry();
@@ -131,6 +138,7 @@ private:
 
     String m_busName;
     bool m_isConnecting { false };
+    unsigned m_nameOwnerId { 0 };
     GRefPtr<GDBusConnection> m_connection;
     GRefPtr<GDBusProxy> m_registry;
     Vector<PendingRootRegistration> m_pendingRootRegistrations;

@@ -31,6 +31,7 @@
 #include "StreamMessageReceiver.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/AlphaPremultiplication.h>
+#include <WebCore/PlatformXR.h>
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <WebCore/WebGPUIntegralTypes.h>
 #include <wtf/Ref.h>
@@ -41,6 +42,11 @@
 #include <wtf/MachSendRight.h>
 #include <wtf/Vector.h>
 #endif
+
+namespace PlatformXR {
+struct FrameData;
+struct RateMapDescription;
+}
 
 namespace WebCore {
 class DestinationColorSpace;
@@ -65,16 +71,16 @@ class ObjectHeap;
 }
 
 class RemoteXRProjectionLayer final : public IPC::StreamMessageReceiver {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(RemoteXRProjectionLayer);
 public:
     static Ref<RemoteXRProjectionLayer> create(WebCore::WebGPU::XRProjectionLayer& xrProjectionLayer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteXRProjectionLayer(xrProjectionLayer, objectHeap, WTFMove(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteXRProjectionLayer(xrProjectionLayer, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteXRProjectionLayer();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
     void stopListeningForIPC();
 
     WebCore::WebGPU::XRProjectionLayer& backing() { return m_backing; }
@@ -89,16 +95,16 @@ private:
     RemoteXRProjectionLayer& operator=(const RemoteXRProjectionLayer&) = delete;
     RemoteXRProjectionLayer& operator=(RemoteXRProjectionLayer&&) = delete;
 
-    RefPtr<IPC::Connection> connection() const;
-
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
     void destruct();
-    [[noreturn]] void startFrame();
-    [[noreturn]] void endFrame();
+#if PLATFORM(COCOA)
+    void startFrame(uint64_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, uint64_t reusableTextureIndex, PlatformXR::RateMapDescription&&);
+#endif
+    void NODELETE endFrame();
 
-    Ref<WebCore::WebGPU::XRProjectionLayer> m_backing;
+    const Ref<WebCore::WebGPU::XRProjectionLayer> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;
     WeakRef<RemoteGPU> m_gpu;
 };

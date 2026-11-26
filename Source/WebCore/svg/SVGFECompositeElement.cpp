@@ -25,19 +25,21 @@
 #include "FEComposite.h"
 #include "NodeName.h"
 #include "SVGNames.h"
+#include "SVGPropertyOwnerRegistry.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGFECompositeElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFECompositeElement);
 
 inline SVGFECompositeElement::SVGFECompositeElement(const QualifiedName& tagName, Document& document)
     : SVGFilterPrimitiveStandardAttributes(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
 {
     ASSERT(hasTagName(SVGNames::feCompositeTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFECompositeElement::m_in1>();
         PropertyRegistry::registerProperty<SVGNames::in2Attr, &SVGFECompositeElement::m_in2>();
         PropertyRegistry::registerProperty<SVGNames::operatorAttr, CompositeOperationType, &SVGFECompositeElement::m_svgOperator>();
@@ -45,7 +47,7 @@ inline SVGFECompositeElement::SVGFECompositeElement(const QualifiedName& tagName
         PropertyRegistry::registerProperty<SVGNames::k2Attr, &SVGFECompositeElement::m_k2>();
         PropertyRegistry::registerProperty<SVGNames::k3Attr, &SVGFECompositeElement::m_k3>();
         PropertyRegistry::registerProperty<SVGNames::k4Attr, &SVGFECompositeElement::m_k4>();
-    });
+    }
 }
 
 Ref<SVGFECompositeElement> SVGFECompositeElement::create(const QualifiedName& tagName, Document& document)
@@ -57,8 +59,8 @@ void SVGFECompositeElement::attributeChanged(const QualifiedName& name, const At
 {
     switch (name.nodeName()) {
     case AttributeNames::operatorAttr: {
-        CompositeOperationType propertyValue = SVGPropertyTraits<CompositeOperationType>::fromString(newValue);
-        if (enumToUnderlyingType(propertyValue))
+        CompositeOperationType propertyValue = SVGPropertyTraits<CompositeOperationType>::fromString(*this, newValue);
+        if (std::to_underlying(propertyValue))
             Ref { m_svgOperator }->setBaseValInternal<CompositeOperationType>(propertyValue);
         break;
     }
@@ -69,16 +71,16 @@ void SVGFECompositeElement::attributeChanged(const QualifiedName& name, const At
         Ref { m_in2 }->setBaseValInternal(newValue);
         break;
     case AttributeNames::k1Attr:
-        Ref { m_k1 }->setBaseValInternal(newValue.toFloat());
+        m_k1->setBaseValInternal(newValue.toFloat());
         break;
     case AttributeNames::k2Attr:
-        Ref { m_k2 }->setBaseValInternal(newValue.toFloat());
+        m_k2->setBaseValInternal(newValue.toFloat());
         break;
     case AttributeNames::k3Attr:
-        Ref { m_k3 }->setBaseValInternal(newValue.toFloat());
+        m_k3->setBaseValInternal(newValue.toFloat());
         break;
     case AttributeNames::k4Attr:
-        Ref { m_k4 }->setBaseValInternal(newValue.toFloat());
+        m_k4->setBaseValInternal(newValue.toFloat());
         break;
     default:
         break;

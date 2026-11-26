@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "ContainerNodeInlines.h"
 #include "HTMLFrameElement.h"
 #include "RenderFrameBase.h"
 
@@ -30,13 +31,13 @@ namespace WebCore {
 struct FrameEdgeInfo;
 
 class RenderFrame final : public RenderFrameBase {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderFrame);
+    WTF_MAKE_TZONE_ALLOCATED(RenderFrame);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderFrame);
 public:
-    RenderFrame(HTMLFrameElement&, RenderStyle&&);
+    RenderFrame(HTMLFrameElement&, Style::ComputedStyle&&);
     virtual ~RenderFrame();
 
-    HTMLFrameElement& frameElement() const;
+    HTMLFrameElement& NODELETE frameElement() const;
     FrameEdgeInfo edgeInfo() const;
 
     void updateFromElement() final;

@@ -10,19 +10,19 @@
 #include "include/core/SkData.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkMesh.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/core/SkVertices.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/SkColorData.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkSpan_impl.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "include/private/base/SkTypeTraits.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "include/private/SkTypeTraits.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkMeshPriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkSLTypeShared.h"
@@ -699,7 +699,7 @@ private:
 
     void onPrepareDraws(GrMeshDrawTarget*) override;
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     SkString onDumpInfo() const override;
 #endif
 
@@ -897,7 +897,7 @@ void MeshOp::Mesh::writeVertices(skgpu::VertexWriter& writer,
             SkPoint pos = fVertices->priv().positions()[i];
             if (transform) {
                 SkASSERT(!fViewMatrix.hasPerspective());
-                fViewMatrix.mapPoints(&pos, 1);
+                pos = fViewMatrix.mapPoint(pos);
             }
             writer << pos;
             if (SkMeshSpecificationPriv::HasColors(spec)) {
@@ -962,7 +962,7 @@ static SkMeshSpecification* make_vertices_spec(bool hasColors, bool hasTex) {
         attributes.push_back({Attribute::Type::kUByte4_unorm, size, SkString{"color"}});
         varyings.push_back({Varying::Type::kHalf4, SkString{"color"}});
         vs += "v.color = a.color;\n";
-        // Using float4 for the output color to work around skbug.com/12761
+        // Using float4 for the output color to work around skbug.com/40043854
         fs += "main(const Varyings v, out float4 color) {\n"
               "color = float4(v.color.bgr*v.color.a, v.color.a);\n";
         size += 4;
@@ -1055,7 +1055,7 @@ MeshOp::MeshOp(GrProcessorSet*          processorSet,
     fIndexCount  = fMeshes.back().indexCount();
 }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 SkString MeshOp::onDumpInfo() const { return {}; }
 #endif
 
@@ -1127,7 +1127,7 @@ void MeshOp::onPrepareDraws(GrMeshDrawTarget* target) {
                                                              fVertexCount,
                                                              &vertexBuffer,
                                                              &firstVertex);
-        if (!verts) {
+        if (!verts) SK_UNLIKELY {
             SkDebugf("Could not allocate vertices.\n");
             return;
         }
@@ -1149,7 +1149,7 @@ void MeshOp::onPrepareDraws(GrMeshDrawTarget* target) {
     if (fIndexCount && !indexBuffer) {
         uint16_t* indices = nullptr;
         indices = target->makeIndexSpace(fIndexCount, &indexBuffer, &firstIndex);
-        if (!indices) {
+        if (!indices) SK_UNLIKELY {
             SkDebugf("Could not allocate indices.\n");
             return;
         }
@@ -1238,7 +1238,11 @@ GrOp::CombineResult MeshOp::onCombineIfPossible(GrOp* t, SkArenaAlloc*, const Gr
     if (SkToBool(fIndexCount) != SkToBool(that->fIndexCount)) {
         return CombineResult::kCannotCombine;
     }
-    if (SkToBool(fIndexCount) && fVertexCount > SkToInt(UINT16_MAX) - that->fVertexCount) {
+    if (SkToBool(fIndexCount) &&
+         // Index count would overflow
+        (fIndexCount > INT32_MAX - that->fIndexCount ||
+         // *or* combined vertex count would not be referenceable by uint16 indices
+         fVertexCount > SkToInt(UINT16_MAX) - that->fVertexCount)) {
         return CombineResult::kCannotCombine;
     }
 

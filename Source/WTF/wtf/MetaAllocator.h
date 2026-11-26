@@ -36,16 +36,19 @@
 #include <wtf/PageBlock.h>
 #include <wtf/RedBlackTree.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WTF {
 
 #define ENABLE_META_ALLOCATOR_PROFILE 0
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(MetaAllocatorFreeSpace, WTF_INTERNAL);
+
 class MetaAllocatorTracker {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MetaAllocatorTracker);
 public:
-    void notify(MetaAllocatorHandle&);
-    void release(MetaAllocatorHandle&);
+    void NODELETE notify(MetaAllocatorHandle&);
+    void NODELETE release(MetaAllocatorHandle&);
 
     MetaAllocatorHandle* find(void* address)
     {
@@ -88,7 +91,7 @@ public:
     
     // Atomic method for getting allocator statistics.
     struct Statistics {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Statistics);
         size_t bytesAllocated;
         size_t bytesReserved;
         size_t bytesCommitted;
@@ -98,7 +101,7 @@ public:
         Locker locker { m_lock };
         return currentStatistics(locker);
     }
-    WTF_EXPORT_PRIVATE Statistics currentStatistics(const Locker<Lock>&);
+    WTF_EXPORT_PRIVATE Statistics NODELETE currentStatistics(const Locker<Lock>&);
 
     // Add more free space to the allocator. Call this directly from
     // the constructor if you wish to operate the allocator within a
@@ -107,7 +110,7 @@ public:
 
     // This is meant only for implementing tests. Never call this in release
     // builds.
-    WTF_EXPORT_PRIVATE size_t debugFreeSpaceSize();
+    WTF_EXPORT_PRIVATE size_t NODELETE debugFreeSpaceSize();
 
     WTF_EXPORT_PRIVATE bool isInAllocatedMemory(const AbstractLocker&, void* address);
     
@@ -138,10 +141,16 @@ protected:
 private:
     
     friend class MetaAllocatorHandle;
-    
-    class FreeSpaceNode : public RedBlackTree<FreeSpaceNode, size_t>::Node {
+
+    class FreeSpaceNode final : public RedBlackTree<FreeSpaceNode, size_t>::ThreadSafeNode {
+        WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FreeSpaceNode);
     public:
-        FreeSpaceNode() = default;
+        void operator delete(void* object) { MetaAllocatorFreeSpaceMalloc::free(object); }
+        void* operator new(size_t size)
+        {
+            ASSERT(sizeof(FreeSpaceNode) == size);
+            return MetaAllocatorFreeSpaceMalloc::malloc(size);
+        }
 
         size_t sizeInBytes()
         {
@@ -178,10 +187,10 @@ private:
 
     // Utilities.
     
-    size_t roundUp(size_t sizeInBytes);
+    size_t NODELETE roundUp(size_t sizeInBytes);
     
-    FreeSpaceNode* allocFreeSpaceNode();
-    WTF_EXPORT_PRIVATE void freeFreeSpaceNode(FreeSpaceNode*);
+    FreeSpaceNode* NODELETE allocFreeSpaceNode();
+    WTF_EXPORT_PRIVATE void NODELETE freeFreeSpaceNode(CheckedPtr<FreeSpaceNode>&&);
     
     size_t m_allocationGranule;
     size_t m_pageSize;
@@ -189,9 +198,9 @@ private:
     unsigned m_logPageSize;
     
     Tree m_freeSpaceSizeMap;
-    HashMap<FreeSpacePtr, FreeSpaceNode*> m_freeSpaceStartAddressMap;
-    HashMap<FreeSpacePtr, FreeSpaceNode*> m_freeSpaceEndAddressMap;
-    HashMap<uintptr_t, size_t> m_pageOccupancyMap;
+    UncheckedKeyHashMap<FreeSpacePtr, CheckedPtr<FreeSpaceNode>> m_freeSpaceStartAddressMap;
+    UncheckedKeyHashMap<FreeSpacePtr, CheckedPtr<FreeSpaceNode>> m_freeSpaceEndAddressMap;
+    UncheckedKeyHashMap<uintptr_t, size_t> m_pageOccupancyMap;
     
     size_t m_bytesAllocated;
     size_t m_bytesReserved;

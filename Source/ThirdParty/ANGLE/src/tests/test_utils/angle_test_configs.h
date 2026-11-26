@@ -26,16 +26,10 @@ namespace angle
 struct PlatformParameters
 {
     PlatformParameters();
-    PlatformParameters(EGLenum clientType,
-                       EGLint majorVersion,
+    PlatformParameters(EGLint majorVersion,
                        EGLint minorVersion,
-                       EGLint profileMask,
                        const EGLPlatformParameters &eglPlatformParameters);
-    PlatformParameters(EGLenum clientType,
-                       EGLint majorVersion,
-                       EGLint minorVersion,
-                       EGLint profileMask,
-                       GLESDriverType driver);
+    PlatformParameters(EGLint majorVersion, EGLint minorVersion, GLESDriverType driver);
 
     EGLint getRenderer() const;
     EGLint getDeviceType() const;
@@ -44,14 +38,12 @@ struct PlatformParameters
     bool isANGLE() const;
     bool isMetal() const;
     bool isWebGPU() const;
-    bool isDesktopOpenGLFrontend() const;
 
     void initDefaultParameters();
 
     auto tie() const
     {
-        return std::tie(driver, noFixture, eglParameters, clientType, majorVersion, minorVersion,
-                        profileMask);
+        return std::tie(driver, noFixture, eglParameters, majorVersion, minorVersion);
     }
 
     // Helpers to enable and disable ANGLE features.  Expects a Feature::* value from
@@ -72,10 +64,8 @@ struct PlatformParameters
     GLESDriverType driver;
     bool noFixture;
     EGLPlatformParameters eglParameters;
-    EGLenum clientType;
     EGLint majorVersion;
     EGLint minorVersion;
-    EGLint profileMask;
 };
 
 const char *GetRendererName(EGLint renderer);
@@ -90,10 +80,6 @@ namespace egl_platform
 
 EGLPlatformParameters DEFAULT();
 EGLPlatformParameters DEFAULT_NULL();
-
-EGLPlatformParameters D3D9();
-EGLPlatformParameters D3D9_NULL();
-EGLPlatformParameters D3D9_REFERENCE();
 
 EGLPlatformParameters D3D11();
 EGLPlatformParameters D3D11_PRESENT_PATH_FAST();
@@ -120,15 +106,12 @@ EGLPlatformParameters METAL();
 
 EGLPlatformParameters OPENGL();
 EGLPlatformParameters OPENGL(EGLint major, EGLint minor);
-EGLPlatformParameters OPENGL_NULL();
 
 EGLPlatformParameters OPENGLES();
 EGLPlatformParameters OPENGLES(EGLint major, EGLint minor);
-EGLPlatformParameters OPENGLES_NULL();
 
 EGLPlatformParameters OPENGL_OR_GLES();
 EGLPlatformParameters OPENGL_OR_GLES(EGLint major, EGLint minor);
-EGLPlatformParameters OPENGL_OR_GLES_NULL();
 
 EGLPlatformParameters VULKAN();
 EGLPlatformParameters VULKAN_NULL();
@@ -139,9 +122,6 @@ EGLPlatformParameters WEBGPU();
 }  // namespace egl_platform
 
 // ANGLE tests platforms
-PlatformParameters ES1_D3D9();
-PlatformParameters ES2_D3D9();
-
 PlatformParameters ES1_D3D11();
 PlatformParameters ES2_D3D11();
 PlatformParameters ES2_D3D11_PRESENT_PATH_FAST();
@@ -163,9 +143,6 @@ PlatformParameters ES3_D3D11();
 PlatformParameters ES3_D3D11_FL11_1();
 PlatformParameters ES3_D3D11_FL11_0();
 PlatformParameters ES3_D3D11_FL10_1();
-PlatformParameters ES31_D3D11();
-PlatformParameters ES31_D3D11_FL11_1();
-PlatformParameters ES31_D3D11_FL11_0();
 
 PlatformParameters ES3_D3D11_WARP();
 PlatformParameters ES3_D3D11_FL11_1_WARP();
@@ -208,8 +185,6 @@ PlatformParameters ES31_VULKAN_SWIFTSHADER();
 PlatformParameters ES32_VULKAN();
 PlatformParameters ES32_VULKAN_NULL();
 PlatformParameters ES32_VULKAN_SWIFTSHADER();
-PlatformParameters GL32_CORE_VULKAN();
-PlatformParameters GL32_CORE_VULKAN_SWIFTSHADER();
 
 PlatformParameters ES1_METAL();
 PlatformParameters ES2_METAL();
@@ -218,12 +193,6 @@ PlatformParameters ES3_METAL();
 PlatformParameters ES2_WGL();
 PlatformParameters ES3_WGL();
 
-PlatformParameters ES1_EGL();
-PlatformParameters ES2_EGL();
-PlatformParameters ES3_EGL();
-PlatformParameters ES31_EGL();
-PlatformParameters ES32_EGL();
-
 PlatformParameters ES1_ANGLE_Vulkan_Secondaries();
 PlatformParameters ES2_ANGLE_Vulkan_Secondaries();
 PlatformParameters ES3_ANGLE_Vulkan_Secondaries();
@@ -231,6 +200,7 @@ PlatformParameters ES31_ANGLE_Vulkan_Secondaries();
 PlatformParameters ES32_ANGLE_Vulkan_Secondaries();
 
 PlatformParameters ES2_WEBGPU();
+PlatformParameters ES3_WEBGPU();
 
 PlatformParameters ES1_Zink();
 PlatformParameters ES2_Zink();

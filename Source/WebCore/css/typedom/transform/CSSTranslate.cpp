@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,7 +43,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CSSTranslate);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CSSTranslate);
 
 ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<CSSNumericValue> x, Ref<CSSNumericValue> y, RefPtr<CSSNumericValue> z)
 {
@@ -55,21 +56,18 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<CSSNumericValue> x, Ref<
         || !z->type().matches<CSSNumericBaseType::Length>())
         return Exception { ExceptionCode::TypeError };
 
-    return adoptRef(*new CSSTranslate(is2D, WTFMove(x), WTFMove(y), z.releaseNonNull()));
+    return adoptRef(*new CSSTranslate(is2D, WTF::move(x), WTF::move(y), z.releaseNonNull()));
 }
 
-ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(CSSFunctionValue& cssFunctionValue)
+ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(Ref<const CSSFunctionValue> cssFunctionValue, Document& document)
 {
-    auto makeTranslate = [&](const Function<ExceptionOr<Ref<CSSTranslate>>(Vector<Ref<CSSNumericValue>>&&)>& create, size_t minNumberOfComponents, std::optional<size_t> maxNumberOfComponents = std::nullopt) -> ExceptionOr<Ref<CSSTranslate>> {
+    auto makeTranslate = [&](NOESCAPE const Function<ExceptionOr<Ref<CSSTranslate>>(Vector<Ref<CSSNumericValue>>&&)>& create, size_t minNumberOfComponents, std::optional<size_t> maxNumberOfComponents = std::nullopt) -> ExceptionOr<Ref<CSSTranslate>> {
         Vector<Ref<CSSNumericValue>> components;
-        for (auto& componentCSSValue : cssFunctionValue) {
-            auto valueOrException = CSSStyleValueFactory::reifyValue(componentCSSValue, std::nullopt);
+        for (Ref componentCSSValue : cssFunctionValue.get()) {
+            auto valueOrException = CSSNumericValue::reifyValue(document, componentCSSValue.get());
             if (valueOrException.hasException())
                 return valueOrException.releaseException();
-            RefPtr numericValue = dynamicDowncast<CSSNumericValue>(valueOrException.releaseReturnValue());
-            if (!numericValue)
-                return Exception { ExceptionCode::TypeError, "Expected a CSSNumericValue."_s };
-            components.append(numericValue.releaseNonNull());
+            components.append(valueOrException.releaseReturnValue());
         }
         if (!maxNumberOfComponents)
             maxNumberOfComponents = minNumberOfComponents;
@@ -78,10 +76,10 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(CSSFunctionValue& cssFunctio
             ASSERT_NOT_REACHED();
             return Exception { ExceptionCode::TypeError, "Unexpected number of values."_s };
         }
-        return create(WTFMove(components));
+        return create(WTF::move(components));
     };
 
-    switch (cssFunctionValue.name()) {
+    switch (cssFunctionValue->name()) {
     case CSSValueTranslateX:
         return makeTranslate([](Vector<Ref<CSSNumericValue>>&& components) {
             return CSSTranslate::create(components[0], CSSNumericFactory::px(0), nullptr);
@@ -110,11 +108,11 @@ ExceptionOr<Ref<CSSTranslate>> CSSTranslate::create(CSSFunctionValue& cssFunctio
     }
 }
 
-CSSTranslate::CSSTranslate(CSSTransformComponent::Is2D is2D, Ref<CSSNumericValue> x, Ref<CSSNumericValue> y, Ref<CSSNumericValue> z)
+CSSTranslate::CSSTranslate(CSSTransformComponent::Is2D is2D, Ref<CSSNumericValue>&& x, Ref<CSSNumericValue>&& y, Ref<CSSNumericValue>&& z)
     : CSSTransformComponent(is2D)
-    , m_x(WTFMove(x))
-    , m_y(WTFMove(y))
-    , m_z(WTFMove(z))
+    , m_x(WTF::move(x))
+    , m_y(WTF::move(y))
+    , m_z(WTF::move(z))
 {
 }
 
@@ -122,12 +120,12 @@ void CSSTranslate::serialize(StringBuilder& builder) const
 {
     // https://drafts.css-houdini.org/css-typed-om/#serialize-a-csstranslate
     builder.append(is2D() ? "translate("_s : "translate3d("_s);
-    m_x->serialize(builder);
+    protect(m_x)->serialize(builder);
     builder.append(", "_s);
-    m_y->serialize(builder);
+    protect(m_y)->serialize(builder);
     if (!is2D()) {
         builder.append(", "_s);
-        m_z->serialize(builder);
+        protect(m_z)->serialize(builder);
     }
     builder.append(')');
 }
@@ -137,7 +135,7 @@ ExceptionOr<void> CSSTranslate::setZ(Ref<CSSNumericValue> z)
     if (!z->type().matches<CSSNumericBaseType::Length>())
         return Exception { ExceptionCode::TypeError };
 
-    m_z = WTFMove(z);
+    m_z = WTF::move(z);
     return { };
 }
 
@@ -171,23 +169,23 @@ ExceptionOr<Ref<DOMMatrix>> CSSTranslate::toMatrix()
     else
         matrix.translate3d(x, y, z);
 
-    return { DOMMatrix::create(WTFMove(matrix), is2D() ? DOMMatrixReadOnly::Is2D::Yes : DOMMatrixReadOnly::Is2D::No) };
+    return { DOMMatrix::create(WTF::move(matrix), is2D() ? DOMMatrixReadOnly::Is2D::Yes : DOMMatrixReadOnly::Is2D::No) };
 }
 
 RefPtr<CSSValue> CSSTranslate::toCSSValue() const
 {
-    auto x = m_x->toCSSValue();
+    RefPtr x = protect(m_x)->toCSSValue();
     if (!x)
         return nullptr;
 
-    auto y = m_y->toCSSValue();
+    RefPtr y = protect(m_y)->toCSSValue();
     if (!y)
         return nullptr;
 
     if (is2D())
         return CSSFunctionValue::create(CSSValueTranslate, x.releaseNonNull(), y.releaseNonNull());
 
-    auto z = m_z->toCSSValue();
+    RefPtr z = protect(m_z)->toCSSValue();
     if (!z)
         return nullptr;
 

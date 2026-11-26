@@ -85,6 +85,12 @@ namespace spirv
 
 BUILDER_HELPER_FUNCTIONS = """namespace
 {
+ANGLE_NOINLINE void ShaderNotRepresentible()
+{
+    ERR() << "Complex shader not representible in SPIR-V";
+    ANGLE_CRASH();
+}
+
 uint32_t MakeLengthOp(size_t length, spv::Op op)
 {
     ASSERT(length <= 0xFFFFu);
@@ -95,8 +101,7 @@ uint32_t MakeLengthOp(size_t length, spv::Op op)
     // would gracefully fail compilation, so this is more of a safety net.
     if (ANGLE_UNLIKELY(length > 0xFFFFu))
     {
-        ERR() << "Complex shader not representible in SPIR-V";
-        ANGLE_CRASH();
+        ShaderNotRepresentible();
     }
 
     return static_cast<uint32_t>(length) << 16 | op;
@@ -186,8 +191,14 @@ class Writer:
         self.path_prefix = os.path.dirname(os.path.realpath(__file__)) + os.path.sep
         self.grammar = load_grammar(self.path_prefix + SPIRV_GRAMMAR_FILE)
 
-        # List of extensions needed by ANGLE
-        cherry_picked_extensions = {'SPV_EXT_fragment_shader_interlock'}
+        # List of extensions needed by ANGLE.
+        #
+        # * SPV_EXT_fragment_shader_interlock is exposed by VK_EXT_fragment_shader_interlock.
+        # * SPV_EXT_demote_to_helper_invocation is exposed by
+        #   VK_EXT_shader_demote_to_helper_invocation.
+        cherry_picked_extensions = {
+            'SPV_EXT_fragment_shader_interlock', 'SPV_EXT_demote_to_helper_invocation'
+        }
 
         # If an instruction has a parameter of these types, the instruction is ignored
         self.unsupported_kinds = set(['LiteralSpecConstantOpInteger'])

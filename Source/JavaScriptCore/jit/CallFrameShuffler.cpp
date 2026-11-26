@@ -36,13 +36,13 @@ namespace JSC {
 
 CallFrameShuffler::CallFrameShuffler(CCallHelpers& jit, const CallFrameShuffleData& data)
     : m_jit(jit)
-    , m_oldFrame(data.numLocals + CallerFrameAndPC::sizeInRegisters, nullptr)
-    , m_newFrame(data.args.size() + CallFrame::headerSizeInRegisters, nullptr)
+    , m_oldFrame(FillWith { }, data.numLocals + CallerFrameAndPC::sizeInRegisters, nullptr)
+    , m_newFrame(FillWith { }, data.args.size() + CallFrame::headerSizeInRegisters, nullptr)
     , m_alignedOldFrameSize(CallFrame::headerSizeInRegisters + roundArgumentCountToAlignFrame(data.numParameters))
     , m_alignedNewFrameSize(CallFrame::headerSizeInRegisters
         + roundArgumentCountToAlignFrame(data.args.size()))
     , m_frameDelta(m_alignedNewFrameSize - m_alignedOldFrameSize)
-    , m_lockedRegisters(RegisterSetBuilder::allRegisters().buildScalarRegisterSet())
+    , m_lockedRegisters(RegisterSet::allRegisters().toScalarRegisterSet())
     , m_numPassedArgs(data.numPassedArgs)
     , m_numParameters(data.numParameters)
 {
@@ -53,8 +53,8 @@ CallFrameShuffler::CallFrameShuffler(CCallHelpers& jit, const CallFrameShuffleDa
         m_lockedRegisters.remove(FPRInfo::toRegister(i));
 
     // ... as well as the callee saved registers
-    for (Reg r : RegisterSetBuilder::vmCalleeSaveRegisters()) {
-        if (RegisterSetBuilder::vmCalleeSaveRegisters().contains(r, IgnoreVectors))
+    for (Reg r : RegisterSet::vmCalleeSaveRegisters()) {
+        if (RegisterSet::vmCalleeSaveRegisters().contains(r, IgnoreVectors))
             m_lockedRegisters.remove(r);
     }
 
@@ -87,6 +87,7 @@ CallFrameShuffler::CallFrameShuffler(CCallHelpers& jit, const CallFrameShuffleDa
 #endif
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 void CallFrameShuffler::dump(PrintStream& out) const
 {
     static const char* delimiter             = " +-------------------------------+ ";
@@ -222,6 +223,7 @@ void CallFrameShuffler::dump(PrintStream& out) const
         out.print("   NumberTag is currently in ", m_numberTagRegister, "\n");
 #endif
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 CachedRecovery* CallFrameShuffler::getCachedRecovery(ValueRecovery recovery)
 {
@@ -588,7 +590,7 @@ bool CallFrameShuffler::performSafeWrites()
                 if (!tryWrites(*cachedRecovery))
                     stillFailing.append(failed);
             }
-            failures = WTFMove(stillFailing);
+            failures = WTF::move(stillFailing);
         }
         if (verbose && firstSafe != dangerFrontier() + 1)
             dataLog("  We freed up danger slots!\n");

@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "FilterEffect.h"
+#include <WebCore/FilterEffect.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -35,20 +35,28 @@ enum class ChannelSelectorType : uint8_t {
     CHANNEL_A = 4
 };
 
-class FEDisplacementMap : public FilterEffect {
+class FEDisplacementMap final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEDisplacementMap);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEDisplacementMap);
 public:
-    WEBCORE_EXPORT static Ref<FEDisplacementMap> create(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float scale, DestinationColorSpace = DestinationColorSpace::SRGB());
+    WEBCORE_EXPORT static Ref<FEDisplacementMap> create(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float scale, DestinationColorSpace = DestinationColorSpace::SRGB(), bool in2IsTainted = false);
 
     bool operator==(const FEDisplacementMap&) const;
 
     ChannelSelectorType xChannelSelector() const { return m_xChannelSelector; }
-    bool setXChannelSelector(const ChannelSelectorType);
+    bool NODELETE setXChannelSelector(const ChannelSelectorType);
 
     ChannelSelectorType yChannelSelector() const { return m_yChannelSelector; }
-    bool setYChannelSelector(const ChannelSelectorType);
+    bool NODELETE setYChannelSelector(const ChannelSelectorType);
 
     float scale() const { return m_scale; }
-    bool setScale(float);
+    bool NODELETE setScale(float);
+
+    // §16.4: when in2 is tainted, this primitive becomes a pass-through of in.
+    bool in2IsTainted() const { return m_in2IsTainted; }
+    void setIn2IsTainted(bool tainted) { m_in2IsTainted = tainted; }
+
+    static IntOutsets calculateOutsets(const FloatSize& maxDisplacement);
 
 private:
     FEDisplacementMap(ChannelSelectorType xChannelSelector, ChannelSelectorType yChannelSelector, float, DestinationColorSpace);
@@ -59,9 +67,11 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
-    const DestinationColorSpace& resultColorSpace(const FilterImageVector&) const override;
-    void transformInputsColorSpace(const FilterImageVector& inputs) const override;
+    const DestinationColorSpace& resultColorSpace(std::span<const Ref<FilterImage>>) const override;
+    void transformInputsColorSpace(std::span<const Ref<FilterImage>> inputs) const override;
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode>) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;
@@ -69,6 +79,7 @@ private:
     ChannelSelectorType m_xChannelSelector;
     ChannelSelectorType m_yChannelSelector;
     float m_scale;
+    bool m_in2IsTainted { false };
 };
 
 } // namespace WebCore

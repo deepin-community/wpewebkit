@@ -26,14 +26,16 @@
 #include "config.h"
 #include "Lexer.h"
 
+#include "Token.h"
+
 namespace TestWGSLAPI {
 
-class TestLexer : public WGSL::Lexer<LChar> {
-    using Base = WGSL::Lexer<LChar>;
+class TestLexer : public WGSL::Lexer<Latin1Character> {
+    using Base = WGSL::Lexer<Latin1Character>;
 
 public:
     TestLexer(const String& input)
-        : Base(input)
+        : Base(input.span<Latin1Character>())
         , m_tokens(Base::lex())
     {
     }
@@ -141,6 +143,7 @@ TEST(WGSLLexerTests, SingleTokens)
     checkSingleFloatLiteral(".456f"_s, TokenType::FloatLiteral, 0.456f);
     checkSingleFloatLiteral("42e-3"_s, TokenType::AbstractFloatLiteral, 42e-3);
     checkSingleFloatLiteral("42e-3f"_s, TokenType::FloatLiteral, 42e-3f);
+    checkSingleFloatLiteral("34028235000000000000000000000000000000f"_s, TokenType::FloatLiteral, 34028234663852885981170418348451692544.0f);
 }
 
 TEST(WGSLLexerTests, KeywordTokens)

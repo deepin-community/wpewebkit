@@ -1307,9 +1307,6 @@ typedef void(INTERNAL_GL_APIENTRY *PFNGLVERTEXATTRIBIFORMATPROC)(GLuint, GLint, 
 typedef void(INTERNAL_GL_APIENTRY *PFNGLVERTEXATTRIBLFORMATPROC)(GLuint, GLint, GLenum, GLuint);
 typedef void(INTERNAL_GL_APIENTRY *PFNGLVERTEXBINDINGDIVISORPROC)(GLuint, GLuint);
 
-// NV_framebuffer_mixed_samples
-typedef void(INTERNAL_GL_APIENTRY *PFNGLCOVERAGEMODULATIONNVPROC)(GLenum);
-
 // 4.4
 typedef void(INTERNAL_GL_APIENTRY *PFNGLBINDBUFFERSBASEPROC)(GLenum,
                                                              GLuint,
@@ -1745,13 +1742,21 @@ typedef void(INTERNAL_GL_APIENTRY *PFNGLGETINTERNALFORMATSAMPLEIVNVPROC)(GLenum 
                                                                          GLsizei bufSize,
                                                                          GLint *params);
 
-// GL_OVR_multiview2
+// GL_OVR_multiview
 typedef void(INTERNAL_GL_APIENTRY *PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(GLenum target,
                                                                             GLenum attachment,
                                                                             GLuint texture,
                                                                             GLint level,
                                                                             GLint baseViewIndex,
                                                                             GLsizei numViews);
+typedef void(INTERNAL_GL_APIENTRY *PFNGLNAMEDFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(
+    GLuint framebuffer,
+    GLenum attachment,
+    GLuint texture,
+    GLint level,
+    GLint baseViewIndex,
+    GLsizei numViews);
+
 // EXT_debug_marker
 typedef void(INTERNAL_GL_APIENTRY *PFNGLINSERTEVENTMARKEREXTPROC)(GLsizei length,
                                                                   const GLchar *marker);

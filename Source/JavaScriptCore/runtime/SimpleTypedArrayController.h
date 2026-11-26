@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "Handle.h"
-#include "TypedArrayController.h"
-#include "WeakHandleOwner.h"
+#include <JavaScriptCore/Handle.h>
+#include <JavaScriptCore/TypedArrayController.h>
+#include <JavaScriptCore/WeakHandleOwner.h>
 
 namespace JSC {
 
@@ -51,8 +51,8 @@ public:
     JS_EXPORT_PRIVATE SimpleTypedArrayController(bool allowAtomicsWait = true);
     ~SimpleTypedArrayController() final;
     
-    JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer*) final;
-    void registerWrapper(JSGlobalObject*, ArrayBuffer*, JSArrayBuffer*) final;
+    JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer&) final;
+    void registerWrapper(JSGlobalObject*, ArrayBuffer&, JSArrayBuffer&) final;
     bool isAtomicsWaitAllowedOnCurrentThread() final;
 
 private:

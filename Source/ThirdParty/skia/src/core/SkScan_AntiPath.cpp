@@ -9,10 +9,11 @@
 
 #include "include/core/SkRect.h"
 #include "include/core/SkRegion.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkMath.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkMath.h"
 #include "src/core/SkAAClip.h"
 #include "src/core/SkBlitter.h"
+#include "src/core/SkPathRaw.h"
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkScan.h"
 #include "src/core/SkScanPriv.h"
@@ -32,21 +33,21 @@ static SkIRect safeRoundOut(const SkRect& src) {
     return dst;
 }
 
-static int overflows_short_shift(int value, int shift) {
+static constexpr int overflows_short_shift(int value, int shift) {
     const int s = 16 + shift;
     return (SkLeftShift(value, s) >> s) - value;
 }
+
+static_assert(!overflows_short_shift(8191, SK_SUPERSAMPLE_SHIFT));
+static_assert(overflows_short_shift(8192, SK_SUPERSAMPLE_SHIFT));
+static_assert(!overflows_short_shift(32767, 0));
+static_assert(overflows_short_shift(32768, 0));
 
 /**
   Would any of the coordinates of this rectangle not fit in a short,
   when left-shifted by shift?
 */
 static int rect_overflows_short_shift(SkIRect rect, int shift) {
-    SkASSERT(!overflows_short_shift(8191, shift));
-    SkASSERT(overflows_short_shift(8192, shift));
-    SkASSERT(!overflows_short_shift(32767, 0));
-    SkASSERT(overflows_short_shift(32768, 0));
-
     // Since we expect these to succeed, we bit-or together
     // for a tiny extra bit of speed.
     return overflows_short_shift(rect.fLeft, shift) |
@@ -55,14 +56,14 @@ static int rect_overflows_short_shift(SkIRect rect, int shift) {
            overflows_short_shift(rect.fBottom, shift);
 }
 
-void SkScan::AntiFillPath(const SkPath& path, const SkRegion& origClip,
+void SkScan::AntiFillPath(const SkPathRaw& path, const SkRegion& origClip,
                           SkBlitter* blitter, bool forceRLE) {
     if (origClip.isEmpty()) {
         return;
     }
 
     const bool isInverse = path.isInverseFillType();
-    SkIRect ir = safeRoundOut(path.getBounds());
+    SkIRect ir = safeRoundOut(path.bounds());
     if (ir.isEmpty()) {
         if (isInverse) {
             blitter->blitRegion(origClip);
@@ -135,36 +136,20 @@ void SkScan::AntiFillPath(const SkPath& path, const SkRegion& origClip,
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void SkScan::FillPath(const SkPath& path, const SkRasterClip& clip, SkBlitter* blitter) {
-    if (clip.isEmpty() || !path.isFinite()) {
+void SkScan::AntiFillPath(const SkPathRaw& raw, const SkRasterClip& clip, SkBlitter* blitter) {
+    SkASSERT(raw.bounds().isFinite());
+    if (clip.isEmpty()) {
         return;
     }
 
     if (clip.isBW()) {
-        FillPath(path, clip.bwRgn(), blitter);
+        AntiFillPath(raw, clip.bwRgn(), blitter, false);
     } else {
         SkRegion        tmp;
         SkAAClipBlitter aaBlitter;
 
         tmp.setRect(clip.getBounds());
         aaBlitter.init(blitter, &clip.aaRgn());
-        SkScan::FillPath(path, tmp, &aaBlitter);
-    }
-}
-
-void SkScan::AntiFillPath(const SkPath& path, const SkRasterClip& clip, SkBlitter* blitter) {
-    if (clip.isEmpty() || !path.isFinite()) {
-        return;
-    }
-
-    if (clip.isBW()) {
-        AntiFillPath(path, clip.bwRgn(), blitter, false);
-    } else {
-        SkRegion        tmp;
-        SkAAClipBlitter aaBlitter;
-
-        tmp.setRect(clip.getBounds());
-        aaBlitter.init(blitter, &clip.aaRgn());
-        AntiFillPath(path, tmp, &aaBlitter, true); // SkAAClipBlitter can blitMask, why forceRLE?
+        AntiFillPath(raw, tmp, &aaBlitter, true); // SkAAClipBlitter can blitMask, why forceRLE?
     }
 }

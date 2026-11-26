@@ -46,19 +46,30 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         this.#ui.generalSection = new WI.DetailsSection("media-details-general", WI.UIString("General", "General @ Media Sidebar", "Title for General Section in Media Sidebar"), [generalGroup]);
 
         this.#ui.videoCodecRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Video Codec", "Video Codec @ Media Sidebar", "Title for Video Codec row in Media Sidebar"));
+        this.#ui.videoProtectedRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Protected", "Protected @ Media Sidebar", "Title for Protected row in Media Sidebar"));
         this.#ui.transferRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Transfer Function", "Transfer Function @ Media Sidebar", "Title for Transfer Function row in Media Sidebar"));
         this.#ui.primariesRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Color Primaries", "Color Primaries @ Media Sidebar", "Title for Color Primaries row in Media Sidebar"));
         this.#ui.matrixRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Matrix Coefficients", "Matrix Coefficients @ Media Sidebar", "Title for Matrix Coefficients row in Media Sidebar"));
         this.#ui.fullRangeRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Color Range", "Color Range @ Media Sidebar", "Title for Color Range row in Media Sidebar"));
+        this.#ui.projectionRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Projection", "Projections @ Media Sidebar", "Title for Projection row in Media Sidebar"));
 
-        let videoGroup = new WI.DetailsSectionGroup([this.#ui.videoCodecRow, this.#ui.primariesRow, this.#ui.transferRow, this.#ui.matrixRow, this.#ui.fullRangeRow]);
+        let videoGroup = new WI.DetailsSectionGroup([this.#ui.videoCodecRow, this.#ui.videoProtectedRow, this.#ui.primariesRow, this.#ui.transferRow, this.#ui.matrixRow, this.#ui.fullRangeRow, this.#ui.projectionRow]);
         this.#ui.videoSection = new WI.DetailsSection("media-video-details", WI.UIString("Video Details", "Video Details @ Media Sidebar", "Title for Video Details section in Media Sidebar"), [videoGroup]);
         this.#ui.audioCodecRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Audio Codec", "Audio Codec @ Media Sidebar", "Title for Audio Codec row in Media Sidebar"));
+        this.#ui.audioProtectedRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Protected", "Protected @ Media Sidebar", "Title for Protected row in Media Sidebar"));
         this.#ui.sampleRateRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Sample Rate", "Sample Rate @ Media Sidebar", "Title for Sample Rate row in Media Sidebar"));
         this.#ui.channelsRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Channels", "Channels @ Media Sidebar", "Title for Channels row in Media Sidebar"));
 
-        let audioGroup = new WI.DetailsSectionGroup([this.#ui.audioCodecRow, this.#ui.sampleRateRow, this.#ui.channelsRow]);
+        let audioGroup = new WI.DetailsSectionGroup([this.#ui.audioCodecRow, this.#ui.audioProtectedRow, this.#ui.sampleRateRow, this.#ui.channelsRow]);
         this.#ui.audioSection = new WI.DetailsSection("media-audio-details", WI.UIString("Audio Details", "Audio Details @ Media Sidebar", "Title for Audio Details section in Media Sidebar"), [audioGroup]);
+
+        this.#ui.spatialSizeRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Size", "Size @ Spatial Section @ Media Sidebar", "Titel for Size row in Spatial Section of Media Sidebar"));
+        this.#ui.fovRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("FOV", "FOV @ Media Sidebar", "Title for FOV in Media Sidebar"));
+        this.#ui.baselineRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Baseline", "Baseline @ Media Sidebar", "Title for Baseline in Media Sidebar"));
+        this.#ui.disparityRow = new WI.MediaDetailsSidebarPanel.#Row(WI.UIString("Disparity", "Disparity @ Media Sidebar", "Title for Disparity in Media Sidebar"));
+
+        let spatialGroup = new WI.DetailsSectionGroup([this.#ui.spatialSizeRow, this.#ui.fovRow, this.#ui.baselineRow, this.#ui.disparityRow]);
+        this.#ui.spatialSection = new WI.DetailsSection("media-spatial-details", WI.UIString("Spatial Details", "Spatial Details @ Media Sidebar", "Title for Media Details section in Media Sidebar"), [spatialGroup]);
     }
 
     layout()
@@ -70,13 +81,20 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         this.#ui.videoFormatRow.updateValue();
         this.#ui.audioFormatRow.updateValue();
         this.#ui.videoCodecRow.updateValue();
+        this.#ui.videoProtectedRow.updateValue();
         this.#ui.transferRow.updateValue();
         this.#ui.primariesRow.updateValue();
         this.#ui.matrixRow.updateValue();
         this.#ui.fullRangeRow.updateValue();
+        this.#ui.projectionRow.updateValue();
         this.#ui.audioCodecRow.updateValue();
+        this.#ui.audioProtectedRow.updateValue();
         this.#ui.sampleRateRow.updateValue();
         this.#ui.channelsRow.updateValue();
+        this.#ui.spatialSizeRow.updateValue();
+        this.#ui.fovRow.updateValue();
+        this.#ui.baselineRow.updateValue();
+        this.#ui.disparityRow.updateValue();
     }
 
     // Protected
@@ -106,9 +124,10 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
     {
         super.initialLayout();
 
-        this.element.appendChild(this.#ui.generalSection.element);
-        this.element.appendChild(this.#ui.videoSection.element);
-        this.element.appendChild(this.#ui.audioSection.element);
+        this.contentView.element.appendChild(this.#ui.generalSection.element);
+        this.contentView.element.appendChild(this.#ui.videoSection.element);
+        this.contentView.element.appendChild(this.#ui.audioSection.element);
+        this.contentView.element.appendChild(this.#ui.spatialSection.element);
     }
 
     // Private
@@ -162,11 +181,17 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         primariesRow: null,
         matrixRow: null,
         fullRangeRow: null,
+        projectionRow: null,
         videoSection: null,
         audioCodecRow: null,
         sampleRateRow: null,
         channelsRow: null,
         audioSection: null,
+        spatialSection: null,
+        spatialSizeRow: null,
+        fovRow: null,
+        baselineRow: null,
+        disparityRow: null,
     };
 
     #updateTimer = null;
@@ -268,8 +293,26 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         this.needsLayout();
     }
 
+    #localizedVideoProjectionMetadataKindString(projectionKind)
+    {
+        if (!projectionKind)
+            return "";
+
+        switch (projectionKind) {
+        case "unknown": return WI.UIString("Unknown", "unknown @ Media Sidebar", "Value for 'unknown' in the Media Sidebar")
+        case "equirectangular": return WI.UIString("Equirectangular", "equirectangular @ Media Sidebar", "Value for 'equirectangular' in the Media Sidebar")
+        case "half-equirectangular": return WI.UIString("Half Equirectangular", "half-equirectangular @ Media Sidebar", "Value for 'half-equirectangular' in the Media Sidebar")
+        case "equi-angular-cubemap": return WI.UIString("Equi Angular Cubemap", "equi-angular-cubemap @ Media Sidebar", "Value for 'equi-angular-cubemap' in the Media Sidebar")
+        case "parametric": return WI.UIString("Parametric", "parametric @ Media Sidebar", "Value for 'parametric' in the Media Sidebar")
+        case "pyramid": return WI.UIString("Pyramid", "pyramid @ Media Sidebar", "Value for 'pyramid' in the Media Sidebar")
+        case "apple-immersive-video": return WI.UIString("Apple Immersive Video", "apple-immersive-video @ Media Sidebar", "Value for 'immersive' in the Media Sidebar")
+        }
+    }
+
     #setVideo(video)
     {
+        const checkmark = "\u2713";
+
         if (this.#values.video === video)
             return;
 
@@ -280,7 +323,8 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
             && Object.shallowEqual(this.#values.video?.colorSpace, video?.colorSpace)
             && this.#values.video?.colorSpace?.primaries === video?.colorSpace?.primaries
             && this.#values.video?.colorSpace?.matrix === video?.colorSpace?.matrix
-            && this.#values.video?.fullRange === video?.fullRange)
+            && this.#values.video?.fullRange === video?.fullRange
+            && this.#values.video?.isProtected === video?.isProtected)
             return;
 
         this.#values.video = video;
@@ -288,6 +332,7 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         this.#ui.resolutionRow.pendingValue = WI.UIString("%dx%d (%dfps)").format(video?.width ?? 0, video?.height ?? 0, video?.framerate ?? 0);
         this.#ui.resolutionRow.element.classList.toggle("hidden", !video);
         this.#ui.videoCodecRow.pendingValue = video?.codec;
+        this.#ui.videoProtectedRow.pendingValue = video?.isProtected ? checkmark : null;
         this.#ui.transferRow.pendingValue = video?.colorSpace?.transfer;
         this.#ui.primariesRow.pendingValue = video?.colorSpace?.primaries;
         this.#ui.matrixRow.pendingValue = video?.colorSpace?.matrix;
@@ -295,6 +340,32 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
             this.#ui.fullRangeRow.pendingValue = WI.UIString("Full range", "Full range @ Media Sidebar", "Value string for Full Range color in the Media Sidebar");
         else
             this.#ui.fullRangeRow.pendingValue = WI.UIString("Video range", "Video range @ Media Sidebar", "Value string for Video Range color in the Media Sidebar");
+        this.#ui.projectionRow.pendingValue = this.#localizedVideoProjectionMetadataKindString(video?.videoProjectionMetadata?.kind);
+        this.#ui.projectionRow.element.classList.toggle("hidden", !video?.videoProjectionMetadata);
+        this.#ui.spatialSizeRow.pendingValue = WI.UIString("%dx%d").format(video?.immersiveVideoMetadata?.width ?? 0, video?.immersiveVideoMetadata?.height ?? 0);
+        let horizontalFieldOfView = video?.immersiveVideoMetadata?.horizontalFieldOfView;
+        if (!isNaN(horizontalFieldOfView))
+            horizontalFieldOfView /= 1000;
+        else {
+            // COMPATIBLITY (macOS 26.2, iOS 26.2): `horizontalFOVDegrees` was renamed to `horizontalFieldOfView`.
+            horizontalFieldOfView = video?.spatialVideoMetadata?.horizontalFOVDegrees ?? 0;
+        }
+        this.#ui.fovRow.pendingValue = WI.UIString("%dº").format(horizontalFieldOfView);
+        let stereoCameraBaseline = video?.immersiveVideoMetadata?.stereoCameraBaseline;
+        if (isNaN(stereoCameraBaseline)) {
+            // COMPATIBLITY (macOS 26.2, iOS 26.2): `baseline` was renamed to `stereoCameraBaseline`.
+            stereoCameraBaseline = (video?.spatialVideoMetadata?.baseline ?? 0) / 1000;
+        }
+        this.#ui.baselineRow.pendingValue = WI.UIString("%dmm").format(stereoCameraBaseline);
+        let horizontalDisparityAdjustment = video?.immersiveVideoMetadata?.horizontalDisparityAdjustment;
+        if (!isNaN(horizontalDisparityAdjustment))
+            horizontalDisparityAdjustment /= 10;
+        else {
+            // COMPATIBLITY (macOS 26.2, iOS 26.2): `disparityAdjustment` was renamed to `horizontalDisparityAdjustment`.
+            horizontalDisparityAdjustment = (video?.spatialVideoMetadata?.disparityAdjustment ?? 0) * 100;
+        }
+        this.#ui.disparityRow.pendingValue = WI.UIString("%d%%").format(horizontalDisparityAdjustment);
+        this.#ui.spatialSection.element.classList.toggle("hidden", !video?.immersiveVideoMetadata && !video?.spatialVideoMetadata);
         this.needsLayout();
     }
 
@@ -306,6 +377,7 @@ WI.MediaDetailsSidebarPanel = class MediaDetailsSidebarPanel extends WI.DOMDetai
         this.#values.audio = audio;
         this.#ui.audioSection.element.classList.toggle("hidden", !audio);
         this.#ui.audioCodecRow.pendingValue = audio?.codec;
+        this.#ui.audioProtectedRow.pendingValue = audio?.isProtected ? WI.UIString("True") : null;
         this.#ui.sampleRateRow.pendingValue = WI.UIString("%d Hz").format(audio?.sampleRate);
         switch (audio?.numberOfChannels) {
         case 1:

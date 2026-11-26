@@ -25,12 +25,17 @@
 
 #pragma once
 
-#include "FloatSize.h"
-#include "ScrollTypes.h"
+#include <WebCore/FloatSize.h>
+#include <WebCore/ScrollTypes.h>
+#include <wtf/Platform.h>
+
+namespace WTF {
+class TextStream;
+}
 
 namespace WebCore {
 
-WEBCORE_EXPORT FloatSize unitVectorForScrollDirection(ScrollDirection);
+WEBCORE_EXPORT FloatSize NODELETE unitVectorForScrollDirection(ScrollDirection);
 
 struct KeyboardScroll {
     FloatSize offset; // Points per increment.
@@ -76,5 +81,8 @@ struct KeyboardScrollParameters {
 #endif
     }
 };
+
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const KeyboardScroll&);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const KeyboardScrollParameters&);
 
 } // namespace WebCore

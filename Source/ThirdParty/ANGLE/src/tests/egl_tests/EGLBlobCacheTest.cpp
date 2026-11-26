@@ -14,6 +14,7 @@
 
 #include "common/PackedEnums.h"
 #include "common/angleutils.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/MultiThreadSteps.h"
 #include "test_utils/gl_raii.h"
@@ -55,10 +56,10 @@ CacheOpResult gLastCacheOpResult = CacheOpResult::ValueNotSet;
 void SetBlob(const void *key, EGLsizeiANDROID keySize, const void *value, EGLsizeiANDROID valueSize)
 {
     std::vector<uint8_t> keyVec(keySize);
-    memcpy(keyVec.data(), key, keySize);
+    ANGLE_UNSAFE_TODO(memcpy(keyVec.data(), key, keySize));
 
     std::vector<uint8_t> valueVec(valueSize);
-    memcpy(valueVec.data(), value, valueSize);
+    ANGLE_UNSAFE_TODO(memcpy(valueVec.data(), value, valueSize));
 
     gApplicationCache[keyVec] = valueVec;
 
@@ -71,10 +72,10 @@ void SetCorruptedBlob(const void *key,
                       EGLsizeiANDROID valueSize)
 {
     std::vector<uint8_t> keyVec(keySize);
-    memcpy(keyVec.data(), key, keySize);
+    ANGLE_UNSAFE_TODO(memcpy(keyVec.data(), key, keySize));
 
     std::vector<uint8_t> valueVec(valueSize);
-    memcpy(valueVec.data(), value, valueSize);
+    ANGLE_UNSAFE_TODO(memcpy(valueVec.data(), value, valueSize));
 
     // Corrupt the data
     ++valueVec[valueVec.size() / 2];
@@ -94,7 +95,7 @@ EGLsizeiANDROID GetBlob(const void *key,
                         EGLsizeiANDROID valueSize)
 {
     std::vector<uint8_t> keyVec(keySize);
-    memcpy(keyVec.data(), key, keySize);
+    ANGLE_UNSAFE_TODO(memcpy(keyVec.data(), key, keySize));
 
     auto entry = gApplicationCache.find(keyVec);
     if (entry == gApplicationCache.end())
@@ -112,7 +113,7 @@ EGLsizeiANDROID GetBlob(const void *key,
 
     if (entry->second.size() <= static_cast<size_t>(valueSize))
     {
-        memcpy(value, entry->second.data(), entry->second.size());
+        ANGLE_UNSAFE_TODO(memcpy(value, entry->second.data(), entry->second.size()));
         gLastCacheOpResult = CacheOpResult::GetSuccess;
     }
     else
@@ -149,6 +150,7 @@ class EGLBlobCacheTest : public ANGLETest<>
     {
         // Force disply caching off. Blob cache functions require it.
         forceNewDisplay();
+        setPbuffer(true);
     }
 
     void testSetUp() override
@@ -507,7 +509,7 @@ TEST_P(EGLBlobCacheTest, ThreadSafety)
         // Insert a new entry into the cache unique to this thread.
         std::stringstream ss;
         ss << essl1_shaders::vs::Simple() << "//" << threadID;
-        std::string newEntryVSSource = ss.str().c_str();
+        std::string newEntryVSSource = ss.str();
         ANGLE_GL_PROGRAM(unusedProgramTemp2, newEntryVSSource.c_str(), essl1_shaders::fs::Red());
 
         // Clean up
@@ -671,7 +673,6 @@ TEST_P(EGLBlobCacheInternalRejectionTest, ShaderCacheFunctional)
 }
 
 ANGLE_INSTANTIATE_TEST(EGLBlobCacheTest,
-                       ES2_D3D9(),
                        ES2_D3D11(),
                        ES3_D3D11(),
                        ES2_OPENGL(),
@@ -690,11 +691,9 @@ ANGLE_INSTANTIATE_TEST(EGLBlobCacheTest,
                            .enable(Feature::DisablePipelineCacheLoadForTesting)
                            .disable(Feature::SyncMonolithicPipelinesToBlobCache),
                        ES3_VULKAN()
-                           .enable(Feature::AsyncCommandQueue)
                            .enable(Feature::DisablePipelineCacheLoadForTesting)
                            .disable(Feature::SyncMonolithicPipelinesToBlobCache),
                        ES2_VULKAN_SWIFTSHADER()
-                           .enable(Feature::AsyncCommandQueue)
                            .enable(Feature::DisablePipelineCacheLoadForTesting)
                            .disable(Feature::SyncMonolithicPipelinesToBlobCache),
                        ES2_VULKAN_SWIFTSHADER()
@@ -703,11 +702,6 @@ ANGLE_INSTANTIATE_TEST(EGLBlobCacheTest,
                            .disable(Feature::SyncMonolithicPipelinesToBlobCache),
                        ES3_VULKAN()
                            .enable(Feature::EnableParallelCompileAndLink)
-                           .enable(Feature::DisablePipelineCacheLoadForTesting)
-                           .disable(Feature::SyncMonolithicPipelinesToBlobCache),
-                       ES2_VULKAN_SWIFTSHADER()
-                           .enable(Feature::EnableParallelCompileAndLink)
-                           .enable(Feature::AsyncCommandQueue)
                            .enable(Feature::DisablePipelineCacheLoadForTesting)
                            .disable(Feature::SyncMonolithicPipelinesToBlobCache));
 

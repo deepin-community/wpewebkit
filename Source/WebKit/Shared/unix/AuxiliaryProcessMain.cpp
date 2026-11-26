@@ -26,16 +26,27 @@
 #include "config.h"
 #include "AuxiliaryProcessMain.h"
 
-#include "IPCUtilities.h"
 #include <JavaScriptCore/Options.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/text/CStringView.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/StringView.h>
+#include <wtf/unix/UnixFileDescriptor.h>
 
 #if ENABLE(BREAKPAD)
 #include "unix/BreakpadExceptionHandler.h"
+#endif
+
+#if USE(GLIB)
+#include <glib-unix.h>
+#endif
+
+#if ENABLE(LLVM_PROFILE_GENERATION)
+__attribute__((weak)) extern "C" int __llvm_profile_dump(void);
 #endif
 
 namespace WebKit {
@@ -51,41 +62,31 @@ AuxiliaryProcessMainCommon::AuxiliaryProcessMainCommon()
 bool AuxiliaryProcessMainCommon::parseCommandLine(int argc, char** argv)
 {
     int argIndex = 1; // Start from argv[1], since argv[0] is the program name.
+    std::span argvSpan = unsafeMakeSpan(argv, argc);
 
     // Ensure we have enough arguments for processIdentifier and connectionIdentifier
     if (argc < argIndex + 2)
         return false;
 
-    if (auto processIdentifier = parseInteger<uint64_t>(span(argv[argIndex++])))
-        m_parameters.processIdentifier = LegacyNullableObjectIdentifier<WebCore::ProcessIdentifierType>(*processIdentifier);
-    else
-        return false;
-
-    if (auto connectionIdentifier = parseInteger<int>(span(argv[argIndex++])))
-        m_parameters.connectionIdentifier = IPC::Connection::Identifier { *connectionIdentifier };
-    else
-        return false;
-
-    if (!m_parameters.processIdentifier->toRawValue() || m_parameters.connectionIdentifier.handle <= 0)
-        return false;
-
-#if USE(GLIB) && OS(LINUX)
-    // Parse pidSocket if available
-    if (argc > argIndex) {
-        auto pidSocket = parseInteger<int>(span(argv[argIndex]));
-        if (pidSocket && *pidSocket >= 0) {
-            IPC::sendPIDToPeer(*pidSocket);
-            RELEASE_ASSERT(!close(*pidSocket));
-            ++argIndex;
-        } else
+    if (auto processIdentifier = parseInteger<uint64_t>(StringView::fromLatin1(argvSpan[argIndex++]))) {
+        if (!ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(*processIdentifier))
             return false;
-    }
-#endif
+        m_parameters.processIdentifier = ObjectIdentifier<WebCore::ProcessIdentifierType>(*processIdentifier);
+    } else
+        return false;
+
+    if (auto connectionIdentifier = parseInteger<int>(StringView::fromLatin1(argvSpan[argIndex++])))
+        m_parameters.connectionIdentifier = IPC::Connection::Identifier { { *connectionIdentifier, UnixFileDescriptor::Adopt } };
+    else
+        return false;
+
+    if (!m_parameters.processIdentifier->toRawValue() || m_parameters.connectionIdentifier.handle.value() <= 0)
+        return false;
 
 #if ENABLE(DEVELOPER_MODE)
     // Check last remaining options for JSC testing
-    for (; argIndex < argc; ++argIndex) {
-        if (argv[argIndex] && !strcmp(argv[argIndex], "--configure-jsc-for-testing"))
+    for (auto& arg : argvSpan.subspan(argIndex)) {
+        if (CStringView::unsafeFromUTF8(arg) == "--configure-jsc-for-testing"_s)
             JSC::Config::configureForTesting();
     }
 #endif
@@ -95,11 +96,21 @@ bool AuxiliaryProcessMainCommon::parseCommandLine(int argc, char** argv)
 
 void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationParameters&)
 {
-    struct sigaction signalAction;
-    memset(&signalAction, 0, sizeof(signalAction));
+    struct sigaction signalAction { };
     RELEASE_ASSERT(!sigemptyset(&signalAction.sa_mask));
     signalAction.sa_handler = SIG_IGN;
     RELEASE_ASSERT(!sigaction(SIGPIPE, &signalAction, nullptr));
+#if ENABLE(LLVM_PROFILE_GENERATION) && USE(GLIB)
+    // __llvm_profile_dump() is not async-signal-safe but losing profile
+    // data from auxiliary processes would make PGO collection impractical.
+    if (__llvm_profile_dump) {
+        g_unix_signal_add(SIGTERM, [](void* data) -> gboolean {
+            __llvm_profile_dump();
+            static_cast<AuxiliaryProcess*>(data)->terminate();
+            return G_SOURCE_REMOVE;
+        }, this);
+    }
+#endif
 }
 
 } // namespace WebKit

@@ -25,10 +25,12 @@
 
 #pragma once
 
-#include "HeapObserver.h"
-#include "InspectorAgentBase.h"
-#include "InspectorBackendDispatchers.h"
-#include "InspectorFrontendDispatchers.h"
+#include <JavaScriptCore/HeapObserver.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/InspectorAgentBase.h>
+#include <JavaScriptCore/InspectorBackendDispatchers.h>
+#include <JavaScriptCore/InspectorFrontendDispatchers.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
@@ -42,16 +44,17 @@ namespace Inspector {
 
 class InjectedScriptManager;
 
-class JS_EXPORT_PRIVATE InspectorHeapAgent : public InspectorAgentBase, public HeapBackendDispatcherHandler, public JSC::HeapObserver {
+class JS_EXPORT_PRIVATE InspectorHeapAgent : public InspectorAgentBase, public HeapBackendDispatcherHandler, public JSC::HeapObserver, public JSC::HeapSnapshotBuilder::Client {
     WTF_MAKE_NONCOPYABLE(InspectorHeapAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorHeapAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorHeapAgent);
 public:
     InspectorHeapAgent(AgentContext&);
     ~InspectorHeapAgent() override;
 
     // InspectorAgentBase
-    void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
-    void willDestroyFrontendAndBackend(DisconnectReason) final;
+    void didCreateFrontendAndBackend() override;
+    void willDestroyFrontendAndBackend(DisconnectReason) override;
 
     // HeapBackendDispatcherHandler
     Protocol::ErrorStringOr<void> enable() override;
@@ -67,6 +70,9 @@ public:
     void willGarbageCollect() final;
     void didGarbageCollect(JSC::CollectionScope) final;
 
+    // JSC::HeapSnapshotBuilder::Client
+    bool heapSnapshotBuilderIgnoreNode(const JSC::HeapSnapshotBuilder&, JSC::JSCell*) final;
+
 protected:
     void clearHeapSnapshots();
 
@@ -75,10 +81,10 @@ protected:
 private:
     std::optional<JSC::HeapSnapshotNode> nodeForHeapObjectIdentifier(Protocol::ErrorString&, unsigned heapObjectIdentifier);
 
-    InjectedScriptManager& m_injectedScriptManager;
-    std::unique_ptr<HeapFrontendDispatcher> m_frontendDispatcher;
-    RefPtr<HeapBackendDispatcher> m_backendDispatcher;
-    InspectorEnvironment& m_environment;
+    const CheckedRef<InjectedScriptManager> m_injectedScriptManager;
+    const UniqueRef<HeapFrontendDispatcher> m_frontendDispatcher;
+    const Ref<HeapBackendDispatcher> m_backendDispatcher;
+    WeakRef<InspectorEnvironment> m_environment;
 
     bool m_enabled { false };
     bool m_tracking { false };

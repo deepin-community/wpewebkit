@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,14 +28,18 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "GPUProcessConnection.h"
-#include "RenderingBackendIdentifier.h"
+#include "RemoteRenderingBackendIdentifier.h"
 #include "StreamClientConnection.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPU.h>
 #include <WebCore/WebGPUPresentationContext.h>
-#include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
+
+namespace WebModel {
+struct ImageAsset;
+struct MeshDescriptor;
+}
 
 namespace WebCore {
 class IntSize;
@@ -44,6 +48,9 @@ class NativeImage;
 }
 
 namespace WebKit {
+class ConvertToBackingContext;
+class Mesh;
+class ModelConvertToBackingContext;
 class RemoteRenderingBackendProxy;
 class WebPage;
 
@@ -54,9 +61,10 @@ class DowncastConvertToBackingContext;
 
 class RemoteGPUProxy final : public WebCore::WebGPU::GPU, private IPC::Connection::Client, public ThreadSafeRefCounted<RemoteGPUProxy>, SerialFunctionDispatcher {
     WTF_MAKE_TZONE_ALLOCATED(RemoteGPUProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteGPUProxy);
 public:
-    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, WebPage&);
-    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
+    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, WebPage&);
+    static RefPtr<RemoteGPUProxy> create(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, RemoteRenderingBackendProxy&, SerialFunctionDispatcher&);
 
     virtual ~RemoteGPUProxy();
 
@@ -69,22 +77,25 @@ public:
 
     void paintToCanvas(WebCore::NativeImage&, const WebCore::IntSize&, WebCore::GraphicsContext&) final;
     WebGPUIdentifier backing() const { return m_backing; }
+    RefPtr<WebKit::Mesh> NODELETE createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 
 private:
     friend class WebGPU::DowncastConvertToBackingContext;
 
-    RemoteGPUProxy(WebGPU::ConvertToBackingContext&, SerialFunctionDispatcher&);
-    void initializeIPC(Ref<IPC::StreamClientConnection>&&, RenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
+    RemoteGPUProxy(WebGPU::ConvertToBackingContext&, ModelConvertToBackingContext&, SerialFunctionDispatcher&);
+    void initializeIPC(Ref<IPC::StreamClientConnection>&&, RemoteRenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
 
     RemoteGPUProxy(const RemoteGPUProxy&) = delete;
     RemoteGPUProxy(RemoteGPUProxy&&) = delete;
     RemoteGPUProxy& operator=(const RemoteGPUProxy&) = delete;
     RemoteGPUProxy& operator=(RemoteGPUProxy&&) = delete;
 
+    bool isRemoteGPUProxy() const final { return true; }
+
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
     void didClose(IPC::Connection&) final;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfObjectFailingDecoding) final { }
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) final { }
 
     // Messages to be received.
     void wasCreated(bool didSucceed, IPC::Semaphore&& wakeUpSemaphore, IPC::Semaphore&& clientWaitSemaphore);
@@ -92,14 +103,19 @@ private:
     void waitUntilInitialized();
 
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(std::forward<T>(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult<T> sendSync(T&& message)
+    [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().streamClientConnection().sendSync(std::forward<T>(message), backing());
+        return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
+    }
+    template<typename T, typename C>
+    [[nodiscard]] std::optional<IPC::StreamClientConnection::AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler)
+    {
+        return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
     void requestAdapter(const WebCore::WebGPU::RequestAdapterOptions&, CompletionHandler<void(RefPtr<WebCore::WebGPU::Adapter>&&)>&&) final;
@@ -139,12 +155,12 @@ private:
     void disconnectGpuProcessIfNeeded();
 
     // SerialFunctionDispatcher
-    void dispatch(Function<void()>&& function) final { m_dispatcher.dispatch(WTFMove(function)); }
-    bool isCurrent() const final { return m_dispatcher.isCurrent(); }
+    void dispatch(Function<void()>&&) final;
+    bool isCurrent() const final;
 
-    Ref<WebGPU::ConvertToBackingContext> m_convertToBackingContext;
-    Deque<CompletionHandler<void(RefPtr<WebCore::WebGPU::Adapter>&&)>> m_callbacks;
-    SerialFunctionDispatcher& m_dispatcher;
+    const Ref<WebGPU::ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<ModelConvertToBackingContext> m_modelConvertToBackingContext;
+    ThreadSafeWeakPtr<SerialFunctionDispatcher> m_dispatcher;
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection;
     RefPtr<IPC::StreamClientConnection> m_streamConnection;
     WebGPUIdentifier m_backing { WebGPUIdentifier::generate() };
@@ -153,5 +169,9 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::RemoteGPUProxy)
+    static bool isType(const WebCore::WebGPU::GPU& gpu) { return gpu.isRemoteGPUProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

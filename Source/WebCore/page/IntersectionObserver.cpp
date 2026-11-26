@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2020 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,9 +27,16 @@
 #include "config.h"
 #include "IntersectionObserver.h"
 
+#include "ContainerNodeInlines.h"
+#include "ContextDestructionObserverInlines.h"
 #include "CSSParserTokenRange.h"
-#include "CSSPropertyParserConsumer+Length.h"
+#include "CSSPropertyParserConsumer+Background.h"
+#include "CSSPropertyParserConsumer+LengthPercentageDefinitions.h"
+#include "CSSPropertyParserConsumer+MetaConsumer.h"
 #include "CSSTokenizer.h"
+#include "DocumentQuirks.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameView.h"
@@ -37,86 +44,123 @@
 #include "IntersectionObserverCallback.h"
 #include "IntersectionObserverEntry.h"
 #include "JSNodeCustom.h"
+#include "LegacyRenderSVGModelObject.h"
+#include "LegacyRenderSVGRoot.h"
 #include "LocalDOMWindow.h"
 #include "Logging.h"
 #include "Performance.h"
+#include "RenderAncestorIterator.h"
 #include "RenderBlock.h"
 #include "RenderBoxInlines.h"
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
+#include "RenderObjectInlines.h"
+#include "RenderSVGModelObject.h"
+#include "RenderSVGRoot.h"
 #include "RenderView.h"
+#include "SVGRenderSupport.h"
+#include "StyleKeyword+Logging.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "StylePrimitiveNumericTypes+Logging.h"
+#include "TransformState.h"
+#include "VisibleRectContext.h"
 #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/AbstractSlotVisitorInlines.h>
+#include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
 
-static ExceptionOr<LengthBox> parseRootMargin(String& rootMargin)
+static ExceptionOr<IntersectionObserverMarginBox> parseMargin(String& margin, const String& marginName)
 {
-    CSSTokenizer tokenizer(rootMargin);
+    using namespace CSSPropertyParserHelpers;
+
+    auto parserContext = CSSParserContext { HTMLStandardMode };
+    auto parserState = CSS::PropertyParserState {
+        .context = parserContext,
+        .absoluteLengthUnitsOnly = true
+    };
+
+    CSSTokenizer tokenizer(margin);
     auto tokenRange = tokenizer.tokenRange();
     tokenRange.consumeWhitespace();
-    Vector<Length, 4> margins;
-    while (!tokenRange.atEnd()) {
-        if (margins.size() == 4)
-            return Exception { ExceptionCode::SyntaxError, "Failed to construct 'IntersectionObserver': Extra text found at the end of rootMargin."_s };
-        RefPtr<CSSPrimitiveValue> parsedValue = CSSPropertyParserHelpers::consumeLengthOrPercent(tokenRange, HTMLStandardMode);
-        if (!parsedValue || parsedValue->isCalculated())
-            return Exception { ExceptionCode::SyntaxError, "Failed to construct 'IntersectionObserver': rootMargin must be specified in pixels or percent."_s };
-        if (parsedValue->isPercentage())
-            margins.append(Length(parsedValue->doubleValue(), LengthType::Percent));
-        else if (parsedValue->isPx())
-            margins.append(Length(parsedValue->intValue(), LengthType::Fixed));
-        else
-            return Exception { ExceptionCode::SyntaxError, "Failed to construct 'IntersectionObserver': rootMargin must be specified in pixels or percent."_s };
-    }
-    switch (margins.size()) {
-    case 0:
-        for (unsigned i = 0; i < 4; ++i)
-            margins.append(Length(0, LengthType::Fixed));
-        break;
-    case 1:
-        for (unsigned i = 0; i < 3; ++i)
-            margins.append(margins[0]);
-        break;
-    case 2:
-        margins.append(margins[0]);
-        margins.append(margins[1]);
-        break;
-    case 3:
-        margins.append(margins[1]);
-        break;
-    case 4:
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
 
-    return LengthBox(WTFMove(margins[0]), WTFMove(margins[1]), WTFMove(margins[2]), WTFMove(margins[3]));
+    if (tokenRange.atEnd())
+        return IntersectionObserverMarginBox { IntersectionObserverMarginEdge::Dimension { 0 } };
+
+    auto consumeEdge = [&] -> ExceptionOr<IntersectionObserverMarginEdge> {
+        auto parsedValue = MetaConsumer<CSS::LengthPercentageRaw<CSS::AllUnzoomed>>::consume(tokenRange, parserState);
+
+        if (!parsedValue)
+            return Exception { ExceptionCode::SyntaxError, makeString("Failed to construct 'IntersectionObserver': "_s, marginName, " must be specified as an absolute length or a percentage."_s) };
+
+        // Due to setting the parser state's `absoluteLengthUnitsOnly` to true, no units requiring conversion data should be present.
+        ASSERT(!conversionToCanonicalUnitRequiresConversionData(parsedValue->unit));
+
+        return Style::toStyle(*parsedValue, NoConversionDataRequiredToken { });
+    };
+
+    auto edge1 = consumeEdge();
+    if (edge1.hasException())
+        return edge1.releaseException();
+
+    if (tokenRange.atEnd())
+        return completeQuad<IntersectionObserverMarginBox>(edge1.releaseReturnValue());
+
+    auto edge2 = consumeEdge();
+    if (edge2.hasException())
+        return edge2.releaseException();
+
+    if (tokenRange.atEnd())
+        return completeQuad<IntersectionObserverMarginBox>(edge1.releaseReturnValue(), edge2.releaseReturnValue());
+
+    auto edge3 = consumeEdge();
+    if (edge3.hasException())
+        return edge3.releaseException();
+
+    if (tokenRange.atEnd())
+        return completeQuad<IntersectionObserverMarginBox>(edge1.releaseReturnValue(), edge2.releaseReturnValue(), edge3.releaseReturnValue());
+
+    auto edge4 = consumeEdge();
+    if (edge4.hasException())
+        return edge4.releaseException();
+
+    if (!tokenRange.atEnd())
+        return Exception { ExceptionCode::SyntaxError, makeString("Failed to construct 'IntersectionObserver': Extra text found at the end of "_s, marginName, "."_s) };
+
+    return IntersectionObserverMarginBox { edge1.releaseReturnValue(), edge2.releaseReturnValue(), edge3.releaseReturnValue(), edge4.releaseReturnValue() };
 }
 
-ExceptionOr<Ref<IntersectionObserver>> IntersectionObserver::create(Document& document, Ref<IntersectionObserverCallback>&& callback, IntersectionObserver::Init&& init)
+ExceptionOr<Ref<IntersectionObserver>> IntersectionObserver::create(Document& document, Ref<IntersectionObserverCallback>&& callback, IntersectionObserver::Init&& init, IncludeObscuredInsets includeObscuredInsets)
 {
     RefPtr<ContainerNode> root;
     if (init.root) {
-        WTF::switchOn(*init.root, [&root] (RefPtr<Element> element) {
-            root = element.get();
-        }, [&root] (RefPtr<Document> document) {
-            root = document.get();
-        });
+        root = WTF::switchOn(*init.root,
+            [](auto elementOrDocument) -> RefPtr<ContainerNode> {
+                return elementOrDocument.get();
+            }
+        );
     }
 
-    auto rootMarginOrException = parseRootMargin(init.rootMargin);
+    auto rootMarginOrException = parseMargin(init.rootMargin, "rootMargin"_s);
     if (rootMarginOrException.hasException())
         return rootMarginOrException.releaseException();
 
+    auto scrollMarginOrException = parseMargin(init.scrollMargin, "scrollMargin"_s);
+    if (scrollMarginOrException.hasException())
+        return scrollMarginOrException.releaseException();
+
     Vector<double> thresholds;
-    WTF::switchOn(init.threshold, [&thresholds] (double initThreshold) {
-        thresholds.append(initThreshold);
-    }, [&thresholds] (Vector<double>& initThresholds) {
-        thresholds = WTFMove(initThresholds);
-    });
+    WTF::switchOn(init.threshold,
+        [&thresholds](double initThreshold) {
+            thresholds.append(initThreshold);
+        },
+        [&thresholds](Vector<double>& initThresholds) {
+            thresholds = WTF::move(initThresholds);
+        }
+    );
 
     if (thresholds.isEmpty())
         thresholds.append(0.f);
@@ -126,16 +170,18 @@ ExceptionOr<Ref<IntersectionObserver>> IntersectionObserver::create(Document& do
             return Exception { ExceptionCode::RangeError, "Failed to construct 'IntersectionObserver': all thresholds must lie in the range [0.0, 1.0]."_s };
     }
 
-    return adoptRef(*new IntersectionObserver(document, WTFMove(callback), root.get(), rootMarginOrException.releaseReturnValue(), WTFMove(thresholds)));
+    return adoptRef(*new IntersectionObserver(document, WTF::move(callback), root.get(), rootMarginOrException.releaseReturnValue(), scrollMarginOrException.releaseReturnValue(), WTF::move(thresholds), includeObscuredInsets));
 }
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(IntersectionObserver);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(IntersectionObserver);
 
-IntersectionObserver::IntersectionObserver(Document& document, Ref<IntersectionObserverCallback>&& callback, ContainerNode* root, LengthBox&& parsedRootMargin, Vector<double>&& thresholds)
+IntersectionObserver::IntersectionObserver(Document& document, Ref<IntersectionObserverCallback>&& callback, ContainerNode* root, IntersectionObserverMarginBox&& parsedRootMargin, IntersectionObserverMarginBox&& parsedScrollMargin, Vector<double>&& thresholds, IncludeObscuredInsets includeObscuredInsets)
     : m_root(root)
-    , m_rootMargin(WTFMove(parsedRootMargin))
-    , m_thresholds(WTFMove(thresholds))
-    , m_callback(WTFMove(callback))
+    , m_rootMargin(WTF::move(parsedRootMargin))
+    , m_scrollMargin(WTF::move(parsedScrollMargin))
+    , m_thresholds(WTF::move(thresholds))
+    , m_callback(WTF::move(callback))
+    , m_includeObscuredInsets(includeObscuredInsets)
 {
     if (RefPtr rootDocument = dynamicDowncast<Document>(root)) {
         auto& observerData = rootDocument->ensureIntersectionObserverData();
@@ -143,14 +189,20 @@ IntersectionObserver::IntersectionObserver(Document& document, Ref<IntersectionO
     } else if (root) {
         auto& observerData = downcast<Element>(*root).ensureIntersectionObserverData();
         observerData.observers.append(*this);
-    } else if (auto* frame = document.frame()) {
-        if (auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame()))
+    } else if (RefPtr frame = document.frame()) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame())) {
+            // implicitRootDocument is in same process
             m_implicitRootDocument = localFrame->document();
+        } else {
+            // Main frame's document is in different process, so the current document tracks it.
+            m_type = Type::Remote;
+            m_implicitRootDocument = document;
+        }
     }
 
-    std::sort(m_thresholds.begin(), m_thresholds.end());
-    
-    LOG_WITH_STREAM(IntersectionObserver, stream << "Created IntersectionObserver " << this << " root " << root << " root margin " << m_rootMargin << " thresholds " << m_thresholds);
+    std::ranges::sort(m_thresholds);
+
+    LOG_WITH_STREAM(IntersectionObserver, stream << "Created IntersectionObserver " << this << " root " << root << " root margin " << m_rootMargin << " scroll margin " << m_scrollMargin << " thresholds " << m_thresholds);
 }
 
 IntersectionObserver::~IntersectionObserver()
@@ -163,36 +215,77 @@ IntersectionObserver::~IntersectionObserver()
     disconnect();
 }
 
-String IntersectionObserver::rootMargin() const
+Document* IntersectionObserver::trackingDocument() const
+{
+    return m_root ? &m_root->document() : m_implicitRootDocument.get();
+}
+
+static String marginBoxToString(const IntersectionObserverMarginBox& marginBox)
 {
     StringBuilder stringBuilder;
     for (auto side : allBoxSides) {
-        auto& length = m_rootMargin.at(side);
-        stringBuilder.append(length.intValue(), length.isPercent() ? "%"_s : "px"_s, side != BoxSide::Left ? " "_s : ""_s);
+        auto& edge = marginBox.at(side);
+        if (auto percentage = edge.tryPercentage())
+            stringBuilder.append(static_cast<int>(percentage->value), "%"_s, side != BoxSide::Left ? " "_s : ""_s);
+        else
+            stringBuilder.append(static_cast<int>(edge.tryDimension()->resolveZoom(Style::ZoomFactor::none())), "px"_s, side != BoxSide::Left ? " "_s : ""_s);
     }
     return stringBuilder.toString();
 }
 
+String IntersectionObserver::rootMargin() const
+{
+    return marginBoxToString(m_rootMargin);
+}
+
+String IntersectionObserver::scrollMargin() const
+{
+    return marginBoxToString(m_scrollMargin);
+}
+
 bool IntersectionObserver::isObserving(const Element& element) const
 {
-    return m_observationTargets.findIf([&](auto& target) {
-        return target.get() == &element;
-    }) != notFound;
+    Locker locker { m_observationTargetsLock };
+    return m_observationTargets.contains(element);
+}
+
+Vector<Ref<Element>> IntersectionObserver::observationTargets() const
+{
+    Locker locker { m_observationTargetsLock };
+    return copyToVectorOf<Ref<Element>>(m_observationTargets);
+}
+
+Vector<Ref<Element>> IntersectionObserver::takeAllTargets()
+{
+    Locker locker { m_observationTargetsLock };
+    auto targets = copyToVectorOf<Ref<Element>>(m_observationTargets);
+    m_observationTargets.clear();
+    m_targetsWaitingForFirstObservation.clear();
+    return targets;
+}
+
+Vector<GCReachableRef<Element>> IntersectionObserver::takeTargetsWaitingForFirstObservation()
+{
+    Locker locker { m_observationTargetsLock };
+    return std::exchange(m_targetsWaitingForFirstObservation, { });
 }
 
 void IntersectionObserver::observe(Element& target)
 {
-    if (!trackingDocument() || !m_callback || isObserving(target))
+    if (!trackingDocument() || isObserving(target))
         return;
 
     target.ensureIntersectionObserverData().registrations.append({ *this, std::nullopt });
     bool hadObservationTargets = hasObservationTargets();
-    m_observationTargets.append(target);
+    {
+        Locker locker { m_observationTargetsLock };
+        m_observationTargets.add(target);
 
-    // Per the specification, we should dispatch at least one observation for the target. For this reason, we make sure to keep the
-    // target alive until this first observation. This, in turn, will keep the IntersectionObserver's JS wrapper alive via
-    // isReachableFromOpaqueRoots(), so the callback stays alive.
-    m_targetsWaitingForFirstObservation.append(target);
+        // Per the specification, we should dispatch at least one observation for the target. For this reason, we make sure to keep the
+        // target alive until this first observation. This, in turn, will keep the IntersectionObserver's JS wrapper alive via
+        // isReachableFromOpaqueRoots(), so the callback stays alive.
+        m_targetsWaitingForFirstObservation.append(target);
+    }
 
     RefPtr document = trackingDocument();
     if (!hadObservationTargets)
@@ -205,9 +298,12 @@ void IntersectionObserver::unobserve(Element& target)
     if (!removeTargetRegistration(target))
         return;
 
-    bool removed = m_observationTargets.removeFirst(&target);
-    ASSERT_UNUSED(removed, removed);
-    m_targetsWaitingForFirstObservation.removeFirstMatching([&](auto& pendingTarget) { return pendingTarget.ptr() == &target; });
+    {
+        Locker locker { m_observationTargetsLock };
+        bool removed = m_observationTargets.remove(&target);
+        ASSERT_UNUSED(removed, removed);
+        m_targetsWaitingForFirstObservation.removeFirstMatching([&](auto& pendingTarget) { return pendingTarget.ptr() == &target; });
+    }
 
     if (!hasObservationTargets()) {
         if (RefPtr document = trackingDocument())
@@ -218,7 +314,7 @@ void IntersectionObserver::unobserve(Element& target)
 void IntersectionObserver::disconnect()
 {
     if (!hasObservationTargets()) {
-        ASSERT(m_targetsWaitingForFirstObservation.isEmpty());
+        ASSERT(!hasTargetsWaitingForFirstObservation());
         return;
     }
 
@@ -229,13 +325,18 @@ void IntersectionObserver::disconnect()
 
 auto IntersectionObserver::takeRecords() -> TakenRecords
 {
-    return { WTFMove(m_queuedEntries), WTFMove(m_pendingTargets) };
+    Locker locker { m_observationTargetsLock };
+    return { WTF::move(m_queuedEntries), WTF::move(m_pendingTargets) };
 }
 
 void IntersectionObserver::targetDestroyed(Element& target)
 {
-    m_observationTargets.removeFirst(&target);
-    m_targetsWaitingForFirstObservation.removeFirstMatching([&](auto& pendingTarget) { return pendingTarget.ptr() == &target; });
+    {
+        Locker locker { m_observationTargetsLock };
+        m_observationTargets.remove(target);
+        ASSERT(!m_targetsWaitingForFirstObservation.containsIf([&](auto& pendingTarget) { return pendingTarget.ptr() == &target; }));
+    }
+
     if (!hasObservationTargets()) {
         if (RefPtr document = trackingDocument())
             document->removeIntersectionObserver(*this);
@@ -256,12 +357,10 @@ bool IntersectionObserver::removeTargetRegistration(Element& target)
 
 void IntersectionObserver::removeAllTargets()
 {
-    for (auto& target : m_observationTargets) {
-        bool removed = removeTargetRegistration(*target);
+    for (Ref target : takeAllTargets()) {
+        bool removed = removeTargetRegistration(target);
         ASSERT_UNUSED(removed, removed);
     }
-    m_observationTargets.clear();
-    m_targetsWaitingForFirstObservation.clear();
 }
 
 void IntersectionObserver::rootDestroyed()
@@ -271,62 +370,211 @@ void IntersectionObserver::rootDestroyed()
     m_root = nullptr;
 }
 
-static void expandRootBoundsWithRootMargin(FloatRect& rootBounds, const LengthBox& rootMargin, float zoomFactor)
+static void expandRootBoundsWithRootMargin(FloatRect& rootBounds, const IntersectionObserverMarginBox& rootMargin, Style::ZoomFactor zoomFactor)
 {
-    auto zoomAdjustedLength = [](const Length& length, float maximumValue, float zoomFactor) {
-        if (length.isPercent())
-            return floatValueForLength(length, maximumValue);
-
-        return floatValueForLength(length, maximumValue) * zoomFactor;
-    };
-
     auto rootMarginEdges = FloatBoxExtent {
-        zoomAdjustedLength(rootMargin.top(), rootBounds.height(), zoomFactor),
-        zoomAdjustedLength(rootMargin.right(), rootBounds.width(), zoomFactor),
-        zoomAdjustedLength(rootMargin.bottom(), rootBounds.height(), zoomFactor),
-        zoomAdjustedLength(rootMargin.left(), rootBounds.width(), zoomFactor)
+        Style::evaluate<float>(rootMargin.top(), rootBounds.height(), zoomFactor),
+        Style::evaluate<float>(rootMargin.right(), rootBounds.width(), zoomFactor),
+        Style::evaluate<float>(rootMargin.bottom(), rootBounds.height(), zoomFactor),
+        Style::evaluate<float>(rootMargin.left(), rootBounds.width(), zoomFactor)
     };
 
     rootBounds.expand(rootMarginEdges);
 }
 
-static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const LayoutRect& rect, const RenderElement* renderer)
+// Given a rectangle in the coordinate space of rendererOrFrame, compute the visible
+// rectangle in the content coordinate space of the root's (main frame) RenderView.
+// This is done by computing the visible rectangle in the nearest frame, then its
+// parent frame, ... up to the main frame.
+//
+// If rendererOrFrame is a:
+// * Renderer: rect is in the coordinate space of the renderer.
+// * Frame: rect is in the coordinate space of the frame's owner renderer.
+//   This is only used in Site Isolation mode, when the frame is out-of-process
+//   and its owner renderer is not available.
+//
+// targetSecurityOrigin is the security origin of the target (the element that
+// originates the very first rect)
+static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const LayoutRect& rect, const SecurityOrigin& targetSecurityOrigin, Variant<const RenderElement*, const Frame*> rendererOrFrame, std::optional<IntersectionObserverMarginBox> scrollMargin)
 {
-    auto visibleRectOptions = OptionSet {
-        RenderObject::VisibleRectContextOption::UseEdgeInclusiveIntersection,
-        RenderObject::VisibleRectContextOption::ApplyCompositedClips,
-        RenderObject::VisibleRectContextOption::ApplyCompositedContainerScrolls
-    };
+    RefPtr<const Frame> enclosingFrame = WTF::visit(WTF::makeVisitor(
+        [&] (const RenderElement* renderer) { return static_cast<const Frame*>(&renderer->frame()); },
+        [&] (const Frame* frame) { return static_cast<const Frame*>(frame->tree().parent()); }
+    ), rendererOrFrame);
 
-    auto absoluteRects = renderer->computeVisibleRectsInContainer({ rect }, &renderer->view(), { false /* hasPositionFixedDescendant */, false /* dirtyRectIsFlipped */, visibleRectOptions });
-    if (!absoluteRects)
+    if (!enclosingFrame)
         return std::nullopt;
 
-    auto absoluteClippedRect = absoluteRects->clippedOverflowRect;
-    if (renderer->frame().isMainFrame())
+    RefPtr<const FrameView> enclosingFrameView = enclosingFrame->virtualView();
+    ASSERT(enclosingFrameView);
+    if (!enclosingFrameView)
+        return std::nullopt;
+
+    // Scroll margin should not propagate past the first cross-origin frame in the chain leading to the main frame.
+    // e.g given the chain: main <- cross-origin <- same-origin 2 <- same-origin 1 <- target
+    // then scroll margin is applied to same-origin frame 1/2 but not to cross-origin and main frames.
+    // Hence, clear out the scroll margin when we see a cross-origin frame.
+    bool isSameOriginDomain = [&] () {
+        if (RefPtr enclosingFrameSecurityOrigin = enclosingFrame->frameDocumentSecurityOrigin())
+            return enclosingFrameSecurityOrigin->isSameOriginDomain(targetSecurityOrigin);
+
+        return false;
+    }();
+    if (!isSameOriginDomain)
+        scrollMargin.reset();
+
+    auto absoluteClippedRect = WTF::visit(WTF::makeVisitor(
+        [&] (const RenderElement* renderer) {
+            auto visibleRects = renderer->computeVisibleRectsInContainer(
+                { rect },
+                &renderer->view(),
+                {
+                    .hasPositionFixedDescendant = false,
+                    .dirtyRectIsFlipped = false,
+                    .descendantNeedsEnclosingIntRect = false,
+                    .options = {
+                        VisibleRectContext::Option::UseEdgeInclusiveIntersection,
+                        VisibleRectContext::Option::ApplyCompositedClips,
+                        VisibleRectContext::Option::ApplyCompositedContainerScrolls
+                    },
+                    .scrollMargin = scrollMargin
+                }
+            );
+
+            return visibleRects.transform([] (auto&& repaintRects) { return repaintRects.clippedOverflowRect; } );
+        },
+        [&] (const Frame* frame) -> std::optional<LayoutRect> {
+            // This rect is in coordinate space of parent frame. It doesn't account for
+            // scroll margin, which is fine as this codepath is only reached when Site
+            // Isolation is enabled, and the frame is cross-origin. Scroll margin doesn't
+            // get applied to cross-origin frames.
+            auto visibleRectInParentFrame = enclosingFrameView->visibleRectOfChild(*frame);
+            if (!visibleRectInParentFrame)
+                return std::nullopt;
+
+            // rect is in coordinate space of the frame's owner renderer,
+            // it needs to be converted to parent frame's coordinate space first before intersecting.
+            auto absoluteRect = LayoutRect { enclosingFrameView->childFrameOwnerToRootContentTransform(*frame).mapRect(rect) };
+            if (!absoluteRect.edgeInclusiveIntersect(*visibleRectInParentFrame))
+                return std::nullopt;
+
+            return std::make_optional(absoluteRect);
+    }), rendererOrFrame);
+
+    if (!absoluteClippedRect)
+        return std::nullopt;
+
+    // Stop here if there are no more parent frames to traverse to.
+    RefPtr enclosingFrameParent = enclosingFrame->parent();
+    if (!enclosingFrameParent)
         return absoluteClippedRect;
 
-    bool intersects = absoluteClippedRect.edgeInclusiveIntersect(renderer->view().frameView().layoutViewportRect());
-    if (!intersects)
+    RefPtr enclosingFrameParentView = enclosingFrameParent->virtualView();
+    if (!enclosingFrameParentView)
+        return absoluteClippedRect;
+
+    // The computed visible rect is in the coordinate space of enclosingFrame.
+    // But only the iframe's viewport is visible, so clip by the iframe's viewport.
+
+    // Compute the frame's viewport (this is in the coordinate space of enclosingFrame too.)
+    auto frameRect = enclosingFrameView->layoutViewportRect();
+    if (scrollMargin) {
+        auto scrollMarginEdges = LayoutBoxExtent {
+            LayoutUnit(Style::evaluate<int>(scrollMargin->top(), frameRect.height(), Style::ZoomFactor::none())),
+            LayoutUnit(Style::evaluate<int>(scrollMargin->right(), frameRect.width(), Style::ZoomFactor::none())),
+            LayoutUnit(Style::evaluate<int>(scrollMargin->bottom(), frameRect.height(), Style::ZoomFactor::none())),
+            LayoutUnit(Style::evaluate<int>(scrollMargin->left(), frameRect.width(), Style::ZoomFactor::none())),
+        };
+        frameRect.expand(scrollMarginEdges);
+    }
+
+    if (!absoluteClippedRect->edgeInclusiveIntersect(frameRect))
         return std::nullopt;
 
-    RefPtr ownerRenderer = renderer->frame().ownerRenderer();
-    if (!ownerRenderer)
-        return std::nullopt;
+    // Then convert it to the view coordinate space of enclosingFrame.
+    // This is now the visible portion in enclosingFrame's owner renderer's content box.
+    absoluteClippedRect = LayoutRect { enclosingFrameView->contentsToView(*absoluteClippedRect) };
 
-    LayoutRect rectInFrameViewSpace { renderer->view().frameView().contentsToView(absoluteClippedRect) };
+    if (RefPtr ownerRenderer = enclosingFrame->ownerRenderer()) {
+        // Adjust for borders and/or padding of the owner renderer box.
+        absoluteClippedRect->moveBy(ownerRenderer->contentBoxLocation());
+        return computeClippedRectInRootContentsSpace(*absoluteClippedRect, targetSecurityOrigin, ownerRenderer.get(), scrollMargin);
+    }
 
-    rectInFrameViewSpace.moveBy(ownerRenderer->contentBoxLocation());
-    return computeClippedRectInRootContentsSpace(rectInFrameViewSpace, ownerRenderer.get());
+    absoluteClippedRect->moveBy(enclosingFrameParentView->childFrameOwnerContentBoxLocation(*enclosingFrame));
+    return computeClippedRectInRootContentsSpace(*absoluteClippedRect, targetSecurityOrigin, enclosingFrame.get(), WTF::move(scrollMargin));
 }
 
-auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRegistration& registration, LocalFrameView& frameView, Element& target, bool applyRootMargin) const -> IntersectionObservationState
+// Equivalent to FrameView::convertFromContainingView.
+static FloatRect convertFromContainingView(const FrameView& frameView, const FrameView& parentView, FloatRect rect)
+{
+    if (is<LocalFrameView>(parentView)) {
+        // If we can compute it the old way, do so.
+        return frameView.convertFromContainingView(rect);
+    }
+
+    rect = parentView.viewToContents(rect);
+
+    auto transform = parentView.absoluteToChildFrameOwnerLocalTransform(frameView.frame());
+    FloatRect transformed = transform.projectQuad(rect).boundingBox();
+    transformed.moveBy(-parentView.childFrameOwnerContentBoxLocation(frameView.frame()));
+
+    return transformed;
+}
+
+// Equivalent to Widget::convertFromRootView.
+static FloatRect convertFromRootView(const FrameView& frameView, FloatRect rect)
+{
+    auto parentView = [&frameView] () -> RefPtr<const FrameView> {
+        if (RefPtr parent = dynamicDowncast<FrameView>(frameView.parent()))
+            return parent;
+
+        // When Site Isolation is enabled, Widget::m_parent is not populated if
+        // frameView is RemoteFrameView. Workaround this by using the frame tree parent.
+        // FIXME: fix the underlying issue instead.
+        if (RefPtr parent = frameView.frame().tree().parent())
+            return parent->virtualView();
+
+        return nullptr;
+    }();
+
+    if (parentView) {
+        FloatRect parentRect = convertFromRootView(*parentView, rect);
+        return convertFromContainingView(frameView, *parentView, parentRect);
+    }
+
+    return rect;
+}
+
+// Equivalent to rootViewToContents.
+static FloatRect mainFrameViewToContents(const FrameView& targetFrameView, FloatRect rect)
+{
+    return targetFrameView.viewToContents(convertFromRootView(targetFrameView, rect));
+}
+
+auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRegistration& registration, FrameView& hostFrameView, Element& target, ApplyRootMargin applyRootMargin) const -> IntersectionObservationState
 {
     bool isFirstObservation = !registration.previousThresholdIndex;
 
-    RenderBlock* rootRenderer = nullptr;
-    RenderElement* targetRenderer = nullptr;
+    // This is not set if the root is implicit (meaning the root is the main frame),
+    // it's cross-origin with the target, and Site Isolation is enabled. In that case,
+    // the renderer is in another process and can't be accessed.
+    CheckedPtr<RenderBox> rootRenderer;
+
+    CheckedPtr<RenderElement> targetRenderer;
     IntersectionObservationState intersectionState;
+
+    auto layoutViewportRectForIntersection = [&] {
+        if (m_includeObscuredInsets == IncludeObscuredInsets::Yes) {
+            // IncludeObscuredInsets::Yes is only used by ContentVisibilityDocumentState, which
+            // tracks the visibility of an element wrt. its document.
+            // Therefore the intersection observer is guaranteed to be a local and explicit root
+            // observer, so frameView must be local too.
+            return downcast<LocalFrameView>(hostFrameView).layoutViewportRectIncludingObscuredInsets();
+        }
+
+        return hostFrameView.layoutViewportRect();
+    };
 
     auto computeRootBounds = [&]() {
         targetRenderer = target.renderer();
@@ -334,35 +582,47 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
             return;
 
         if (root()) {
-            if (trackingDocument() != &target.document())
-                return;
-
             if (!root()->renderer())
                 return;
 
-            rootRenderer = dynamicDowncast<RenderBlock>(root()->renderer());
-            if (!rootRenderer || !rootRenderer->isContainingBlockAncestorFor(*targetRenderer))
+            // Use RenderBox here rather than RenderBlock so explicit SVG roots
+            // (LegacyRenderSVGRoot and RenderSVGRoot are RenderReplaced) are accepted.
+            rootRenderer = dynamicDowncast<RenderBox>(root()->renderer());
+            if (!rootRenderer)
+                return;
+
+            auto isRootAncestorOfTarget = [&] {
+                // containingBlock() skips the SVG boundary (the SVG root is a
+                // RenderReplaced), so resolve an explicit SVG root via the target's SVG tree root.
+                if (CheckedPtr legacySVGRoot = dynamicDowncast<LegacyRenderSVGRoot>(rootRenderer))
+                    return SVGRenderSupport::findTreeRootObject(*targetRenderer) == legacySVGRoot;
+                if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(rootRenderer))
+                    return lineageOfType<RenderSVGRoot>(*targetRenderer).first() == svgRoot;
+
+                // isContainingBlockAncestorFor is only available on RenderBlock.
+                CheckedPtr rootBlock = dynamicDowncast<RenderBlock>(rootRenderer);
+                return rootBlock && rootBlock->isContainingBlockAncestorFor(*targetRenderer);
+            };
+
+            if (!isRootAncestorOfTarget())
                 return;
 
             intersectionState.canComputeIntersection = true;
             if (root() == &target.document())
-                intersectionState.rootBounds = frameView.layoutViewportRect();
+                intersectionState.rootBounds = layoutViewportRectForIntersection();
             else if (rootRenderer->hasNonVisibleOverflow())
-                intersectionState.rootBounds = rootRenderer->contentBoxRect();
+                intersectionState.rootBounds = rootRenderer->paddingBoxRect();
             else
-                intersectionState.rootBounds = { FloatPoint(), rootRenderer->size() };
+                intersectionState.rootBounds = { FloatPoint(), rootRenderer->borderBoxSize() };
 
             return;
         }
 
-        ASSERT(frameView.frame().isMainFrame());
-        // FIXME: Handle the case of an implicit-root observer that has a target in a different frame tree.
-        if (&targetRenderer->frame().mainFrame() != &frameView.frame())
-            return;
+        if (RefPtr hostLocalFrameView = dynamicDowncast<LocalFrameView>(hostFrameView))
+            rootRenderer = hostLocalFrameView->renderView();
 
         intersectionState.canComputeIntersection = true;
-        rootRenderer = frameView.renderView();
-        intersectionState.rootBounds = frameView.layoutViewportRect();
+        intersectionState.rootBounds = layoutViewportRectForIntersection();
     };
 
     computeRootBounds();
@@ -371,8 +631,16 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
         return intersectionState;
     }
 
-    if (applyRootMargin)
-        expandRootBoundsWithRootMargin(intersectionState.rootBounds, rootMarginBox(), rootRenderer->style().usedZoom());
+    if (applyRootMargin == ApplyRootMargin::Yes) {
+        // If applyRootMargin is Yes, the root and target frames are same-origin.
+        // Therefore the root renderer should be available, as the root is in the
+        // same process as the target (with or without Site Isolation)
+        ASSERT(rootRenderer);
+        auto rootUsedZoom = rootRenderer ? Style::ZoomFactor { rootRenderer->style().usedZoom() } : Style::ZoomFactor::none();
+
+        expandRootBoundsWithRootMargin(intersectionState.rootBounds, scrollMarginBox(), rootUsedZoom);
+        expandRootBoundsWithRootMargin(intersectionState.rootBounds, rootMarginBox(), rootUsedZoom);
+    }
 
     auto localTargetBounds = [&]() -> LayoutRect {
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*targetRenderer))
@@ -384,10 +652,15 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
             return unionRect(rects);
         }
 
-        if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(targetRenderer))
+        if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(targetRenderer.get()))
             return renderLineBreak->linesBoundingBox();
 
-        // FIXME: Implement for SVG etc.
+        if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(*targetRenderer))
+            return svgModelObject->borderBoxRectEquivalent();
+
+        if (CheckedPtr legacySVGModelObject = dynamicDowncast<LegacyRenderSVGModelObject>(*targetRenderer))
+            return enclosingLayoutRect(legacySVGModelObject->strokeBoundingBox());
+
         return { };
     }();
 
@@ -396,17 +669,27 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
             return std::nullopt;
 
         if (root()) {
-            auto visibleRectOptions = OptionSet {
-                RenderObject::VisibleRectContextOption::UseEdgeInclusiveIntersection,
-                RenderObject::VisibleRectContextOption::ApplyCompositedClips,
-                RenderObject::VisibleRectContextOption::ApplyCompositedContainerScrolls };
-            auto result = targetRenderer->computeVisibleRectsInContainer({ localTargetBounds }, rootRenderer, { false /* hasPositionFixedDescendant */, false /* dirtyRectIsFlipped */, visibleRectOptions });
+            auto result = targetRenderer->computeVisibleRectsInContainer(
+                { localTargetBounds },
+                rootRenderer,
+                {
+                    .hasPositionFixedDescendant = false,
+                    .dirtyRectIsFlipped = false,
+                    .descendantNeedsEnclosingIntRect = false,
+                    .options = {
+                        VisibleRectContext::Option::UseEdgeInclusiveIntersection,
+                        VisibleRectContext::Option::ApplyCompositedClips,
+                        VisibleRectContext::Option::ApplyCompositedContainerScrolls
+                    },
+                    .scrollMargin = { }
+                }
+            );
             if (!result)
                 return std::nullopt;
             return result->clippedOverflowRect;
         }
 
-        return computeClippedRectInRootContentsSpace(localTargetBounds, targetRenderer);
+        return computeClippedRectInRootContentsSpace(localTargetBounds, protect(protect(target)->document().securityOrigin()), targetRenderer, scrollMarginBox());
     }();
 
     auto rootLocalIntersectionRect = intersectionState.rootBounds;
@@ -415,14 +698,38 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
     if (isFirstObservation || intersectionState.isIntersecting)
         intersectionState.absoluteTargetRect = targetRenderer->localToAbsoluteQuad(FloatRect(localTargetBounds)).boundingBox();
 
+    auto rootLocalToAbsoluteRect = [&] (FloatRect rect) {
+        if (rootRenderer)
+            return rootRenderer->localToAbsoluteQuad(rect).boundingBox();
+
+        // The below codepath is specific to implicit root, where the root is the main frame.
+        ASSERT(!root());
+
+        // When page scale is > 1 (e.g by pinch-to-zoom), a scale transform is applied on the
+        // main frame's RenderView in Style::resolveForDocument(). Therefore we have to apply
+        // this transform to the local coordinate to turn it into absolute.
+        // This is identical to calling localToAbsoluteQuad() on the main frame's RenderView,
+        // as it'll apply the same transform.
+        // Not applicable on iOS family as they apply page scale differently.
+        // FIXME: replace the platform ifdef with something else.
+#if !PLATFORM(IOS_FAMILY)
+        if (RefPtr hostPage = hostFrameView.frame().page())
+            rect.scale(hostPage->pageScaleFactor());
+#endif
+
+        return rect;
+    };
+
     if (intersectionState.isIntersecting) {
-        auto rootAbsoluteIntersectionRect = rootRenderer->localToAbsoluteQuad(rootLocalIntersectionRect).boundingBox();
-        if (&targetRenderer->frame() == &rootRenderer->frame())
+        auto rootAbsoluteIntersectionRect = rootLocalToAbsoluteRect(rootLocalIntersectionRect);
+
+        if (root() && &targetRenderer->frame() == &rootRenderer->frame())
             intersectionState.absoluteIntersectionRect = rootAbsoluteIntersectionRect;
         else {
-            auto rootViewIntersectionRect = frameView.contentsToView(rootAbsoluteIntersectionRect);
-            intersectionState.absoluteIntersectionRect = targetRenderer->view().frameView().rootViewToContents(rootViewIntersectionRect);
+            auto rootViewIntersectionRect = hostFrameView.contentsToView(rootAbsoluteIntersectionRect);
+            intersectionState.absoluteIntersectionRect = mainFrameViewToContents(targetRenderer->view().frameView(), rootViewIntersectionRect);
         }
+
         intersectionState.isIntersecting = intersectionState.absoluteIntersectionRect->edgeInclusiveIntersect(*intersectionState.absoluteTargetRect);
     }
 
@@ -445,7 +752,8 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
 
     intersectionState.observationChanged = isFirstObservation || intersectionState.thresholdIndex != registration.previousThresholdIndex;
     if (intersectionState.observationChanged) {
-        intersectionState.absoluteRootBounds = rootRenderer->localToAbsoluteQuad(intersectionState.rootBounds).boundingBox();
+        intersectionState.absoluteRootBounds = rootLocalToAbsoluteRect(intersectionState.rootBounds);
+
         if (!intersectionState.absoluteTargetRect)
             intersectionState.absoluteTargetRect = targetRenderer->localToAbsoluteQuad(FloatRect(localTargetBounds)).boundingBox();
     }
@@ -453,10 +761,10 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
     return intersectionState;
 }
 
-auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNotify
+auto IntersectionObserver::updateObservations(const Frame& hostFrame) -> NeedNotify
 {
-    RefPtr frameView = hostDocument.view();
-    if (!frameView)
+    RefPtr hostFrameView = hostFrame.virtualView();
+    if (!hostFrameView)
         return NeedNotify::No;
 
     auto timestamp = nowTimestamp();
@@ -465,7 +773,15 @@ auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNot
 
     auto needNotify = NeedNotify::No;
 
-    for (auto& target : observationTargets()) {
+    // Iterate on a copy of m_observationTargets, in case something in the loop mutates it.
+    auto observationTargets = this->observationTargets();
+    for (Ref target : observationTargets) {
+        // Per HTML spec, "update the rendering" step (which includes "run the update intersection
+        // observations") should only occur for fully active documents. Hence skip updating the
+        // target if its document is not fully active.
+        if (!root() && !target->document().isFullyActive())
+            continue;
+
         auto& targetRegistrations = target->intersectionObserverDataIfExists()->registrations;
         auto index = targetRegistrations.findIf([&](auto& registration) {
             return registration.observer.get() == this;
@@ -473,10 +789,26 @@ auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNot
         ASSERT(index != notFound);
         auto& registration = targetRegistrations[index];
 
-        bool isSameOriginObservation = &target->document() == &hostDocument || target->document().protectedSecurityOrigin()->isSameOriginDomain(hostDocument.securityOrigin());
-        auto intersectionState = computeIntersectionState(registration, *frameView, *target, isSameOriginObservation);
+        bool isSameOriginObservation = [&] () {
+            if (RefPtr hostFrameSecurityOrigin = hostFrame.frameDocumentSecurityOrigin())
+                return protect(target->document().securityOrigin())->isSameOriginDomain(*hostFrameSecurityOrigin);
+
+            return false;
+        }();
+        auto applyRootMargin = isSameOriginObservation ? ApplyRootMargin::Yes : ApplyRootMargin::No;
+        auto intersectionState = computeIntersectionState(registration, *hostFrameView, target, applyRootMargin);
 
         if (intersectionState.observationChanged) {
+            if (intersectionState.isIntersecting) {
+                if (RefPtr document = dynamicDowncast<Document>(m_callback->scriptExecutionContext())) {
+                    if (RefPtr page = document->page()) {
+                        if (document->quirks().shouldDeferIntersectionObserversDuringResize() && page->isWithinResizeDebounceWindow()) {
+                            registration.previousThresholdIndex = intersectionState.thresholdIndex;
+                            continue;
+                        }
+                    }
+                }
+            }
             FloatRect targetBoundingClientRect;
             FloatRect clientIntersectionRect;
             FloatRect clientRootBounds;
@@ -485,11 +817,13 @@ auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNot
                 ASSERT(intersectionState.absoluteRootBounds);
 
                 RefPtr targetFrameView = target->document().view();
-                targetBoundingClientRect = targetFrameView->absoluteToClientRect(*intersectionState.absoluteTargetRect, target->renderer()->style().usedZoom());
-                clientRootBounds = frameView->absoluteToLayoutViewportRect(*intersectionState.absoluteRootBounds);
+                auto targetZoomForClient = target->document().zoomForClient(target->renderer()->style());
+                targetBoundingClientRect = targetFrameView->absoluteToClientRect(*intersectionState.absoluteTargetRect, targetZoomForClient);
+                clientRootBounds = hostFrameView->absoluteToLayoutViewportRect(*intersectionState.absoluteRootBounds);
+
                 if (intersectionState.isIntersecting) {
                     ASSERT(intersectionState.absoluteIntersectionRect);
-                    clientIntersectionRect = targetFrameView->absoluteToClientRect(*intersectionState.absoluteIntersectionRect, target->renderer()->style().usedZoom());
+                    clientIntersectionRect = targetFrameView->absoluteToClientRect(*intersectionState.absoluteIntersectionRect, targetZoomForClient);
                 }
             }
 
@@ -508,9 +842,9 @@ auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNot
                 reportedRootBounds,
                 { targetBoundingClientRect.x(), targetBoundingClientRect.y(), targetBoundingClientRect.width(), targetBoundingClientRect.height() },
                 { clientIntersectionRect.x(), clientIntersectionRect.y(), clientIntersectionRect.width(), clientIntersectionRect.height() },
-                intersectionState.intersectionRatio,
-                target.get(),
                 intersectionState.thresholdIndex > 0,
+                intersectionState.intersectionRatio,
+                target,
             }));
 
             needNotify = NeedNotify::Yes;
@@ -523,16 +857,13 @@ auto IntersectionObserver::updateObservations(Document& hostDocument) -> NeedNot
 
 std::optional<ReducedResolutionSeconds> IntersectionObserver::nowTimestamp() const
 {
-    if (!m_callback)
-        return std::nullopt;
-
     RefPtr<LocalDOMWindow> window;
     {
         auto* context = m_callback->scriptExecutionContext();
         if (!context)
             return std::nullopt;
-        auto& document = downcast<Document>(*context);
-        window = document.domWindow();
+        Ref document = downcast<Document>(*context);
+        window = document->window();
         if (!window)
             return std::nullopt;
     }
@@ -541,20 +872,31 @@ std::optional<ReducedResolutionSeconds> IntersectionObserver::nowTimestamp() con
 
 void IntersectionObserver::appendQueuedEntry(Ref<IntersectionObserverEntry>&& entry)
 {
-    ASSERT(entry->target());
-    m_pendingTargets.append(*entry->target());
-    m_queuedEntries.append(WTFMove(entry));
+    {
+        Locker locker { m_observationTargetsLock };
+        m_pendingTargets.append(entry->target());
+    }
+    m_queuedEntries.append(WTF::move(entry));
 }
 
 void IntersectionObserver::notify()
 {
     if (m_queuedEntries.isEmpty()) {
-        ASSERT(m_pendingTargets.isEmpty());
+        ASSERT(!hasPendingTargets());
         return;
     }
 
+    if (RefPtr context = m_callback->scriptExecutionContext()) {
+        if (RefPtr document = dynamicDowncast<Document>(context.get())) {
+            if (RefPtr page = document->page()) {
+                if (document->quirks().shouldDeferIntersectionObserversDuringResize() && page->isWithinResizeDebounceWindow())
+                    return;
+            }
+        }
+    }
+
     auto takenRecords = takeRecords();
-    auto targetsWaitingForFirstObservation = std::exchange(m_targetsWaitingForFirstObservation, { });
+    auto targetsWaitingForFirstObservation = takeTargetsWaitingForFirstObservation();
 
     // FIXME: The JSIntersectionObserver wrapper should be kept alive as long as the intersection observer can fire events.
     ASSERT(m_callback->hasCallback());
@@ -574,22 +916,30 @@ void IntersectionObserver::notify()
 #endif
 
     InspectorInstrumentation::willFireObserverCallback(*context, "IntersectionObserver"_s);
-    m_callback->handleEvent(*this, WTFMove(takenRecords.records), *this);
+    m_callback->invoke(*this, WTF::move(takenRecords.records), *this);
     InspectorInstrumentation::didFireObserverCallback(*context);
 }
 
 bool IntersectionObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
+    Locker locker { m_observationTargetsLock };
+
     for (auto& target : m_observationTargets) {
-        SUPPRESS_UNCOUNTED_LOCAL auto* element = target.get();
-        if (containsWebCoreOpaqueRoot(visitor, element))
+        if (containsWebCoreOpaqueRoot(visitor, target))
             return true;
     }
+
     for (auto& target : m_pendingTargets) {
         if (containsWebCoreOpaqueRoot(visitor, target.get()))
             return true;
     }
-    return !m_targetsWaitingForFirstObservation.isEmpty();
+
+    for (auto& target : m_targetsWaitingForFirstObservation) {
+        if (containsWebCoreOpaqueRoot(visitor, target.get()))
+            return true;
+    }
+
+    return false;
 }
 
 } // namespace WebCore

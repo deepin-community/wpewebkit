@@ -34,31 +34,42 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebKit {
-class PingLoad;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::PingLoad> : std::true_type { };
-}
-
-namespace WebKit {
 
 class NetworkConnectionToWebProcess;
 class NetworkLoadChecker;
 class NetworkProcess;
 class NetworkSchemeRegistry;
 
-class PingLoad final : public NetworkDataTaskClient {
+class PingLoad final : public RefCounted<PingLoad>, public NetworkDataTaskClient {
 public:
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    static void create(NetworkProcess& networkProcess, PAL::SessionID sessionID, NetworkResourceLoadParameters&& networkResourceLoadParameters, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&& completionHandler)
+    {
+        Ref pingLoad = adoptRef(*new PingLoad(networkProcess, sessionID, WTF::move(networkResourceLoadParameters), WTF::move(completionHandler)));
+
+        // Keep the load alive until didFinish.
+        pingLoad->m_selfReference = WTF::move(pingLoad);
+    }
+
+    static void create(NetworkConnectionToWebProcess& networkConnectionToWebProcess, NetworkResourceLoadParameters&& networkResourceLoadParameters, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&& completionHandler)
+    {
+        Ref pingLoad = adoptRef(*new PingLoad(networkConnectionToWebProcess, WTF::move(networkResourceLoadParameters), WTF::move(completionHandler)));
+
+        // Keep the load alive until didFinish.
+        pingLoad->m_selfReference = WTF::move(pingLoad);
+    }
+
+    ~PingLoad();
+
+private:
     PingLoad(NetworkProcess&, PAL::SessionID, NetworkResourceLoadParameters&&, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&&);
     PingLoad(NetworkConnectionToWebProcess&, NetworkResourceLoadParameters&&, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&&);
 
-private:
-    ~PingLoad();
     void initialize(NetworkProcess&);
 
-    const URL& currentURL() const;
+    const URL& NODELETE currentURL() const;
 
     void willPerformHTTPRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, RedirectCompletionHandler&&) final;
     void didReceiveChallenge(WebCore::AuthenticationChallenge&&, NegotiatedLegacyTLS, ChallengeCompletionHandler&&) final;
@@ -76,13 +87,14 @@ private:
 
     void didFinish(const WebCore::ResourceError& = { }, const WebCore::ResourceResponse& response = { });
     
+    RefPtr<PingLoad> m_selfReference;
     PAL::SessionID m_sessionID;
     NetworkResourceLoadParameters m_parameters;
     CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)> m_completionHandler;
     RefPtr<NetworkDataTask> m_task;
     WebCore::Timer m_timeoutTimer;
-    UniqueRef<NetworkLoadChecker> m_networkLoadChecker;
-    Vector<RefPtr<WebCore::BlobDataFileReference>> m_blobFiles;
+    const Ref<NetworkLoadChecker> m_networkLoadChecker;
+    Vector<Ref<WebCore::BlobDataFileReference>> m_blobFiles;
 };
 
 }

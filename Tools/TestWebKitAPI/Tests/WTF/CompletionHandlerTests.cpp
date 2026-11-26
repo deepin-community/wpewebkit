@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
@@ -112,7 +112,7 @@ TEST_F(CompletionHandlerTest, CalledHandlerCanBeDestroyedOffThread)
 
     bool didDestroy = false;
     Thread::create("CalledHandlerCanBeDestroyedOffThread"_s, [&] {
-        auto ch = WTFMove(ch3);
+        auto ch = WTF::move(ch3);
         didDestroy = true;
     })->waitForCompletion();
     EXPECT_TRUE(didDestroy);

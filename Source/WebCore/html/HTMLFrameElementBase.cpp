@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Simon Hausmann (hausmann@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,28 +24,34 @@
 #include "config.h"
 #include "HTMLFrameElementBase.h"
 
+#include "ContainerNodeInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "FrameDestructionObserverInlines.h"
+#include "DocumentEventLoop.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
 #include "EventLoop.h"
 #include "FocusController.h"
 #include "FrameLoader.h"
+#include "HTMLBodyElement.h"
 #include "HTMLNames.h"
 #include "JSDOMBindingSecurity.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "Page.h"
-#include "Quirks.h"
 #include "RenderWidget.h"
 #include "ScriptController.h"
 #include "Settings.h"
 #include "SubframeLoader.h"
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLFrameElementBase);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLFrameElementBase);
 
 using namespace HTMLNames;
 
@@ -68,15 +74,17 @@ bool HTMLFrameElementBase::canLoad() const
 
 bool HTMLFrameElementBase::canLoadURL(const String& relativeURL) const
 {
-    return canLoadURL(document().completeURL(relativeURL));
+    return canLoadURL(protect(document())->encodingParseURL(relativeURL));
 }
 
-// Note that unlike HTMLPlugInImageElement::canLoadURL this uses ScriptController::canAccessFromCurrentOrigin.
+// Note that unlike HTMLPlugInElement::canLoadURL this uses ScriptController::canAccessFromCurrentOrigin.
 bool HTMLFrameElementBase::canLoadURL(const URL& completeURL) const
 {
     if (completeURL.protocolIsJavaScript()) {
-        RefPtr<Document> contentDocument = this->contentDocument();
-        if (contentDocument && !ScriptController::canAccessFromCurrentOrigin(contentDocument->frame(), document()))
+        RefPtr contentDocument = this->contentDocument();
+        if (contentDocument && !ScriptController::canAccessFromCurrentOrigin(protect(contentDocument->frame()).get(), protect(document()).get()))
+            return false;
+        else if (RefPtr contentFrame = this->contentFrame(); contentFrame && !ScriptController::canAccessFromCurrentOrigin(contentFrame, protect(document()).get()))
             return false;
     }
 
@@ -91,29 +99,32 @@ void HTMLFrameElementBase::openURL(LockHistory lockHistory, LockBackForwardList 
     if (m_frameURL.isEmpty())
         m_frameURL = AtomString { aboutBlankURL().string() };
 
-    RefPtr parentFrame { document().frame() };
+    Ref document = this->document();
+    RefPtr parentFrame { document->frame() };
     if (!parentFrame)
         return;
 
     auto frameName = getNameAttribute();
-    if (frameName.isNull() && UNLIKELY(document().settings().needsFrameNameFallbackToIdQuirk()))
-        frameName = getIdAttribute();
+    if (frameName.isNull()) {
+        if (document->settings().needsFrameNameFallbackToIdQuirk()) [[unlikely]]
+            frameName = getIdAttribute();
+    }
 
-    auto completeURL = document().completeURL(m_frameURL);
-    auto finishOpeningURL = [this, weakThis = WeakPtr { *this }, frameName, lockHistory, lockBackForwardList, parentFrame = WTFMove(parentFrame), completeURL] {
-        if (!weakThis)
+    auto completeURL = document->encodingParseURL(m_frameURL);
+    auto finishOpeningURL = [weakThis = WeakPtr { *this }, frameName, lockHistory, lockBackForwardList, parentFrame = WTF::move(parentFrame), completeURL] {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return;
-        Ref protectedThis { *this };
-        if (shouldLoadFrameLazily()) {
-            parentFrame->loader().subframeLoader().createFrameIfNecessary(protectedThis.get(), frameName);
+        if (protectedThis->shouldLoadFrameLazily()) {
+            parentFrame->loader().subframeLoader().createFrameIfNecessary(*protectedThis, frameName);
             return;
         }
 
-        document().willLoadFrameElement(completeURL);
-        parentFrame->loader().subframeLoader().requestFrame(*this, m_frameURL, frameName, lockHistory, lockBackForwardList);
+        protect(protectedThis->document())->willLoadFrameElement(completeURL);
+        parentFrame->loader().subframeLoader().requestFrame(*protectedThis, completeURL.string(), frameName, lockHistory, lockBackForwardList);
     };
 
-    document().quirks().triggerOptionalStorageAccessIframeQuirk(completeURL, WTFMove(finishOpeningURL));
+    document->quirks().triggerOptionalStorageAccessIframeQuirk(completeURL, WTF::move(finishOpeningURL));
 }
 
 void HTMLFrameElementBase::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
@@ -123,28 +134,40 @@ void HTMLFrameElementBase::attributeChanged(const QualifiedName& name, const Ato
         if (newValue.isNull())
             setLocation(attributeWithoutSynchronization(srcAttr).string().trim(isASCIIWhitespace));
         else
-            setLocation("about:srcdoc"_s);
+            setLocation(aboutSrcDocURL().string());
     } else if (name == srcAttr && !hasAttributeWithoutSynchronization(srcdocAttr))
         setLocation(newValue.string().trim(isASCIIWhitespace));
-    else
+    else if (name == scrollingAttr && contentFrame())
+        protect(contentFrame())->updateScrollingMode();
+    else if (name == marginwidthAttr || name == marginheightAttr) {
+        if (RefPtr contentDocument = this->contentDocument()) {
+            if (RefPtr body = contentDocument->body()) {
+                if (newValue.isNull())
+                    body->removeAttribute(name);
+                else
+                    body->setAttributeWithoutSynchronization(name, newValue);
+            }
+        }
+    } else
         HTMLFrameOwnerElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-Node::InsertedIntoAncestorResult HTMLFrameElementBase::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLFrameElementBase::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLFrameOwnerElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLFrameOwnerElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
-    return InsertedIntoAncestorResult::Done;
+        return NeedsPostConnectionSteps::Yes;
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLFrameElementBase::didFinishInsertingNode()
+void HTMLFrameElementBase::postConnectionSteps()
 {
     if (!isConnected())
         return;
 
     // DocumentFragments don't kick off any loads.
-    if (!document().frame())
+    Ref document = this->document();
+    if (!document->frame())
         return;
 
     if (!SubframeLoadingDisabler::canLoadFrame(*this))
@@ -153,24 +176,23 @@ void HTMLFrameElementBase::didFinishInsertingNode()
     if (!renderer())
         invalidateStyleAndRenderersForSubtree();
 
-    auto work = [this, weakThis = WeakPtr { *this }] {
-        if (!weakThis)
+    auto work = [weakThis = WeakPtr { *this }] {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return;
-        Ref<HTMLFrameElementBase> protectedThis { *this };
-        m_openingURLAfterInserting = true;
-        if (isConnected())
-            openURL();
-        m_openingURLAfterInserting = false;
+        SetForScope openingURLAfterInserting(protectedThis->m_openingURLAfterInserting, true);
+        if (protectedThis->isConnected())
+            protectedThis->openURL();
     };
     if (!m_openingURLAfterInserting)
         work();
     else
-        document().eventLoop().queueTask(TaskSource::DOMManipulation, WTFMove(work));
+        protect(document->eventLoop())->queueTask(TaskSource::DOMManipulation, WTF::move(work));
 }
 
 void HTMLFrameElementBase::didAttachRenderers()
 {
-    if (RenderWidget* part = renderWidget()) {
+    if (CheckedPtr part = renderWidget()) {
         if (RefPtr frame = contentFrame())
             part->setWidget(frame->virtualView());
     }
@@ -190,16 +212,6 @@ void HTMLFrameElementBase::setLocation(const String& str)
         openURL(LockHistory::No, LockBackForwardList::No);
 }
 
-void HTMLFrameElementBase::setLocation(JSC::JSGlobalObject& state, const String& newLocation)
-{
-    if (WTF::protocolIsJavaScript(newLocation)) {
-        if (!BindingSecurity::shouldAllowAccessToNode(state, contentDocument()))
-            return;
-    }
-
-    setLocation(newLocation);
-}
-
 bool HTMLFrameElementBase::supportsFocus() const
 {
     return true;
@@ -208,11 +220,12 @@ bool HTMLFrameElementBase::supportsFocus() const
 void HTMLFrameElementBase::setFocus(bool received, FocusVisibility visibility)
 {
     HTMLFrameOwnerElement::setFocus(received, visibility);
-    if (Page* page = document().page()) {
+    if (RefPtr page = document().page()) {
         CheckedRef focusController { page->focusController() };
+        RefPtr contentFrame = this->contentFrame();
         if (received)
-            focusController->setFocusedFrame(contentFrame());
-        else if (focusController->focusedFrame() == contentFrame()) // Focus may have already been given to another frame, don't take it away.
+            focusController->setFocusedFrame(contentFrame.get());
+        else if (focusController->focusedFrame() == contentFrame) // Focus may have already been given to another frame, don't take it away.
             focusController->setFocusedFrame(nullptr);
     }
 }

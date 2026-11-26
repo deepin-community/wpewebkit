@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <ranges>
 #include <wtf/Hasher.h>
 #include <wtf/Vector.h>
 
@@ -44,10 +45,10 @@ struct HashableActionList {
         : actions(otherActions)
         , state(Valid)
     {
-        std::sort(actions.begin(), actions.end());
-        SuperFastHash hasher;
-        hasher.addCharactersAssumingAligned(reinterpret_cast<const UChar*>(actions.data()), actions.size() * sizeof(uint64_t) / sizeof(UChar));
-        hash = hasher.hash();
+        std::ranges::sort(actions);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        hash = SuperFastHash::computeHash(std::span { reinterpret_cast<const char16_t*>(actions.span().data()), actions.size() * sizeof(uint64_t) / sizeof(char16_t) });
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 
     bool isEmptyValue() const { return state == Empty; }

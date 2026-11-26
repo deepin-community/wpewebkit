@@ -29,6 +29,7 @@
 #include "MessageNames.h"
 #include "StreamServerConnection.h"
 #include <wtf/Forward.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 
@@ -48,19 +49,21 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     explicit SendStreamServerConnection(IPC::StreamServerConnectionHandle&& handle)
-        : m_arguments(WTFMove(handle))
+        : m_handle(WTF::move(handle))
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        encoder << WTF::move(m_handle);
     }
 
 private:
-    std::tuple<IPC::StreamServerConnectionHandle&&> m_arguments;
+    IPC::StreamServerConnectionHandle&& m_handle;
 };
 
 } // namespace TestWithStreamServerConnectionHandle

@@ -1,8 +1,8 @@
 {
     "domain": "DOM",
     "description": "This domain exposes DOM read/write operations. Each DOM Node is represented with its mirror object that has an <code>id</code>. This <code>id</code> can be used to get additional information on the Node, resolve it into the JavaScript object wrapper, etc. It is important that client receives DOM events only for the nodes that are known to the client. Backend keeps track of the nodes that were sent to the client and never sends the same node twice. It is client's responsibility to collect information about the nodes that were sent to the client.<p>Note that <code>iframe</code> owner elements will return corresponding document elements as their child nodes.</p>",
-    "debuggableTypes": ["itml", "page", "web-page"],
-    "targetTypes": ["itml", "page"],
+    "debuggableTypes": ["itml", "web-page"],
+    "targetTypes": ["itml", "frame", "page"],
     "types": [
         {
             "id": "NodeId",
@@ -180,7 +180,8 @@
                 { "name": "showLineNumbers", "type": "boolean", "optional": true, "description": "Show labels for grid line numbers. If not specified, the default value is false." },
                 { "name": "showExtendedGridLines", "type": "boolean", "optional": true, "description": "Show grid lines that extend beyond the bounds of the grid. If not specified, the default value is false." },
                 { "name": "showTrackSizes", "type": "boolean", "optional": true, "description": "Show grid track size information. If not specified, the default value is false." },
-                { "name": "showAreaNames", "type": "boolean", "optional": true, "description": "Show labels for grid area names. If not specified, the default value is false." }
+                { "name": "showAreaNames", "type": "boolean", "optional": true, "description": "Show labels for grid area names. If not specified, the default value is false." },
+                { "name": "showOrderNumbers", "type": "boolean", "optional": true, "description": "Show labels for grid item order. If not specified, the default value is false." }
             ]
         },
         {
@@ -223,7 +224,8 @@
                 { "name": "codec", "type": "string", "description": "The codec string of the primary audio track. (E.g., \"hvc1.1.6.L123.B0\")" },
                 { "name": "humanReadableCodecString", "type": "string", "description": "A human readable version of the `codec` parameter."},
                 { "name": "numberOfChannels", "type": "integer", "description": "The number of audio channels in the primary audio track." },
-                { "name": "sampleRate", "type": "number", "description": "The sample rate of the primary audio track in hertz." }
+                { "name": "sampleRate", "type": "number", "description": "The sample rate of the primary audio track in hertz." },
+                { "name": "isProtected", "type": "boolean", "optional": true, "description": "Whether the track contains protected contents" }
             ]
         },
         {
@@ -237,7 +239,9 @@
                 { "name": "colorSpace", "$ref": "VideoColorSpace" },
                 { "name": "framerate", "type": "number", "description": "The nominal frame rate of video track in frames per second." },
                 { "name": "height", "type": "integer", "description": "The native height of the video track in CSS pixels" },
-                { "name": "width", "type": "integer", "description": "The native width of the video track in CSS pixels" }
+                { "name": "width", "type": "integer", "description": "The native width of the video track in CSS pixels" },
+                { "name": "immersiveVideoMetadata", "$ref": "ImmersiveVideoMetadata", "optional": true },
+                { "name": "isProtected", "type": "boolean", "optional": true, "description": "Whether the track contains protected contents" }
             ]
         },
         {
@@ -260,6 +264,25 @@
                 { "name": "droppedVideoFrames", "type": "integer", "description": "The number of frames of the total which were dropped without being displayed." },
                 { "name": "totalVideoFrames", "type": "integer", "description": "The total number of frames enqueued for display by the media element." }
             ]
+        },
+        {
+            "id": "ImmersiveVideoMetadata",
+            "type": "object",
+            "description": "A structure containing metadata describing spatial video properties.",
+            "properties": [
+                { "name": "kind", "$ref": "VideoProjectionMetadataKind", "description": "The kind of immersive video." },
+                { "name": "width", "type": "number" },
+                { "name": "height", "type": "number" },
+                { "name": "horizontalFieldOfView", "type": "integer", "optional": true, "description": "The horizontal field-of-view measurement, in degrees" },
+                { "name": "stereoCameraBaseline", "type": "integer", "optional": true, "description": "The distance between the centers of the lenses in a camera system, in micrometers" },
+                { "name": "horizontalDisparityAdjustment", "type": "integer", "optional": true, "description": "The relative shift of the left and right eye images, as a percentage" }
+            ]
+        },
+        {
+            "id": "VideoProjectionMetadataKind",
+            "type": "string",
+            "enum": ["unknown", "rectilinear", "equirectangular", "half-equirectangular", "equi-angular-cubemap", "parametric", "pyramid", "apple-immersive-video" ],
+            "description": "Video Projection Metadata Kind."
         },
         {
             "id": "ViewportSize",
@@ -287,9 +310,29 @@
             ]
         },
         {
+            "name": "requestAssignedSlot",
+            "description": "Requests the <code>HTMLSlotElement</code> that the node with the given id is assigned to.",
+            "parameters": [
+                { "name": "nodeId", "$ref": "NodeId" }
+            ],
+            "returns": [
+                { "name": "slotElementId", "$ref": "NodeId", "optional": true, "description": "Not provided if the given node is not assigned to a <code>HTMLSlotElement</code>." }
+            ]
+        },
+        {
+            "name": "requestAssignedNodes",
+            "description": "Requests the list of assigned nodes for the <code>HTMLSlotElement</code> with the given id.",
+            "parameters": [
+                { "name": "slotElementId", "$ref": "NodeId" }
+            ],
+            "returns": [
+                { "name": "assignedNodeIds", "type": "array", "items": { "$ref": "NodeId" } }
+            ]
+        },
+        {
             "name": "querySelector",
             "description": "Executes <code>querySelector</code> on a given node.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to query upon." },
                 { "name": "selector", "type": "string", "description": "Selector string." }
@@ -301,7 +344,7 @@
         {
             "name": "querySelectorAll",
             "description": "Executes <code>querySelectorAll</code> on a given node.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to query upon." },
                 { "name": "selector", "type": "string", "description": "Selector string." }
@@ -313,7 +356,7 @@
         {
             "name": "setNodeName",
             "description": "Sets node name for a node with given id.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to set name for." },
                 { "name": "name", "type": "string", "description": "New node's name." }
@@ -325,6 +368,7 @@
         {
             "name": "setNodeValue",
             "description": "Sets node value for a node with given id.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to set value for." },
                 { "name": "value", "type": "string", "description": "New node's value." }
@@ -333,6 +377,7 @@
         {
             "name": "removeNode",
             "description": "Removes node with given id.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to remove." }
             ]
@@ -340,6 +385,7 @@
         {
             "name": "setAttributeValue",
             "description": "Sets attribute for an element with given id.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the element to set attribute for." },
                 { "name": "name", "type": "string", "description": "Attribute name." },
@@ -349,6 +395,7 @@
         {
             "name": "setAttributesAsText",
             "description": "Sets attributes on element with given id. This method is useful when user edits some existing attribute value and types in several attribute name/value pairs.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the element to set attributes for." },
                 { "name": "text", "type": "string", "description": "Text with a number of attributes. Will parse this text using HTML parser." },
@@ -358,6 +405,7 @@
         {
             "name": "removeAttribute",
             "description": "Removes attribute with given name from an element with given id.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the element to remove attribute from." },
                 { "name": "name", "type": "string", "description": "Name of the attribute to remove." }
@@ -397,6 +445,7 @@
         {
             "name": "getEventListenersForNode",
             "description": "Returns event listeners relevant to the node.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to get listeners for." },
                 { "name": "includeAncestors", "type": "boolean", "optional": true, "description": "Controls whether ancestor event listeners are included. Defaults to true." }
@@ -408,6 +457,7 @@
         {
             "name": "setEventListenerDisabled",
             "description": "Enable/disable the given event listener. A disabled event listener will not fire.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "eventListenerId", "$ref": "EventListenerId" },
                 { "name": "disabled", "type": "boolean" }
@@ -433,6 +483,7 @@
         {
             "name": "getAccessibilityPropertiesForNode",
             "description": "Returns a dictionary of accessibility properties for the node.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node for which to get accessibility properties." }
             ],
@@ -453,6 +504,7 @@
         {
             "name": "setOuterHTML",
             "description": "Sets node HTML markup, returns new node id.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to set markup for." },
                 { "name": "outerHTML", "type": "string", "description": "Outer HTML markup to set." }
@@ -460,7 +512,7 @@
         },
         {
             "name": "insertAdjacentHTML",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId" },
                 { "name": "position", "type": "string" },
@@ -502,7 +554,7 @@
         {
             "name": "requestNode",
             "description": "Requests that the node is sent to the caller given the JavaScript node object reference. All nodes that form the path from the node to the root are also sent to the client as a series of <code>setChildNodes</code> notifications.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "objectId", "$ref": "Runtime.RemoteObjectId", "description": "JavaScript object id to convert into node." }
             ],
@@ -684,7 +736,7 @@
         {
             "name": "pushNodeByPathToFrontend",
             "description": "Requests that the node is sent to the caller given its path.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "path", "type": "string", "description": "Path to node in the proprietary format." }
             ],
@@ -695,7 +747,7 @@
         {
             "name": "resolveNode",
             "description": "Resolves JavaScript node object for given node id.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to resolve." },
                 { "name": "objectGroup", "type": "string", "optional": true, "description": "Symbolic group name that can be used to release multiple objects." }
@@ -717,6 +769,7 @@
         {
             "name": "moveTo",
             "description": "Moves node into the new container, places it before the given anchor.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "Id of the node to drop." },
                 { "name": "targetNodeId", "$ref": "NodeId", "description": "Id of the element to drop into." },
@@ -729,17 +782,17 @@
         {
             "name": "undo",
             "description": "Undoes the last performed action.",
-            "targetTypes": ["page"]
+            "targetTypes": ["frame", "page"]
         },
         {
             "name": "redo",
             "description": "Re-does the last undone action.",
-            "targetTypes": ["page"]
+            "targetTypes": ["frame", "page"]
         },
         {
             "name": "markUndoableState",
             "description": "Marks last undoable state.",
-            "targetTypes": ["page"]
+            "targetTypes": ["frame", "page"]
         },
         {
             "name": "focus",
@@ -752,7 +805,7 @@
         {
             "name": "setInspectedNode",
             "description": "Enables console to refer to the node with given id via $0 (see Command Line API for more details).",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "DOM node id to be accessible by means of $0 command line API." }
             ]
@@ -760,7 +813,7 @@
         {
             "name": "setAllowEditingUserAgentShadowTrees",
             "description": "Controls whether any DOM commands work for nodes inside a UserAgent shadow tree.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "allow", "type": "boolean" }
             ]

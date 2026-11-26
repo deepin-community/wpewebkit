@@ -1,9 +1,16 @@
+include(CheckCXXSymbolExists)
+
 if (ENABLE_VIDEO OR ENABLE_WEB_AUDIO)
+    list(APPEND WebCore_LIBRARIES
+        GLib::GioUnix
+    )
+
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
         "${WEBCORE_DIR}/Modules/mediastream/gstreamer"
         "${WEBCORE_DIR}/platform/graphics/gstreamer"
         "${WEBCORE_DIR}/platform/graphics/gstreamer/mse"
         "${WEBCORE_DIR}/platform/graphics/gstreamer/eme"
+        "${WEBCORE_DIR}/platform/graphics/gstreamer/telemetry"
         "${WEBCORE_DIR}/platform/gstreamer"
         "${WEBCORE_DIR}/platform/mediarecorder/gstreamer"
     )
@@ -26,6 +33,16 @@ if (ENABLE_VIDEO OR ENABLE_WEB_AUDIO)
         platform/mediastream/libwebrtc/gstreamer/GStreamerVideoEncoderFactory.h
         platform/mediastream/libwebrtc/gstreamer/LibWebRTCProviderGStreamer.h
     )
+
+    if (ENABLE_MEDIA_TELEMETRY)
+      list(APPEND WebCore_SOURCES
+        platform/graphics/gstreamer/telemetry/MediaTelemetry.cpp
+      )
+      list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        platform/graphics/gstreamer/telemetry/MediaTelemetry.h
+        platform/graphics/gstreamer/telemetry/MediaTelemetryReportPrivateMembers.h
+      )
+    endif ()
 
     if (USE_GSTREAMER_FULL)
         list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
@@ -60,17 +77,6 @@ if (ENABLE_VIDEO OR ENABLE_WEB_AUDIO)
         # Specify video decoding limits for platform/graphics/gstreamer/GStreamerRegistryScanner.cpp
         list(APPEND WebCore_PRIVATE_DEFINITIONS VIDEO_DECODING_LIMIT="${VIDEO_DECODING_LIMIT}")
     endif ()
-endif ()
-
-if (USE_GSTREAMER_TRANSCODER)
-    if (NOT USE_GSTREAMER_FULL)
-        list(APPEND WebCore_LIBRARIES
-            ${GSTREAMER_TRANSCODER_LIBRARIES}
-        )
-    endif ()
-    list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
-        ${GSTREAMER_TRANSCODER_INCLUDE_DIRS}
-    )
 endif ()
 
 if (ENABLE_VIDEO)
@@ -128,10 +134,27 @@ if (ENABLE_VIDEO)
         endif ()
 
         list(APPEND WebCore_LIBRARIES OpenSSL::Crypto)
+
+        if (USE_LIBRICE)
+            list(APPEND WebCore_LIBRARIES Rice::Proto)
+            list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+                Modules/mediastream/gstreamer/GStreamerIceAgent.h
+                Modules/mediastream/gstreamer/RiceGatherResult.h
+
+                platform/rice/GRefPtrRice.h
+                platform/rice/GUniquePtrRice.h
+                platform/rice/RiceUtilities.h
+                platform/rice/RiceVersioning.h
+            )
+            list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+                "${WEBCORE_DIR}/Modules/mediastream/gstreamer"
+                "${WEBCORE_DIR}/platform/rice"
+              )
+        endif ()
     endif ()
 endif ()
 
-if (ENABLE_WEB_AUDIO OR ENABLE_WEB_CODECS)
+if (ENABLE_MEDIA_STREAM OR ENABLE_WEB_AUDIO OR ENABLE_WEB_CODECS)
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
         "${WEBCORE_DIR}/platform/audio/gstreamer"
     )
@@ -158,4 +181,38 @@ if (ENABLE_ENCRYPTED_MEDIA AND ENABLE_THUNDER)
     list(APPEND WebCore_LIBRARIES
         ${THUNDER_LIBRARIES}
     )
+
+    # Globally add thunder libraries, required for the check_cxx_symbol_exists call.
+    set(CMAKE_REQUIRED_LIBRARIES ${THUNDER_LIBRARIES})
+
+    check_cxx_symbol_exists(opencdm_gstreamer_session_decrypt_buffer ${THUNDER_INCLUDE_DIR}/open_cdm_adapter.h HAS_OCDM_DECRYPT_BUFFER)
+    if (HAS_OCDM_DECRYPT_BUFFER)
+      list(APPEND WebCore_PRIVATE_DEFINITIONS THUNDER_HAS_OCDM_DECRYPT_BUFFER=1)
+    else ()
+      list(APPEND WebCore_PRIVATE_DEFINITIONS THUNDER_HAS_OCDM_DECRYPT_BUFFER=0)
+    endif ()
 endif ()
+
+if (ENABLE_SPEECH_SYNTHESIS)
+    if (USE_SPIEL)
+        list(APPEND WebCore_SOURCES
+            platform/spiel/PlatformSpeechSynthesizerSpiel.cpp
+        )
+        list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
+            ${SPIEL_INCLUDE_DIRS}
+        )
+        list(APPEND WebCore_LIBRARIES
+            LibSpiel::LibSpiel
+        )
+    elseif (USE_FLITE)
+        # Flite is loaded with dlopen() when speech synthesis is first used, see
+        # WebKitFliteSourceGStreamer.cpp.
+        list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
+            ${Flite_INCLUDE_DIRS}
+        )
+        list(APPEND WebCore_LIBRARIES
+            ${CMAKE_DL_LIBS}
+        )
+    endif ()
+endif ()
+

@@ -22,30 +22,37 @@
 
 #if USE(GSTREAMER)
 
+#include "AudioUtilities.h"
 #include "GStreamerAudioMixer.h"
 #include "GStreamerCommon.h"
 #include <wtf/glib/WTFGType.h>
+
+#if ENABLE(WEB_AUDIO)
+#include "AudioDestination.h"
+#endif
 
 using namespace WebCore;
 
 struct _WebKitAudioSinkPrivate {
     GRefPtr<GstElement> interAudioSink;
     GRefPtr<GstPad> mixerPad;
+    String role;
+    String deviceId;
+    GRefPtr<GstDevice> device;
 };
 
 enum {
-    PROP_0,
-    PROP_VOLUME,
-    PROP_MUTE,
+    WEBKIT_AUDIO_SINK_PROP_0,
+    WEBKIT_AUDIO_SINK_PROP_VOLUME,
+    WEBKIT_AUDIO_SINK_PROP_MUTE,
 };
 
-static GstStaticPadTemplate sinkTemplate = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
+static GstStaticPadTemplate audioSinkTemplate = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
     GST_STATIC_CAPS("audio/x-raw"));
 
 GST_DEBUG_CATEGORY_STATIC(webkit_audio_sink_debug);
 #define GST_CAT_DEFAULT webkit_audio_sink_debug
 
-#define webkit_audio_sink_parent_class parent_class
 WEBKIT_DEFINE_TYPE_WITH_CODE(WebKitAudioSink, webkit_audio_sink, GST_TYPE_BIN,
     G_IMPLEMENT_INTERFACE(GST_TYPE_STREAM_VOLUME, nullptr);
     GST_DEBUG_CATEGORY_INIT(webkit_audio_sink_debug, "webkitaudiosink", 0, "webkit audio sink element")
@@ -53,22 +60,52 @@ WEBKIT_DEFINE_TYPE_WITH_CODE(WebKitAudioSink, webkit_audio_sink, GST_TYPE_BIN,
 
 static bool webKitAudioSinkConfigure(WebKitAudioSink* sink)
 {
-    const char* value = g_getenv("WEBKIT_GST_ENABLE_AUDIO_MIXER");
-    if (value && !strcmp(value, "1")) {
-        if (!GStreamerAudioMixer::isAvailable()) {
-            GST_WARNING("Internal audio mixing request cannot be fulfilled.");
-            return false;
-        }
+    auto enableAudioMixer = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_AUDIO_MIXER"));
+    if (!enableAudioMixer || enableAudioMixer != "1"_s)
+        return false;
 
-        sink->priv->interAudioSink = makeGStreamerElement("interaudiosink", nullptr);
-        RELEASE_ASSERT(sink->priv->interAudioSink);
-
-        gst_bin_add(GST_BIN_CAST(sink), sink->priv->interAudioSink.get());
-        auto targetPad = adoptGRef(gst_element_get_static_pad(sink->priv->interAudioSink.get(), "sink"));
-        gst_element_add_pad(GST_ELEMENT_CAST(sink), webkitGstGhostPadFromStaticTemplate(&sinkTemplate, "sink", targetPad.get()));
-        return true;
+    if (!GStreamerAudioMixer::isAvailable()) {
+        GST_WARNING("Internal audio mixing request cannot be fulfilled.");
+        return false;
     }
-    return false;
+
+    sink->priv->interAudioSink = makeGStreamerElement("interaudiosink"_s);
+    RELEASE_ASSERT(sink->priv->interAudioSink);
+
+    gst_bin_add(GST_BIN_CAST(sink), sink->priv->interAudioSink.get());
+    GRefPtr targetPad = adoptGRef(gst_element_get_static_pad(sink->priv->interAudioSink.get(), "sink"));
+    gst_element_add_pad(GST_ELEMENT_CAST(sink), webkitGstGhostPadFromStaticTemplate(&audioSinkTemplate, "sink"_s, targetPad.get()));
+
+    if (sink->priv->role != "webaudio"_s)
+        return true;
+
+    // Match the interaudiosrc period-time with the WebAudio renderQuantumSize applied to the
+    // sample rate, otherwise the samples created by the source will have clipping, leading to
+    // garbled rendering. For this to work the sample rate also needs to match between
+    // webkitaudiosink and the caps negotiated on the audiomixer sink pad (this is handled in
+    // webKitAudioSinkChangeState()).
+    gst_pad_add_probe(targetPad.get(), GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, reinterpret_cast<GstPadProbeCallback>(+[](GstPad* pad, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
+        auto event = GST_PAD_PROBE_INFO_EVENT(info);
+        if (GST_EVENT_TYPE(event) != GST_EVENT_CAPS)
+            return GST_PAD_PROBE_OK;
+
+        GstCaps* caps;
+        gst_event_parse_caps(event, &caps);
+
+        if (gst_caps_is_empty(caps) || gst_caps_is_any(caps)) [[unlikely]]
+            return GST_PAD_PROBE_OK;
+
+        auto structure = gst_caps_get_structure(caps, 0);
+        auto sampleRate = gstStructureGet<int>(structure, "rate"_s);
+        if (!sampleRate) [[unlikely]]
+            return GST_PAD_PROBE_OK;
+
+        GRefPtr sink = adoptGRef(gst_pad_get_parent_element(pad));
+        uint64_t periodTime = gst_util_uint64_scale_ceil(AudioUtilities::renderQuantumSize, GST_SECOND, *sampleRate);
+        GStreamerAudioMixer::singleton().configureSourcePeriodTime(CStringView::unsafeFromUTF8(GST_ELEMENT_NAME(sink.get())), periodTime);
+        return GST_PAD_PROBE_OK;
+    }), nullptr, nullptr);
+    return true;
 }
 
 static void webKitAudioSinkSetProperty(GObject* object, guint propID, const GValue* value, GParamSpec* pspec)
@@ -76,11 +113,11 @@ static void webKitAudioSinkSetProperty(GObject* object, guint propID, const GVal
     WebKitAudioSink* sink = WEBKIT_AUDIO_SINK(object);
 
     switch (propID) {
-    case PROP_VOLUME: {
+    case WEBKIT_AUDIO_SINK_PROP_VOLUME: {
         g_object_set_property(G_OBJECT(sink->priv->mixerPad.get()), "volume", value);
         break;
     }
-    case PROP_MUTE: {
+    case WEBKIT_AUDIO_SINK_PROP_MUTE: {
         g_object_set_property(G_OBJECT(sink->priv->mixerPad.get()), "mute", value);
         break;
     }
@@ -95,11 +132,11 @@ static void webKitAudioSinkGetProperty(GObject* object, guint propID, GValue* va
     WebKitAudioSink* sink = WEBKIT_AUDIO_SINK(object);
 
     switch (propID) {
-    case PROP_VOLUME: {
+    case WEBKIT_AUDIO_SINK_PROP_VOLUME: {
         g_object_get_property(G_OBJECT(sink->priv->mixerPad.get()), "volume", value);
         break;
     }
-    case PROP_MUTE: {
+    case WEBKIT_AUDIO_SINK_PROP_MUTE: {
         g_object_get_property(G_OBJECT(sink->priv->mixerPad.get()), "mute", value);
         break;
     }
@@ -117,13 +154,19 @@ static GstStateChangeReturn webKitAudioSinkChangeState(GstElement* element, GstS
     GST_DEBUG_OBJECT(sink, "Handling %s transition", gst_state_change_get_name(stateChange));
 
     auto& mixer = GStreamerAudioMixer::singleton();
-    if (priv->interAudioSink && stateChange == GST_STATE_CHANGE_NULL_TO_READY)
-        priv->mixerPad = mixer.registerProducer(priv->interAudioSink.get());
+    if (priv->interAudioSink && stateChange == GST_STATE_CHANGE_NULL_TO_READY) {
+        std::optional<int> forcedSampleRate;
+#if ENABLE(WEB_AUDIO)
+        if (priv->role == "webaudio"_s)
+            forcedSampleRate = AudioDestination::hardwareSampleRate();
+#endif
+        priv->mixerPad = mixer.registerProducer(priv->interAudioSink.get(), forcedSampleRate, priv->deviceId, priv->device);
+    }
 
     if (priv->mixerPad)
-        mixer.ensureState(stateChange);
+        mixer.ensureState(stateChange, priv->deviceId);
 
-    GstStateChangeReturn result = GST_CALL_PARENT_WITH_DEFAULT(GST_ELEMENT_CLASS, change_state, (element, stateChange), GST_STATE_CHANGE_FAILURE);
+    GstStateChangeReturn result = GST_ELEMENT_CLASS(webkit_audio_sink_parent_class)->change_state(element, stateChange);
 
     if (priv->mixerPad && stateChange == GST_STATE_CHANGE_READY_TO_NULL && result > GST_STATE_CHANGE_FAILURE) {
         mixer.unregisterProducer(priv->mixerPad);
@@ -135,10 +178,11 @@ static GstStateChangeReturn webKitAudioSinkChangeState(GstElement* element, GstS
 
 static void webKitAudioSinkConstructed(GObject* object)
 {
-    GST_CALL_PARENT(G_OBJECT_CLASS, constructed, (object));
-
+    G_OBJECT_CLASS(webkit_audio_sink_parent_class)->constructed(object);
+    IGNORE_WARNINGS_BEGIN("cast-align");
     GST_OBJECT_FLAG_SET(GST_OBJECT_CAST(object), GST_ELEMENT_FLAG_SINK);
     gst_bin_set_suppressed_flags(GST_BIN_CAST(object), static_cast<GstElementFlags>(GST_ELEMENT_FLAG_SOURCE | GST_ELEMENT_FLAG_SINK));
+    IGNORE_WARNINGS_END;
 }
 
 static void webkit_audio_sink_class_init(WebKitAudioSinkClass* klass)
@@ -148,15 +192,15 @@ static void webkit_audio_sink_class_init(WebKitAudioSinkClass* klass)
     oklass->get_property = webKitAudioSinkGetProperty;
     oklass->constructed = webKitAudioSinkConstructed;
 
-    g_object_class_install_property(oklass, PROP_VOLUME,
+    g_object_class_install_property(oklass, WEBKIT_AUDIO_SINK_PROP_VOLUME,
         g_param_spec_double("volume", nullptr, nullptr, 0, 10, 1,
             static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-    g_object_class_install_property(oklass, PROP_MUTE,
+    g_object_class_install_property(oklass, WEBKIT_AUDIO_SINK_PROP_MUTE,
         g_param_spec_boolean("mute", nullptr, nullptr, FALSE,
             static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
     GstElementClass* eklass = GST_ELEMENT_CLASS(klass);
-    gst_element_class_add_static_pad_template(eklass, &sinkTemplate);
+    gst_element_class_add_static_pad_template(eklass, &audioSinkTemplate);
     gst_element_class_set_metadata(eklass, "WebKit Audio sink element", "Sink/Audio",
         "Proxies audio data to WebKit's audio mixer",
         "Philippe Normand <philn@igalia.com>");
@@ -164,14 +208,63 @@ static void webkit_audio_sink_class_init(WebKitAudioSinkClass* klass)
     eklass->change_state = GST_DEBUG_FUNCPTR(webKitAudioSinkChangeState);
 }
 
-GstElement* webkitAudioSinkNew()
+GstElement* /* (transfer floating) */ webkitAudioSinkNew(const String& role, const String& deviceId, const GRefPtr<GstDevice>& device)
 {
-    auto* sink = GST_ELEMENT_CAST(g_object_new(WEBKIT_TYPE_AUDIO_SINK, nullptr));
-    if (!webKitAudioSinkConfigure(WEBKIT_AUDIO_SINK(sink))) {
-        gst_object_unref(sink);
+    auto element = GST_ELEMENT_CAST(g_object_new(WEBKIT_TYPE_AUDIO_SINK, nullptr));
+    auto audioSink = WEBKIT_AUDIO_SINK(element);
+
+    audioSink->priv->role = role;
+    audioSink->priv->deviceId = deviceId;
+    if (device)
+        audioSink->priv->device = device;
+    if (!webKitAudioSinkConfigure(audioSink)) {
+        gst_object_unref(element);
         return nullptr;
     }
-    return sink;
+    ASSERT(g_object_is_floating(element));
+    return element;
+}
+
+bool webkitAudioSinkSetDevice(GstElement* element, const String& deviceId, const GRefPtr<GstDevice>& device)
+{
+    if (!WEBKIT_IS_AUDIO_SINK(element))
+        return false;
+
+    auto* sink = WEBKIT_AUDIO_SINK(element);
+    auto* priv = sink->priv;
+
+    // No-op if already on the requested device.
+    if (priv->deviceId == deviceId)
+        return true;
+
+    auto& mixer = GStreamerAudioMixer::singleton();
+
+    if (priv->mixerPad) {
+        mixer.unregisterProducer(priv->mixerPad);
+        priv->mixerPad = nullptr;
+    }
+
+    priv->deviceId = deviceId;
+    priv->device = device;
+
+    if (priv->interAudioSink) {
+        std::optional<int> forcedSampleRate;
+#if ENABLE(WEB_AUDIO)
+        if (priv->role == "webaudio"_s)
+            forcedSampleRate = AudioDestination::hardwareSampleRate();
+#endif
+        priv->mixerPad = mixer.registerProducer(priv->interAudioSink.get(), forcedSampleRate, priv->deviceId, priv->device);
+
+        // Bring the new pipeline to the current element state.
+        GstState currentState;
+        gst_element_get_state(element, &currentState, nullptr, 0);
+        if (currentState >= GST_STATE_PAUSED) {
+            mixer.ensureState(GST_STATE_CHANGE_READY_TO_PAUSED, priv->deviceId);
+            if (currentState >= GST_STATE_PLAYING)
+                mixer.ensureState(GST_STATE_CHANGE_PAUSED_TO_PLAYING, priv->deviceId);
+        }
+    }
+    return true;
 }
 
 #undef GST_CAT_DEFAULT

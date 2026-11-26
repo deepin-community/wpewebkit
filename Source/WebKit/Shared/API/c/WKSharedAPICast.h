@@ -36,6 +36,7 @@
 #include "SameDocumentNavigationType.h"
 #include "WKBase.h"
 #include "WKContextMenuItemTypes.h"
+#include "WKData.h"
 #include "WKDiagnosticLoggingResultType.h"
 #include "WKEvent.h"
 #include "WKFindOptions.h"
@@ -54,7 +55,7 @@
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/LayoutMilestone.h>
-#include <WebCore/PlatformMouseEvent.h>
+#include <WebCore/MouseEventTypes.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/UserContentTypes.h>
 #include <WebCore/UserScriptTypes.h>
@@ -62,12 +63,12 @@
 
 namespace API {
 class Array;
+class CompletionListener;
 class Dictionary;
 class Data;
 class Point;
 class Rect;
 class SecurityOrigin;
-class SerializedScriptValue;
 class Size;
 class UserContentURLPattern;
 class WebArchive;
@@ -92,6 +93,7 @@ template<typename ImplType> struct ImplTypeInfo;
 
 WK_ADD_API_MAPPING(WKArrayRef, API::Array)
 WK_ADD_API_MAPPING(WKBooleanRef, API::Boolean)
+WK_ADD_API_MAPPING(WKCompletionListenerRef, API::CompletionListener);
 WK_ADD_API_MAPPING(WKContextMenuItemRef, WebContextMenuItem)
 WK_ADD_API_MAPPING(WKDataRef, API::Data)
 WK_ADD_API_MAPPING(WKDictionaryRef, API::Dictionary)
@@ -101,7 +103,6 @@ WK_ADD_API_MAPPING(WKImageRef, WebImage)
 WK_ADD_API_MAPPING(WKPointRef, API::Point)
 WK_ADD_API_MAPPING(WKRectRef, API::Rect)
 WK_ADD_API_MAPPING(WKSecurityOriginRef, API::SecurityOrigin)
-WK_ADD_API_MAPPING(WKSerializedScriptValueRef, API::SerializedScriptValue)
 WK_ADD_API_MAPPING(WKSizeRef, API::Size)
 WK_ADD_API_MAPPING(WKStringRef, API::String)
 WK_ADD_API_MAPPING(WKTypeRef, API::Object)
@@ -130,15 +131,30 @@ auto toAPI(T* t) -> APIType
 }
 
 template<typename T, typename APIType = typename ImplTypeInfo<T>::APIType>
+auto toAPILeakingRef(RefPtr<T>&& t) -> APIType
+{
+    SUPPRESS_UNCOUNTED_ARG return reinterpret_cast<APIType>(API::Object::wrap(t.leakRef()));
+}
+
+template<typename T, typename APIType = typename ImplTypeInfo<T>::APIType>
 auto toAPI(T& t) -> APIType
 {
-    return reinterpret_cast<APIType>(API::Object::wrap(&t));
+    SUPPRESS_UNCOUNTED_ARG return reinterpret_cast<APIType>(API::Object::wrap(&t));
+}
+
+template<typename T, typename APIType = typename ImplTypeInfo<T>::APIType>
+auto toAPILeakingRef(Ref<T>&& t) -> APIType
+{
+    SUPPRESS_UNCOUNTED_ARG return reinterpret_cast<APIType>(API::Object::wrap(&t.leakRef()));
 }
 
 template<typename T, typename ImplType = typename APITypeInfo<T>::ImplType>
 auto toImpl(T t) -> ImplType*
 {
-    return static_cast<ImplType*>(API::Object::unwrap(static_cast<void*>(const_cast<typename std::remove_const<typename std::remove_pointer<T>::type>::type*>(t))));
+    if constexpr (std::is_same_v<ImplType, API::Object>)
+        return API::Object::unwrap(static_cast<void*>(const_cast<typename std::remove_const<typename std::remove_pointer<T>::type>::type*>(t)));
+    else
+        return downcast<ImplType>(API::Object::unwrap(static_cast<void*>(const_cast<typename std::remove_const<typename std::remove_pointer<T>::type>::type*>(t))));
 }
 
 template<typename ImplType, typename APIType = typename ImplTypeInfo<ImplType>::APIType>
@@ -150,7 +166,7 @@ public:
     }
 
     ProxyingRefPtr(Ref<ImplType>&& impl)
-        : m_impl(WTFMove(impl))
+        : m_impl(WTF::move(impl))
     {
     }
 
@@ -169,7 +185,7 @@ inline ProxyingRefPtr<API::String> toAPI(StringImpl* string)
 
 inline WKStringRef toCopiedAPI(const String& string)
 {
-    return toAPI(&API::String::create(string).leakRef());
+    return toAPILeakingRef(API::String::create(string));
 }
 
 inline ProxyingRefPtr<API::URL> toURLRef(StringImpl* string)
@@ -183,7 +199,7 @@ inline WKURLRef toCopiedURLAPI(const String& string)
 {
     if (!string)
         return nullptr;
-    return toAPI(&API::URL::create(string).leakRef());
+    return toAPILeakingRef(API::URL::create(string));
 }
 
 inline WKURLRef toCopiedURLAPI(const URL& url)
@@ -195,7 +211,7 @@ inline String toWTFString(WKStringRef stringRef)
 {
     if (!stringRef)
         return String();
-    return toImpl(stringRef)->string();
+    return protect(toImpl(stringRef))->string();
 }
 
 inline String toWTFString(WKURLRef urlRef)
@@ -224,7 +240,7 @@ inline WKSecurityOriginRef toCopiedAPI(WebCore::SecurityOrigin* origin)
 {
     if (!origin)
         return nullptr;
-    return toAPI(&API::SecurityOrigin::create(*origin).leakRef());
+    return toAPILeakingRef(API::SecurityOrigin::create(*origin));
 }
 
 /* Geometry conversions */
@@ -243,6 +259,11 @@ inline WebCore::IntSize toIntSize(const WKSize& wkSize)
 inline WebCore::IntPoint toIntPoint(const WKPoint& wkPoint)
 {
     return WebCore::IntPoint(static_cast<int>(wkPoint.x), static_cast<int>(wkPoint.y));
+}
+
+inline WebCore::DoublePoint toDoublePoint(const WKPoint& wkPoint)
+{
+    return WebCore::DoublePoint(wkPoint.x, wkPoint.y);
 }
 
 inline WebCore::IntRect toIntRect(const WKRect& wkRect)
@@ -343,6 +364,12 @@ inline WKEventMouseButton toAPI(WebMouseEventButton mouseButton)
     case WebMouseEventButton::Right:
         wkMouseButton = kWKEventMouseButtonRightButton;
         break;
+    case WebMouseEventButton::Back:
+        wkMouseButton = kWKEventMouseButtonBackButton;
+        break;
+    case WebMouseEventButton::Forward:
+        wkMouseButton = kWKEventMouseButtonForwardButton;
+        break;
     }
 
     return wkMouseButton;
@@ -364,6 +391,12 @@ inline WKEventMouseButton toAPI(WebCore::MouseButton mouseButton)
         break;
     case WebCore::MouseButton::Right:
         wkMouseButton = kWKEventMouseButtonRightButton;
+        break;
+    case WebCore::MouseButton::Back:
+        wkMouseButton = kWKEventMouseButtonBackButton;
+        break;
+    case WebCore::MouseButton::Forward:
+        wkMouseButton = kWKEventMouseButtonForwardButton;
         break;
     default:
         break;
@@ -531,8 +564,8 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagToggleVideoFullscreen;
     case WebCore::ContextMenuItemTagEnterVideoFullscreen:
         return kWKContextMenuItemTagEnterVideoFullscreen;
-    case WebCore::ContextMenuItemTagToggleVideoEnhancedFullscreen:
-        return kWKContextMenuItemTagToggleVideoEnhancedFullscreen;
+    case WebCore::ContextMenuItemTagTogglePictureInPicture:
+        return kWKContextMenuItemTagTogglePictureInPicture;
     case WebCore::ContextMenuItemTagMediaPlayPause:
         return kWKContextMenuItemTagMediaPlayPause;
     case WebCore::ContextMenuItemTagToggleVideoViewer:
@@ -543,8 +576,8 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagAddHighlightToCurrentQuickNote;
     case WebCore::ContextMenuItemTagAddHighlightToNewQuickNote:
         return kWKContextMenuItemTagAddHighlightToNewQuickNote;
-    case WebCore::ContextMenuItemTagCopyLinkToHighlight:
-        return kWKContextMenuItemTagCopyLinkToHighlight;
+    case WebCore::ContextMenuItemTagCopyLinkWithHighlight:
+        return kWKContextMenuItemTagCopyLinkWithHighlight;
 #if PLATFORM(COCOA)
     case WebCore::ContextMenuItemTagCorrectSpellingAutomatically:
         return kWKContextMenuItemTagCorrectSpellingAutomatically;
@@ -572,6 +605,10 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagCapitalize;
     case WebCore::ContextMenuItemTagChangeBack:
         return kWKContextMenuItemTagChangeBack;
+    case WebCore::ContextMenuItemTagConvertToTraditionalChinese:
+        return kWKContextMenuItemTagConvertToTraditionalChinese;
+    case WebCore::ContextMenuItemTagConvertToSimplifiedChinese:
+        return kWKContextMenuItemTagConvertToSimplifiedChinese;
 #endif
     case WebCore::ContextMenuItemTagShareMenu:
         return kWKContextMenuItemTagShareMenu;
@@ -581,6 +618,12 @@ inline WKContextMenuItemTag toAPI(WebCore::ContextMenuAction action)
         return kWKContextMenuItemTagTranslate;
     case WebCore::ContextMenuItemTagWritingTools:
         return kWKContextMenuItemTagWritingTools;
+    case WebCore::ContextMenuItemTagProofread:
+        return kWKContextMenuItemTagProofread;
+    case WebCore::ContextMenuItemTagRewrite:
+        return kWKContextMenuItemTagRewrite;
+    case WebCore::ContextMenuItemTagSummarize:
+        return kWKContextMenuItemTagSummarize;
     case WebCore::ContextMenuItemTagCopySubject:
         return kWKContextMenuItemTagCopyCroppedImage;
     default:
@@ -751,8 +794,8 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagToggleVideoFullscreen;
     case kWKContextMenuItemTagEnterVideoFullscreen:
         return WebCore::ContextMenuItemTagEnterVideoFullscreen;
-    case kWKContextMenuItemTagToggleVideoEnhancedFullscreen:
-        return WebCore::ContextMenuItemTagToggleVideoEnhancedFullscreen;
+    case kWKContextMenuItemTagTogglePictureInPicture:
+        return WebCore::ContextMenuItemTagTogglePictureInPicture;
     case kWKContextMenuItemTagMediaPlayPause:
         return WebCore::ContextMenuItemTagMediaPlayPause;
     case kWKContextMenuItemTagToggleVideoViewer:
@@ -763,8 +806,8 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagAddHighlightToCurrentQuickNote;
     case kWKContextMenuItemTagAddHighlightToNewQuickNote:
         return WebCore::ContextMenuItemTagAddHighlightToNewQuickNote;
-    case kWKContextMenuItemTagCopyLinkToHighlight:
-        return WebCore::ContextMenuItemTagCopyLinkToHighlight;
+    case kWKContextMenuItemTagCopyLinkWithHighlight:
+        return WebCore::ContextMenuItemTagCopyLinkWithHighlight;
 #if PLATFORM(COCOA)
     case kWKContextMenuItemTagCorrectSpellingAutomatically:
         return WebCore::ContextMenuItemTagCorrectSpellingAutomatically;
@@ -794,6 +837,10 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagChangeBack;
     case kWKContextMenuItemTagShareMenu:
         return WebCore::ContextMenuItemTagShareMenu;
+    case kWKContextMenuItemTagConvertToTraditionalChinese:
+        return WebCore::ContextMenuItemTagConvertToTraditionalChinese;
+    case kWKContextMenuItemTagConvertToSimplifiedChinese:
+        return WebCore::ContextMenuItemTagConvertToSimplifiedChinese;
 #endif
     case kWKContextMenuItemTagRevealImage:
         return WebCore::ContextMenuItemTagLookUpImage;
@@ -801,6 +848,12 @@ inline WebCore::ContextMenuAction toImpl(WKContextMenuItemTag tag)
         return WebCore::ContextMenuItemTagTranslate;
     case kWKContextMenuItemTagWritingTools:
         return WebCore::ContextMenuItemTagWritingTools;
+    case kWKContextMenuItemTagProofread:
+        return WebCore::ContextMenuItemTagProofread;
+    case kWKContextMenuItemTagRewrite:
+        return WebCore::ContextMenuItemTagRewrite;
+    case kWKContextMenuItemTagSummarize:
+        return WebCore::ContextMenuItemTagSummarize;
     case kWKContextMenuItemTagCopyCroppedImage:
         return WebCore::ContextMenuItemTagCopySubject;
     case kWKContextMenuItemTagOpenLinkInThisWindow:

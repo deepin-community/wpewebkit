@@ -26,9 +26,12 @@
 #include "config.h"
 #include "WPEToplevelQtQuick.h"
 
+#include <wtf/glib/WTFGType.h>
+
 /**
  * WPEToplevelQtQuick:
  *
+ * A #WPEToplevel implementation for Qt Quick applications.
  */
 struct _WPEToplevelQtQuickPrivate {
 };

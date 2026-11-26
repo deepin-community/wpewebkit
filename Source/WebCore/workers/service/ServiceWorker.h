@@ -28,6 +28,8 @@
 #include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
+#include "ScriptExecutionContext.h"
 #include "ServiceWorkerData.h"
 #include <JavaScriptCore/Strong.h>
 #include <wtf/RefCounted.h>
@@ -46,30 +48,32 @@ class SWClientConnection;
 struct StructuredSerializeOptions;
 
 class ServiceWorker final : public RefCounted<ServiceWorker>, public EventTarget, public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(ServiceWorker, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(ServiceWorker, WEBCORE_EXPORT);
 public:
     using State = ServiceWorkerState;
     static Ref<ServiceWorker> getOrCreate(ScriptExecutionContext&, ServiceWorkerData&&);
 
     WEBCORE_EXPORT virtual ~ServiceWorker();
 
-    const URL& scriptURL() const { return m_data.scriptURL; }
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
+    const URL& scriptURL() const LIFETIME_BOUND { return m_data.scriptURL; }
 
     State state() const { return m_data.state; }
     
     void updateState(State);
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
+    ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, Vector<JSC::Strong<JSC::JSObject>>&&);
 
     ServiceWorkerIdentifier identifier() const { return m_data.identifier; }
     ServiceWorkerRegistrationIdentifier registrationIdentifier() const { return m_data.registrationIdentifier; }
     WorkerType workerType() const { return m_data.type; }
 
-    // ActiveDOMObject.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
-    const ServiceWorkerData& data() const { return m_data; }
+    const ServiceWorkerData& data() const LIFETIME_BOUND { return m_data; }
 
 private:
     ServiceWorker(ScriptExecutionContext&, ServiceWorkerData&&);
@@ -90,4 +94,11 @@ private:
     RefPtr<PendingActivity<ServiceWorker>> m_pendingActivityForEventDispatch;
 };
 
+inline ServiceWorker* ScriptExecutionContext::serviceWorker(ServiceWorkerIdentifier identifier)
+{
+    return m_serviceWorkers.get(identifier);
+}
+
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(ServiceWorker)

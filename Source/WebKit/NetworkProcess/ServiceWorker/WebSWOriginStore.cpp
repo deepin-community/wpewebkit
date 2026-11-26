@@ -30,45 +30,48 @@
 #include "WebSWClientConnectionMessages.h"
 #include "WebSWServerConnection.h"
 #include <WebCore/SecurityOrigin.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSWOriginStore);
 
 using namespace WebCore;
 
 WebSWOriginStore::WebSWOriginStore()
-    : m_store(*this)
+    : m_store(makeUniqueRef<SharedStringHashStore>(*this))
 {
 }
 
 void WebSWOriginStore::addToStore(const SecurityOriginData& origin)
 {
-    m_store.scheduleAddition(computeSharedStringHash(origin.toString()));
-    m_store.flushPendingChanges();
+    m_store->scheduleAddition(computeSharedStringHash(origin.toString()));
+    m_store->flushPendingChanges();
 }
 
 void WebSWOriginStore::removeFromStore(const SecurityOriginData& origin)
 {
-    m_store.scheduleRemoval(computeSharedStringHash(origin.toString()));
-    m_store.flushPendingChanges();
+    m_store->scheduleRemoval(computeSharedStringHash(origin.toString()));
+    m_store->flushPendingChanges();
 }
 
 void WebSWOriginStore::clearStore()
 {
-    m_store.clear();
+    m_store->clear();
 }
 
 void WebSWOriginStore::importComplete()
 {
     m_isImported = true;
-    for (auto& connection : m_webSWServerConnections)
-        connection.send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
+    for (Ref connection : m_webSWServerConnections)
+        connection->send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
 }
 
 void WebSWOriginStore::registerSWServerConnection(WebSWServerConnection& connection)
 {
     m_webSWServerConnections.add(connection);
 
-    if (!m_store.isEmpty())
+    if (!m_store->isEmpty())
         sendStoreHandle(connection);
 
     if (m_isImported)
@@ -82,16 +85,16 @@ void WebSWOriginStore::unregisterSWServerConnection(WebSWServerConnection& conne
 
 void WebSWOriginStore::sendStoreHandle(WebSWServerConnection& connection)
 {
-    auto handle = m_store.createSharedMemoryHandle();
+    auto handle = m_store->createSharedMemoryHandle();
     if (!handle)
         return;
-    connection.send(Messages::WebSWClientConnection::SetSWOriginTableSharedMemory(WTFMove(*handle)));
+    connection.send(Messages::WebSWClientConnection::SetSWOriginTableSharedMemory(WTF::move(*handle)));
 }
 
 void WebSWOriginStore::didInvalidateSharedMemory()
 {
-    for (auto& connection : m_webSWServerConnections)
-        sendStoreHandle(CheckedRef { connection }.get());
+    for (Ref connection : m_webSWServerConnections)
+        sendStoreHandle(connection.get());
 }
 
 } // namespace WebKit

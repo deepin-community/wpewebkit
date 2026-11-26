@@ -49,7 +49,7 @@ public:
     MarkingConstraintSolver(MarkingConstraintSet&);
     ~MarkingConstraintSolver();
     
-    bool didVisitSomething() const;
+    bool NODELETE didVisitSomething() const;
     
     enum SchedulerPreference {
         ParallelWorkFirst,
@@ -74,7 +74,7 @@ private:
         TaskWithConstraint() { }
         
         TaskWithConstraint(RefPtr<SharedTask<void(SlotVisitor&)>> task, MarkingConstraint* constraint)
-            : task(WTFMove(task))
+            : task(WTF::move(task))
             , constraint(constraint)
         {
         }

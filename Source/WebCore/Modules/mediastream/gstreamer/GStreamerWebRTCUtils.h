@@ -25,11 +25,15 @@
 #include "GUniquePtrGStreamer.h"
 #include "MediaEndpointConfiguration.h"
 #include "PeerConnectionBackend.h"
+#include "Performance.h"
 #include "RTCBundlePolicy.h"
 #include "RTCCertificate.h"
 #include "RTCDtlsTransport.h"
 #include "RTCError.h"
+#include "RTCIceCandidate.h"
+#include "RTCIceComponent.h"
 #include "RTCIceConnectionState.h"
+#include "RTCIceProtocol.h"
 #include "RTCIceTransportPolicy.h"
 #include "RTCIceTransportState.h"
 #include "RTCRtpSendParameters.h"
@@ -43,9 +47,51 @@
 #include <gst/webrtc/webrtc.h>
 #undef GST_USE_UNSTABLE_API
 
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
+
+inline RTCIceComponent toRTCIceComponent(int component)
+{
+    return component == 1 ? RTCIceComponent::Rtp : RTCIceComponent::Rtcp;
+}
+
+inline std::optional<RTCIceProtocol> toRTCIceProtocol(StringView protocol)
+{
+    if (protocol.isEmpty())
+        return { };
+    if (protocol == "udp"_s)
+        return RTCIceProtocol::Udp;
+    ASSERT(protocol == "tcp"_s);
+    return RTCIceProtocol::Tcp;
+}
+
+inline std::optional<RTCIceTcpCandidateType> toRTCIceTcpCandidateType(StringView type)
+{
+    if (type.isEmpty())
+        return { };
+    if (type == "active"_s)
+        return RTCIceTcpCandidateType::Active;
+    if (type == "passive"_s)
+        return RTCIceTcpCandidateType::Passive;
+    ASSERT(type == "so"_s);
+    return RTCIceTcpCandidateType::So;
+}
+
+inline std::optional<RTCIceCandidateType> toRTCIceCandidateType(StringView type)
+{
+    if (type.isEmpty())
+        return { };
+    if (type == "host"_s)
+        return RTCIceCandidateType::Host;
+    if (type == "srflx"_s)
+        return RTCIceCandidateType::Srflx;
+    if (type == "prflx"_s)
+        return RTCIceCandidateType::Prflx;
+    ASSERT(type == "relay"_s);
+    return RTCIceCandidateType::Relay;
+}
 
 inline RTCRtpTransceiverDirection toRTCRtpTransceiverDirection(GstWebRTCRTPTransceiverDirection direction)
 {
@@ -70,6 +116,7 @@ inline GstWebRTCRTPTransceiverDirection fromRTCRtpTransceiverDirection(RTCRtpTra
 {
     switch (direction) {
     case RTCRtpTransceiverDirection::Inactive:
+    case RTCRtpTransceiverDirection::Stopped:
         return GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_INACTIVE;
     case RTCRtpTransceiverDirection::Sendonly:
         return GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_SENDONLY;
@@ -259,18 +306,35 @@ static inline std::optional<RTCErrorDetailType> toRTCErrorDetailType(GstWebRTCEr
     };
 }
 
+static inline GstWebRTCPriorityType fromRTCPriorityType(RTCPriorityType priority)
+{
+    switch (priority) {
+    case RTCPriorityType::VeryLow:
+        return GST_WEBRTC_PRIORITY_TYPE_VERY_LOW;
+    case RTCPriorityType::Low:
+        return GST_WEBRTC_PRIORITY_TYPE_LOW;
+    case RTCPriorityType::Medium:
+        return GST_WEBRTC_PRIORITY_TYPE_MEDIUM;
+    case RTCPriorityType::High:
+        return GST_WEBRTC_PRIORITY_TYPE_HIGH;
+    }
+    ASSERT_NOT_REACHED();
+    return GST_WEBRTC_PRIORITY_TYPE_MEDIUM;
+}
+
 RefPtr<RTCError> toRTCError(GError*);
 
-GUniquePtr<GstStructure> fromRTCEncodingParameters(const RTCRtpEncodingParameters&);
+ExceptionOr<GUniquePtr<GstStructure>> fromRTCEncodingParameters(const RTCRtpEncodingParameters&, const String& kind);
+GUniquePtr<GstStructure> fromRTCCodecParameters(const RTCRtpCodecParameters&);
 RTCRtpSendParameters toRTCRtpSendParameters(const GstStructure*);
-GUniquePtr<GstStructure> fromRTCSendParameters(const RTCRtpSendParameters&);
+ExceptionOr<GUniquePtr<GstStructure>>fromRTCSendParameters(const RTCRtpSendParameters&, const String& kind);
 
 std::optional<Ref<RTCCertificate>> generateCertificate(Ref<SecurityOrigin>&&, const PeerConnectionBackend::CertificateInformation&);
 
-bool sdpMediaHasAttributeKey(const GstSDPMedia*, const char* key);
+bool sdpMediaHasAttributeKey(const GstSDPMedia*, ASCIILiteral key);
 
 class UniqueSSRCGenerator : public ThreadSafeRefCounted<UniqueSSRCGenerator> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(UniqueSSRCGenerator);
 public:
     static Ref<UniqueSSRCGenerator> create() { return adoptRef(*new UniqueSSRCGenerator()); }
 
@@ -281,12 +345,14 @@ private:
     Vector<uint32_t> m_knownIds WTF_GUARDED_BY_LOCK(m_lock);
 };
 
-std::optional<int> payloadTypeForEncodingName(StringView encodingName);
+std::optional<int> payloadTypeForEncodingName(const String& encodingName);
 
-WARN_UNUSED_RETURN GRefPtr<GstCaps> capsFromRtpCapabilities(RefPtr<UniqueSSRCGenerator>, const RTCRtpCapabilities&, Function<void(GstStructure*)> supplementCapsCallback);
+using RTPHeaderExtensionMapping = HashMap<String, uint8_t>;
+
+[[nodiscard]] GRefPtr<GstCaps> capsFromRtpCapabilities(const RTPHeaderExtensionMapping&, const RTCRtpCapabilities&, Function<void(GstStructure*)> supplementCapsCallback);
 
 GstWebRTCRTPTransceiverDirection getDirectionFromSDPMedia(const GstSDPMedia*);
-WARN_UNUSED_RETURN GRefPtr<GstCaps> capsFromSDPMedia(const GstSDPMedia*);
+[[nodiscard]] GRefPtr<GstCaps> capsFromSDPMedia(const GstSDPMedia*);
 
 void setSsrcAudioLevelVadOn(GstStructure*);
 
@@ -302,6 +368,51 @@ inline void unmapRtpBuffer(GstBuffer*, GstRTPBuffer* rtpBuffer)
 }
 
 using GstMappedRtpBuffer = GstBufferMapper<GstRTPBuffer, mapRtpBuffer, unmapRtpBuffer>;
+
+class StatsTimestampConverter {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StatsTimestampConverter);
+    WTF_MAKE_NONCOPYABLE(StatsTimestampConverter);
+    friend NeverDestroyed<StatsTimestampConverter>;
+
+public:
+    static StatsTimestampConverter& singleton();
+
+    ReducedResolutionSeconds convertFromMonotonicTime(Seconds value) const;
+
+private:
+    explicit StatsTimestampConverter() = default;
+
+    WallTime m_epoch { WallTime::now() };
+    MonotonicTime m_initialMonotonicTime { MonotonicTime::now() };
+};
+
+inline GstWebRTCKind webrtcKindFromCaps(const GRefPtr<GstCaps>& caps)
+{
+    if (!caps || !gst_caps_get_size(caps.get()))
+        return GST_WEBRTC_KIND_UNKNOWN;
+
+    auto media = gstStructureGetString(gst_caps_get_structure(caps.get(), 0), "media"_s);
+    if (!media)
+        return GST_WEBRTC_KIND_UNKNOWN;
+
+    if (media == "audio"_s)
+        return GST_WEBRTC_KIND_AUDIO;
+
+    if (media == "video"_s)
+        return GST_WEBRTC_KIND_VIDEO;
+
+    return GST_WEBRTC_KIND_UNKNOWN;
+}
+
+void forEachTransceiver(const GRefPtr<GstElement>&, Function<bool(GRefPtr<GstWebRTCRTPTransceiver>&&)>&&);
+
+String sdpAsString(const GstSDPMessage*);
+
+bool sdpMediaHasRTPHeaderExtension(const GstSDPMedia*, const String&);
+
+[[nodiscard]] GRefPtr<GstCaps> extractMidAndRidFromRTPBuffer(const GstMappedRtpBuffer&, const GstSDPMessage*);
+
+bool validateRTPHeaderExtensions(const GstSDPMessage* previousSDP, const GstSDPMessage* newSDP);
 
 } // namespace WebCore
 

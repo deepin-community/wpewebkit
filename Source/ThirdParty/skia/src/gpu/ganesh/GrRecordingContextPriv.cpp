@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Google Inc.
+ * Copyright 2020 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -10,8 +10,8 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkSurfaceProps.h"
-#include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContextOptions.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
 #include "include/private/gpu/ganesh/GrContext_Base.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/RefCntedCallback.h"
@@ -85,9 +85,12 @@ sktext::gpu::SubRunControl GrRecordingContextPriv::getSubRunControl(
             useSDFTForSmallText,
             !this->caps()->disablePerspectiveSDFText(),
             this->options().fMinDistanceFieldFontSize,
-            this->options().fGlyphsAsPathsFontSize};
+            this->options().fGlyphsAsPathsFontSize,
+            /*forcePathAA=*/false,
+            this->options().fSupportBilerpFromGlyphAtlas};
 #else
-    return sktext::gpu::SubRunControl{};
+    return sktext::gpu::SubRunControl{/*forcePathAA=*/false,
+                                      this->options().fSupportBilerpFromGlyphAtlas};
 #endif
 }
 

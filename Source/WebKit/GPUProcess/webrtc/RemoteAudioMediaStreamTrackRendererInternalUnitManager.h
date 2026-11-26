@@ -29,7 +29,10 @@
 
 #include "AudioMediaStreamTrackRendererInternalUnitIdentifier.h"
 #include "Connection.h"
+#include "GPUConnectionToWebProcess.h"
 #include "SharedCARingBuffer.h"
+#include "SharedPreferencesForWebProcess.h"
+#include <WebCore/AudioSession.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -49,7 +52,8 @@ class GPUConnectionToWebProcess;
 class RemoteAudioDestination;
 class RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit;
 
-class RemoteAudioMediaStreamTrackRendererInternalUnitManager : private IPC::MessageReceiver {
+class RemoteAudioMediaStreamTrackRendererInternalUnitManager final : public WebCore::AudioSessionInterruptionObserver
+    , private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteAudioMediaStreamTrackRendererInternalUnitManager);
     WTF_MAKE_NONCOPYABLE(RemoteAudioMediaStreamTrackRendererInternalUnitManager);
 public:
@@ -62,15 +66,25 @@ public:
 
     void notifyLastToCaptureAudioChanged();
 
+    USING_CAN_MAKE_WEAKPTR(IPC::MessageReceiver);
+
+    void ref() const final;
+    void deref() const final;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
+
 private:
     // Messages
-    void createUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback);
+    void createUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier, const String&, CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, uint64_t)>&& callback);
     void deleteUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier);
     void startUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier, ConsumerSharedCARingBuffer::Handle&&, IPC::Semaphore&&);
     void stopUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier);
-    void setAudioOutputDevice(AudioMediaStreamTrackRendererInternalUnitIdentifier, const String&);
+    void setLastDeviceUsed(const String&);
 
-    HashMap<AudioMediaStreamTrackRendererInternalUnitIdentifier, UniqueRef<class RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit>> m_units;
+    // WebCore::AudioSessionInterruptionObserver
+    void beginAudioSessionInterruption() final;
+    void endAudioSessionInterruption(WebCore::AudioSession::MayResume) final;
+
+    HashMap<AudioMediaStreamTrackRendererInternalUnitIdentifier, Ref<class RemoteAudioMediaStreamTrackRendererInternalUnitManagerUnit>> m_units;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
 };
 

@@ -25,10 +25,18 @@
 
 #include "config.h"
 #include "ThermalMitigationNotifier.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+Ref<ThermalMitigationNotifier> ThermalMitigationNotifier::create(ThermalMitigationChangeCallback&& callback)
+{
+    return adoptRef(*new ThermalMitigationNotifier(WTF::move(callback)));
+}
+
 #if !HAVE(APPLE_THERMAL_MITIGATION_SUPPORT)
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ThermalMitigationNotifier);
 
 ThermalMitigationNotifier::ThermalMitigationNotifier(ThermalMitigationChangeCallback&&)
 {

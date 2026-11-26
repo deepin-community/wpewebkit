@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,16 +26,13 @@
 #ifndef PAS_TRY_ALLOCATE_H
 #define PAS_TRY_ALLOCATE_H
 
-#include "pas_allocator_counts.h"
-#include "pas_cares_about_size_mode.h"
 #include "pas_heap.h"
 #include "pas_heap_config.h"
 #include "pas_heap_ref.h"
-#include "pas_local_allocator_inlines.h"
-#include "pas_physical_memory_transaction.h"
-#include "pas_segregated_heap.h"
 #include "pas_thread_local_cache.h"
 #include "pas_try_allocate_common.h"
+
+#if LIBPAS_ENABLED
 
 PAS_BEGIN_EXTERN_C;
 
@@ -76,8 +73,8 @@ pas_try_allocate_impl_inline_only(
     pas_heap_config config,
     pas_try_allocate_common_fast_inline_only try_allocate_common_fast_inline_only)
 {
-    static const bool verbose = false;
-    
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_OTHER);
+
     pas_local_allocator_result allocator;
     unsigned allocator_index;
     pas_thread_local_cache* cache;
@@ -155,5 +152,5 @@ typedef pas_allocation_result (*pas_try_allocate)(pas_heap_ref* heap_ref, pas_al
 
 PAS_END_EXTERN_C;
 
+#endif /* LIBPAS_ENABLED */
 #endif /* PAS_TRY_ALLOCATE_H */
-

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "InternalObserverFilter.h"
 
+#include "ContextDestructionObserverInlines.h"
 #include "InternalObserver.h"
 #include "Observable.h"
 #include "PredicateCallback.h"
@@ -34,6 +35,7 @@
 #include "Subscriber.h"
 #include "SubscriberCallback.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace WebCore {
 
@@ -53,9 +55,9 @@ public:
             return adoptRef(*new InternalObserverFilter::SubscriberCallbackFilter(context, source, predicate));
         }
 
-        CallbackResult<void> handleEvent(Subscriber& subscriber) final
+        CallbackResult<void> invoke(Subscriber& subscriber) final
         {
-            auto context = scriptExecutionContext();
+            RefPtr context = scriptExecutionContext();
 
             if (!context) {
                 subscriber.complete();
@@ -63,10 +65,15 @@ public:
             }
 
             SubscribeOptions options;
-            options.signal = &subscriber.signal();
-            m_sourceObservable->subscribeInternal(*context, InternalObserverFilter::create(*context, subscriber, m_predicate), options);
+            options.signal = subscriber.signal();
+            m_sourceObservable->subscribeInternal(*context, InternalObserverFilter::create(*context, subscriber, m_predicate), WTF::move(options));
 
             return { };
+        }
+
+        CallbackResult<void> invokeRethrowingException(Subscriber& subscriber) final
+        {
+            return invoke(subscriber);
         }
 
     private:
@@ -78,14 +85,14 @@ public:
 
         bool hasCallback() const final { return true; }
 
-        Ref<Observable> m_sourceObservable;
-        Ref<PredicateCallback> m_predicate;
+        const Ref<Observable> m_sourceObservable;
+        const Ref<PredicateCallback> m_predicate;
     };
 
 private:
     void next(JSC::JSValue value) final
     {
-        auto context = scriptExecutionContext();
+        RefPtr context = scriptExecutionContext();
         if (!context)
             return;
 
@@ -95,17 +102,15 @@ private:
         auto matches = false;
 
         // The exception is not reported, instead it is forwarded to the
-        // error handler. As such, PredicateCallback `[RethrowsException]`
-        // and here a catch scope is declared so the error can be passed
-        // to the subscription error handler.
+        // error handler.
         JSC::Exception* previousException = nullptr;
         {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
-            auto result = m_predicate->handleEvent(value, m_idx);
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto result = protect(m_predicate)->invokeRethrowingException(value, m_idx);
             previousException = catchScope.exception();
             if (previousException) {
                 catchScope.clearException();
-                m_subscriber->error(previousException->value());
+                protect(m_subscriber)->error(previousException->value());
                 return;
             }
 
@@ -116,30 +121,24 @@ private:
         m_idx += 1;
 
         if (matches)
-            m_subscriber->next(value);
+            protect(m_subscriber)->next(value);
     }
 
     void error(JSC::JSValue value) final
     {
-        m_subscriber->error(value);
+        protect(m_subscriber)->error(value);
     }
 
     void complete() final
     {
         InternalObserver::complete();
-        m_subscriber->complete();
+        protect(m_subscriber)->complete();
     }
 
-    void visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const final
+    void visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const final
     {
-        m_subscriber->visitAdditionalChildren(visitor);
-        m_predicate->visitJSFunction(visitor);
-    }
-
-    void visitAdditionalChildren(JSC::SlotVisitor& visitor) const final
-    {
-        m_subscriber->visitAdditionalChildren(visitor);
-        m_predicate->visitJSFunction(visitor);
+        m_subscriber->visitAdditionalChildrenInGCThread(visitor);
+        m_predicate->visitJSFunctionInGCThread(visitor);
     }
 
     InternalObserverFilter(ScriptExecutionContext& context, Ref<Subscriber> subscriber, Ref<PredicateCallback> predicate)
@@ -148,8 +147,8 @@ private:
         , m_predicate(predicate)
     { }
 
-    Ref<Subscriber> m_subscriber;
-    Ref<PredicateCallback> m_predicate;
+    const Ref<Subscriber> m_subscriber;
+    const Ref<PredicateCallback> m_predicate;
     uint64_t m_idx { 0 };
 };
 

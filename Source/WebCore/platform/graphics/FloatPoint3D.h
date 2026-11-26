@@ -23,7 +23,7 @@
 #ifndef FloatPoint3D_h
 #define FloatPoint3D_h
 
-#include "FloatPoint.h"
+#include <WebCore/FloatPoint.h>
 
 namespace WebCore {
 
@@ -85,7 +85,7 @@ public:
         return !m_x && !m_y && !m_z;
     }
 
-    void normalize();
+    void NODELETE normalize();
 
     float dot(const FloatPoint3D& a) const
     {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,13 +29,9 @@
 #if ENABLE(DFG_JIT)
 
 #include "DFGAvailabilityMap.h"
-#include "DFGBlockMapInlines.h"
 #include "JSCJSValueInlines.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace DFG {
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED_TEMPLATE(CombinedLivenessNodeLivenessMap, CombinedLiveness::NodeLivenessMap);
 
 static void addBytecodeLiveness(Graph& graph, AvailabilityMap& availabilityMap, NodeSet& seen, Node* node)
 {
@@ -65,9 +61,16 @@ NodeSet liveNodesAtHead(Graph& graph, BasicBlock* block)
     return seen;
 }
 
+NodeSet bytecodeLivenessAtTerminal(Graph& graph, BasicBlock* block)
+{
+    NodeSet seen;
+    addBytecodeLiveness(graph, block->ssa->availabilityAtTail, seen, block->last());
+    return seen;
+}
+
 CombinedLiveness::CombinedLiveness(Graph& graph)
-    : liveAtHead(graph)
-    , liveAtTail(graph)
+    : liveAtHead(graph.numBlocks())
+    , liveAtTail(graph.numBlocks())
 {
     // First compute 
     // - The liveAtHead for each block.
@@ -84,11 +87,8 @@ CombinedLiveness::CombinedLiveness(Graph& graph)
         // Unreachable
         //
         // And things may definitely be live in bytecode at that point in the program.
-        if (!block->numSuccessors()) {
-            NodeSet seen;
-            addBytecodeLiveness(graph, block->ssa->availabilityAtTail, seen, block->last());
-            liveAtTail[block] = seen;
-        }
+        if (!block->numSuccessors())
+            liveAtTail[block] = bytecodeLivenessAtTerminal(graph, block);
     }
     
     // Now compute the liveAtTail by unifying the liveAtHead of the successors.

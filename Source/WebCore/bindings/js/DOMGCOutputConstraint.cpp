@@ -34,22 +34,23 @@
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 using namespace JSC;
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DOMGCOutputConstraint);
+
 DOMGCOutputConstraint::DOMGCOutputConstraint(VM& vm, JSHeapData& heapData)
-    : MarkingConstraint("Domo", "DOM Output", ConstraintVolatility::SeldomGreyed, ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel)
+    : MarkingConstraint("Domo"_s, "DOM Output"_s, ConstraintVolatility::SeldomGreyed, ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel)
     , m_vm(vm)
     , m_heapData(heapData)
     , m_lastExecutionVersion(vm.heap.mutatorExecutionVersion())
 {
 }
 
-DOMGCOutputConstraint::~DOMGCOutputConstraint()
-{
-}
+DOMGCOutputConstraint::~DOMGCOutputConstraint() = default;
 
 template<typename Visitor>
 void DOMGCOutputConstraint::executeImplImpl(Visitor& visitor)
@@ -62,10 +63,12 @@ void DOMGCOutputConstraint::executeImplImpl(Visitor& visitor)
     m_lastExecutionVersion = heap.mutatorExecutionVersion();
     
     m_heapData.forEachOutputConstraintSpace(
-        [&] (Subspace& subspace) {
-            auto func = [] (Visitor& visitor, HeapCell* heapCell, HeapCell::Kind) {
+        [&](Subspace& subspace) {
+            auto func = [](Visitor& visitor, HeapCell* heapCell, HeapCell::Kind kind) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::DOMGCOutput);
-                JSCell* cell = static_cast<JSCell*>(heapCell);
+                RELEASE_ASSERT(kind == HeapCell::Kind::JSCell || kind == HeapCell::Kind::JSCellWithIndexingHeader);
+                // This cast is guaranteed safe by the RELEASE_ASSERT above.
+                SUPPRESS_MEMORY_UNSAFE_CAST auto* cell = static_cast<JSCell*>(heapCell);
                 cell->methodTable()->visitOutputConstraints(cell, visitor);
             };
             

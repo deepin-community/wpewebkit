@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,39 +29,50 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "ArgumentCoders.h"
+
 #include "MessageSenderInlines.h"
 #include "RemoteFaceDetectorMessages.h"
 #include "RemoteRenderingBackendProxy.h"
 #include "StreamClientConnection.h"
 #include "WebProcess.h"
-#include <WebCore/ImageBuffer.h>
+#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/NativeImage.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit::ShapeDetection {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteFaceDetectorProxy);
 
-Ref<RemoteFaceDetectorProxy> RemoteFaceDetectorProxy::create(Ref<IPC::StreamClientConnection>&& streamClientConnection, RenderingBackendIdentifier renderingBackendIdentifier, ShapeDetectionIdentifier identifier, const WebCore::ShapeDetection::FaceDetectorOptions& faceDetectorOptions)
+Ref<RemoteFaceDetectorProxy> RemoteFaceDetectorProxy::create(RemoteRenderingBackendProxy& renderingBackend)
 {
-    streamClientConnection->send(Messages::RemoteRenderingBackend::CreateRemoteFaceDetector(identifier, faceDetectorOptions), renderingBackendIdentifier);
-    return adoptRef(*new RemoteFaceDetectorProxy(WTFMove(streamClientConnection), renderingBackendIdentifier, identifier));
+    // FIXME(https://bugs.webkit.org/show_bug.cgi?id=275245): Does not work when GPUP crashes.
+    return adoptRef(*new RemoteFaceDetectorProxy(renderingBackend));
 }
 
-RemoteFaceDetectorProxy::RemoteFaceDetectorProxy(Ref<IPC::StreamClientConnection>&& streamClientConnection, RenderingBackendIdentifier renderingBackendIdentifier, ShapeDetectionIdentifier identifier)
-    : m_backing(identifier)
-    , m_streamClientConnection(WTFMove(streamClientConnection))
-    , m_renderingBackendIdentifier(renderingBackendIdentifier)
+RemoteFaceDetectorProxy::RemoteFaceDetectorProxy(RemoteRenderingBackendProxy& renderingBackend)
+    : m_renderingBackend(renderingBackend)
 {
 }
 
 RemoteFaceDetectorProxy::~RemoteFaceDetectorProxy()
 {
-    m_streamClientConnection->send(Messages::RemoteRenderingBackend::ReleaseRemoteFaceDetector(m_backing), m_renderingBackendIdentifier);
+    if (RefPtr renderingBackend = m_renderingBackend.get())
+        renderingBackend->releaseFaceDetector(*this);
 }
 
-void RemoteFaceDetectorProxy::detect(Ref<WebCore::ImageBuffer>&& imageBuffer, CompletionHandler<void(Vector<WebCore::ShapeDetection::DetectedFace>&&)>&& completionHandler)
+void RemoteFaceDetectorProxy::detect(const WebCore::NativeImage& image, CompletionHandler<void(Vector<WebCore::ShapeDetection::DetectedFace>&&)>&& completionHandler)
 {
-    m_streamClientConnection->sendWithAsyncReply(Messages::RemoteFaceDetector::Detect(imageBuffer->renderingResourceIdentifier()), WTFMove(completionHandler), m_backing);
+    RefPtr renderingBackend = m_renderingBackend.get();
+    RefPtr connection = renderingBackend ? renderingBackend->connection() : nullptr;
+    if (!connection) [[unlikely]] {
+        completionHandler({ });
+        return;
+    }
+    if (!renderingBackend->remoteResourceCacheProxy().recordNativeImageUse(image, WebCore::DestinationColorSpace::SRGB())) {
+        completionHandler({ });
+        return;
+    }
+    connection->sendWithAsyncReply(Messages::RemoteFaceDetector::Detect(image.renderingResourceIdentifier()), WTF::move(completionHandler), identifier());
 }
 
 } // namespace WebKit::WebGPU

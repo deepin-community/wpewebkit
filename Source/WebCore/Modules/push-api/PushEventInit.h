@@ -25,13 +25,12 @@
 
 #pragma once
 
-#include "ExtendableEventInit.h"
 #include <JavaScriptCore/ArrayBuffer.h>
-#include <variant>
+#include <WebCore/ExtendableEventInit.h>
 
 namespace WebCore {
 
-using PushMessageDataInit = std::variant<RefPtr<JSC::ArrayBufferView>, RefPtr<JSC::ArrayBuffer>, String>;
+using PushMessageDataInit = Variant<Ref<JSC::ArrayBufferView>, Ref<JSC::ArrayBuffer>, String>;
 
 struct PushEventInit : ExtendableEventInit {
     std::optional<PushMessageDataInit> data;

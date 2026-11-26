@@ -7,6 +7,7 @@
 // vulkan_icd.cpp : Helper for creating vulkan instances & selecting physical device.
 
 #include "common/vulkan/vulkan_icd.h"
+#include "common/unsafe_buffers.h"
 
 #include <functional>
 #include <vector>
@@ -81,16 +82,18 @@ ICDFilterFunc GetFilterForICD(vk::ICD preferredICD)
     {
         case vk::ICD::Mock:
             return [](const VkPhysicalDeviceProperties &deviceProperties) {
-                return ((deviceProperties.vendorID == kMockVendorID) &&
-                        (deviceProperties.deviceID == kMockDeviceID) &&
-                        (strcmp(deviceProperties.deviceName, kMockDeviceName) == 0));
+                return (
+                    (deviceProperties.vendorID == kMockVendorID) &&
+                    (deviceProperties.deviceID == kMockDeviceID) &&
+                    (ANGLE_UNSAFE_TODO(strcmp(deviceProperties.deviceName, kMockDeviceName)) == 0));
             };
         case vk::ICD::SwiftShader:
             return [](const VkPhysicalDeviceProperties &deviceProperties) {
-                return ((deviceProperties.vendorID == kGoogleVendorID) &&
-                        (deviceProperties.deviceID == kSwiftShaderDeviceID) &&
-                        (strncmp(deviceProperties.deviceName, kSwiftShaderDeviceName,
-                                 strlen(kSwiftShaderDeviceName)) == 0));
+                return (
+                    (deviceProperties.vendorID == kGoogleVendorID) &&
+                    (deviceProperties.deviceID == kSwiftShaderDeviceID) &&
+                    (ANGLE_UNSAFE_TODO(strncmp(deviceProperties.deviceName, kSwiftShaderDeviceName,
+                                               strlen(kSwiftShaderDeviceName))) == 0));
             };
         default:
             const std::string anglePreferredDevice =
@@ -116,7 +119,7 @@ ScopedVkLoaderEnvironment::ScopedVkLoaderEnvironment(bool enableDebugLayers, vk:
 // Changing CWD and setting environment variables makes no sense on Android,
 // since this code is a part of Java application there.
 // Android Vulkan loader doesn't need this either.
-#if !defined(ANGLE_PLATFORM_ANDROID) && !defined(ANGLE_PLATFORM_GGP)
+#if !defined(ANGLE_PLATFORM_ANDROID)
     if (icd == vk::ICD::Mock)
     {
         if (!setICDEnvironment(WrapICDEnvironment(ANGLE_VK_MOCK_ICD_JSON).c_str()))
@@ -218,104 +221,176 @@ bool ScopedVkLoaderEnvironment::setICDEnvironment(const char *icd)
     return mChangedICDEnv;
 }
 
-void ChoosePhysicalDevice(PFN_vkGetPhysicalDeviceProperties pGetPhysicalDeviceProperties,
+void ChoosePhysicalDevice(PFN_vkGetPhysicalDeviceProperties2 pGetPhysicalDeviceProperties2,
                           const std::vector<VkPhysicalDevice> &physicalDevices,
                           vk::ICD preferredICD,
                           uint32_t preferredVendorID,
                           uint32_t preferredDeviceID,
+                          const uint8_t *preferredDeviceUUID,
+                          const uint8_t *preferredDriverUUID,
+                          VkDriverId preferredDriverID,
                           VkPhysicalDevice *physicalDeviceOut,
-                          VkPhysicalDeviceProperties *physicalDevicePropertiesOut)
+                          VkPhysicalDeviceProperties2 *physicalDeviceProperties2Out,
+                          VkPhysicalDeviceIDProperties *physicalDeviceIDPropertiesOut,
+                          VkPhysicalDeviceDriverProperties *physicalDeviceDriverPropertiesOut)
 {
     ASSERT(!physicalDevices.empty());
 
+    const size_t deviceCount = physicalDevices.size();
+    std::vector<VkPhysicalDeviceProperties2> allProps(deviceCount);
+    std::vector<VkPhysicalDeviceIDProperties> allIDProps(deviceCount);
+    std::vector<VkPhysicalDeviceDriverProperties> allDriverProps(deviceCount);
+
+    for (size_t i = 0; i < deviceCount; ++i)
+    {
+        allProps[i]       = {};
+        allProps[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        allProps[i].pNext = &allIDProps[i];
+
+        allIDProps[i]       = {};
+        allIDProps[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        allIDProps[i].pNext = &allDriverProps[i];
+
+        allDriverProps[i]       = {};
+        allDriverProps[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+
+        pGetPhysicalDeviceProperties2(physicalDevices[i], &allProps[i]);
+    }
+
+    auto selectDevice = [&](size_t i) {
+        *physicalDeviceOut                       = physicalDevices[i];
+        *physicalDeviceProperties2Out            = allProps[i];
+        *physicalDeviceIDPropertiesOut           = allIDProps[i];
+        *physicalDeviceDriverPropertiesOut       = allDriverProps[i];
+        physicalDeviceProperties2Out->pNext      = nullptr;
+        physicalDeviceIDPropertiesOut->pNext     = nullptr;
+        physicalDeviceDriverPropertiesOut->pNext = nullptr;
+    };
+
     ICDFilterFunc filter = GetFilterForICD(preferredICD);
 
-    const bool shouldChooseByID = (preferredVendorID != 0 || preferredDeviceID != 0);
+    const bool shouldChooseByPciId = (preferredVendorID != 0 || preferredDeviceID != 0);
+    const bool shouldChooseByUUIDs = (preferredDeviceUUID != nullptr ||
+                                      preferredDriverUUID != nullptr || preferredDriverID != 0);
 
-    for (const VkPhysicalDevice &physicalDevice : physicalDevices)
+    // Pass 1: exact matches (ICD filter or device/driver UUIDs).
+    for (size_t i = 0; i < deviceCount; ++i)
     {
-        pGetPhysicalDeviceProperties(physicalDevice, physicalDevicePropertiesOut);
+        const VkPhysicalDeviceProperties &props = allProps[i].properties;
 
-        if (physicalDevicePropertiesOut->apiVersion < kMinimumVulkanAPIVersion)
+        if (props.apiVersion < kMinimumVulkanAPIVersion)
         {
             // Skip any devices that don't support our minimum API version. This
             // takes precedence over all other considerations.
             continue;
         }
 
-        if (filter(*physicalDevicePropertiesOut))
+        if (filter(props))
         {
-            *physicalDeviceOut = physicalDevice;
+            selectDevice(i);
             return;
         }
 
-        if (shouldChooseByID)
+        if (shouldChooseByUUIDs)
         {
-            // NOTE: If the system has multiple GPUs with the same vendor and
-            // device IDs, this will arbitrarily select one of them.
+            bool matched = true;
+
+            if (preferredDriverID != 0 && preferredDriverID != allDriverProps[i].driverID)
+            {
+                matched = false;
+            }
+            // SAFETY: preferredDeviceUUID and deviceUUID both have size VK_UUID_SIZE.
+            else if (preferredDeviceUUID != nullptr &&
+                     ANGLE_UNSAFE_BUFFERS(
+                         memcmp(preferredDeviceUUID, allIDProps[i].deviceUUID, VK_UUID_SIZE)) != 0)
+            {
+                matched = false;
+            }
+            // SAFETY: preferredDriverUUID and driverUUID both have size VK_UUID_SIZE.
+            else if (preferredDriverUUID != nullptr &&
+                     ANGLE_UNSAFE_BUFFERS(
+                         memcmp(preferredDriverUUID, allIDProps[i].driverUUID, VK_UUID_SIZE)) != 0)
+            {
+                matched = false;
+            }
+
+            if (matched)
+            {
+                selectDevice(i);
+                return;
+            }
+        }
+    }
+
+    // Pass 2: PCI IDs (lowest-priority criterion; identifies a GPU model rather
+    // than an individual GPU, so several devices in a system can share a pair).
+    if (shouldChooseByPciId)
+    {
+        for (size_t i = 0; i < deviceCount; ++i)
+        {
+            const VkPhysicalDeviceProperties &props = allProps[i].properties;
+
+            if (props.apiVersion < kMinimumVulkanAPIVersion)
+            {
+                continue;
+            }
+
             bool matchVendorID = true;
             bool matchDeviceID = true;
 
-            if (preferredVendorID != 0 &&
-                preferredVendorID != physicalDevicePropertiesOut->vendorID)
+            if (preferredVendorID != 0 && preferredVendorID != props.vendorID)
             {
                 matchVendorID = false;
             }
 
-            if (preferredDeviceID != 0 &&
-                preferredDeviceID != physicalDevicePropertiesOut->deviceID)
+            if (preferredDeviceID != 0 && preferredDeviceID != props.deviceID)
             {
                 matchDeviceID = false;
             }
 
             if (matchVendorID && matchDeviceID)
             {
-                *physicalDeviceOut = physicalDevice;
+                selectDevice(i);
                 return;
             }
         }
     }
 
-    Optional<VkPhysicalDevice> integratedDevice;
-    VkPhysicalDeviceProperties integratedDeviceProperties;
-    for (const VkPhysicalDevice &physicalDevice : physicalDevices)
-    {
-        pGetPhysicalDeviceProperties(physicalDevice, physicalDevicePropertiesOut);
+    // Pass 3: Fallbacks (discrete GPU, then integrated, then device 0).
+    Optional<size_t> integratedDeviceIndex;
 
-        if (physicalDevicePropertiesOut->apiVersion < kMinimumVulkanAPIVersion)
+    for (size_t i = 0; i < deviceCount; ++i)
+    {
+        const VkPhysicalDeviceProperties &props = allProps[i].properties;
+
+        if (props.apiVersion < kMinimumVulkanAPIVersion)
         {
-            // Skip any devices that don't support our minimum API version. This
-            // takes precedence over all other considerations.
             continue;
         }
 
         // If discrete GPU exists, uses it by default.
-        if (physicalDevicePropertiesOut->deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
         {
-            *physicalDeviceOut = physicalDevice;
+            selectDevice(i);
             return;
         }
-        if (physicalDevicePropertiesOut->deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU &&
-            !integratedDevice.valid())
+        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU &&
+            !integratedDeviceIndex.valid())
         {
-            integratedDevice           = physicalDevice;
-            integratedDeviceProperties = *physicalDevicePropertiesOut;
-            continue;
+            integratedDeviceIndex = i;
         }
     }
 
     // If only integrated GPU exists, use it by default.
-    if (integratedDevice.valid())
+    if (integratedDeviceIndex.valid())
     {
-        *physicalDeviceOut           = integratedDevice.value();
-        *physicalDevicePropertiesOut = integratedDeviceProperties;
+        selectDevice(integratedDeviceIndex.value());
         return;
     }
 
     WARN() << "Preferred device ICD not found. Using default physicalDevice instead.";
     // Fallback to the first device.
-    *physicalDeviceOut = physicalDevices[0];
-    pGetPhysicalDeviceProperties(*physicalDeviceOut, physicalDevicePropertiesOut);
+    selectDevice(0);
 }
 
 }  // namespace vk

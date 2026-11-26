@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2010-2014 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,12 +23,14 @@
 #include "FileInputType.h"
 
 #include "Chrome.h"
+#include "ContainerNodeInlines.h"
 #include "DOMFormData.h"
 #include "DirectoryFileListCreator.h"
 #include "DragData.h"
-#include "ElementChildIteratorInlines.h"
+#include "ElementInlines.h"
 #include "ElementRareData.h"
 #include "Event.h"
+#include "FrameDestructionObserverInlines.h"
 #include "File.h"
 #include "FileChooser.h"
 #include "FileList.h"
@@ -46,6 +48,7 @@
 #include "ShadowRoot.h"
 #include "UserAgentParts.h"
 #include "UserGestureIndicator.h"
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/TypeCasts.h>
@@ -59,6 +62,8 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FileInputType);
+
 using namespace HTMLNames;
 
 FileInputType::FileInputType(HTMLInputElement& element)
@@ -70,8 +75,8 @@ FileInputType::FileInputType(HTMLInputElement& element)
 
 FileInputType::~FileInputType()
 {
-    if (m_fileChooser)
-        m_fileChooser->invalidate();
+    if (auto* fileChooser = m_fileChooser.get())
+        fileChooser->invalidate();
 
     if (m_fileIconLoader)
         m_fileIconLoader->invalidate();
@@ -107,7 +112,7 @@ FormControlState FileInputType::saveFormControlState() const
         stateVector.append(AtomString { file->name() });
     }
     stateVector.append(AtomString { m_displayString });
-    return FormControlState { WTFMove(stateVector) };
+    return FormControlState { WTF::move(stateVector) };
 }
 
 void FileInputType::restoreFormControlState(const FormControlState& state)
@@ -119,16 +124,16 @@ void FileInputType::restoreFormControlState(const FormControlState& state)
 bool FileInputType::appendFormData(DOMFormData& formData) const
 {
     ASSERT(element());
-    RefPtr fileList = element()->files();
-    ASSERT(fileList);
+    Ref element = *this->element();
+    Ref fileList = m_fileList;
 
-    auto name = element()->name();
+    auto name = element->name();
 
     // If no filename at all is entered, return successful but empty.
     // Null would be more logical, but Netscape posts an empty file. Argh.
     if (fileList->isEmpty()) {
-        auto* document = element() ? &element()->document() : nullptr;
-        auto file = File::create(document, Blob::create(document, { }, defaultMIMEType()), emptyString());
+        Ref document = element->document();
+        auto file = File::create(document.ptr(), Blob::create(document.ptr(), { }, defaultMIMEType()), emptyString());
         formData.append(name, file);
         return true;
     }
@@ -138,7 +143,7 @@ bool FileInputType::appendFormData(DOMFormData& formData) const
     return true;
 }
 
-bool FileInputType::valueMissing(const String& value) const
+bool FileInputType::valueMissing(StringView value) const
 {
     ASSERT(element());
     return element()->isRequired() && value.isEmpty();
@@ -153,9 +158,8 @@ String FileInputType::valueMissingText() const
 void FileInputType::handleDOMActivateEvent(Event& event)
 {
     ASSERT(element());
-    auto& input = *element();
 
-    if (input.isDisabledFormControl())
+    if (element()->isDisabledFormControl())
         return;
 
     if (!UserGestureIndicator::processingUserGesture())
@@ -168,11 +172,9 @@ void FileInputType::handleDOMActivateEvent(Event& event)
 void FileInputType::showPicker()
 {
     ASSERT(element());
-    auto& input = *element();
-
     if (auto* chrome = this->chrome()) {
         applyFileChooserSettings();
-        chrome->runOpenPanel(*input.document().frame(), *m_fileChooser);
+        chrome->runOpenPanel(*protect(element()->document().frame()), *protect(m_fileChooser));
     }
 }
 
@@ -181,10 +183,11 @@ bool FileInputType::allowsShowPickerAcrossFrames()
     return true;
 }
 
-RenderPtr<RenderElement> FileInputType::createInputRenderer(RenderStyle&& style)
+RenderPtr<RenderElement> FileInputType::createInputRenderer(Style::ComputedStyle&& style)
 {
     ASSERT(element());
-    return createRenderer<RenderFileUploadControl>(*element(), WTFMove(style));
+    // FIXME: https://github.com/llvm/llvm-project/pull/142471 Moving style is not unsafe.
+    SUPPRESS_UNCOUNTED_ARG return createRenderer<RenderFileUploadControl>(*protect(element()), WTF::move(style));
 }
 
 bool FileInputType::canSetStringValue() const
@@ -203,7 +206,7 @@ String FileInputType::firstElementPathForInputValue() const
     // decided to try to parse the value by looking for backslashes
     // (because that's what Windows file paths use). To be compatible
     // with that code, we make up a fake path for the file.
-    return makeString("C:\\fakepath\\"_s, m_fileList->file(0).name());
+    return makeString("C:\\fakepath\\"_s, files().file(0).name());
 }
 
 void FileInputType::setValue(const String&, bool valueChanged, TextFieldEventBehavior, TextControlSetValueSelection)
@@ -212,11 +215,12 @@ void FileInputType::setValue(const String&, bool valueChanged, TextFieldEventBeh
     if (!valueChanged)
         return;
     
-    m_fileList->clear();
+    protect(files())->clear();
     m_icon = nullptr;
     ASSERT(element());
-    element()->invalidateStyleForSubtree();
-    element()->updateValidity();
+    Ref element = *this->element();
+    element->invalidateStyleForSubtree();
+    element->updateValidity();
 }
 
 void FileInputType::createShadowSubtree()
@@ -225,34 +229,33 @@ void FileInputType::createShadowSubtree()
     ASSERT(element());
     ASSERT(element()->shadowRoot());
 
-    Ref button = HTMLInputElement::create(inputTag, element()->protectedDocument(), nullptr, false);
+    Ref element = *this->element();
+    Ref button = HTMLInputElement::create(inputTag, protect(element->document()), false);
     {
         ScriptDisallowedScope::EventAllowedScope eventAllowedScopeBeforeAppend { button };
-        button->setType(InputTypeNames::button());
+        button->setAttributeWithoutSynchronization(typeAttr, InputTypeNames::button());
         button->setUserAgentPart(UserAgentParts::fileSelectorButton());
-        button->setValue(element()->multiple() ? fileButtonChooseMultipleFilesLabel() : fileButtonChooseFileLabel());
+        button->setValue(element->multiple() ? fileButtonChooseMultipleFilesLabel() : fileButtonChooseFileLabel());
     }
-    Ref shadowRoot = *element()->userAgentShadowRoot();
+    Ref shadowRoot = *element->userAgentShadowRoot();
     ScriptDisallowedScope::EventAllowedScope eventAllowedScope { shadowRoot };
     shadowRoot->appendChild(ContainerNode::ChildChange::Source::Parser, button);
     disabledStateChanged();
 }
 
-static RefPtr<HTMLInputElement> fileSelectorButton(const Element& element)
+static RefPtr<HTMLInputElement> NODELETE fileSelectorButton(const Element& element)
 {
-    auto root = element.userAgentShadowRoot();
-    if (!root)
-        return nullptr;
-
-    return childrenOfType<HTMLInputElement>(*root).first();
+    auto* root = element.userAgentShadowRoot();
+    return root ? downcast<HTMLInputElement>(root->firstChild()) : nullptr;
 }
 
 void FileInputType::disabledStateChanged()
 {
     ASSERT(element());
 
-    if (RefPtr button = fileSelectorButton(*element()))
-        button->setBooleanAttribute(disabledAttr, element()->isDisabledFormControl());
+    Ref element = *this->element();
+    if (RefPtr button = fileSelectorButton(element))
+        button->setBooleanAttribute(disabledAttr, element->isDisabledFormControl());
 }
 
 void FileInputType::attributeChanged(const QualifiedName& name)
@@ -291,24 +294,24 @@ void FileInputType::requestIcon(const Vector<String>& paths)
 FileChooserSettings FileInputType::fileChooserSettings() const
 {
     ASSERT(element());
-    auto& input = *element();
+    Ref element = *this->element();
 
     FileChooserSettings settings;
     settings.allowsDirectories = allowsDirectories();
-    settings.allowsMultipleFiles = input.hasAttributeWithoutSynchronization(multipleAttr);
-    settings.acceptMIMETypes = input.acceptMIMETypes();
-    settings.acceptFileExtensions = input.acceptFileExtensions();
-    settings.selectedFiles = m_fileList->paths();
+    settings.allowsMultipleFiles = element->hasAttributeWithoutSynchronization(multipleAttr);
+    settings.acceptMIMETypes = element->acceptMIMETypes();
+    settings.acceptFileExtensions = element->acceptFileExtensions();
+    settings.selectedFiles = protect(files())->paths();
 #if ENABLE(MEDIA_CAPTURE)
-    settings.mediaCaptureType = input.mediaCaptureType();
+    settings.mediaCaptureType = element->mediaCaptureType();
 #endif
     return settings;
 }
 
 void FileInputType::applyFileChooserSettings()
 {
-    if (m_fileChooser)
-        m_fileChooser->invalidate();
+    if (auto* fileChooser = m_fileChooser.get())
+        fileChooser->invalidate();
 
     m_fileChooser = FileChooser::create(*this, fileChooserSettings());
 }
@@ -316,9 +319,10 @@ void FileInputType::applyFileChooserSettings()
 bool FileInputType::allowsDirectories() const
 {
     ASSERT(element());
-    if (!element()->document().settings().directoryUploadEnabled())
+    auto& element = *this->element();
+    if (!element.document().settings().directoryUploadEnabled())
         return false;
-    return element()->hasAttributeWithoutSynchronization(webkitdirectoryAttr);
+    return element.hasAttributeWithoutSynchronization(webkitdirectoryAttr);
 }
 
 bool FileInputType::dirAutoUsesValue() const
@@ -328,7 +332,7 @@ bool FileInputType::dirAutoUsesValue() const
 
 void FileInputType::setFiles(RefPtr<FileList>&& files, WasSetByJavaScript wasSetByJavaScript)
 {
-    setFiles(WTFMove(files), RequestIcon::Yes, wasSetByJavaScript);
+    setFiles(WTF::move(files), RequestIcon::Yes, wasSetByJavaScript);
 }
 
 void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequestIcon, WasSetByJavaScript wasSetByJavaScript)
@@ -337,7 +341,7 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
         return;
 
     ASSERT(element());
-    Ref<HTMLInputElement> protectedInputElement(*element());
+    Ref element = *this->element();
 
     unsigned length = files->length();
 
@@ -345,8 +349,9 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
     if (length != m_fileList->length())
         pathsChanged = true;
     else {
+        auto& currentFiles = m_fileList;
         for (unsigned i = 0; i < length; ++i) {
-            if (files->file(i).path() != m_fileList->file(i).path() || !FileSystem::fileIDsAreEqual(files->file(i).fileID(), m_fileList->file(i).fileID())) {
+            if (files->file(i).path() != currentFiles->file(i).path() || !FileSystem::fileIDsAreEqual(files->file(i).fileID(), currentFiles->file(i).fileID())) {
                 pathsChanged = true;
                 break;
             }
@@ -355,14 +360,14 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
 
     m_fileList = files.releaseNonNull();
 
-    protectedInputElement->setFormControlValueMatchesRenderer(true);
-    protectedInputElement->updateValidity();
+    element->setFormControlValueMatchesRenderer(true);
+    element->updateValidity();
 
     if (shouldRequestIcon == RequestIcon::Yes)
-        requestIcon(m_fileList->paths());
+        requestIcon(protect(this->files())->paths());
 
-    if (protectedInputElement->renderer())
-        protectedInputElement->renderer()->repaint();
+    if (CheckedPtr renderer = element->renderer())
+        renderer->repaint();
 
     if (wasSetByJavaScript == WasSetByJavaScript::Yes)
         return;
@@ -370,13 +375,13 @@ void FileInputType::setFiles(RefPtr<FileList>&& files, RequestIcon shouldRequest
     if (pathsChanged) {
         // This call may cause destruction of this instance.
         // input instance is safe since it is ref-counted.
-        protectedInputElement->dispatchInputEvent();
-        protectedInputElement->dispatchChangeEvent();
+        element->dispatchInputEvent();
+        element->dispatchChangeEvent();
     } else
-        protectedInputElement->dispatchCancelEvent();
+        element->dispatchCancelEvent();
 
-    protectedInputElement->setChangedSinceLastFormControlChangeEvent(false);
-    protectedInputElement->setInteractedWithSinceLastFormSubmitEvent(true);
+    element->setChangedSinceLastFormControlChangeEvent(false);
+    element->setInteractedWithSinceLastFormSubmitEvent(true);
 }
 
 void FileInputType::filesChosen(const Vector<FileChooserFileInfo>& paths, const String& displayString, Icon* icon)
@@ -384,29 +389,30 @@ void FileInputType::filesChosen(const Vector<FileChooserFileInfo>& paths, const 
     if (!displayString.isEmpty())
         m_displayString = displayString;
 
-    if (m_directoryFileListCreator)
-        m_directoryFileListCreator->cancel();
+    if (RefPtr creator = m_directoryFileListCreator)
+        creator->cancel();
 
-    auto* document = element() ? &element()->document() : nullptr;
+    RefPtr document = element() ? &element()->document() : nullptr;
     if (!allowsDirectories()) {
         auto files = paths.map([document](auto& fileInfo) {
-            auto handle = FileSystem::openFile(fileInfo.path, FileSystem::FileOpenMode::Read);
-            auto fileID = FileSystem::fileID(handle);
-            FileSystem::closeFile(handle);
-
-            return File::create(document, fileInfo.path, fileInfo.replacementPath, fileInfo.displayName, fileID);
+            std::optional<FileSystem::PlatformFileID> fileID;
+            if (auto handle = FileSystem::openFile(fileInfo.path, FileSystem::FileOpenMode::Read); handle)
+                fileID = handle.id();
+            return File::create(document.get(), fileInfo.path, fileInfo.replacementPath, fileInfo.displayName, fileID);
         });
-        didCreateFileList(FileList::create(WTFMove(files)), icon);
+        didCreateFileList(FileList::create(WTF::move(files)), icon);
         return;
     }
 
-    m_directoryFileListCreator = DirectoryFileListCreator::create([this, weakThis = WeakPtr { *this }, icon = RefPtr { icon }](Ref<FileList>&& fileList) mutable {
+    Ref creator = DirectoryFileListCreator::create([weakThis = WeakPtr { *this }, icon = RefPtr { icon }](Ref<FileList>&& fileList) mutable {
         ASSERT(isMainThread());
-        if (!weakThis)
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return;
-        didCreateFileList(WTFMove(fileList), WTFMove(icon));
+        protectedThis->didCreateFileList(WTF::move(fileList), WTF::move(icon));
     });
-    m_directoryFileListCreator->start(document, paths);
+    creator->start(document.get(), paths);
+    m_directoryFileListCreator = WTF::move(creator);
 }
 
 void FileInputType::filesChosen(const Vector<String>& paths, const Vector<String>& replacementPaths)
@@ -420,15 +426,13 @@ void FileInputType::filesChosen(const Vector<String>& paths, const Vector<String
         return FileChooserFileInfo { paths[i], i < replacementPaths.size() ? replacementPaths[i] : nullString(), { } };
     });
 
-    filesChosen(WTFMove(files));
+    filesChosen(WTF::move(files));
 }
 
 void FileInputType::fileChoosingCancelled()
 {
     ASSERT(element());
-    Ref<HTMLInputElement> protectedInputElement(*element());
-
-    protectedInputElement->dispatchCancelEvent();
+    protect(element())->dispatchCancelEvent();
 }
 
 void FileInputType::didCreateFileList(Ref<FileList>&& fileList, RefPtr<Icon>&& icon)
@@ -438,9 +442,9 @@ void FileInputType::didCreateFileList(Ref<FileList>&& fileList, RefPtr<Icon>&& i
     ASSERT(!allowsDirectories() || m_directoryFileListCreator);
     m_directoryFileListCreator = nullptr;
 
-    setFiles(WTFMove(fileList), icon ? RequestIcon::No : RequestIcon::Yes, WasSetByJavaScript::No);
+    setFiles(WTF::move(fileList), icon ? RequestIcon::No : RequestIcon::Yes, WasSetByJavaScript::No);
     if (icon && !m_fileList->isEmpty() && element())
-        iconLoaded(WTFMove(icon));
+        iconLoaded(WTF::move(icon));
 }
 
 String FileInputType::displayString() const
@@ -453,9 +457,9 @@ void FileInputType::iconLoaded(RefPtr<Icon>&& icon)
     if (m_icon == icon)
         return;
 
-    m_icon = WTFMove(icon);
+    m_icon = WTF::move(icon);
     ASSERT(element());
-    if (auto* renderer = element()->renderer())
+    if (CheckedPtr renderer = element()->renderer())
         renderer->repaint();
 }
 
@@ -465,31 +469,24 @@ bool FileInputType::receiveDroppedFilesWithImageTranscoding(const Vector<String>
 #if PLATFORM(MAC)
     auto settings = fileChooserSettings();
     auto allowedMIMETypes = MIMETypeRegistry::allowedMIMETypes(settings.acceptMIMETypes, settings.acceptFileExtensions);
-    
+
     auto transcodingPaths = findImagesForTranscoding(paths, allowedMIMETypes);
     if (transcodingPaths.isEmpty())
-        return { };
+        return false;
 
     auto transcodingMIMEType = MIMETypeRegistry::preferredImageMIMETypeForEncoding(allowedMIMETypes, { });
     if (transcodingMIMEType.isNull())
-        return { };
+        return false;
 
     auto transcodingUTI = WebCore::UTIFromMIMEType(transcodingMIMEType);
     auto transcodingExtension = WebCore::MIMETypeRegistry::preferredExtensionForMIMEType(transcodingMIMEType);
 
-    auto callFilesChosen = [protectedThis = Ref { *this }, paths](const Vector<String>& replacementPaths) {
+    auto* chrome = this->chrome();
+    if (!chrome)
+        return false;
+
+    chrome->transcodeChosenFiles(WTF::move(transcodingPaths), WTF::move(transcodingUTI), WTF::move(transcodingExtension), [protectedThis = Ref { *this }, paths](Vector<String>&& replacementPaths) mutable {
         protectedThis->filesChosen(paths, replacementPaths);
-    };
-
-    sharedImageTranscodingQueue().dispatch([callFilesChosen = WTFMove(callFilesChosen), transcodingPaths = crossThreadCopy(WTFMove(transcodingPaths)), transcodingUTI = WTFMove(transcodingUTI).isolatedCopy(), transcodingExtension = WTFMove(transcodingExtension).isolatedCopy()]() mutable {
-        ASSERT(!RunLoop::isMain());
-
-        auto replacementPaths = transcodeImages(transcodingPaths, transcodingUTI, transcodingExtension);
-        ASSERT(transcodingPaths.size() == replacementPaths.size());
-
-        RunLoop::main().dispatch([callFilesChosen = WTFMove(callFilesChosen), replacementPaths = crossThreadCopy(WTFMove(replacementPaths))] {
-            callFilesChosen(replacementPaths);
-        });
     });
 
     return true;
@@ -529,8 +526,9 @@ String FileInputType::defaultToolTip() const
     }
 
     StringBuilder names;
+    Ref fileList = m_fileList;
     for (unsigned i = 0; i < listSize; ++i) {
-        names.append(m_fileList->file(i).name());
+        names.append(fileList->file(i).name());
         if (i != listSize - 1)
             names.append('\n');
     }

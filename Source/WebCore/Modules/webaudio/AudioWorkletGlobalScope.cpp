@@ -39,16 +39,19 @@
 #include "CommonVM.h"
 #include "JSAudioWorkletProcessor.h"
 #include "JSAudioWorkletProcessorConstructor.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertDictionary.h"
+#include "JSDOMConvertSequences.h"
+#include "SerializedScriptValue.h"
 #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(AudioWorkletGlobalScope);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioWorkletGlobalScope);
 
 RefPtr<AudioWorkletGlobalScope> AudioWorkletGlobalScope::tryCreate(AudioWorkletThread& thread, const WorkletParameters& parameters)
 {
@@ -57,11 +60,12 @@ RefPtr<AudioWorkletGlobalScope> AudioWorkletGlobalScope::tryCreate(AudioWorkletT
         return nullptr;
     auto scope = adoptRef(*new AudioWorkletGlobalScope(thread, vm.releaseNonNull(), parameters));
     scope->addToContextsMap();
+    scope->applyContentSecurityPolicyResponseHeaders(parameters.contentSecurityPolicyResponseHeaders);
     return scope;
 }
 
 AudioWorkletGlobalScope::AudioWorkletGlobalScope(AudioWorkletThread& thread, Ref<JSC::VM>&& vm, const WorkletParameters& parameters)
-    : WorkletGlobalScope(thread, WTFMove(vm), parameters)
+    : WorkletGlobalScope(thread, WTF::move(vm), parameters)
     , m_sampleRate(parameters.sampleRate)
 {
     ASSERT(!isMainThread());
@@ -81,14 +85,14 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
         return Exception { ExceptionCode::NotSupportedError, "A processor was already registered with this name"_s };
 
     JSC::JSObject* jsConstructor = processorConstructor->callbackData()->callback();
-    auto* globalObject = jsConstructor->globalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = jsConstructor->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!jsConstructor->isConstructor())
         return Exception { ExceptionCode::TypeError, "Class definition passed to registerProcessor() is not a constructor"_s };
 
-    auto prototype = jsConstructor->getPrototype(vm, globalObject);
+    auto* globalObject = jsConstructor->realm();
+    auto prototype = jsConstructor->getPrototype(globalObject);
     RETURN_IF_EXCEPTION(scope, Exception { ExceptionCode::ExistingExceptionError });
 
     if (!prototype.isObject())
@@ -100,7 +104,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
     Vector<AudioParamDescriptor> parameterDescriptors;
     if (!parameterDescriptorsValue.isUndefined()) {
         auto parameterDescriptorsConversionResult = convert<IDLSequence<IDLDictionary<AudioParamDescriptor>>>(*globalObject, parameterDescriptorsValue);
-        if (UNLIKELY(parameterDescriptorsConversionResult.hasException(scope)))
+        if (parameterDescriptorsConversionResult.hasException(scope)) [[unlikely]]
             return Exception { ExceptionCode::ExistingExceptionError };
 
         parameterDescriptors = parameterDescriptorsConversionResult.releaseReturnValue();
@@ -117,20 +121,20 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
         }
     }
 
-    auto addResult = m_processorConstructorMap.add(name, WTFMove(processorConstructor));
+    auto addResult = m_processorConstructorMap.add(name, WTF::move(processorConstructor));
 
     // We've already checked at the beginning of this function but then we ran some JS so we need to check again.
     if (!addResult.isNewEntry)
         return Exception { ExceptionCode::NotSupportedError, "A processor was already registered with this name"_s };
 
-    auto* messagingProxy = thread().messagingProxy();
+    RefPtr messagingProxy = thread()->messagingProxy();
     if (!messagingProxy)
         return Exception { ExceptionCode::InvalidStateError };
 
-    messagingProxy->postTaskToAudioWorklet([name = WTFMove(name).isolatedCopy(), parameterDescriptors = crossThreadCopy(WTFMove(parameterDescriptors))](AudioWorklet& worklet) mutable {
+    messagingProxy->postTaskToAudioWorklet([name = WTF::move(name).isolatedCopy(), parameterDescriptors = crossThreadCopy(WTF::move(parameterDescriptors))](AudioWorklet& worklet) mutable {
         ASSERT(isMainThread());
         if (RefPtr audioContext = worklet.audioContext())
-            audioContext->addAudioParamDescriptors(name, WTFMove(parameterDescriptors));
+            audioContext->addAudioParamDescriptors(name, WTF::move(parameterDescriptors));
     });
 
     return { };
@@ -138,7 +142,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
 
 RefPtr<AudioWorkletProcessor> AudioWorkletGlobalScope::createProcessor(const String& name, TransferredMessagePort port, Ref<SerializedScriptValue>&& options)
 {
-    auto constructor = m_processorConstructorMap.get(name);
+    RefPtr constructor = m_processorConstructorMap.get(name);
     ASSERT(constructor);
     if (!constructor)
         return nullptr;
@@ -153,7 +157,7 @@ RefPtr<AudioWorkletProcessor> AudioWorkletGlobalScope::createProcessor(const Str
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder lock { globalObject };
 
-    m_pendingProcessorConstructionData = makeUnique<AudioWorkletProcessorConstructionData>(String { name }, MessagePort::entangle(*this, WTFMove(port)));
+    m_pendingProcessorConstructionData = makeUnique<AudioWorkletProcessorConstructionData>(String { name }, MessagePort::entangle(*this, WTF::move(port)));
 
     JSC::MarkedArgumentBuffer args;
     bool didFail = false;
@@ -168,7 +172,7 @@ RefPtr<AudioWorkletProcessor> AudioWorkletGlobalScope::createProcessor(const Str
     ASSERT(!!scope.exception() == !object);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* jsProcessor = JSC::jsDynamicCast<JSAudioWorkletProcessor*>(object);
+    auto* jsProcessor = dynamicDowncast<JSAudioWorkletProcessor>(object);
     if (!jsProcessor)
         return nullptr;
 
@@ -188,9 +192,9 @@ std::unique_ptr<AudioWorkletProcessorConstructionData> AudioWorkletGlobalScope::
     return std::exchange(m_pendingProcessorConstructionData, nullptr);
 }
 
-AudioWorkletThread& AudioWorkletGlobalScope::thread() const
+Ref<AudioWorkletThread> AudioWorkletGlobalScope::thread() const
 {
-    return *static_cast<AudioWorkletThread*>(workerOrWorkletThread());
+    return downcast<AudioWorkletThread>(workerOrWorkletThread()).releaseNonNull();
 }
 
 void AudioWorkletGlobalScope::handlePreRenderTasks()
@@ -219,7 +223,7 @@ void AudioWorkletGlobalScope::processorIsNoLongerNeeded(AudioWorkletProcessor& p
     m_processors.remove(processor);
 }
 
-void AudioWorkletGlobalScope::visitProcessors(JSC::AbstractSlotVisitor& visitor)
+void AudioWorkletGlobalScope::visitProcessorsInGCThread(JSC::AbstractSlotVisitor& visitor)
 {
     m_processors.forEach([&](auto& processor) {
         addWebCoreOpaqueRoot(visitor, processor);

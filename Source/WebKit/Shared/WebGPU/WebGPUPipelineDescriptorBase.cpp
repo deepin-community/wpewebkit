@@ -41,14 +41,14 @@ std::optional<PipelineDescriptorBase> ConvertToBackingContext::convertToBacking(
     if (!base)
         return std::nullopt;
 
-    WebGPUIdentifier layout;
+    std::optional<WebGPUIdentifier> layout;
     if (pipelineDescriptorBase.layout) {
-        layout = convertToBacking(*pipelineDescriptorBase.layout);
+        layout = convertToBacking(*protect(pipelineDescriptorBase.layout));
         if (!layout)
             return std::nullopt;
     }
 
-    return { { WTFMove(*base), layout } };
+    return { { WTF::move(*base), layout } };
 }
 
 std::optional<WebCore::WebGPU::PipelineDescriptorBase> ConvertFromBackingContext::convertFromBacking(const PipelineDescriptorBase& pipelineDescriptorBase)
@@ -57,14 +57,14 @@ std::optional<WebCore::WebGPU::PipelineDescriptorBase> ConvertFromBackingContext
     if (!base)
         return std::nullopt;
 
-    WebCore::WebGPU::PipelineLayout* layout = nullptr;
-    if (pipelineDescriptorBase.layout) {
-        layout = convertPipelineLayoutFromBacking(pipelineDescriptorBase.layout);
-        if (!layout)
-            return std::nullopt;
-    }
+    if (!pipelineDescriptorBase.layout)
+        return std::nullopt;
 
-    return { { WTFMove(*base), layout } };
+    auto layout = convertPipelineLayoutFromBacking(*pipelineDescriptorBase.layout);
+    if (!layout)
+        return std::nullopt;
+
+    return { { WTF::move(*base), layout } };
 }
 
 } // namespace WebKit

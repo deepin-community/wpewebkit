@@ -32,14 +32,14 @@
 namespace WebCore {
 
 FileMonitor::FileMonitor(const String& path, Ref<WorkQueue>&& handlerQueue, Function<void(FileChangeType)>&& modificationHandler)
-    : m_handlerQueue(WTFMove(handlerQueue))
-    , m_modificationHandler(WTFMove(modificationHandler))
+    : m_handlerQueue(WTF::move(handlerQueue))
+    , m_modificationHandler(WTF::move(modificationHandler))
 {
     if (path.isEmpty() || !m_modificationHandler)
         return;
 
     Function<void ()> createPlatformMonitor = [&] {
-        auto file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).data()));
+        GRefPtr file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).data()));
         GUniqueOutPtr<GError> error;
         m_platformMonitor = adoptGRef(g_file_monitor(file.get(), G_FILE_MONITOR_NONE, nullptr, &error.outPtr()));
         if (m_platformMonitor)
@@ -54,7 +54,7 @@ FileMonitor::FileMonitor(const String& path, Ref<WorkQueue>&& handlerQueue, Func
         return;
     }
 
-    m_handlerQueue->dispatchSync([createPlatformMonitor = WTFMove(createPlatformMonitor)] {
+    m_handlerQueue->dispatchSync([createPlatformMonitor = WTF::move(createPlatformMonitor)] {
         createPlatformMonitor();
     });
 }

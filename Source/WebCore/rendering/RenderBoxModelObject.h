@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2010-2018 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,42 +23,27 @@
 
 #pragma once
 
-#include "FontBaseline.h"
-#include "LayoutRect.h"
-#include "RectEdges.h"
-#include "RenderLayerModelObject.h"
+#include <WebCore/FontBaseline.h>
+#include <WebCore/LayoutRect.h>
+#include <WebCore/RectEdges.h>
+#include <WebCore/RenderLayerModelObject.h>
 
 namespace WebCore {
 
 // Modes for some of the line-related functions.
-enum LinePositionMode { PositionOnContainingLine, PositionOfInteriorLineBoxes };
-enum LineDirectionMode { HorizontalLine, VerticalLine };
+enum class LineDirection : bool { Horizontal, Vertical };
 
-enum BackgroundBleedAvoidance {
-    BackgroundBleedNone,
-    BackgroundBleedShrinkBackground,
-    BackgroundBleedUseTransparencyLayer,
-    BackgroundBleedBackgroundOverBorder
-};
-
-enum BaseBackgroundColorUsage {
-    BaseBackgroundColorUse,
-    BaseBackgroundColorOnly,
-    BaseBackgroundColorSkip
-};
-
-enum ContentChangeType {
-    ImageChanged,
-    MaskImageChanged,
-    BackgroundImageChanged,
-    CanvasChanged,
-    CanvasPixelsChanged,
-    VideoChanged,
-    FullScreenChanged,
-    ModelChanged
+enum class BleedAvoidance : uint8_t {
+    None,
+    ShrinkBackground,
+    UseTransparencyLayer,
+    BackgroundOverBorder
 };
 
 class BorderEdge;
+class BorderShape;
+class GraphicsContext;
+class Image;
 class ImageBuffer;
 class RenderTextFragment;
 class StickyPositionViewportConstraints;
@@ -68,31 +53,35 @@ namespace InlineIterator {
 class InlineBoxIterator;
 };
 
-enum class BoxSideFlag : uint8_t;
-using BoxSideSet = OptionSet<BoxSideFlag>;
+namespace Style {
+class Image;
+}
+
+enum class BoxSide : uint8_t;
+enum class DecodingMode : uint8_t;
+enum class InterpolationQuality : uint8_t;
+
+using BoxSideSet = EnumSet<BoxSide>;
 using BorderEdges = RectEdges<BorderEdge>;
 
 // This class is the base for all objects that adhere to the CSS box model as described
 // at http://www.w3.org/TR/CSS21/box.html
-
 class RenderBoxModelObject : public RenderLayerModelObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderBoxModelObject);
+    WTF_MAKE_TZONE_ALLOCATED(RenderBoxModelObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderBoxModelObject);
 public:
     virtual ~RenderBoxModelObject();
     
     LayoutSize relativePositionOffset() const;
-    inline LayoutSize relativePositionLogicalOffset() const;
 
     FloatRect constrainingRectForStickyPosition() const;
-    std::pair<const RenderBox&, const RenderLayer*> enclosingClippingBoxForStickyPosition() const;
+    std::pair<const RenderBox&, const RenderLayer*> NODELETE enclosingClippingBoxForStickyPosition() const;
     void computeStickyPositionConstraints(StickyPositionViewportConstraints&, const FloatRect& constrainingRect) const;
     LayoutSize stickyPositionOffset() const;
-    inline LayoutSize stickyPositionLogicalOffset() const;
 
     LayoutSize offsetForInFlowPosition() const;
 
-    // IE extensions. Used to calculate offsetWidth/Height.  Overridden by inlines (RenderFlow)
+    // IE extensions. Used to calculate offsetWidth/Height. Overridden by inlines (RenderFlow)
     // to return the remaining width on a given line (and the height of a single line).
     virtual LayoutUnit offsetLeft() const;
     virtual LayoutUnit offsetTop() const;
@@ -173,52 +162,62 @@ public:
     virtual LayoutUnit marginBottom() const = 0;
     virtual LayoutUnit marginLeft() const = 0;
     virtual LayoutUnit marginRight() const = 0;
-    virtual LayoutUnit marginBefore(const RenderStyle* otherStyle = nullptr) const = 0;
-    virtual LayoutUnit marginAfter(const RenderStyle* otherStyle = nullptr) const = 0;
-    virtual LayoutUnit marginStart(const RenderStyle* otherStyle = nullptr) const = 0;
-    virtual LayoutUnit marginEnd(const RenderStyle* otherStyle = nullptr) const = 0;
-    LayoutUnit verticalMarginExtent() const { return marginTop() + marginBottom(); }
-    LayoutUnit horizontalMarginExtent() const { return marginLeft() + marginRight(); }
-    LayoutUnit marginLogicalHeight() const { return marginBefore() + marginAfter(); }
-    LayoutUnit marginLogicalWidth() const { return marginStart() + marginEnd(); }
+    virtual LayoutUnit marginBefore(const WritingMode) const = 0;
+    virtual LayoutUnit marginAfter(const WritingMode) const = 0;
+    virtual LayoutUnit marginStart(const WritingMode) const = 0;
+    virtual LayoutUnit marginEnd(const WritingMode) const = 0;
+    inline LayoutUnit marginBefore() const;
+    inline LayoutUnit marginAfter() const;
+    inline LayoutUnit marginStart() const;
+    inline LayoutUnit marginEnd() const;
+    inline LayoutUnit verticalMarginExtent() const;
+    inline LayoutUnit horizontalMarginExtent() const;
+    inline LayoutUnit marginLogicalHeight() const;
+    inline LayoutUnit marginLogicalWidth() const;
 
-    RoundedRect roundedContentBoxRect(const LayoutRect& borderBoxRect, bool includeLeftEdge = true, bool includeRightEdge = true) const;
+    BorderShape borderShapeForContentClipping(const LayoutRect& borderBoxRect, RectEdges<bool> closedEdges = { true }) const;
 
     inline bool hasInlineDirectionBordersPaddingOrMargin() const;
     inline bool hasInlineDirectionBordersOrPadding() const;
 
     virtual LayoutUnit containingBlockLogicalWidthForContent() const;
 
-    // Overridden by subclasses to determine line height and baseline position.
-    virtual LayoutUnit lineHeight(bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const = 0;
-    virtual LayoutUnit baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const = 0;
-
     void mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode>, TransformState&) const override;
 
     void setSelectionState(HighlightState) override;
 
-    bool canHaveBoxInfoInFragment() const { return !isFloating() && !isReplacedOrInlineBlock() && !isInline() && !isRenderTableCell() && isRenderBlock() && !isRenderSVGBlock(); }
-
-    void contentChanged(ContentChangeType);
-    bool hasAcceleratedCompositing() const;
-
-    RenderBoxModelObject* continuation() const;
-    WEBCORE_EXPORT RenderInline* inlineContinuation() const;
-
-    static void forRendererAndContinuations(RenderBoxModelObject&, const std::function<void(RenderBoxModelObject&)>&);
-
-    void insertIntoContinuationChainAfter(RenderBoxModelObject&);
-    void removeFromContinuationChain();
-
     bool hasRunningAcceleratedAnimations() const;
 
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const override;
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const override;
+
+    bool NODELETE fixedBackgroundPaintsInLocalCoordinates() const;
+    InterpolationQuality chooseInterpolationQuality(GraphicsContext&, Image&, const void*, const LayoutSize&) const;
+    DecodingMode decodingModeForImageDraw(const Image&, const PaintInfo&) const;
+
+    void paintMaskForTextFillBox(GraphicsContext&, const FloatRect&, const InlineIterator::InlineBoxIterator&, const LayoutRect&);
+
+    // For RenderBlocks and RenderInlines with m_style->pseudoElementType() == PseudoElementType::FirstLetter, this tracks their remaining text fragments
+    RenderTextFragment* NODELETE firstLetterRemainingText() const;
+    void setFirstLetterRemainingText(RenderTextFragment&);
+    void clearFirstLetterRemainingText();
+
+    enum class ScaleByUsedZoom : bool { No, Yes };
+    LayoutSize calculateImageIntrinsicDimensions(Style::Image*, const LayoutSize& scaledPositioningAreaSize, ScaleByUsedZoom) const;
+
+    RenderBlock* containingBlockForAutoHeightDetection(const Style::PreferredSize& logicalHeight) const;
+    RenderBlock* containingBlockForAutoHeightDetection(const Style::MinimumSize& logicalHeight) const;
+    RenderBlock* containingBlockForAutoHeightDetection(const Style::MaximumSize& logicalHeight) const;
+
+    void removeOutOfFlowBoxesIfNeededOnStyleChange(RenderBlock& delegateBlock, const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle);
+
 
 protected:
-    RenderBoxModelObject(Type, Element&, RenderStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
-    RenderBoxModelObject(Type, Document&, RenderStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
+    RenderBoxModelObject(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
+    RenderBoxModelObject(Type, Document&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
 
     void willBeDestroyed() override;
+
+    void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
 
     LayoutPoint adjustedPositionRelativeToOffsetParent(const LayoutPoint&) const;
 
@@ -226,51 +225,19 @@ protected:
     bool borderObscuresBackgroundEdge(const FloatSize& contextScale) const;
     bool borderObscuresBackground() const;
 
-    enum class UpdatePercentageHeightDescendants : bool { No, Yes };
-    bool hasAutoHeightOrContainingBlockWithAutoHeight(UpdatePercentageHeightDescendants = UpdatePercentageHeightDescendants::Yes) const;
-
-public:
-    bool fixedBackgroundPaintsInLocalCoordinates() const;
-    InterpolationQuality chooseInterpolationQuality(GraphicsContext&, Image&, const void*, const LayoutSize&) const;
-    DecodingMode decodingModeForImageDraw(const Image&, const PaintInfo&) const;
-
-    void paintMaskForTextFillBox(ImageBuffer*, const FloatRect&, const InlineIterator::InlineBoxIterator&, const LayoutRect&);
-
-    // For RenderBlocks and RenderInlines with m_style->pseudoElementType() == PseudoId::FirstLetter, this tracks their remaining text fragments
-    RenderTextFragment* firstLetterRemainingText() const;
-    void setFirstLetterRemainingText(RenderTextFragment&);
-    void clearFirstLetterRemainingText();
-
-    enum class ScaleByUsedZoom : bool { No, Yes };
-    LayoutSize calculateImageIntrinsicDimensions(StyleImage*, const LayoutSize& scaledPositioningAreaSize, ScaleByUsedZoom) const;
-
-    RenderBlock* containingBlockForAutoHeightDetection(Length logicalHeight) const;
-
-    struct ContinuationChainNode {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
-
-        SingleThreadWeakPtr<RenderBoxModelObject> renderer;
-        ContinuationChainNode* previous { nullptr };
-        ContinuationChainNode* next { nullptr };
-
-        ContinuationChainNode(RenderBoxModelObject&);
-        ~ContinuationChainNode();
-
-        void insertAfter(ContinuationChainNode&);
-    };
-
-    ContinuationChainNode* continuationChainNode() const;
-
-protected:
-    LayoutUnit resolveLengthPercentageUsingContainerLogicalWidth(const Length&) const;
-    virtual void absoluteQuadsIgnoringContinuation(const FloatRect&, Vector<FloatQuad>&, bool* /*wasFixed*/) const { ASSERT_NOT_REACHED(); }
-    void collectAbsoluteQuadsForContinuation(Vector<FloatQuad>& quads, bool* wasFixed) const;
+    LayoutUnit resolveLengthPercentageUsingContainerLogicalWidth(const auto&) const;
+    LayoutUnit resolveLengthPercentageUsingContainerLogicalWidth(const auto&, const Style::ZoomFactor&) const;
 
 private:
-    ContinuationChainNode& ensureContinuationChainNode();
-    
     virtual LayoutRect frameRectForStickyPositioning() const = 0;
+
+    RenderBlock* containingBlockForAutoHeightDetectionGeneric(const auto& logicalHeight) const;
 };
+
+WEBCORE_EXPORT LayoutUnit borderLeft(const RenderBoxModelObject&);
+WEBCORE_EXPORT LayoutUnit borderTop(const RenderBoxModelObject&);
+WEBCORE_EXPORT LayoutUnit paddingLeft(const RenderBoxModelObject&);
+WEBCORE_EXPORT LayoutUnit paddingTop(const RenderBoxModelObject&);
 
 } // namespace WebCore
 

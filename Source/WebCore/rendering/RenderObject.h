@@ -25,21 +25,16 @@
 
 #pragma once
 
-#include "CachedImageClient.h"
-#include "Element.h"
-#include "FloatQuad.h"
-#include "FrameDestructionObserverInlines.h"
-#include "HTMLNames.h"
-#include "InspectorInstrumentationPublic.h"
-#include "LayoutRect.h"
-#include "LocalFrame.h"
-#include "Page.h"
-#include "RenderObjectEnums.h"
-#include "RenderStyle.h"
-#include "ScrollAlignment.h"
-#include "StyleImage.h"
-#include "TextAffinity.h"
+#include <WebCore/CachedImageClient.h>
+#include <WebCore/LayoutRect.h>
+#include <WebCore/PlatformLayerIdentifier.h>
+#include <WebCore/Position.h>
+#include <WebCore/RenderObjectEnums.h>
+#include <WebCore/RenderStyleConstants.h>
+#include <WebCore/RepaintRectCalculation.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/EnumSet.h>
+#include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WTF {
@@ -53,14 +48,21 @@ class Color;
 class ControlPart;
 class Cursor;
 class Document;
+class FloatQuad;
 class HitTestLocation;
 class HitTestRequest;
 class HitTestResult;
 class HostWindow;
 class LegacyInlineBox;
+class LocalFrame;
+class LocalFrameViewLayoutContext;
+class Node;
+class Page;
 class Path;
 class Position;
+class PositionWithAffinity;
 class ReferencedSVGResources;
+class RenderBox;
 class RenderBoxModelObject;
 class RenderInline;
 class RenderBlock;
@@ -73,36 +75,44 @@ class RenderLayerModelObject;
 class RenderFragmentContainer;
 class RenderTheme;
 class RenderTreeBuilder;
+class RenderView;
 class RenderHighlight;
-class TransformState;
-class VisiblePosition;
-
-#if PLATFORM(IOS_FAMILY)
+class ScrollAnchoringController;
 class SelectionGeometry;
-#endif
+class Settings;
+class TransformState;
+class TreeScope;
+class VisiblePosition;
+class WeakPtrImplWithEventTargetData;
 
 struct InlineBoxAndOffset;
 struct PaintInfo;
-struct SimpleRange;
-
 struct ScrollRectToVisibleOptions;
+struct SimpleRange;
+struct VisibleRectContext;
 
 namespace Layout {
 class Box;
 }
 
 namespace Style {
+class ComputedStyle;
 class PseudoElementRequest;
+enum class MarginTrimSide : uint8_t;
 }
 
+enum class Affinity : bool;
 enum class HitTestSource : bool;
-enum class RepaintRectCalculation : bool { Fast, Accurate };
 enum class RepaintOutlineBounds : bool { No, Yes };
+enum class PointerEvents : uint8_t;
 enum class RequiresFullRepaint : bool { No, Yes };
+enum class StyleColorOptions : uint8_t;
+
+typedef const void* WrappedImagePtr;
 
 // Base class for all rendering tree objects.
-class RenderObject : public CachedImageClient, public CanMakeCheckedPtr<RenderObject> {
-    WTF_MAKE_COMPACT_TZONE_OR_ISO_ALLOCATED(RenderObject);
+class RenderObject : public CanMakeSingleThreadWeakPtr<RenderObject>, public CanMakeCheckedPtr<RenderObject> {
+    WTF_MAKE_PREFERABLY_COMPACT_TZONE_ALLOCATED(RenderObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderObject);
     friend class RenderBlock;
     friend class RenderBlockFlow;
@@ -110,6 +120,7 @@ class RenderObject : public CachedImageClient, public CanMakeCheckedPtr<RenderOb
     friend class RenderElement;
     friend class RenderLayer;
     friend class RenderLayerScrollableArea;
+    friend class RenderTreeBuilder;
 public:
     enum class Type : uint8_t {
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -244,7 +255,7 @@ public:
         IsFragmentedFlow = 1 << 1,
         IsTextControl = 1 << 2,
         IsSVGBlock = 1 << 3,
-        IsViewTransitionContainer = 1 << 4,
+        IsViewTransitionContainingBlock = 1 << 4,
     };
 
     enum class LineBreakFlag : uint8_t {
@@ -281,28 +292,28 @@ public:
         TypeSpecificFlags() = default;
 
         TypeSpecificFlags(OptionSet<BlockFlowFlag> flags)
-            : m_kind(enumToUnderlyingType(Kind::BlockFlow))
+            : m_kind(std::to_underlying(Kind::BlockFlow))
             , m_flags(flags.toRaw())
         {
             ASSERT(blockFlowFlags() == flags);
         }
 
         TypeSpecificFlags(OptionSet<LineBreakFlag> flags)
-            : m_kind(enumToUnderlyingType(Kind::LineBreak))
+            : m_kind(std::to_underlying(Kind::LineBreak))
             , m_flags(flags.toRaw())
         {
             ASSERT(lineBreakFlags() == flags);
         }
 
         TypeSpecificFlags(OptionSet<ReplacedFlag> flags)
-            : m_kind(enumToUnderlyingType(Kind::Replaced))
+            : m_kind(std::to_underlying(Kind::Replaced))
             , m_flags(flags.toRaw())
         {
             ASSERT(replacedFlags() == flags);
         }
 
         TypeSpecificFlags(OptionSet<SVGModelObjectFlag> flags)
-            : m_kind(enumToUnderlyingType(Kind::SVGModelObject))
+            : m_kind(std::to_underlying(Kind::SVGModelObject))
             , m_flags(flags.toRaw())
         {
             ASSERT(svgFlags() == flags);
@@ -322,7 +333,7 @@ public:
             return this->kind() == kind ? m_flags : 0;
         }
 
-        const uint8_t m_kind : 3 { enumToUnderlyingType(Kind::Invalid) }; // Security hardening to store the type.
+        const uint8_t m_kind : 3 { std::to_underlying(Kind::Invalid) }; // Security hardening to store the type.
         const uint8_t m_flags : 6 { 0 };
         // 7 bits free.
     };
@@ -335,16 +346,15 @@ public:
     Type type() const { return m_type; }
     Layout::Box* layoutBox() { return m_layoutBox.get(); }
     const Layout::Box* layoutBox() const { return m_layoutBox.get(); }
-    void setLayoutBox(Layout::Box&);
-    void clearLayoutBox();
+    void NODELETE setLayoutBox(Layout::Box&);
+    void NODELETE clearLayoutBox();
 
     WEBCORE_EXPORT RenderTheme& theme() const;
 
     virtual ASCIILiteral renderName() const = 0;
 
     inline RenderElement* parent() const; // Defined in RenderElement.h.
-    inline CheckedPtr<RenderElement> checkedParent() const; // Defined in RenderElement.h.
-    bool isDescendantOf(const RenderObject*) const;
+    bool NODELETE isDescendantOf(const RenderObject*) const;
 
     RenderObject* previousSibling() const { return m_previous.get(); }
     RenderObject* nextSibling() const { return m_next.get(); }
@@ -366,7 +376,7 @@ public:
     RenderObject* firstLeafChild() const;
     RenderObject* lastLeafChild() const;
 
-    RenderElement* firstNonAnonymousAncestor() const;
+    RenderElement* NODELETE firstNonAnonymousAncestor() const;
 
 #if ENABLE(TEXT_AUTOSIZING)
     // Minimal distance between the block with fixed height and overflowing content and the text block to apply text autosizing.
@@ -384,22 +394,17 @@ public:
     RenderObject* traverseNext(const RenderObject* stayWithin, HeightTypeTraverseNextInclusionFunction, int& currentDepth, int& newFixedDepth) const;
 #endif
 
-    WEBCORE_EXPORT RenderLayer* enclosingLayer() const;
+    WEBCORE_EXPORT RenderLayer* NODELETE enclosingLayer() const;
 
-    WEBCORE_EXPORT RenderBox& enclosingBox() const;
-    RenderBoxModelObject& enclosingBoxModelObject() const;
-    RenderBox* enclosingScrollableContainerForSnapping() const;
+    WEBCORE_EXPORT RenderBox& NODELETE enclosingBox() const;
+    RenderBoxModelObject& NODELETE enclosingBoxModelObject() const;
+    RenderBox* enclosingScrollableContainer() const;
 
     // Return our enclosing flow thread if we are contained inside one. Follows the containing block chain.
     RenderFragmentedFlow* enclosingFragmentedFlow() const;
 
     WEBCORE_EXPORT bool useDarkAppearance() const;
     WEBCORE_EXPORT OptionSet<StyleColorOptions> styleColorOptions() const;
-
-#if ASSERT_ENABLED
-    void setHasAXObject(bool flag) { m_hasAXObject = flag; }
-    bool hasAXObject() const { return m_hasAXObject; }
-#endif
 
     // Creates a scope where this object will assert on calls to setNeedsLayout().
     class SetLayoutNeededForbiddenScope;
@@ -414,6 +419,7 @@ public:
 #if ENABLE(TREE_DEBUGGING)
     void showNodeTreeForThis() const;
     void showRenderTreeForThis() const;
+    void showSubtreeForThis() const;
     void showLineTreeForThis() const;
 
     void outputRenderObject(WTF::TextStream&, bool mark, int depth) const;
@@ -421,7 +427,7 @@ public:
     void outputRegionsInformation(WTF::TextStream&) const;
 #endif
 
-    bool isPseudoElement() const { return node() && node()->isPseudoElement(); }
+    inline bool isPseudoElement() const; // Defined in RenderObjectNode.h
 
     bool isRenderElement() const { return !isRenderText(); }
     bool isRenderReplaced() const { return m_typeSpecificFlags.kind() == TypeSpecificFlags::Kind::Replaced; }
@@ -431,19 +437,19 @@ public:
     bool isRenderInline() const { return m_typeFlags.contains(TypeFlag::IsRenderInline); }
     bool isRenderLayerModelObject() const { return m_typeFlags.contains(TypeFlag::IsLayerModelObject); }
 
-    inline bool isAtomicInlineLevelBox() const;
+    inline bool isAtomicInlineLevelBox() const; // Defined in RenderObjectStyle.h
+    inline bool isNonReplacedAtomicInlineLevelBox() const;
 
     bool isRenderCounter() const { return type() == Type::Counter; }
     bool isRenderQuote() const { return type() == Type::Quote; }
 
     bool isRenderDetailsMarker() const { return type() == Type::DetailsMarker; }
     bool isRenderEmbeddedObject() const { return type() == Type::EmbeddedObject; }
-    bool isFieldset() const;
+    bool NODELETE isFieldset() const;
     bool isRenderFileUploadControl() const { return type() == Type::FileUploadControl; }
     bool isRenderFrame() const { return type() == Type::Frame; }
     bool isRenderFrameSet() const { return type() == Type::FrameSet; }
     virtual bool isImage() const { return false; }
-    virtual bool isInlineBlockOrInlineTable() const { return false; }
     bool isRenderListBox() const { return type() == Type::ListBox; }
     bool isRenderListItem() const { return type() == Type::ListItem; }
     bool isRenderListMarker() const { return type() == Type::ListMarker; }
@@ -459,10 +465,10 @@ public:
     bool isRenderModel() const { return type() == Type::Model; }
 #endif
     bool isRenderFragmentContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsFragmentContainer); }
-    bool isRenderViewTransitionContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsViewTransitionContainer); }
     bool isRenderReplica() const { return type() == Type::Replica; }
 
     bool isRenderSlider() const { return type() == Type::Slider; }
+    bool isRenderSliderContainer() const { return type() == Type::SliderContainer; }
     bool isRenderTable() const;
     bool isRenderTableCell() const { return type() == Type::TableCell; }
     bool isRenderTableCol() const { return type() == Type::TableCol; }
@@ -473,6 +479,7 @@ public:
     bool isRenderTextControlSingleLine() const { return isRenderTextControl() && !isRenderTextControlMultiLine(); }
     bool isRenderSearchField() const { return type() == Type::SearchField; }
     bool isRenderTextControlInnerBlock() const { return type() == Type::TextControlInnerBlock; }
+    bool isRenderTextControlInnerContainer() const { return type() == Type::TextControlInnerContainer; }
     bool isRenderVideo() const { return type() == Type::Video; }
     bool isRenderViewTransitionCapture() const { return isRenderReplaced() && m_typeSpecificFlags.replacedFlags().contains(ReplacedFlag::IsViewTransitionCapture); }
     bool isRenderWidget() const { return isRenderReplaced() && m_typeSpecificFlags.replacedFlags().contains(ReplacedFlag::IsWidget); }
@@ -489,23 +496,16 @@ public:
     bool isRenderScrollbarPart() const { return type() == Type::ScrollbarPart; }
     bool isRenderVTTCue() const { return type() == Type::VTTCue; }
 
-    bool isDocumentElementRenderer() const { return document().documentElement() == m_node.ptr(); }
-    bool isBody() const { return node() && node()->hasTagName(HTMLNames::bodyTag); }
-    bool isHR() const { return node() && node()->hasTagName(HTMLNames::hrTag); }
-    bool isLegend() const;
+    bool isViewTransitionContainingBlock() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsViewTransitionContainingBlock); }
 
-    bool isHTMLMarquee() const;
+    inline bool isDocumentElementRenderer() const; // Defined in RenderObjectInlines.h
+    inline bool isBody() const; // Defined in RenderObjectNode.h
+    inline bool isHR() const; // Defined in RenderObjectNode.h
+    bool NODELETE isLegend() const;
+
+    bool NODELETE isHTMLMarquee() const;
 
     bool isTablePart() const { return isRenderTableCell() || isRenderTableCol() || isRenderTableCaption() || isRenderTableRow() || isRenderTableSection(); }
-
-    bool isViewTransitionPseudo() const { return isRenderViewTransitionCapture() || isRenderViewTransitionContainer(); }
-
-    inline bool isBeforeContent() const;
-    inline bool isAfterContent() const;
-    inline bool isBeforeOrAfterContent() const;
-    static inline bool isBeforeContent(const RenderObject* obj) { return obj && obj->isBeforeContent(); }
-    static inline bool isAfterContent(const RenderObject* obj) { return obj && obj->isAfterContent(); }
-    static inline bool isBeforeOrAfterContent(const RenderObject* obj) { return obj && obj->isBeforeOrAfterContent(); }
 
     bool beingDestroyed() const { return m_stateBitfields.hasFlag(StateFlag::BeingDestroyed); }
 
@@ -559,13 +559,14 @@ public:
     bool isRenderSVGViewportContainer() const { return type() == Type::SVGViewportContainer; }
     bool isLegacyRenderSVGViewportContainer() const { return type() == Type::LegacySVGViewportContainer; }
     bool isRenderSVGGradientStop() const { return type() == Type::SVGGradientStop; }
-    bool isLegacyRenderSVGHiddenContainer() const { return type() == Type::LegacySVGHiddenContainer || isLegacyRenderSVGResourceContainer(); }
-    bool isRenderSVGHiddenContainer() const { return type() == Type::SVGHiddenContainer || isRenderSVGResourceContainer() || isRenderSVGResourceFilterPrimitive(); }
+    bool isLegacyRenderSVGHiddenContainer() const { return isLegacyRenderSVGModelObject() && m_typeSpecificFlags.svgFlags().contains(SVGModelObjectFlag::IsHiddenContainer); }
+    bool isRenderSVGHiddenContainer() const { return isRenderSVGModelObject() && m_typeSpecificFlags.svgFlags().contains(SVGModelObjectFlag::IsHiddenContainer); }
     bool isLegacyRenderSVGPath() const { return type() == Type::LegacySVGPath; }
     bool isRenderSVGPath() const { return type() == Type::SVGPath; }
     bool isRenderSVGShape() const { return isRenderSVGModelObject() && m_typeSpecificFlags.svgFlags().contains(SVGModelObjectFlag::IsShape); }
     bool isLegacyRenderSVGShape() const { return isLegacyRenderSVGModelObject() && m_typeSpecificFlags.svgFlags().contains(SVGModelObjectFlag::IsShape); }
     bool isLegacyRenderSVGRect() const { return type() == Type::LegacySVGRect; }
+    bool isRenderSVGRect() const { return type() == Type::SVGRect; }
     bool isRenderSVGText() const { return type() == Type::SVGText; }
     bool isRenderSVGTextPath() const { return type() == Type::SVGTextPath; }
     bool isRenderSVGTSpan() const { return type() == Type::SVGTSpan; }
@@ -596,28 +597,30 @@ public:
     bool isRenderOrLegacyRenderSVGShape() const { return isRenderSVGShape() || isLegacyRenderSVGShape(); }
     bool isRenderOrLegacyRenderSVGPath() const { return isRenderSVGPath() || isLegacyRenderSVGPath(); }
     bool isRenderOrLegacyRenderSVGImage() const { return isRenderSVGImage() || isLegacyRenderSVGImage(); }
+    bool isRenderOrLegacyRenderSVGRect() const { return isRenderSVGRect() || isLegacyRenderSVGRect(); }
     bool isRenderOrLegacyRenderSVGForeignObject() const { return isRenderSVGForeignObject() || isLegacyRenderSVGForeignObject(); }
     bool isRenderOrLegacyRenderSVGModelObject() const { return isRenderSVGModelObject() || isLegacyRenderSVGModelObject(); }
     bool isRenderOrLegacyRenderSVGResourceFilterPrimitive() const { return isRenderSVGResourceFilterPrimitive() || isLegacyRenderSVGResourceFilterPrimitive(); }
     bool isSVGLayerAwareRenderer() const { return isRenderSVGRoot() || isRenderSVGModelObject() || isRenderSVGText() || isRenderSVGInline() || isRenderSVGForeignObject(); }
-    bool isSVGRenderer() const { return isRenderOrLegacyRenderSVGRoot() || isLegacyRenderSVGModelObject() || isRenderSVGModelObject() || isRenderSVGBlock() || isRenderSVGInline(); }
+    bool isSVGRenderer() const { return isRenderOrLegacyRenderSVGRoot() || isRenderOrLegacyRenderSVGModelObject() || isRenderSVGBlock() || isRenderSVGInline(); }
 
     // FIXME: Those belong into a SVG specific base-class for all renderers (see above)
     // Unfortunately we don't have such a class yet, because it's not possible for all renderers
     // to inherit from RenderSVGObject -> RenderObject (some need RenderBlock inheritance for instance)
-    void invalidateCachedBoundaries();
+    void NODELETE invalidateCachedBoundaries();
     bool usesBoundaryCaching() const;
-    virtual void setNeedsBoundariesUpdate();
+    virtual void NODELETE setNeedsBoundariesUpdate();
     virtual void setNeedsTransformUpdate() { }
 
     // Per SVG 1.1 objectBoundingBox ignores clipping, masking, filter effects, opacity and stroke-width.
-    // This is used for all computation of objectBoundingBox relative units and by SVGLocatable::getBBox().
+    // This is used for all computation of objectBoundingBox relative units and by SVGGraphicsElement::getBBox().
     // NOTE: Markers are not specifically ignored here by SVG 1.1 spec, but we ignore them
     // since stroke-width is ignored (and marker size can depend on stroke-width).
     // objectBoundingBox is returned local coordinates.
     // The name objectBoundingBox is taken from the SVG 1.1 spec.
     virtual FloatRect objectBoundingBox() const;
     virtual FloatRect strokeBoundingBox() const;
+    virtual bool objectBoundingBoxIsEmpty() const { return false; }
 
     // The objectBoundingBox of a SVG container is affected by the transformations applied on its children -- the container
     // bounding box is a union of all child bounding boxes, mapped through their transformation matrices.
@@ -635,37 +638,33 @@ public:
     // This returns approximate rectangle for SVG renderers when RepaintRectCalculation::Fast is specified.
     virtual FloatRect repaintRectInLocalCoordinates(RepaintRectCalculation = RepaintRectCalculation::Fast) const;
 
+    // Returns the bounding box including fill, stroke, and markers.
+    // This is the geometric visual extent, used for masks/gradients/clippers.
+    // Unlike repaintRectInLocalCoordinates, this is always accurate.
+    virtual FloatRect decoratedBoundingBox() const;
+
     // This only returns the transform="" value from the element
     // most callsites want localToParentTransform() instead.
-    virtual AffineTransform localTransform() const;
+    virtual AffineTransform NODELETE localTransform() const;
 
     // Returns the full transform mapping from local coordinates to local coords for the parent SVG renderer
     // This includes any viewport transforms and x/y offsets as well as the transform="" value off the element.
-    virtual const AffineTransform& localToParentTransform() const;
+    virtual const AffineTransform& localToParentTransform() const LIFETIME_BOUND;
 
     // SVG uses FloatPoint precise hit testing, and passes the point in parent
     // coordinates instead of in repaint container coordinates.  Eventually the
     // rest of the rendering tree will move to a similar model.
     virtual bool nodeAtFloatPoint(const HitTestRequest&, HitTestResult&, const FloatPoint& pointInParent, HitTestAction);
 
-    virtual bool hasIntrinsicAspectRatio() const { return isReplacedOrInlineBlock() && (isImage() || isRenderVideo() || isRenderHTMLCanvas() || isRenderViewTransitionCapture()); }
     bool isAnonymous() const { return m_typeFlags.contains(TypeFlag::IsAnonymous); }
-    bool isAnonymousBlock() const;
-    bool isAnonymousForPercentageResolution() const { return isAnonymous() && !isViewTransitionPseudo(); }
-    bool isBlockBox() const;
-    inline bool isBlockLevelBox() const;
-    bool isBlockContainer() const;
 
     bool isFloating() const { return m_stateBitfields.hasFlag(StateFlag::Floating); }
 
     bool isPositioned() const { return m_stateBitfields.isPositioned(); }
     bool isInFlowPositioned() const { return m_stateBitfields.isRelativelyPositioned() || m_stateBitfields.isStickilyPositioned(); }
     bool isOutOfFlowPositioned() const { return m_stateBitfields.isOutOfFlowPositioned(); } // absolute or fixed positioning
-    bool isFixedPositioned() const { return isOutOfFlowPositioned() && style().position() == PositionType::Fixed; }
-    bool isAbsolutelyPositioned() const { return isOutOfFlowPositioned() && style().position() == PositionType::Absolute; }
     bool isRelativelyPositioned() const { return m_stateBitfields.isRelativelyPositioned(); }
     bool isStickilyPositioned() const { return m_stateBitfields.isStickilyPositioned(); }
-    bool shouldUsePositionedClipping() const { return isAbsolutelyPositioned() || isRenderSVGForeignObject(); }
 
     bool isRenderText() const { return m_typeFlags.contains(TypeFlag::IsText); }
     bool isRenderLineBreak() const { return type() == Type::LineBreak; }
@@ -677,7 +676,7 @@ public:
     bool isRenderTableRow() const { return type() == Type::TableRow; }
     bool isRenderView() const  { return type() == Type::View; }
     bool isInline() const { return !m_stateBitfields.hasFlag(StateFlag::IsBlock); } // inline object
-    bool isReplacedOrInlineBlock() const { return m_stateBitfields.hasFlag(StateFlag::IsReplacedOrInlineBlock); }
+    bool isBlockLevelReplacedOrAtomicInline() const { return m_stateBitfields.hasFlag(StateFlag::IsBlockLevelReplacedOrAtomicInline); }
     bool isHorizontalWritingMode() const { return !m_stateBitfields.hasFlag(StateFlag::VerticalWritingMode); }
 
     bool hasReflection() const { return hasRareData() && rareData().hasReflection; }
@@ -690,6 +689,9 @@ public:
     void setIsExcludedFromNormalLayout(bool excluded) { m_stateBitfields.setFlag(StateFlag::IsExcludedFromNormalLayout, excluded); }
     bool isExcludedAndPlacedInBorder() const { return isExcludedFromNormalLayout() && isLegend(); }
 
+    bool isYouTubeReplacement() const { return hasRareData() && rareData().isYouTubeReplacement; }
+    void markIsYouTubeReplacement();
+
     bool hasLayer() const { return m_stateBitfields.hasFlag(StateFlag::HasLayer); }
 
     enum class BoxDecorationState : uint8_t {
@@ -698,88 +700,72 @@ public:
         IsKnownToBeObscured,
         MayBeVisible,
     };
-    bool hasVisibleBoxDecorations() const { return m_stateBitfields.boxDecorationState() != BoxDecorationState::None; }
-    bool backgroundIsKnownToBeObscured(const LayoutPoint& paintOffset);
+    bool hasVisibleBoxDecorations() const { return boxDecorationState() != BoxDecorationState::None; }
 
     bool needsLayout() const;
-    bool selfNeedsLayout() const { return m_stateBitfields.hasFlag(StateFlag::NeedsLayout); }
-    bool needsPositionedMovementLayout() const { return m_stateBitfields.hasFlag(StateFlag::NeedsPositionedMovementLayout); }
-    bool needsPositionedMovementLayoutOnly() const;
+    bool hasInvalidContentLogicalWidths() const { return m_stateBitfields.hasFlag(StateFlag::ContentLogicalWidthsInvalidated); }
 
-    bool posChildNeedsLayout() const { return m_stateBitfields.hasFlag(StateFlag::PosChildNeedsLayout); }
+    bool selfNeedsLayout() const { return m_stateBitfields.hasFlag(StateFlag::NeedsLayout); }
+    bool needsOutOfFlowMovementLayout() const { return m_stateBitfields.hasFlag(StateFlag::NeedsOutOfFlowMovementLayout); }
+    bool needsOutOfFlowMovementLayoutOnly() const;
+
+    bool outOfFlowChildNeedsLayout() const { return m_stateBitfields.hasFlag(StateFlag::OutOfFlowChildNeedsLayout); }
     bool needsSimplifiedNormalFlowLayout() const { return m_stateBitfields.hasFlag(StateFlag::NeedsSimplifiedNormalFlowLayout); }
     bool needsSimplifiedNormalFlowLayoutOnly() const;
+    bool needsNormalChildOrSimplifiedLayoutOnly() const;
     bool normalChildNeedsLayout() const { return m_stateBitfields.hasFlag(StateFlag::NormalChildNeedsLayout); }
     bool outOfFlowChildNeedsStaticPositionLayout() const { return m_stateBitfields.hasFlag(StateFlag::OutOfFlowChildNeedsStaticPositionLayout); }
-    
-    bool preferredLogicalWidthsDirty() const { return m_stateBitfields.hasFlag(StateFlag::PreferredLogicalWidthsDirty); }
 
-    bool isSelectionBorder() const;
+    bool NODELETE isSelectionBorder() const;
 
     bool hasNonVisibleOverflow() const { return m_stateBitfields.hasFlag(StateFlag::HasNonVisibleOverflow); }
 
-    bool hasPotentiallyScrollableOverflow() const;
-
     bool hasTransformRelatedProperty() const { return m_stateBitfields.hasFlag(StateFlag::HasTransformRelatedProperty); } // Transform, perspective or transform-style: preserve-3d.
-    inline bool isTransformed() const;
-    inline bool hasTransformOrPerspective() const;
+    inline bool isTransformed() const; // Defined in RenderObjectStyle.h
+    inline bool hasTransformOrPerspective() const; // Defined in RenderObjectStyle.h
 
     bool capturedInViewTransition() const { return m_stateBitfields.hasFlag(StateFlag::CapturedInViewTransition); }
-    void setCapturedInViewTransition(bool);
+    bool setCapturedInViewTransition(bool);
 
     // When the document element is captured, the captured contents uses the RenderView
     // instead. Returns the capture state with this adjustment applied.
     bool effectiveCapturedInViewTransition() const;
 
-    inline bool preservesNewline() const;
-
-    RenderView& view() const { return *document().renderView(); }
-    CheckedRef<RenderView> checkedView() const;
+    inline RenderView& NODELETE view() const LIFETIME_BOUND; // Defined in RenderObjectDocument.h
+    inline LocalFrameViewLayoutContext& layoutContext() const;
 
     HostWindow* hostWindow() const;
 
     // Returns true if this renderer is rooted.
-    bool isRooted() const;
+    bool NODELETE isRooted() const;
 
-    Node* node() const
-    { 
-        if (isAnonymous())
-            return nullptr;
-        return m_node.ptr();
-    }
-    RefPtr<Node> protectedNode() const { return node(); }
+    inline Node* node() const; // Defined in RenderObjectNode.h
 
-    Node* nonPseudoNode() const { return isPseudoElement() ? nullptr : node(); }
+    inline Node* nonPseudoNode() const; // Defined in RenderObjectNode.h
 
-    // Returns the styled node that caused the generation of this renderer.
-    // This is the same as node() except for renderers of :before and :after
-    // pseudo elements for which their parent node is returned.
-    Node* generatingNode() const { return isPseudoElement() ? generatingPseudoHostElement() : node(); }
-
-    Document& document() const { return m_node.get().document(); }
-    inline Ref<Document> protectedDocument() const; // Defined in RenderObjectInlines.h.
-    TreeScope& treeScopeForSVGReferences() const { return m_node.get().treeScopeForSVGReferences(); }
-    LocalFrame& frame() const;
-    Ref<LocalFrame> protectedFrame() const { return frame(); }
-    Page& page() const;
-    Settings& settings() const { return page().settings(); }
+    inline Document& NODELETE document() const; // Defined in RenderObjectDocument.h
+    inline TreeScope& treeScopeForSVGReferences() const; // Defined in RenderObjectInlines.h
+    inline LocalFrame& frame() const; // Defined in RenderObjectDocument.h
+    inline Page& page() const; // Defined in RenderObjectInlines.h
+    inline const Settings& settings() const; // Defined in RenderObjectDocument.h
 
     // Returns the object containing this one. Can be different from parent for positioned elements.
     // If repaintContainer and repaintContainerSkipped are not null, on return *repaintContainerSkipped
     // is true if the renderer returned is an ancestor of repaintContainer.
     RenderElement* container() const;
     RenderElement* container(const RenderLayerModelObject* repaintContainer, bool& repaintContainerSkipped) const;
-
-    RenderBoxModelObject* offsetParent() const;
+    bool isAncestorContainerOfRenderer(const RenderObject&) const;
 
     RenderElement* markContainingBlocksForLayout(RenderElement* layoutRoot = nullptr);
-    void setNeedsLayout(MarkingBehavior = MarkContainingBlockChain);
+    inline void setNeedsLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
     enum class HadSkippedLayout { No, Yes };
     void clearNeedsLayout(HadSkippedLayout = HadSkippedLayout::No);
-    void setPreferredLogicalWidthsDirty(bool, MarkingBehavior = MarkContainingBlockChain);
-    void invalidateContainerPreferredLogicalWidths();
+    void invalidateContentLogicalWidths(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain, const RenderBlock* ancestorUpdateBoundary = nullptr);
+    void clearContentLogicalWidthsInvalidation() { m_stateBitfields.setFlag(StateFlag::ContentLogicalWidthsInvalidated, { }); }
+
+    void notifyInspectorOfLayoutInvalidate();
     
-    void setNeedsLayoutAndPrefWidthsRecalc();
+    inline void setNeedsLayoutAndInvalidateContentLogicalWidths();
 
     void setPositionState(PositionType);
     void clearPositionedState() { m_stateBitfields.clearPositionedState(); }
@@ -789,9 +775,8 @@ public:
 
     void setHasVisibleBoxDecorations(bool = true);
     void invalidateBackgroundObscurationStatus();
-    virtual bool computeBackgroundIsKnownToBeObscured(const LayoutPoint&) { return false; }
 
-    void setReplacedOrInlineBlock(bool b = true) { m_stateBitfields.setFlag(StateFlag::IsReplacedOrInlineBlock, b); }
+    void setBlockLevelReplacedOrAtomicInline(bool b = true) { m_stateBitfields.setFlag(StateFlag::IsBlockLevelReplacedOrAtomicInline, b); }
     void setHorizontalWritingMode(bool b = true) { m_stateBitfields.setFlag(StateFlag::VerticalWritingMode, !b); }
     void setHasNonVisibleOverflow(bool b = true) { m_stateBitfields.setFlag(StateFlag::HasNonVisibleOverflow, b); }
     void setHasLayer(bool b = true) { m_stateBitfields.setFlag(StateFlag::HasLayer, b); }
@@ -802,59 +787,57 @@ public:
     void setPaintContainmentApplies(bool value = true) { m_stateBitfields.setFlag(StateFlag::PaintContainmentApplies, value); }
     void setHasSVGTransform(bool value = true) { m_stateBitfields.setFlag(StateFlag::HasSVGTransform, value); }
 
-    // Hook so that RenderTextControl can return the line height of its inner renderer.
-    // For other renderers, the value is the same as lineHeight(false).
-    virtual int innerLineHeight() const;
-
     // used for element state updates that cannot be fixed with a
     // repaint and do not need a relayout
     virtual void updateFromElement() { }
 
-    bool isComposited() const;
+    bool NODELETE isComposited() const;
 
-    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestFilter = HitTestAll);
+    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestFilter = HitTestFilter::All);
     virtual Node* nodeForHitTest() const;
-    RefPtr<Node> protectedNodeForHitTest() const;
-    virtual void updateHitTestResult(HitTestResult&, const LayoutPoint&);
+    virtual void updateHitTestResult(HitTestResult&, const LayoutPoint&) const;
 
     virtual bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
     virtual Position positionForPoint(const LayoutPoint&, HitTestSource);
-    virtual VisiblePosition positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*);
-    VisiblePosition createVisiblePosition(int offset, Affinity) const;
-    VisiblePosition createVisiblePosition(const Position&) const;
+    virtual PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*);
+    PositionWithAffinity createPositionWithAffinity(int offset, Affinity) const;
+    PositionWithAffinity createPositionWithAffinity(const Position&) const;
+
+    WEBCORE_EXPORT VisiblePosition visiblePositionForPoint(const LayoutPoint&, HitTestSource, AllowUserSelectNone = AllowUserSelectNone::No);
 
     // Returns the containing block level element for this element.
     WEBCORE_EXPORT RenderBlock* containingBlock() const;
-    CheckedPtr<RenderBlock> checkedContainingBlock() const;
     static RenderBlock* containingBlockForPositionType(PositionType, const RenderObject&);
 
     // Convert the given local point to absolute coordinates. If OptionSet<MapCoordinatesMode> includes UseTransforms, take transforms into account.
     WEBCORE_EXPORT FloatPoint localToAbsolute(const FloatPoint& localPoint = FloatPoint(), OptionSet<MapCoordinatesMode> = { }, bool* wasFixed = nullptr) const;
-    std::unique_ptr<TransformationMatrix> viewTransitionTransform() const;
-    FloatPoint absoluteToLocal(const FloatPoint&, OptionSet<MapCoordinatesMode> = { }) const;
+    TransformState viewTransitionTransform() const;
+    FloatPoint absoluteToLocal(const DoublePoint&, OptionSet<MapCoordinatesMode> = { }) const;
 
     // Convert a local quad to absolute coordinates, taking transforms into account.
-    FloatQuad localToAbsoluteQuad(const FloatQuad&, OptionSet<MapCoordinatesMode> = UseTransforms, bool* wasFixed = nullptr) const;
+    inline FloatQuad localToAbsoluteQuad(const FloatQuad&, OptionSet<MapCoordinatesMode> = MapCoordinatesMode::UseTransforms, bool* wasFixed = nullptr) const; // Defined in RenderObjectInlines.h
     // Convert an absolute quad to local coordinates.
-    FloatQuad absoluteToLocalQuad(const FloatQuad&, OptionSet<MapCoordinatesMode> = UseTransforms) const;
+    FloatQuad absoluteToLocalQuad(const FloatQuad&, OptionSet<MapCoordinatesMode> = MapCoordinatesMode::UseTransforms) const;
 
     // Convert a local quad into the coordinate system of container, taking transforms into account.
-    WEBCORE_EXPORT FloatQuad localToContainerQuad(const FloatQuad&, const RenderLayerModelObject* container, OptionSet<MapCoordinatesMode> = UseTransforms, bool* wasFixed = nullptr) const;
-    WEBCORE_EXPORT FloatPoint localToContainerPoint(const FloatPoint&, const RenderLayerModelObject* container, OptionSet<MapCoordinatesMode> = UseTransforms, bool* wasFixed = nullptr) const;
+    WEBCORE_EXPORT FloatQuad localToContainerQuad(const FloatQuad&, const RenderLayerModelObject* container, OptionSet<MapCoordinatesMode> = MapCoordinatesMode::UseTransforms, bool* wasFixed = nullptr) const;
+    WEBCORE_EXPORT FloatPoint localToContainerPoint(const FloatPoint&, const RenderLayerModelObject* container, OptionSet<MapCoordinatesMode> = MapCoordinatesMode::UseTransforms, bool* wasFixed = nullptr) const;
 
     // Return the offset from the container() renderer (excluding transforms). In multi-column layout,
     // different offsets apply at different points, so return the offset that applies to the given point.
-    virtual LayoutSize offsetFromContainer(RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const;
+    virtual LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const;
     // Return the offset from an object up the container() chain. Asserts that none of the intermediate objects have transforms.
     LayoutSize offsetFromAncestorContainer(const RenderElement&) const;
 
-#if PLATFORM(IOS_FAMILY)
     virtual void collectSelectionGeometries(Vector<SelectionGeometry>&, unsigned startOffset = 0, unsigned endOffset = std::numeric_limits<unsigned>::max());
     virtual void absoluteQuadsForSelection(Vector<FloatQuad>& quads) const { absoluteQuads(quads); }
-    WEBCORE_EXPORT static Vector<SelectionGeometry> collectSelectionGeometries(const SimpleRange&);
+    struct SelectionGeometries {
+        Vector<SelectionGeometry> geometries;
+        Vector<PlatformLayerIdentifier> intersectingLayerIDs;
+    };
+    WEBCORE_EXPORT static SelectionGeometries collectSelectionGeometries(const SimpleRange&);
     WEBCORE_EXPORT static Vector<SelectionGeometry> collectSelectionGeometriesWithoutUnionInteriorLines(const SimpleRange&);
-#endif
 
     virtual void boundingRects(Vector<LayoutRect>&, const LayoutPoint& /* offsetFromRoot */) const { }
 
@@ -878,19 +861,17 @@ public:
     WEBCORE_EXPORT static Vector<FloatRect> absoluteBorderAndTextRects(const SimpleRange&, OptionSet<BoundingRectBehavior> = { });
     static Vector<FloatRect> clientBorderAndTextRects(const SimpleRange&);
 
-    // the rect that will be painted if this object is passed as the paintingRoot
-    WEBCORE_EXPORT LayoutRect paintingRootRect(LayoutRect& topLevelRect);
+    // the rect that will be painted if this object is passed as the subtree paint root
+    enum class RespectTransforms : bool { No, Yes };
+    WEBCORE_EXPORT LayoutRect subtreePaintRootRect(LayoutRect& topLevelRect, RespectTransforms = RespectTransforms::No);
 
-    virtual LayoutUnit minPreferredLogicalWidth() const { return 0; }
-    virtual LayoutUnit maxPreferredLogicalWidth() const { return 0; }
+    inline const Style::ComputedStyle& style() const LIFETIME_BOUND; // Defined in RenderObjectStyle.h.
+    inline CheckedRef<const Style::ComputedStyle> firstLineStyle() const LIFETIME_BOUND;
+    inline WritingMode writingMode() const; // Defined in RenderObjectStyle.h.
+    // writingMode().isHorizontal() is cached by isHorizontalWritingMode() above.
 
-    const RenderStyle& style() const;
-    const RenderStyle& firstLineStyle() const;
+    virtual const Style::ComputedStyle& outlineStyleForRepaint() const LIFETIME_BOUND;
 
-    // Anonymous blocks that are part of of a continuation chain will return their inline continuation's outline style instead.
-    // This is typically only relevant when repainting.
-    virtual const RenderStyle& outlineStyleForRepaint() const { return style(); }
-    
     virtual CursorDirective getCursor(const LayoutPoint&, Cursor&) const;
 
     // Return the RenderLayerModelObject in the container chain which is responsible for painting this object, or nullptr
@@ -902,7 +883,9 @@ public:
     RepaintContainerStatus containerForRepaint() const;
     // Actually do the repaint of rect r for this object which has been computed in the coordinate space
     // of repaintContainer. If repaintContainer is nullptr, repaint via the view.
-    void repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerModelObject>&& repaintContainer, const LayoutRect&, bool shouldClipToLayer = true) const;
+    enum class ClipRepaintToLayer : bool { No, Yes };
+    enum class RepaintRectIsPartial : bool { No, Yes };
+    void repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerModelObject>&& repaintContainer, const LayoutRect&, ClipRepaintToLayer = ClipRepaintToLayer::Yes, RepaintRectIsPartial = RepaintRectIsPartial::No) const;
 
     // Repaint the entire object.  Called when, e.g., the color of a border changes, or when a border
     // style changes.
@@ -912,41 +895,14 @@ public:
     // Repaint a specific subrectangle within a given object.  The rect |r| is in the object's coordinate space.
     WEBCORE_EXPORT void repaintRectangle(const LayoutRect&, bool shouldClipToLayer = true) const;
 
-    enum class ClipRepaintToLayer : bool { No, Yes };
     void repaintRectangle(const LayoutRect&, ClipRepaintToLayer, ForceRepaint, std::optional<LayoutBoxExtent> additionalRepaintOutsets = std::nullopt) const;
 
     // Repaint a slow repaint object, which, at this time, means we are repainting an object with background-attachment:fixed.
     void repaintSlowRepaintObject() const;
 
-    enum class VisibleRectContextOption {
-        UseEdgeInclusiveIntersection        = 1 << 0,
-        ApplyCompositedClips                = 1 << 1,
-        ApplyCompositedContainerScrolls     = 1 << 2,
-        ApplyContainerClip                  = 1 << 3,
-        CalculateAccurateRepaintRect        = 1 << 4,
-    };
-    struct VisibleRectContext {
-        VisibleRectContext(bool hasPositionFixedDescendant = false, bool dirtyRectIsFlipped = false, OptionSet<VisibleRectContextOption> options = { })
-            : hasPositionFixedDescendant(hasPositionFixedDescendant)
-            , dirtyRectIsFlipped(dirtyRectIsFlipped)
-            , options(options)
-            {
-            }
-
-        RepaintRectCalculation repaintRectCalculation() const
-        {
-            return options.contains(VisibleRectContextOption::CalculateAccurateRepaintRect) ? RepaintRectCalculation::Accurate : RepaintRectCalculation::Fast;
-        }
-
-        bool hasPositionFixedDescendant { false };
-        bool dirtyRectIsFlipped { false };
-        bool descendantNeedsEnclosingIntRect { false };
-        OptionSet<VisibleRectContextOption> options;
-    };
-
     struct RepaintRects {
         LayoutRect clippedOverflowRect; // Some rect (normally the visual overflow rect) mapped up to the repaint container, respecting clipping.
-        std::optional<LayoutRect> outlineBoundsRect; // A rect repsenting the extent of outlines and shadows, mapped to the repaint container, but not clipped.
+        std::optional<LayoutRect> outlineBoundsRect; // A rect representing the extent of outlines and shadows, mapped to the repaint container, but not clipped.
 
         RepaintRects(LayoutRect rect = { }, const std::optional<LayoutRect>& outlineBounds = { })
             : clippedOverflowRect(rect)
@@ -1024,14 +980,14 @@ public:
 
     // Returns the rect that should be repainted whenever this object changes. The rect is in the view's
     // coordinate space. This method deals with outlines and overflow.
-    LayoutRect absoluteClippedOverflowRectForRepaint() const { return clippedOverflowRect(nullptr, visibleRectContextForRepaint()); }
-    LayoutRect absoluteClippedOverflowRectForSpatialNavigation() const { return clippedOverflowRect(nullptr, visibleRectContextForSpatialNavigation()); }
-    LayoutRect absoluteClippedOverflowRectForRenderTreeAsText() const { return clippedOverflowRect(nullptr, visibleRectContextForRenderTreeAsText()); }
+    inline LayoutRect absoluteClippedOverflowRectForRepaint() const;
+    inline LayoutRect absoluteClippedOverflowRectForSpatialNavigation() const;
+    inline LayoutRect absoluteClippedOverflowRectForRenderTreeAsText() const;
 
     WEBCORE_EXPORT IntRect pixelSnappedAbsoluteClippedOverflowRect() const;
 
     virtual LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext) const;
-    LayoutRect clippedOverflowRectForRepaint(const RenderLayerModelObject* repaintContainer) const { return clippedOverflowRect(repaintContainer, visibleRectContextForRepaint()); }
+    inline LayoutRect clippedOverflowRectForRepaint(const RenderLayerModelObject* repaintContainer) const;
     virtual LayoutRect rectWithOutlineForRepaint(const RenderLayerModelObject* repaintContainer, LayoutUnit outlineWidth) const;
     virtual LayoutRect outlineBoundsForRepaint(const RenderLayerModelObject* /*repaintContainer*/, const RenderGeometryMap* = nullptr) const { return { }; }
 
@@ -1039,7 +995,7 @@ public:
     // of repaintContainer suitable for the given VisibleRectContext.
     RepaintRects computeRects(const RepaintRects&, const RenderLayerModelObject* repaintContainer, VisibleRectContext) const;
 
-    LayoutRect computeRectForRepaint(const LayoutRect& rect, const RenderLayerModelObject* repaintContainer) const { return computeRects({ rect }, repaintContainer, visibleRectContextForRepaint()).clippedOverflowRect; }
+    inline LayoutRect computeRectForRepaint(const LayoutRect& rect, const RenderLayerModelObject* repaintContainer) const;
     FloatRect computeFloatRectForRepaint(const FloatRect&, const RenderLayerModelObject* repaintContainer) const;
 
     virtual RepaintRects rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds) const;
@@ -1050,9 +1006,7 @@ public:
     virtual std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* repaintContainer, VisibleRectContext) const;
     virtual std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* repaintContainer, VisibleRectContext) const;
 
-    WEBCORE_EXPORT bool hasNonEmptyVisibleRectRespectingParentFrames() const;
-
-    virtual unsigned length() const { return 1; }
+    WEBCORE_EXPORT bool hasEmptyVisibleRectRespectingParentFrames() const;
 
     bool isFloatingOrOutOfFlowPositioned() const { return (isFloating() || isOutOfFlowPositioned()); }
     bool isInFlow() const { return !isFloatingOrOutOfFlowPositioned(); }
@@ -1082,7 +1036,7 @@ public:
     virtual bool shouldPaintSelectionGaps() const { return false; }
 
     // When performing a global document tear-down, or when going into the back/forward cache, the renderer of the document is cleared.
-    bool renderTreeBeingDestroyed() const;
+    bool renderTreeBeingDestroyed() const; // Defined in RenderObjectInlines.h
 
     void destroy();
 
@@ -1101,27 +1055,30 @@ public:
     virtual int previousOffsetForBackwardDeletion(int current) const;
     virtual int nextOffset(int current) const;
 
-    void imageChanged(CachedImage*, const IntRect* = nullptr) override;
+    // CachedImageClient emulation.
+    virtual void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) { }
     virtual void imageChanged(WrappedImagePtr, const IntRect* = nullptr) { }
+    virtual bool allowsAnimation() const { return true; }
+    virtual bool canDestroyDecodedData() const { return true; }
+    virtual bool useSystemDarkAppearance() const { return false; }
+    virtual VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect*);
+    virtual VisibleInViewportState imageVisibleInViewport(const Document&) const { return VisibleInViewportState::No; }
+    virtual void didRemoveCachedImageClient(CachedImage&) { }
+    virtual void imageContentChanged(CachedImage&) { }
+    virtual void scheduleRenderingUpdateForImage(CachedImage&) { }
+    CachedImageClient& cachedImageClient() const;
 
     // Map points and quads through elements, potentially via 3d transforms. You should never need to call these directly; use
     // localToAbsolute/absoluteToLocal methods instead.
     virtual void mapLocalToContainer(const RenderLayerModelObject* repaintContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed = nullptr) const;
     virtual void mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode>, TransformState&) const;
 
-    // Pushes state onto RenderGeometryMap about how to map coordinates from this renderer to its container, or ancestorToStopAt (whichever is encountered first).
-    // Returns the renderer which was mapped to (container or ancestorToStopAt).
-    virtual const RenderObject* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const;
-    
-    bool shouldUseTransformFromContainer(const RenderObject* container) const;
+    bool NODELETE shouldUseTransformFromContainer(const RenderElement* container) const;
     void getTransformFromContainer(const LayoutSize& offsetInContainer, TransformationMatrix&) const;
     
     void pushOntoTransformState(TransformState&, OptionSet<MapCoordinatesMode>, const RenderLayerModelObject* repaintContainer, const RenderElement* container, const LayoutSize& offsetInContainer, bool containerSkipped) const;
-    void pushOntoGeometryMap(RenderGeometryMap&, const RenderLayerModelObject* repaintContainer, RenderElement* container, bool containerSkipped) const;
 
     bool participatesInPreserve3D() const;
-
-    virtual void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& /* additionalOffset */, const RenderLayerModelObject* /* paintContainer */ = nullptr) const { };
 
     LayoutRect absoluteOutlineBounds() const { return outlineBoundsForRepaint(nullptr); }
 
@@ -1135,30 +1092,27 @@ public:
     virtual String description() const;
     virtual String debugDescription() const;
 
-    void addPDFURLRect(const PaintInfo&, const LayoutPoint&) const;
-
     bool isSkippedContent() const;
 
-    bool isSkippedContentRoot() const;
-    bool isSkippedContentForLayout() const;
-
-    PointerEvents usedPointerEvents() const;
+    PointerEvents NODELETE usedPointerEvents() const;
 
 protected:
     //////////////////////////////////////////
     // Helper functions. Dangerous to use!
     void setPreviousSibling(RenderObject* previous) { m_previous = previous; }
     void setNextSibling(RenderObject* next) { m_next = next; }
-    void setParent(RenderElement*);
+    void NODELETE setParent(RenderElement*);
     //////////////////////////////////////////
-    Node& nodeForNonAnonymous() const { ASSERT(!isAnonymous()); return m_node.get(); }
+
+    inline Node& nodeForNonAnonymous() const; // Defined in RenderObjectInlines.h
 
     virtual void willBeDestroyed();
+    void setIsBeingDestroyed() { m_stateBitfields.setFlag(StateFlag::BeingDestroyed); }
 
     void scheduleLayout(RenderElement* layoutRoot);
-    void setNeedsPositionedMovementLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::NeedsPositionedMovementLayout, b); }
+    void setNeedsOutOfFlowMovementLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::NeedsOutOfFlowMovementLayout, b); }
     void setNormalChildNeedsLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::NormalChildNeedsLayout, b); }
-    void setPosChildNeedsLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::PosChildNeedsLayout, b); }
+    void setOutOfFlowChildNeedsLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::OutOfFlowChildNeedsLayout, b); }
     void setNeedsSimplifiedNormalFlowLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::NeedsSimplifiedNormalFlowLayout, b); }
     void setOutOfFlowChildNeedsStaticPositionLayoutBit(bool b) { m_stateBitfields.setFlag(StateFlag::OutOfFlowChildNeedsStaticPositionLayout, b); }
 
@@ -1175,22 +1129,56 @@ protected:
     void issueRepaint(std::optional<LayoutRect> partialRepaintRect = std::nullopt, ClipRepaintToLayer = ClipRepaintToLayer::No, ForceRepaint = ForceRepaint::No, std::optional<LayoutBoxExtent> additionalRepaintOutsets = std::nullopt) const;
     bool hasWBRLineBreakFlag() const { return m_typeSpecificFlags.lineBreakFlags().contains(LineBreakFlag::IsWBR); }
 
+    void setBoxDecorationState(BoxDecorationState boxDecorationState) { m_stateBitfields.setBoxDecorationState(boxDecorationState); }
+    BoxDecorationState boxDecorationState() const { return m_stateBitfields.boxDecorationState(); }
+
 private:
+    // This class is to avoid making RenderObject refcounted.
+    class CachedImageListener final : public CachedImageClient, public RefCounted<CachedImageListener> {
+        WTF_MAKE_TZONE_ALLOCATED(CachedImageListener);
+    public:
+        static Ref<CachedImageListener> create(RenderObject&);
+
+        // CachedImageClient.
+        void ref() const final { RefCounted::ref(); }
+        void deref() const final { RefCounted::deref(); }
+
+    private:
+        // CachedResourceClient.
+        void notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess) final;
+
+        // CachedImageClient.
+        void imageChanged(CachedImage*, const IntRect* = nullptr) final;
+        bool allowsAnimation() const final;
+        bool canDestroyDecodedData() const final;
+        bool useSystemDarkAppearance() const final;
+        VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect*) final;
+        VisibleInViewportState imageVisibleInViewport(const Document&) const final;
+        void didRemoveCachedImageClient(CachedImage&) final;
+        void imageContentChanged(CachedImage&) final;
+        void scheduleRenderingUpdateForImage(CachedImage&) final;
+        bool isRendererClient() const final { return true; }
+
+        explicit CachedImageListener(RenderObject&);
+
+        SingleThreadWeakPtr<RenderObject> m_renderer;
+    };
+
     virtual RepaintRects localRectsForRepaint(RepaintOutlineBounds) const;
 
-    void addAbsoluteRectForLayer(LayoutRect& result);
-    void setLayerNeedsFullRepaint();
-    void setLayerNeedsFullRepaintForPositionedMovementLayout();
+    void addAbsoluteRectForLayer(LayoutRect& result, RespectTransforms = RespectTransforms::No);
+    void NODELETE setLayerNeedsFullRepaint();
+    void NODELETE setLayerNeedsFullRepaintForOutOfFlowMovementLayout();
 
-#if PLATFORM(IOS_FAMILY)
-    struct SelectionGeometries {
+    void invalidateContainerContentLogicalWidths(const RenderBlock* ancestorUpdateBoundary = nullptr);
+
+    struct SelectionGeometriesInternal {
         Vector<SelectionGeometry> geometries;
-        int maxLineNumber;
+        int maxLineNumber { 0 };
+        bool hasBidirectionalText { false };
+        Vector<PlatformLayerIdentifier> intersectingLayerIDs;
     };
-    WEBCORE_EXPORT static SelectionGeometries collectSelectionGeometriesInternal(const SimpleRange&);
-#endif
-
-    Node* generatingPseudoHostElement() const;
+    static SelectionGeometriesInternal collectSelectionGeometriesInternal(const SimpleRange&);
 
     void propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderLayerModelObject& repaintContainer, const LayoutRect& repaintRect) const;
 
@@ -1201,38 +1189,33 @@ private:
 
 #if ASSERT_ENABLED
     void setNeedsLayoutIsForbidden(bool flag) const { m_setNeedsLayoutForbidden = flag; }
-    void checkBlockPositionedObjectsNeedLayout();
-#endif
-
-#if ASSERT_ENABLED
-    bool m_hasAXObject : 1;
     mutable bool m_setNeedsLayoutForbidden : 1;
 #endif
 
     enum class StateFlag : uint32_t {
-        IsBlock = 1 << 0,
-        IsReplacedOrInlineBlock = 1 << 1,
-        BeingDestroyed = 1 << 2,
-        NeedsLayout = 1 << 3,
-        NeedsPositionedMovementLayout = 1 << 4,
-        NormalChildNeedsLayout = 1 << 5,
-        PosChildNeedsLayout = 1 << 6,
-        NeedsSimplifiedNormalFlowLayout = 1 << 7,
-        OutOfFlowChildNeedsStaticPositionLayout = 1 << 8,
-        EverHadLayout = 1 << 9,
-        IsExcludedFromNormalLayout = 1 << 10,
-        Floating = 1 << 11,
-        VerticalWritingMode = 1 << 12,
-        PreferredLogicalWidthsDirty = 1 << 13,
-        HasRareData = 1 << 14,
-        HasLayer = 1 << 15,
-        HasNonVisibleOverflow = 1 << 16,
-        HasTransformRelatedProperty = 1 << 17,
-        ChildrenInline = 1 << 18,
-        PaintContainmentApplies = 1 << 19,
-        HasSVGTransform = 1 << 20,
-        WasSkippedDuringLastLayoutDueToContentVisibility = 1 << 21,
-        CapturedInViewTransition = 1 << 22
+        IsBlock                                             = 1 << 0,
+        IsBlockLevelReplacedOrAtomicInline                  = 1 << 1,
+        BeingDestroyed                                      = 1 << 2,
+        NeedsLayout                                         = 1 << 3,
+        NeedsOutOfFlowMovementLayout                        = 1 << 4,
+        NormalChildNeedsLayout                              = 1 << 5,
+        OutOfFlowChildNeedsLayout                           = 1 << 6,
+        NeedsSimplifiedNormalFlowLayout                     = 1 << 7,
+        OutOfFlowChildNeedsStaticPositionLayout             = 1 << 8,
+        EverHadLayout                                       = 1 << 9,
+        IsExcludedFromNormalLayout                          = 1 << 10,
+        Floating                                            = 1 << 11,
+        VerticalWritingMode                                 = 1 << 12,
+        ContentLogicalWidthsInvalidated                    = 1 << 13,
+        HasRareData                                         = 1 << 14,
+        HasLayer                                            = 1 << 15,
+        HasNonVisibleOverflow                               = 1 << 16,
+        HasTransformRelatedProperty                         = 1 << 17,
+        ChildrenInline                                      = 1 << 18,
+        PaintContainmentApplies                             = 1 << 19,
+        HasSVGTransform                                     = 1 << 20,
+        WasSkippedDuringLastLayoutDueToContentVisibility    = 1 << 21,
+        CapturedInViewTransition                            = 1 << 22
     };
 
     class StateBitfields {
@@ -1246,9 +1229,9 @@ private:
     private:
         uint32_t m_flags : 23 { 0 };
         uint32_t m_positionedState : 2 { IsStaticallyPositioned }; // PositionedState
-        uint32_t m_selectionState : 3 { enumToUnderlyingType(HighlightState::None) }; // HighlightState
-        uint32_t m_fragmentedFlowState : 1 { enumToUnderlyingType(FragmentedFlowState::NotInsideFlow) }; // FragmentedFlowState
-        uint32_t m_boxDecorationState : 2 { enumToUnderlyingType(BoxDecorationState::None) }; // BoxDecorationState
+        uint32_t m_selectionState : 3 { std::to_underlying(HighlightState::None) }; // HighlightState
+        uint32_t m_fragmentedFlowState : 1 { std::to_underlying(FragmentedFlowState::NotInsideFlow) }; // FragmentedFlowState
+        uint32_t m_boxDecorationState : 2 { std::to_underlying(BoxDecorationState::None) }; // BoxDecorationState
         // 1 bit free
 
     public:
@@ -1297,34 +1280,36 @@ private:
     const TypeSpecificFlags m_typeSpecificFlags;
 
     CheckedPtr<Layout::Box> m_layoutBox;
+    const RefPtr<CachedImageListener> m_cachedImageClient;
 
     // FIXME: This should be RenderElementRareData.
     class RenderObjectRareData {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_PREFERABLY_COMPACT_TZONE_ALLOCATED(RenderObjectRareData);
     public:
         RenderObjectRareData();
         ~RenderObjectRareData();
 
         bool hasReflection { false };
         bool hasOutlineAutoAncestor { false };
-        OptionSet<MarginTrimType> trimmedMargins;
+        // Dirty bit was set with MarkingBehavior::MarkOnlyThis
+        bool contentLogicalWidthsInvalidationIsMarkOnlyThis { false };
+        bool isYouTubeReplacement { false };
+        EnumSet<Style::MarginTrimSide> trimmedMargins;
 
         // From RenderElement
         std::unique_ptr<ReferencedSVGResources> referencedSVGResources;
-        SingleThreadWeakPtr<RenderBlockFlow> backdropRenderer;
+        std::array<SingleThreadWeakPtr<RenderBlockFlow>, 3> pseudoElementRenderers;
 
         // From RenderBox
         RefPtr<ControlPart> controlPart;
     };
 
-    WEBCORE_EXPORT const RenderObject::RenderObjectRareData& rareData() const;
+    WEBCORE_EXPORT const RenderObject::RenderObjectRareData& NODELETE rareData() const;
     RenderObjectRareData& ensureRareData();
     void removeRareData();
-    
-    using RareDataMap = HashMap<SingleThreadWeakRef<const RenderObject>, std::unique_ptr<RenderObjectRareData>>;
 
-    static RareDataMap& rareDataMap();
-
+    using RareDataMap = SingleThreadWeakHashMap<const RenderObject, std::unique_ptr<RenderObjectRareData>>;
+    static RareDataMap& NODELETE rareDataMap();
 };
 
 class RenderObject::SetLayoutNeededForbiddenScope {
@@ -1337,61 +1322,6 @@ private:
     bool m_preexistingForbidden;
 #endif
 };
-
-inline LocalFrame& RenderObject::frame() const
-{
-    return *document().frame();
-}
-
-inline Page& RenderObject::page() const
-{
-    // The render tree will always be torn down before Frame is disconnected from Page,
-    // so it's safe to assume Frame::page() is non-null as long as there are live RenderObjects.
-    ASSERT(frame().page());
-    return *frame().page();
-}
-
-inline bool RenderObject::renderTreeBeingDestroyed() const
-{
-    return document().renderTreeBeingDestroyed();
-}
-
-inline bool RenderObject::isBeforeContent() const
-{
-    // Text nodes don't have their own styles, so ignore the style on a text node.
-    if (isRenderText())
-        return false;
-    if (style().pseudoElementType() != PseudoId::Before)
-        return false;
-    return true;
-}
-
-inline bool RenderObject::isAfterContent() const
-{
-    // Text nodes don't have their own styles, so ignore the style on a text node.
-    if (isRenderText())
-        return false;
-    if (style().pseudoElementType() != PseudoId::After)
-        return false;
-    return true;
-}
-
-inline bool RenderObject::isBeforeOrAfterContent() const
-{
-    return isBeforeContent() || isAfterContent();
-}
-
-inline void RenderObject::setNeedsLayout(MarkingBehavior markParents)
-{
-    ASSERT(!isSetNeedsLayoutForbidden());
-    if (selfNeedsLayout())
-        return;
-    m_stateBitfields.setFlag(StateFlag::NeedsLayout);
-    if (markParents == MarkContainingBlockChain)
-        scheduleLayout(markContainingBlocksForLayout());
-    if (hasLayer())
-        setLayerNeedsFullRepaint();
-}
 
 inline void RenderObject::setSelectionStateIfNeeded(HighlightState state)
 {
@@ -1419,19 +1349,39 @@ inline void RenderObject::invalidateBackgroundObscurationStatus()
     m_stateBitfields.setBoxDecorationState(BoxDecorationState::InvalidObscurationStatus);
 }
 
-inline bool RenderObject::backgroundIsKnownToBeObscured(const LayoutPoint& paintOffset)
+inline bool RenderObject::needsLayout() const
 {
-    if (m_stateBitfields.boxDecorationState() == BoxDecorationState::InvalidObscurationStatus) {
-        BoxDecorationState boxDecorationState = computeBackgroundIsKnownToBeObscured(paintOffset) ? BoxDecorationState::IsKnownToBeObscured : BoxDecorationState::MayBeVisible;
-        m_stateBitfields.setBoxDecorationState(boxDecorationState);
-    }
-    return m_stateBitfields.boxDecorationState() == BoxDecorationState::IsKnownToBeObscured;
+    return selfNeedsLayout()
+        || normalChildNeedsLayout()
+        || outOfFlowChildNeedsLayout()
+        || needsSimplifiedNormalFlowLayout()
+        || needsOutOfFlowMovementLayout();
+}
+
+inline bool RenderObject::needsOutOfFlowMovementLayoutOnly() const
+{
+    return needsOutOfFlowMovementLayout()
+        && !selfNeedsLayout()
+        && !normalChildNeedsLayout()
+        && !outOfFlowChildNeedsLayout()
+        && !needsSimplifiedNormalFlowLayout();
 }
 
 inline bool RenderObject::needsSimplifiedNormalFlowLayoutOnly() const
 {
-    return needsSimplifiedNormalFlowLayout() && !selfNeedsLayout() && !normalChildNeedsLayout()
-        && !posChildNeedsLayout() && !needsPositionedMovementLayout();
+    return needsSimplifiedNormalFlowLayout()
+        && !selfNeedsLayout()
+        && !normalChildNeedsLayout()
+        && !outOfFlowChildNeedsLayout()
+        && !needsOutOfFlowMovementLayout();
+}
+
+inline bool RenderObject::needsNormalChildOrSimplifiedLayoutOnly() const
+{
+    return (normalChildNeedsLayout() || needsSimplifiedNormalFlowLayout())
+        && !selfNeedsLayout()
+        && !outOfFlowChildNeedsLayout()
+        && !needsOutOfFlowMovementLayout();
 }
 
 inline RenderFragmentedFlow* RenderObject::enclosingFragmentedFlow() const
@@ -1442,73 +1392,12 @@ inline RenderFragmentedFlow* RenderObject::enclosingFragmentedFlow() const
     return locateEnclosingFragmentedFlow();
 }
 
-inline bool RenderObject::isAnonymousBlock() const
-{
-    // This function must be kept in sync with anonymous block creation conditions in RenderBlock::createAnonymousBlock().
-    // FIXME: That seems difficult. Can we come up with a simpler way to make behavior correct?
-    // FIXME: Does this relatively long function benefit from being inlined?
-    return isAnonymous()
-        && (style().display() == DisplayType::Block || style().display() == DisplayType::Box)
-        && style().pseudoElementType() == PseudoId::None
-        && isRenderBlock()
-#if ENABLE(MATHML)
-        && !isRenderMathMLBlock()
-#endif
-        && !isRenderListMarker()
-        && !isRenderFragmentedFlow()
-        && !isRenderMultiColumnSet()
-        && !isRenderView();
-}
-
-inline bool RenderObject::needsLayout() const
-{
-    return selfNeedsLayout()
-        || normalChildNeedsLayout()
-        || posChildNeedsLayout()
-        || needsSimplifiedNormalFlowLayout()
-        || needsPositionedMovementLayout();
-}
-
-inline bool RenderObject::needsPositionedMovementLayoutOnly() const
-{
-    return needsPositionedMovementLayout()
-        && !selfNeedsLayout()
-        && !normalChildNeedsLayout()
-        && !posChildNeedsLayout()
-        && !needsSimplifiedNormalFlowLayout();
-}
-
-inline void RenderObject::setNeedsLayoutAndPrefWidthsRecalc()
-{
-    setNeedsLayout();
-    setPreferredLogicalWidthsDirty(true);
-}
-
 inline void RenderObject::setPositionState(PositionType position)
 {
     ASSERT((position != PositionType::Absolute && position != PositionType::Fixed) || isRenderBox());
     m_stateBitfields.setPositionedState(position);
 }
 
-inline FloatQuad RenderObject::localToAbsoluteQuad(const FloatQuad& quad, OptionSet<MapCoordinatesMode> mode, bool* wasFixed) const
-{
-    return localToContainerQuad(quad, nullptr, mode, wasFixed);
-}
-
-inline auto RenderObject::visibleRectContextForRepaint() -> VisibleRectContext
-{
-    return { false, false, { VisibleRectContextOption::ApplyContainerClip, VisibleRectContextOption::ApplyCompositedContainerScrolls } };
-}
-
-inline auto RenderObject::visibleRectContextForSpatialNavigation() -> VisibleRectContext
-{
-    return { false, false, { VisibleRectContextOption::ApplyContainerClip, VisibleRectContextOption::ApplyCompositedContainerScrolls, VisibleRectContextOption::ApplyCompositedClips } };
-}
-
-inline auto RenderObject::visibleRectContextForRenderTreeAsText() -> VisibleRectContext
-{
-    return { false, false, { VisibleRectContextOption::ApplyContainerClip, VisibleRectContextOption::ApplyCompositedContainerScrolls, VisibleRectContextOption::ApplyCompositedClips, VisibleRectContextOption::CalculateAccurateRepaintRect  } };
-}
 
 inline bool RenderObject::isSetNeedsLayoutForbidden() const
 {
@@ -1527,35 +1416,20 @@ inline RenderObject::SetLayoutNeededForbiddenScope::SetLayoutNeededForbiddenScop
 
 #endif
 
-inline void Node::setRenderer(RenderObject* renderer)
-{
-    m_rendererWithStyleFlags.setPointer(renderer);
-
-    if (UNLIKELY(InspectorInstrumentationPublic::hasFrontends()))
-        notifyInspectorOfRendererChange();
-}
-
 inline RenderObject* RenderObject::previousInFlowSibling() const
 {
-    auto* previousSibling = this->previousSibling();
+    CheckedPtr previousSibling = this->previousSibling();
     while (previousSibling && !previousSibling->isInFlow())
         previousSibling = previousSibling->previousSibling();
-    return previousSibling;
+    return previousSibling.unsafeGet();
 }
 
 inline RenderObject* RenderObject::nextInFlowSibling() const
 {
-    auto* nextSibling = this->nextSibling();
+    CheckedPtr nextSibling = this->nextSibling();
     while (nextSibling && !nextSibling->isInFlow())
         nextSibling = nextSibling->nextSibling();
-    return nextSibling;
-}
-
-inline bool RenderObject::hasPotentiallyScrollableOverflow() const
-{
-    // We only need to test one overflow dimension since 'visible' and 'clip' always get accompanied
-    // with 'clip' or 'visible' in the other dimension (see Style::Adjuster::adjust).
-    return hasNonVisibleOverflow() && style().overflowX() != Overflow::Clip && style().overflowX() != Overflow::Visible;
+    return nextSibling.unsafeGet();
 }
 
 #if ENABLE(MATHML)
@@ -1596,14 +1470,33 @@ inline bool RenderObject::isRenderTable() const
 inline bool RenderObject::usesBoundaryCaching() const
 {
     // Use the same bit for UsesBoundaryCaching so that clang collapse two comparisons into one.
-    ASSERT(enumToUnderlyingType(ReplacedFlag::UsesBoundaryCaching) == enumToUnderlyingType(SVGModelObjectFlag::UsesBoundaryCaching));
+    ASSERT(std::to_underlying(ReplacedFlag::UsesBoundaryCaching) == std::to_underlying(SVGModelObjectFlag::UsesBoundaryCaching));
     return (m_typeSpecificFlags.kind() == TypeSpecificFlags::Kind::Replaced && m_typeSpecificFlags.replacedFlags().contains(ReplacedFlag::UsesBoundaryCaching))
         || (m_typeSpecificFlags.kind() == TypeSpecificFlags::Kind::SVGModelObject && m_typeSpecificFlags.svgFlags().contains(SVGModelObjectFlag::UsesBoundaryCaching));
 }
 
+inline CachedImageClient& RenderObject::cachedImageClient() const
+{
+    if (!m_cachedImageClient)
+        lazyInitialize(m_cachedImageClient, CachedImageListener::create(*const_cast<RenderObject*>(this)));
+    return *m_cachedImageClient.get();
+}
+
+std::partial_ordering renderTreeOrder(const RenderObject&, const RenderObject&);
+
 WTF::TextStream& operator<<(WTF::TextStream&, const RenderObject&);
+WTF::TextStream& operator<<(WTF::TextStream&, const RenderObject::RepaintRects&);
+
+enum class ScrollbarWidth : uint8_t;
+WEBCORE_EXPORT IntRect absoluteInteractionBounds(const RenderObject&);
+WEBCORE_EXPORT ScrollbarWidth scrollbarWidth(const RenderObject&);
+#if ENABLE(CSS_TAP_HIGHLIGHT_COLOR)
+WEBCORE_EXPORT Color tapHighlightColor(const RenderObject&);
+#endif
 
 #if ENABLE(TREE_DEBUGGING)
+void printAccessibilityTreeForLiveDocuments();
+void printAccessibilityTreeForLiveDocumentsAfterDelay();
 void printPaintOrderTreeForLiveDocuments();
 void printRenderTreeForLiveDocuments();
 void printLayerTreeForLiveDocuments();

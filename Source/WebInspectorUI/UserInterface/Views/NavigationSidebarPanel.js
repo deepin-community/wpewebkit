@@ -158,16 +158,6 @@ WI.NavigationSidebarPanel = class NavigationSidebarPanel extends WI.SidebarPanel
         return contentTreeOutline;
     }
 
-    suppressFilteringOnTreeElements(treeElements)
-    {
-        console.assert(Array.isArray(treeElements), "TreeElements should be an array.");
-
-        for (let treeElement of treeElements)
-            treeElement[WI.NavigationSidebarPanel.SuppressFilteringSymbol] = true;
-
-        this.updateFilter();
-    }
-
     treeElementForRepresentedObject(representedObject)
     {
         let treeElement = null;
@@ -444,7 +434,7 @@ WI.NavigationSidebarPanel = class NavigationSidebarPanel extends WI.SidebarPanel
 
                 // Only expand if the built-in filters matched, not custom filters.
                 if (flags.expandTreeElement && !currentAncestor.expanded) {
-                    currentAncestor.__wasExpandedDuringFiltering = true;
+                    currentAncestor[WI.NavigationSidebarPanel.WasExpandedDuringFilteringSymbol] = true;
                     currentAncestor.expand();
                 }
 
@@ -629,9 +619,7 @@ WI.NavigationSidebarPanel = class NavigationSidebarPanel extends WI.SidebarPanel
     _isTreeElementWithoutRepresentedObject(treeElement)
     {
         return treeElement instanceof WI.FolderTreeElement
-            || treeElement instanceof WI.DatabaseHostTreeElement
             || treeElement instanceof WI.IndexedDatabaseHostTreeElement
-            || treeElement instanceof WI.ApplicationCacheManifestTreeElement
             || treeElement instanceof WI.ThreadTreeElement
             || treeElement instanceof WI.IdleTreeElement
             || treeElement instanceof WI.DOMBreakpointTreeElement

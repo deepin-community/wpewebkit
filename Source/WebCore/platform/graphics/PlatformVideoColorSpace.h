@@ -25,22 +25,27 @@
 
 #pragma once
 
-#include "PlatformVideoColorPrimaries.h"
-#include "PlatformVideoMatrixCoefficients.h"
-#include "PlatformVideoTransferCharacteristics.h"
+#include <WebCore/PlatformVideoColorPrimaries.h>
+#include <WebCore/PlatformVideoMatrixCoefficients.h>
+#include <WebCore/PlatformVideoTransferCharacteristics.h>
 #include <optional>
 #include <wtf/FastMalloc.h>
 
 namespace WebCore {
 
 struct PlatformVideoColorSpace {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
-    std::optional<PlatformVideoColorPrimaries> primaries;
-    std::optional<PlatformVideoTransferCharacteristics> transfer;
-    std::optional<PlatformVideoMatrixCoefficients> matrix;
-    std::optional<bool> fullRange;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlatformVideoColorSpace);
+    std::optional<PlatformVideoColorPrimaries> primaries { };
+    std::optional<PlatformVideoTransferCharacteristics> transfer { };
+    std::optional<PlatformVideoMatrixCoefficients> matrix { };
+    std::optional<bool> fullRange { };
 
+    bool isValid() const { return primaries || transfer || matrix || fullRange; }
     friend bool operator==(const PlatformVideoColorSpace&, const PlatformVideoColorSpace&) = default;
 };
+
+void overrideVideoColorSpaceAsNeeded(PlatformVideoColorSpace&, const std::optional<PlatformVideoColorSpace>&);
+
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, PlatformVideoColorSpace);
 
 }

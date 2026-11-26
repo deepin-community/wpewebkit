@@ -44,6 +44,7 @@ struct RemoteMediaPlayerState {
     MediaTime startTime;
     String languageOfPrimaryAudioTrack;
     String wirelessPlaybackTargetName;
+    String wirelessPlaybackRouteName;
     std::optional<WebCore::PlatformTimeRanges> bufferedRanges;
     WebCore::MediaPlayerEnums::NetworkState networkState { WebCore::MediaPlayerEnums::NetworkState::Empty };
     WebCore::MediaPlayerEnums::MovieLoadType movieLoadType { WebCore::MediaPlayerEnums::MovieLoadType::Unknown };
@@ -64,7 +65,6 @@ struct RemoteMediaPlayerState {
     bool hasAvailableVideoFrame { false };
     bool wirelessVideoPlaybackDisabled { false };
     bool didPassCORSAccessCheck { false };
-    WebCore::MediaPlayerEnums::VideoPlaybackConfiguration videoConfiguration;
 };
 
 } // namespace WebKit

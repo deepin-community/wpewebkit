@@ -20,33 +20,17 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakRef.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class Page;
-
-enum class PluginLoadClientPolicy : uint8_t {
-    // No client-specific plug-in load policy has been defined. The plug-in should be visible in navigator.plugins and WebKit should synchronously
-    // ask the client whether the plug-in should be loaded.
-    Undefined = 0,
-
-    // The plug-in module should be blocked from being instantiated. The plug-in should be hidden in navigator.plugins.
-    Block,
-
-    // WebKit should synchronously ask the client whether the plug-in should be loaded. The plug-in should be visible in navigator.plugins.
-    Ask,
-
-    // The plug-in module may be loaded if WebKit is not blocking it.
-    Allow,
-
-    // The plug-in module should be loaded irrespective of whether WebKit has asked it to be blocked.
-    AllowAlways,
-};
 
 struct MimeClassInfo {
     AtomString type;
@@ -62,8 +46,6 @@ struct PluginInfo {
     String desc;
     Vector<MimeClassInfo> mimes;
     bool isApplicationPlugin { false };
-
-    PluginLoadClientPolicy clientLoadPolicy { PluginLoadClientPolicy::Undefined };
 
     String bundleIdentifier;
 #if PLATFORM(MAC)
@@ -83,21 +65,21 @@ class PluginData : public RefCounted<PluginData> {
 public:
     static Ref<PluginData> create(Page& page) { return adoptRef(*new PluginData(page)); }
 
-    const Vector<PluginInfo>& plugins() const { return m_plugins; }
-    WEBCORE_EXPORT const Vector<PluginInfo>& webVisiblePlugins() const;
+    const Vector<PluginInfo>& plugins() const LIFETIME_BOUND { return m_plugins; }
+    WEBCORE_EXPORT const Vector<PluginInfo>& webVisiblePlugins() const LIFETIME_BOUND;
     WEBCORE_EXPORT Vector<MimeClassInfo> webVisibleMimeTypes() const;
 
     enum AllowedPluginTypes {
         AllPlugins,
         OnlyApplicationPlugins
     };
-    WEBCORE_EXPORT bool supportsMimeType(const String& mimeType, const AllowedPluginTypes) const;
+    WEBCORE_EXPORT bool NODELETE supportsMimeType(const String& mimeType, const AllowedPluginTypes) const;
     WEBCORE_EXPORT bool supportsWebVisibleMimeType(const String& mimeType, const AllowedPluginTypes) const;
     WEBCORE_EXPORT bool supportsWebVisibleMimeTypeForURL(const String& mimeType, const AllowedPluginTypes, const URL&) const;
 
     String pluginFileForWebVisibleMimeType(const String& mimeType) const;
 
-    const std::optional<PluginInfo>& builtInPDFPlugin() const { return m_builtInPDFPluginInfo; }
+    const std::optional<PluginInfo>& builtInPDFPlugin() const LIFETIME_BOUND { return m_builtInPDFPluginInfo; }
 
     static PluginInfo dummyPDFPluginInfo();
 
@@ -106,7 +88,7 @@ private:
     void initPlugins();
 
 protected:
-    Page& m_page;
+    WeakRef<Page> m_page;
     Vector<PluginInfo> m_plugins;
     std::optional<Vector<SupportedPluginIdentifier>> m_supportedPluginIdentifiers;
 

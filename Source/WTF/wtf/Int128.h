@@ -33,13 +33,12 @@
 
 #pragma once
 
-#include <cassert>
 #include <cmath>
+#include <compare>
 #include <cstdint>
-#include <cstring>
 #include <iosfwd>
 #include <limits>
-#include <utility>
+#include <wtf/ExportMacros.h>
 #include <wtf/Platform.h>
 
 #if COMPILER(MSVC)
@@ -97,7 +96,7 @@ class PrintStream;
 //     uint64_t i = v;                         // Error
 //     uint64_t i = static_cast<uint64_t>(v);  // OK
 //
-class alignas(16) UInt128Impl {
+class UInt128Impl {
  public:
   UInt128Impl() = default;
 
@@ -195,9 +194,7 @@ class alignas(16) UInt128Impl {
   constexpr UInt128Impl(uint64_t high, uint64_t low);
 
   // TODO(strel) Update implementation to use __int128 once all users of
-  // UInt128Impl are fixed to not depend on alignof(UInt128Impl) == 8. Also add
-  // alignas(16) to class definition to keep alignment consistent across
-  // platforms.
+  // UInt128Impl are fixed to not depend on alignof(UInt128Impl) == 8.
 #if CPU(LITTLE_ENDIAN)
   uint64_t lo_;
   uint64_t hi_;
@@ -293,7 +290,7 @@ namespace WTF {
 //     int64_t i = v;                        // Error
 //     int64_t i = static_cast<int64_t>(v);  // OK
 //
-class alignas(16) Int128Impl {
+class Int128Impl {
  public:
   Int128Impl() = default;
 
@@ -678,22 +675,17 @@ inline UInt128Impl::operator long double() const {
 
 // Comparison operators.
 
-constexpr bool operator==(UInt128Impl lhs, UInt128Impl rhs) {
-  return (UInt128Low64(lhs) == UInt128Low64(rhs) &&
-          UInt128High64(lhs) == UInt128High64(rhs));
+constexpr bool operator==(UInt128Impl lhs, UInt128Impl rhs)
+{
+    return UInt128Low64(lhs) == UInt128Low64(rhs) && UInt128High64(lhs) == UInt128High64(rhs);
 }
 
-constexpr bool operator<(UInt128Impl lhs, UInt128Impl rhs) {
-  return (UInt128High64(lhs) == UInt128High64(rhs))
-             ? (UInt128Low64(lhs) < UInt128Low64(rhs))
-             : (UInt128High64(lhs) < UInt128High64(rhs));
+constexpr std::strong_ordering operator<=>(UInt128Impl lhs, UInt128Impl rhs)
+{
+    if (auto cmp = UInt128High64(lhs) <=> UInt128High64(rhs); cmp != std::strong_ordering::equal)
+        return cmp;
+    return UInt128Low64(lhs) <=> UInt128Low64(rhs);
 }
-
-constexpr bool operator>(UInt128Impl lhs, UInt128Impl rhs) { return rhs < lhs; }
-
-constexpr bool operator<=(UInt128Impl lhs, UInt128Impl rhs) { return !(rhs < lhs); }
-
-constexpr bool operator>=(UInt128Impl lhs, UInt128Impl rhs) { return !(lhs < rhs); }
 
 // Unary operators.
 
@@ -1104,26 +1096,17 @@ inline Int128Impl::operator long double() const {
 
 // Comparison operators.
 
-constexpr bool operator==(Int128Impl lhs, Int128Impl rhs) {
-  return (Int128Low64(lhs) == Int128Low64(rhs) &&
-          Int128High64(lhs) == Int128High64(rhs));
+constexpr bool operator==(Int128Impl lhs, Int128Impl rhs)
+{
+    return Int128Low64(lhs) == Int128Low64(rhs) && Int128High64(lhs) == Int128High64(rhs);
 }
 
-constexpr bool operator<(Int128Impl lhs, Int128Impl rhs) {
-  return (Int128High64(lhs) == Int128High64(rhs))
-             ? (Int128Low64(lhs) < Int128Low64(rhs))
-             : (Int128High64(lhs) < Int128High64(rhs));
+constexpr std::strong_ordering operator<=>(Int128Impl lhs, Int128Impl rhs)
+{
+    if (auto cmp = Int128High64(lhs) <=> Int128High64(rhs); cmp != std::strong_ordering::equal)
+        return cmp;
+    return Int128Low64(lhs) <=> Int128Low64(rhs);
 }
-
-constexpr bool operator>(Int128Impl lhs, Int128Impl rhs) {
-  return (Int128High64(lhs) == Int128High64(rhs))
-             ? (Int128Low64(lhs) > Int128Low64(rhs))
-             : (Int128High64(lhs) > Int128High64(rhs));
-}
-
-constexpr bool operator<=(Int128Impl lhs, Int128Impl rhs) { return !(lhs > rhs); }
-
-constexpr bool operator>=(Int128Impl lhs, Int128Impl rhs) { return !(lhs < rhs); }
 
 // Unary operators.
 
@@ -1248,13 +1231,8 @@ constexpr Int128Impl operator>>(Int128Impl lhs, int amount) {
 }
 
 #if HAVE(INT128_T)
-#if COMPILER(MSVC) // Workaround for a clang-cl bug <https://webkit.org/b/274765>
-typedef __uint128_t UInt128 __attribute__((aligned(16)));
-typedef __int128_t Int128 __attribute__((aligned(16)));
-#else
 using UInt128 = __uint128_t;
 using Int128 = __int128_t;
-#endif
 #else
 using UInt128 = UInt128Impl;
 using Int128 = Int128Impl;

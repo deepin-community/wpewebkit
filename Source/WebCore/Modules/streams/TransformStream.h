@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
 #include "JSDOMGlobalObject.h"
 #include "JSValueInWrappedObject.h"
 #include <JavaScriptCore/Strong.h>
@@ -37,26 +36,39 @@ class InternalReadableStream;
 class InternalTransformStream;
 class InternalWritableStream;
 class JSDOMGlobalObject;
+class MessagePort;
 class ReadableStream;
 class WritableStream;
+template<typename> class ExceptionOr;
+
+struct DetachedTransformStream {
+    Ref<MessagePort> readablePort;
+    Ref<MessagePort> writablePort;
+};
 
 class TransformStream : public RefCounted<TransformStream> {
 public:
-    static ExceptionOr<Ref<TransformStream>> create(JSC::JSGlobalObject&, std::optional<JSC::Strong<JSC::JSObject>>&&, std::optional<JSC::Strong<JSC::JSObject>>&&, std::optional<JSC::Strong<JSC::JSObject>>&&);
+    static ExceptionOr<Ref<TransformStream>> create(JSC::JSGlobalObject&, JSC::Strong<JSC::JSObject>&&, JSC::Strong<JSC::JSObject>&&, JSC::Strong<JSC::JSObject>&&);
+    static Ref<TransformStream> create(Ref<ReadableStream>&&, Ref<WritableStream>&&);
 
     ~TransformStream();
 
     ReadableStream& readable() { return m_readable.get(); }
     WritableStream& writable() { return m_writable.get(); }
 
-    JSValueInWrappedObject& internalTransformStream() { return m_internalTransformStream; }
+    JSValueInWrappedObject& internalTransformStream() LIFETIME_BOUND { return m_internalTransformStream; }
+
+    bool canTransfer() const;
+    ExceptionOr<DetachedTransformStream> runTransferSteps(JSDOMGlobalObject&);
+    static ExceptionOr<Ref<TransformStream>> runTransferReceivingSteps(JSDOMGlobalObject&, DetachedTransformStream&&);
 
 private:
-    TransformStream(JSC::JSValue, Ref<ReadableStream>&&, Ref<WritableStream>&&);
+    TransformStream(Ref<ReadableStream>&&, Ref<WritableStream>&&);
+    TransformStream(JSC::JSGlobalObject&, JSC::JSValue internalTransformStream, Ref<ReadableStream>&&, Ref<WritableStream>&&);
 
     JSValueInWrappedObject m_internalTransformStream;
-    Ref<ReadableStream> m_readable;
-    Ref<WritableStream> m_writable;
+    const Ref<ReadableStream> m_readable;
+    const Ref<WritableStream> m_writable;
 };
 
 } // namespace WebCore

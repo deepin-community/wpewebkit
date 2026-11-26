@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,15 +42,26 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteCDMFactory);
 
-RemoteCDMFactory::RemoteCDMFactory(WebProcess&)
+RemoteCDMFactory::RemoteCDMFactory(WebProcess& webProcess)
+    : m_webProcess(webProcess)
 {
 }
 
 RemoteCDMFactory::~RemoteCDMFactory() = default;
 
-void RemoteCDMFactory::registerFactory(Vector<CDMFactory*>& factories)
+void RemoteCDMFactory::ref() const
 {
-    factories.append(this);
+    return m_webProcess->ref();
+}
+
+void RemoteCDMFactory::deref() const
+{
+    return m_webProcess->deref();
+}
+
+void RemoteCDMFactory::registerFactory(Vector<WeakRef<CDMFactory>>& factories)
+{
+    factories.append(*this);
 }
 
 ASCIILiteral RemoteCDMFactory::supplementName()
@@ -70,13 +81,13 @@ bool RemoteCDMFactory::supportsKeySystem(const String& keySystem)
     return supported;
 }
 
-std::unique_ptr<CDMPrivate> RemoteCDMFactory::createCDM(const String& keySystem, const CDMPrivateClient&)
+std::unique_ptr<CDMPrivate> RemoteCDMFactory::createCDM(const String& keySystem, const String& mediaKeysHashSalt, const CDMPrivateClient&)
 {
-    auto sendResult = gpuProcessConnection().connection().sendSync(Messages::RemoteCDMFactoryProxy::CreateCDM(keySystem), { });
-    auto [identifier, configuration] = sendResult.takeReplyOr(RemoteCDMIdentifier { }, RemoteCDMConfiguration { });
+    auto sendResult = gpuProcessConnection().connection().sendSync(Messages::RemoteCDMFactoryProxy::CreateCDM(keySystem, mediaKeysHashSalt), { });
+    auto [identifier, configuration] = sendResult.takeReplyOr(std::nullopt, RemoteCDMConfiguration { });
     if (!identifier)
         return nullptr;
-    return RemoteCDM::create(*this, WTFMove(identifier), WTFMove(configuration));
+    return RemoteCDM::create(*this, WTF::move(*identifier), WTF::move(configuration), mediaKeysHashSalt);
 }
 
 void RemoteCDMFactory::addSession(RemoteCDMInstanceSession& session)
@@ -99,8 +110,10 @@ void RemoteCDMFactory::removeInstance(RemoteCDMInstanceIdentifier identifier)
 
 void RemoteCDMFactory::didReceiveSessionMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    if (auto session = m_sessions.get(LegacyNullableObjectIdentifier<RemoteCDMInstanceSessionIdentifierType>(decoder.destinationID())))
-        session->didReceiveMessage(connection, decoder);
+    if (ObjectIdentifier<RemoteCDMInstanceSessionIdentifierType>::isValidIdentifier(decoder.destinationID())) {
+        if (RefPtr session = m_sessions.get(ObjectIdentifier<RemoteCDMInstanceSessionIdentifierType>(decoder.destinationID())))
+            session->didReceiveMessage(connection, decoder);
+    }
 }
 
 }

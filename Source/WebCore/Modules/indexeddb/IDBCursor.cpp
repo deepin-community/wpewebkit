@@ -26,6 +26,7 @@
 #include "config.h"
 #include "IDBCursor.h"
 
+#include "ExceptionOr.h"
 #include "IDBBindingUtilities.h"
 #include "IDBDatabase.h"
 #include "IDBGetResult.h"
@@ -34,18 +35,21 @@
 #include "IDBObjectStore.h"
 #include "IDBRequest.h"
 #include "IDBTransaction.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "Logging.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptWrappableInlines.h"
 #include "SerializedScriptValue.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 using namespace JSC;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(IDBCursor);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(IDBCursor);
 
 Ref<IDBCursor> IDBCursor::create(IDBObjectStore& objectStore, const IDBCursorInfo& info)
 {
@@ -59,14 +63,14 @@ Ref<IDBCursor> IDBCursor::create(IDBIndex& index, const IDBCursorInfo& info)
 
 IDBCursor::IDBCursor(IDBObjectStore& objectStore, const IDBCursorInfo& info)
     : m_info(info)
-    , m_source(&objectStore)
+    , m_source(objectStore)
 {
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 }
 
 IDBCursor::IDBCursor(IDBIndex& index, const IDBCursorInfo& info)
     : m_info(info)
-    , m_source(&index)
+    , m_source(index)
 {
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 }
@@ -81,16 +85,16 @@ bool IDBCursor::sourcesDeleted() const
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
     return WTF::switchOn(m_source,
-        [] (const RefPtr<IDBObjectStore>& objectStore) { return objectStore->isDeleted(); },
-        [] (const RefPtr<IDBIndex>& index) { return index->isDeleted() || index->objectStore().isDeleted(); }
+        [](const Ref<IDBObjectStore>& objectStore) { return objectStore->isDeleted(); },
+        [](const Ref<IDBIndex>& index) { return index->isDeleted() || index->objectStore().isDeleted(); }
     );
 }
 
 IDBObjectStore& IDBCursor::effectiveObjectStore() const
 {
     return WTF::switchOn(m_source,
-        [] (const RefPtr<IDBObjectStore>& objectStore) -> IDBObjectStore& { return *objectStore; },
-        [] (const RefPtr<IDBIndex>& index) -> IDBObjectStore& { return index->objectStore(); }
+        [](const Ref<IDBObjectStore>& objectStore) -> IDBObjectStore& { return objectStore; },
+        [](const Ref<IDBIndex>& index) -> IDBObjectStore& { return index->objectStore(); }
     );
 }
 
@@ -108,10 +112,11 @@ ExceptionOr<Ref<IDBRequest>> IDBCursor::update(JSGlobalObject& state, JSValue va
     if (sourcesDeleted())
         return Exception { ExceptionCode::InvalidStateError, "Failed to execute 'update' on 'IDBCursor': The cursor's source or effective object store has been deleted."_s };
 
-    if (!transaction().isActive())
+    Ref transaction = this->transaction();
+    if (!transaction->isActive())
         return Exception { ExceptionCode::TransactionInactiveError, "Failed to execute 'update' on 'IDBCursor': The transaction is inactive or finished."_s };
 
-    if (transaction().isReadOnly())
+    if (transaction->isReadOnly())
         return Exception { ExceptionCode::ReadonlyError, "Failed to execute 'update' on 'IDBCursor': The record may not be updated inside a read-only transaction."_s };
 
     if (!m_gotValue)
@@ -121,19 +126,19 @@ ExceptionOr<Ref<IDBRequest>> IDBCursor::update(JSGlobalObject& state, JSValue va
         return Exception { ExceptionCode::InvalidStateError, "Failed to execute 'update' on 'IDBCursor': The cursor is a key cursor."_s };
 
     VM& vm = state.vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Transaction should be inactive during structured clone.
-    Ref transaction = effectiveObjectStore().transaction();
+    Ref objectStore = effectiveObjectStore();
     transaction->deactivate();
     auto serializedValue = SerializedScriptValue::create(state, value, SerializationForStorage::Yes);
     transaction->activate();
 
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         return Exception { ExceptionCode::DataCloneError, "Failed to store record in an IDBObjectStore: An object could not be cloned."_s };
 
-    auto& objectStore = effectiveObjectStore();
-    auto& optionalKeyPath = objectStore.info().keyPath();
+
+    auto& optionalKeyPath = objectStore->info().keyPath();
     const bool usesInLineKeys = !!optionalKeyPath;
     if (usesInLineKeys) {
         auto clonedValue = serializedValue->deserialize(state, &state, SerializationErrorMode::NonThrowing);
@@ -143,7 +148,7 @@ ExceptionOr<Ref<IDBRequest>> IDBCursor::update(JSGlobalObject& state, JSValue va
             return Exception { ExceptionCode::DataError, "Failed to execute 'update' on 'IDBCursor': The effective object store of this cursor uses in-line keys and evaluating the key path of the value parameter results in a different value than the cursor's effective key."_s };
     }
 
-    auto putResult = effectiveObjectStore().putForCursorUpdate(state, value, m_primaryKey.copyRef(), WTFMove(serializedValue));
+    auto putResult = objectStore->putForCursorUpdate(state, value, m_primaryKey.copyRef(), WTF::move(serializedValue));
     if (putResult.hasException())
         return putResult.releaseException();
 
@@ -191,7 +196,7 @@ ExceptionOr<void> IDBCursor::continuePrimaryKey(JSGlobalObject& state, JSValue k
     if (sourcesDeleted())
         return Exception { ExceptionCode::InvalidStateError, "Failed to execute 'continuePrimaryKey' on 'IDBCursor': The cursor's source or effective object store has been deleted."_s };
 
-    if (!std::holds_alternative<RefPtr<IDBIndex>>(m_source))
+    if (!std::holds_alternative<Ref<IDBIndex>>(m_source))
         return Exception { ExceptionCode::InvalidAccessError, "Failed to execute 'continuePrimaryKey' on 'IDBCursor': The cursor's source is not an index."_s };
 
     auto direction = m_info.cursorDirection();
@@ -262,10 +267,10 @@ ExceptionOr<void> IDBCursor::continueFunction(const IDBKeyData& key)
         return Exception { ExceptionCode::DataError, "Failed to execute 'continue' on 'IDBCursor': The parameter is not a valid key."_s };
 
     if (m_info.isDirectionForward()) {
-        if (!key.isNull() && key.compare(m_keyData) <= 0)
+        if (!key.isNull() && key <= m_keyData)
             return Exception { ExceptionCode::DataError, "Failed to execute 'continue' on 'IDBCursor': The parameter is less than or equal to this cursor's position."_s };
     } else {
-        if (!key.isNull() && key.compare(m_keyData) >= 0)
+        if (!key.isNull() && key >= m_keyData)
             return Exception { ExceptionCode::DataError, "Failed to execute 'continue' on 'IDBCursor': The parameter is greater than or equal to this cursor's position."_s };
     }
 
@@ -278,20 +283,22 @@ ExceptionOr<void> IDBCursor::continueFunction(const IDBKeyData& key)
 
 void IDBCursor::uncheckedIterateCursor(const IDBKeyData& key, unsigned count)
 {
-    ASSERT(m_request);
+    RefPtr request = m_request.get();
+    ASSERT(request);
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
-    m_request->willIterateCursor(*this);
-    transaction().iterateCursor(*this, { key, { }, count });
+    request->willIterateCursor(*this);
+    protect(transaction())->iterateCursor(*this, { key, { }, count });
 }
 
 void IDBCursor::uncheckedIterateCursor(const IDBKeyData& key, const IDBKeyData& primaryKey)
 {
-    ASSERT(m_request);
+    RefPtr request = m_request.get();
+    ASSERT(request);
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
-    m_request->willIterateCursor(*this);
-    transaction().iterateCursor(*this, { key, primaryKey, 0 });
+    request->willIterateCursor(*this);
+    protect(transaction())->iterateCursor(*this, { key, primaryKey, 0 });
 }
 
 ExceptionOr<Ref<WebCore::IDBRequest>> IDBCursor::deleteFunction()
@@ -314,7 +321,7 @@ ExceptionOr<Ref<WebCore::IDBRequest>> IDBCursor::deleteFunction()
     if (!isKeyCursorWithValue())
         return Exception { ExceptionCode::InvalidStateError, "Failed to execute 'delete' on 'IDBCursor': The cursor is a key cursor."_s };
 
-    auto result = effectiveObjectStore().deleteFunction(IDBKeyRange::create(m_primaryKey.copyRef()).ptr());
+    auto result = protect(effectiveObjectStore())->deleteFunction(IDBKeyRange::create(m_primaryKey.copyRef()).ptr());
     if (result.hasException())
         return result.releaseException();
 

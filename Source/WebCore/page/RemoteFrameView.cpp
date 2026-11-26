@@ -26,22 +26,89 @@
 #include "config.h"
 #include "RemoteFrameView.h"
 
+#include "AXObjectCache.h"
+#include "Chrome.h"
+#include "ChromeClient.h"
+#include "DocumentPage.h"
+#include "GraphicsContext.h"
+#include "Page.h"
 #include "RemoteFrame.h"
 #include "RemoteFrameClient.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteFrameView);
 
 RemoteFrameView::RemoteFrameView(RemoteFrame& frame)
     : m_frame(frame)
 {
 }
 
+void RemoteFrameView::setFrameRectWithoutSync(const IntRect& newRect)
+{
+    FrameView::setFrameRect(newRect);
+}
+
 void RemoteFrameView::setFrameRect(const IntRect& newRect)
 {
     IntRect oldRect = frameRect();
-    if (newRect.size() != oldRect.size())
-        m_frame->client().sizeDidChange(newRect.size());
-    FrameView::setFrameRect(newRect);
+    setFrameRectWithoutSync(newRect);
+    if (newRect != oldRect) {
+        m_frame->client().frameRectDidChange(newRect);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+        if (AXObjectCache::accessibilityEnabled()) {
+            if (RefPtr page = m_frame->page())
+                page->chrome().client().scheduleAccessibilityFrameGeometryUpdate();
+        }
+#endif
+    }
+}
+
+LayoutRect RemoteFrameView::layoutViewportRect() const
+{
+    return m_frame->frameTreeSyncData().frameLayoutViewportRect;
+}
+
+std::optional<LayoutRect> RemoteFrameView::visibleRectOfChild(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+        return info->visibleRectInParent();
+
+    return std::nullopt;
+}
+
+OptionSet<FrameOwnerElementAppearance> RemoteFrameView::appearanceOfOwnerElementOfChildFrame(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+        return info->ownerElementAppearance();
+
+    return { };
+}
+
+LayoutPoint RemoteFrameView::childFrameOwnerContentBoxLocation(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+        return info->contentBoxLocation();
+
+    return { };
+}
+
+TransformationMatrix RemoteFrameView::childFrameOwnerToRootContentTransform(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+        return info->childFrameOwnerToRootContentTransform();
+
+    return { };
+}
+
+TransformationMatrix RemoteFrameView::absoluteToChildFrameOwnerLocalTransform(const Frame& child) const
+{
+    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+        return info->absoluteToChildFrameOwnerLocalTransform();
+
+    return { };
 }
 
 // FIXME: Implement all the stubs below.
@@ -70,8 +137,9 @@ IntRect RemoteFrameView::windowClipRect() const
     return { };
 }
 
-void RemoteFrameView::paintContents(GraphicsContext&, const IntRect&, SecurityOriginPaintPolicy, RegionContext*)
+void RemoteFrameView::paintContents(GraphicsContext& context, const IntRect& rect, SecurityOriginPaintPolicy, RegionContext*)
 {
+    m_frame->client().paintContents(context, rect);
 }
 
 void RemoteFrameView::addedOrRemovedScrollbar()

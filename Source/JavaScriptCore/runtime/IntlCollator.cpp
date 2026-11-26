@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2015 Andy VanWagoner (andy@vanwagoner.family)
  * Copyright (C) 2015 Sukolsak Sakshuwong (sukolsak@gmail.com)
- * Copyright (C) 2016-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,7 +63,7 @@ IntlCollator::IntlCollator(VM& vm, Structure* structure)
 template<typename Visitor>
 void IntlCollator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    IntlCollator* thisObject = jsCast<IntlCollator*>(cell);
+    IntlCollator* thisObject = uncheckedDowncast<IntlCollator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
@@ -89,13 +89,13 @@ Vector<String> IntlCollator::sortLocaleData(const String& locale, RelevantExtens
             int32_t length = 0;
             while ((pointer = uenum_next(enumeration.get(), &length, &status)) && U_SUCCESS(status)) {
                 // 10.2.3 "The values "standard" and "search" must not be used as elements in any [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co array."
-                String collation({ pointer, static_cast<size_t>(length) });
+                String collation(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
                 if (collation == "standard"_s || collation == "search"_s)
                     continue;
                 if (auto mapped = mapICUCollationKeywordToBCP47(collation))
-                    keyLocaleData.append(WTFMove(mapped.value()));
+                    keyLocaleData.append(WTF::move(mapped.value()));
                 else
-                    keyLocaleData.append(WTFMove(collation));
+                    keyLocaleData.append(WTF::move(collation));
             }
         }
         break;
@@ -164,7 +164,7 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
                 throwRangeError(globalObject, scope, "collation is not a well-formed collation value"_s);
                 return;
             }
-            localeOptions[static_cast<unsigned>(RelevantExtensionKey::Co)] = WTFMove(collation);
+            localeOptions[static_cast<unsigned>(RelevantExtensionKey::Co)] = WTF::move(collation);
         }
     }
 
@@ -385,7 +385,7 @@ void IntlCollator::setBoundCompare(VM& vm, JSBoundFunction* format)
 static bool canDoASCIIUCADUCETComparisonWithUCollator(UCollator& collator)
 {
     // Attributes are default ones unless we set. So, non-configured attributes are default ones.
-    static constexpr std::pair<UColAttribute, UColAttributeValue> attributes[] = {
+    static constexpr auto attributes = WTF::toArray<std::pair<UColAttribute, UColAttributeValue>>({
         { UCOL_FRENCH_COLLATION, UCOL_OFF },
         { UCOL_ALTERNATE_HANDLING, UCOL_NON_IGNORABLE },
         { UCOL_STRENGTH, UCOL_TERTIARY },
@@ -393,7 +393,7 @@ static bool canDoASCIIUCADUCETComparisonWithUCollator(UCollator& collator)
         { UCOL_CASE_FIRST, UCOL_OFF },
         { UCOL_NUMERIC_COLLATION, UCOL_OFF },
         // We do not check UCOL_NORMALIZATION_MODE status since FCD normalization does nothing for ASCII strings.
-    };
+    });
 
     for (auto& pair : attributes) {
         UErrorCode status = U_ZERO_ERROR;
@@ -444,10 +444,10 @@ void IntlCollator::checkICULocaleInvariants(const LocaleSet& locales)
             bool allAreGood = true;
             for (unsigned x = 0; x < 128; ++x) {
                 for (unsigned y = 0; y < 128; ++y) {
-                    if (canUseASCIIUCADUCETComparison(static_cast<LChar>(x)) && canUseASCIIUCADUCETComparison(static_cast<LChar>(y))) {
+                    if (canUseASCIIUCADUCETComparison(static_cast<Latin1Character>(x)) && canUseASCIIUCADUCETComparison(static_cast<Latin1Character>(y))) {
                         UErrorCode status = U_ZERO_ERROR;
-                        UChar xstring[] = { static_cast<UChar>(x), 0 };
-                        UChar ystring[] = { static_cast<UChar>(y), 0 };
+                        char16_t xstring[] = { static_cast<char16_t>(x), 0 };
+                        char16_t ystring[] = { static_cast<char16_t>(y), 0 };
                         auto resultICU = ucol_strcoll(&collator, xstring, 1, ystring, 1);
                         ASSERT(U_SUCCESS(status));
                         auto resultJSC = compareASCIIWithUCADUCET(span(*xstring), span(*ystring));
@@ -489,7 +489,7 @@ void IntlCollator::checkICULocaleInvariants(const LocaleSet& locales)
         // Contractions and Expansions are defined as a rule. If there is no tailoring rule, then they should be UCA DUCET's default.
 
         auto ensureNotIncludingASCII = [&](USet& set) {
-            Vector<UChar, 32> buffer;
+            Vector<char16_t, 32> buffer;
             for (int32_t index = 0, count = uset_getItemCount(&set); index < count; ++index) {
                 // start and end are inclusive.
                 UChar32 start = 0;

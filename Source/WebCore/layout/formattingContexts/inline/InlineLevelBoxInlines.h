@@ -1,5 +1,6 @@
 /**
  * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,47 +26,59 @@
 
 #pragma once
 
+#include "CSSKeywordList.h"
+#include "FontCascadeInlines.h"
 #include "InlineLevelBox.h"
-#include "RenderStyleInlines.h"
+#include "LayoutBoxInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Layout {
 
-inline InlineLevelBox::InlineLevelBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutSize logicalSize, Type type, OptionSet<PositionWithinLayoutBox> positionWithinLayoutBox)
+template<typename PreferredLineHeightFunctor> InlineLevelBox::VerticalAlignment toInlineBoxLevelVerticalAlign(const Style::ComputedStyle& style, NOESCAPE PreferredLineHeightFunctor&& preferredLineHeightFunctor)
+{
+    return WTF::switchOn(style.verticalAlign(),
+        [](CSS::SpecificKeyword auto const& keyword) -> InlineLevelBox::VerticalAlignment {
+            return keyword;
+        },
+        [&](const Style::VerticalAlign::LengthPercentage& value) -> InlineLevelBox::VerticalAlignment {
+            return Style::evaluate<InlineLayoutUnit>(value, std::forward<PreferredLineHeightFunctor>(preferredLineHeightFunctor), style.usedZoomForLength());
+        }
+    );
+}
+
+inline InlineLevelBox::InlineLevelBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutSize logicalSize, Type type, EnumSet<PositionWithinLayoutBox> positionWithinLayoutBox)
     : m_layoutBox(layoutBox)
     , m_logicalRect({ }, logicalLeft, logicalSize.width(), logicalSize.height())
     , m_hasContent(layoutBox.isRubyBase() && layoutBox.associatedRubyAnnotationBox()) // Normally we set inline box's has-content state as we come across child content, but ruby annotations are not visible to inline layout.
     , m_isFirstWithinLayoutBox(positionWithinLayoutBox.contains(PositionWithinLayoutBox::First))
     , m_isLastWithinLayoutBox(positionWithinLayoutBox.contains(PositionWithinLayoutBox::Last))
     , m_type(type)
-    , m_style({ style.fontCascade().metricsOfPrimaryFont(), style.lineHeight(), style.lineFitEdge(), style.lineBoxContain(), InlineLayoutUnit(style.fontCascade().fontDescription().computedSize()), { } })
+    , m_style({ style.fontCascade().metricsOfPrimaryFont(), style.lineHeight(), style.textBoxTrim(), style.textBoxEdge(), style.lineFitEdge(), style.usedZoomForLength(), style.lineBoxContain(), InlineLayoutUnit(style.fontCascade().fontDescription().computedSize()), toInlineBoxLevelVerticalAlign(style, [this] { return preferredLineHeight(); }) })
 {
-    m_style.verticalAlignment.type = style.verticalAlign();
-    if (m_style.verticalAlignment.type == VerticalAlign::Length)
-        m_style.verticalAlignment.baselineOffset = floatValueForLength(style.verticalAlignLength(), preferredLineHeight());
 }
 
-inline InlineLevelBox InlineLevelBox::createAtomicInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
+inline InlineLevelBox InlineLevelBox::createAtomicInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::AtomicInlineBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createGenericInlineLevelBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft)
+inline InlineLevelBox InlineLevelBox::createGenericInlineLevelBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft)
 {
     return { layoutBox, style, logicalLeft, { }, Type::GenericInlineLevelBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox isLineSpanning)
+inline InlineLevelBox InlineLevelBox::createInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox isLineSpanning)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, isLineSpanning == LineSpanningInlineBox::Yes ? Type::LineSpanningInlineBox : Type::InlineBox, { } };
 }
 
-inline InlineLevelBox InlineLevelBox::createLineBreakBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft)
+inline InlineLevelBox InlineLevelBox::createLineBreakBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft)
 {
     return { layoutBox, style, logicalLeft, { }, Type::LineBreakBox };
 }
 
-inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
+inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, const WebCore::Style::ComputedStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
 {
     return { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::RootInlineBox, { } };
 }
@@ -73,18 +86,18 @@ inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, 
 inline bool InlineLevelBox::mayStretchLineBox() const
 {
     if (isRootInlineBox())
-        return m_style.lineBoxContain.containsAny({ LineBoxContain::Block, LineBoxContain::Inline }) || (hasContent() && m_style.lineBoxContain.containsAny({ LineBoxContain::InitialLetter, LineBoxContain::Font, LineBoxContain::Glyphs }));
+        return m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::Block, WebCore::Style::WebkitLineBoxContainValue::Inline }) || (hasContent() && m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::InitialLetter, WebCore::Style::WebkitLineBoxContainValue::Font, WebCore::Style::WebkitLineBoxContainValue::Glyphs }));
 
     if (isAtomicInlineBox())
-        return m_style.lineBoxContain.contains(LineBoxContain::Replaced);
+        return m_style.lineBoxContain.contains(WebCore::Style::WebkitLineBoxContainValue::Replaced);
 
     if (isInlineBox()) {
-        // Either the inline box itself is included or its text content thorugh Glyph and Font.
-        return m_style.lineBoxContain.containsAny({ LineBoxContain::Inline, LineBoxContain::InlineBox }) || (hasContent() && m_style.lineBoxContain.containsAny({ LineBoxContain::Font, LineBoxContain::Glyphs }));
+        // Either the inline box itself is included or its text content through Glyph and Font.
+        return m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::Inline, WebCore::Style::WebkitLineBoxContainValue::InlineBox }) || (hasContent() && m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::Font, WebCore::Style::WebkitLineBoxContainValue::Glyphs }));
     }
 
     if (isLineBreakBox())
-        return m_style.lineBoxContain.containsAny({ LineBoxContain::Inline, LineBoxContain::InlineBox }) || (hasContent() && m_style.lineBoxContain.containsAny({ LineBoxContain::Font, LineBoxContain::Glyphs }));
+        return m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::Inline, WebCore::Style::WebkitLineBoxContainValue::InlineBox }) || (hasContent() && m_style.lineBoxContain.containsAny({ WebCore::Style::WebkitLineBoxContainValue::Font, WebCore::Style::WebkitLineBoxContainValue::Glyphs }));
 
     return true;
 }

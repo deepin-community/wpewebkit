@@ -28,7 +28,6 @@
 #if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
 
 #include "JITCompilation.h"
-#include "WasmBinding.h"
 #include "WasmFormat.h"
 #include <wtf/Expected.h>
 
@@ -42,7 +41,7 @@ enum class BindingFailure {
     OutOfMemory,
 };
 
-Expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(unsigned importIndex);
+Expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation&, unsigned importIndex);
 
 } } // namespace JSC::Wasm
 

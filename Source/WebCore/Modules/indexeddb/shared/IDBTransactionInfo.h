@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "IDBDatabaseInfo.h"
-#include "IDBResourceIdentifier.h"
-#include "IDBTransactionDurability.h"
-#include "IDBTransactionMode.h"
-#include "IndexedDB.h"
+#include <WebCore/IDBDatabaseInfo.h>
+#include <WebCore/IDBResourceIdentifier.h>
+#include <WebCore/IDBTransactionDurability.h>
+#include <WebCore/IDBTransactionMode.h>
+#include <WebCore/IndexedDB.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -43,7 +44,7 @@ class IDBConnectionToClient;
 }
 
 class IDBTransactionInfo {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(IDBTransactionInfo, WEBCORE_EXPORT);
 public:
     static IDBTransactionInfo clientTransaction(const IDBClient::IDBConnectionProxy&, const Vector<String>& objectStores, IDBTransactionMode, std::optional<IDBTransactionDurability>);
     static IDBTransactionInfo versionChange(const IDBServer::IDBConnectionToClient&, const IDBDatabaseInfo& originalDatabaseInfo, uint64_t newVersion);
@@ -57,23 +58,23 @@ public:
 
     WEBCORE_EXPORT IDBTransactionInfo isolatedCopy() const;
 
-    const IDBResourceIdentifier& identifier() const { return m_identifier; }
+    const IDBResourceIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
 
     IDBTransactionMode mode() const { return m_mode; }
     IDBTransactionDurability durability() const { return m_durability; }
     uint64_t newVersion() const { return m_newVersion; }
 
-    const Vector<String>& objectStores() const { return m_objectStores; }
+    const Vector<String>& objectStores() const LIFETIME_BOUND { return m_objectStores; }
 
-    const std::unique_ptr<IDBDatabaseInfo>& originalDatabaseInfo() const { return m_originalDatabaseInfo; }
+    const std::unique_ptr<IDBDatabaseInfo>& originalDatabaseInfo() const LIFETIME_BOUND { return m_originalDatabaseInfo; }
 
     IDBTransactionInfo(IDBResourceIdentifier identifier, IDBTransactionMode mode, IDBTransactionDurability durability, uint64_t newVersion, Vector<String>&& objectStores, std::unique_ptr<IDBDatabaseInfo> originalDatabaseInfo)
         : m_identifier(identifier)
         , m_mode(mode)
         , m_durability(durability)
         , m_newVersion(newVersion)
-        , m_objectStores(WTFMove(objectStores))
-        , m_originalDatabaseInfo(WTFMove(originalDatabaseInfo)) { }
+        , m_objectStores(WTF::move(objectStores))
+        , m_originalDatabaseInfo(WTF::move(originalDatabaseInfo)) { }
 
 #if !LOG_DISABLED
     String loggingString() const;

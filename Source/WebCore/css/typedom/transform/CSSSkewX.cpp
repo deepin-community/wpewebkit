@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,39 +41,36 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CSSSkewX);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CSSSkewX);
 
 ExceptionOr<Ref<CSSSkewX>> CSSSkewX::create(Ref<CSSNumericValue> ax)
 {
     if (!ax->type().matches<CSSNumericBaseType::Angle>())
         return Exception { ExceptionCode::TypeError };
-    return adoptRef(*new CSSSkewX(WTFMove(ax)));
+    return adoptRef(*new CSSSkewX(WTF::move(ax)));
 }
 
-ExceptionOr<Ref<CSSSkewX>> CSSSkewX::create(CSSFunctionValue& cssFunctionValue)
+ExceptionOr<Ref<CSSSkewX>> CSSSkewX::create(Ref<const CSSFunctionValue> cssFunctionValue, Document& document)
 {
-    if (cssFunctionValue.name() != CSSValueSkewX) {
+    if (cssFunctionValue->name() != CSSValueSkewX) {
         ASSERT_NOT_REACHED();
-        return CSSSkewX::create(CSSNumericFactory::deg(0));
+        return CSSSkewX::create(Ref<CSSNumericValue>(CSSNumericFactory::deg(0)));
     }
 
-    if (cssFunctionValue.size() != 1 || !cssFunctionValue.item(0)) {
+    if (cssFunctionValue->size() != 1 || !cssFunctionValue->item(0)) {
         ASSERT_NOT_REACHED();
         return Exception { ExceptionCode::TypeError, "Unexpected number of values."_s };
     }
 
-    auto valueOrException = CSSStyleValueFactory::reifyValue(*cssFunctionValue.item(0), std::nullopt);
+    auto valueOrException = CSSNumericValue::reifyValue(document, protect(*cssFunctionValue->item(0)));
     if (valueOrException.hasException())
         return valueOrException.releaseException();
-    RefPtr numericValue = dynamicDowncast<CSSNumericValue>(valueOrException.releaseReturnValue());
-    if (!numericValue)
-        return Exception { ExceptionCode::TypeError, "Expected a CSSNumericValue."_s };
-    return CSSSkewX::create(numericValue.releaseNonNull());
+    return CSSSkewX::create(valueOrException.releaseReturnValue());
 }
 
-CSSSkewX::CSSSkewX(Ref<CSSNumericValue> ax)
+CSSSkewX::CSSSkewX(Ref<CSSNumericValue>&& ax)
     : CSSTransformComponent(Is2D::Yes)
-    , m_ax(WTFMove(ax))
+    , m_ax(WTF::move(ax))
 {
 }
 
@@ -81,7 +79,7 @@ ExceptionOr<void> CSSSkewX::setAx(Ref<CSSNumericValue> ax)
     if (!ax->type().matches<CSSNumericBaseType::Angle>())
         return Exception { ExceptionCode::TypeError };
 
-    m_ax = WTFMove(ax);
+    m_ax = WTF::move(ax);
     return { };
 }
 
@@ -89,7 +87,7 @@ void CSSSkewX::serialize(StringBuilder& builder) const
 {
     // https://drafts.css-houdini.org/css-typed-om/#serialize-a-cssskewx
     builder.append("skewX("_s);
-    m_ax->serialize(builder);
+    protect(m_ax)->serialize(builder);
     builder.append(')');
 }
 
@@ -106,12 +104,12 @@ ExceptionOr<Ref<DOMMatrix>> CSSSkewX::toMatrix()
     TransformationMatrix matrix { };
     matrix.skewX(x->value());
 
-    return { DOMMatrix::create(WTFMove(matrix), DOMMatrixReadOnly::Is2D::Yes) };
+    return { DOMMatrix::create(WTF::move(matrix), DOMMatrixReadOnly::Is2D::Yes) };
 }
 
 RefPtr<CSSValue> CSSSkewX::toCSSValue() const
 {
-    auto ax = m_ax->toCSSValue();
+    auto ax = protect(m_ax)->toCSSValue();
     if (!ax)
         return nullptr;
     return CSSFunctionValue::create(CSSValueSkewX, ax.releaseNonNull());

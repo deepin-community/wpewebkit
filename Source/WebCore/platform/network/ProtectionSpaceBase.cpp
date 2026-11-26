@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Apple Inc.  All rights reserved.
+ * Copyright (C) 2007 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,13 +66,20 @@ bool ProtectionSpaceBase::isPasswordBased() const
     case AuthenticationScheme::NTLM:
     case AuthenticationScheme::Negotiate:
     case AuthenticationScheme::OAuth:
+#if PLATFORM(COCOA)
+    case AuthenticationScheme::XMobileMeAuthToken:
+    case AuthenticationScheme::PrivateAccessToken:
+    case AuthenticationScheme::OAuthBearerToken:
+#endif
 #if USE(GLIB)
     case AuthenticationScheme::ClientCertificatePINRequested:
 #endif
         return true;
     case AuthenticationScheme::ClientCertificateRequested:
     case AuthenticationScheme::ServerTrustEvaluationRequested:
+#if !PLATFORM(COCOA)
     case AuthenticationScheme::Unknown:
+#endif
         return false;
     }
 

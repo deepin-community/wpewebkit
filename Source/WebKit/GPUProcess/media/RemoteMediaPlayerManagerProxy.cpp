@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,17 +30,19 @@
 
 #include "GPUConnectionToWebProcess.h"
 #include "GPUProcess.h"
+#include "Logging.h"
 #include "RemoteMediaPlayerConfiguration.h"
 #include "RemoteMediaPlayerManagerProxyMessages.h"
 #include "RemoteMediaPlayerProxy.h"
 #include "RemoteMediaPlayerProxyConfiguration.h"
 #include "RemoteVideoFrameObjectHeap.h"
 #include "ScopedRenderingResourcesRequest.h"
-#include "WebCoreArgumentCoders.h"
+#include "SharedPreferencesForWebProcess.h"
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/MediaPlayerPrivate.h>
-#include <wtf/Logger.h>
+#include <wtf/LoggerHelper.h>
+#include <wtf/RefPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UniqueRef.h>
 
@@ -48,14 +50,29 @@
 #include <WebCore/AVAssetMIMETypeCache.h>
 #endif
 
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_gpuConnectionToWebProcess.get()->connection())
+
 namespace WebKit {
 
 using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaPlayerManagerProxy);
 
+CheckedPtr<const MediaPlayerFactory> RemoteMediaPlayerManagerProxy::playbackEngineForConnection(MediaPlayerEnums::MediaEngineIdentifier engineIdentifier) const
+{
+    MediaPlayerEngineSelection selection {
+        .identifier = engineIdentifier,
+        .scope = MediaPlayerScope::Playback,
+    };
+    return MediaPlayer::mediaEngine(selection);
+}
+
 RemoteMediaPlayerManagerProxy::RemoteMediaPlayerManagerProxy(GPUConnectionToWebProcess& connection)
     : m_gpuConnectionToWebProcess(connection)
+#if !RELEASE_LOG_DISABLED
+    , m_logIdentifier { LoggerHelper::uniqueLogIdentifier() }
+    , m_logger { connection.logger() }
+#endif
 {
 }
 
@@ -68,7 +85,7 @@ void RemoteMediaPlayerManagerProxy::clear()
 {
     auto proxies = std::exchange(m_proxies, { });
 
-    for (auto& proxy : proxies.values())
+    for (Ref proxy : proxies.values())
         proxy->invalidate();
 }
 
@@ -80,8 +97,15 @@ void RemoteMediaPlayerManagerProxy::createMediaPlayer(MediaPlayerIdentifier iden
     ASSERT(RunLoop::isMain());
     ASSERT(!m_proxies.contains(identifier));
 
-    auto proxy = RemoteMediaPlayerProxy::create(*this, identifier, clientIdentifier, connection->protectedConnection(), engineIdentifier, WTFMove(proxyConfiguration), Ref { connection->videoFrameObjectHeap() }, connection->webProcessIdentity());
-    m_proxies.add(identifier, WTFMove(proxy));
+    if (!playbackEngineForConnection(engineIdentifier)) {
+        // Terminate only for a containment bypass: the engine is registered here for capability
+        // queries (Supports scope) but not for playback. An entirely-absent engine (e.g. media
+        // framework unavailable in recoveryOS) degrades to a null player.
+        MESSAGE_CHECK(!MediaPlayer::mediaEngine({ .identifier = engineIdentifier, .scope = MediaPlayerScope::Supports }));
+    }
+
+    auto proxy = RemoteMediaPlayerProxy::create(*this, identifier, clientIdentifier, connection->connection(), engineIdentifier, WTF::move(proxyConfiguration), Ref { connection->videoFrameObjectHeap() }, connection->webProcessIdentity());
+    m_proxies.add(identifier, WTF::move(proxy));
 }
 
 void RemoteMediaPlayerManagerProxy::deleteMediaPlayer(MediaPlayerIdentifier identifier)
@@ -101,7 +125,7 @@ void RemoteMediaPlayerManagerProxy::deleteMediaPlayer(MediaPlayerIdentifier iden
 
 void RemoteMediaPlayerManagerProxy::getSupportedTypes(MediaPlayerEnums::MediaEngineIdentifier engineIdentifier, CompletionHandler<void(Vector<String>&&)>&& completionHandler)
 {
-    auto engine = MediaPlayer::mediaEngine(engineIdentifier);
+    CheckedPtr engine = playbackEngineForConnection(engineIdentifier);
     if (!engine) {
         WTFLogAlways("Failed to find media engine.");
         completionHandler({ });
@@ -115,12 +139,12 @@ void RemoteMediaPlayerManagerProxy::getSupportedTypes(MediaPlayerEnums::MediaEng
         return type;
     });
 
-    completionHandler(WTFMove(result));
+    completionHandler(WTF::move(result));
 }
 
 void RemoteMediaPlayerManagerProxy::supportsTypeAndCodecs(MediaPlayerEnums::MediaEngineIdentifier engineIdentifier, const MediaEngineSupportParameters&& parameters, CompletionHandler<void(MediaPlayer::SupportsType)>&& completionHandler)
 {
-    auto engine = MediaPlayer::mediaEngine(engineIdentifier);
+    CheckedPtr engine = playbackEngineForConnection(engineIdentifier);
     if (!engine) {
         WTFLogAlways("Failed to find media engine.");
         completionHandler(MediaPlayer::SupportsType::IsNotSupported);
@@ -133,7 +157,7 @@ void RemoteMediaPlayerManagerProxy::supportsTypeAndCodecs(MediaPlayerEnums::Medi
 
 void RemoteMediaPlayerManagerProxy::supportsKeySystem(MediaPlayerEnums::MediaEngineIdentifier engineIdentifier, const String&& keySystem, const String&& mimeType, CompletionHandler<void(bool)>&& completionHandler)
 {
-    auto engine = MediaPlayer::mediaEngine(engineIdentifier);
+    CheckedPtr engine = playbackEngineForConnection(engineIdentifier);
     if (!engine) {
         WTFLogAlways("Failed to find media engine.");
         return;
@@ -146,66 +170,50 @@ void RemoteMediaPlayerManagerProxy::supportsKeySystem(MediaPlayerEnums::MediaEng
 void RemoteMediaPlayerManagerProxy::didReceivePlayerMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
     ASSERT(RunLoop::isMain());
-    if (auto* player = m_proxies.get(LegacyNullableObjectIdentifier<MediaPlayerIdentifierType>(decoder.destinationID())))
-        player->didReceiveMessage(connection, decoder);
+    if (ObjectIdentifier<MediaPlayerIdentifierType>::isValidIdentifier(decoder.destinationID())) {
+        if (RefPtr player = m_proxies.get(ObjectIdentifier<MediaPlayerIdentifierType>(decoder.destinationID())))
+            player->didReceiveMessage(connection, decoder);
+    }
 }
 
-bool RemoteMediaPlayerManagerProxy::didReceiveSyncPlayerMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
+void RemoteMediaPlayerManagerProxy::didReceiveSyncPlayerMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
 {
     ASSERT(RunLoop::isMain());
-    if (auto* player = m_proxies.get(LegacyNullableObjectIdentifier<MediaPlayerIdentifierType>(decoder.destinationID())))
-        return player->didReceiveSyncMessage(connection, decoder, encoder);
-    return false;
+    if (ObjectIdentifier<MediaPlayerIdentifierType>::isValidIdentifier(decoder.destinationID())) {
+        if (RefPtr player = m_proxies.get(ObjectIdentifier<MediaPlayerIdentifierType>(decoder.destinationID()))) {
+            player->didReceiveSyncMessage(connection, decoder, encoder);
+            return;
+        }
+    }
 }
 
-RefPtr<MediaPlayer> RemoteMediaPlayerManagerProxy::mediaPlayer(const MediaPlayerIdentifier& identifier)
+RefPtr<MediaPlayer> RemoteMediaPlayerManagerProxy::mediaPlayer(std::optional<MediaPlayerIdentifier> identifier)
 {
     ASSERT(RunLoop::isMain());
-    if (!identifier.isValid())
+    if (!identifier)
         return nullptr;
-    auto results = m_proxies.find(identifier);
+    auto results = m_proxies.find(*identifier);
     if (results != m_proxies.end())
         return results->value->mediaPlayer();
     return nullptr;
 }
 
 #if !RELEASE_LOG_DISABLED
-Logger& RemoteMediaPlayerManagerProxy::logger()
+WTFLogChannel& RemoteMediaPlayerManagerProxy::logChannel() const
 {
-    if (!m_logger) {
-        m_logger = Logger::create(this);
-        auto connection = m_gpuConnectionToWebProcess.get();
-        m_logger->setEnabled(this, connection ? connection->sessionID().isAlwaysOnLoggingAllowed() : false);
-    }
-
-    return *m_logger;
+    return WebKit2LogMedia;
 }
 #endif
 
-std::optional<ShareableBitmap::Handle> RemoteMediaPlayerManagerProxy::bitmapImageForCurrentTime(WebCore::MediaPlayerIdentifier identifier)
+std::optional<SharedPreferencesForWebProcess> RemoteMediaPlayerManagerProxy::sharedPreferencesForWebProcess() const
 {
-    auto player = mediaPlayer(identifier);
-    if (!player)
-        return { };
-
-    auto image = player->nativeImageForCurrentTime();
-    if (!image)
-        return { };
-
-    auto imageSize = image->size();
-    auto bitmap = ShareableBitmap::create({ imageSize, player->colorSpace() });
-    if (!bitmap)
-        return { };
-
-    auto context = bitmap->createGraphicsContext();
-    if (!context)
-        return { };
-
-    context->drawNativeImage(*image, FloatRect { { }, imageSize }, FloatRect { { }, imageSize });
-
-    return bitmap->createHandle();
+    if (RefPtr connection = m_gpuConnectionToWebProcess.get())
+        return connection->sharedPreferencesForWebProcess();
+    return std::nullopt;
 }
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK
 
 #endif // ENABLE(GPU_PROCESS) && ENABLE(VIDEO)

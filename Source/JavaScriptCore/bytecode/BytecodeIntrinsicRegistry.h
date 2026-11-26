@@ -26,7 +26,8 @@
 
 #pragma once
 
-#include "Identifier.h"
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/Strong.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -47,16 +48,15 @@ enum class LinkTimeConstant : int32_t;
     macro(getByIdDirectPrivate) \
     macro(getByValWithThis) \
     macro(getPrototypeOf) \
-    macro(getPromiseInternalField) \
     macro(getGeneratorInternalField) \
-    macro(getAsyncGeneratorInternalField) \
-    macro(getAbstractModuleRecordInternalField) \
+    macro(getIteratorHelperInternalField) \
+    macro(getAsyncDisposableStackInternalField) \
     macro(getArrayIteratorInternalField) \
-    macro(getStringIteratorInternalField) \
-    macro(getMapIteratorInternalField) \
-    macro(getSetIteratorInternalField) \
     macro(getProxyInternalField) \
+    macro(getWrapForValidIteratorInternalField) \
+    macro(getDisposableStackInternalField) \
     macro(idWithProfile) \
+    macro(isAsyncDisposableStack) \
     macro(isObject) \
     macro(isCallable) \
     macro(isConstructor) \
@@ -64,35 +64,28 @@ enum class LinkTimeConstant : int32_t;
     macro(isProxyObject) \
     macro(isDerivedArray) \
     macro(isGenerator) \
-    macro(isAsyncGenerator) \
+    macro(isIteratorHelper) \
     macro(isPromise) \
     macro(isRegExpObject) \
     macro(isMap) \
     macro(isSet) \
     macro(isShadowRealm) \
-    macro(isStringIterator) \
     macro(isArrayIterator) \
-    macro(isMapIterator) \
-    macro(isSetIterator) \
     macro(isUndefinedOrNull) \
-    macro(tailCallForwardArguments) \
+    macro(isWrapForValidIterator) \
+    macro(isDisposableStack) \
     macro(throwTypeError) \
     macro(throwRangeError) \
     macro(throwOutOfMemoryError) \
-    macro(tryGetById) \
-    macro(tryGetByIdWithWellKnownSymbol) \
     macro(putByIdDirect) \
     macro(putByIdDirectPrivate) \
     macro(putByValDirect) \
     macro(putByValWithThisSloppy) \
     macro(putByValWithThisStrict) \
-    macro(putPromiseInternalField) \
     macro(putGeneratorInternalField) \
-    macro(putAsyncGeneratorInternalField) \
+    macro(putAsyncDisposableStackInternalField) \
     macro(putArrayIteratorInternalField) \
-    macro(putStringIteratorInternalField) \
-    macro(putMapIteratorInternalField) \
-    macro(putSetIteratorInternalField) \
+    macro(putDisposableStackInternalField) \
     macro(superSamplerBegin) \
     macro(superSamplerEnd) \
     macro(toNumber) \
@@ -105,6 +98,9 @@ enum class LinkTimeConstant : int32_t;
     macro(newArrayWithSize) \
     macro(newArrayWithSpecies) \
     macro(newPromise) \
+    macro(iteratorGenericClose) \
+    macro(iteratorGenericNext) \
+    macro(ifAbruptCloseIterator) \
     macro(createPromise) \
 
 #define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(macro) \
@@ -126,53 +122,36 @@ enum class LinkTimeConstant : int32_t;
     macro(ModuleSatisfy) \
     macro(ModuleLink) \
     macro(ModuleReady) \
-    macro(promiseRejectionReject) \
-    macro(promiseRejectionHandle) \
-    macro(promiseStatePending) \
-    macro(promiseStateFulfilled) \
-    macro(promiseStateRejected) \
-    macro(promiseStateMask) \
-    macro(promiseFlagsIsHandled) \
-    macro(promiseFlagsIsFirstResolvingFunctionCalled) \
-    macro(promiseFieldFlags) \
-    macro(promiseFieldReactionsOrResult) \
     macro(proxyFieldTarget) \
     macro(proxyFieldHandler) \
     macro(generatorFieldState) \
     macro(generatorFieldNext) \
     macro(generatorFieldThis) \
     macro(generatorFieldFrame) \
-    macro(generatorFieldContext) \
     macro(GeneratorResumeModeNormal) \
     macro(GeneratorResumeModeThrow) \
     macro(GeneratorResumeModeReturn) \
     macro(GeneratorStateCompleted) \
     macro(GeneratorStateExecuting) \
+    macro(GeneratorStateInit) \
+    macro(iteratorHelperFieldGenerator) \
+    macro(iteratorHelperFieldUnderlyingIterator) \
     macro(arrayIteratorFieldIndex) \
     macro(arrayIteratorFieldIteratedObject) \
     macro(arrayIteratorFieldKind) \
-    macro(mapIteratorFieldEntry) \
-    macro(mapIteratorFieldIteratedObject) \
-    macro(mapIteratorFieldStorage) \
-    macro(mapIteratorFieldKind) \
-    macro(setIteratorFieldEntry) \
-    macro(setIteratorFieldIteratedObject) \
-    macro(setIteratorFieldStorage) \
-    macro(setIteratorFieldKind) \
-    macro(stringIteratorFieldIndex) \
-    macro(stringIteratorFieldIteratedString) \
-    macro(asyncGeneratorFieldSuspendReason) \
-    macro(asyncGeneratorFieldQueueFirst) \
-    macro(asyncGeneratorFieldQueueLast) \
-    macro(AsyncGeneratorStateCompleted) \
-    macro(AsyncGeneratorStateExecuting) \
-    macro(AsyncGeneratorStateAwaitingReturn) \
-    macro(AsyncGeneratorStateSuspendedStart) \
-    macro(AsyncGeneratorStateSuspendedYield) \
-    macro(AsyncGeneratorSuspendReasonYield) \
-    macro(AsyncGeneratorSuspendReasonAwait) \
-    macro(AsyncGeneratorSuspendReasonNone) \
-    macro(abstractModuleRecordFieldState)
+    macro(wrapForValidIteratorFieldIteratedIterator) \
+    macro(wrapForValidIteratorFieldIteratedNextMethod) \
+    macro(disposableStackFieldState) \
+    macro(disposableStackFieldCapability) \
+    macro(DisposableStackStatePending) \
+    macro(DisposableStackStateDisposed) \
+    macro(asyncDisposableStackFieldState) \
+    macro(asyncDisposableStackFieldCapability) \
+    macro(AsyncDisposableStackStatePending) \
+    macro(AsyncDisposableStackStateDisposed) \
+    macro(InternalMicrotaskAsyncFromSyncIteratorContinue) \
+    macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
+
 
 #define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
     macro(orderedHashTableSentinel)
@@ -222,7 +201,7 @@ public:
         Type m_type;
     };
 
-    std::optional<Entry> lookup(const Identifier&) const;
+    std::optional<Entry> NODELETE lookup(const Identifier&) const;
 
 #define JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS(name) JSValue name##Value(BytecodeGenerator&);
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS)

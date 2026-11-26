@@ -27,7 +27,7 @@
 
 #if ENABLE(ASYNC_SCROLLING)
 
-#include "ScrollingStateScrollingNode.h"
+#include <WebCore/ScrollingStateScrollingNode.h>
 
 namespace WebCore {
 
@@ -56,7 +56,7 @@ private:
 #if ENABLE(SCROLLING_THREAD)
         OptionSet<SynchronousScrollingReason>,
 #endif
-        RequestedScrollData&&,
+        ScrollRequestData&&,
         FloatScrollSnapOffsetsInfo&&,
         std::optional<unsigned> currentHorizontalSnapPointIndex,
         std::optional<unsigned> currentVerticalSnapPointIndex,
@@ -69,8 +69,10 @@ private:
         MouseLocationState&&,
         ScrollbarHoverState&&,
         ScrollbarEnabledState&&,
+        std::optional<ScrollbarColor>&&,
         UserInterfaceLayoutDirection,
         ScrollbarWidth,
+        bool useDarkAppearanceForScrollbars,
         RequestedKeyboardScrollData&&
     );
     ScrollingStateOverflowScrollingNode(ScrollingStateTree&, ScrollingNodeID);

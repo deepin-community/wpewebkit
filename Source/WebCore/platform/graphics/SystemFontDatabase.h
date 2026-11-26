@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include "FontSelectionAlgorithm.h"
+#include <WebCore/FontSelectionAlgorithm.h>
 #include <array>
 #include <optional>
 #include <wtf/EnumeratedArray.h>
+#include <wtf/Platform.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -74,13 +75,14 @@ public:
     float systemFontShorthandSize(FontShorthand);
     FontSelectionValue systemFontShorthandWeight(FontShorthand);
 
+    void invalidate();
+
 protected:
     SystemFontDatabase();
 
 private:
     friend class FontCache;
 
-    void invalidate();
     void platformInvalidate();
 
     struct SystemFontShorthandInfo {

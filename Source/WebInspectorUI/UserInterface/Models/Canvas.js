@@ -58,7 +58,7 @@ WI.Canvas = class Canvas extends WI.Object
         this._recordingFrames = [];
         this._recordingBufferUsed = 0;
 
-        // COMPATIBILITY (macOS 14.2, iOS 17.2): `Canvas.canvasSizeChanged` did not exist yet.
+        // COMPATIBILITY (macOS 14.0, iOS 17.0): `Canvas.canvasSizeChanged` did not exist yet.
         if (!InspectorBackend.hasEvent("Canvas.canvasSizeChanged")) {
             console.assert(!size);
 
@@ -112,7 +112,7 @@ WI.Canvas = class Canvas extends WI.Object
             console.error("Invalid canvas context type", payload.contextType);
         }
 
-        // COMPATIBILITY (macOS 14.2, iOS 17.2): `width` and `height` did not exist yet.
+        // COMPATIBILITY (macOS 14.0, iOS 17.0): `width` and `height` did not exist yet.
         let size = ("width" in payload && "height" in payload) ? new WI.Size(payload.width, payload.height) : null;
 
         // COMPATIBILITY (macOS 13.0, iOS 16.0): `backtrace` was renamed to `stackTrace`.
@@ -163,8 +163,12 @@ WI.Canvas = class Canvas extends WI.Object
         switch(colorSpace) {
         case WI.Canvas.ColorSpace.SRGB:
             return WI.UIString("sRGB", "sRGB @ Color Space", "Label for a canvas that uses the sRGB color space.");
+        case WI.Canvas.ColorSpace.SRGBLinear:
+            return WI.UIString("Linear sRGB", "Linear sRGB @ Color Space", "Label for a canvas that uses the linear sRGB color space.");
         case WI.Canvas.ColorSpace.DisplayP3:
             return WI.UIString("Display P3", "Display P3 @ Color Space", "Label for a canvas that uses the Display P3 color space.");
+        case WI.Canvas.ColorSpace.DisplayP3Linear:
+            return WI.UIString("Linear Display P3", "Linear Display P3 @ Color Space", "Label for a canvas that uses the linear Display P3 color space.");
         }
 
         console.assert(false, "Unknown canvas color space", colorSpace);
@@ -353,22 +357,7 @@ WI.Canvas = class Canvas extends WI.Object
             }
 
             this._recordingState = WI.Canvas.RecordingState.ActiveFrontend;
-
-            // COMPATIBILITY (iOS 12.1): Canvas.recordingStarted did not exist yet
-            if (this._target.hasEvent("Canvas.recordingStarted"))
-                return;
-
-            this._recordingFrames = [];
-            this._recordingBufferUsed = 0;
-
-            this.dispatchEventToListeners(WI.Canvas.Event.RecordingStarted);
         };
-
-        // COMPATIBILITY (iOS 12.1): `frameCount` did not exist yet.
-        if (this._target.hasCommand("Canvas.startRecording", "singleFrame")) {
-            this._target.CanvasAgent.startRecording(this._identifier, singleFrame, handleStartRecording);
-            return;
-        }
 
         if (singleFrame) {
             const frameCount = 1;
@@ -395,7 +384,7 @@ WI.Canvas = class Canvas extends WI.Object
     {
         // Called from WI.CanvasManager.
 
-        // COMPATIBILITY (macOS 14.2, iOS 17.2): `width` and `height` did not exist yet.
+        // COMPATIBILITY (macOS 14.0, iOS 17.0): `width` and `height` did not exist yet.
         if (this._size?.equals(size))
             return;
 
@@ -469,10 +458,6 @@ WI.Canvas = class Canvas extends WI.Object
         // Called from WI.CanvasManager.
 
         let initiatedByUser = this._recordingState === WI.Canvas.RecordingState.ActiveFrontend;
-
-        // COMPATIBILITY (iOS 12.1): Canvas.recordingStarted did not exist yet
-        if (!initiatedByUser && !InspectorBackend.hasEvent("Canvas.recordingStarted"))
-            initiatedByUser = !!this.recordingActive;
 
         let recording = recordingPayload ? WI.Recording.fromPayload(recordingPayload, this._recordingFrames) : null;
         if (recording) {

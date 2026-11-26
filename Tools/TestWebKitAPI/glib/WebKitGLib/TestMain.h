@@ -20,6 +20,7 @@
 #pragma once
 
 #include <glib-object.h>
+#include <gobject/gvaluecollector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
@@ -27,7 +28,7 @@
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
 
-#if USE(CAIRO) || PLATFORM(GTK)
+#if PLATFORM(GTK)
 #include <cairo.h>
 #endif
 
@@ -36,8 +37,13 @@
 #elif PLATFORM(GTK)
 #include <webkit2/webkit2.h>
 #elif PLATFORM(WPE)
-#include <WPEToolingBackends/HeadlessViewBackend.h>
 #include <wpe/webkit.h>
+#if USE(LIBWPE)
+#include <WPEToolingBackends/HeadlessViewBackend.h>
+#endif
+#if ENABLE(WPE_PLATFORM)
+#include <wpe/headless/wpe-headless.h>
+#endif
 #endif
 
 #define TEST_PATH_FORMAT "/webkit/%s/%s"
@@ -99,20 +105,15 @@
     } while(0)
 #endif
 
+#if PLATFORM(GTK)
+#define KEY(x) GDK_KEY_##x
+#elif PLATFORM(WPE)
+#define KEY(x) WPE_KEY_##x
+#endif
+
 class Test {
 public:
     MAKE_GLIB_TEST_FIXTURE(Test);
-
-    static GRefPtr<WebKitWebView> adoptView(gpointer view)
-    {
-        g_assert_true(WEBKIT_IS_WEB_VIEW(view));
-#if PLATFORM(GTK)
-        g_assert_true(g_object_is_floating(view));
-        return GRefPtr<WebKitWebView>(WEBKIT_WEB_VIEW(view));
-#elif PLATFORM(WPE)
-        return adoptGRef(WEBKIT_WEB_VIEW(view));
-#endif
-    }
 
     static const char* dataDirectory();
 
@@ -125,6 +126,12 @@ public:
 
     Test()
     {
+#if ENABLE(WPE_PLATFORM)
+        if (!s_useWPELegacyAPI) {
+            m_display = adoptGRef(wpe_display_headless_new());
+            assertObjectIsDeletedWhenTestFinishes(G_OBJECT(m_display.get()));
+        }
+#endif
 #if ENABLE(2022_GLIB_API)
         m_networkSession = adoptGRef(webkit_network_session_new(dataDirectory(), dataDirectory()));
         assertObjectIsDeletedWhenTestFinishes(G_OBJECT(m_networkSession.get()));
@@ -162,6 +169,9 @@ public:
 #if ENABLE(2022_GLIB_API)
         m_networkSession = nullptr;
 #endif
+#if ENABLE(WPE_PLATFORM)
+        m_display = nullptr;
+#endif
         if (m_watchedObjects.isEmpty())
             return;
 
@@ -187,14 +197,14 @@ public:
 #endif
     }
 
-#if PLATFORM(WPE)
+#if PLATFORM(WPE) && USE(LIBWPE)
     static WebKitWebViewBackend* createWebViewBackend()
     {
         // Don't make warnings fatal when creating the backend, since atk produces warnings when a11y bus is not running.
         removeLogFatalFlag(G_LOG_LEVEL_WARNING);
-        auto* headlessBackend = new WPEToolingBackends::HeadlessViewBackend(800, 600);
+        auto* headlessBackend = new WPEToolingBackends::HeadlessViewBackend(1024, 768);
         addLogFatalFlag(G_LOG_LEVEL_WARNING);
-        // Make the view initially hidden for consistency with GTK+ tests.
+        // Make the view initially hidden for consistency with GTK tests.
         wpe_view_backend_remove_activity_state(headlessBackend->backend(), wpe_view_activity_state_visible | wpe_view_activity_state_focused);
         return webkit_web_view_backend_new(headlessBackend->backend(), [](gpointer userData) {
             delete static_cast<WPEToolingBackends::HeadlessViewBackend*>(userData);
@@ -202,53 +212,134 @@ public:
     }
 #endif
 
-    static WebKitWebView* createWebView()
+    void addWebViewConstructParameters(GPtrArray* propertyNames, GArray* propertyValues, bool setWebContext, bool setNetworkSession, bool hasRelatedView)
     {
+        if (setWebContext && !hasRelatedView) {
+            g_ptr_array_add(propertyNames, g_strdup("web-context"));
+            g_array_set_size(propertyValues, propertyNames->len);
+            GValue* value = &g_array_index(propertyValues, GValue, propertyValues->len - 1);
+            g_value_init(value, G_TYPE_OBJECT);
+            g_value_set_object(value, G_OBJECT(m_webContext.get()));
+        }
+
+#if ENABLE(2022_GLIB_API)
+        if (setNetworkSession && !hasRelatedView) {
+            g_ptr_array_add(propertyNames, g_strdup("network-session"));
+            g_array_set_size(propertyValues, propertyNames->len);
+            GValue* value = &g_array_index(propertyValues, GValue, propertyValues->len - 1);
+            g_value_init(value, G_TYPE_OBJECT);
+            g_value_set_object(value, G_OBJECT(m_networkSession.get()));
+        }
+#endif
+
+#if PLATFORM(WPE)
+#if ENABLE(WPE_PLATFORM)
+        if (m_display) {
+            if (!hasRelatedView) {
+                g_ptr_array_add(propertyNames, g_strdup("display"));
+                g_array_set_size(propertyValues, propertyNames->len);
+                GValue* value = &g_array_index(propertyValues, GValue, propertyValues->len - 1);
+                g_value_init(value, G_TYPE_OBJECT);
+                g_value_set_object(value, G_OBJECT(m_display.get()));
+            }
+            return;
+        }
+#endif
+#if USE(LIBWPE)
+        g_ptr_array_add(propertyNames, g_strdup("backend"));
+        g_array_set_size(propertyValues, propertyNames->len);
+        GValue* value = &g_array_index(propertyValues, GValue, propertyValues->len - 1);
+        g_value_init(value, WEBKIT_TYPE_WEB_VIEW_BACKEND);
+        g_value_set_boxed(value, createWebViewBackend());
+#endif
+#endif
+    }
+
+    static GType webViewPropertyType(const char* name)
+    {
+        if (!g_strcmp0(name, "is-ephemeral") || !g_strcmp0(name, "is-controlled-by-automation"))
+            return G_TYPE_BOOLEAN;
+        if (!g_strcmp0(name, "automation-presentation-type"))
+            return WEBKIT_TYPE_AUTOMATION_BROWSING_CONTEXT_PRESENTATION;
+        if (!g_strcmp0(name, "default-content-security-policy"))
+            return G_TYPE_STRING;
+        if (!g_strcmp0(name, "web-extension-mode"))
+            return WEBKIT_TYPE_WEB_EXTENSION_MODE;
+        return G_TYPE_OBJECT;
+    }
+
+    // Create a WebKitWebView with the test context and network session and the given construct properties.
+    // If web-context or network-session are explicitly passed they will override the test one, using the
+    // given object or the default if nullptr is passed.
+    GRefPtr<WebKitWebView> createWebView(const char *firstPropertyName, ...)
+    {
+        GRefPtr<GPtrArray> propertyNames = adoptGRef(g_ptr_array_new_full(firstPropertyName ? 3 : 2, g_free));
+        GRefPtr<GArray> propertyValues = adoptGRef(g_array_sized_new(FALSE, TRUE, sizeof(GValue), firstPropertyName ? 3 : 2));
+        g_array_set_clear_func(propertyValues.get(), reinterpret_cast<GDestroyNotify>(g_value_unset));
+
+        bool setWebContext = true;
+        bool setNetworkSession = true;
+        bool hasRelatedView = false;
+
+        va_list args;
+        va_start(args, firstPropertyName);
+        const char* name = firstPropertyName;
+        while (name) {
+            g_ptr_array_add(propertyNames.get(), g_strdup(name));
+            g_array_set_size(propertyValues.get(), propertyNames->len);
+
+            if (!g_strcmp0(name, "web-context"))
+                setWebContext = false;
+            if (!g_strcmp0(name, "network-session"))
+                setNetworkSession = false;
+            if (!g_strcmp0(name, "related-view"))
+                hasRelatedView = true;
+
+            GUniqueOutPtr<char> error;
+            auto gType = webViewPropertyType(name);
+            G_VALUE_COLLECT_INIT(&g_array_index(propertyValues.get(), GValue, propertyValues->len - 1), gType, args, G_VALUE_NOCOPY_CONTENTS, &error.outPtr());
+            if (error) {
+                g_critical("Error creating web view: %s", error.get());
+                break;
+            }
+
+            // Passing nullptr parameter means use the default.
+            if (gType == G_TYPE_OBJECT) {
+                unsigned index = propertyValues->len - 1;
+                GValue* value = &g_array_index(propertyValues.get(), GValue, index);
+                if (!g_value_get_object(value)) {
+                    g_ptr_array_remove_index(propertyNames.get(), index);
+                    g_array_remove_index(propertyValues.get(), index);
+                }
+            }
+
+            name = va_arg(args, const char*);
+        }
+        va_end(args);
+
+        addWebViewConstructParameters(propertyNames.get(), propertyValues.get(), setWebContext, setNetworkSession, hasRelatedView);
+        auto* webView = WEBKIT_WEB_VIEW(g_object_new_with_properties(WEBKIT_TYPE_WEB_VIEW, propertyValues->len,
+            const_cast<const char**>(reinterpret_cast<char**>(propertyNames->pdata)), const_cast<const GValue*>(reinterpret_cast<GValue*>(propertyValues->data))));
+
 #if PLATFORM(GTK)
-        return WEBKIT_WEB_VIEW(webkit_web_view_new());
+        g_assert_true(g_object_is_floating(webView));
+        return webView;
 #elif PLATFORM(WPE)
-        return webkit_web_view_new(createWebViewBackend());
+#if ENABLE(WPE_PLATFORM)
+        if (m_display) {
+            // Make the view initially hidden for consistency with GTK tests.
+            auto* view = webkit_web_view_get_wpe_view(webView);
+            wpe_view_set_visible(view, FALSE);
+        }
+#endif
+        return adoptGRef(webView);
 #endif
     }
 
-    static WebKitWebView* createWebView(WebKitWebContext* context)
+    // Create a WebKitWebView with the test context and network session.
+    GRefPtr<WebKitWebView> createWebView()
     {
-        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-#if PLATFORM(WPE)
-                                            "backend", createWebViewBackend(),
-#endif
-                                            "web-context", context,
-                                            nullptr));
-    }
-
-    static WebKitWebView* createWebView(WebKitWebView* relatedView)
-    {
-        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-#if PLATFORM(WPE)
-            "backend", createWebViewBackend(),
-#endif
-            "related-view", relatedView,
-            nullptr));
-    }
-
-    static WebKitWebView* createWebView(WebKitUserContentManager* contentManager)
-    {
-        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-#if PLATFORM(WPE)
-                                            "backend", createWebViewBackend(),
-#endif
-                                            "user-content-manager", contentManager,
-                                            nullptr));
-    }
-
-    static WebKitWebView* createWebView(WebKitSettings* settings)
-    {
-        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-#if PLATFORM(WPE)
-                                            "backend", createWebViewBackend(),
-#endif
-                                            "settings", settings,
-                                            nullptr));
+        return this->createWebView(nullptr);
     }
 
     static void objectFinalized(Test* test, GObject* finalizedObject)
@@ -272,11 +363,11 @@ public:
     {
         switch (resourcesDir) {
         case WebKitGLibResources: {
-            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Tests", "WebKitGLib", "resources", nullptr));
+            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", "glib", nullptr));
             return resourcesDir.get();
         }
         case WebKit2Resources: {
-            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Tests", "WebKit", nullptr));
+            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", nullptr));
             return resourcesDir.get();
         }
         }
@@ -297,7 +388,7 @@ public:
         g_log_set_always_fatal(static_cast<GLogLevelFlags>(fatalMask));
     }
 
-#if USE(CAIRO) || PLATFORM(GTK)
+#if PLATFORM(GTK)
     static bool cairoSurfacesEqual(cairo_surface_t* s1, cairo_surface_t* s2)
     {
         return (cairo_image_surface_get_format(s1) == cairo_image_surface_get_format(s2)
@@ -314,6 +405,10 @@ public:
     GRefPtr<WebKitWebContext> m_webContext;
 #if ENABLE(2022_GLIB_API)
     GRefPtr<WebKitNetworkSession> m_networkSession;
+#endif
+#if ENABLE(WPE_PLATFORM)
+    GRefPtr<WPEDisplay> m_display;
+    static bool s_useWPELegacyAPI;
 #endif
     static GRefPtr<GDBusServer> s_dbusServer;
     static Vector<GRefPtr<GDBusConnection>> s_dbusConnections;

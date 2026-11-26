@@ -26,28 +26,58 @@
 #include "config.h"
 #include "WebTransportReceiveStream.h"
 
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSWebTransportReceiveStreamStats.h"
+#include "ReadableByteStreamController.h"
+#include "ScriptExecutionContextInlines.h"
+#include "TaskSource.h"
+#include "WebTransportReceiveStreamByteSource.h"
+#include "WebTransportReceiveStreamSource.h"
 #include "WebTransportReceiveStreamStats.h"
+#include "WebTransportSession.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
 
-ExceptionOr<Ref<WebTransportReceiveStream>> WebTransportReceiveStream::create(JSDOMGlobalObject& globalObject, Ref<ReadableStreamSource>&& source)
+ExceptionOr<Ref<WebTransportReceiveStream>> WebTransportReceiveStream::create(WebTransportStreamIdentifier identifier, WebTransportSession& session, JSDOMGlobalObject& globalObject, Ref<WebTransportReceiveStreamByteSource>&& source)
 {
-    auto result = createInternalReadableStream(globalObject, WTFMove(source));
-    if (result.hasException())
-        return result.releaseException();
+    Ref stream = adoptRef(*new WebTransportReceiveStream(protect(globalObject.scriptExecutionContext()).get(), identifier, session));
+    stream->suspendIfNeeded();
 
-    return adoptRef(*new WebTransportReceiveStream(result.releaseReturnValue()));
+    ReadableByteStreamController::PullAlgorithm pullAlgorithm = [source](auto& globalObject, auto&) {
+        return source->pull(globalObject);
+    };
+
+    ReadableByteStreamController::CancelAlgorithm cancelAlgorithm = [source](auto& globalObject, auto&, auto&& reason) {
+        auto [promise, deferred] = createPromiseAndWrapper(globalObject);
+        source->cancel(reason ? *reason : JSC::jsUndefined(), WTF::move(deferred));
+        return promise;
+    };
+
+    stream->setupReadableByteStreamController(globalObject, WTF::move(pullAlgorithm), WTF::move(cancelAlgorithm), 0, ReadableStream::StartSynchronously::No);
+
+    return stream;
 }
 
-WebTransportReceiveStream::WebTransportReceiveStream(Ref<InternalReadableStream>&& stream)
-    : ReadableStream(WTFMove(stream)) { }
+WebTransportReceiveStream::WebTransportReceiveStream(ScriptExecutionContext* context, WebTransportStreamIdentifier identifier, WebTransportSession& session)
+    : ReadableStream(context, { }, { }, ReadableStream::IsSourceReachableFromOpaqueRoot::Yes)
+    , m_identifier(identifier)
+    , m_session(session) { }
 
-void WebTransportReceiveStream::getStats(Ref<DeferredPromise>&& promise)
+WebTransportReceiveStream::~WebTransportReceiveStream() = default;
+
+void WebTransportReceiveStream::getStats(ScriptExecutionContext& context, Ref<DeferredPromise>&& promise)
 {
-    // FIXME: Resolve promise with stats.
-    return promise->reject(ExceptionCode::NotSupportedError);
+    RefPtr session = m_session.get();
+    if (!session)
+        return promise->reject(ExceptionCode::InvalidStateError);
+    context.enqueueTaskWhenSettled(session->getReceiveStreamStats(m_identifier), WebCore::TaskSource::Networking, [promise = WTF::move(promise)] (auto&& stats) mutable {
+        if (!stats)
+            return promise->reject(ExceptionCode::InvalidStateError);
+        promise->resolve<IDLDictionary<WebTransportReceiveStreamStats>>(*stats);
+    });
 }
 
 }

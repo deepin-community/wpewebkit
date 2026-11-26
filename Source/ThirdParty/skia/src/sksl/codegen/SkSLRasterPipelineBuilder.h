@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Google Inc.
+ * Copyright 2022 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -7,18 +7,20 @@
 
 #ifndef SKSL_RASTERPIPELINEBUILDER
 #define SKSL_RASTERPIPELINEBUILDER
+#include "src/partition_alloc/raw_ptr_exclusion.h"
 
 #include "include/core/SkTypes.h"
 
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkUtils.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkRasterPipelineOpList.h"
+#include "src/core/SkUtils.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 class SkArenaAlloc;
 class SkRasterPipeline;
@@ -176,11 +178,11 @@ private:
         SkSpan<float> stack;
         SkSpan<float> immutable;
     };
-    SlotData allocateSlotData(SkArenaAlloc* alloc) const;
+    std::optional<SlotData> allocateSlotData(SkArenaAlloc* alloc) const;
 
     struct Stage {
         ProgramOp op;
-        void*     ctx;
+        RAW_PTR_EXCLUSION void* ctx;  // RAW_PTR_EXCLUSION: pointer used to pack integers.
     };
     void makeStages(skia_private::TArray<Stage>* pipeline,
                     SkArenaAlloc* alloc,

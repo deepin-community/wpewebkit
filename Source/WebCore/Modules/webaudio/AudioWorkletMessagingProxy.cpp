@@ -35,10 +35,12 @@
 #include "AudioWorkletThread.h"
 #include "BaseAudioContext.h"
 #include "CacheStorageConnection.h"
-#include "Document.h"
+#include "ContentSecurityPolicy.h"
+#include "DocumentPage.h"
+#include "DocumentSettingsValues.h"
+#include "FileSystemStorageConnection.h"
+#include "IDBConnectionProxy.h"
 #include "LocalFrame.h"
-#include "Page.h"
-#include "Settings.h"
 #include "WebRTCProvider.h"
 #include "WorkletParameters.h"
 #include "WorkletPendingTasks.h"
@@ -61,13 +63,15 @@ static WorkletParameters generateWorkletParameters(AudioWorklet& worklet)
         document->referrerPolicy(),
         worklet.audioContext() ? !worklet.audioContext()->isOfflineContext() : false,
         document->advancedPrivacyProtections(),
-        document->noiseInjectionHashSalt()
+        document->noiseInjectionHashSalt(),
+        document->agentClusterID(),
+        protect(document->contentSecurityPolicy())->responseHeaders()
     };
 }
 
 AudioWorkletMessagingProxy::AudioWorkletMessagingProxy(AudioWorklet& worklet)
     : m_worklet(worklet)
-    , m_document(*worklet.document())
+    , m_documentIdentifier(worklet.document()->identifier())
     , m_workletThread(AudioWorkletThread::create(*this, generateWorkletParameters(worklet)))
 {
     ASSERT(isMainThread());
@@ -77,13 +81,20 @@ AudioWorkletMessagingProxy::AudioWorkletMessagingProxy(AudioWorklet& worklet)
 
 AudioWorkletMessagingProxy::~AudioWorkletMessagingProxy()
 {
+    ASSERT(isMainThread());
+
     m_workletThread->stop();
+}
+
+void AudioWorkletMessagingProxy::detachFromThread()
+{
+    ASSERT(isMainThread());
     m_workletThread->clearProxies();
 }
 
 bool AudioWorkletMessagingProxy::postTaskForModeToWorkletGlobalScope(ScriptExecutionContext::Task&& task, const String& mode)
 {
-    m_workletThread->runLoop().postTaskForMode(WTFMove(task), mode);
+    m_workletThread->runLoop().postTaskForMode(WTF::move(task), mode);
     return true;
 }
 
@@ -93,30 +104,45 @@ RefPtr<CacheStorageConnection> AudioWorkletMessagingProxy::createCacheStorageCon
     return nullptr;
 }
 
+RefPtr<IDBClient::IDBConnectionProxy> AudioWorkletMessagingProxy::createIDBConnectionProxy()
+{
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
 RefPtr<RTCDataChannelRemoteHandlerConnection> AudioWorkletMessagingProxy::createRTCDataChannelRemoteHandlerConnection()
 {
     ASSERT(isMainThread());
-    if (!m_document->page())
+    RefPtr worklet = m_worklet.get();
+    if (!worklet)
         return nullptr;
-    return m_document->page()->webRTCProvider().createRTCDataChannelRemoteHandlerConnection();
+    RefPtr document = worklet->document();
+    if (!document || !document->page())
+        return nullptr;
+    return document->page()->webRTCProvider().createRTCDataChannelRemoteHandlerConnection();
 }
 
 ScriptExecutionContextIdentifier AudioWorkletMessagingProxy::loaderContextIdentifier() const
 {
-    return m_document->identifier();
+    return m_documentIdentifier;
 }
 
 void AudioWorkletMessagingProxy::postTaskToLoader(ScriptExecutionContext::Task&& task)
 {
-    m_document->postTask(WTFMove(task));
+    ScriptExecutionContext::postTaskTo(m_documentIdentifier, WTF::move(task));
 }
 
 void AudioWorkletMessagingProxy::postTaskToAudioWorklet(Function<void(AudioWorklet&)>&& task)
 {
-    m_document->postTask([this, protectedThis = Ref { *this }, task = WTFMove(task)](ScriptExecutionContext&) {
-        if (m_worklet)
-            task(*m_worklet);
+    ScriptExecutionContext::postTaskTo(m_documentIdentifier, [protectedThis = Ref { *this }, task = WTF::move(task)](ScriptExecutionContext&) {
+        if (protectedThis->m_worklet)
+            task(*protectedThis->m_worklet);
     });
+}
+
+RefPtr<FileSystemStorageConnection> AudioWorkletMessagingProxy::createFileSystemStorageConnection()
+{
+    return nullptr;
 }
 
 } // namespace WebCore

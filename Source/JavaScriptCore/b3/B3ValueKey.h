@@ -33,7 +33,15 @@
 #include "B3Type.h"
 #include <wtf/HashTable.h>
 
-namespace JSC { namespace B3 {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+
+namespace Wasm {
+class RTT;
+}
+
+namespace B3 {
 
 class Procedure;
 class Value;
@@ -61,6 +69,8 @@ public:
     ValueKey(Kind, Type, Value* left, Value* right);
 
     ValueKey(Kind, Type, Value* a, Value* b, Value* c);
+
+    ValueKey(Kind, Type, Value*, int32_t value);
 
     ValueKey(Kind kind, Type type, int64_t value)
         : m_kind(kind)
@@ -97,7 +107,10 @@ public:
     ValueKey(Kind, Type, SIMDInfo, Value*, uint8_t);
     ValueKey(Kind, Type, SIMDInfo, Value*, Value*, uint8_t);
 
-    static ValueKey intConstant(Type type, int64_t value);
+    ValueKey(Kind, Type, Value* child, Value* optionalChild2, unsigned packedFlags, const Wasm::RTT*);
+    ValueKey(Kind, Type, Value* child, Value* optionalChild2, unsigned packedFlags, int32_t targetHeapType);
+
+    static ValueKey NODELETE intConstant(Type type, int64_t value);
 
     SIMDInfo simdInfo() const { return m_simdInfo; }
     Kind kind() const { return m_kind; }
@@ -160,7 +173,9 @@ public:
     {
         return *this == ValueKey(WTF::HashTableDeletedValue);
     }
-        
+
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
+
 private:
     SIMDInfo m_simdInfo { };
     Kind m_kind { };
@@ -190,18 +205,11 @@ private:
     } u;
 };
 
-struct ValueKeyHash {
-    static unsigned hash(const ValueKey& key) { return key.hash(); }
-    static bool equal(const ValueKey& a, const ValueKey& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
 
-} } // namespace JSC::B3
+} // namespace B3
+} // namespace JSC
 
 namespace WTF {
-
-template<typename T> struct DefaultHash;
-template<> struct DefaultHash<JSC::B3::ValueKey> : JSC::B3::ValueKeyHash { };
 
 template<typename T> struct HashTraits;
 template<> struct HashTraits<JSC::B3::ValueKey> : public SimpleClassHashTraits<JSC::B3::ValueKey> {
@@ -209,5 +217,7 @@ template<> struct HashTraits<JSC::B3::ValueKey> : public SimpleClassHashTraits<J
 };
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

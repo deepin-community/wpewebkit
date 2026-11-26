@@ -23,7 +23,6 @@
 #include "WebPopupMenu.h"
 
 #include "PlatformPopupMenuData.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
@@ -45,9 +44,7 @@ WebPopupMenu::WebPopupMenu(WebPage* page, PopupMenuClient* client)
 {
 }
 
-WebPopupMenu::~WebPopupMenu()
-{
-}
+WebPopupMenu::~WebPopupMenu() = default;
 
 WebPage* WebPopupMenu::page()
 {
@@ -56,37 +53,41 @@ WebPage* WebPopupMenu::page()
 
 void WebPopupMenu::disconnectClient()
 {
-    m_popupClient = 0;
+    m_popupClient = nullptr;
 }
 
+#if !PLATFORM(IOS_FAMILY)
 void WebPopupMenu::didChangeSelectedIndex(int newIndex)
 {
-    if (!m_popupClient)
+    RefPtr popupClient = m_popupClient;
+    if (!popupClient)
         return;
 
-    m_popupClient->popupDidHide();
+    popupClient->popupDidHide();
     if (newIndex >= 0)
-        m_popupClient->valueChanged(newIndex);
+        popupClient->valueChanged(newIndex);
 }
+#endif
 
+#if !PLATFORM(COCOA)
 void WebPopupMenu::setTextForIndex(int index)
 {
-    if (!m_popupClient)
-        return;
-
-    m_popupClient->setTextFromItem(index);
+    if (RefPtr popupClient = m_popupClient)
+        popupClient->setTextFromItem(index);
 }
+#endif
 
 Vector<WebPopupItem> WebPopupMenu::populateItems()
 {
-    return Vector<WebPopupItem>(m_popupClient->listSize(), [&](size_t i) {
-        if (m_popupClient->itemIsSeparator(i))
+    RefPtr popupClient = m_popupClient;
+    return Vector<WebPopupItem>(popupClient->listSize(), [&](size_t i) {
+        if (popupClient->itemIsSeparator(i))
             return WebPopupItem(WebPopupItem::Type::Separator);
         // FIXME: Add support for styling the font.
         // FIXME: Add support for styling the foreground and background colors.
         // FIXME: Find a way to customize text color when an item is highlighted.
-        PopupMenuStyle itemStyle = m_popupClient->itemStyle(i);
-        return WebPopupItem(WebPopupItem::Type::Item, m_popupClient->itemText(i), itemStyle.textDirection(), itemStyle.hasTextDirectionOverride(), m_popupClient->itemToolTip(i), m_popupClient->itemAccessibilityText(i), m_popupClient->itemIsEnabled(i), m_popupClient->itemIsLabel(i), m_popupClient->itemIsSelected(i));
+        PopupMenuStyle itemStyle = popupClient->itemStyle(i);
+        return WebPopupItem(WebPopupItem::Type::Item, popupClient->itemText(i), itemStyle.language(), itemStyle.textDirection(), itemStyle.hasTextDirectionOverride(), popupClient->itemToolTip(i), popupClient->itemAccessibilityText(i), popupClient->itemIsEnabled(i), popupClient->itemIsLabel(i), popupClient->itemIsSelected(i));
     });
 }
 
@@ -94,15 +95,17 @@ void WebPopupMenu::show(const IntRect& rect, LocalFrameView& view, int selectedI
 {
     // FIXME: We should probably inform the client to also close the menu.
     Vector<WebPopupItem> items = populateItems();
+    RefPtr popupClient = m_popupClient;
+    RefPtr page = m_page.get();
 
-    if (items.isEmpty() || !m_page) {
-        m_popupClient->popupDidHide();
+    if (items.isEmpty() || !page) {
+        popupClient->popupDidHide();
         return;
     }
 
-    RELEASE_ASSERT_WITH_MESSAGE(selectedIndex == -1 || static_cast<unsigned>(selectedIndex) < items.size(), "Invalid selectedIndex (%d) for popup menu with %lu items", selectedIndex, items.size());
+    RELEASE_ASSERT_WITH_MESSAGE(selectedIndex == -1 || static_cast<unsigned>(selectedIndex) < items.size(), "Invalid selectedIndex (%d) for popup menu with %zu items", selectedIndex, items.size());
 
-    m_page->setActivePopupMenu(this);
+    page->setActivePopupMenu(this);
 
     // Move to page coordinates
     IntRect pageCoordinates(view.contentsToWindow(rect.location()), rect.size());
@@ -110,17 +113,19 @@ void WebPopupMenu::show(const IntRect& rect, LocalFrameView& view, int selectedI
     PlatformPopupMenuData platformData;
     setUpPlatformData(pageCoordinates, platformData);
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebPageProxy::ShowPopupMenuFromFrame(view.frame().frameID(), pageCoordinates, static_cast<uint64_t>(m_popupClient->menuStyle().textDirection()), items, selectedIndex, platformData), m_page->identifier());
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::ShowPopupMenuFromFrame(view.frame().frameID(), pageCoordinates, static_cast<uint64_t>(popupClient->menuStyle().textDirection()), items, selectedIndex, platformData), page->identifier());
 }
 
 void WebPopupMenu::hide()
 {
-    if (!m_page || !m_popupClient)
+    RefPtr page = m_page.get();
+    RefPtr popupClient = m_popupClient;
+    if (!page || !popupClient)
         return;
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebPageProxy::HidePopupMenu(), m_page->identifier());
-    m_page->setActivePopupMenu(nullptr);
-    m_popupClient->popupDidHide();
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::HidePopupMenu(), page->identifier());
+    page->setActivePopupMenu(nullptr);
+    popupClient->popupDidHide();
 }
 
 void WebPopupMenu::updateFromElement()

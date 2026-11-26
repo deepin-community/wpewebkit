@@ -28,10 +28,13 @@
 #if USE(GSTREAMER)
 
 #include "GStreamerTest.h"
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <WebCore/GStreamerCommon.h>
 #include <WebCore/GStreamerElementHarness.h>
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
+#include <wtf/glib/GMallocString.h>
+#include <wtf/glib/GUniquePtr.h>
 
 using namespace WebCore;
 
@@ -40,7 +43,7 @@ namespace TestWebKitAPI {
 TEST_F(GStreamerTest, harnessBasic)
 {
     GRefPtr<GstElement> element = gst_element_factory_make("identity", nullptr);
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [](auto&, auto&&) { });
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [](auto&, auto&&) { });
 
     // The identity element has a single source pad. Fetch the corresponding stream.
     ASSERT_FALSE(harness->outputStreams().isEmpty());
@@ -58,7 +61,7 @@ TEST_F(GStreamerTest, harnessBasic)
     EXPECT_EQ(mappedInputBuffer.size(), 64);
     auto caps = adoptGRef(gst_caps_new_empty_simple("foo"));
     auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
-    EXPECT_TRUE(harness->pushSample(WTFMove(sample)));
+    EXPECT_TRUE(harness->pushSample(WTF::move(sample)));
 
     auto event = stream->pullEvent();
     ASSERT_NOT_NULL(event.get());
@@ -93,7 +96,7 @@ TEST_F(GStreamerTest, harnessBasic)
 TEST_F(GStreamerTest, harnessManualStart)
 {
     GRefPtr<GstElement> element = gst_element_factory_make("identity", nullptr);
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [](auto&, auto&&) { });
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [](auto&, auto&&) { });
 
     // The identity element has a single source pad. Fetch the corresponding stream.
     ASSERT_FALSE(harness->outputStreams().isEmpty());
@@ -108,7 +111,7 @@ TEST_F(GStreamerTest, harnessManualStart)
 
     // Start the harness and expect initial events.
     auto caps = adoptGRef(gst_caps_new_empty_simple("foo"));
-    harness->start(WTFMove(caps));
+    harness->start(WTF::move(caps));
 
     auto event = stream->pullEvent();
     ASSERT_NOT_NULL(event.get());
@@ -151,7 +154,7 @@ TEST_F(GStreamerTest, harnessBufferProcessing)
 {
     GRefPtr<GstElement> element = gst_element_factory_make("identity", nullptr);
     unsigned counter = 0;
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [&counter](auto&, auto&& outputSample) mutable {
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [&counter](auto&, auto&& outputSample) mutable {
         auto outputBuffer = gst_sample_get_buffer(outputSample.get());
         GstMappedBuffer mappedOutputBuffer(outputBuffer, GST_MAP_READ);
         ASSERT_TRUE(mappedOutputBuffer);
@@ -175,7 +178,7 @@ TEST_F(GStreamerTest, harnessBufferProcessing)
         auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, 64, nullptr));
         gst_buffer_memset(buffer.get(), 0, i, 64);
         auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
-        EXPECT_TRUE(harness->pushSample(WTFMove(sample)));
+        EXPECT_TRUE(harness->pushSample(WTF::move(sample)));
     }
     harness->processOutputSamples();
     ASSERT_EQ(counter, 3);
@@ -185,7 +188,7 @@ TEST_F(GStreamerTest, harnessFlush)
 {
     GRefPtr<GstElement> element = gst_element_factory_make("identity", nullptr);
     unsigned counter = 0;
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [&counter](auto&, auto&& outputSample) mutable {
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [&counter](auto&, auto&& outputSample) mutable {
         auto outputBuffer = gst_sample_get_buffer(outputSample.get());
         GstMappedBuffer mappedOutputBuffer(outputBuffer, GST_MAP_READ);
         ASSERT_TRUE(mappedOutputBuffer);
@@ -210,7 +213,7 @@ TEST_F(GStreamerTest, harnessFlush)
         auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, 64, nullptr));
         gst_buffer_memset(buffer.get(), 0, i, 64);
         auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
-        EXPECT_TRUE(harness->pushSample(WTFMove(sample)));
+        EXPECT_TRUE(harness->pushSample(WTF::move(sample)));
     }
     auto firstOutputSample = stream->pullSample();
     auto firstOutputBuffer = gst_sample_get_buffer(firstOutputSample.get());
@@ -241,7 +244,7 @@ TEST_F(GStreamerTest, harnessParseMP4)
         uint64_t totalAudioBuffers { 0 };
         uint64_t totalVideoBuffers { 0 };
     } bufferTracker;
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [&bufferTracker](auto& stream, auto&&) mutable {
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [&bufferTracker](auto& stream, auto&&) mutable {
         auto gstStream = adoptGRef(gst_pad_get_stream(stream.pad().get()));
         auto streamType = gst_stream_get_stream_type(gstStream.get());
         if (streamType == GST_STREAM_TYPE_AUDIO)
@@ -255,11 +258,11 @@ TEST_F(GStreamerTest, harnessParseMP4)
     });
 
     // Feed the contents of a MP4 file to the harnessed parsebin.
-    GUniquePtr<char> filePath(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Tests", "WebKit", "test.mp4", nullptr));
-    auto handle = FileSystem::openFile(span(filePath.get()), FileSystem::FileOpenMode::Read);
+    auto filePath = GMallocString::unsafeAdoptFromUTF8(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", "test.mp4", nullptr));
+    auto handle = FileSystem::openFile(filePath.span(), FileSystem::FileOpenMode::Read);
 
     size_t totalRead = 0;
-    auto size = FileSystem::fileSize(handle).value_or(0);
+    auto size = handle.size().value_or(0);
     auto caps = adoptGRef(gst_caps_new_empty_simple("video/quicktime"));
     while (totalRead < size) {
         size_t bytesToRead = 1024;
@@ -269,10 +272,10 @@ TEST_F(GStreamerTest, harnessParseMP4)
         auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, bytesToRead, nullptr));
         {
             GstMappedBuffer mappedBuffer(buffer.get(), GST_MAP_WRITE);
-            FileSystem::readFromFile(handle, mappedBuffer.mutableSpan());
+            handle.read(mappedBuffer.mutableSpan<uint8_t>());
         }
         auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
-        EXPECT_TRUE(harness->pushSample(WTFMove(sample)));
+        EXPECT_TRUE(harness->pushSample(WTF::move(sample)));
 
         totalRead += bytesToRead;
     }
@@ -281,7 +284,15 @@ TEST_F(GStreamerTest, harnessParseMP4)
     // the first events on each.
     EXPECT_EQ(harness->outputStreams().size(), 2);
     for (auto& stream : harness->outputStreams()) {
-        auto event = stream->pullEvent();
+        // Since GStreamer 1.24.9 the stream collection is stored on the pad and not forwarded by parsebin.
+        // https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7609
+        auto event = adoptGRef(gst_pad_get_sticky_event(stream->pad().get(), GST_EVENT_STREAM_COLLECTION, 0));
+        ASSERT_NOT_NULL(event.get());
+        GRefPtr<GstStreamCollection> collection;
+        gst_event_parse_stream_collection(event.get(), &collection.outPtr());
+        ASSERT_EQ(gst_stream_collection_get_size(collection.get()), 2);
+
+        event = stream->pullEvent();
         ASSERT_NOT_NULL(event.get());
         EXPECT_STREQ(GST_EVENT_TYPE_NAME(event.get()), "stream-start");
 
@@ -291,13 +302,6 @@ TEST_F(GStreamerTest, harnessParseMP4)
         GstCaps* eventCaps;
         gst_event_parse_caps(event.get(), &eventCaps);
         ASSERT_TRUE(gst_caps_is_equal(stream->outputCaps().get(), eventCaps));
-
-        event = stream->pullEvent();
-        ASSERT_NOT_NULL(event.get());
-        EXPECT_STREQ(GST_EVENT_TYPE_NAME(event.get()), "stream-collection");
-        GRefPtr<GstStreamCollection> collection;
-        gst_event_parse_stream_collection(event.get(), &collection.outPtr());
-        ASSERT_EQ(gst_stream_collection_get_size(collection.get()), 2);
     }
 
     // We haven't pulled any buffer yet, so our buffer tracker should report empty metrics.
@@ -316,7 +320,7 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
     GRefPtr<GstElement> element = gst_element_factory_make("decodebin3", nullptr);
 
     // Disable internal buffering in decodebin3.
-    for (auto child : GstIteratorAdaptor<GstElement>(GUniquePtr<GstIterator>(gst_bin_iterate_recurse(GST_BIN_CAST(element.get()))))) {
+    for (auto child : GstIteratorAdaptor<GstElement>(gst_bin_iterate_recurse(GST_BIN_CAST(element.get())))) {
         if (g_str_has_prefix(GST_OBJECT_NAME(GST_OBJECT_CAST(child)), "multiqueue")) {
             g_object_set(child, "max-size-buffers", 1, nullptr);
             break;
@@ -326,7 +330,7 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
     struct BufferTracker {
         uint64_t totalVideoBuffers { 0 };
     } bufferTracker;
-    auto harness = WebCore::GStreamerElementHarness::create(WTFMove(element), [&bufferTracker](auto& stream, auto&&) mutable {
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [&bufferTracker](auto& stream, auto&&) mutable {
         auto gstStream = adoptGRef(gst_pad_get_stream(stream.pad().get()));
         auto streamType = gst_stream_get_stream_type(gstStream.get());
         if (streamType == GST_STREAM_TYPE_VIDEO)
@@ -338,15 +342,15 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
     });
 
     auto caps = adoptGRef(gst_caps_new_empty_simple("video/quicktime"));
-    harness->start(WTFMove(caps));
+    harness->start(WTF::move(caps));
 
     // Feed the contents of a MP4 file to the harnessed decodebin3, until it is able to figure out
     // the stream topology.
-    GUniquePtr<char> filePath(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Tests", "WebKit", "test.mp4", nullptr));
-    auto handle = FileSystem::openFile(span(filePath.get()), FileSystem::FileOpenMode::Read);
+    auto filePath = GMallocString::unsafeAdoptFromUTF8(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", "test.mp4", nullptr));
+    auto handle = FileSystem::openFile(filePath.span(), FileSystem::FileOpenMode::Read);
 
     size_t totalRead = 0;
-    auto size = FileSystem::fileSize(handle).value_or(0);
+    auto size = handle.size().value_or(0);
     GRefPtr<GstStreamCollection> collection;
     RefPtr<GStreamerElementHarness::Stream> harnessedStream;
     while (totalRead < size) {
@@ -357,9 +361,9 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
         auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, bytesToRead, nullptr));
         {
             GstMappedBuffer mappedBuffer(buffer.get(), GST_MAP_WRITE);
-            FileSystem::readFromFile(handle, mappedBuffer.mutableSpan());
+            handle.read(mappedBuffer.mutableSpan<uint8_t>());
         }
-        EXPECT_TRUE(harness->pushBuffer(WTFMove(buffer)));
+        EXPECT_TRUE(harness->pushBuffer(WTF::move(buffer)));
         totalRead += bytesToRead;
 
         // Process events, if a stream collection is received, interrupt the buffer feed.
@@ -407,9 +411,9 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
         auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, bytesToRead, nullptr));
         {
             GstMappedBuffer mappedBuffer(buffer.get(), GST_MAP_WRITE);
-            FileSystem::readFromFile(handle, mappedBuffer.mutableSpan());
+            handle.read(mappedBuffer.mutableSpan<uint8_t>());
         }
-        EXPECT_TRUE(harness->pushBuffer(WTFMove(buffer)));
+        EXPECT_TRUE(harness->pushBuffer(WTF::move(buffer)));
 
         totalRead += bytesToRead;
     }
@@ -424,6 +428,59 @@ TEST_F(GStreamerTest, harnessDecodeMP4Video)
     // Flush all internal queues, the harness should trigger our buffer tracker now.
     harness->flush();
     ASSERT_GT(bufferTracker.totalVideoBuffers, 100);
+}
+
+TEST_F(GStreamerTest, harnessCustomCaps)
+{
+    GRefPtr<GstElement> element = gst_element_factory_make("identity", nullptr);
+    auto caps = adoptGRef(gst_caps_new_empty_simple("foo/bar"));
+    auto harness = WebCore::GStreamerElementHarness::create(WTF::move(element), [](auto&, auto&&) { }, std::nullopt, GRefPtr(caps));
+
+    // The identity element has a single source pad. Fetch the corresponding stream.
+    ASSERT_FALSE(harness->outputStreams().isEmpty());
+    auto& stream = harness->outputStreams().first();
+
+    // Harness has not started processing data yet.
+    ASSERT_NULL(stream->pullSample());
+    ASSERT_NULL(stream->pullEvent());
+
+    // Push a sample and expect initial events and an output buffer.
+    auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, 64, nullptr));
+    GstMappedBuffer mappedInputBuffer(buffer.get(), GST_MAP_READWRITE);
+    memsetSpan(mappedInputBuffer.mutableSpan<uint8_t>(), 2);
+    ASSERT_TRUE(mappedInputBuffer);
+    EXPECT_EQ(mappedInputBuffer.size(), 64);
+    auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
+    EXPECT_TRUE(harness->pushSample(WTF::move(sample)));
+
+    auto event = stream->pullEvent();
+    ASSERT_NOT_NULL(event.get());
+    EXPECT_STREQ(GST_EVENT_TYPE_NAME(event.get()), "stream-start");
+
+    event = stream->pullEvent();
+    ASSERT_NOT_NULL(event.get());
+    EXPECT_STREQ(GST_EVENT_TYPE_NAME(event.get()), "caps");
+    GstCaps* eventCaps;
+    gst_event_parse_caps(event.get(), &eventCaps);
+    ASSERT_TRUE(gst_caps_is_equal(eventCaps, caps.get()));
+
+    event = stream->pullEvent();
+    ASSERT_NOT_NULL(event.get());
+    EXPECT_STREQ(GST_EVENT_TYPE_NAME(event.get()), "segment");
+
+    ASSERT_TRUE(gst_caps_is_equal(stream->outputCaps().get(), caps.get()));
+
+    // The harnessed element is identity, so output buffers should be the same as input buffers.
+    auto outputSample = stream->pullSample();
+    auto outputBuffer = gst_sample_get_buffer(outputSample.get());
+    GstMappedBuffer mappedOutputBuffer(outputBuffer, GST_MAP_READ);
+    ASSERT_TRUE(mappedOutputBuffer);
+    EXPECT_EQ(mappedOutputBuffer.size(), 64);
+    EXPECT_TRUE(equalSpans(mappedInputBuffer.span<uint8_t>(), mappedOutputBuffer.span<uint8_t>()));
+
+    // Harness is now empty.
+    ASSERT_NULL(stream->pullSample());
+    ASSERT_NULL(stream->pullEvent());
 }
 
 } // namespace TestWebKitAPI

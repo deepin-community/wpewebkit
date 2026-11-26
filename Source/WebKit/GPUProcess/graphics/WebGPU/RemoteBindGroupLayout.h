@@ -54,12 +54,12 @@ class RemoteBindGroupLayout final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteBindGroupLayout> create(WebCore::WebGPU::BindGroupLayout& bindGroupLayout, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteBindGroupLayout(bindGroupLayout, objectHeap, WTFMove(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteBindGroupLayout(bindGroupLayout, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteBindGroupLayout();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -80,9 +80,9 @@ private:
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::BindGroupLayout> m_backing;
+    const Ref<WebCore::WebGPU::BindGroupLayout> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

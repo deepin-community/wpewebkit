@@ -102,13 +102,13 @@ std::unique_ptr<WaylandSHMPool> WaylandSHMPool::create(struct wl_shm* shm, size_
     if (data == MAP_FAILED)
         return nullptr;
 
-    return makeUnique<WaylandSHMPool>(data, size, WTFMove(fd), shm);
+    return makeUnique<WaylandSHMPool>(data, size, WTF::move(fd), shm);
 }
 
 WaylandSHMPool::WaylandSHMPool(void* data, size_t size, UnixFileDescriptor&& fd, struct wl_shm* shm)
     : m_data(data)
     , m_size(size)
-    , m_fd(WTFMove(fd))
+    , m_fd(WTF::move(fd))
     , m_pool(wl_shm_create_pool(shm, m_fd.value(), m_size))
 {
 }
@@ -154,6 +154,16 @@ bool WaylandSHMPool::resize(size_t size)
 struct wl_buffer* WaylandSHMPool::createBuffer(uint32_t offset, uint32_t width, uint32_t height, uint32_t stride)
 {
     return wl_shm_pool_create_buffer(m_pool, offset, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+}
+
+void WaylandSHMPool::write(std::span<const uint8_t> data, int offset)
+{
+    memcpySpan(mutableSpan().subspan(offset), data);
+}
+
+void WaylandSHMPool::write(std::span<const uint32_t> data, int offset)
+{
+    write(asBytes(data), offset);
 }
 
 } // namespace WPE

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JITStubRoutine.h"
+#include <JavaScriptCore/JITStubRoutine.h>
 #include <wtf/HashMap.h>
 #include <wtf/Range.h>
 #include <wtf/TZoneMalloc.h>
@@ -49,7 +49,7 @@ public:
     
     void add(GCAwareJITStubRoutine*);
 
-    void clearMarks();
+    void NODELETE clearMarks();
     
     void mark(void* candidateAddress)
     {

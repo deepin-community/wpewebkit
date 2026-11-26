@@ -30,11 +30,12 @@
 #include "WebGPUIdentifier.h"
 #include "WebGPUObjectDescriptorBase.h"
 #include <optional>
+#include <wtf/Markable.h>
 
 namespace WebKit::WebGPU {
 
 struct PipelineDescriptorBase : public ObjectDescriptorBase {
-    WebGPUIdentifier layout;
+    Markable<WebGPUIdentifier> layout;
 };
 
 } // namespace WebKit::WebGPU

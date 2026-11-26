@@ -23,17 +23,18 @@
 
 #include "HTMLProgressElement.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderStyleInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderTheme.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderProgress);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderProgress);
 
-RenderProgress::RenderProgress(HTMLElement& element, RenderStyle&& style)
-    : RenderBlockFlow(Type::Progress, element, WTFMove(style))
+RenderProgress::RenderProgress(HTMLElement& element, Style::ComputedStyle&& style)
+    : RenderBlockFlow(Type::Progress, element, WTF::move(style))
     , m_position(HTMLProgressElement::InvalidPosition)
     , m_animationTimer(*this, &RenderProgress::animationTimerFired)
 {
@@ -42,9 +43,15 @@ RenderProgress::RenderProgress(HTMLElement& element, RenderStyle&& style)
 
 RenderProgress::~RenderProgress() = default;
 
+void RenderProgress::willBeDestroyed()
+{
+    m_animationTimer.stop();
+    RenderBlockFlow::willBeDestroyed();
+}
+
 void RenderProgress::updateFromElement()
 {
-    HTMLProgressElement* element = progressElement();
+    RefPtr element = progressElement();
     if (m_position == element->position())
         return;
     m_position = element->position();
@@ -57,13 +64,13 @@ void RenderProgress::updateFromElement()
 RenderBox::LogicalExtentComputedValues RenderProgress::computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const
 {
     auto computedValues = RenderBox::computeLogicalHeight(logicalHeight, logicalTop);
-    LayoutRect frame = frameRect();
+    LayoutRect frame = borderBoxRectInContainer();
     if (isHorizontalWritingMode())
-        frame.setHeight(computedValues.m_extent);
+        frame.setHeight(computedValues.extent);
     else
-        frame.setWidth(computedValues.m_extent);
+        frame.setWidth(computedValues.extent);
     IntSize frameSize = theme().progressBarRectForBounds(*this, snappedIntRect(frame)).size();
-    computedValues.m_extent = isHorizontalWritingMode() ? frameSize.height() : frameSize.width();
+    computedValues.extent = isHorizontalWritingMode() ? frameSize.height() : frameSize.width();
     return computedValues;
 }
 
@@ -107,7 +114,7 @@ void RenderProgress::updateAnimationState()
         m_animationTimer.stop();
 }
 
-HTMLProgressElement* RenderProgress::progressElement() const
+HTMLProgressElement* NODELETE RenderProgress::progressElement() const
 {
     if (!element())
         return nullptr;

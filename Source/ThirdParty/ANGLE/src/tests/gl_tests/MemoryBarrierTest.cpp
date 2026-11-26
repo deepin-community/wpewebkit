@@ -28,7 +28,9 @@
 // In summary, every bit defines a memory barrier for some access after a shader write.
 // Additionally, SHADER_IMAGE_ACCESS_BARRIER_BIT and SHADER_STORAGE_BARRIER_BIT bits are used to
 // define a memory barrier for shader writes after other accesses.
+//
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 #include "util/random_utils.h"
@@ -666,9 +668,9 @@ void MemoryBarrierTestBase::verifyBufferContents(const std::array<T, 4> &expecte
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(bufferContents[0], expected[0]);
-    EXPECT_EQ(bufferContents[1], expected[1]);
-    EXPECT_EQ(bufferContents[2], expected[2]);
-    EXPECT_EQ(bufferContents[3], expected[3]);
+    ANGLE_UNSAFE_TODO(EXPECT_EQ(bufferContents[1], expected[1]));
+    ANGLE_UNSAFE_TODO(EXPECT_EQ(bufferContents[2], expected[2]));
+    ANGLE_UNSAFE_TODO(EXPECT_EQ(bufferContents[3], expected[3]));
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 

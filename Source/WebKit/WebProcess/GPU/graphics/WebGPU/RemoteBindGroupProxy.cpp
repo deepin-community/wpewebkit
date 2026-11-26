@@ -55,10 +55,12 @@ void RemoteBindGroupProxy::setLabelInternal(const String& label)
     UNUSED_VARIABLE(sendResult);
 }
 
-void RemoteBindGroupProxy::updateExternalTextures(const WebCore::WebGPU::ExternalTexture& externalTexture)
+bool RemoteBindGroupProxy::updateExternalTextures(WebCore::WebGPU::ExternalTexture& externalTexture)
 {
-    auto sendResult = send(Messages::RemoteBindGroup::UpdateExternalTextures(m_convertToBackingContext->convertToBacking(externalTexture)));
-    UNUSED_VARIABLE(sendResult);
+    auto convertedDescriptor = protect(m_convertToBackingContext)->convertToBacking(externalTexture);
+    auto sendResult = sendSync(Messages::RemoteBindGroup::UpdateExternalTextures(WTF::move(convertedDescriptor)));
+    auto [result] = sendResult.takeReplyOr(false);
+    return result;
 }
 
 } // namespace WebKit::WebGPU

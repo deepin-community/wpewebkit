@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -88,6 +88,7 @@ iframe:fullscreen {
     max-height: 100vh !important;
     border-radius: 20px !important;
     pointer-events: auto !important;
+    cursor: auto !important;
 }
 
 *|*:not(:root):-internal-in-window-fullscreen::backdrop {

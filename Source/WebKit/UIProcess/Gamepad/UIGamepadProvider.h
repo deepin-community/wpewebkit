@@ -44,6 +44,10 @@ class UIGamepadProvider final : public WebCore::GamepadProviderClient {
 public:
     static UIGamepadProvider& singleton();
 
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
+
     void processPoolStartedUsingGamepads(WebProcessPool&);
     void processPoolStoppedUsingGamepads(WebProcessPool&);
 
@@ -53,12 +57,14 @@ public:
     Vector<GamepadData> gamepadStates() const;
 
 #if PLATFORM(COCOA)
-    static void setUsesGameControllerFramework();
+    static void NODELETE setUsesGameControllerFramework();
 #endif
 
     Vector<std::optional<GamepadData>> snapshotGamepads();
 
     size_t numberOfConnectedGamepads() const { return m_gamepads.size(); }
+
+    WebPageProxy* platformWebPageProxyForGamepadInput();
 
 private:
     friend NeverDestroyed<UIGamepadProvider>;
@@ -69,7 +75,6 @@ private:
     void stopMonitoringGamepads();
 
     void platformSetDefaultGamepadProvider();
-    WebPageProxy* platformWebPageProxyForGamepadInput();
     void platformStopMonitoringInput();
     void platformStartMonitoringInput();
 

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2015 Ericsson AB. All rights reserved.
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,15 +48,11 @@ namespace WebCore {
 class PeerConnectionBackend;
 }
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::PeerConnectionBackend> : std::true_type { };
-}
-
 namespace WebCore {
 
 class DeferredPromise;
 class Document;
+class Exception;
 class MediaStream;
 class MediaStreamTrack;
 class PeerConnectionBackend;
@@ -73,26 +69,32 @@ class RTCSctpTransportBackend;
 class RTCSessionDescription;
 class RTCStatsReport;
 class ScriptExecutionContext;
+class WeakPtrImplWithEventTargetData;
 
 struct MediaEndpointConfiguration;
 struct RTCAnswerOptions;
+struct RTCConfiguration;
 struct RTCDataChannelInit;
 struct RTCOfferOptions;
 struct RTCRtpTransceiverInit;
 
 template<typename IDLType> class DOMPromiseDeferred;
+template<typename> class ExceptionOr;
 
 namespace PeerConnection {
 using SessionDescriptionPromise = DOMPromiseDeferred<IDLDictionary<RTCSessionDescriptionInit>>;
 using StatsPromise = DOMPromiseDeferred<IDLInterface<RTCStatsReport>>;
 }
 
-using CreatePeerConnectionBackend = std::unique_ptr<PeerConnectionBackend> (*)(RTCPeerConnection&);
+using CreatePeerConnectionBackend = const std::unique_ptr<PeerConnectionBackend> (*)(RTCPeerConnection&, MediaEndpointConfiguration&&);
 
 class PeerConnectionBackend
     : public CanMakeWeakPtr<PeerConnectionBackend>
 #if !RELEASE_LOG_DISABLED
     , private LoggerHelper
+#if PLATFORM(WPE) || PLATFORM(GTK)
+    , public Logger::MessageHandlerObserver
+#endif
 #endif
 {
 public:
@@ -115,6 +117,9 @@ public:
 
     void stop();
 
+#if USE(GSTREAMER_WEBRTC)
+    virtual void prepareForClose() = 0;
+#endif
     virtual void close() = 0;
 
     virtual void restartIce() = 0;
@@ -134,8 +139,6 @@ public:
 
     void markAsNeedingNegotiation(uint32_t);
     virtual bool isNegotiationNeeded(uint32_t) const = 0;
-
-    virtual void emulatePlatformEvent(const String& action) = 0;
 
     struct DescriptionStates {
         std::optional<RTCSignalingState> signalingState;
@@ -161,7 +164,7 @@ public:
     void newDataChannel(UniqueRef<RTCDataChannelHandler>&&, String&&, RTCDataChannelInit&&);
 
     virtual void disableICECandidateFiltering();
-    void enableICECandidateFiltering();
+    void NODELETE enableICECandidateFiltering();
 
     virtual std::optional<bool> canTrickleIceCandidates() const = 0;
 
@@ -169,9 +172,12 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const override { return "PeerConnectionBackend"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
+#if PLATFORM(WPE) || PLATFORM(GTK)
+    void handleLogMessage(const WTFLogChannel&, WTFLogLevel, std::optional<WTFLogLocation>, const Vector<JSONLogValue>&) final;
+#endif
 #endif
 
     virtual bool isLocalDescriptionSet() const = 0;
@@ -207,9 +213,9 @@ public:
     };
     static void generateCertificate(Document&, const CertificateInformation&, DOMPromiseDeferred<IDLInterface<RTCCertificate>>&&);
 
-    virtual void collectTransceivers() { };
+    virtual void collectTransceivers(Vector<Ref<RTCRtpTransceiver>>&&) { };
 
-    ScriptExecutionContext* context() const;
+    ScriptExecutionContext* NODELETE context() const;
 
     virtual void suspend() { }
     virtual void resume() { }
@@ -223,6 +229,11 @@ public:
 
     virtual void startGatheringStatLogs(Function<void(String&&)>&&) { }
     virtual void stopGatheringStatLogs() { }
+
+    WEBCORE_EXPORT void NODELETE ref() const;
+    WEBCORE_EXPORT void deref() const;
+
+    virtual bool shouldEnableServiceClass() const { return true; }
 
 protected:
     void doneGatheringCandidates();
@@ -239,7 +250,21 @@ protected:
     void setRemoteDescriptionSucceeded(std::optional<DescriptionStates>&&, std::optional<TransceiverStates>&&, std::unique_ptr<RTCSctpTransportBackend>&&, std::optional<double>);
     void setRemoteDescriptionFailed(Exception&&);
 
-    void validateSDP(const String&) const;
+    void NODELETE validateSDP(const String&) const;
+
+#if PLATFORM(WPE) || PLATFORM(GTK)
+    bool isJSONLogStreamingEnabled() const { return !m_jsonFilePath.isEmpty(); }
+#endif
+
+    struct MessageLogEvent {
+        String message;
+        std::optional<std::span<const uint8_t>> payload;
+    };
+    using StatsLogEvent = String;
+
+    using LogEvent = Variant<MessageLogEvent, StatsLogEvent>;
+    String generateJSONLogEvent(LogEvent&&, bool isForGatherLogs);
+    void NODELETE emitJSONLogEvent(String&&);
 
 private:
     virtual void doCreateOffer(RTCOfferOptions&&) = 0;
@@ -250,7 +275,7 @@ private:
     virtual void doStop() = 0;
 
 protected:
-    RTCPeerConnection& m_peerConnection;
+    WeakRef<RTCPeerConnection, WeakPtrImplWithEventTargetData> m_peerConnection;
 
 private:
     CreateCallback m_offerAnswerCallback;
@@ -259,11 +284,16 @@ private:
     bool m_shouldFilterICECandidates { true };
 
 #if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
+    String m_logIdentifierString;
     bool m_finishedGatheringCandidates { false };
     bool m_isProcessingLocalDescriptionAnswer { false };
+
+#if PLATFORM(WPE) || PLATFORM(GTK)
+    String m_jsonFilePath;
+#endif
 };
 
 inline PeerConnectionBackend::DescriptionStates PeerConnectionBackend::DescriptionStates::isolatedCopy() &&
@@ -271,13 +301,13 @@ inline PeerConnectionBackend::DescriptionStates PeerConnectionBackend::Descripti
     return DescriptionStates {
         signalingState,
         currentLocalDescriptionSdpType,
-        WTFMove(currentLocalDescriptionSdp).isolatedCopy(),
+        WTF::move(currentLocalDescriptionSdp).isolatedCopy(),
         pendingLocalDescriptionSdpType,
-        WTFMove(pendingLocalDescriptionSdp).isolatedCopy(),
+        WTF::move(pendingLocalDescriptionSdp).isolatedCopy(),
         currentRemoteDescriptionSdpType,
-        WTFMove(currentRemoteDescriptionSdp).isolatedCopy(),
+        WTF::move(currentRemoteDescriptionSdp).isolatedCopy(),
         pendingRemoteDescriptionSdpType,
-        WTFMove(pendingRemoteDescriptionSdp).isolatedCopy()
+        WTF::move(pendingRemoteDescriptionSdp).isolatedCopy()
     };
 }
 } // namespace WebCore

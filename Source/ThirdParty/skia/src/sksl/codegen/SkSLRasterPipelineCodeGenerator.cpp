@@ -9,12 +9,12 @@
 
 #include "include/core/SkPoint.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkEnumBitMask.h"
-#include "src/base/SkStringView.h"
-#include "src/base/SkUtils.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkStringView.h"
 #include "src/core/SkTHash.h"
+#include "src/core/SkUtils.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
@@ -443,7 +443,7 @@ public:
     Analysis::ReturnComplexity returnComplexity(const FunctionDefinition* func) {
         Analysis::ReturnComplexity* complexity = fReturnComplexityMap.find(func);
         if (!complexity) {
-            complexity = fReturnComplexityMap.set(fCurrentFunction,
+            complexity = fReturnComplexityMap.set(func,
                                                   Analysis::GetReturnComplexity(*func));
         }
         return *complexity;
@@ -1422,10 +1422,13 @@ std::optional<SlotRange> Generator::writeFunction(
             // If we are passing a child effect to a function, we need to add its mapping to our
             // child map.
             if (arg.type().isEffectChild()) {
-                if (int* childIndex = fChildEffectMap.find(arg.as<VariableReference>()
-                                                              .variable())) {
+                if (int* childIndexPtr =
+                            fChildEffectMap.find(arg.as<VariableReference>().variable())) {
+                    // In earlier C++ versions, the map assignment could cause the map to be
+                    // resized, invalidating the pointer.
+                    int childIndex = *childIndexPtr;
                     SkASSERT(!fChildEffectMap.find(&param));
-                    fChildEffectMap[&param] = *childIndex;
+                    fChildEffectMap[&param] = childIndex;
                 }
                 continue;
             }
@@ -2809,8 +2812,9 @@ bool Generator::pushConstructorCompound(const AnyConstructor& c) {
 }
 
 bool Generator::pushChildCall(const ChildCall& c) {
-    int* childIdx = fChildEffectMap.find(&c.child());
-    SkASSERT(childIdx != nullptr);
+    int* childIdxPtr = fChildEffectMap.find(&c.child());
+    SkASSERT(childIdxPtr != nullptr);
+    int childIdx = *childIdxPtr;  // Save this in case pushExpression changes fChildEffectMap
     SkASSERT(!c.arguments().empty());
 
     // All child calls have at least one argument.
@@ -2832,7 +2836,7 @@ bool Generator::pushChildCall(const ChildCall& c) {
 
             // Move the argument into src.rgba while also preserving the execution mask.
             fBuilder.exchange_src();
-            fBuilder.invoke_shader(*childIdx);
+            fBuilder.invoke_shader(childIdx);
             break;
         }
         case Type::TypeKind::kColorFilter: {
@@ -2843,7 +2847,7 @@ bool Generator::pushChildCall(const ChildCall& c) {
 
             // Move the argument into src.rgba while also preserving the execution mask.
             fBuilder.exchange_src();
-            fBuilder.invoke_color_filter(*childIdx);
+            fBuilder.invoke_color_filter(childIdx);
             break;
         }
         case Type::TypeKind::kBlender: {
@@ -2861,7 +2865,7 @@ bool Generator::pushChildCall(const ChildCall& c) {
             }
             fBuilder.pop_dst_rgba();
             fBuilder.exchange_src();
-            fBuilder.invoke_blender(*childIdx);
+            fBuilder.invoke_blender(childIdx);
             break;
         }
         default: {
@@ -3368,9 +3372,9 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             subexpressionStack.exit();
             subexpressionStack.pushClone(/*slots=*/3);
 
-            fBuilder.swizzle(/*consumedSlots=*/3, {1, 2, 0});
+            fBuilder.swizzle(/*consumedSlots=*/3, {{1, 2, 0}});
             subexpressionStack.enter();
-            fBuilder.swizzle(/*consumedSlots=*/3, {2, 0, 1});
+            fBuilder.swizzle(/*consumedSlots=*/3, {{2, 0, 1}});
             subexpressionStack.exit();
 
             // Push `arg1.zxy` onto this stack and `arg1.yzx` onto the next stack. Perform the
@@ -3383,11 +3387,11 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             subexpressionStack.exit();
             subexpressionStack.pushClone(/*slots=*/3);
 
-            fBuilder.swizzle(/*consumedSlots=*/3, {2, 0, 1});
+            fBuilder.swizzle(/*consumedSlots=*/3, {{2, 0, 1}});
             fBuilder.binary_op(BuilderOp::mul_n_floats, 3);
 
             subexpressionStack.enter();
-            fBuilder.swizzle(/*consumedSlots=*/3, {1, 2, 0});
+            fBuilder.swizzle(/*consumedSlots=*/3, {{1, 2, 0}});
             fBuilder.binary_op(BuilderOp::mul_n_floats, 3);
             subexpressionStack.exit();
 

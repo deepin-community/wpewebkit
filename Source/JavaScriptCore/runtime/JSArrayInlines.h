@@ -19,26 +19,84 @@
 
 #pragma once
 
-#include "ArrayPrototype.h"
-#include "ButterflyInlines.h"
-#include "ClonedArguments.h"
-#include "DirectArguments.h"
-#include "Error.h"
-#include "JSArray.h"
-#include "JSCellInlines.h"
-#include "ScopedArguments.h"
-#include "Structure.h"
+#include <JavaScriptCore/ArrayPrototype.h>
+#include <JavaScriptCore/ButterflyInlines.h>
+#include <JavaScriptCore/ClonedArguments.h>
+#include <JavaScriptCore/DirectArguments.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/ResourceExhaustion.h>
+#include <JavaScriptCore/ScopedArguments.h>
+#include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/StructureArrayStorageInlines.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initialLength, unsigned vectorLengthHint)
+{
+    ASSERT(vectorLengthHint >= initialLength);
+    unsigned outOfLineStorage = structure->outOfLineCapacity();
+
+    Butterfly* butterfly;
+    IndexingType indexingType = structure->indexingType();
+    if (!hasAnyArrayStorage(indexingType)) [[likely]] {
+        ASSERT(
+            hasUndecided(indexingType)
+            || hasInt32(indexingType)
+            || hasDouble(indexingType)
+            || hasContiguous(indexingType));
+
+        if (vectorLengthHint > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+            return nullptr;
+
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, vectorLengthHint);
+        void* temp = vm.auxiliarySpace().allocate(
+            vm,
+            Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
+            nullptr, AllocationFailureMode::ReturnNull);
+        if (!temp)
+            return nullptr;
+        butterfly = Butterfly::fromBase(temp, 0, outOfLineStorage);
+        butterfly->setVectorLength(vectorLength);
+        butterfly->setPublicLength(initialLength);
+        Butterfly::clearRange(indexingType, butterfly, 0, vectorLength);
+    } else {
+        ASSERT(
+            indexingType == ArrayWithSlowPutArrayStorage
+            || indexingType == ArrayWithArrayStorage);
+        butterfly = tryCreateArrayButterfly(vm, nullptr, initialLength);
+        if (!butterfly)
+            return nullptr;
+        for (unsigned i = 0; i < BASE_ARRAY_STORAGE_VECTOR_LEN; ++i)
+            butterfly->arrayStorage()->m_vector[i].clear();
+    }
+
+    return createWithButterfly(vm, nullptr, structure, butterfly);
+}
+
+inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initialLength)
+{
+    return tryCreate(vm, structure, initialLength, initialLength);
+}
+
+inline JSArray* JSArray::create(VM& vm, Structure* structure, unsigned initialLength)
+{
+    JSArray* result = JSArray::tryCreate(vm, structure, initialLength);
+    RELEASE_ASSERT_RESOURCE_AVAILABLE(result, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    return result;
+}
 
 inline Structure* JSArray::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, IndexingType indexingType)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ArrayType, StructureFlags), info(), indexingType);
 }
 
-inline IndexingType JSArray::mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion)
+inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType other, bool allowPromotion)
 {
-    IndexingType type = indexingType();
     if (!(type & IsArray && other & IsArray))
         return NonArray;
 
@@ -74,13 +132,17 @@ inline IndexingType JSArray::mergeIndexingTypeForCopying(IndexingType other, boo
     return type;
 }
 
+inline IndexingType JSArray::mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion)
+{
+    return mergeIndexingTypesForCopying(indexingType(), other, allowPromotion);
+}
+
 ALWAYS_INLINE bool JSArray::holesMustForwardToPrototype() const
 {
     Structure* structure = this->structure();
-    if (LIKELY(type() == ArrayType)) {
-        ASSERT(!structure->mayInterceptIndexedAccesses());
-        JSGlobalObject* globalObject = structure->globalObject();
-        if (LIKELY(structure->hasMonoProto() && structure->storedPrototype() == globalObject->arrayPrototype() && globalObject->arrayPrototypeChainIsSane()))
+    if (type() == ArrayType) [[likely]] {
+        JSGlobalObject* globalObject = structure->realm();
+        if (structure->hasMonoProto() && structure->storedPrototype() == globalObject->arrayPrototype() && globalObject->arrayPrototypeChainIsSane()) [[likely]]
             return false;
     }
     return structure->holesMustForwardToPrototype(const_cast<JSArray*>(this));
@@ -105,7 +167,7 @@ inline bool JSArray::canFastAppend(JSArray* otherArray) const
 
 inline bool JSArray::canDoFastIndexedAccess() const
 {
-    JSGlobalObject* globalObject = this->globalObject();
+    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->arrayPrototypeChainIsSane())
         return false;
 
@@ -125,7 +187,7 @@ inline bool JSArray::canDoFastIndexedAccess() const
 
 ALWAYS_INLINE bool JSArray::definitelyNegativeOneMiss() const
 {
-    JSGlobalObject* globalObject = this->globalObject();
+    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->arrayPrototypeChainIsSane())
         return false;
 
@@ -151,16 +213,16 @@ ALWAYS_INLINE uint64_t toLength(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (LIKELY(isJSArray(object)))
-        return jsCast<JSArray*>(object)->length();
+    if (isJSArray(object)) [[likely]]
+        return uncheckedDowncast<JSArray>(object)->length();
 
     switch (object->type()) {
     case DirectArgumentsType:
-        RELEASE_AND_RETURN(scope, jsCast<DirectArguments*>(object)->length(globalObject));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<DirectArguments>(object)->length(globalObject));
     case ScopedArgumentsType:
-        RELEASE_AND_RETURN(scope, jsCast<ScopedArguments*>(object)->length(globalObject));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<ScopedArguments>(object)->length(globalObject));
     case ClonedArgumentsType:
-        RELEASE_AND_RETURN(scope, jsCast<ClonedArguments*>(object)->length(globalObject));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<ClonedArguments>(object)->length(globalObject));
     default:
         break;
     }
@@ -181,7 +243,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     switch (indexingMode()) {
     case ArrayClass: {
         createInitialUndecided(vm, 0);
-        FALLTHROUGH;
+        [[fallthrough]];
     }
 
     case ArrayWithUndecided: {
@@ -207,7 +269,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             return;
         }
 
-        if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
+        if (length > MAX_ARRAY_INDEX) [[unlikely]] {
             methodTable()->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
                 throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
@@ -229,7 +291,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             return;
         }
 
-        if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
+        if (length > MAX_ARRAY_INDEX) [[unlikely]] {
             methodTable()->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
                 throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
@@ -265,7 +327,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             return;
         }
 
-        if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
+        if (length > MAX_ARRAY_INDEX) [[unlikely]] {
             methodTable()->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
                 throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
@@ -289,7 +351,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             }
             return;
         }
-        FALLTHROUGH;
+        [[fallthrough]];
     }
 
     case ArrayWithArrayStorage: {
@@ -305,7 +367,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         }
 
         // Pushing to an array of invalid length (2^31-1) stores the property, but throws a range error.
-        if (UNLIKELY(storage->length() > MAX_ARRAY_INDEX)) {
+        if (storage->length() > MAX_ARRAY_INDEX) [[unlikely]] {
             methodTable()->putByIndex(this, globalObject, storage->length(), value, true);
             // Per ES5.1 15.4.4.7 step 6 & 15.4.5.1 step 3.d.
             if (!scope.exception())
@@ -324,4 +386,29 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 }
 
+ALWAYS_INLINE JSValue getProperty(JSGlobalObject* globalObject, JSObject* object, uint64_t index)
+{
+    if (JSValue result = object->tryGetIndexQuickly(index))
+        return result;
+
+    // Don't return undefined if the property is not found.
+    return object->getIfPropertyExists(globalObject, index);
+}
+
+ALWAYS_INLINE bool isHole(double value)
+{
+    return std::isnan(value);
+}
+
+template<typename T>
+ALWAYS_INLINE bool containsHole(const T* data, unsigned length)
+{
+    if constexpr (std::is_same_v<T, double>)
+        return WTF::findNaN(data, length);
+    else
+        return WTF::find64(std::bit_cast<const uint64_t*>(data), JSValue::encode(JSValue()), length);
+}
+
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

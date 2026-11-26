@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,49 +25,48 @@
 
 #pragma once
 
-#include "CSSPrimitiveValue.h"
+#include "CSSPrimitiveNumericTypes.h"
 #include "CSSValue.h"
 #include <wtf/Function.h>
 
 namespace WebCore {
 
-class StyleImage;
-
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSCrossfadeValue final : public CSSValue {
 public:
-    static Ref<CSSCrossfadeValue> create(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed = false);
+    using Progress = CSS::NumberOrPercentageResolvedToNumber<CSS::ClosedUnitRangeClampBoth, CSS::ClosedPercentageRangeClampBoth>;
+
+    static Ref<CSSCrossfadeValue> create(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Progress&&, bool isPrefixed);
 
     ~CSSCrossfadeValue();
 
     bool equals(const CSSCrossfadeValue&) const;
     bool equalInputImages(const CSSCrossfadeValue&) const;
 
-    String customCSSText() const;
+    String customCSSText(const CSS::SerializationContext&) const;
     bool isPrefixed() const { return m_isPrefixed; }
 
-    RefPtr<StyleImage> createStyleImage(Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
-    IterationStatus customVisitChildren(const Function<IterationStatus(CSSValue&)>& func) const
+    IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
     {
         if (func(m_fromValueOrNone.get()) == IterationStatus::Done)
             return IterationStatus::Done;
         if (func(m_toValueOrNone.get()) == IterationStatus::Done)
             return IterationStatus::Done;
-        if (func(m_percentageValue.get()) == IterationStatus::Done)
-            return IterationStatus::Done;
         return IterationStatus::Continue;
     }
 
 private:
-    CSSCrossfadeValue(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Ref<CSSPrimitiveValue>&& percentageValue, bool isPrefixed);
+    CSSCrossfadeValue(Ref<CSSValue>&& fromValueOrNone, Ref<CSSValue>&& toValueOrNone, Progress&&, bool isPrefixed);
 
-    Ref<CSSValue> m_fromValueOrNone;
-    Ref<CSSValue> m_toValueOrNone;
-    Ref<CSSPrimitiveValue> m_percentageValue;
+    const Ref<CSSValue> m_fromValueOrNone;
+    const Ref<CSSValue> m_toValueOrNone;
+    const Progress m_progress;
     bool m_isPrefixed;
 };
 

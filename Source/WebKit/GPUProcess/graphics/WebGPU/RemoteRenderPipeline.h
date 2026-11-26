@@ -54,12 +54,12 @@ class RemoteRenderPipeline final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteRenderPipeline> create(WebCore::WebGPU::RenderPipeline& renderPipeline, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteRenderPipeline(renderPipeline, objectHeap, WTFMove(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteRenderPipeline(renderPipeline, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteRenderPipeline();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -82,9 +82,9 @@ private:
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::RenderPipeline> m_backing;
+    const Ref<WebCore::WebGPU::RenderPipeline> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

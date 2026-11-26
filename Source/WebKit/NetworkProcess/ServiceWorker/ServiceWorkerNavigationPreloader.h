@@ -45,37 +45,43 @@ class DownloadManager;
 class NetworkLoad;
 class NetworkSession;
 
-class ServiceWorkerNavigationPreloader final : public NetworkLoadClient, public CanMakeWeakPtr<ServiceWorkerNavigationPreloader>, public CanMakeCheckedPtr<ServiceWorkerNavigationPreloader> {
+class ServiceWorkerNavigationPreloader final : public NetworkLoadClient, public RefCounted<ServiceWorkerNavigationPreloader> {
     WTF_MAKE_TZONE_ALLOCATED(ServiceWorkerNavigationPreloader);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ServiceWorkerNavigationPreloader);
 public:
-    ServiceWorkerNavigationPreloader(NetworkSession&, NetworkLoadParameters&&, const WebCore::NavigationPreloadState&, bool shouldCaptureExtraNetworkLoadMetrics);
+    static Ref<ServiceWorkerNavigationPreloader> create(NetworkSession&, NetworkLoadParameters&&, const WebCore::NavigationPreloadState&, bool shouldCaptureExtraNetworkLoadMetrics);
     ~ServiceWorkerNavigationPreloader();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void cancel();
 
     using ResponseCallback = Function<void()>;
     void waitForResponse(ResponseCallback&&);
-    using BodyCallback = Function<void(RefPtr<const WebCore::FragmentedSharedBuffer>&&, uint64_t reportedEncodedDataLength)>;
+    using BodyCallback = Function<void(RefPtr<const WebCore::FragmentedSharedBuffer>&&)>;
     void waitForBody(BodyCallback&&);
 
-    const WebCore::ResourceError& error() const { return m_error; }
-    const WebCore::ResourceResponse& response() const { return m_response; }
-    const WebCore::NetworkLoadMetrics& networkLoadMetrics() const { return m_networkLoadMetrics; }
+    const WebCore::ResourceError& error() const LIFETIME_BOUND { return m_error; }
+    const WebCore::ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
+    const WebCore::NetworkLoadMetrics& networkLoadMetrics() const LIFETIME_BOUND { return m_networkLoadMetrics; }
     bool isServiceWorkerNavigationPreloadEnabled() const { return m_state.enabled; }
+    bool didReceiveResponseOrError() const { return m_didReceiveResponseOrError; }
 
     bool convertToDownload(DownloadManager&, DownloadID, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&);
 
     MonotonicTime startTime() const { return m_startTime; }
 
 private:
+    ServiceWorkerNavigationPreloader(NetworkSession&, NetworkLoadParameters&&, const WebCore::NavigationPreloadState&, bool shouldCaptureExtraNetworkLoadMetrics);
+
     // NetworkLoadClient.
     void didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent) final { }
     bool isSynchronous() const final { return false; }
     bool isAllowedToAskUserForCredentials() const final { return false; }
     void willSendRedirectedRequest(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&&) final;
     void didReceiveResponse(WebCore::ResourceResponse&&, PrivateRelayed, ResponseCompletionHandler&&) final;
-    void didReceiveBuffer(const WebCore::FragmentedSharedBuffer&, uint64_t reportedEncodedDataLength) final;
+    void didReceiveBuffer(const WebCore::FragmentedSharedBuffer&) final;
     void didFinishLoading(const WebCore::NetworkLoadMetrics&) final;
     void didFailLoading(const WebCore::ResourceError&) final;
     bool shouldCaptureExtraNetworkLoadMetrics() const final { return m_shouldCaptureExtraNetworkLoadMetrics; }
@@ -85,7 +91,7 @@ private:
     void loadFromNetwork();
     void didComplete();
 
-    std::unique_ptr<NetworkLoad> m_networkLoad;
+    RefPtr<NetworkLoad> m_networkLoad;
     WeakPtr<NetworkSession> m_session;
 
     NetworkLoadParameters m_parameters;
@@ -103,6 +109,7 @@ private:
     bool m_isStarted { false };
     bool m_isCancelled { false };
     bool m_shouldCaptureExtraNetworkLoadMetrics { false };
+    bool m_didReceiveResponseOrError { false };
     MonotonicTime m_startTime;
 };
 

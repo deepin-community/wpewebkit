@@ -5,7 +5,13 @@
 //
 // ComputeShaderTest:
 //   Compute shader specific tests.
+//
 
+#ifdef UNSAFE_BUFFERS_BUILD
+#    pragma allow_unsafe_buffers
+#endif
+
+#include <array>
 #include <vector>
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -66,14 +72,14 @@ class ComputeShaderTest : public ANGLETest<>
 
         glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
 
-        T outputValues[kWidth * kHeight] = {};
+        std::array<T, kWidth * kHeight> outputValues = {};
         glUseProgram(0);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[1],
                                0);
         EXPECT_GL_NO_ERROR();
-        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, format, outputValues);
+        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, format, outputValues.data());
         EXPECT_GL_NO_ERROR();
 
         for (int i = 0; i < kWidth * kHeight; i++)
@@ -87,12 +93,6 @@ class ComputeShaderTestES3 : public ANGLETest<>
 {
   protected:
     ComputeShaderTestES3() {}
-};
-
-class WebGL2ComputeTest : public ComputeShaderTest
-{
-  protected:
-    WebGL2ComputeTest() { setWebGLCompatibilityEnabled(true); }
 };
 
 // link a simple compute program. It should be successful.
@@ -670,11 +670,11 @@ void main()
     ANGLE_GL_COMPUTE_PROGRAM(program1, kCS1);
 
     constexpr unsigned int kBufferSize              = 2;
-    constexpr unsigned int kBufferData[kBufferSize] = {10, 20};
+    constexpr std::array<unsigned int, kBufferSize> kBufferData = {10, 20};
 
     GLBuffer blockIn;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, blockIn);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(kBufferData), kBufferData, GL_STATIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(kBufferData), kBufferData.data(), GL_STATIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blockIn);
 
     GLBuffer blockOut;
@@ -689,10 +689,10 @@ void main()
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, blockOut);
-    unsigned int bufferDataOut[kBufferSize] = {};
+    std::array<unsigned int, kBufferSize> bufferDataOut = {};
     const GLColor *ptr                      = reinterpret_cast<GLColor *>(
         glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(kBufferData), GL_MAP_READ_BIT));
-    memcpy(bufferDataOut, ptr, sizeof(kBufferData));
+    memcpy(bufferDataOut.data(), ptr, sizeof(kBufferData));
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     for (unsigned int index = 0; index < kBufferSize; ++index)
@@ -740,7 +740,7 @@ void main()
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
 
-    GLuint outputValues[kWidth][kHeight];
+    std::array<std::array<GLuint, kHeight>, kWidth> outputValues;
 
     GLFramebuffer framebuffer;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -748,7 +748,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     constexpr GLuint kExpectedValue = 100u;
@@ -832,7 +832,7 @@ void main()
 
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 
-    GLuint outputValues[kWidth][kHeight];
+    std::array<std::array<GLuint, kHeight>, kWidth> outputValues;
 
     GLFramebuffer framebuffer;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -840,7 +840,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     constexpr GLuint kExpectedValue = 100u;
@@ -1025,9 +1025,9 @@ void main()
     glBindFramebuffer(GL_READ_FRAMEBUFFER, mFramebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
-    GLuint outputValues[kTextureWidth * kTextureHeight];
+    std::array<GLuint, kTextureWidth * kTextureHeight> outputValues;
     glReadPixels(0, 0, kTextureWidth, kTextureHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                 outputValues);
+                 outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     GLuint expectedValue = 100;
@@ -1094,9 +1094,9 @@ void main()
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, out, 0);
-    GLuint outputValues[kTextureWidth * kTextureHeight];
+    std::array<GLuint, kTextureWidth * kTextureHeight> outputValues;
     glReadPixels(0, 0, kTextureWidth, kTextureHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                 outputValues);
+                 outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     GLuint expectedValue = 100;
@@ -1191,7 +1191,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -1201,7 +1201,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -1263,7 +1263,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -1273,7 +1273,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -1361,14 +1361,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 150;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[2], 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight; i++)
@@ -1420,14 +1420,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[1], 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight; i++)
@@ -1482,14 +1482,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[1], 1);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight; i++)
@@ -1541,7 +1541,7 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -1550,14 +1550,14 @@ void main()
     glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture[1], 0, 1);
     EXPECT_GL_NO_ERROR();
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
         EXPECT_EQ(expectedValue, outputValues[i]);
     }
     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
@@ -1611,7 +1611,7 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -1620,14 +1620,14 @@ void main()
     glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture[1], 1, 1);
     EXPECT_GL_NO_ERROR();
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
         EXPECT_EQ(expectedValue, outputValues[i]);
     }
     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
@@ -1678,7 +1678,7 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -1687,14 +1687,14 @@ void main()
     glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture[1], 0, 1);
     EXPECT_GL_NO_ERROR();
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
         EXPECT_EQ(expectedValue, outputValues[i]);
     }
     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kWidth * kHeight; i++)
     {
@@ -1756,7 +1756,7 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint expectedValue = 200;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -1766,7 +1766,7 @@ void main()
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, texture[1], 0);
         EXPECT_GL_NO_ERROR();
-        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
         EXPECT_GL_NO_ERROR();
 
         for (int i = 0; i < kWidth * kHeight; i++)
@@ -1797,7 +1797,7 @@ void main()
     constexpr GLuint kInputValues[2][2] = {{200, 150}, {100, 50}};
     constexpr GLuint expectedValue_1    = 200;
     constexpr GLuint expectedValue_2    = 100;
-    GLuint outputValues[kResultSize];
+    std::array<GLuint, kResultSize> outputValues;
 
     glBindTexture(GL_TEXTURE_2D_ARRAY, texture[0]);
     glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R32UI, kWidth, kHeight, kDepth);
@@ -1828,14 +1828,14 @@ void main()
     glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture[1], 0, 1);
     EXPECT_GL_NO_ERROR();
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kResultSize; i++)
     {
         EXPECT_EQ(expectedValue_2, outputValues[i]);
     }
     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kResultSize; i++)
     {
@@ -1868,7 +1868,7 @@ void main()
     constexpr GLuint kInputValues[2][2] = {{200, 150}, {100, 50}};
     constexpr GLuint expectedValue_1    = 150;
     constexpr GLuint expectedValue_2    = 50;
-    GLuint outputValues[kResultSize];
+    std::array<GLuint, kResultSize> outputValues;
 
     glBindTexture(GL_TEXTURE_3D, texture[0]);
     glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI, kWidth, kHeight, kDepth);
@@ -1899,14 +1899,14 @@ void main()
     glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture[1], 0, 1);
     EXPECT_GL_NO_ERROR();
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kResultSize; i++)
     {
         EXPECT_EQ(expectedValue_1, outputValues[i]);
     }
     glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
     for (int i = 0; i < kResultSize; i++)
     {
@@ -1939,7 +1939,7 @@ void main()
     constexpr GLuint kInputValues[2][1] = {{200}, {100}};
     constexpr GLuint expectedValue_1    = 200;
     constexpr GLuint expectedValue_2    = 100;
-    GLuint outputValues[kResultSize];
+    std::array<GLuint, kResultSize> outputValues;
 
     glBindTexture(GL_TEXTURE_CUBE_MAP, texture[0]);
     glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, GL_R32UI, kWidth, kHeight);
@@ -1980,7 +1980,7 @@ void main()
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, texture[1], 0);
         EXPECT_GL_NO_ERROR();
-        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
         EXPECT_GL_NO_ERROR();
 
         if (face == 4)
@@ -2037,7 +2037,7 @@ TEST_P(ComputeShaderTest, BindImageTextureWithMixTextureTypes)
 
     constexpr GLuint expectedValue_1 = 148;
     constexpr GLuint expectedValue_2 = 232;
-    GLuint outputValues[kResultSize];
+    std::array<GLuint, kResultSize> outputValues;
 
     glBindTexture(GL_TEXTURE_2D, texture[0]);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
@@ -2090,7 +2090,7 @@ TEST_P(ComputeShaderTest, BindImageTextureWithMixTextureTypes)
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, texture[3], 0);
         EXPECT_GL_NO_ERROR();
-        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+        glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
         EXPECT_GL_NO_ERROR();
 
         if (face == 4)
@@ -2207,14 +2207,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     constexpr GLuint kExpectedValue = 4;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight; i++)
@@ -2286,6 +2286,90 @@ TEST_P(ComputeShaderTest, ExceedCombinedShaderOutputResourcesInCS)
 
     GLuint computeProgram = CompileComputeProgram(computeShaderStream.str().c_str());
     EXPECT_EQ(0u, computeProgram);
+}
+
+// Tests running a compute shader writing to separate components on SSBO without explicit barrier.
+// Based on dEQP test: KHR-GLES31.core.shader_storage_buffer_object.advanced-switchBuffers-cs
+TEST_P(ComputeShaderTest, WriteToSeparateSSBOComponentsWithoutExplicitBarrier)
+{
+    constexpr char kCS[] = R"(#version 310 es
+precision highp float;
+precision highp int;
+
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) buffer Input {
+    uint cookie[4];
+} g_in;
+
+layout(binding = 1, std430) buffer Output {
+    uvec4 digest;
+};
+
+void main()
+{
+    uint sum = g_in.cookie[0] + g_in.cookie[1] + g_in.cookie[2] + g_in.cookie[3];
+    switch (sum)
+    {
+        case 0x000000FFu:
+            digest.x = 0xFF000000u;
+            break;
+        case 0x0000FF00u:
+            digest.y = 0x00FF0000u;
+            break;
+        case 0x00FF0000u:
+            digest.z = 0x0000FF00u;
+            break;
+        case 0xFF000000u:
+            digest.w = 0x000000FFu;
+            break;
+        default:
+            break;
+   }
+})";
+    ANGLE_GL_COMPUTE_PROGRAM(program, kCS);
+    EXPECT_GL_NO_ERROR();
+    glUseProgram(program);
+
+    std::array<GLBuffer, 4> ssboIn;
+    GLBuffer ssboOut;
+
+    const GLubyte data0[] = {0, 0, 0, 0x11, 0, 0, 0, 0x44, 0, 0, 0, 0x88, 0, 0, 0, 0x22};
+    const GLubyte data1[] = {0, 0, 0x44, 0, 0, 0, 0x22, 0, 0, 0, 0x88, 0, 0, 0, 0x11, 0};
+    const GLubyte data2[] = {0, 0x88, 0, 0, 0, 0x11, 0, 0, 0, 0x44, 0, 0, 0, 0x22, 0, 0};
+    const GLubyte data3[] = {0x22, 0, 0, 0, 0x88, 0, 0, 0, 0x11, 0, 0, 0, 0x44, 0, 0, 0};
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboIn[0]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(data0), data0, GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboIn[1]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(data1), data1, GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboIn[2]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(data2), data2, GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboIn[3]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(data3), data3, GL_STATIC_DRAW);
+
+    const GLubyte dataZero[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboOut);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(dataZero), dataZero, GL_STATIC_DRAW);
+
+    // Since the write is expected to occur on separate components on the output SSBO, no explicit
+    // barrier is used between the dispatch calls.
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboIn[i]);
+        glDispatchCompute(1, 1, 1);
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboOut);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+    auto actualOutput = static_cast<GLuint *>(
+        glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(data0), GL_MAP_READ_BIT));
+    EXPECT_NE(actualOutput, nullptr);
+
+    std::array<GLuint, 4> expectedOutput = {0xFF000000, 0x00FF0000, 0x0000FF00, 0x000000FF};
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        EXPECT_EQ(actualOutput[i], expectedOutput[i]) << "Failed at index " << i;
+    }
 }
 
 // Test that uniform block with struct member in compute shader is supported.
@@ -2716,9 +2800,9 @@ void main()
 
     GLint uniformBufferIndex = glGetUniformBlockIndex(program, "uni");
     EXPECT_NE(uniformBufferIndex, -1);
-    GLuint data[4] = {201, 202, 203, 204};
+    std::array<GLuint, 4> data = {201, 202, 203, 204};
     glBindBuffer(GL_UNIFORM_BUFFER, buffer);
-    glBufferData(GL_UNIFORM_BUFFER, sizeof(GLuint) * 4, data, GL_STATIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(GLuint) * 4, data.data(), GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, buffer);
     glUniformBlockBinding(program, uniformBufferIndex, 0);
     EXPECT_GL_NO_ERROR();
@@ -2730,13 +2814,13 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight * 4];
+    std::array<GLuint, kWidth * kHeight * 4> outputValues;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RGBA_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RGBA_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight * 4; i++)
@@ -3172,62 +3256,13 @@ void main()
 // 3.10
 TEST_P(ComputeShaderTestES3, NotSupported)
 {
+    // Allow the system EGL to skip the test if the context version is not exactly 3.0, which is
+    // possible when the driver does not support "EGL_ANGLE_create_context_backwards_compatible".
+    ANGLE_SKIP_TEST_IF(isAtLeastClientVersion(3, 1));
+
     GLuint computeShaderHandle = glCreateShader(GL_COMPUTE_SHADER);
     EXPECT_EQ(0u, computeShaderHandle);
     EXPECT_GL_ERROR(GL_INVALID_ENUM);
-}
-
-// The contents of shared variables should be cleared to zero at the beginning of shader execution.
-TEST_P(WebGL2ComputeTest, sharedVariablesShouldBeZero)
-{
-    // http://anglebug.com/40644676
-    ANGLE_SKIP_TEST_IF(IsD3D11());
-
-    // Fails on Android, AMD/windows and Intel/windows.  Probably works by chance on other
-    // platforms, so suppressing on all platforms to avoid possible flakiness.
-    // http://anglebug.com/42262513
-    ANGLE_SKIP_TEST_IF(IsVulkan());
-
-    // http://anglebug.com/40096654
-    ANGLE_SKIP_TEST_IF(IsAndroid() && IsOpenGLES());
-    ANGLE_SKIP_TEST_IF(IsOpenGL() &&
-                       ((getClientMajorVersion() == 3) && (getClientMinorVersion() >= 1)));
-
-    const char kCSShader[] = R"(#version 310 es
-layout (local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
-layout (r32ui, binding = 0) readonly uniform highp uimage2D srcImage;
-layout (r32ui, binding = 1) writeonly uniform highp uimage2D dstImage;
-struct S {
-    float f;
-    int i;
-    uint u;
-    bool b;
-    vec4 v[64];
-};
-
-shared S vars[16];
-void main()
-{
-    S zeroS;
-    zeroS.f = 0.0f;
-    zeroS.i = 0;
-    zeroS.u = 0u;
-    zeroS.b = false;
-    for (int i = 0; i < 64; i++)
-    {
-        zeroS.v[i] = vec4(0.0f);
-    }
-
-    uint tid = gl_LocalInvocationID.x + gl_LocalInvocationID.y * 4u;
-    uint value = (zeroS == vars[tid] ? 127u : 0u);
-    imageStore(dstImage, ivec2(gl_LocalInvocationID.xy), uvec4(value));
-})";
-
-    const std::array<GLuint, 16> inputData = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-    const std::array<GLuint, 16> expectedValues = {
-        {127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127}};
-    runSharedMemoryTest<GLuint, 4, 4>(kCSShader, GL_R32UI, GL_UNSIGNED_INT, inputData,
-                                      expectedValues);
 }
 
 // Test uniform dirty in compute shader, and verify the contents.
@@ -3288,14 +3323,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth * kHeight];
+    std::array<GLuint, kWidth * kHeight> outputValues;
     GLuint expectedValue = 600;
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[1], 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth * kHeight; i++)
@@ -3334,7 +3369,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -3344,7 +3379,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -3432,14 +3467,14 @@ void main()
     EXPECT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
-    GLuint outputValues[kWidth2 * kHeight2 * 4];
-    constexpr GLuint expectedValue[] = {4, 2};
+    std::array<GLuint, kWidth2 * kHeight2 * 4> outputValues;
+    constexpr std::array<GLuint, 2> expectedValue = {4, 2};
     glUseProgram(0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture[1], 0);
     EXPECT_GL_NO_ERROR();
-    glReadPixels(0, 0, kWidth2, kHeight2, GL_RGBA_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth2, kHeight2, GL_RGBA_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     for (int i = 0; i < kWidth2 * kHeight2; i++)
@@ -3608,8 +3643,7 @@ void main(void) {
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     ANGLE_GL_COMPUTE_PROGRAM(csProgram, kCSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3710,8 +3744,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3781,8 +3814,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3861,8 +3893,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -4150,7 +4181,7 @@ void main(void) {
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
 
-    unsigned char *data = new unsigned char[4 * getWindowWidth() * getWindowHeight()];
+    std::vector<uint8_t> data(4 * getWindowWidth() * getWindowHeight(), 0);
     for (int i = 0; i < getWindowWidth() * getWindowHeight(); i++)
     {
         data[i * 4]     = 0xff;
@@ -4163,7 +4194,7 @@ void main(void) {
     glTexStorage2D(GL_TEXTURE_2D, 2, GL_RGBA8, getWindowWidth(), getWindowHeight());
     // Clear the texture level 0 to Red.
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, getWindowWidth(), getWindowHeight(), GL_RGBA,
-                    GL_UNSIGNED_BYTE, data);
+                    GL_UNSIGNED_BYTE, data.data());
     for (int i = 0; i < getWindowWidth() * getWindowHeight(); i++)
     {
         data[i * 4]     = 0;
@@ -4173,8 +4204,7 @@ void main(void) {
     }
     // Clear the texture level 1 to Green.
     glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, getWindowWidth() / 2, getWindowHeight() / 2, GL_RGBA,
-                    GL_UNSIGNED_BYTE, data);
-    delete[] data;
+                    GL_UNSIGNED_BYTE, data.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glUseProgram(program);
@@ -4223,6 +4253,68 @@ void main(void) {
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     EXPECT_PIXEL_COLOR_EQ(1, 1, GLColor::green);
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2 - 1, getWindowHeight() / 2 - 1, GLColor::green);
+}
+
+// Test that writes via compute are visible to draw call
+TEST_P(ComputeShaderTest, DispatchDrawBlend)
+{
+    const char kCS[] = R"(#version 310 es
+layout(local_size_x=1, local_size_y=1) in;
+layout(rgba8, binding = 0) writeonly uniform highp image2D image;
+uniform vec4 color;
+void main()
+{
+    imageStore(image, ivec2(0, 0), color);
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(imageWrite, kCS);
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    glUseProgram(imageWrite);
+    const GLint uniLoc = glGetUniformLocation(imageWrite, "color");
+
+    for (const GLboolean layered : {GL_FALSE, GL_TRUE})
+    {
+        GLTexture texture;
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+        // Leave the texture intentionally uninitialized, it's initialized by the compute shader.
+        glBindImageTexture(0, texture, 0, layered, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+        // Use with compute shader once; in the Vulkan backend, this may recreate the image's
+        // backing storage (which at the time of writing this comment, copies the undefined values
+        // from the existing image into a new image, marking it as having defined values).
+        // glInvalidateFramebuffer is used to mark the contents undefined again.
+        glUseProgram(imageWrite);
+        glUniform4f(uniLoc, 0, 1, 0, 1);
+        glDispatchCompute(1, 1, 1);
+        EXPECT_GL_NO_ERROR();
+
+        constexpr std::array<GLenum, 1> kDiscard = {GL_COLOR_ATTACHMENT0};
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, kDiscard.data());
+
+        // Dispatch again, which is supposed to make the contents defined.
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        glUniform4f(uniLoc, 0, 0, 1, 1);
+        glDispatchCompute(1, 1, 1);
+        EXPECT_GL_NO_ERROR();
+
+        // Blend into it after the CS write
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.0f);
+
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::magenta) << "Layered? " << layered;
+        ASSERT_GL_NO_ERROR();
+    }
 }
 
 // Test that maxComputeWorkGroupCount is valid number.
@@ -4376,6 +4468,207 @@ void main() {
         glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), GL_MAP_READ_BIT));
     EXPECT_EQ(kVertexCount * 2, mappedBuffer[0]);
     glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+}
+
+// This test mirrors a dEQP test that is failing on some platforms
+//  - KHR-GLES31.core.shader_image_load_store.advanced-sync-vertexArray
+// The test has three pipelines:
+//  - First uses a vertex shader to store data to images
+//  - Second uses a compute shader to read from those images and store to buffers
+//  - Third uses those buffers as vertex input to render a color
+// It does this twice with different colors, and we were failing the second pass.
+// http://anglebug.com/416573908
+TEST_P(ComputeShaderTest, AdvancedSyncVertexArray)
+{
+    GLint maxVertexImageUniforms = 0;
+    glGetIntegerv(GL_MAX_VERTEX_IMAGE_UNIFORMS, &maxVertexImageUniforms);
+    ANGLE_SKIP_TEST_IF(maxVertexImageUniforms < 3);
+
+    constexpr char kCopyCS[] = R"(#version 310 es
+#define KSIZE 4
+layout (local_size_x = KSIZE) in;
+
+layout(rgba32f, binding = 0) readonly uniform highp image2D  positionImage;
+layout(rgba32f, binding = 1) readonly uniform highp image2D  colorImage;
+layout(r32ui,   binding = 2) readonly uniform highp uimage2D elementImage;
+
+layout(std430, binding = 1) buffer positionBuffer {
+    vec2 position[KSIZE];
+};
+layout(std430, binding = 2) buffer colorBuffer {
+    vec4 color[KSIZE];
+};
+layout(std430, binding = 3) buffer elementBuffer {
+    uint element[KSIZE];
+};
+
+void main() {
+    ivec2 coord = ivec2(gl_LocalInvocationID.x, 0);
+
+    position[coord.x] = imageLoad(positionImage, coord).xy;
+       color[coord.x] = imageLoad(colorImage, coord);
+     element[coord.x] = uint(imageLoad(elementImage, coord).x);
+})";
+
+    constexpr char kStoreVS[] = R"(#version 310 es
+layout(rgba32f, binding = 0) writeonly uniform highp image2D positionImage;
+layout(rgba32f, binding = 1) writeonly uniform highp image2D colorImage;
+layout(r32ui,   binding = 2) writeonly uniform highp uimage2D elementImage;
+
+uniform vec4 inColor;
+
+void main() {
+    vec2[4] data = vec2[4](vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(1, 1));
+
+    imageStore(positionImage, ivec2(gl_VertexID, 0), vec4(data[gl_VertexID], 0.0, 1.0));
+    imageStore(colorImage,    ivec2(gl_VertexID, 0), inColor);
+    imageStore(elementImage,  ivec2(gl_VertexID, 0), uvec4(gl_VertexID));
+})";
+
+    constexpr char kStoreFS[] = R"(#version 310 es
+precision mediump float;
+
+void main() {
+    discard;
+})";
+
+    constexpr char kDrawVS[] = R"(#version 310 es
+layout(location = 0) in vec4 inPosition;
+layout(location = 1) in vec4 inColor;
+
+out vec4 vsColor;
+
+void main() {
+    gl_Position = inPosition;
+    vsColor     = inColor;
+})";
+
+    constexpr char kDrawFS[] = R"(#version 310 es
+precision mediump float;
+
+in vec4 vsColor;
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = vsColor;
+})";
+
+    // The store program writes values to images
+    ANGLE_GL_PROGRAM(storeProgram, kStoreVS, kStoreFS);
+    // The compute program copies from images to buffers
+    ANGLE_GL_COMPUTE_PROGRAM(copyProgram, kCopyCS);
+    // The draw program reads from vertex input buffers
+    ANGLE_GL_PROGRAM(drawProgram, kDrawVS, kDrawFS);
+    EXPECT_GL_NO_ERROR();
+
+    GLint inColorLoc = glGetUniformLocation(storeProgram, "inColor");
+    ASSERT_NE(inColorLoc, -1);
+
+    GLuint texture[3];
+    glGenTextures(3, texture);
+    glBindTexture(GL_TEXTURE_2D, texture[0]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 4, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, texture[1]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 4, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, texture[2]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, 4, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint attribless_vao;
+    GLuint draw_vao;
+    glGenVertexArrays(1, &attribless_vao);
+    glGenVertexArrays(1, &draw_vao);
+    glBindVertexArray(draw_vao);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint position_buffer;
+    glGenBuffers(1, &position_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, position_buffer);
+    glBufferData(GL_ARRAY_BUFFER, 4 * 4 * 4, 0, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint color_buffer;
+    glGenBuffers(1, &color_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
+    glBufferData(GL_ARRAY_BUFFER, 4 * 4 * 4, 0, GL_STATIC_DRAW);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    EXPECT_GL_NO_ERROR();
+
+    GLuint element_buffer;
+    glGenBuffers(1, &element_buffer);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 4 * 4 * 4, 0, GL_STATIC_DRAW);
+    EXPECT_GL_NO_ERROR();
+
+    glBindVertexArray(0);
+    // Vertex position
+    glBindImageTexture(0, texture[0], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+    // Vertex color
+    glBindImageTexture(1, texture[1], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+    // Vertex ID
+    glBindImageTexture(2, texture[2], 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+    EXPECT_GL_NO_ERROR();
+
+    // Store Vertex Positions, GREEN, and Vertex ID to the images
+    glUseProgram(storeProgram);
+    glUniform4f(inColorLoc, 0.0f, 1.0f, 0.0f, 1.0f);
+    glBindVertexArray(attribless_vao);
+    glDrawArrays(GL_POINTS, 0, 4);
+    EXPECT_GL_NO_ERROR();
+
+    // Copy GREEN from images to vertex array buffers
+    glUseProgram(copyProgram);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, position_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, color_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, element_buffer);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    glDispatchCompute(1, 1, 1);
+    EXPECT_GL_NO_ERROR();
+
+    // Draw GREEN using the incoming vertex data
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(drawProgram);
+    glBindVertexArray(draw_vao);
+    glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT);
+    glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_INT, 0);
+    EXPECT_GL_NO_ERROR();
+
+    // Check for GREEN
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Store Vertex Positions, BLUE, and Vertex ID to the images
+    glUseProgram(storeProgram);
+    glUniform4f(inColorLoc, 0.0f, 0.0f, 1.0f, 1.0f);
+    glBindVertexArray(attribless_vao);
+    glDrawArrays(GL_POINTS, 0, 4);
+    EXPECT_GL_NO_ERROR();
+
+    // Copy BLUE from images to vertex array buffers
+    glUseProgram(copyProgram);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    glDispatchCompute(1, 1, 1);
+    EXPECT_GL_NO_ERROR();
+
+    // Draw BLUE using incoming vertex data
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(drawProgram);
+    glBindVertexArray(draw_vao);
+    glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT);
+    glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_INT, 0);
+    EXPECT_GL_NO_ERROR();
+
+    // Check for BLUE
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
 }
 
 // Validate that on Vulkan, compute pipeline is correctly bound after an internal dispatch call is
@@ -4800,10 +5093,6 @@ TEST_P(ComputeShaderTest, ImageBufferMapWrite)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
 
-    // Claims to support GL_OES_texture_buffer, but fails compilation of shader because "extension
-    // 'GL_OES_texture_buffer' is not supported".  http://anglebug.com/42264369
-    ANGLE_SKIP_TEST_IF(IsQualcomm() && IsOpenGLES());
-
     constexpr char kComputeImageBuffer[] = R"(#version 310 es
 #extension GL_OES_texture_buffer : require
 layout(local_size_x=1, local_size_y=1, local_size_z=1) in;
@@ -4871,13 +5160,6 @@ TEST_P(ComputeShaderTest, ImageBufferMapWriteAndBufferSubData)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
 
-    // Claims to support GL_OES_texture_buffer, but fails compilation of shader because "extension
-    // 'GL_OES_texture_buffer' is not supported".  http://anglebug.com/42264369
-    ANGLE_SKIP_TEST_IF(IsQualcomm() && IsOpenGLES());
-
-    // angleporject:6545. Known bug.
-    ANGLE_SKIP_TEST_IF(IsVulkan());
-
     constexpr char kComputeImageBuffer[] = R"(#version 310 es
 #extension GL_OES_texture_buffer : require
 layout(local_size_x=1, local_size_y=1, local_size_z=1) in;
@@ -4933,9 +5215,9 @@ void main()
 
         if (loop == 1)
         {
-            // Make write operation finished but read operation pending. We don't care actual
-            // rendering result but just to have a unflushed rendering using the buffer so that it
-            // will appears as pending.
+            // Make write operation finished but read operation pending. We don't care about the
+            // actual rendering result but just to have unflushed commands using the buffer so that
+            // it appears as pending.
             glFinish();
             constexpr char kVS[] = R"(attribute vec4 in_attrib;
                                     varying vec4 v_attrib;
@@ -5313,9 +5595,9 @@ TEST_P(ComputeShaderTest, SSBOAliasOverWrite)
     ASSERT_GL_NO_ERROR();
 
     bool error = false;
-    for (int index = 0; index < static_cast<int>(results.size()); ++index)
+    for (int result : results)
     {
-        if (results[index] != 1)
+        if (result != 1)
         {
             error = true;
         }
@@ -5372,9 +5654,9 @@ TEST_P(ComputeShaderTest, AtomicOpPreviousValueAssignedToSSBO)
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     ASSERT_GL_NO_ERROR();
 
-    for (int index = 0; index < static_cast<int>(results.size()); ++index)
+    for (int result : results)
     {
-        EXPECT_EQ(results[index], 0);
+        EXPECT_EQ(result, 0);
     }
 }
 
@@ -5430,14 +5712,77 @@ void main()
     EXPECT_GL_NO_ERROR();
 }
 
+// Test reading from a storage image that was bound to a deleted texture.
+TEST_P(ComputeShaderTest, DeleteTextureBoundToImageUnit)
+{
+    constexpr char kShader[] = R"(#version 310 es
+layout(local_size_x=1) in;
+layout(r32f, binding=0) uniform highp readonly image2D img;
+layout(std430, binding=1) buffer Out {
+    float val;
+} out_data;
+
+void main() {
+    out_data.val = imageLoad(img, ivec2(0,0)).x;
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(program, kShader);
+    glUseProgram(program);
+
+    // Create a texture and fill it with a value.
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, 1, 1);
+    float initValue = 1.0f;
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RED, GL_FLOAT, &initValue);
+
+    // Bind it to an image unit.
+    glBindImageTexture(0, tex, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32F);
+
+    // Create a buffer for output.
+    GLBuffer buf;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, buf);
+
+    // Dispatch once to synchronize all dirty bits.
+    glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    // Verify output is 1.0.
+    {
+        const float result = *reinterpret_cast<const float *>(
+            glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(float), GL_MAP_READ_BIT));
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        EXPECT_EQ(1.0f, result);
+    }
+
+    // Delete the texture. This should detach it from the image unit.
+    tex.reset();
+
+    // Reset the buffer to another value and dispatch again.
+    float resetValue = 0.5f;
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(float), &resetValue);
+    glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    // Verify output is 0.0 (null image).
+    {
+        const float result = *reinterpret_cast<const float *>(
+            glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(float), GL_MAP_READ_BIT));
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        EXPECT_EQ(0.0f, result);
+    }
+
+    EXPECT_GL_NO_ERROR();
+}
+
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ComputeShaderTest);
-ANGLE_INSTANTIATE_TEST_ES31(ComputeShaderTest);
+ANGLE_INSTANTIATE_TEST_ES31_AND(ComputeShaderTest,
+                                ES31_VULKAN().enable(Feature::ForceRobustResourceInit));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ComputeShaderTestES3);
 ANGLE_INSTANTIATE_TEST_ES3(ComputeShaderTestES3);
-
-GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(WebGL2ComputeTest);
-ANGLE_INSTANTIATE_TEST_ES31(WebGL2ComputeTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(StorageImageRenderProgramTest);
 ANGLE_INSTANTIATE_TEST_ES31(StorageImageRenderProgramTest);

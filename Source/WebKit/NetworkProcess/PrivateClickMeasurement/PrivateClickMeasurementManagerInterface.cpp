@@ -32,7 +32,6 @@
 #include "PrivateClickMeasurementConnection.h"
 #include "PrivateClickMeasurementDaemonClient.h"
 #include "PrivateClickMeasurementManager.h"
-#include "WebCoreArgumentCoders.h"
 
 #if PLATFORM(COCOA)
 #include "PCMDaemonConnectionSet.h"
@@ -126,6 +125,11 @@ FUNCTION(allowTLSCertificateChainForLocalPCMTesting)
 ARGUMENTS(WebCore::CertificateInfo)
 END
 
+FUNCTION(fetchRegistrableDomains)
+ARGUMENTS()
+REPLY(Vector<WebCore::RegistrableDomain>)
+END
+
 #undef FUNCTION
 #undef ARGUMENTS
 #undef REPLY
@@ -139,11 +143,22 @@ EMPTY_REPLY(destroyStoreForTesting);
 EMPTY_REPLY(storeUnattributed);
 #undef EMPTY_REPLY
 
-PCM::EncodedMessage toStringForTesting::encodeReply(String reply)
+template<typename T>
+static PCM::EncodedMessage encodeReplyImpl(T&& payload)
 {
     Daemon::Encoder encoder;
-    encoder << reply;
+    encoder << std::forward<T>(payload);
     return encoder.takeBuffer();
+}
+
+PCM::EncodedMessage toStringForTesting::encodeReply(String reply)
+{
+    return encodeReplyImpl(WTF::move(reply));
+}
+
+PCM::EncodedMessage fetchRegistrableDomains::encodeReply(Vector<WebCore::RegistrableDomain> domains)
+{
+    return encodeReplyImpl(WTF::move(domains));
 }
 
 } // namespace MessageInfo
@@ -170,25 +185,26 @@ bool messageTypeSendsReply(MessageType messageType)
     case MessageType::ToStringForTesting:
     case MessageType::Clear:
     case MessageType::ClearForRegistrableDomain:
+    case MessageType::FetchRegistrableDomains:
         return true;
     }
     ASSERT_NOT_REACHED();
     return false;
 }
 
-static std::unique_ptr<PrivateClickMeasurementManager>& managerPointer()
+static RefPtr<PrivateClickMeasurementManager>& NODELETE managerPointer()
 {
-    static NeverDestroyed<std::unique_ptr<PrivateClickMeasurementManager>> manager;
+    static NeverDestroyed<RefPtr<PrivateClickMeasurementManager>> manager;
     return manager.get();
 }
 
-void initializePCMStorageInDirectory(const String& storageDirectory)
+void initializePCMStorageInDirectory(const String& storageDirectory, const String& applicationBundleIdentifier, const String& secondaryApplicationBundleIdentifier)
 {
     ASSERT(!managerPointer());
-    managerPointer() = makeUnique<PrivateClickMeasurementManager>(makeUniqueRef<PCM::DaemonClient>(), storageDirectory);
+    managerPointer() = PrivateClickMeasurementManager::create(makeUniqueRef<PCM::DaemonClient>(), storageDirectory, std::make_pair(applicationBundleIdentifier, secondaryApplicationBundleIdentifier));
 }
 
-static PrivateClickMeasurementManager& daemonManager()
+static PrivateClickMeasurementManager& NODELETE daemonManagerSingleton()
 {
     ASSERT(managerPointer());
     return *managerPointer();
@@ -201,10 +217,10 @@ void handlePCMMessage(std::span<const uint8_t> encodedMessage)
 
     std::optional<typename Info::ArgsTuple> arguments;
     decoder >> arguments;
-    if (UNLIKELY(!arguments))
+    if (!arguments) [[unlikely]]
         return;
 
-    IPC::callMemberFunction(&daemonManager(), Info::MemberFunction, WTFMove(*arguments));
+    IPC::callMemberFunction(&daemonManagerSingleton(), Info::MemberFunction, WTF::move(*arguments));
 }
 
 static void handlePCMMessageSetDebugModeIsEnabled(const Daemon::Connection& connection, std::span<const uint8_t> encodedMessage)
@@ -213,14 +229,14 @@ static void handlePCMMessageSetDebugModeIsEnabled(const Daemon::Connection& conn
     Daemon::Decoder decoder(encodedMessage);
     std::optional<bool> enabled;
     decoder >> enabled;
-    if (UNLIKELY(!enabled))
+    if (!enabled) [[unlikely]]
         return;
 
     auto& connectionSet = DaemonConnectionSet::singleton();
     bool debugModeWasEnabled = connectionSet.debugModeEnabled();
     connectionSet.setConnectedNetworkProcessHasDebugModeEnabled(connection, *enabled);
     if (debugModeWasEnabled != connectionSet.debugModeEnabled())
-        daemonManager().setDebugModeIsEnabled(*enabled);
+        daemonManagerSingleton().setDebugModeIsEnabled(*enabled);
 #else
     UNUSED_PARAM(connection);
     UNUSED_PARAM(encodedMessage);
@@ -234,19 +250,19 @@ void handlePCMMessageWithReply(std::span<const uint8_t> encodedMessage, Completi
 
     std::optional<typename Info::ArgsTuple> arguments;
     decoder >> arguments;
-    if (UNLIKELY(!arguments))
+    if (!arguments) [[unlikely]]
         return;
 
-    typename Info::Reply completionHandler { [replySender = WTFMove(replySender)] (auto&&... args) mutable {
+    typename Info::Reply completionHandler { [replySender = WTF::move(replySender)] (auto&&... args) mutable {
         replySender(Info::encodeReply(args...));
     }};
 
-    IPC::callMemberFunction(&daemonManager(), Info::MemberFunction, WTFMove(*arguments), WTFMove(completionHandler));
+    IPC::callMemberFunction(&daemonManagerSingleton(), Info::MemberFunction, WTF::move(*arguments), WTF::move(completionHandler));
 }
 
 void doDailyActivityInManager()
 {
-    daemonManager().firePendingAttributionRequests();
+    daemonManagerSingleton().firePendingAttributionRequests();
 }
 
 void decodeMessageAndSendToManager(const Daemon::Connection& connection, MessageType messageType, std::span<const uint8_t> encodedMessage, CompletionHandler<void(Vector<uint8_t>&&)>&& replySender)
@@ -254,16 +270,16 @@ void decodeMessageAndSendToManager(const Daemon::Connection& connection, Message
     ASSERT(messageTypeSendsReply(messageType) == !!replySender);
     switch (messageType) {
     case PCM::MessageType::StoreUnattributed:
-        handlePCMMessageWithReply<MessageInfo::storeUnattributed>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::storeUnattributed>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::HandleAttribution:
         handlePCMMessage<MessageInfo::handleAttribution>(encodedMessage);
         break;
     case PCM::MessageType::Clear:
-        handlePCMMessageWithReply<MessageInfo::clear>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::clear>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::ClearForRegistrableDomain:
-        handlePCMMessageWithReply<MessageInfo::clearForRegistrableDomain>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::clearForRegistrableDomain>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::SetDebugModeIsEnabled:
         handlePCMMessageSetDebugModeIsEnabled(connection, encodedMessage);
@@ -272,7 +288,7 @@ void decodeMessageAndSendToManager(const Daemon::Connection& connection, Message
         handlePCMMessage<MessageInfo::migratePrivateClickMeasurementFromLegacyStorage>(encodedMessage);
         break;
     case PCM::MessageType::ToStringForTesting:
-        handlePCMMessageWithReply<MessageInfo::toStringForTesting>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::toStringForTesting>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::SetOverrideTimerForTesting:
         handlePCMMessage<MessageInfo::setOverrideTimerForTesting>(encodedMessage);
@@ -290,7 +306,7 @@ void decodeMessageAndSendToManager(const Daemon::Connection& connection, Message
         handlePCMMessage<MessageInfo::markAllUnattributedAsExpiredForTesting>(encodedMessage);
         break;
     case PCM::MessageType::MarkAttributedPrivateClickMeasurementsAsExpiredForTesting:
-        handlePCMMessageWithReply<MessageInfo::markAttributedPrivateClickMeasurementsAsExpiredForTesting>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::markAttributedPrivateClickMeasurementsAsExpiredForTesting>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::SetPCMFraudPreventionValuesForTesting:
         handlePCMMessage<MessageInfo::setPCMFraudPreventionValuesForTesting>(encodedMessage);
@@ -302,10 +318,13 @@ void decodeMessageAndSendToManager(const Daemon::Connection& connection, Message
         handlePCMMessage<MessageInfo::setPrivateClickMeasurementAppBundleIDForTesting>(encodedMessage);
         break;
     case PCM::MessageType::DestroyStoreForTesting:
-        handlePCMMessageWithReply<MessageInfo::destroyStoreForTesting>(encodedMessage, WTFMove(replySender));
+        handlePCMMessageWithReply<MessageInfo::destroyStoreForTesting>(encodedMessage, WTF::move(replySender));
         break;
     case PCM::MessageType::AllowTLSCertificateChainForLocalPCMTesting:
         handlePCMMessage<MessageInfo::allowTLSCertificateChainForLocalPCMTesting>(encodedMessage);
+        break;
+    case PCM::MessageType::FetchRegistrableDomains:
+        handlePCMMessageWithReply<MessageInfo::fetchRegistrableDomains>(encodedMessage, WTF::move(replySender));
         break;
     }
 }

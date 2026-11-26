@@ -31,10 +31,10 @@
 
 #pragma once
 
-#include "Exception.h"
-#include "InspectorEnvironment.h"
-#include "InspectorProtocolObjects.h"
-#include "ScriptFunctionCall.h"
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/InspectorEnvironment.h>
+#include <JavaScriptCore/InspectorProtocolObjects.h>
+#include <JavaScriptCore/ScriptFunctionCall.h>
 #include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -51,11 +51,14 @@ using AsyncCallCallback = WTF::Function<void(Protocol::ErrorString&, RefPtr<Prot
 
 JS_EXPORT_PRIVATE RefPtr<JSON::Value> toInspectorValue(JSC::JSGlobalObject*, JSC::JSValue);
 
-class JS_EXPORT_PRIVATE InjectedScriptBase {
+class InjectedScriptBase {
 public:
-    virtual ~InjectedScriptBase();
+    JS_EXPORT_PRIVATE InjectedScriptBase(const InjectedScriptBase&);
+    JS_EXPORT_PRIVATE virtual ~InjectedScriptBase();
 
-    const String& name() const { return m_name; }
+    JS_EXPORT_PRIVATE InjectedScriptBase& operator=(const InjectedScriptBase&);
+
+    const String& name() const LIFETIME_BOUND { return m_name; }
     bool hasNoValue() const { return !m_injectedScriptObject.get(); }
     JSC::JSGlobalObject* globalObject() const { return m_globalObject; }
 
@@ -63,11 +66,11 @@ protected:
     InjectedScriptBase(const String& name);
     InjectedScriptBase(const String& name, JSC::JSGlobalObject*, JSC::JSObject*, InspectorEnvironment*);
 
-    InspectorEnvironment* inspectorEnvironment() const { return m_environment; }
+    InspectorEnvironment& inspectorEnvironment() const { return *m_environment; }
 
     bool hasAccessToInspectedScriptState() const;
 
-    JSC::JSObject* injectedScriptObject() const;
+    JSC::JSObject* NODELETE injectedScriptObject() const;
     Expected<JSC::JSValue, NakedPtr<JSC::Exception>> callFunctionWithEvalEnabled(ScriptFunctionCall&) const;
     Ref<JSON::Value> makeCall(ScriptFunctionCall&);
     void makeEvalCall(Protocol::ErrorString&, ScriptFunctionCall&, RefPtr<Protocol::Runtime::RemoteObject>& resultObject, std::optional<bool>& wasThrown, std::optional<int>& savedResultIndex);
@@ -78,9 +81,9 @@ private:
     void checkAsyncCallResult(RefPtr<JSON::Value> result, const AsyncCallCallback&);
 
     String m_name;
-    JSC::JSGlobalObject* m_globalObject { nullptr };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::JSGlobalObject* m_globalObject { nullptr };
     JSC::Strong<JSC::JSObject> m_injectedScriptObject;
-    InspectorEnvironment* m_environment { nullptr };
+    WeakPtr<InspectorEnvironment> m_environment;
 };
 
 } // namespace Inspector

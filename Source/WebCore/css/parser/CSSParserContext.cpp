@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +29,9 @@
 
 #include "CSSPropertyNames.h"
 #include "CSSValuePool.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentQuirks.h"
+#include "DocumentSecurityOrigin.h"
 #include "OriginAccessPatterns.h"
 #include "Page.h"
 #include "Settings.h"
@@ -37,35 +39,38 @@
 
 namespace WebCore {
 
-// https://drafts.csswg.org/css-values/#url-local-url-flag
-bool ResolvedURL::isLocalURL() const
-{
-    return specifiedURLString.startsWith('#');
-}
-
 const CSSParserContext& strictCSSParserContext()
 {
     static MainThreadNeverDestroyed<CSSParserContext> strictContext(HTMLStandardMode);
     return strictContext;
 }
 
+static void NODELETE applyUASheetBehaviorsToContext(CSSParserContext& context)
+{
+    // FIXME: We should turn all of the features on from their WebCore Settings defaults.
+    context.cssAppearanceBaseEnabled = true;
+    context.cssRubyDisplayTypesEnabled = true;
+    context.cssTextTransformMathAutoEnabled = true;
+    context.popoverAttributeEnabled = true;
+    context.propertySettings.cssInputSecurityEnabled = true;
+    context.propertySettings.supportHDRDisplayEnabled = true;
+    context.propertySettings.cssFieldSizingEnabled = true;
+    context.cssMathDepthEnabled = true;
+    context.propertySettings.cssMathDepthEnabled = true;
+#if HAVE(CORE_MATERIAL)
+    context.propertySettings.useSystemAppearance = true;
+#endif
+    context.propertySettings.cssAnchorPositioningEnabled = true;
+    context.cssInternalAutoBaseParsingEnabled = true;
+    context.htmlEnhancedSelectEnabled = true;
+}
+
 CSSParserContext::CSSParserContext(CSSParserMode mode, const URL& baseURL)
     : baseURL(baseURL)
     , mode(mode)
 {
-    // FIXME: We should turn all of the features on from their WebCore Settings defaults.
-    if (isUASheetBehavior(mode)) {
-        cssTextUnderlinePositionLeftRightEnabled = true;
-        lightDarkEnabled = true;
-        popoverAttributeEnabled = true;
-        propertySettings.cssInputSecurityEnabled = true;
-        propertySettings.cssCounterStyleAtRulesEnabled = true;
-        propertySettings.viewTransitionsEnabled = true;
-        thumbAndTrackPseudoElementsEnabled = true;
-#if ENABLE(CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
-        transformStyleOptimized3DEnabled = true;
-#endif
-    }
+    if (isUASheetBehavior(mode))
+        applyUASheetBehaviorsToContext(*this);
 
     StaticCSSValuePool::init();
 }
@@ -75,115 +80,118 @@ CSSParserContext::CSSParserContext(const Document& document)
     *this = document.cssParserContext();
 }
 
-CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBaseURL, const String& charset)
-    : baseURL { sheetBaseURL.isNull() ? document.baseURL() : sheetBaseURL }
-    , charset { charset }
-    , mode { document.inQuirksMode() ? HTMLQuirksMode : HTMLStandardMode }
-    , isHTMLDocument { document.isHTMLDocument() }
-    , hasDocumentSecurityOrigin { sheetBaseURL.isNull() || document.protectedSecurityOrigin()->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton()) }
-    , useSystemAppearance { document.page() ? document.page()->useSystemAppearance() : false }
-    , colorContrastEnabled { document.settings().cssColorContrastEnabled() }
-    , counterStyleAtRuleImageSymbolsEnabled { document.settings().cssCounterStyleAtRuleImageSymbolsEnabled() }
-    , springTimingFunctionEnabled { document.settings().springTimingFunctionEnabled() }
-#if ENABLE(CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
-    , transformStyleOptimized3DEnabled { document.settings().cssTransformStyleOptimized3DEnabled() }
+CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBaseURL, ASCIILiteral charset)
+    : CSSParserContext(document.settings())
+{
+    baseURL = sheetBaseURL.isNull() ? document.baseURL() : sheetBaseURL;
+    this->charset = charset;
+    mode = document.inQuirksMode() ? HTMLQuirksMode : HTMLStandardMode;
+    isHTMLDocument = document.isHTMLDocument();
+    hasDocumentSecurityOrigin = sheetBaseURL.isNull() || protect(document.securityOrigin())->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
+    webkitMediaTextTrackDisplayQuirkEnabled = document.quirks().needsWebKitMediaTextTrackDisplayQuirk();
+}
+
+CSSParserContext::CSSParserContext(const Settings& settings)
+    : mode { HTMLStandardMode }
+    , useSystemAppearance { settings.useSystemAppearance() }
+    , counterStyleAtRuleImageSymbolsEnabled { settings.cssCounterStyleAtRuleImageSymbolsEnabled() }
+    , springTimingFunctionEnabled { settings.springTimingFunctionEnabled() }
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+    , cssTransformStyleSeparatedEnabled { settings.cssTransformStyleSeparatedEnabled() }
 #endif
-    , masonryEnabled { document.settings().masonryEnabled() }
-    , cssNestingEnabled { document.settings().cssNestingEnabled() }
-    , cssPaintingAPIEnabled { document.settings().cssPaintingAPIEnabled() }
-    , cssScopeAtRuleEnabled { document.settings().cssScopeAtRuleEnabled() }
-    , cssShapeFunctionEnabled { document.settings().cssShapeFunctionEnabled() }
-    , cssStartingStyleAtRuleEnabled { document.settings().cssStartingStyleAtRuleEnabled() }
-    , cssStyleQueriesEnabled { document.settings().cssStyleQueriesEnabled() }
-    , cssTextUnderlinePositionLeftRightEnabled { document.settings().cssTextUnderlinePositionLeftRightEnabled() }
-    , cssBackgroundClipBorderAreaEnabled  { document.settings().cssBackgroundClipBorderAreaEnabled() }
-    , cssWordBreakAutoPhraseEnabled { document.settings().cssWordBreakAutoPhraseEnabled() }
-    , popoverAttributeEnabled { document.settings().popoverAttributeEnabled() }
-    , sidewaysWritingModesEnabled { document.settings().sidewaysWritingModesEnabled() }
-    , cssTextWrapPrettyEnabled { document.settings().cssTextWrapPrettyEnabled() }
-    , highlightAPIEnabled { document.settings().highlightAPIEnabled() }
-    , grammarAndSpellingPseudoElementsEnabled { document.settings().grammarAndSpellingPseudoElementsEnabled() }
-    , customStateSetEnabled { document.settings().customStateSetEnabled() }
-    , thumbAndTrackPseudoElementsEnabled { document.settings().thumbAndTrackPseudoElementsEnabled() }
+    , gridLanesEnabled { settings.gridLanesEnabled() }
+    , cssAppearanceBaseEnabled { settings.cssAppearanceBaseEnabled() }
+    , cssPaintingAPIEnabled { settings.cssPaintingAPIEnabled() }
+    , cssTextDecorationLineErrorValues { settings.cssTextDecorationLineErrorValues() }
+    , cssWordBreakAutoPhraseEnabled { settings.cssWordBreakAutoPhraseEnabled() }
+    , popoverAttributeEnabled { settings.popoverAttributeEnabled() }
+    , cssTextWrapPrettyEnabled { settings.cssTextWrapPrettyEnabled() }
 #if ENABLE(SERVICE_CONTROLS)
-    , imageControlsEnabled { document.settings().imageControlsEnabled() }
+    , imageControlsEnabled { settings.imageControlsEnabled() }
 #endif
-    , colorLayersEnabled { document.settings().cssColorLayersEnabled() }
-    , lightDarkEnabled { document.settings().cssLightDarkEnabled() }
-    , targetTextPseudoElementEnabled { document.settings().targetTextPseudoElementEnabled() }
-    , viewTransitionTypesEnabled { document.settings().viewTransitionsEnabled() && document.settings().viewTransitionTypesEnabled() }
-    , propertySettings { CSSPropertySettings { document.settings() } }
+    , colorLayersEnabled { settings.cssColorLayersEnabled() }
+    , cssPickerPseudoElementEnabled { settings.cssPickerPseudoElementEnabled() }
+    , targetTextPseudoElementEnabled { settings.targetTextPseudoElementEnabled() }
+    , htmlEnhancedSelectEnabled { settings.htmlEnhancedSelectEnabled() }
+    , cssRandomFunctionEnabled { settings.cssRandomFunctionEnabled() }
+    , cssRandomItemFunctionEnabled { settings.cssRandomItemFunctionEnabled() }
+    , cssRubyDisplayTypesEnabled { settings.cssRubyDisplayTypesInAuthorStylesEnabled() }
+    , cssTreeCountingFunctionsEnabled { settings.cssTreeCountingFunctionsEnabled() }
+    , cssURLModifiersEnabled { settings.cssURLModifiersEnabled() }
+    , cssURLIntegrityModifierEnabled { settings.cssURLIntegrityModifierEnabled() }
+    , cssAxisRelativePositionKeywordsEnabled { settings.cssAxisRelativePositionKeywordsEnabled() }
+    , cssDynamicRangeLimitMixEnabled { settings.cssDynamicRangeLimitMixEnabled() }
+    , cssConstrainedDynamicRangeLimitEnabled { settings.cssConstrainedDynamicRangeLimitEnabled() }
+    , cssTextTransformMathAutoEnabled { settings.cssTextTransformMathAutoEnabled() }
+    , cssFontSynthesisStyleObliqueOnlyEnabled { settings.cssFontSynthesisStyleObliqueOnlyEnabled() }
+    , cssInternalAutoBaseParsingEnabled { settings.cssInternalAutoBaseParsingEnabled() }
+    , cssMathDepthEnabled { settings.cssMathDepthEnabled() }
+    , openPseudoClassEnabled { settings.openPseudoClassEnabled() }
+    , cssAttrSubstitutionFunctionEnabled { settings.cssAttrSubstitutionFunctionEnabled() }
+    , cssScrollStateContainerQueriesEnabled { settings.cssScrollStateContainerQueriesEnabled() }
+    , cssCalcMixEnabled { settings.cssCalcMixEnabled() }
+    , cssIdentFunctionEnabled { settings.cssIdentFunctionEnabled() }
+    , cssIfFunctionEnabled { settings.cssIfFunctionEnabled() }
+    , propertySettings { CSSPropertySettings { settings } }
 {
 }
 
 void add(Hasher& hasher, const CSSParserContext& context)
 {
-    uint32_t bits = context.isHTMLDocument                  << 0
-        | context.hasDocumentSecurityOrigin                 << 1
-        | context.isContentOpaque                           << 2
-        | context.useSystemAppearance                       << 3
-        | context.colorContrastEnabled                      << 4
-        | context.springTimingFunctionEnabled               << 5
-#if ENABLE(CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
-        | context.transformStyleOptimized3DEnabled          << 6
+    auto bits = WTF::packBools(
+        context.isHTMLDocument,
+        context.hasDocumentSecurityOrigin,
+        static_cast<bool>(context.loadedFromOpaqueSource),
+        context.useSystemAppearance,
+        context.shouldIgnoreImportRules,
+        context.counterStyleAtRuleImageSymbolsEnabled,
+        context.springTimingFunctionEnabled,
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+        context.cssTransformStyleSeparatedEnabled,
 #endif
-        | context.masonryEnabled                            << 7
-        | context.cssNestingEnabled                         << 8
-        | context.cssPaintingAPIEnabled                     << 9
-        | context.cssScopeAtRuleEnabled                     << 10
-        | context.cssShapeFunctionEnabled                   << 11
-        | context.cssTextUnderlinePositionLeftRightEnabled  << 12
-        | context.cssBackgroundClipBorderAreaEnabled        << 13
-        | context.cssWordBreakAutoPhraseEnabled             << 14
-        | context.popoverAttributeEnabled                   << 15
-        | context.sidewaysWritingModesEnabled               << 16
-        | context.cssTextWrapPrettyEnabled                  << 17
-        | context.highlightAPIEnabled                       << 18
-        | context.grammarAndSpellingPseudoElementsEnabled   << 19
-        | context.customStateSetEnabled                     << 20
-        | context.thumbAndTrackPseudoElementsEnabled        << 21
+        context.gridLanesEnabled,
+        context.cssAppearanceBaseEnabled,
+        context.cssPaintingAPIEnabled,
+        context.cssWordBreakAutoPhraseEnabled,
+        context.popoverAttributeEnabled,
+        context.cssTextWrapPrettyEnabled,
 #if ENABLE(SERVICE_CONTROLS)
-        | context.imageControlsEnabled                      << 22
+        context.imageControlsEnabled,
 #endif
-        | context.colorLayersEnabled                        << 23
-        | context.lightDarkEnabled                          << 24
-        | context.targetTextPseudoElementEnabled            << 25
-        | context.viewTransitionTypesEnabled                << 26
-        | (uint32_t)context.mode                            << 27; // This is multiple bits, so keep it last.
-    add(hasher, context.baseURL, context.charset, context.propertySettings, bits);
+        context.colorLayersEnabled,
+        context.cssPickerPseudoElementEnabled,
+        context.targetTextPseudoElementEnabled,
+        context.htmlEnhancedSelectEnabled,
+        context.cssRandomFunctionEnabled,
+        context.cssRandomItemFunctionEnabled,
+        context.cssRubyDisplayTypesEnabled,
+        context.cssTreeCountingFunctionsEnabled,
+        context.cssURLModifiersEnabled,
+        context.cssURLIntegrityModifierEnabled,
+        context.cssAxisRelativePositionKeywordsEnabled,
+        context.cssDynamicRangeLimitMixEnabled,
+        context.cssConstrainedDynamicRangeLimitEnabled,
+        context.cssTextDecorationLineErrorValues,
+        context.cssTextTransformMathAutoEnabled,
+        context.cssFontSynthesisStyleObliqueOnlyEnabled,
+        context.cssInternalAutoBaseParsingEnabled,
+        context.webkitMediaTextTrackDisplayQuirkEnabled,
+        context.cssMathDepthEnabled,
+        context.openPseudoClassEnabled,
+        context.cssAttrSubstitutionFunctionEnabled,
+        context.cssScrollStateContainerQueriesEnabled,
+        context.cssCalcMixEnabled,
+        context.cssIdentFunctionEnabled,
+        context.cssIfFunctionEnabled,
+        context.legacyFontFaceAttributeMode
+    );
+    add(hasher, context.baseURL, context.charset, context.propertySettings, context.mode, context.enclosingRuleType, bits);
 }
 
-ResolvedURL CSSParserContext::completeURL(const String& string) const
+void CSSParserContext::setUASheetMode()
 {
-    auto result = [&] () -> ResolvedURL {
-        // See also Document::completeURL(const String&), but note that CSS always uses UTF-8 for URLs
-        if (string.isNull())
-            return { };
-
-        if (CSSValue::isCSSLocalURL(string))
-            return { string, URL { string } };
-
-        return { string, { baseURL, string } };
-    }();
-
-    if (mode == WebVTTMode && !result.resolvedURL.protocolIsData())
-        return { };
-
-    return result;
+    mode = UASheetMode;
+    applyUASheetBehaviorsToContext(*this);
 }
 
-bool mayDependOnBaseURL(const ResolvedURL& resolved)
-{
-    if (resolved.specifiedURLString.isEmpty())
-        return false;
-
-    if (CSSValue::isCSSLocalURL(resolved.specifiedURLString))
-        return false;
-
-    if (protocolIs(resolved.specifiedURLString, "data"_s))
-        return false;
-
-    return true;
-}
-
-}
+} // namespace WebCore

@@ -28,9 +28,11 @@
 
 #include "ArgumentCoders.h"
 #include "WebProcess.h"
+#include "WebUserContentController.h"
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/Page.h>
+#include <WebCore/Settings.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -39,23 +41,24 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebsitePoliciesData);
 
 void WebsitePoliciesData::applyToDocumentLoader(WebsitePoliciesData&& websitePolicies, WebCore::DocumentLoader& documentLoader)
 {
-    documentLoader.setCustomHeaderFields(WTFMove(websitePolicies.customHeaderFields));
-    documentLoader.setCustomUserAgent(websitePolicies.customUserAgent);
-    documentLoader.setCustomUserAgentAsSiteSpecificQuirks(websitePolicies.customUserAgentAsSiteSpecificQuirks);
-    documentLoader.setCustomNavigatorPlatform(websitePolicies.customNavigatorPlatform);
+    documentLoader.setCustomHeaderFields(WTF::move(websitePolicies.customHeaderFields));
+    documentLoader.setCustomUserAgent(WTF::move(websitePolicies.customUserAgent));
+    documentLoader.setCustomUserAgentAsSiteSpecificQuirks(WTF::move(websitePolicies.customUserAgentAsSiteSpecificQuirks));
+    documentLoader.setCustomNavigatorPlatform(WTF::move(websitePolicies.customNavigatorPlatform));
     documentLoader.setAllowPrivacyProxy(websitePolicies.allowPrivacyProxy);
 
 #if ENABLE(DEVICE_ORIENTATION)
-    documentLoader.setDeviceOrientationAndMotionAccessState(websitePolicies.deviceOrientationAndMotionAccessState);
+    if (auto state = websitePolicies.deviceOrientationAndMotionAccessState)
+        documentLoader.setDeviceOrientationAndMotionAccessState(*state);
 #endif
 
     // Only disable content blockers if it hasn't already been disabled by reloading without content blockers.
     auto& [defaultEnablement, exceptions] = documentLoader.contentExtensionEnablement();
     if (defaultEnablement == WebCore::ContentExtensionDefaultEnablement::Enabled && exceptions.isEmpty())
-        documentLoader.setContentExtensionEnablement(WTFMove(websitePolicies.contentExtensionEnablement));
+        documentLoader.setContentExtensionEnablement(WTF::move(websitePolicies.contentExtensionEnablement));
 
     documentLoader.setActiveContentRuleListActionPatterns(websitePolicies.activeContentRuleListActionPatterns);
-    documentLoader.setVisibilityAdjustmentSelectors(WTFMove(websitePolicies.visibilityAdjustmentSelectors));
+    documentLoader.setVisibilityAdjustmentSelectors(WTF::move(websitePolicies.visibilityAdjustmentSelectors));
 
     OptionSet<WebCore::AutoplayQuirk> quirks;
     const auto& allowedQuirks = websitePolicies.allowedAutoplayQuirks;
@@ -73,21 +76,8 @@ void WebsitePoliciesData::applyToDocumentLoader(WebsitePoliciesData&& websitePol
         quirks.add(WebCore::AutoplayQuirk::PerDocumentAutoplayBehavior);
 
     documentLoader.setAllowedAutoplayQuirks(quirks);
-
-    switch (websitePolicies.autoplayPolicy) {
-    case WebsiteAutoplayPolicy::Default:
-        documentLoader.setAutoplayPolicy(WebCore::AutoplayPolicy::Default);
-        break;
-    case WebsiteAutoplayPolicy::Allow:
-        documentLoader.setAutoplayPolicy(WebCore::AutoplayPolicy::Allow);
-        break;
-    case WebsiteAutoplayPolicy::AllowWithoutSound:
-        documentLoader.setAutoplayPolicy(WebCore::AutoplayPolicy::AllowWithoutSound);
-        break;
-    case WebsiteAutoplayPolicy::Deny:
-        documentLoader.setAutoplayPolicy(WebCore::AutoplayPolicy::Deny);
-        break;
-    }
+    documentLoader.setAutoplayPolicy(core(websitePolicies.autoplayPolicy));
+    documentLoader.setAllowsJSHandleCreationInPageWorld(websitePolicies.allowsJSHandleCreationInPageWorld);
 
     switch (websitePolicies.popUpPolicy) {
     case WebsitePopUpPolicy::Default:
@@ -168,11 +158,54 @@ void WebsitePoliciesData::applyToDocumentLoader(WebsitePoliciesData&& websitePol
     documentLoader.setIdempotentModeAutosizingOnlyHonorsPercentages(websitePolicies.idempotentModeAutosizingOnlyHonorsPercentages);
     documentLoader.setHTTPSByDefaultMode(websitePolicies.httpsByDefaultMode);
 
-    if (!documentLoader.frame())
+    switch (websitePolicies.pushAndNotificationsEnabledPolicy) {
+    case WebsitePushAndNotificationsEnabledPolicy::UseGlobalPolicy:
+        documentLoader.setPushAndNotificationsEnabledPolicy(WebCore::PushAndNotificationsEnabledPolicy::UseGlobalPolicy);
+        break;
+    case WebsitePushAndNotificationsEnabledPolicy::No:
+        documentLoader.setPushAndNotificationsEnabledPolicy(WebCore::PushAndNotificationsEnabledPolicy::No);
+        break;
+    case WebsitePushAndNotificationsEnabledPolicy::Yes:
+        documentLoader.setPushAndNotificationsEnabledPolicy(WebCore::PushAndNotificationsEnabledPolicy::Yes);
+        break;
+    }
+
+    switch (websitePolicies.inlineMediaPlaybackPolicy) {
+    case WebsiteInlineMediaPlaybackPolicy::Default:
+        documentLoader.setInlineMediaPlaybackPolicy(WebCore::InlineMediaPlaybackPolicy::Default);
+        break;
+    case WebsiteInlineMediaPlaybackPolicy::RequiresPlaysInlineAttribute:
+        documentLoader.setInlineMediaPlaybackPolicy(WebCore::InlineMediaPlaybackPolicy::RequiresPlaysInlineAttribute);
+        break;
+    case WebsiteInlineMediaPlaybackPolicy::DoesNotRequirePlaysInlineAttribute:
+        documentLoader.setInlineMediaPlaybackPolicy(WebCore::InlineMediaPlaybackPolicy::DoesNotRequirePlaysInlineAttribute);
+        break;
+    }
+
+    if (!websitePolicies.alternateRequest.isNull())
+        documentLoader.willContinueMainResourceLoadAfterRedirect(websitePolicies.alternateRequest);
+
+    documentLoader.setPreferences(WebCore::DocumentLoader::WebpagePreferences {
+        websitePolicies.userContentControllerParameters ? RefPtr { WebUserContentController::getOrCreate(WTF::move(*websitePolicies.userContentControllerParameters)) } : nullptr,
+        websitePolicies.overrideReferrerForAllRequests,
+    });
+
+    RefPtr frame = documentLoader.frame();
+    if (!frame)
         return;
+
+    if (!frame->isMainFrame())
+        return;
+
+#if ENABLE(TOUCH_EVENTS)
+    if (auto overrideValue = websitePolicies.overrideTouchEventDOMAttributesEnabled)
+        frame->settings().setTouchEventDOMAttributesEnabled(*overrideValue);
+#endif
+
+    if (auto overrideValue = websitePolicies.globalPrivacyControlEnabled)
+        frame->settings().setGlobalPrivacyControlEnabled(*overrideValue);
 
     documentLoader.applyPoliciesToSettings();
 }
 
-}
-
+} // namespace WebKit

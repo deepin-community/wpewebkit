@@ -26,6 +26,8 @@
 #pragma once
 
 #include <wtf/Function.h>
+#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/ThreadSafetyAnalysis.h>
 
 namespace WTF {
@@ -43,28 +45,23 @@ protected:
     FunctionDispatcher();
 };
 
-class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE SerialFunctionDispatcher : public FunctionDispatcher {
+class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE SerialFunctionDispatcher : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<SerialFunctionDispatcher>, public FunctionDispatcher {
 public:
     virtual bool isCurrent() const = 0;
 };
 
-// A RefCountedSerialFunctionDispatcher guarantees that a dispatched function will always be run.
-class RefCountedSerialFunctionDispatcher : public SerialFunctionDispatcher {
-public:
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
+// A GuaranteedSerialFunctionDispatcher guarantees that a dispatched function will always be run.
+class GuaranteedSerialFunctionDispatcher : public SerialFunctionDispatcher {
 };
 
 inline void assertIsCurrent(const SerialFunctionDispatcher& queue) WTF_ASSERTS_ACQUIRED_CAPABILITY(queue)
 {
-    ASSERT(queue.isCurrent());
-#if !ASSERT_ENABLED
     UNUSED_PARAM(queue);
-#endif
+    ASSERT_WITH_SECURITY_IMPLICATION(queue.isCurrent());
 }
 
 } // namespace WTF
 
 using WTF::FunctionDispatcher;
 using WTF::SerialFunctionDispatcher;
-using WTF::RefCountedSerialFunctionDispatcher;
+using WTF::GuaranteedSerialFunctionDispatcher;

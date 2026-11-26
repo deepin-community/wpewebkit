@@ -38,7 +38,14 @@ tcu::RandomOrderExecutor *g_executor = nullptr;
 std::string GetLogFileName(std::string deqpDataDir)
 {
 #if (DE_OS == DE_OS_ANDROID)
-    // On Android executable dir is not writable, so use data dir instead
+    // On Android executable dir is not writable, so use data dir instead.
+    // ActivityThread sets TMPDIR to /data/user/<user_id>/com.android.angle.test/cache,
+    // which works across all Android users (including --force-main-user / user 10).
+    Optional<std::string> tempDir = angle::GetTempDirectory();
+    if (tempDir.valid())
+    {
+        return tempDir.value() + "/" + g_cmdLine->getLogFileName();
+    }
     return std::string("/data/data/com.android.angle.test/") + g_cmdLine->getLogFileName();
 #else
     return g_cmdLine->getLogFileName();
@@ -56,10 +63,10 @@ ANGLE_LIBTESTER_EXPORT bool deqp_libtester_init_platform(int argc,
     {
 #if (DE_OS != DE_OS_WIN32)
         // Set stdout to line-buffered mode (will be fully buffered by default if stdout is pipe).
-        setvbuf(stdout, DE_NULL, _IOLBF, 4 * 1024);
+        setvbuf(stdout, nullptr, _IOLBF, 4 * 1024);
 #endif
         g_platform = CreateANGLEPlatform(reinterpret_cast<angle::LogErrorFunc>(logErrorFunc),
-                                         options.preRotation);
+                                         options.preRotation, options.driverOption);
 
         if (!deSetRoundingMode(DE_ROUNDINGMODE_TO_NEAREST_EVEN))
         {
@@ -78,14 +85,14 @@ ANGLE_LIBTESTER_EXPORT bool deqp_libtester_init_platform(int argc,
         g_cmdLine = new tcu::CommandLine(argc, argv);
         g_archive = new tcu::DirArchive(deqpDataDir);
         g_log     = new tcu::TestLog(GetLogFileName(deqpDataDir).c_str(), g_cmdLine->getLogFlags());
-        g_testCtx = new tcu::TestContext(*g_platform, *g_archive, *g_log, *g_cmdLine, DE_NULL);
+        g_testCtx = new tcu::TestContext(*g_platform, *g_archive, *g_log, *g_cmdLine, nullptr);
         g_root    = new tcu::TestPackageRoot(*g_testCtx, tcu::TestPackageRegistry::getSingleton());
         g_executor =
             new tcu::RandomOrderExecutor(*g_root, *g_testCtx, options.enableRenderDocCapture);
     }
     catch (const std::exception &e)
     {
-        tcu::die("%s", e.what());
+        ANGLE_UNSAFE_TODO(tcu::die("%s", e.what()));
         return false;
     }
 
@@ -114,7 +121,7 @@ ANGLE_LIBTESTER_EXPORT int deqp_libtester_main(int argc, const char *argv[])
     catch (const std::exception &e)
     {
         deqp_libtester_shutdown_platform();
-        tcu::die("%s", e.what());
+        ANGLE_UNSAFE_TODO(tcu::die("%s", e.what()));
     }
 
     deqp_libtester_shutdown_platform();

@@ -27,6 +27,7 @@
 
 #include "APIObject.h"
 #include "GeolocationIdentifier.h"
+#include <WebCore/RegistrableDomain.h>
 #include <wtf/Function.h>
 #include <wtf/WeakPtr.h>
 
@@ -37,31 +38,33 @@ class WebProcessProxy;
 
 class GeolocationPermissionRequestProxy : public RefCounted<GeolocationPermissionRequestProxy> {
 public:
-    static Ref<GeolocationPermissionRequestProxy> create(GeolocationPermissionRequestManagerProxy* manager, GeolocationIdentifier geolocationID, WebProcessProxy& process)
+    static Ref<GeolocationPermissionRequestProxy> create(GeolocationPermissionRequestManagerProxy& manager, GeolocationIdentifier geolocationID, WebProcessProxy& process, WebCore::RegistrableDomain&& registrableDomain)
     {
-        return adoptRef(*new GeolocationPermissionRequestProxy(manager, geolocationID, process));
+        return adoptRef(*new GeolocationPermissionRequestProxy(manager, geolocationID, process, WTF::move(registrableDomain)));
     }
 
     void allow();
     void deny();
-    
-    void invalidate();
 
-    WebProcessProxy* process() const;
+    void NODELETE invalidate();
+
+    WebProcessProxy* NODELETE process() const;
+    const WebCore::RegistrableDomain& registrableDomain() const LIFETIME_BOUND { return m_registrableDomain; }
 
 private:
-    GeolocationPermissionRequestProxy(GeolocationPermissionRequestManagerProxy*, GeolocationIdentifier, WebProcessProxy&);
+    GeolocationPermissionRequestProxy(GeolocationPermissionRequestManagerProxy&, GeolocationIdentifier, WebProcessProxy&, WebCore::RegistrableDomain&&);
 
-    GeolocationPermissionRequestManagerProxy* m_manager;
+    WeakPtr<GeolocationPermissionRequestManagerProxy> m_manager;
     GeolocationIdentifier m_geolocationID;
     WeakPtr<WebProcessProxy> m_process;
+    WebCore::RegistrableDomain m_registrableDomain;
 };
 
 class GeolocationPermissionRequest : public API::ObjectImpl<API::Object::Type::GeolocationPermissionRequest> {
 public:
     static Ref<GeolocationPermissionRequest> create(Function<void(bool)>&& completionHandler)
     {
-        return adoptRef(*new GeolocationPermissionRequest(WTFMove(completionHandler)));
+        return adoptRef(*new GeolocationPermissionRequest(WTF::move(completionHandler)));
     }
     
     void allow() { m_completionHandler(true); }
@@ -69,10 +72,14 @@ public:
 
 private:
     GeolocationPermissionRequest(Function<void(bool)>&& completionHandler)
-        : m_completionHandler(WTFMove(completionHandler))
+        : m_completionHandler(WTF::move(completionHandler))
     { }
     
     Function<void(bool)> m_completionHandler;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::GeolocationPermissionRequest)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::GeolocationPermissionRequest; }
+SPECIALIZE_TYPE_TRAITS_END()

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,11 +29,49 @@
 namespace WebCore {
 namespace Style {
 
-PropertyAllowlist propertyAllowlistForPseudoId(PseudoId pseudoId)
+PropertyAllowlist propertyAllowlistForPseudoElement(PseudoElementType type)
 {
-    if (pseudoId == PseudoId::Marker)
+    switch (type) {
+    case PseudoElementType::GrammarError:
+    case PseudoElementType::Highlight:
+    case PseudoElementType::Selection:
+    case PseudoElementType::SpellingError:
+    case PseudoElementType::TargetText:
+        return PropertyAllowlist::Highlight;
+    case PseudoElementType::Marker:
         return PropertyAllowlist::Marker;
-    return PropertyAllowlist::None;
+    default:
+        return PropertyAllowlist::None;
+    }
+}
+
+// https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+bool isValidHighlightStyleProperty(CSSPropertyID id)
+{
+    switch (id) {
+    case CSSPropertyBackgroundColor:
+    case CSSPropertyColor:
+    case CSSPropertyCustom:
+    case CSSPropertyFill:
+    case CSSPropertyStroke:
+    case CSSPropertyStrokeColor:
+    case CSSPropertyStrokeWidth:
+    case CSSPropertyTextDecoration:
+    case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
+    case CSSPropertyTextDecorationLine:
+    case CSSPropertyTextDecorationSkip:
+    case CSSPropertyTextDecorationSkipInk:
+    case CSSPropertyTextDecorationStyle:
+    case CSSPropertyTextDecorationThickness:
+    case CSSPropertyTextShadow:
+    case CSSPropertyTextUnderlineOffset:
+    case CSSPropertyTextUnderlinePosition:
+        return true;
+    default:
+        break;
+    }
+    return false;
 }
 
 // https://drafts.csswg.org/css-lists-3/#marker-properties (Editor's Draft, 14 July 2021)
@@ -44,6 +82,7 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyColor:
     case CSSPropertyContent:
     case CSSPropertyCustom:
+    case CSSPropertyCursor:
     case CSSPropertyDirection:
     case CSSPropertyFont:
     case CSSPropertyFontFamily:
@@ -51,7 +90,7 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyFontKerning:
     case CSSPropertyFontSize:
     case CSSPropertyFontSizeAdjust:
-    case CSSPropertyFontStretch:
+    case CSSPropertyFontWidth:
     case CSSPropertyFontStyle:
     case CSSPropertyFontSynthesis:
     case CSSPropertyFontSynthesisWeight:
@@ -74,6 +113,7 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyLineHeight:
     case CSSPropertyListStyle:
     case CSSPropertyOverflowWrap:
+    case CSSPropertyQuotes:
     case CSSPropertyTabSize:
     case CSSPropertyTextCombineUpright:
     case CSSPropertyTextDecorationSkipInk:
@@ -81,11 +121,15 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyTextEmphasisColor:
     case CSSPropertyTextEmphasisPosition:
     case CSSPropertyTextEmphasisStyle:
+    case CSSPropertyTextIndent:
+    case CSSPropertyTextOrientation:
     case CSSPropertyTextShadow:
     case CSSPropertyTextTransform:
     case CSSPropertyTextWrapMode:
     case CSSPropertyTextWrapStyle:
     case CSSPropertyUnicodeBidi:
+    case CSSPropertyWebkitTextFillColor:
+    case CSSPropertyWebkitTextOrientation:
     case CSSPropertyWordBreak:
     case CSSPropertyWordSpacing:
     case CSSPropertyWhiteSpace:
@@ -99,6 +143,9 @@ bool isValidMarkerStyleProperty(CSSPropertyID id)
     case CSSPropertyAnimationPlayState:
     case CSSPropertyAnimationComposition:
     case CSSPropertyAnimationName:
+    case CSSPropertyAnimationRangeEnd:
+    case CSSPropertyAnimationRangeStart:
+    case CSSPropertyAnimationTimeline:
     case CSSPropertyTransitionBehavior:
     case CSSPropertyTransitionDuration:
     case CSSPropertyTransitionTimingFunction:
@@ -134,7 +181,11 @@ bool isValidCueStyleProperty(CSSPropertyID id)
     case CSSPropertyWhiteSpace:
     case CSSPropertyWhiteSpaceCollapse:
     case CSSPropertyTextCombineUpright:
+    case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
     case CSSPropertyTextDecorationLine:
+    case CSSPropertyTextDecorationStyle:
+    case CSSPropertyTextDecorationThickness:
     case CSSPropertyTextShadow:
     case CSSPropertyTextWrapMode:
     case CSSPropertyTextWrapStyle:
@@ -186,7 +237,11 @@ bool isValidCueSelectorStyleProperty(CSSPropertyID id)
     case CSSPropertyWhiteSpace:
     case CSSPropertyWhiteSpaceCollapse:
     case CSSPropertyTextCombineUpright:
+    case CSSPropertyTextDecorationColor:
+    case CSSPropertyTextDecorationInset:
     case CSSPropertyTextDecorationLine:
+    case CSSPropertyTextDecorationStyle:
+    case CSSPropertyTextDecorationThickness:
     case CSSPropertyTextShadow:
     case CSSPropertyTextWrapMode:
     case CSSPropertyTextWrapStyle:

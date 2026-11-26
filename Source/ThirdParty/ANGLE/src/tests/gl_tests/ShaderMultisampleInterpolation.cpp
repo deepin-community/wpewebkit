@@ -16,6 +16,11 @@ namespace
 
 class SampleMultisampleInterpolationTest : public ANGLETest<>
 {
+  public:
+    void basicPerSampleShading(std::vector<GLint> samples, bool verify);
+    void simpleDraw(bool verify);
+    void dispatch();
+
   protected:
     SampleMultisampleInterpolationTest()
     {
@@ -26,6 +31,115 @@ class SampleMultisampleInterpolationTest : public ANGLETest<>
         setExtensionsEnabled(false);
     }
 };
+
+void SampleMultisampleInterpolationTest::basicPerSampleShading(std::vector<GLint> samples,
+                                                               bool verify)
+{
+    ASSERT(IsGLExtensionEnabled("GL_OES_sample_variables"));
+    ASSERT(IsGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    const char kVS[] = R"(#version 300 es
+#extension GL_OES_shader_multisample_interpolation : require
+
+in vec4 a_position;
+sample out float interpolant;
+
+void main()
+{
+    gl_Position = a_position;
+    interpolant = 0.5;
+})";
+
+    const char kFS[] = R"(#version 300 es
+#extension GL_OES_sample_variables : require
+#extension GL_OES_shader_multisample_interpolation : require
+
+precision highp float;
+sample in float interpolant;
+out vec4 color;
+
+bool isPow2(int v)
+{
+    return v != 0 && (v & (v - 1)) == 0;
+}
+
+void main()
+{
+    float r = float(isPow2(gl_SampleMaskIn[0]));
+    color = vec4(r, interpolant, 0, 1);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+
+    for (GLint sampleCount : samples)
+    {
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        GLRenderbuffer rbo;
+        glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, sampleCount, GL_RGBA8, 1, 1);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+        drawQuad(program, "a_position", 0.0);
+        ASSERT_GL_NO_ERROR();
+
+        if (verify)
+        {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glBlitFramebuffer(0, 0, 1, 1, 0, 0, 1, 1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            GLubyte pixel[4];
+            glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+            ASSERT_GL_NO_ERROR();
+
+            EXPECT_EQ(pixel[0], 255) << "Samples: " << sampleCount;
+        }
+    }
+}
+
+void SampleMultisampleInterpolationTest::simpleDraw(bool verify)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    ANGLE_GL_PROGRAM(simpleDrawProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    glUseProgram(simpleDrawProgram);
+    drawQuad(simpleDrawProgram, "a_position", 0.0);
+    if (verify)
+    {
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    }
+}
+
+void SampleMultisampleInterpolationTest::dispatch()
+{
+    constexpr char kCS[] = R"(#version 310 es
+layout(local_size_x=4, local_size_y=3, local_size_z=2) in;
+layout(rgba32ui) uniform highp writeonly uimage2D imageOut;
+void main()
+{
+    uvec3 temp = gl_NumWorkGroups;
+    imageStore(imageOut, ivec2(gl_GlobalInvocationID.xy), uvec4(temp, 0u));
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(computeProgram, kCS);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, 4, 3);
+    EXPECT_GL_NO_ERROR();
+
+    glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+    EXPECT_GL_NO_ERROR();
+
+    glUseProgram(computeProgram);
+    glDispatchCompute(8, 4, 2);
+    EXPECT_GL_NO_ERROR();
+}
 
 // Test state queries
 TEST_P(SampleMultisampleInterpolationTest, StateQueries)
@@ -76,66 +190,7 @@ TEST_P(SampleMultisampleInterpolationTest, SampleMaskInPerSample)
     ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
     ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
 
-    const char kVS[] = R"(#version 300 es
-#extension GL_OES_shader_multisample_interpolation : require
-
-in vec4 a_position;
-sample out float interpolant;
-
-void main()
-{
-    gl_Position = a_position;
-    interpolant = 0.5;
-})";
-
-    const char kFS[] = R"(#version 300 es
-#extension GL_OES_sample_variables : require
-#extension GL_OES_shader_multisample_interpolation : require
-
-precision highp float;
-sample in float interpolant;
-out vec4 color;
-
-bool isPow2(int v)
-{
-    return v != 0 && (v & (v - 1)) == 0;
-}
-
-void main()
-{
-    float r = float(isPow2(gl_SampleMaskIn[0]));
-    color = vec4(r, interpolant, 0, 1);
-})";
-
-    ANGLE_GL_PROGRAM(program, kVS, kFS);
-    glUseProgram(program);
-
-    for (GLint sampleCount : {0, 4})
-    {
-        GLFramebuffer fbo;
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-        GLRenderbuffer rbo;
-        glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, sampleCount, GL_RGBA8, 1, 1);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
-        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
-
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-        drawQuad(program, "a_position", 0.0);
-        ASSERT_GL_NO_ERROR();
-
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        glBlitFramebuffer(0, 0, 1, 1, 0, 0, 1, 1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        GLubyte pixel[4];
-        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-        ASSERT_GL_NO_ERROR();
-
-        EXPECT_EQ(pixel[0], 255) << "Samples: " << sampleCount;
-    }
+    basicPerSampleShading({0, 4}, true);
 }
 
 // Test gl_SampleMaskIn values with per-sample noperspective shading
@@ -390,7 +445,237 @@ void main()
     ANGLE_GL_PROGRAM(program, kVS, kFS);
 }
 
+// Test that nested interpolateAtOffset calls (the offset argument is itself an interpolateAtOffset)
+// compile and draw correctly.
+TEST_P(SampleMultisampleInterpolationTest, CompileNestedInterpolateAtOffset)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 a_position;
+out vec2 interpolant;
+
+void main()
+{
+    gl_Position = a_position;
+    // Keep the interpolant constant across the primitive: interpolateAtOffset samples at an
+    // implementation-defined location, so a constant keeps the drawn result the same everywhere.
+    // 0.5 also keeps the nested call's result within the valid offset range.
+    interpolant = vec2(0.0, 0.5);
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_shader_multisample_interpolation : require
+
+precision highp float;
+
+in vec2 interpolant;
+
+out vec4 color;
+
+void main()
+{
+    // The offset (second) argument of the outer interpolateAtOffset is itself an
+    // interpolateAtOffset call.
+    color = vec4(interpolateAtOffset(interpolant, interpolateAtOffset(interpolant, vec2(0.5))),
+                 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+
+    // Draw and verify: with a constant interpolant of (0.0, 0.5), both interpolateAtOffset calls
+    // return it, so the fragment output is vec4(0.0, 0.5, 0.0, 1.0). 0.5 becomes 127 or 128 after
+    // unorm8 conversion, so allow an off-by-one.
+    drawQuad(program, "a_position", 0.0f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(0, 128, 0, 255), 1);
+}
+
+// Test that array references to interpolants compile and draw correctly.
+TEST_P(SampleMultisampleInterpolationTest, CompileArrayInterpolantReferences)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    constexpr char kVS[] = R"(#version 300 es
+#extension GL_OES_shader_multisample_interpolation : require
+
+in vec4 a_position;
+
+out vec3 interpolantArray[2];
+centroid out vec3 interpolantCentroidArray[2];
+sample out vec3 interpolantSampleArray[2];
+
+void main()
+{
+    gl_Position = a_position;
+
+    // Keep constant so that every read returns the same value.
+    interpolantArray[0] = vec3(10.0);
+    interpolantArray[1] = vec3(11.0);
+    interpolantCentroidArray[0] = vec3(20.0);
+    interpolantCentroidArray[1] = vec3(21.0);
+    interpolantSampleArray[0] = vec3(30.0);
+    interpolantSampleArray[1] = vec3(31.0);
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_shader_multisample_interpolation : require
+
+precision highp float;
+
+in vec3 interpolantArray[2];
+centroid in vec3 interpolantCentroidArray[2];
+sample in vec3 interpolantSampleArray[2];
+
+out vec4 color;
+
+bool eq(vec3 a, vec3 b)
+{
+    return all(lessThan(abs(a - b), vec3(0.01)));
+}
+
+bool check(vec3 values[2], float base)
+{
+    return eq(values[0], vec3(base)) && eq(values[1], vec3(base + 1.0));
+}
+
+void main()
+{
+    // Marks each input as an interpolant, which is what made the uses below crash.
+    bool ok = eq(interpolateAtCentroid(interpolantArray[0]), vec3(10.0)) &&
+              eq(interpolateAtCentroid(interpolantCentroidArray[0]), vec3(20.0)) &&
+              eq(interpolateAtCentroid(interpolantSampleArray[0]), vec3(30.0));
+
+    // Test by assigning the array.
+    vec3 localArray[2];
+    vec3 localCentroidArray[2];
+    vec3 localSampleArray[2];
+    localArray         = interpolantArray;
+    localCentroidArray = interpolantCentroidArray;
+    localSampleArray   = interpolantSampleArray;
+    ok = ok && check(localArray, 10.0) && check(localCentroidArray, 20.0) &&
+         check(localSampleArray, 30.0);
+
+    // Test by passing the array to a function.
+    ok = ok && check(interpolantArray, 10.0) && check(interpolantCentroidArray, 20.0) &&
+         check(interpolantSampleArray, 30.0);
+
+    // Test by initializing from the array.
+    vec3 initArray[2]         = interpolantArray;
+    vec3 initCentroidArray[2] = interpolantCentroidArray;
+    vec3 initSampleArray[2]   = interpolantSampleArray;
+    ok = ok && check(initArray, 10.0) && check(initCentroidArray, 20.0) &&
+         check(initSampleArray, 30.0);
+
+    // Green indicates every check above passed.
+    color = ok ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+
+    // Green only if every read matched what the vertex shader wrote.
+    drawQuad(program, "a_position", 0.0f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+class SampleMultisampleInterpolationTest31 : public SampleMultisampleInterpolationTest
+{};
+
+// Test per-sample shading draw -> simple draw -> per-sample shading draw
+TEST_P(SampleMultisampleInterpolationTest31, SampleShadingThenSimpleDraw)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, false);
+
+    // Draw without sample shading
+    simpleDraw(false);
+
+    // Draw with sample shading, again
+    basicPerSampleShading({4}, true);
+}
+
+// Test per-sample shading draw -> dispatch
+TEST_P(SampleMultisampleInterpolationTest31, SampleShadingThenCompute)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, false);
+
+    // Dispatch with compute shader
+    dispatch();
+}
+
+// Test dispatch -> per-sample shading draw
+TEST_P(SampleMultisampleInterpolationTest31, ComputeThenSampleShading)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Dispatch with compute shader
+    dispatch();
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, false);
+}
+
+// Test per-sample shading draw -> dispatch -> simple draw
+TEST_P(SampleMultisampleInterpolationTest31, SampleShadingThenComputeThenSimpleDraw)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, false);
+
+    // Dispatch with compute shader
+    dispatch();
+
+    // Draw without sample shading
+    simpleDraw(true);
+}
+
+// Test per-sample shading draw -> dispatch -> per-sample shading draw
+TEST_P(SampleMultisampleInterpolationTest31, SampleShadingThenComputeThenSampleShading)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, false);
+
+    // Dispatch with compute shader
+    dispatch();
+
+    // Draw with sample shading, again
+    basicPerSampleShading({4}, true);
+}
+
+// Test simple draw -> dispatch -> per-sample shading draw
+TEST_P(SampleMultisampleInterpolationTest31, SimpleDrawThenComputeThenSampleShading)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_sample_variables"));
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    // Draw without sample shading
+    simpleDraw(false);
+
+    // Dispatch with compute shader
+    dispatch();
+
+    // Draw with sample shading
+    basicPerSampleShading({4}, true);
+}
+
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SampleMultisampleInterpolationTest);
 ANGLE_INSTANTIATE_TEST_ES3(SampleMultisampleInterpolationTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SampleMultisampleInterpolationTest31);
+ANGLE_INSTANTIATE_TEST_ES31(SampleMultisampleInterpolationTest31);
 
 }  // anonymous namespace

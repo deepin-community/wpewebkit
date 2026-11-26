@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2024, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,13 @@
 /* BCOMPILER() - the compiler being used to build the project */
 #define BCOMPILER(BFEATURE) (defined BCOMPILER_##BFEATURE && BCOMPILER_##BFEATURE)
 
+/* BCOMPILER_HAS_CLANG_BUILTIN() - whether the compiler supports a particular clang builtin. */
+#ifdef __has_builtin
+#define BCOMPILER_HAS_CLANG_BUILTIN(x) __has_builtin(x)
+#else
+#define BCOMPILER_HAS_CLANG_BUILTIN(x) 0
+#endif
+
 /* BCOMPILER_HAS_CLANG_FEATURE() - whether the compiler supports a particular language or library feature. */
 /* http://clang.llvm.org/docs/LanguageExtensions.html#has-feature-and-has-extension */
 #ifdef __has_feature
@@ -37,6 +44,7 @@
 #endif
 
 #define BASAN_ENABLED BCOMPILER_HAS_CLANG_FEATURE(address_sanitizer)
+#define BTSAN_ENABLED BCOMPILER_HAS_CLANG_FEATURE(thread_sanitizer)
 
 /* BCOMPILER_HAS_CLANG_DECLSPEC() - whether the compiler supports a Microsoft style __declspec attribute. */
 /* https://clang.llvm.org/docs/LanguageExtensions.html#has-declspec-attribute */
@@ -75,44 +83,6 @@
 #endif
 #endif
 
-/* BFALLTHROUGH */
-
-#if !defined(BFALLTHROUGH) && defined(__cplusplus) && defined(__has_cpp_attribute)
-
-#if __has_cpp_attribute(fallthrough)
-#define BFALLTHROUGH [[fallthrough]]
-#elif __has_cpp_attribute(clang::fallthrough)
-#define BFALLTHROUGH [[clang::fallthrough]]
-#elif __has_cpp_attribute(gnu::fallthrough)
-#define BFALLTHROUGH [[gnu::fallthrough]]
-#endif
-
-#endif // !defined(BFALLTHROUGH) && defined(__cplusplus) && defined(__has_cpp_attribute)
-
-#if !defined(BFALLTHROUGH)
-#define BFALLTHROUGH
-#endif
-
-/* BLIKELY */
-
-#if !defined(BLIKELY) && BCOMPILER(GCC_COMPATIBLE)
-#define BLIKELY(x) __builtin_expect(!!(x), 1)
-#endif
-
-#if !defined(BLIKELY)
-#define BLIKELY(x) (x)
-#endif
-
-/* BUNLIKELY */
-
-#if !defined(BUNLIKELY) && BCOMPILER(GCC_COMPATIBLE)
-#define BUNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
-
-#if !defined(BUNLIKELY)
-#define BUNLIKELY(x) (x)
-#endif
-
 /* BUNUSED_TYPE_ALIAS */
 
 #if !defined(BUNUSED_TYPE_ALIAS) && BCOMPILER(GCC_COMPATIBLE)
@@ -144,6 +114,55 @@
 #define BALLOW_DEPRECATED_DECLARATIONS_END \
     _Pragma("GCC diagnostic pop")
 #else
-#define BALLOW_DEPRECATED_DECLARATIONS_BEGIN
-#define BALLOW_DEPRECATED_DECLARATIONS_END
+#define BALLOW_DEPRECATED_DECLARATIONS_BEGIN \
+    _Pragma("clang diagnostic push") \
+    _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
+#define BALLOW_DEPRECATED_DECLARATIONS_END \
+    _Pragma("clang diagnostic pop")
 #endif
+
+/* BALLOW_UNSAFE_BUFFER_USAGE_BEGIN */
+
+#if BCOMPILER(CLANG)
+#define BALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    _Pragma("clang diagnostic push") \
+    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage\"")
+
+#define BALLOW_UNSAFE_BUFFER_USAGE_END \
+    _Pragma("clang diagnostic pop")
+#else
+#define BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#define BALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
+/* BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE() - suppress a clang static analyzer warning on the following statement.
+ * https://clang.llvm.org/docs/AttributeReference.html#suppress */
+#if defined(__has_cpp_attribute)
+#if __has_cpp_attribute(clang::suppress)
+#define BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE(warning, ...) [[clang::suppress]]
+#endif
+#endif
+#if !defined(BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE)
+#define BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE(warning, ...)
+#endif
+
+/* MUST_TAIL_CALL */
+
+// 32-bit platforms use different calling conventions, so a MUST_TAIL_CALL function
+// written for 64-bit may fail to tail call on 32-bit.
+// It also doesn't work on ppc64le: https://github.com/llvm/llvm-project/issues/98859
+// and on Windows: https://github.com/llvm/llvm-project/issues/116568
+#if BCOMPILER(CLANG)
+#if __SIZEOF_POINTER__ == 8
+#if !defined(BMUST_TAIL_CALL) && defined(__cplusplus) && defined(__has_cpp_attribute)
+#if __has_cpp_attribute(clang::musttail) && !defined(__powerpc__) && !defined(_WIN32)
+#define BMUST_TAIL_CALL [[clang::musttail]]
+#endif
+#endif
+#endif
+#endif
+
+#if !defined(BMUST_TAIL_CALL)
+#define BMUST_TAIL_CALL
+#endif
+

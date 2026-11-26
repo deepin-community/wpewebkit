@@ -29,10 +29,10 @@ class SVGElement;
 // This class is for containers which are never drawn, but do need to support style
 // <defs>, <linearGradient>, <radialGradient> are all good examples
 class RenderSVGHiddenContainer : public RenderSVGContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGHiddenContainer);
+    WTF_MAKE_TZONE_ALLOCATED(RenderSVGHiddenContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGHiddenContainer);
 public:
-    RenderSVGHiddenContainer(Type, SVGElement&, RenderStyle&&, OptionSet<SVGModelObjectFlag> = { });
+    RenderSVGHiddenContainer(Type, SVGElement&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
     virtual ~RenderSVGHiddenContainer();
 
 protected:
@@ -43,8 +43,8 @@ private:
 
     void paint(PaintInfo&, const LayoutPoint&) final { }
 
-    LayoutRect clippedOverflowRect(const RenderLayerModelObject*, VisibleRectContext) const final { return { }; }
-    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject*, VisibleRectContext) const final { return rects; }
+    LayoutRect NODELETE clippedOverflowRect(const RenderLayerModelObject*, VisibleRectContext) const final;
+    std::optional<RepaintRects> NODELETE computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject*, VisibleRectContext) const final;
 
     void boundingRects(Vector<LayoutRect>&, const LayoutPoint&) const final { }
     void absoluteQuads(Vector<FloatQuad>&, bool*) const final { }
@@ -52,7 +52,8 @@ private:
 
 protected:
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) final { return false; }
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect&, OptionSet<RenderStyle::TransformOperationOption>) const override { }
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect&, OptionSet<Style::TransformResolverOption>) const override { }
+    bool requiresLayer() const override { return false; }
     void updateFromStyle() override { }
     bool needsHasSVGTransformFlags() const override { return false; }
 };

@@ -6,6 +6,12 @@
 
 // copyvertex.inc.h: Implementation of vertex buffer copying and conversion functions
 
+#ifdef UNSAFE_BUFFERS_BUILD
+#    pragma allow_unsafe_buffers
+#endif
+
+#include <array>
+
 namespace rx
 {
 
@@ -68,12 +74,12 @@ inline void CopyNativeVertexData(const uint8_t *input, size_t stride, size_t cou
 
     if (inputComponentCount == outputComponentCount)
     {
+        std::array<T, inputComponentCount> offsetInputAligned;
         for (size_t i = 0; i < count; i++)
         {
             const T *offsetInput = reinterpret_cast<const T *>(input + (i * stride));
-            T offsetInputAligned[inputComponentCount];
-            offsetInput =
-                GetAlignedOffsetInput<T, inputComponentCount>(offsetInput, &offsetInputAligned[0]);
+            offsetInput = GetAlignedOffsetInput<T, inputComponentCount>(offsetInput,
+                                                                        offsetInputAligned.data());
 
             T *offsetOutput = reinterpret_cast<T *>(output) + i * outputComponentCount;
 
@@ -85,13 +91,13 @@ inline void CopyNativeVertexData(const uint8_t *input, size_t stride, size_t cou
     const T defaultAlphaValue                = gl::bitCast<T>(alphaDefaultValueBits);
     const size_t lastNonAlphaOutputComponent = std::min<size_t>(outputComponentCount, 3);
 
+    std::array<T, inputComponentCount> offsetInputAligned;
+    ASSERT(sizeof(offsetInputAligned) == attribSize);
     for (size_t i = 0; i < count; i++)
     {
         const T *offsetInput = reinterpret_cast<const T *>(input + (i * stride));
-        T offsetInputAligned[inputComponentCount];
-        ASSERT(sizeof(offsetInputAligned) == attribSize);
         offsetInput =
-            GetAlignedOffsetInput<T, inputComponentCount>(offsetInput, &offsetInputAligned[0]);
+            GetAlignedOffsetInput<T, inputComponentCount>(offsetInput, offsetInputAligned.data());
 
         T *offsetOutput = reinterpret_cast<T *>(output) + i * outputComponentCount;
 
@@ -242,15 +248,15 @@ inline void CopyToFloatVertexData(const uint8_t *input,
     typedef std::numeric_limits<T> NL;
     typedef typename std::conditional<toHalf, GLhalf, float>::type outputType;
 
+    std::array<T, inputComponentCount> offsetInputAligned;
     for (size_t i = 0; i < count; i++)
     {
         const T *offsetInput = reinterpret_cast<const T *>(input + (stride * i));
         outputType *offsetOutput =
             reinterpret_cast<outputType *>(output) + i * outputComponentCount;
 
-        T offsetInputAligned[inputComponentCount];
         offsetInput =
-            GetAlignedOffsetInput<T, inputComponentCount>(offsetInput, &offsetInputAligned[0]);
+            GetAlignedOffsetInput<T, inputComponentCount>(offsetInput, offsetInputAligned.data());
 
         for (size_t j = 0; j < inputComponentCount; j++)
         {
@@ -296,7 +302,7 @@ inline void CopyToFloatVertexData(const uint8_t *input,
             }
             else
             {
-                offsetOutput[3] = static_cast<outputType>(gl::Float32One);
+                offsetOutput[3] = static_cast<outputType>(1.0f);
             }
         }
     }

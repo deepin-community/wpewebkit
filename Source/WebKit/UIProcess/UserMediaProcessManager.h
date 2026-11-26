@@ -28,27 +28,21 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebKit {
-class UserMediaProcessManager;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::UserMediaProcessManager> : std::true_type { };
-}
-
-namespace WebKit {
 
 class UserMediaPermissionRequestProxy;
 class WebProcessProxy;
 
 class UserMediaProcessManager : public WebCore::RealtimeMediaSourceCenterObserver {
 public:
-
-    static UserMediaProcessManager& singleton();
+    static UserMediaProcessManager& NODELETE singleton();
 
     UserMediaProcessManager();
 
-    bool willCreateMediaStream(UserMediaPermissionRequestManagerProxy&, const UserMediaPermissionRequestProxy&);
+    // No-op since this object is always a singleton.
+    void ref() const { ASSERT(this == &singleton()); }
+    void deref() const { ASSERT(this == &singleton()); }
+
+    bool NODELETE willCreateMediaStream(UserMediaPermissionRequestManagerProxy&, const UserMediaPermissionRequestProxy&);
 
     void revokeSandboxExtensionsIfNeeded(WebProcessProxy&);
 
@@ -60,6 +54,7 @@ public:
     void beginMonitoringCaptureDevices();
 
 private:
+
     enum class ShouldNotify : bool { No, Yes };
     void updateCaptureDevices(ShouldNotify);
     void captureDevicesChanged();

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,11 +36,11 @@
 
 using namespace WebKit;
 
-void WKAddMockMediaDevice(WKContextRef context, WKStringRef persistentId, WKStringRef label, WKStringRef type, WKDictionaryRef properties)
+void WKAddMockMediaDevice(WKContextRef context, WKStringRef persistentId, WKStringRef label, WKStringRef type, WKDictionaryRef properties, bool isDefault)
 {
 #if ENABLE(MEDIA_STREAM)
-    String typeString = WebKit::toImpl(type)->string();
-    std::variant<WebCore::MockMicrophoneProperties, WebCore::MockSpeakerProperties, WebCore::MockCameraProperties, WebCore::MockDisplayProperties> deviceProperties;
+    String typeString = protect(WebKit::toImpl(type))->string();
+    Variant<WebCore::MockMicrophoneProperties, WebCore::MockSpeakerProperties, WebCore::MockCameraProperties, WebCore::MockDisplayProperties> deviceProperties;
     if (typeString == "camera"_s) {
         WebCore::MockCameraProperties cameraProperties;
         if (properties) {
@@ -55,7 +55,7 @@ void WKAddMockMediaDevice(WKContextRef context, WKStringRef persistentId, WKStri
                     cameraProperties.fillColor = WebCore::Color::green;
             }
         }
-        deviceProperties = WTFMove(cameraProperties);
+        deviceProperties = WTF::move(cameraProperties);
     } else if (typeString == "screen"_s)
         deviceProperties = WebCore::MockDisplayProperties { };
     else if (typeString == "speaker"_s)
@@ -72,26 +72,26 @@ void WKAddMockMediaDevice(WKContextRef context, WKStringRef persistentId, WKStri
         }
     }
 
-    toImpl(context)->addMockMediaDevice({ WebKit::toImpl(persistentId)->string(), WebKit::toImpl(label)->string(), flags, WTFMove(deviceProperties) });
+    protect(toImpl(context))->addMockMediaDevice({ protect(WebKit::toImpl(persistentId))->string(), protect(WebKit::toImpl(label))->string(), flags, isDefault, WTF::move(deviceProperties) });
 #endif
 }
 
 void WKClearMockMediaDevices(WKContextRef context)
 {
-    toImpl(context)->clearMockMediaDevices();
+    protect(toImpl(context))->clearMockMediaDevices();
 }
 
 void WKRemoveMockMediaDevice(WKContextRef context, WKStringRef persistentId)
 {
-    toImpl(context)->removeMockMediaDevice(WebKit::toImpl(persistentId)->string());
+    protect(toImpl(context))->removeMockMediaDevice(protect(WebKit::toImpl(persistentId))->string());
 }
 
 void WKResetMockMediaDevices(WKContextRef context)
 {
-    toImpl(context)->resetMockMediaDevices();
+    protect(toImpl(context))->resetMockMediaDevices();
 }
 
 void WKSetMockMediaDeviceIsEphemeral(WKContextRef context, WKStringRef persistentId, bool isEphemeral)
 {
-    toImpl(context)->setMockMediaDeviceIsEphemeral(WebKit::toImpl(persistentId)->string(), isEphemeral);
+    protect(toImpl(context))->setMockMediaDeviceIsEphemeral(protect(WebKit::toImpl(persistentId))->string(), isEphemeral);
 }

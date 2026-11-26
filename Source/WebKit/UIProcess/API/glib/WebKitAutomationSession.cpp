@@ -74,7 +74,7 @@ struct _WebKitAutomationSessionPrivate {
     CString id;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitAutomationSession, webkit_automation_session, G_TYPE_OBJECT, GObject)
 
@@ -113,7 +113,7 @@ private:
     void requestMaximizeWindowOfPage(WebAutomationSession&, WebPageProxy& page, CompletionHandler<void()>&& completionHandler) override
     {
         if (auto* webView = webkitWebContextGetWebViewForPage(m_session->priv->webContext, &page))
-            webkitWebViewMaximizeWindow(webView, WTFMove(completionHandler));
+            webkitWebViewMaximizeWindow(webView, WTF::move(completionHandler));
         else
             completionHandler();
     }
@@ -121,7 +121,7 @@ private:
     void requestHideWindowOfPage(WebAutomationSession&, WebPageProxy& page, CompletionHandler<void()>&& completionHandler) override
     {
         if (auto* webView = webkitWebContextGetWebViewForPage(m_session->priv->webContext, &page))
-            webkitWebViewMinimizeWindow(webView, WTFMove(completionHandler));
+            webkitWebViewMinimizeWindow(webView, WTF::move(completionHandler));
         else
             completionHandler();
     }
@@ -129,7 +129,7 @@ private:
     void requestRestoreWindowOfPage(WebAutomationSession&, WebPageProxy& page, CompletionHandler<void()>&& completionHandler) override
     {
         if (auto* webView = webkitWebContextGetWebViewForPage(m_session->priv->webContext, &page))
-            webkitWebViewRestoreWindow(webView, WTFMove(completionHandler));
+            webkitWebViewRestoreWindow(webView, WTF::move(completionHandler));
         else
             completionHandler();
     }
@@ -158,11 +158,11 @@ private:
         webkitWebViewAcceptCurrentScriptDialog(webView);
     }
 
-    String messageOfCurrentJavaScriptDialogOnPage(WebAutomationSession&, WebPageProxy& page) override
+    std::optional<String> messageOfCurrentJavaScriptDialogOnPage(WebAutomationSession&, WebPageProxy& page) override
     {
         auto* webView = webkitWebContextGetWebViewForPage(m_session->priv->webContext, &page);
         if (!webView)
-            return { };
+            return std::nullopt;
         return webkitWebViewGetCurrentScriptDialogMessage(webView);
     }
 
@@ -353,11 +353,15 @@ static WebKitNetworkProxyMode parseProxyCapabilities(const Inspector::RemoteInsp
         return WEBKIT_NETWORK_PROXY_MODE_NO_PROXY;
 
     if (!proxy.ignoreAddressList.isEmpty()) {
-        GUniquePtr<char*> ignoreAddressList(static_cast<char**>(g_new0(char*, proxy.ignoreAddressList.size() + 1)));
-        unsigned i = 0;
-        for (const auto& ignoreAddress : proxy.ignoreAddressList)
-            ignoreAddressList.get()[i++] = g_strdup(ignoreAddress.utf8().data());
-        *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.get());
+        auto ignoreAddressListUTF8 = WTF::map(proxy.ignoreAddressList, [](const String& ignoreAddress) {
+            return ignoreAddress.utf8();
+        });
+        Vector<const char*> ignoreAddressList;
+        ignoreAddressList.reserveInitialCapacity(ignoreAddressListUTF8.size() + 1);
+        for (const auto& ignoreAddress : ignoreAddressListUTF8)
+            ignoreAddressList.append(ignoreAddress.data());
+        ignoreAddressList.append(nullptr);
+        *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.span().data());
     } else
         *settings = webkit_network_proxy_settings_new(nullptr, nullptr);
 
@@ -411,7 +415,7 @@ WebKitAutomationSession* webkitAutomationSessionCreate(WebKitWebContext* webCont
 #else
                 Ref dataStore = webkitWebsiteDataManagerGetDataStore(webkit_web_context_get_website_data_manager(webContext));
 #endif
-                dataStore->setNetworkProxySettings(WTFMove(settings));
+                dataStore->setNetworkProxySettings(WTF::move(settings));
             }
         } else {
             WebKitNetworkProxySettings* proxySettings = nullptr;
@@ -508,11 +512,11 @@ void webkit_automation_session_set_application_info(WebKitAutomationSession* ses
  * webkit_automation_session_get_application_info:
  * @session: a #WebKitAutomationSession
  *
- * Get the the previously set #WebKitAutomationSession.
+ * Get the previously set #WebKitApplicationInfo.
  *
- * Get the #WebKitAutomationSession previously set with webkit_automation_session_set_application_info().
+ * Get the #WebKitApplicationInfo previously set with webkit_automation_session_set_application_info().
  *
- * Returns: (transfer none): the #WebKitAutomationSession of @session, or %NULL if no one has been set.
+ * Returns: (transfer none): the #WebKitApplicationInfo of @session, or %NULL if no one has been set.
  *
  * Since: 2.18
  */

@@ -29,7 +29,6 @@
  */
 
 #include "config.h"
-#if ENABLE(INPUT_TYPE_TIME)
 #include "TimeInputType.h"
 
 #include "DateComponents.h"
@@ -43,16 +42,19 @@
 #include "StepRange.h"
 #include <wtf/DateMath.h>
 #include <wtf/MathExtras.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TimeInputType);
 
 using namespace HTMLNames;
 
 static const int timeDefaultStep = 60;
 static const int timeDefaultStepBase = 0;
 static const int timeStepScaleFactor = 1000;
-static const StepRange::StepDescription timeStepDescription { timeDefaultStep, timeDefaultStepBase, timeStepScaleFactor, StepRange::ScaledStepValueShouldBeInteger };
+static const StepRange::StepDescription timeStepDescription { timeDefaultStep, timeDefaultStepBase, timeStepScaleFactor, StepRange::StepValueShouldBe::ScaledInteger };
 
 TimeInputType::TimeInputType(HTMLInputElement& element)
     : BaseDateAndTimeInputType(Type::Time, element)
@@ -87,11 +89,15 @@ Decimal TimeInputType::defaultValueForStepUp() const
 StepRange TimeInputType::createStepRange(AnyStepHandling anyStepHandling) const
 {
     ASSERT(element());
+    Ref element = *this->element();
     const Decimal stepBase = findStepBase(timeDefaultStepBase);
-    const Decimal minimum = parseToNumber(element()->attributeWithoutSynchronization(minAttr), Decimal::fromDouble(DateComponents::minimumTime()));
-    const Decimal maximum = parseToNumber(element()->attributeWithoutSynchronization(maxAttr), Decimal::fromDouble(DateComponents::maximumTime()));
-    const Decimal step = StepRange::parseStep(anyStepHandling, timeStepDescription, element()->attributeWithoutSynchronization(stepAttr));
-    return StepRange(stepBase, RangeLimitations::Valid, minimum, maximum, step, timeStepDescription, StepRange::IsReversible::Yes);
+
+    RangeLimitations rangeLimitations = RangeLimitations::Invalid;
+    const Decimal minimum = extractStepRangeBound(minAttr, Decimal::fromDouble(DateComponents::minimumTime()), rangeLimitations);
+    const Decimal maximum = extractStepRangeBound(maxAttr, Decimal::fromDouble(DateComponents::maximumTime()), rangeLimitations);
+
+    const Decimal step = StepRange::parseStep(anyStepHandling, timeStepDescription, element->attributeWithoutSynchronization(stepAttr));
+    return StepRange(stepBase, rangeLimitations, minimum, maximum, step, timeStepDescription, StepRange::IsReversible::Yes);
 }
 
 std::optional<DateComponents> TimeInputType::parseToDateComponents(StringView source) const
@@ -138,14 +144,12 @@ void TimeInputType::setupLayoutParameters(DateTimeEditElement::LayoutParameters&
     layoutParameters.shouldHaveMillisecondField = shouldHaveMillisecondField(date);
 
     if (layoutParameters.shouldHaveMillisecondField || shouldHaveSecondField(date)) {
-        layoutParameters.dateTimeFormat = layoutParameters.locale.timeFormat();
+        layoutParameters.dateTimeFormat = layoutParameters.locale->timeFormat();
         layoutParameters.fallbackDateTimeFormat = "HH:mm:ss"_s;
     } else {
-        layoutParameters.dateTimeFormat = layoutParameters.locale.shortTimeFormat();
+        layoutParameters.dateTimeFormat = layoutParameters.locale->shortTimeFormat();
         layoutParameters.fallbackDateTimeFormat = "HH:mm"_s;
     }
 }
 
 } // namespace WebCore
-
-#endif

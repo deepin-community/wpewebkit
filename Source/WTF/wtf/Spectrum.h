@@ -33,7 +33,7 @@ namespace WTF {
 
 template<typename T, typename CounterType = unsigned>
 class Spectrum {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Spectrum);
 public:
     typedef typename HashMap<T, CounterType>::iterator iterator;
     typedef typename HashMap<T, CounterType>::const_iterator const_iterator;
@@ -43,11 +43,14 @@ public:
     void add(const T& key, CounterType count = 1)
     {
         Locker locker(m_lock);
+        add(locker, key, count);
+    }
+
+    void add(const AbstractLocker&, const T& key, CounterType count = 1)
+    {
         if (!count)
             return;
-        typename HashMap<T, CounterType>::AddResult result = m_map.add(key, count);
-        if (!result.isNewEntry)
-            result.iterator->value += count;
+        m_map.add(key, CounterType { }).iterator->value += count;
     }
     
     template<typename U>
@@ -68,11 +71,11 @@ public:
     
     size_t size() const { return m_map.size(); }
     
-    const_iterator begin() const { return m_map.begin(); }
-    const_iterator end() const { return m_map.end(); }
+    const_iterator begin() const LIFETIME_BOUND { return m_map.begin(); }
+    const_iterator end() const LIFETIME_BOUND { return m_map.end(); }
     
     struct KeyAndCount {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(KeyAndCount);
         KeyAndCount() { }
         
         KeyAndCount(const T& key, CounterType count)
@@ -95,7 +98,7 @@ public:
         CounterType count;
     };
 
-    Lock& getLock() { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND { return m_lock; }
     
     // Returns a list ordered from lowest-count to highest-count.
     Vector<KeyAndCount> buildList(AbstractLocker&) const

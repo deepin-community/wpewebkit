@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,15 +31,15 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <WebCore/PlatformExportMacros.h>
 #include <pal/ExportMacros.h>
-#include <wtf/DisallowCType.h>
 
 #ifdef __cplusplus
 
-// These undefs match up with defines in WebKit2Prefix.h for Mac OS X.
+// These undefs match up with defines in WebKitPrefix.h for Mac OS X.
 // Helps us catch if anyone uses new or delete by accident in code and doesn't include "config.h".
 #undef new
 #undef delete
 #include <wtf/FastMalloc.h>
+#include <wtf/TZoneMalloc.h>
 
 #endif
 

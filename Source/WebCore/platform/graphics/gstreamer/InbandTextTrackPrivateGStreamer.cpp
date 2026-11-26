@@ -45,39 +45,38 @@ static void ensureTextTrackDebugCategoryInitialized()
     });
 }
 
-InbandTextTrackPrivateGStreamer::InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstPad>&& pad, bool shouldHandleStreamStartEvent)
+InbandTextTrackPrivateGStreamer::InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstPad>&& pad, TrackID trackId)
     : InbandTextTrackPrivate(CueFormat::WebVTT)
-    , TrackPrivateBaseGStreamer(TrackPrivateBaseGStreamer::TrackType::Text, this, index, WTFMove(pad), shouldHandleStreamStartEvent)
+    , TrackPrivateBaseGStreamer(nullptr, GStreamerTrackType::Text, this, index, WTF::move(pad), trackId)
     , m_kind(Kind::Subtitles)
 {
     ensureTextTrackDebugCategoryInitialized();
-    installUpdateConfigurationHandlers();
 }
 
-InbandTextTrackPrivateGStreamer::InbandTextTrackPrivateGStreamer(unsigned index, GstStream* stream)
+InbandTextTrackPrivateGStreamer::InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstStream>&& stream)
     : InbandTextTrackPrivate(CueFormat::WebVTT)
-    , TrackPrivateBaseGStreamer(TrackPrivateBaseGStreamer::TrackType::Text, this, index, stream)
+    , TrackPrivateBaseGStreamer(nullptr, GStreamerTrackType::Text, this, index, WTF::move(stream))
 {
     ensureTextTrackDebugCategoryInitialized();
-    installUpdateConfigurationHandlers();
 
-    GST_INFO("Track %d got stream start for stream %s.", m_index, m_stringId.string().utf8().data());
+    GST_INFO("Track %" PRIu64 " got stream start. GStreamer stream-id: %s", m_data->m_id, m_data->m_gstStreamId.utf8().data());
 
-    GST_DEBUG("Stream %" GST_PTR_FORMAT, m_stream.get());
-    auto caps = adoptGRef(gst_stream_get_caps(m_stream.get()));
+    GST_DEBUG("Stream %" GST_PTR_FORMAT, m_data->m_stream.get());
+    GRefPtr caps = adoptGRef(gst_stream_get_caps(m_data->m_stream.get()));
     m_kind = doCapsHaveType(caps.get(), "closedcaption/"_s) ? Kind::Captions : Kind::Subtitles;
 }
 
 void InbandTextTrackPrivateGStreamer::tagsChanged(GRefPtr<GstTagList>&& tags)
 {
+    ASSERT(isMainThread());
     if (!tags)
         return;
 
-    if (!updateTrackIDFromTags(tags))
+    if (!m_data->updateTrackIDFromTags(tags))
         return;
 
-    GST_DEBUG_OBJECT(objectForLogging(), "Text track ID set from container-specific-track-id tag %" G_GUINT64_FORMAT, *m_trackID);
-    notifyClients([trackID = *m_trackID](auto& client) {
+    GST_DEBUG_OBJECT(m_data->objectForLogging(), "Text track ID set from container-specific-track-id tag %" G_GUINT64_FORMAT, *m_data->m_trackID);
+    notifyClients([trackID = *m_data->m_trackID](auto& client) {
         client.idChanged(trackID);
     });
 }
@@ -86,11 +85,11 @@ void InbandTextTrackPrivateGStreamer::handleSample(GRefPtr<GstSample>&& sample)
 {
     {
         Locker locker { m_sampleMutex };
-        m_pendingSamples.append(WTFMove(sample));
+        m_pendingSamples.append(WTF::move(sample));
     }
 
     RefPtr<InbandTextTrackPrivateGStreamer> protectedThis(this);
-    m_notifier->notify(MainThreadNotification::NewSample, [protectedThis] {
+    m_data->m_notifier->notify(TrackDataHolder::MainThreadNotification::NewSample, [protectedThis] {
         protectedThis->notifyTrackOfSample();
     });
 }
@@ -106,24 +105,44 @@ void InbandTextTrackPrivateGStreamer::notifyTrackOfSample()
     for (auto& sample : samples) {
         GstBuffer* buffer = gst_sample_get_buffer(sample.get());
         if (!buffer) {
-            GST_WARNING("Track %d got sample with no buffer.", m_index);
+            GST_WARNING("Track %" PRIu64 " got sample with no buffer.", m_data->m_id);
             continue;
         }
         GstMappedBuffer mappedBuffer(buffer, GST_MAP_READ);
         ASSERT(mappedBuffer);
         if (!mappedBuffer) {
-            GST_WARNING("Track %d unable to map buffer.", m_index);
+            GST_WARNING("Track %" PRIu64 " unable to map buffer.", m_data->m_id);
             continue;
         }
 
-        GST_INFO("Track %d parsing sample: %.*s", m_index, static_cast<int>(mappedBuffer.size()),
+        GST_INFO("Track %" PRIu64 " parsing sample: %.*s", m_data->m_id, static_cast<int>(mappedBuffer.size()),
             reinterpret_cast<char*>(mappedBuffer.data()));
         ASSERT(isMainThread());
         ASSERT(!hasClients() || hasOneClient());
         notifyMainThreadClient([&](auto& client) {
-            downcast<InbandTextTrackPrivateClient>(client).parseWebVTTCueData(std::span { mappedBuffer.data(), mappedBuffer.size() });
+            downcast<InbandTextTrackPrivateClient>(client).parseWebVTTCueData(mappedBuffer.span<uint8_t>());
         });
     }
+}
+
+TrackID InbandTextTrackPrivateGStreamer::id() const
+{
+    return m_data->m_trackID.value_or(m_data->m_id);
+}
+
+String InbandTextTrackPrivateGStreamer::label() const
+{
+    return m_data->m_label;
+}
+
+String InbandTextTrackPrivateGStreamer::language() const
+{
+    return m_data->m_language;
+}
+
+int InbandTextTrackPrivateGStreamer::trackIndex() const
+{
+    return m_data->m_index;
 }
 
 #undef GST_CAT_DEFAULT

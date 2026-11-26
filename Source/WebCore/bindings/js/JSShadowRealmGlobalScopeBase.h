@@ -40,9 +40,11 @@ public:
 
     DECLARE_INFO;
 
+    DECLARE_VISIT_CHILDREN;
+
     ShadowRealmGlobalScope& wrapped() const { return *m_wrapped; }
 
-    const JSDOMGlobalObject* incubatingRealm() const;
+    const JSDOMGlobalObject* NODELETE incubatingRealm() const;
     JSDOMGlobalObject* incubatingRealm();
 
     ScriptExecutionContext* scriptExecutionContext() const;
@@ -53,20 +55,15 @@ private:
     static bool shouldInterruptScriptBeforeTimeout(const JSC::JSGlobalObject*);
     static JSC::RuntimeFlags javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
     static JSC::ScriptExecutionStatus scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
-    static void queueMicrotaskToEventLoop(JSC::JSGlobalObject&, Ref<JSC::Microtask>&&);
-    static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, JSC::JSString*);
-    static String codeForEval(JSC::JSGlobalObject*, JSC::JSValue);
-    static bool canCompileStrings(JSC::JSGlobalObject*, JSC::CompilationType, String, JSC::JSValue);
+    static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, const String&);
 
 protected:
     JSShadowRealmGlobalScopeBase(JSC::VM&, JSC::Structure*, RefPtr<ShadowRealmGlobalScope>&&);
     void finishCreation(JSC::VM&, JSC::JSGlobalProxy*);
 
-    DECLARE_VISIT_CHILDREN;
-
-private:
     static const JSC::GlobalObjectMethodTable* globalObjectMethodTable();
 
+private:
     RefPtr<ShadowRealmGlobalScope> m_wrapped;
 };
 
@@ -76,9 +73,9 @@ inline JSDOMGlobalObject* JSShadowRealmGlobalScopeBase::incubatingRealm()
 }
 
 // Always ignores the execState and passed globalObject, ShadowRealmGlobalScope is itself a globalObject and will always use its own prototype chain.
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, ShadowRealmGlobalScope&);
+JSC::JSValue NODELETE toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, ShadowRealmGlobalScope&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ShadowRealmGlobalScope* scope) { return scope ? toJS(lexicalGlobalObject, globalObject, *scope) : JSC::jsNull(); }
-JSC::JSValue toJS(JSC::JSGlobalObject*, ShadowRealmGlobalScope&);
+JSC::JSValue NODELETE toJS(JSC::JSGlobalObject*, ShadowRealmGlobalScope&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, ShadowRealmGlobalScope* scope) { return scope ? toJS(lexicalGlobalObject, *scope) : JSC::jsNull(); }
 
 } // namespace WebCore

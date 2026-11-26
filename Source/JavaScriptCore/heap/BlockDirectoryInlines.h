@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "BlockDirectory.h"
-#include "FreeListInlines.h"
-#include "VM.h"
+#include <JavaScriptCore/BlockDirectory.h>
+#include <JavaScriptCore/FreeListInlines.h>
+#include <JavaScriptCore/VM.h>
 
 namespace JSC {
 
@@ -47,6 +47,11 @@ inline void BlockDirectory::forEachNotEmptyBlock(const std::invocable<MarkedBloc
         [&] (size_t index) {
             functor(m_blocks[index]);
         });
+}
+
+inline MarkedBlock::Handle* BlockDirectory::findBlockToSweep()
+{
+    return findBlockToSweep(m_unsweptCursor);
 }
 
 } // namespace JSC

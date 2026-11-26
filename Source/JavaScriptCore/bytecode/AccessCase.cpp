@@ -43,9 +43,9 @@
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
 #include "ModuleNamespaceAccessCase.h"
+#include "PropertyInlineCache.h"
 #include "ScopedArguments.h"
 #include "ScratchRegisterAllocator.h"
-#include "StructureStubInfo.h"
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 
@@ -56,7 +56,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
 AccessCase::AccessCase(VM& vm, JSCell* owner, AccessType type, CacheableIdentifier identifier, PropertyOffset offset, Structure* structure, const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain)
     : m_type(type)
     , m_offset(offset)
-    , m_polyProtoAccessChain(WTFMove(prototypeAccessChain))
+    , m_polyProtoAccessChain(WTF::move(prototypeAccessChain))
     , m_identifier(identifier)
 {
     m_structureID.setMayBeNull(vm, owner, structure);
@@ -68,6 +68,7 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
 {
     switch (type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case InHit:
@@ -79,6 +80,9 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case Replace:
     case ProxyObjectIn:
@@ -116,6 +120,22 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -146,26 +166,26 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
     case IndexedProxyObjectIn:
@@ -192,12 +212,12 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    return adoptRef(*new AccessCase(vm, owner, type, identifier, offset, structure, conditionSet, WTFMove(prototypeAccessChain)));
+    return adoptRef(*new AccessCase(vm, owner, type, identifier, offset, structure, conditionSet, WTF::move(prototypeAccessChain)));
 }
 
 RefPtr<AccessCase> AccessCase::createTransition(
     VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyOffset offset, Structure* oldStructure, Structure* newStructure,
-    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const StructureStubInfo& stubInfo)
+    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const PropertyInlineCache& propertyCache)
 {
     RELEASE_ASSERT(oldStructure == newStructure->previousID());
 
@@ -205,7 +225,7 @@ RefPtr<AccessCase> AccessCase::createTransition(
     // enough registers to make it happen.
     if (oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
         // In 64 bits jsc uses 1 register for value, and it uses 2 registers in 32 bits
-        size_t requiredRegisters = 1; // stubInfo.valueRegs()
+        size_t requiredRegisters = 1; // propertyCache.valueRegs()
 #if USE(JSVALUE32_64)
         ++requiredRegisters;
 #endif
@@ -214,7 +234,7 @@ RefPtr<AccessCase> AccessCase::createTransition(
         ++requiredRegisters;
 #if USE(JSVALUE32_64)
         // In 32 bits, jsc uses may use one extra register, if it is not a Cell
-        if (stubInfo.propertyRegs().tagGPR() != InvalidGPRReg)
+        if (propertyCache.propertyRegs().tagGPR() != InvalidGPRReg)
             ++requiredRegisters;
 #endif
 
@@ -222,13 +242,13 @@ RefPtr<AccessCase> AccessCase::createTransition(
         ++requiredRegisters;
 #if USE(JSVALUE32_64)
         // In 32 bits, jsc uses may use one extra register, if it is not a Cell
-        if (stubInfo.baseRegs().tagGPR() != InvalidGPRReg)
+        if (propertyCache.baseRegs().tagGPR() != InvalidGPRReg)
             ++requiredRegisters;
 #endif
 
-        if (stubInfo.m_stubInfoGPR != InvalidGPRReg)
+        if (propertyCache.m_propertyCacheGPR != InvalidGPRReg)
             ++requiredRegisters;
-        if (stubInfo.m_arrayProfileGPR != InvalidGPRReg)
+        if (propertyCache.m_arrayProfileGPR != InvalidGPRReg)
             ++requiredRegisters;
 
         // One extra register for scratchGPR
@@ -243,7 +263,28 @@ RefPtr<AccessCase> AccessCase::createTransition(
             return nullptr;
     }
 
-    return adoptRef(*new AccessCase(vm, owner, Transition, identifier, offset, newStructure, conditionSet, WTFMove(prototypeAccessChain)));
+    return adoptRef(*new AccessCase(vm, owner, Transition, identifier, offset, newStructure, conditionSet, WTF::move(prototypeAccessChain)));
+}
+
+void AccessCase::convertToNonStringPrimitiveKeyAccessType(AccessType newType)
+{
+    switch (m_type) {
+    case Load:
+        ASSERT(newType == IndexedUndefinedKeyLoad || newType == IndexedNullKeyLoad || newType == IndexedTrueKeyLoad || newType == IndexedFalseKeyLoad);
+        break;
+    case Miss:
+        ASSERT(newType == IndexedUndefinedKeyMiss || newType == IndexedNullKeyMiss || newType == IndexedTrueKeyMiss || newType == IndexedFalseKeyMiss);
+        break;
+    case Replace:
+        ASSERT(newType == IndexedUndefinedKeyReplace || newType == IndexedNullKeyReplace || newType == IndexedTrueKeyReplace || newType == IndexedFalseKeyReplace);
+        break;
+    case Transition:
+        ASSERT(newType == IndexedUndefinedKeyTransition || newType == IndexedNullKeyTransition || newType == IndexedTrueKeyTransition || newType == IndexedFalseKeyTransition);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    m_type = newType;
 }
 
 Ref<AccessCase> AccessCase::createDelete(
@@ -273,28 +314,28 @@ Ref<AccessCase> AccessCase::createReplace(VM& vm, JSCell* owner, CacheableIdenti
     return result;
 }
 
-RefPtr<AccessCase> AccessCase::fromStructureStubInfo(
-    VM& vm, JSCell* owner, CacheableIdentifier identifier, StructureStubInfo& stubInfo)
+RefPtr<AccessCase> AccessCase::fromPropertyInlineCache(
+    VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyInlineCache& propertyCache)
 {
-    switch (stubInfo.cacheType()) {
+    switch (propertyCache.cacheType()) {
     case CacheType::GetByIdSelf:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return ProxyableAccessCase::create(vm, owner, Load, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure());
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return ProxyableAccessCase::create(vm, owner, Load, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure());
 
     case CacheType::PutByIdReplace:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return AccessCase::createReplace(vm, owner, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure(), false);
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return AccessCase::createReplace(vm, owner, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure(), false);
 
     case CacheType::InByIdSelf:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
-        return AccessCase::create(vm, owner, InHit, identifier, stubInfo.byIdSelfOffset, stubInfo.inlineAccessBaseStructure());
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
+        return AccessCase::create(vm, owner, InHit, identifier, propertyCache.byIdSelfOffset, propertyCache.inlineAccessBaseStructure());
 
     case CacheType::ArrayLength:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
         return AccessCase::create(vm, owner, AccessCase::ArrayLength, CacheableIdentifier::createFromImmortalIdentifier(vm.propertyNames->length.impl()));
 
     case CacheType::StringLength:
-        RELEASE_ASSERT(hasConstantIdentifier(stubInfo.accessType));
+        RELEASE_ASSERT(hasConstantIdentifier(propertyCache.accessType));
         return AccessCase::create(vm, owner, AccessCase::StringLength, CacheableIdentifier::createFromImmortalIdentifier(vm.propertyNames->length.impl()));
 
     default:
@@ -314,6 +355,10 @@ JSObject* AccessCase::tryGetAlternateBaseImpl() const
     case AccessCase::IntrinsicGetter:
     case AccessCase::Load:
     case AccessCase::GetGetter:
+    case AccessCase::IndexedUndefinedKeyLoad:
+    case AccessCase::IndexedNullKeyLoad:
+    case AccessCase::IndexedTrueKeyLoad:
+    case AccessCase::IndexedFalseKeyLoad:
         if (!conditionSet().isEmpty())
             return conditionSet().slotBaseCondition().object();
         return nullptr;
@@ -332,12 +377,16 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
 
     switch (m_type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case ArrayLength:
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -408,26 +457,26 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
         return false;
     case Load:
@@ -438,6 +487,22 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
     case Replace:
     case IndexedNoIndexingMiss:
     case IndexedNoIndexingInMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case Transition:
     case GetGetter:
     case Getter:
@@ -461,6 +526,7 @@ bool AccessCase::requiresIdentifierNameMatch() const
     switch (m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     // We don't currently have a by_val for these puts, but we do care about the identifier.
@@ -484,6 +550,9 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -528,6 +597,22 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -558,26 +643,26 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
         return false;
@@ -590,6 +675,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
     switch (m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -612,6 +698,9 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case ProxyObjectIn:
     case ProxyObjectLoad:
@@ -627,6 +716,22 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case IndexedMegamorphicIn:
     case IndexedMegamorphicLoad:
     case IndexedMegamorphicStore:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
         return false;
     case IndexedInt32Load:
     case IndexedDoubleLoad:
@@ -686,26 +791,26 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
         return true;
@@ -730,7 +835,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
         break;
     }
     case CustomValueGetter:
-    case CustomValueSetter: {
+    case CustomValueSetter:
+    case CustomAccessorGetter:
+    case CustomAccessorSetter: {
         auto& accessor = this->as<GetterSetterAccessCase>();
         if (accessor.customSlotBase())
             functor(accessor.customSlotBase());
@@ -755,10 +862,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
         if (as<InstanceOfAccessCase>().prototype())
             functor(as<InstanceOfAccessCase>().prototype());
         break;
-    case CustomAccessorGetter:
-    case CustomAccessorSetter:
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -776,6 +882,9 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ProxyObjectIn:
     case ProxyObjectLoad:
     case ProxyObjectStore:
@@ -811,6 +920,22 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -841,26 +966,26 @@ void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
     case IndexedProxyObjectIn:
@@ -875,6 +1000,10 @@ bool AccessCase::doesCalls(VM&) const
     bool doesCalls = false;
     switch (type()) {
     case Transition:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyTransition:
         doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && structure()->couldHaveIndexingHeader();
         break;
     case Getter:
@@ -891,6 +1020,7 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedProxyObjectStore:
     case StoreMegamorphic:
     case IndexedMegamorphicStore:
+    case LoadMegamorphicGetter:
         doesCalls = true;
         break;
     case IntrinsicGetter: {
@@ -913,6 +1043,9 @@ bool AccessCase::doesCalls(VM&) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case ModuleNamespaceLoad:
     case InstanceOfHit:
     case InstanceOfMiss:
@@ -947,6 +1080,14 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedResizableTypedArrayFloat64Load:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
     case IndexedInt32Store:
     case IndexedDoubleStore:
     case IndexedContiguousStore:
@@ -977,31 +1118,35 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
         doesCalls = false;
         break;
     case Replace:
+    case IndexedUndefinedKeyReplace:
+    case IndexedNullKeyReplace:
+    case IndexedTrueKeyReplace:
+    case IndexedFalseKeyReplace:
         doesCalls = viaGlobalProxy();
         break;
     }
@@ -1055,6 +1200,7 @@ bool AccessCase::canReplace(const AccessCase& other) const
     
     switch (type()) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case IndexedMegamorphicLoad:
@@ -1068,6 +1214,9 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case IndexedScopedArgumentsLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
@@ -1127,26 +1276,26 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
         return other.type() == type();
 
@@ -1198,6 +1347,22 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case SetPrivateBrand:
     case IndexedNoIndexingMiss:
     case IndexedNoIndexingInMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
         if (other.type() != type())
             return false;
 
@@ -1253,6 +1418,8 @@ bool AccessCase::visitWeak(VM& vm) const
     forEachDependentCell(vm, [&](JSCell* cell) {
         isValid &= vm.heap.isMarked(cell);
     });
+    if (m_identifier && m_identifier.isCell())
+        isValid &= vm.heap.isMarked(m_identifier.cell());
     return isValid;
 }
 
@@ -1277,6 +1444,10 @@ void AccessCase::propagateTransitions(Visitor& visitor) const
     switch (m_type) {
     case Transition:
     case Delete:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyTransition:
         if (visitor.isMarked(m_structureID->previousID()))
             visitor.appendUnbarriered(m_structureID.get());
         break;
@@ -1302,6 +1473,7 @@ inline void AccessCase::runWithDowncast(const Func& func)
 {
     switch (m_type) {
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -1315,6 +1487,9 @@ inline void AccessCase::runWithDowncast(const Func& func)
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case CheckPrivateBrand:
     case SetPrivateBrand:
     case IndexedMegamorphicLoad:
@@ -1372,32 +1547,48 @@ inline void AccessCase::runWithDowncast(const Func& func)
     case IndexedResizableTypedArrayFloat64Store:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32InHit:
     case IndexedDoubleInHit:
     case IndexedContiguousInHit:
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
     case InstanceOfMegamorphic:
@@ -1441,11 +1632,11 @@ inline void AccessCase::runWithDowncast(const Func& func)
 }
 
 #if ASSERT_ENABLED
-void AccessCase::checkConsistency(StructureStubInfo& stubInfo)
+void AccessCase::checkConsistency(PropertyInlineCache& propertyCache)
 {
     RELEASE_ASSERT(!(requiresInt32PropertyCheck() && requiresIdentifierNameMatch()));
 
-    if (hasConstantIdentifier(stubInfo.accessType)) {
+    if (hasConstantIdentifier(propertyCache.accessType)) {
         RELEASE_ASSERT(!requiresInt32PropertyCheck());
         RELEASE_ASSERT(requiresIdentifierNameMatch());
     }
@@ -1481,6 +1672,7 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     switch (lhs.m_type) {
     case Load:
     case LoadMegamorphic:
+    case LoadMegamorphicGetter:
     case StoreMegamorphic:
     case InMegamorphic:
     case Transition:
@@ -1499,6 +1691,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     case StringLength:
     case DirectArgumentsLength:
     case ScopedArgumentsLength:
+    case RegExpLastIndexLoad:
+    case RegExpLastIndexStore:
+    case ArrayLengthStore:
     case CheckPrivateBrand:
     case SetPrivateBrand:
     case IndexedMegamorphicLoad:
@@ -1556,32 +1751,48 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     case IndexedResizableTypedArrayFloat64Store:
     case IndexedStringLoad:
     case IndexedNoIndexingMiss:
+    case IndexedUndefinedKeyLoad:
+    case IndexedUndefinedKeyMiss:
+    case IndexedNullKeyLoad:
+    case IndexedNullKeyMiss:
+    case IndexedTrueKeyLoad:
+    case IndexedTrueKeyMiss:
+    case IndexedFalseKeyLoad:
+    case IndexedFalseKeyMiss:
+    case IndexedUndefinedKeyReplace:
+    case IndexedUndefinedKeyTransition:
+    case IndexedNullKeyReplace:
+    case IndexedNullKeyTransition:
+    case IndexedTrueKeyReplace:
+    case IndexedTrueKeyTransition:
+    case IndexedFalseKeyReplace:
+    case IndexedFalseKeyTransition:
     case IndexedInt32InHit:
     case IndexedDoubleInHit:
     case IndexedContiguousInHit:
     case IndexedArrayStorageInHit:
     case IndexedScopedArgumentsInHit:
     case IndexedDirectArgumentsInHit:
-    case IndexedTypedArrayInt8InHit:
-    case IndexedTypedArrayUint8InHit:
-    case IndexedTypedArrayUint8ClampedInHit:
-    case IndexedTypedArrayInt16InHit:
-    case IndexedTypedArrayUint16InHit:
-    case IndexedTypedArrayInt32InHit:
-    case IndexedTypedArrayUint32InHit:
-    case IndexedTypedArrayFloat16InHit:
-    case IndexedTypedArrayFloat32InHit:
-    case IndexedTypedArrayFloat64InHit:
-    case IndexedResizableTypedArrayInt8InHit:
-    case IndexedResizableTypedArrayUint8InHit:
-    case IndexedResizableTypedArrayUint8ClampedInHit:
-    case IndexedResizableTypedArrayInt16InHit:
-    case IndexedResizableTypedArrayUint16InHit:
-    case IndexedResizableTypedArrayInt32InHit:
-    case IndexedResizableTypedArrayUint32InHit:
-    case IndexedResizableTypedArrayFloat16InHit:
-    case IndexedResizableTypedArrayFloat32InHit:
-    case IndexedResizableTypedArrayFloat64InHit:
+    case IndexedTypedArrayInt8In:
+    case IndexedTypedArrayUint8In:
+    case IndexedTypedArrayUint8ClampedIn:
+    case IndexedTypedArrayInt16In:
+    case IndexedTypedArrayUint16In:
+    case IndexedTypedArrayInt32In:
+    case IndexedTypedArrayUint32In:
+    case IndexedTypedArrayFloat16In:
+    case IndexedTypedArrayFloat32In:
+    case IndexedTypedArrayFloat64In:
+    case IndexedResizableTypedArrayInt8In:
+    case IndexedResizableTypedArrayUint8In:
+    case IndexedResizableTypedArrayUint8ClampedIn:
+    case IndexedResizableTypedArrayInt16In:
+    case IndexedResizableTypedArrayUint16In:
+    case IndexedResizableTypedArrayInt32In:
+    case IndexedResizableTypedArrayUint32In:
+    case IndexedResizableTypedArrayFloat16In:
+    case IndexedResizableTypedArrayFloat32In:
+    case IndexedResizableTypedArrayFloat64In:
     case IndexedStringInHit:
     case IndexedNoIndexingInMiss:
     case InstanceOfMegamorphic:

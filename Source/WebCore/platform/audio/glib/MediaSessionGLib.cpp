@@ -25,10 +25,13 @@
 #include "MediaSessionManagerGLib.h"
 #include <gio/gio.h>
 #include <wtf/SortedArrayMap.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSessionGLib);
 
 #define DBUS_MPRIS_OBJECT_PATH "/org/mpris/MediaPlayer2"
 #define DBUS_MPRIS_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
@@ -36,17 +39,15 @@ namespace WebCore {
 
 static std::optional<PlatformMediaSession::RemoteControlCommandType> getCommand(const char* name)
 {
-    static const std::pair<ComparableASCIILiteral, PlatformMediaSession::RemoteControlCommandType> commandList[] = {
-        { "Next", PlatformMediaSession::RemoteControlCommandType::NextTrackCommand },
-        { "Pause", PlatformMediaSession::RemoteControlCommandType::PauseCommand },
-        { "Play", PlatformMediaSession::RemoteControlCommandType::PlayCommand },
-        { "PlayPause", PlatformMediaSession::RemoteControlCommandType::TogglePlayPauseCommand },
-        { "Previous", PlatformMediaSession::RemoteControlCommandType::PreviousTrackCommand },
-        { "Seek", PlatformMediaSession::RemoteControlCommandType::SeekToPlaybackPositionCommand },
-        { "Stop", PlatformMediaSession::RemoteControlCommandType::StopCommand }
-    };
-
-    static const SortedArrayMap map { commandList };
+    static const SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, PlatformMediaSession::RemoteControlCommandType>>({
+        { "Next"_s, PlatformMediaSession::RemoteControlCommandType::NextTrackCommand },
+        { "Pause"_s, PlatformMediaSession::RemoteControlCommandType::PauseCommand },
+        { "Play"_s, PlatformMediaSession::RemoteControlCommandType::PlayCommand },
+        { "PlayPause"_s, PlatformMediaSession::RemoteControlCommandType::TogglePlayPauseCommand },
+        { "Previous"_s, PlatformMediaSession::RemoteControlCommandType::PreviousTrackCommand },
+        { "Seek"_s, PlatformMediaSession::RemoteControlCommandType::SeekToPlaybackPositionCommand },
+        { "Stop"_s, PlatformMediaSession::RemoteControlCommandType::StopCommand }
+    }) };
     auto value = map.get(StringView::fromLatin1(name), PlatformMediaSession::RemoteControlCommandType::NoCommand);
     if (value == PlatformMediaSession::RemoteControlCommandType::NoCommand)
         return { };
@@ -95,25 +96,24 @@ enum class MprisProperty : uint8_t {
 
 static std::optional<MprisProperty> getMprisProperty(const char* propertyName)
 {
-    static constexpr std::pair<ComparableASCIILiteral, MprisProperty> propertiesList[] {
-        { "CanControl", MprisProperty::CanControl },
-        { "CanGoNext", MprisProperty::CanGoNext },
-        { "CanGoPrevious", MprisProperty::CanGoPrevious },
-        { "CanPause", MprisProperty::CanPause },
-        { "CanPlay", MprisProperty::CanPlay },
-        { "CanQuit", MprisProperty::CanQuit },
-        { "CanRaise", MprisProperty::CanRaise },
-        { "CanSeek", MprisProperty::CanSeek },
-        { "DesktopEntry", MprisProperty::DesktopEntry },
-        { "HasTrackList", MprisProperty::HasTrackList },
-        { "Identity", MprisProperty::Identity },
-        { "Metadata", MprisProperty::GetMetadata },
-        { "PlaybackStatus", MprisProperty::GetPlaybackStatus },
-        { "Position", MprisProperty::GetPosition },
-        { "SupportedMimeTypes", MprisProperty::SupportedMimeTypes },
-        { "SupportedUriSchemes", MprisProperty::SupportedUriSchemes }
-    };
-    static constexpr SortedArrayMap map { propertiesList };
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, MprisProperty>>({
+        { "CanControl"_s, MprisProperty::CanControl },
+        { "CanGoNext"_s, MprisProperty::CanGoNext },
+        { "CanGoPrevious"_s, MprisProperty::CanGoPrevious },
+        { "CanPause"_s, MprisProperty::CanPause },
+        { "CanPlay"_s, MprisProperty::CanPlay },
+        { "CanQuit"_s, MprisProperty::CanQuit },
+        { "CanRaise"_s, MprisProperty::CanRaise },
+        { "CanSeek"_s, MprisProperty::CanSeek },
+        { "DesktopEntry"_s, MprisProperty::DesktopEntry },
+        { "HasTrackList"_s, MprisProperty::HasTrackList },
+        { "Identity"_s, MprisProperty::Identity },
+        { "Metadata"_s, MprisProperty::GetMetadata },
+        { "PlaybackStatus"_s, MprisProperty::GetPlaybackStatus },
+        { "Position"_s, MprisProperty::GetPosition },
+        { "SupportedMimeTypes"_s, MprisProperty::SupportedMimeTypes },
+        { "SupportedUriSchemes"_s, MprisProperty::SupportedUriSchemes }
+    }) };
     auto value = map.get(StringView::fromLatin1(propertyName), MprisProperty::NoProperty);
     if (value == MprisProperty::NoProperty)
         return { };
@@ -174,18 +174,24 @@ static const GDBusInterfaceVTable gInterfaceVTable = {
     handleMethodCall, handleGetProperty, handleSetProperty, { nullptr }
 };
 
+bool MediaSessionGLib::m_dBusAddressFailed = false;
+
 std::unique_ptr<MediaSessionGLib> MediaSessionGLib::create(MediaSessionManagerGLib& manager, MediaSessionIdentifier identifier)
 {
     if (!manager.areDBusNotificationsEnabled())
         return makeUnique<MediaSessionGLib>(manager, nullptr, identifier);
 
+    if (m_dBusAddressFailed)
+        return nullptr;
+
     GUniqueOutPtr<GError> error;
     GUniquePtr<char> address(g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, nullptr, &error.outPtr()));
     if (error) {
         g_warning("Unable to get session D-Bus address: %s", error->message);
+        m_dBusAddressFailed = true;
         return nullptr;
     }
-    auto connection = adoptGRef(reinterpret_cast<GDBusConnection*>(g_object_new(G_TYPE_DBUS_CONNECTION,
+    GRefPtr connection = adoptGRef(reinterpret_cast<GDBusConnection*>(g_object_new(G_TYPE_DBUS_CONNECTION,
         "address", address.get(),
         "flags", G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
         "exit-on-close", TRUE, nullptr)));
@@ -194,13 +200,13 @@ std::unique_ptr<MediaSessionGLib> MediaSessionGLib::create(MediaSessionManagerGL
         g_warning("Unable to connect to D-Bus session bus: %s", error->message);
         return nullptr;
     }
-    return makeUnique<MediaSessionGLib>(manager, WTFMove(connection), identifier);
+    return makeUnique<MediaSessionGLib>(manager, WTF::move(connection), identifier);
 }
 
 MediaSessionGLib::MediaSessionGLib(MediaSessionManagerGLib& manager, GRefPtr<GDBusConnection>&& connection, MediaSessionIdentifier identifier)
     : m_identifier(identifier)
     , m_manager(manager)
-    , m_connection(WTFMove(connection))
+    , m_connection(WTF::move(connection))
 {
 }
 
@@ -214,12 +220,16 @@ bool MediaSessionGLib::ensureMprisSessionRegistered()
     if (!m_connection || mprisRegistrationEligibility() == MediaSessionGLibMprisRegistrationEligiblilty::NotEligible)
         return false;
 
+    const auto& info = nowPlayingInfo();
+    if (!info || info->metadata.title.isEmpty())
+        return false;
+
     if (m_ownerId)
         return true;
 
-    const auto& mprisInterface = m_manager.mprisInterface();
+    const auto mprisInterfaces = unsafeMakeSpan(m_manager.mprisInterface()->interfaces, 2);
     GUniqueOutPtr<GError> error;
-    m_rootRegistrationId = g_dbus_connection_register_object(m_connection.get(), DBUS_MPRIS_OBJECT_PATH, mprisInterface->interfaces[0],
+    m_rootRegistrationId = g_dbus_connection_register_object(m_connection.get(), DBUS_MPRIS_OBJECT_PATH, mprisInterfaces[0],
         &gInterfaceVTable, this, nullptr, &error.outPtr());
 
     if (!m_rootRegistrationId) {
@@ -227,7 +237,7 @@ bool MediaSessionGLib::ensureMprisSessionRegistered()
         return false;
     }
 
-    m_playerRegistrationId = g_dbus_connection_register_object(m_connection.get(), DBUS_MPRIS_OBJECT_PATH, mprisInterface->interfaces[1],
+    m_playerRegistrationId = g_dbus_connection_register_object(m_connection.get(), DBUS_MPRIS_OBJECT_PATH, mprisInterfaces[1],
         &gInterfaceVTable, this, nullptr, &error.outPtr());
 
     if (!m_playerRegistrationId) {
@@ -286,7 +296,7 @@ void MediaSessionGLib::updateNowPlaying(NowPlayingInfo& nowPlayingInfo)
     g_variant_builder_init(&propertiesBuilder, G_VARIANT_TYPE("a{sv}"));
     g_variant_builder_add(&propertiesBuilder, "{sv}", "Metadata", getMetadataAsGVariant(nowPlayingInfo));
     GRefPtr properties = g_variant_new("(sa{sv}as)", DBUS_MPRIS_PLAYER_INTERFACE, &propertiesBuilder, nullptr);
-    emitPropertiesChanged(WTFMove(properties));
+    emitPropertiesChanged(WTF::move(properties));
     g_variant_builder_clear(&propertiesBuilder);
 }
 
@@ -316,9 +326,9 @@ GVariant* MediaSessionGLib::getMetadataAsGVariant(std::optional<NowPlayingInfo> 
     return g_variant_builder_end(&builder);
 }
 
-GVariant* MediaSessionGLib::getPlaybackStatusAsGVariant(std::optional<const PlatformMediaSession*> session)
+GVariant* MediaSessionGLib::getPlaybackStatusAsGVariant(std::optional<const PlatformMediaSessionInterface*> session)
 {
-    auto state = [this, session = WTFMove(session)]() -> PlatformMediaSession::State {
+    auto state = [this, session = WTF::move(session)]() -> PlatformMediaSession::State {
         if (session)
             return session.value()->state();
 
@@ -356,7 +366,7 @@ void MediaSessionGLib::emitPropertiesChanged(GRefPtr<GVariant>&& parameters)
         g_warning("Failed to emit MPRIS properties changed: %s", error->message);
 }
 
-void MediaSessionGLib::playbackStatusChanged(PlatformMediaSession& platformSession)
+void MediaSessionGLib::playbackStatusChanged(PlatformMediaSessionInterface& platformSession)
 {
     if (!m_connection)
         return;
@@ -365,7 +375,7 @@ void MediaSessionGLib::playbackStatusChanged(PlatformMediaSession& platformSessi
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
     g_variant_builder_add(&builder, "{sv}", "PlaybackStatus", getPlaybackStatusAsGVariant(&platformSession));
     GRefPtr properties = g_variant_new("(sa{sv}as)", DBUS_MPRIS_PLAYER_INTERFACE, &builder, nullptr);
-    emitPropertiesChanged(WTFMove(properties));
+    emitPropertiesChanged(WTF::move(properties));
     g_variant_builder_clear(&builder);
 }
 

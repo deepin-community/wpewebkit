@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,14 +35,20 @@ class CompilationMessage {
     WTF_MAKE_TZONE_ALLOCATED(CompilationMessage);
 public:
     CompilationMessage(String&& message, SourceSpan span)
-        : m_message(WTFMove(message))
+        : m_message(WTF::move(message))
+        , m_span(span)
+    {
+    }
+
+    CompilationMessage(const String& message, SourceSpan span)
+        : m_message(message)
         , m_span(span)
     {
     }
 
     void dump(PrintStream& out) const;
 
-    const String& message() const { return m_message; }
+    const String& message() const LIFETIME_BOUND { return m_message; }
     unsigned lineNumber() const { return m_span.line; }
     unsigned lineOffset() const { return m_span.lineOffset; }
     unsigned offset() const { return m_span.offset; }

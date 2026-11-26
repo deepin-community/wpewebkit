@@ -41,13 +41,14 @@
 #include "NodeName.h"
 #include "NodeRareData.h"
 #include "RenderTable.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLTableElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLTableElement);
 
 using namespace HTMLNames;
 
@@ -79,13 +80,13 @@ ExceptionOr<void> HTMLTableElement::setCaption(RefPtr<HTMLTableCaptionElement>&&
     deleteCaption();
     if (!newCaption)
         return { };
-    return insertBefore(*newCaption, protectedFirstChild());
+    return insertBefore(*newCaption, protect(firstChild()));
 }
 
 RefPtr<HTMLTableSectionElement> HTMLTableElement::tHead() const
 {
-    for (Ref child : childrenOfType<HTMLTableSectionElement>(const_cast<HTMLTableElement&>(*this))) {
-        if (child->hasTagName(theadTag))
+    for (auto& child : childrenOfType<HTMLTableSectionElement>(const_cast<HTMLTableElement&>(*this))) {
+        if (child.hasTagName(theadTag))
             return child;
     }
     return nullptr;
@@ -93,7 +94,7 @@ RefPtr<HTMLTableSectionElement> HTMLTableElement::tHead() const
 
 ExceptionOr<void> HTMLTableElement::setTHead(RefPtr<HTMLTableSectionElement>&& newHead)
 {
-    if (UNLIKELY(newHead && !newHead->hasTagName(theadTag)))
+    if (newHead && !newHead->hasTagName(theadTag)) [[unlikely]]
         return Exception { ExceptionCode::HierarchyRequestError };
 
     deleteTHead();
@@ -106,13 +107,13 @@ ExceptionOr<void> HTMLTableElement::setTHead(RefPtr<HTMLTableSectionElement>&& n
             break;
     }
 
-    return insertBefore(*newHead, WTFMove(child));
+    return insertBefore(*newHead, WTF::move(child));
 }
 
 RefPtr<HTMLTableSectionElement> HTMLTableElement::tFoot() const
 {
-    for (Ref child : childrenOfType<HTMLTableSectionElement>(const_cast<HTMLTableElement&>(*this))) {
-        if (child->hasTagName(tfootTag))
+    for (auto& child : childrenOfType<HTMLTableSectionElement>(const_cast<HTMLTableElement&>(*this))) {
+        if (child.hasTagName(tfootTag))
             return child;
     }
     return nullptr;
@@ -120,7 +121,7 @@ RefPtr<HTMLTableSectionElement> HTMLTableElement::tFoot() const
 
 ExceptionOr<void> HTMLTableElement::setTFoot(RefPtr<HTMLTableSectionElement>&& newFoot)
 {
-    if (UNLIKELY(newFoot && !newFoot->hasTagName(tfootTag)))
+    if (newFoot && !newFoot->hasTagName(tfootTag)) [[unlikely]]
         return Exception { ExceptionCode::HierarchyRequestError };
     deleteTFoot();
     if (!newFoot)
@@ -130,9 +131,9 @@ ExceptionOr<void> HTMLTableElement::setTFoot(RefPtr<HTMLTableSectionElement>&& n
 
 Ref<HTMLTableSectionElement> HTMLTableElement::createTHead()
 {
-    if (auto existingHead = tHead())
+    if (RefPtr existingHead = tHead())
         return existingHead.releaseNonNull();
-    auto head = HTMLTableSectionElement::create(theadTag, document());
+    Ref head = HTMLTableSectionElement::create(theadTag, protect(document()));
     setTHead(head.copyRef());
     return head;
 }
@@ -145,9 +146,9 @@ void HTMLTableElement::deleteTHead()
 
 Ref<HTMLTableSectionElement> HTMLTableElement::createTFoot()
 {
-    if (auto existingFoot = tFoot())
+    if (RefPtr existingFoot = tFoot())
         return existingFoot.releaseNonNull();
-    auto foot = HTMLTableSectionElement::create(tfootTag, document());
+    Ref foot = HTMLTableSectionElement::create(tfootTag, protect(document()));
     setTFoot(foot.copyRef());
     return foot;
 }
@@ -160,37 +161,37 @@ void HTMLTableElement::deleteTFoot()
 
 Ref<HTMLTableSectionElement> HTMLTableElement::createTBody()
 {
-    auto body = HTMLTableSectionElement::create(tbodyTag, document());
-    RefPtr<Node> referenceElement = lastBody() ? lastBody()->nextSibling() : nullptr;
-    insertBefore(body, WTFMove(referenceElement));
+    Ref body = HTMLTableSectionElement::create(tbodyTag, protect(document()));
+    RefPtr referenceElement = lastBody() ? lastBody()->nextSibling() : nullptr;
+    insertBefore(body, WTF::move(referenceElement));
     return body;
 }
 
 Ref<HTMLTableCaptionElement> HTMLTableElement::createCaption()
 {
-    if (auto existingCaption = caption())
+    if (RefPtr existingCaption = caption())
         return existingCaption.releaseNonNull();
-    auto caption = HTMLTableCaptionElement::create(captionTag, document());
+    Ref caption = HTMLTableCaptionElement::create(captionTag, protect(document()));
     setCaption(caption.copyRef());
     return caption;
 }
 
 void HTMLTableElement::deleteCaption()
 {
-    if (auto caption = this->caption())
+    if (RefPtr caption = this->caption())
         removeChild(*caption);
 }
 
 HTMLTableSectionElement* HTMLTableElement::lastBody() const
 {
-    for (RefPtr<Node> child = lastChild(); child; child = child->previousSibling()) {
+    for (auto* child = lastChild(); child; child = child->previousSibling()) {
         if (child->hasTagName(tbodyTag))
-            return downcast<HTMLTableSectionElement>(child.get());
+            return downcast<HTMLTableSectionElement>(child);
     }
     return nullptr;
 }
 
-ExceptionOr<Ref<HTMLElement>> HTMLTableElement::insertRow(int index)
+ExceptionOr<Ref<HTMLTableRowElement>> HTMLTableElement::insertRow(int index)
 {
     if (index < -1)
         return Exception { ExceptionCode::IndexSizeError };
@@ -214,27 +215,28 @@ ExceptionOr<Ref<HTMLElement>> HTMLTableElement::insertRow(int index)
     }
 
     RefPtr<ContainerNode> parent;
+    Ref document = this->document();
     if (lastRow)
         parent = row ? row->parentNode() : lastRow->parentNode();
     else {
         parent = lastBody();
         if (!parent) {
-            auto newBody = HTMLTableSectionElement::create(tbodyTag, document());
-            auto newRow = HTMLTableRowElement::create(document());
+            Ref newBody = HTMLTableSectionElement::create(tbodyTag, document);
+            Ref newRow = HTMLTableRowElement::create(document);
             newBody->appendChild(newRow);
             // FIXME: Why ignore the exception if the first appendChild failed?
             auto result = appendChild(newBody);
             if (result.hasException())
                 return result.releaseException();
-            return Ref<HTMLElement> { WTFMove(newRow) };
+            return newRow;
         }
     }
 
-    auto newRow = HTMLTableRowElement::create(document());
-    auto result = parent->insertBefore(newRow, WTFMove(row));
+    Ref newRow = HTMLTableRowElement::create(document);
+    auto result = parent->insertBefore(newRow, WTF::move(row));
     if (result.hasException())
         return result.releaseException();
-    return Ref<HTMLElement> { WTFMove(newRow) };
+    return newRow;
 }
 
 ExceptionOr<void> HTMLTableElement::deleteRow(int index)
@@ -256,20 +258,19 @@ ExceptionOr<void> HTMLTableElement::deleteRow(int index)
     return row->remove();
 }
 
-static inline bool isTableCellAncestor(const Element& element)
+static inline bool NODELETE isTableCellAncestor(const Element& element)
 {
     return element.hasTagName(theadTag)
         || element.hasTagName(tbodyTag)
         || element.hasTagName(tfootTag)
-        || element.hasTagName(trTag)
-        || element.hasTagName(thTag);
+        || element.hasTagName(trTag);
 }
 
 static bool setTableCellsChanged(Element& element)
 {
     bool cellChanged = false;
 
-    if (element.hasTagName(tdTag))
+    if (element.hasTagName(tdTag) || element.hasTagName(thTag))
         cellChanged = true;
     else if (isTableCellAncestor(element)) {
         for (auto& child : childrenOfType<Element>(element))
@@ -329,7 +330,7 @@ void HTMLTableElement::collectPresentationalHintsForAttribute(const QualifiedNam
         break;
     case AttributeNames::backgroundAttr:
         if (auto url = value.string().trim(isASCIIWhitespace); !url.isEmpty())
-            style.setProperty(CSSProperty(CSSPropertyBackgroundImage, CSSImageValue::create(document().completeURL(url), LoadedFromOpaqueSource::No)));
+            style.setProperty(CSSProperty(CSSPropertyBackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(url))));
         break;
     case AttributeNames::valignAttr:
         if (!value.isEmpty())
@@ -350,7 +351,7 @@ void HTMLTableElement::collectPresentationalHintsForAttribute(const QualifiedNam
         break;
     case AttributeNames::rulesAttr:
         // The presence of a valid rules attribute causes border collapsing to be enabled.
-        if (m_rulesAttr != UnsetRules)
+        if (m_rulesAttr != TableRules::Unset)
             addPropertyToPresentationalHintStyle(style, CSSPropertyBorderCollapse, CSSValueCollapse);
         break;
     case AttributeNames::frameAttr: {
@@ -417,17 +418,17 @@ void HTMLTableElement::attributeChanged(const QualifiedName& name, const AtomStr
         break;
     }
     case AttributeNames::rulesAttr:
-        m_rulesAttr = UnsetRules;
+        m_rulesAttr = TableRules::Unset;
         if (equalLettersIgnoringASCIICase(newValue, "none"_s))
-            m_rulesAttr = NoneRules;
+            m_rulesAttr = TableRules::None;
         else if (equalLettersIgnoringASCIICase(newValue, "groups"_s))
-            m_rulesAttr = GroupsRules;
+            m_rulesAttr = TableRules::Groups;
         else if (equalLettersIgnoringASCIICase(newValue, "rows"_s))
-            m_rulesAttr = RowsRules;
+            m_rulesAttr = TableRules::Rows;
         else if (equalLettersIgnoringASCIICase(newValue, "cols"_s))
-            m_rulesAttr = ColsRules;
+            m_rulesAttr = TableRules::Cols;
         else if (equalLettersIgnoringASCIICase(newValue, "all"_s))
-            m_rulesAttr = AllRules;
+            m_rulesAttr = TableRules::All;
         break;
     case AttributeNames::cellpaddingAttr:
         if (!newValue.isEmpty())
@@ -467,7 +468,7 @@ const MutableStyleProperties* HTMLTableElement::additionalPresentationalHintStyl
     if (!m_borderAttr) {
         // Setting the border to 'hidden' allows it to win over any border
         // set on the table's cells during border-conflict resolution.
-        if (m_rulesAttr != UnsetRules) {
+        if (m_rulesAttr != TableRules::Unset) {
             static NeverDestroyed<Ref<MutableStyleProperties>> solidBorderStyle = createBorderStyle(CSSValueHidden);
             return solidBorderStyle.get().ptr();
         }
@@ -481,22 +482,22 @@ const MutableStyleProperties* HTMLTableElement::additionalPresentationalHintStyl
 HTMLTableElement::CellBorders HTMLTableElement::cellBorders() const
 {
     switch (m_rulesAttr) {
-        case NoneRules:
-        case GroupsRules:
-            return NoBorders;
-        case AllRules:
-            return SolidBorders;
-        case ColsRules:
-            return SolidBordersColsOnly;
-        case RowsRules:
-            return SolidBordersRowsOnly;
-        case UnsetRules:
-            if (!m_borderAttr)
-                return NoBorders;
-            return InsetBorders;
+    case TableRules::None:
+    case TableRules::Groups:
+        return CellBorders::None;
+    case TableRules::All:
+        return CellBorders::Solid;
+    case TableRules::Cols:
+        return CellBorders::SolidColsOnly;
+    case TableRules::Rows:
+        return CellBorders::SolidRowsOnly;
+    case TableRules::Unset:
+        if (!m_borderAttr)
+            return CellBorders::None;
+        return CellBorders::Inset;
     }
     ASSERT_NOT_REACHED();
-    return NoBorders;
+    return CellBorders::None;
 }
 
 Ref<MutableStyleProperties> HTMLTableElement::createSharedCellStyle() const
@@ -504,31 +505,31 @@ Ref<MutableStyleProperties> HTMLTableElement::createSharedCellStyle() const
     auto style = MutableStyleProperties::create();
 
     switch (cellBorders()) {
-    case SolidBordersColsOnly:
+    case CellBorders::SolidColsOnly:
         style->setProperty(CSSPropertyBorderLeftWidth, CSSValueThin);
         style->setProperty(CSSPropertyBorderRightWidth, CSSValueThin);
         style->setProperty(CSSPropertyBorderLeftStyle, CSSValueSolid);
         style->setProperty(CSSPropertyBorderRightStyle, CSSValueSolid);
-        style->setProperty(CSSPropertyBorderColor, CSSPrimitiveValue::create(CSSValueInherit));
+        style->setProperty(CSSPropertyBorderColor, CSSKeywordValue::create(CSSValueInherit));
         break;
-    case SolidBordersRowsOnly:
+    case CellBorders::SolidRowsOnly:
         style->setProperty(CSSPropertyBorderTopWidth, CSSValueThin);
         style->setProperty(CSSPropertyBorderBottomWidth, CSSValueThin);
         style->setProperty(CSSPropertyBorderTopStyle, CSSValueSolid);
         style->setProperty(CSSPropertyBorderBottomStyle, CSSValueSolid);
-        style->setProperty(CSSPropertyBorderColor, CSSPrimitiveValue::create(CSSValueInherit));
+        style->setProperty(CSSPropertyBorderColor, CSSKeywordValue::create(CSSValueInherit));
         break;
-    case SolidBorders:
+    case CellBorders::Solid:
         style->setProperty(CSSPropertyBorderWidth, CSSPrimitiveValue::create(1, CSSUnitType::CSS_PX));
-        style->setProperty(CSSPropertyBorderStyle, CSSPrimitiveValue::create(CSSValueSolid));
-        style->setProperty(CSSPropertyBorderColor, CSSPrimitiveValue::create(CSSValueInherit));
+        style->setProperty(CSSPropertyBorderStyle, CSSKeywordValue::create(CSSValueSolid));
+        style->setProperty(CSSPropertyBorderColor, CSSKeywordValue::create(CSSValueInherit));
         break;
-    case InsetBorders:
+    case CellBorders::Inset:
         style->setProperty(CSSPropertyBorderWidth, CSSPrimitiveValue::create(1, CSSUnitType::CSS_PX));
-        style->setProperty(CSSPropertyBorderStyle, CSSPrimitiveValue::create(CSSValueInset));
-        style->setProperty(CSSPropertyBorderColor, CSSPrimitiveValue::create(CSSValueInherit));
+        style->setProperty(CSSPropertyBorderStyle, CSSKeywordValue::create(CSSValueInset));
+        style->setProperty(CSSPropertyBorderColor, CSSKeywordValue::create(CSSValueInherit));
         break;
-    case NoBorders:
+    case CellBorders::None:
         // If 'rules=none' then allow any borders set at cell level to take effect. 
         break;
     }
@@ -546,7 +547,7 @@ const MutableStyleProperties* HTMLTableElement::additionalCellStyle() const
     return m_sharedCellStyle.get();
 }
 
-static MutableStyleProperties* leakGroupBorderStyle(int rows)
+static Ref<MutableStyleProperties> makeGroupBorderStyle(bool rows)
 {
     auto style = MutableStyleProperties::create();
     if (rows) {
@@ -560,19 +561,19 @@ static MutableStyleProperties* leakGroupBorderStyle(int rows)
         style->setProperty(CSSPropertyBorderLeftStyle, CSSValueSolid);
         style->setProperty(CSSPropertyBorderRightStyle, CSSValueSolid);
     }
-    return &style.leakRef();
+    return style;
 }
 
 const MutableStyleProperties* HTMLTableElement::additionalGroupStyle(bool rows) const
 {
-    if (m_rulesAttr != GroupsRules)
+    if (m_rulesAttr != TableRules::Groups)
         return nullptr;
     if (rows) {
-        static auto* rowBorderStyle = leakGroupBorderStyle(true);
-        return rowBorderStyle;
+        static NeverDestroyed<Ref<MutableStyleProperties>> rowBorderStyle = makeGroupBorderStyle(true);
+        return rowBorderStyle->ptr();
     }
-    static auto* columnBorderStyle = leakGroupBorderStyle(false);
-    return columnBorderStyle;
+    static NeverDestroyed<Ref<MutableStyleProperties>> columnBorderStyle = makeGroupBorderStyle(false);
+    return columnBorderStyle->ptr();
 }
 
 bool HTMLTableElement::isURLAttribute(const Attribute& attribute) const
@@ -582,12 +583,12 @@ bool HTMLTableElement::isURLAttribute(const Attribute& attribute) const
 
 Ref<HTMLCollection> HTMLTableElement::rows()
 {
-    return ensureRareData().ensureNodeLists().addCachedCollection<HTMLTableRowsCollection>(*this, CollectionType::TableRows);
+    return ensureRareData().ensureNodeLists().addCachedCollection<HTMLTableRowsCollection>(*this);
 }
 
 Ref<HTMLCollection> HTMLTableElement::tBodies()
 {
-    return ensureRareData().ensureNodeLists().addCachedCollection<GenericCachedHTMLCollection<CollectionTypeTraits<CollectionType::TableTBodies>::traversalType>>(*this, CollectionType::TableTBodies);
+    return ensureRareData().ensureNodeLists().addCachedCollection<HTMLTableTBodiesCollection>(*this);
 }
 
 const AtomString& HTMLTableElement::rules() const
@@ -600,11 +601,11 @@ const AtomString& HTMLTableElement::summary() const
     return attributeWithoutSynchronization(summaryAttr);
 }
 
-void HTMLTableElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLTableElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLElement::addSubresourceAttributeURLs(urls);
 
-    addSubresourceURL(urls, document().completeURL(attributeWithoutSynchronization(backgroundAttr)));
+    addSubresourceURL(urls, protect(document())->encodingParseURL(attributeWithoutSynchronization(backgroundAttr)));
 }
 
 }

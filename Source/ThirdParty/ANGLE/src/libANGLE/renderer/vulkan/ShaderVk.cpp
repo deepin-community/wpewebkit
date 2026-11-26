@@ -25,7 +25,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
 {
     ContextVk *contextVk = vk::GetImpl(context);
 
-    if (context->isWebGL())
+    if (context->isHardenedContext())
     {
         // Only WebGL requires initialization of local variables, others don't.
         // Extra initialization in spirv shader may affect performance.
@@ -75,17 +75,6 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
         options->ignorePrecisionQualifiers = true;
     }
 
-    if (contextVk->getFeatures().forceFragmentShaderPrecisionHighpToMediump.enabled)
-    {
-        options->forceShaderPrecisionHighpToMediump = true;
-    }
-
-    // Let compiler use specialized constant for pre-rotation.
-    if (!contextVk->getFeatures().preferDriverUniformOverSpecConst.enabled)
-    {
-        options->useSpecializationConstant = true;
-    }
-
     if (contextVk->getFeatures().clampFragDepth.enabled)
     {
         options->clampFragDepth = true;
@@ -94,6 +83,11 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
     if (!contextVk->getFeatures().supportsDepthClipControl.enabled)
     {
         options->addVulkanDepthCorrection = true;
+    }
+
+    if (contextVk->getFeatures().preferPrecomputedVertexTransform.enabled)
+    {
+        options->preferPrecomputedVertexTransform = true;
     }
 
     if (contextVk->getFeatures().supportsTransformFeedbackExtension.enabled)
@@ -106,19 +100,10 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
         options->addVulkanXfbEmulationSupportCode = true;
     }
 
-    if (contextVk->getFeatures().roundOutputAfterDithering.enabled)
-    {
-        options->roundOutputAfterDithering = true;
-    }
 
     if (contextVk->getFeatures().appendAliasedMemoryDecorations.enabled)
     {
         options->aliasedUnlessRestrict = true;
-    }
-
-    if (contextVk->getFeatures().explicitlyCastMediumpFloatTo16Bit.enabled)
-    {
-        options->castMediumpFloatTo16Bit = true;
     }
 
     if (contextVk->getExtensions().shaderPixelLocalStorageANGLE)
@@ -134,6 +119,27 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
     if (contextVk->getFeatures().wrapSwitchInIfTrue.enabled)
     {
         options->wrapSwitchInIfTrue = true;
+    }
+
+    if (contextVk->getFeatures().emulateR32fImageAtomicExchange.enabled)
+    {
+        options->emulateR32fImageAtomicExchange = true;
+    }
+
+    if (contextVk->getFeatures().supportsShaderDemoteToHelperInvocation.enabled)
+    {
+        options->useDemoteToHelperInvocation = true;
+    }
+
+    // https://issuetracker.google.com/406827038
+    // Unconditionally set this option to true for the Vulkan backend
+    options->preserveDenorms = true;
+
+    options->removeInactiveVariables = true;
+
+    if (contextVk->getFeatures().convertLowpAndMediumpFloatUniformsTo16Bits.enabled)
+    {
+        options->transformFloatUniformTo16Bits = true;
     }
 
     // The Vulkan backend needs no post-processing of the translated shader.
@@ -220,7 +226,7 @@ std::string ShaderVk::getDebugInfo() const
     }
 
     blob << R"(
-Paste the following SPIR-V binary in https://www.khronos.org/spir/visualizer/
+Paste the following SPIR-V binary in https://www.khronos.org/spir/visualizer/ or pass to a recent build of `spirv-dis` (optionally with `--comment --nested-indent`)
 
 Setting the environment variable ANGLE_FEATURE_OVERRIDES_ENABLED=retainSPIRVDebugInfo will retain debug info
 

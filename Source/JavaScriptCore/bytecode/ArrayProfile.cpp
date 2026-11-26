@@ -125,11 +125,10 @@ void dumpArrayModes(PrintStream& out, ArrayModes arrayModes)
 
 void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock)
 {
-    auto lastSeenStructureID = std::exchange(m_lastSeenStructureID, StructureID());
-    if (!lastSeenStructureID)
-        return;
-
-    computeUpdatedPrediction(codeBlock, lastSeenStructureID.decode());
+    if (auto structureID = std::exchange(m_lastSeenStructureID, StructureID()))
+        computeUpdatedPrediction(codeBlock, structureID.decode());
+    if (auto structureID = std::exchange(m_speculationFailureStructureID, StructureID()))
+        computeUpdatedPrediction(codeBlock, structureID.decode());
 }
 
 void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* lastSeenStructure)
@@ -146,8 +145,11 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* las
 
     JSGlobalObject* globalObject = codeBlock->globalObject();
     bool isResizableOrGrowableShared = false;
-    if (!globalObject->isOriginalArrayStructure(lastSeenStructure) && !globalObject->isOriginalTypedArrayStructure(lastSeenStructure, isResizableOrGrowableShared))
+    if (!globalObject->isOriginalArrayStructure(lastSeenStructure) && !globalObject->isOriginalTypedArrayStructure(lastSeenStructure, isResizableOrGrowableShared)) {
         m_arrayProfileFlags.add(ArrayProfileFlag::UsesNonOriginalArrayStructures);
+        if (lastSeenStructure == globalObject->regExpMatchesArrayStructure() || lastSeenStructure == globalObject->regExpMatchesArrayWithIndicesStructure())
+            m_arrayProfileFlags.add(ArrayProfileFlag::MayBeRegExpMatchesArray);
+    }
 
     if (isTypedArrayTypeIncludingDataView(lastSeenStructure->typeInfo().type())) {
         if (isResizableOrGrowableSharedTypedArrayIncludingDataView(lastSeenStructure->classInfoForCells()))
@@ -159,14 +161,14 @@ void ArrayProfile::observeIndexedRead(JSCell* cell, unsigned index)
 {
     m_lastSeenStructureID = cell->structureID();
 
-    if (JSObject* object = jsDynamicCast<JSObject*>(cell)) {
+    if (JSObject* object = dynamicDowncast<JSObject>(cell)) {
         if (hasAnyArrayStorage(object->indexingType()) && index >= object->getVectorLength())
             setOutOfBounds();
         else if (index >= object->getArrayLength())
             setOutOfBounds();
     }
 
-    if (JSString* string = jsDynamicCast<JSString*>(cell)) {
+    if (JSString* string = dynamicDowncast<JSString>(cell)) {
         if (index >= string->length())
             setOutOfBounds();
     }

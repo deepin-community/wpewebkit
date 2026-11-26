@@ -21,13 +21,26 @@
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
+#include "GRefPtrGStreamer.h"
+#include "PlatformVideoColorSpace.h"
+#include "VideoFrame.h"
+#include "VideoFrameContentHint.h"
 #include "VideoFrameMetadata.h"
 #include "VideoFrameTimeMetadata.h"
 
-#include <gst/gst.h>
+// Modifies the buffer in-place.
+void webkitGstBufferAddVideoFrameMetadata(GstBuffer*, std::optional<WebCore::VideoFrameTimeMetadata>, WebCore::VideoFrame::Rotation, bool isMirrored, WebCore::VideoFrameContentHint, std::optional<WebCore::PlatformVideoColorSpace> = std::nullopt);
 
-GstBuffer* webkitGstBufferSetVideoFrameTimeMetadata(GstBuffer*, std::optional<WebCore::VideoFrameTimeMetadata>&&);
+// Makes the buffer writable before modifying it.
+[[nodiscard]] GRefPtr<GstBuffer> webkitGstBufferSetVideoFrameMetadata(GRefPtr<GstBuffer>&&, std::optional<WebCore::VideoFrameTimeMetadata>, WebCore::VideoFrame::Rotation = WebCore::VideoFrame::Rotation::None, bool isMirrored = false, WebCore::VideoFrameContentHint = WebCore::VideoFrameContentHint::None, std::optional<WebCore::PlatformVideoColorSpace> = std::nullopt);
+
 void webkitGstTraceProcessingTimeForElement(GstElement*);
 WebCore::VideoFrameMetadata webkitGstBufferGetVideoFrameMetadata(GstBuffer*);
+std::pair<WebCore::VideoFrame::Rotation, bool> webkitGstBufferGetVideoRotation(GstBuffer*);
+
+WebCore::VideoFrameContentHint webkitGstBufferGetContentHint(GstBuffer*);
+WebCore::PlatformVideoColorSpace webkitGstBufferGetNativeColorSpace(GstBuffer*);
+
+MediaTime webkitGstBufferGetProcessingTime(GstBuffer*, GstElement*);
 
 #endif // ENABLE(VIDEO) && USE(GSTREAMER)

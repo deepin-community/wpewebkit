@@ -42,7 +42,7 @@ WebSharedWorkerProvider::WebSharedWorkerProvider() = default;
 
 WebCore::SharedWorkerObjectConnection* WebSharedWorkerProvider::sharedWorkerConnection()
 {
-    return &WebProcess::singleton().ensureNetworkProcessConnection().sharedWorkerConnection();
+    return &protect(WebProcess::singleton().ensureNetworkProcessConnection())->sharedWorkerConnection();
 }
 
 } // namespace WebKit

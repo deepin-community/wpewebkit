@@ -52,13 +52,13 @@ public:
 
     class Client {
     public:
-        virtual ~Client() { }
+        virtual ~Client() = default;
         virtual bool mouseEvent(PageBanner*, WebEventType, WebMouseEventButton, const WebCore::IntPoint&) = 0;
     };
 
 #if PLATFORM(MAC)
     static Ref<PageBanner> create(CALayer *, int height, std::unique_ptr<Client>&&);
-    CALayer *layer();
+    CALayer *NODELETE layer();
 #endif
 
     virtual ~PageBanner();
@@ -93,3 +93,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::PageBanner)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::BundlePageBanner; }
+SPECIALIZE_TYPE_TRAITS_END()

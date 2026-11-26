@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,26 +46,31 @@ class SecurityOrigin;
 
 class FrameInfo final : public ObjectImpl<Object::Type::FrameInfo> {
 public:
-    static Ref<FrameInfo> create(WebKit::FrameInfoData&&, RefPtr<WebKit::WebPageProxy>&&);
+    static Ref<FrameInfo> create(WebKit::FrameInfoData&&);
     virtual ~FrameInfo();
 
     bool isMainFrame() const { return m_data.isMainFrame; }
     bool isLocalFrame() const { return m_data.frameType == WebKit::FrameType::Local; }
-    const WebCore::ResourceRequest& request() const { return m_data.request; }
-    WebCore::SecurityOriginData& securityOrigin() { return m_data.securityOrigin; }
+    const WebCore::ResourceRequest& request() const LIFETIME_BOUND { return m_data.request; }
+    const WebCore::SecurityOriginData& securityOrigin() const LIFETIME_BOUND { return m_data.securityOrigin; }
     Ref<FrameHandle> handle() const;
-    WebKit::WebPageProxy* page() { return m_page.get(); }
+    WebKit::WebPageProxy* page();
+    const WebKit::WebPageProxy* page() const;
     RefPtr<FrameHandle> parentFrameHandle() const;
+    Markable<WebCore::ScriptExecutionContextIdentifier> documentID() const { return m_data.documentID; }
     ProcessID processID() const { return m_data.processID; }
     bool isFocused() const { return m_data.isFocused; }
     bool errorOccurred() const { return m_data.errorOccurred; }
     WTF::String title() const;
 
-private:
-    FrameInfo(WebKit::FrameInfoData&&, RefPtr<WebKit::WebPageProxy>&&);
+    const WebKit::FrameInfoData& frameInfoData() const LIFETIME_BOUND { return m_data; }
 
-    WebKit::FrameInfoData m_data;
-    RefPtr<WebKit::WebPageProxy> m_page;
+private:
+    FrameInfo(WebKit::FrameInfoData&&);
+
+    const WebKit::FrameInfoData m_data;
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(FrameInfo);

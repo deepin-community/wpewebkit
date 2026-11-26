@@ -29,28 +29,39 @@
 #include "FrameProcess.h"
 #include "ProvisionalFrameCreationParameters.h"
 #include "VisitedLinkStore.h"
+#include "WebFrameMessages.h"
 #include "WebFrameProxy.h"
-#include "WebPageMessages.h"
+#include "WebPageInspectorController.h"
 #include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProvisionalFrameProxy);
 
-ProvisionalFrameProxy::ProvisionalFrameProxy(WebFrameProxy& frame, Ref<FrameProcess>&& frameProcess)
+ProvisionalFrameProxy::ProvisionalFrameProxy(WebFrameProxy& frame, Ref<FrameProcess>&& frameProcess, CommitTiming commitTiming)
     : m_frame(frame)
-    , m_frameProcess(WTFMove(frameProcess))
+    , m_frameProcess(WTF::move(frameProcess))
     , m_visitedLinkStore(frame.page()->visitedLinkStore())
 {
-    process().markProcessAsRecentlyUsed();
-    process().send(Messages::WebPage::CreateProvisionalFrame({ frame.layerHostingContextIdentifier() }, frame.frameID()), frame.page()->webPageIDInProcess(process()));
+    Ref process = this->process();
+    process->markProcessAsRecentlyUsed();
+    auto parameters = frame.provisionalFrameCreationParameters(std::nullopt, frame.layerHostingContextIdentifier(), commitTiming);
+    process->send(Messages::WebFrame::CreateProvisionalFrame(parameters), frame.frameID());
 }
 
 ProvisionalFrameProxy::~ProvisionalFrameProxy()
 {
-    if (m_frameProcess && m_frame->page())
-        process().send(Messages::WebPage::DestroyProvisionalFrame(m_frame->frameID()), m_frame->page()->webPageIDInProcess(process()));
+    if (!m_frameProcess)
+        return;
+
+    if (RefPtr page = m_frame->page())
+        page->inspectorController().willDestroyProvisionalFrame(*this);
+
+    Ref frame = m_frame.get();
+    Ref process = this->process();
+    process->send(Messages::WebFrame::DestroyProvisionalFrame(), frame->frameID());
 }
 
 RefPtr<FrameProcess> ProvisionalFrameProxy::takeFrameProcess()
@@ -63,11 +74,6 @@ WebProcessProxy& ProvisionalFrameProxy::process() const
 {
     ASSERT(m_frameProcess);
     return m_frameProcess->process();
-}
-
-Ref<WebProcessProxy> ProvisionalFrameProxy::protectedProcess() const
-{
-    return process();
 }
 
 } // namespace WebKit

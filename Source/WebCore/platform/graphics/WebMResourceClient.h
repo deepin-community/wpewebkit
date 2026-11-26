@@ -25,18 +25,21 @@
 
 #pragma once
 
-#if ENABLE(ALTERNATE_WEBM_PLAYER)
+#if ENABLE(COCOA_WEBM_PLAYER)
 
 #include "PlatformMediaResourceLoader.h"
-#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
-class WebMResourceClientParent : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebMResourceClientParent, WTF::DestructionThread::Main> {
+class WebMResourceClientParent : public AbstractThreadSafeRefCountedAndCanMakeWeakPtr {
 public:
     virtual ~WebMResourceClientParent() = default;
 
+    virtual void responseReceived(PlatformMediaResource&, const ResourceResponse&) = 0;
+    virtual void redirectReceived(PlatformMediaResource&, const ResourceResponse&) = 0;
     virtual void dataReceived(const SharedBuffer&) = 0;
     virtual void loadFailed(const ResourceError&) = 0;
     virtual void loadFinished() = 0;
@@ -45,7 +48,7 @@ public:
 
 class WebMResourceClient final
     : public PlatformMediaResourceClient {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(WebMResourceClient);
 public:
     static RefPtr<WebMResourceClient> create(WebMResourceClientParent&, PlatformMediaResourceLoader&, ResourceRequest&&);
     ~WebMResourceClient() { stop(); }
@@ -56,6 +59,7 @@ private:
     WebMResourceClient(WebMResourceClientParent&, Ref<PlatformMediaResource>&&);
 
     void responseReceived(PlatformMediaResource&, const ResourceResponse&, CompletionHandler<void(ShouldContinuePolicyCheck)>&&) final;
+    void redirectReceived(PlatformMediaResource&, ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&) final;
     void dataReceived(PlatformMediaResource&, const SharedBuffer&) final;
     void loadFailed(PlatformMediaResource&, const ResourceError&) final;
     void loadFinished(PlatformMediaResource&, const NetworkLoadMetrics&) final;
@@ -66,4 +70,4 @@ private:
 
 } // namespace WebCore
 
-#endif // ENABLE(ALTERNATE_WEBM_PLAYER)
+#endif // ENABLE(COCOA_WEBM_PLAYER)

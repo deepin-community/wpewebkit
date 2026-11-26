@@ -32,15 +32,23 @@
 #include "ChromeClient.h"
 #include "Document.h"
 #include "DocumentLoader.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
+#include "FrameLoader.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "Page.h"
 #include "UserGestureIndicator.h"
+#include <wtf/TZoneMallocInlines.h>
+#include "FrameDestructionObserverInlines.h"
+#include "DocumentPage.h"
 
 namespace WebCore {
 
-DeviceOrientationAndMotionAccessController::DeviceOrientationAndMotionAccessController(Document& topDocument)
-    : m_topDocument(topDocument)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DeviceOrientationAndMotionAccessController);
+
+DeviceOrientationAndMotionAccessController::DeviceOrientationAndMotionAccessController(Page& page)
+    : m_page(page)
 {
 }
 
@@ -50,11 +58,18 @@ DeviceOrientationOrMotionPermissionState DeviceOrientationAndMotionAccessControl
     if (iterator != m_accessStatePerOrigin.end())
         return iterator->value;
 
-    // Check per-site setting.
-    Ref topDocument = m_topDocument.get();
-    if (&document == topDocument.ptr() || document.securityOrigin().isSameOriginAs(topDocument->securityOrigin())) {
-        RefPtr frame = topDocument->frame();
-        if (RefPtr documentLoader = frame ? frame->loader().documentLoader() : nullptr)
+    RefPtr page = m_page.get();
+    if (!page)
+        return DeviceOrientationOrMotionPermissionState::Denied;
+
+    RefPtr topDocument = page->localTopDocument();
+    bool topDocumentInAnotherProcess = !topDocument;
+    if (topDocumentInAnotherProcess)
+        return DeviceOrientationOrMotionPermissionState::Prompt;
+
+    if (&document == topDocument.get() || protect(document.securityOrigin())->isSameOriginAs(protect(topDocument->securityOrigin()))) {
+        auto* frame = topDocument->frame();
+        if (auto* documentLoader = frame ? frame->loader().documentLoader() : nullptr)
             return documentLoader->deviceOrientationAndMotionAccessState();
     }
 
@@ -73,26 +88,33 @@ void DeviceOrientationAndMotionAccessController::shouldAllowAccess(const Documen
         return callback(accessState);
 
     bool mayPrompt = UserGestureIndicator::processingUserGesture(&document);
-    page->chrome().client().shouldAllowDeviceOrientationAndMotionAccess(document.protectedFrame().releaseNonNull(), mayPrompt, [this, weakThis = WeakPtr { *this }, securityOrigin = Ref { document.securityOrigin() }, callback = WTFMove(callback)](DeviceOrientationOrMotionPermissionState permissionState) mutable {
-        if (!weakThis)
-            return;
+    page->chrome().client().shouldAllowDeviceOrientationAndMotionAccess(protect(document.frame()).releaseNonNull(), mayPrompt, [weakThis = WeakPtr { *this }, securityOrigin = Ref { document.securityOrigin() }, callback = WTF::move(callback)](DeviceOrientationOrMotionPermissionState permissionState) mutable {
+        {
+            CheckedPtr checkedThis = weakThis.get();
+            if (!checkedThis)
+                return;
 
-        m_accessStatePerOrigin.set(securityOrigin->data(), permissionState);
+            checkedThis->m_accessStatePerOrigin.set(securityOrigin->data(), permissionState);
+        }
         callback(permissionState);
-        if (!weakThis)
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
             return;
 
         if (permissionState != DeviceOrientationOrMotionPermissionState::Granted)
             return;
 
-        for (RefPtr<Frame> frame = m_topDocument->frame(); frame && frame->window(); frame = frame->tree().traverseNext()) {
-            RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
-            if (!localFrame)
-                continue;
-            RefPtr window = localFrame->window();
+        RefPtr page = checkedThis->m_page.get();
+        if (!page)
+            return;
+
+        page->forEachLocalFrame([](LocalFrame& localFrame) {
+            RefPtr window = localFrame.window();
+            if (!window)
+                return;
             window->startListeningForDeviceOrientationIfNecessary();
             window->startListeningForDeviceMotionIfNecessary();
-        }
+        });
     });
 }
 

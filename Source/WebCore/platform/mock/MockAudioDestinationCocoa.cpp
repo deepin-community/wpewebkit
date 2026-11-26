@@ -31,15 +31,16 @@
 #include "AudioUtilitiesCocoa.h"
 #include "CAAudioStreamDescription.h"
 #include "WebAudioBufferList.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-const int kRenderBufferSize = 128;
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MockAudioDestinationCocoa);
 
-MockAudioDestinationCocoa::MockAudioDestinationCocoa(AudioIOCallback& callback, float sampleRate)
-    : AudioDestinationCocoa(callback, 2, sampleRate)
+MockAudioDestinationCocoa::MockAudioDestinationCocoa(const CreationOptions& options)
+    : AudioDestinationCocoa(options)
     , m_workQueue(WorkQueue::create("MockAudioDestinationCocoa Render Queue"_s))
-    , m_timer(RunLoop::current(), this, &MockAudioDestinationCocoa::tick)
+    , m_timer(RunLoop::currentSingleton(), "MockAudioDestinationCocoa::Timer"_s, this, &MockAudioDestinationCocoa::tick)
 {
 }
 
@@ -50,7 +51,7 @@ void MockAudioDestinationCocoa::startRendering(CompletionHandler<void(bool)>&& c
     m_timer.startRepeating(Seconds { m_numberOfFramesToProcess / sampleRate() });
     setIsPlaying(true);
 
-    callOnMainThread([completionHandler = WTFMove(completionHandler)]() mutable {
+    callOnMainThread([completionHandler = WTF::move(completionHandler)]() mutable {
         completionHandler(true);
     });
 }
@@ -60,7 +61,7 @@ void MockAudioDestinationCocoa::stopRendering(CompletionHandler<void(bool)>&& co
     m_timer.stop();
     setIsPlaying(false);
 
-    callOnMainThread([completionHandler = WTFMove(completionHandler)]() mutable {
+    callOnMainThread([completionHandler = WTF::move(completionHandler)]() mutable {
         completionHandler(true);
     });
 }

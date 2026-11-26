@@ -1,18 +1,22 @@
 Source: wpewebkit
 Section: libs
-Priority: optional
 Maintainer: Debian WebKit Maintainers <pkg-webkit-maintainers@lists.alioth.debian.org>
 Uploaders: Alberto Garcia <berto@igalia.com>
 Build-Depends: dpkg-dev (>= 1.22.5), debhelper-compat (= 13),
-               bubblewrap [amd64 arm64 armel armhf i386 mips64el ppc64el riscv64 s390x hppa ppc64 x32],
-               xdg-dbus-proxy [amd64 arm64 armel armhf i386 mips64el ppc64el riscv64 s390x hppa ppc64 x32],
-               libseccomp-dev [amd64 arm64 armel armhf i386 mips64el ppc64el riscv64 s390x hppa ppc64 x32],
-               cmake (>= 3.16),
+               architecture-is-little-endian,
+               bubblewrap [amd64 arm64 armel armhf i386 ppc64el riscv64 loong64 x32],
+               xdg-dbus-proxy [amd64 arm64 armel armhf i386 ppc64el riscv64 loong64 x32],
+               libseccomp-dev [amd64 arm64 armel armhf i386 ppc64el riscv64 loong64 x32],
+               clang [amd64 arm64 armel i386 ppc64el riscv64],
+               clang-22 [armhf],
+               cmake (>= 3.20),
+               flite1-dev,
                gperf,
                libatk-bridge2.0-dev,
                libatk1.0-dev,
                libavif-dev,
                libcairo2-dev,
+               libenchant-2-dev,
                libepoxy-dev,
                libgbm-dev,
                libgcrypt20-dev,
@@ -20,7 +24,9 @@ Build-Depends: dpkg-dev (>= 1.22.5), debhelper-compat (= 13),
                libgstreamer-plugins-base1.0-dev,
                libgstreamer1.0-dev,
                libharfbuzz-dev,
+               libhyphen-dev,
                libicu-dev,
+               libinput-dev,
                libjpeg-dev,
                libjxl-dev,
                liblcms2-dev,
@@ -31,17 +37,16 @@ Build-Depends: dpkg-dev (>= 1.22.5), debhelper-compat (= 13),
                libtasn1-6-dev,
                libwayland-dev,
                libwebp-dev,
-               libwoff-dev,
                libwpe-1.0-dev,
                libwpebackend-fdo-1.0-dev,
+               libxml2-utils,
                libxslt1-dev,
                ninja-build,
                ruby:native,
                unifdef,
                wayland-protocols
-Build-Depends-Indep: gi-docgen, gobject-introspection, libgirepository1.0-dev, libglib2.0-doc, libsoup-3.0-doc, jdupes
-Standards-Version: 4.7.0
-Rules-Requires-Root: no
+Build-Depends-Indep: gi-docgen, gobject-introspection, jdupes
+Standards-Version: 4.7.4
 Vcs-Browser: https://salsa.debian.org/webkit-team/webkit
 Vcs-Git: https://salsa.debian.org/webkit-team/webkit.git -b wpe/unstable
 Homepage: https://wpewebkit.org/
@@ -123,7 +128,6 @@ Multi-Arch: foreign
 Depends: ${misc:Depends}
 Breaks: libwpewebkit-1.0-doc (<< 2.42.5-2~)
 Replaces: libwpewebkit-1.0-doc (<< 2.42.5-2~)
-Suggests: devhelp
 Description: Web content engine for embedded devices - documentation
  WebKit is a modern web engine that is able to display content such as
  HTML, SVG, XML, and others. It also supports DOM, XMLHttpRequest,
@@ -136,20 +140,3 @@ Description: Web content engine for embedded devices - documentation
  best performance.
  .
  This package contains the documentation.
-
-Package: libwpewebkit-1.0-doc
-Build-Profiles: <!nodoc>
-Section: oldlibs
-Architecture: all
-Multi-Arch: foreign
-Depends: libwpewebkit-doc, ${misc:Depends}
-Description: WPE WebKit documentation - Transitional dummy package
- This is a transitional dummy package, it can be safely removed.
-
-Package: wpewebkit-driver
-Section: oldlibs
-Architecture: all
-Multi-Arch: foreign
-Depends: wpewebkit-webdriver, ${misc:Depends}
-Description: WPE WebKit WebDriver support - transitional dummy package
- This is a transitional dummy package, it can be safely removed.

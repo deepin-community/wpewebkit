@@ -28,41 +28,123 @@
 #if ENABLE(WEBXR_LAYERS)
 
 #include "WebXRLayer.h"
+#include "XRLayerInit.h"
 #include "XRLayerLayout.h"
 #include "XRLayerQuality.h"
-
+#include "XRProjectionLayerInit.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
+class WebGLOpaqueTexture;
+class WebXRRigidTransform;
+class WebXRSession;
+class WebXRSpace;
+class XRLayerBacking;
+
 class XRCompositionLayer : public WebXRLayer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(XRCompositionLayer);
+    WTF_MAKE_TZONE_ALLOCATED(XRCompositionLayer);
+
 public:
     virtual ~XRCompositionLayer();
 
-    XRLayerLayout layout() const { RELEASE_ASSERT_NOT_REACHED(); }
+    using WebXRLayerInit = Variant<
+        XRLayerInit,
+        XRProjectionLayerInit
+    >;
+    const WebXRLayerInit& init() const { return m_init; }
 
-    bool blendTextureSourceAlpha() const { RELEASE_ASSERT_NOT_REACHED(); }
-    [[noreturn]] void setBlendTextureSourceAlpha(bool) { RELEASE_ASSERT_NOT_REACHED(); }
+    XRLayerLayout layout() const { return m_layout; }
+    void setLayout(XRLayerLayout layout) { m_layout = layout; }
 
-    bool forceMonoPresentation() const { RELEASE_ASSERT_NOT_REACHED(); }
-    [[noreturn]] void setForceMonoPresentation(bool) { RELEASE_ASSERT_NOT_REACHED(); }
+    bool blendTextureSourceAlpha() const { return m_blendTextureSourceAlpha; }
+    void setBlendTextureSourceAlpha(bool blendTextureSourceAlpha) { m_blendTextureSourceAlpha = blendTextureSourceAlpha; }
 
-    float opacity() const { RELEASE_ASSERT_NOT_REACHED(); }
-    [[noreturn]] void setOpacity(float) { RELEASE_ASSERT_NOT_REACHED(); }
+    bool forceMonoPresentation() const { return m_forceMonoPresentation; }
+    void setForceMonoPresentation(bool forceMonoPresentation) { m_forceMonoPresentation = forceMonoPresentation; }
 
-    uint32_t mipLevels() const { RELEASE_ASSERT_NOT_REACHED(); }
+    float opacity() const { return 1.f; }
+    void setOpacity(float) { }
 
-    XRLayerQuality quality() const { RELEASE_ASSERT_NOT_REACHED(); }
-    [[noreturn]] void setQuality(XRLayerQuality) { RELEASE_ASSERT_NOT_REACHED(); }
+    uint32_t mipLevels() const { return 1; }
 
-    bool needsRedraw() const { RELEASE_ASSERT_NOT_REACHED(); }
+    XRLayerQuality quality() const { return XRLayerQuality::Default; }
+    void setQuality(XRLayerQuality) { }
 
-    [[noreturn]] void destroy() { RELEASE_ASSERT_NOT_REACHED(); }
+    // FIXME: No backend detects a resource loss yet, so nothing sets this to true again after the first draw.
+    bool needsRedraw() const { return m_needsRedraw; }
+    void setNeedsRedraw(bool needsRedraw) { m_needsRedraw = needsRedraw; }
+
+    bool isStatic() const { return m_isStatic; }
+    void setIsStatic(bool isStatic) { m_isStatic = isStatic; }
+
+    void markContentUpdated() { m_contentUpdatedThisFrame = true; }
+
+    XRLayerBacking& backing();
+    PlatformXR::LayerHandle layerHandle() const final;
+    WebXRSession* session() const;
+
+    bool isDestroyed() const final { return m_destroyed; }
+    void destroy();
+
+    const Vector<RefPtr<WebGLOpaqueTexture>>& colorTextures() const { return m_colorTextures; }
+    void setColorTextures(Vector<RefPtr<WebGLOpaqueTexture>>&&);
+
+    const Vector<RefPtr<WebGLOpaqueTexture>>& depthStencilTextures() const { return m_depthStencilTextures; }
+    void setDepthStencilTextures(Vector<RefPtr<WebGLOpaqueTexture>>&&);
+
+    const WebXRSpace& space() const;
+    void setSpace(WebXRSpace&);
+    const WebXRRigidTransform& transform() const;
+    void setTransform(WebXRRigidTransform&);
+
 protected:
-    explicit XRCompositionLayer(ScriptExecutionContext*);
+    // Used by XRProjectionLayer, which has no associated reference space or transform.
+    XRCompositionLayer(ScriptExecutionContext*, WebXRSession&, Ref<XRLayerBacking>&&, const WebXRLayerInit&);
+    // Used by non-projection composition layers.
+    XRCompositionLayer(ScriptExecutionContext*, WebXRSession&, Ref<XRLayerBacking>&&, const WebXRLayerInit&, Ref<WebXRSpace>, RefPtr<WebXRRigidTransform>);
+
+    void fillInCommonDeviceLayerData(PlatformXR::DeviceLayer&) const;
+
+    void startFrame(PlatformXR::FrameData&) override;
+    PlatformXR::DeviceLayer endFrame() override;
+
+    // Composition layers fill in their specific data in their overrides.
+    virtual void fillInTypeSpecificDeviceLayerData(PlatformXR::DeviceLayer&) const { }
+
+    const PlatformXR::FrameData::Pose& poseInLocalSpace() const { return m_poseInLocalSpace; }
+
+    const Ref<XRLayerBacking> m_backing;
+    const WebXRLayerInit m_init;
+
+private:
+    bool isXRCompositionLayer() const final { return true; }
+
+    void recomputePose();
+    void destroyResources();
+
+    WeakPtr<WebXRSession> m_session;
+
+    bool m_destroyed { false };
+    bool m_isStatic { false };
+    bool m_needsRedraw { true };
+    bool m_contentUpdatedThisFrame { false };
+    XRLayerLayout m_layout { XRLayerLayout::Stereo };
+    bool m_blendTextureSourceAlpha { false };
+    bool m_forceMonoPresentation { false };
+
+    Vector<RefPtr<WebGLOpaqueTexture>> m_colorTextures;
+    Vector<RefPtr<WebGLOpaqueTexture>> m_depthStencilTextures;
+
+    RefPtr<WebXRSpace> m_space;
+    RefPtr<WebXRRigidTransform> m_transform;
+    PlatformXR::FrameData::Pose m_poseInLocalSpace;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::XRCompositionLayer)
+    static bool isType(const WebCore::WebXRLayer& layer) { return layer.isXRCompositionLayer(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(WEBXR_LAYERS)

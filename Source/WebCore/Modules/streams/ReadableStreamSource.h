@@ -28,41 +28,46 @@
 
 #pragma once
 
-#include "JSDOMPromiseDeferredForward.h"
 #include "ReadableStreamDefaultController.h"
+#include <WebCore/JSDOMPromiseDeferredForward.h>
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
-class ReadableStreamSource {
+class Exception;
+
+class ReadableStreamSource : public AbstractRefCounted {
 public:
     WEBCORE_EXPORT ReadableStreamSource();
     WEBCORE_EXPORT virtual ~ReadableStreamSource();
 
     void start(ReadableStreamDefaultController&&, DOMPromiseDeferred<void>&&);
     void pull(DOMPromiseDeferred<void>&&);
-    void cancel(JSC::JSValue);
+    void cancel(JSC::JSValue, DOMPromiseDeferred<void>&&);
+
+    void error(JSC::JSGlobalObject&, JSC::JSValue);
+    void error(const Exception&);
 
     bool isPulling() const { return !!m_promise; }
 
-    virtual void ref() = 0;
-    virtual void deref() = 0;
-
 protected:
-    ReadableStreamDefaultController& controller() { return m_controller.value(); }
-    const ReadableStreamDefaultController& controller() const { return m_controller.value(); }
+    ReadableStreamDefaultController& controller() LIFETIME_BOUND { return m_controller.value(); }
+    const ReadableStreamDefaultController& controller() const LIFETIME_BOUND { return m_controller.value(); }
 
     void startFinished();
     void pullFinished();
     void cancelFinished();
-    void clean();
+    void cancelFinished(Exception&&);
+    void cancelFinishedWithError(JSC::JSValue);
+    WEBCORE_EXPORT void clean();
 
     virtual void setActive() = 0;
     virtual void setInactive() = 0;
 
     virtual void doStart() = 0;
     virtual void doPull() = 0;
-    virtual void doCancel() = 0;
+    virtual void doCancel(JSC::JSValue) { cancelFinished(); }
 
 private:
     std::unique_ptr<DOMPromiseDeferred<void>> m_promise;
@@ -73,8 +78,8 @@ class RefCountedReadableStreamSource
     : public ReadableStreamSource
     , public RefCounted<RefCountedReadableStreamSource> {
 public:
-    void ref() final { RefCounted<RefCountedReadableStreamSource>::ref(); };
-    void deref() final { RefCounted<RefCountedReadableStreamSource>::deref(); };
+    void ref() const override { RefCounted::ref(); }
+    void deref() const override { RefCounted::deref(); }
 };
 
 class SimpleReadableStreamSource
@@ -94,7 +99,7 @@ private:
     void setInactive() final { }
     void doStart() final { }
     void doPull() final { }
-    void doCancel() final;
+    void doCancel(JSC::JSValue) final;
 
     bool m_isCancelled { false };
 };

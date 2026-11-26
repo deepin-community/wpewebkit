@@ -39,8 +39,6 @@
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
 
-typedef struct objc_object* id;
-
 OBJC_CLASS CALayer;
 OBJC_CLASS NSArray;
 OBJC_CLASS NSAttributedString;
@@ -60,7 +58,6 @@ class AXObjectCache;
 class Element;
 class FloatPoint;
 class FloatSize;
-class FragmentedSharedBuffer;
 class GraphicsContext;
 class HTMLPlugInElement;
 class ShareableBitmap;
@@ -103,15 +100,13 @@ public:
 
     void showDefinitionForAttributedString(NSAttributedString *, CGPoint);
 
-    CGRect pluginBoundsForAnnotation(RetainPtr<PDFAnnotation>&) const final;
+    CGRect pluginBoundsForAnnotation(PDFAnnotation*) const final;
     void focusNextAnnotation() final;
     void focusPreviousAnnotation() final;
 
     void attemptToUnlockPDF(const String& password) final;
 
     bool showContextMenuAtPoint(const WebCore::IntPoint&);
-
-    WebCore::AXObjectCache* axObjectCache() const;
 
     WebCore::IntPoint convertFromPluginToPDFView(const WebCore::IntPoint&) const;
     WebCore::IntPoint convertFromPDFViewToRootView(const WebCore::IntPoint&) const;
@@ -155,8 +150,6 @@ private:
     WebCore::IntSize contentsSize() const override;
     unsigned firstPageHeight() const override;
 
-    RefPtr<WebCore::FragmentedSharedBuffer> liveResourceData() const override;
-
     bool wantsWheelEvents() const override { return true; }
     bool handleMouseEvent(const WebMouseEvent&) override;
     bool handleWheelEvent(const WebWheelEvent&) override;
@@ -171,9 +164,11 @@ private:
     bool existingSelectionContainsPoint(const WebCore::FloatPoint&) const override;
     WebCore::FloatRect rectForSelectionInRootView(PDFSelection *) const override;
 
-    unsigned countFindMatches(const String& target, WebCore::FindOptions, unsigned maxMatchCount) override;
     bool findString(const String& target, WebCore::FindOptions, unsigned maxMatchCount) override;
     bool drawsFindOverlay() const final { return true; }
+
+    Vector<WebFoundTextRange::PDFData> findTextMatches(const String&, WebCore::FindOptions) final { return { }; }
+    Vector<WebCore::FloatRect> rectsForTextMatchesInRect(const Vector<WebFoundTextRange::PDFData>&, const WebCore::IntRect&) final { return { }; }
 
     WebCore::DictionaryPopupInfo dictionaryPopupInfoForSelection(PDFSelection *, WebCore::TextIndicatorPresentationTransition) override;
     bool performDictionaryLookupAtLocation(const WebCore::FloatPoint&) override;
@@ -190,20 +185,18 @@ private:
     void updatePageAndDeviceScaleFactors();
 
     void createPasswordEntryForm();
-
-    NSData *liveData() const override;
+    void teardownPasswordEntryForm() override;
 
     RetainPtr<CALayer> m_containerLayer;
     RetainPtr<CALayer> m_contentLayer;
     RetainPtr<CALayer> m_horizontalScrollbarLayer;
     RetainPtr<CALayer> m_verticalScrollbarLayer;
     RetainPtr<CALayer> m_scrollCornerLayer;
-    RetainPtr<PDFLayerController> m_pdfLayerController;
-    RetainPtr<WKPDFPluginAccessibilityObject> m_accessibilityObject;
+    const RetainPtr<PDFLayerController> m_pdfLayerController;
+    const RetainPtr<WKPDFPluginAccessibilityObject> m_accessibilityObject;
     
     RefPtr<PDFPluginPasswordField> m_passwordField;
 
-    String m_temporaryPDFUUID;
 
     RetainPtr<WKPDFLayerControllerDelegate> m_pdfLayerControllerDelegate;
 

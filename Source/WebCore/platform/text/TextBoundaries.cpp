@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006, 2007 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006, 2007 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Dominik Röttsches <dominik.roettsches@access-company.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -59,7 +59,7 @@ unsigned startOfLastWordBoundaryContext(StringView text)
     return 0;
 }
 
-#if !PLATFORM(COCOA)
+#if !USE(APPKIT)
 
 int findNextWordFromIndex(StringView text, int position, bool forward)
 {
@@ -89,6 +89,10 @@ int findNextWordFromIndex(StringView text, int position, bool forward)
         return 0;
     }
 }
+
+#endif // !USE(APPKIT)
+
+#if !PLATFORM(COCOA)
 
 void findWordBoundary(StringView text, int position, int* start, int* end)
 {

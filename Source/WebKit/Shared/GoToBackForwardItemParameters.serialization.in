@@ -22,12 +22,14 @@
 
 [RValue] struct WebKit::GoToBackForwardItemParameters {
     WebCore::NavigationIdentifier navigationID;
-    WebCore::BackForwardItemIdentifier backForwardItemID;
+    Ref<WebKit::FrameState> frameState;
     WebCore::FrameLoadType backForwardType;
     WebCore::ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad;
     std::optional<WebKit::WebsitePoliciesData> websitePolicies;
     bool lastNavigationWasAppInitiated;
+    WebCore::ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache;
     std::optional<WebKit::NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume;
     WebCore::PublicSuffix publicSuffix;
     WebKit::SandboxExtensionHandle sandboxExtensionHandle;
+    WebCore::ProcessSwapDisposition processSwapDisposition;
 };

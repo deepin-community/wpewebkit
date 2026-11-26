@@ -25,32 +25,25 @@
 
 #pragma once
 
-#include "Decoder.h"
 #include "MessageReceiveQueue.h"
-#include <variant>
+#include "ReceiverMatcher.h"
 #include <wtf/HashMap.h>
+#include <wtf/Variant.h>
 
 namespace IPC {
 
+class Decoder;
 enum class ReceiverName : uint8_t;
 
 class MessageReceiveQueueMap {
 public:
-    MessageReceiveQueueMap() = default;
-    ~MessageReceiveQueueMap() = default;
-
-    static bool isValidMessage(const Decoder& message)
-    {
-        return QueueMap::isValidKey(std::make_pair(static_cast<uint8_t>(message.messageReceiverName()), message.destinationID()));
-    }
-
     void add(MessageReceiveQueue& queue, const ReceiverMatcher& matcher) { addImpl(StoreType(&queue), matcher); }
-    void add(std::unique_ptr<MessageReceiveQueue>&& queue, const ReceiverMatcher& matcher) { addImpl(StoreType(WTFMove(queue)), matcher); }
+    void add(std::unique_ptr<MessageReceiveQueue>&& queue, const ReceiverMatcher& matcher) { addImpl(StoreType(WTF::move(queue)), matcher); }
     void remove(const ReceiverMatcher&);
 
     MessageReceiveQueue* get(const Decoder&) const;
 private:
-    using StoreType = std::variant<MessageReceiveQueue*, std::unique_ptr<MessageReceiveQueue>>;
+    using StoreType = Variant<MessageReceiveQueue*, std::unique_ptr<MessageReceiveQueue>>;
     void addImpl(StoreType&&, const ReceiverMatcher&);
     using QueueMap = HashMap<std::pair<uint8_t, uint64_t>, StoreType>;
     // Key is ReceiverName. FIXME: make it possible to use ReceiverName.

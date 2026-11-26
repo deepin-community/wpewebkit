@@ -26,12 +26,17 @@
 #pragma once
 
 #include "APIObject.h"
-#include "Site.h"
+#include "BrowsingContextGroup.h"
 #include "WebPreferencesDefaultValues.h"
+#include "WebPreferencesDefinitions.h"
 #include "WebURLSchemeHandler.h"
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/ReferrerPolicy.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
+#include <WebCore/Site.h>
+#include <WebCore/WindowFeatures.h>
 #include <WebCore/WritingToolsTypes.h>
 #include <wtf/Forward.h>
 #include <wtf/GetPtr.h>
@@ -39,6 +44,14 @@
 #include <wtf/Markable.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/text/WTFString.h>
+
+#if PLATFORM(COCOA)
+#include "ClassStructPtr.h"
+#endif
+
+#if ENABLE(DATA_DETECTION)
+#include <WebCore/DataDetectorType.h>
+#endif
 
 #if PLATFORM(IOS_FAMILY)
 OBJC_PROTOCOL(_UIClickInteractionDriving);
@@ -51,6 +64,11 @@ OBJC_PROTOCOL(_UIClickInteractionDriving);
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
 #include <WebCore/ShouldRequireExplicitConsentForGamepadAccess.h>
 #endif
+
+namespace WebCore {
+enum class SandboxFlag : uint16_t;
+using SandboxFlags = OptionSet<SandboxFlag>;
+}
 
 namespace WebKit {
 class BrowsingContextGroup;
@@ -99,18 +117,36 @@ public:
 
     Ref<PageConfiguration> copy() const;
     void copyDataFrom(const PageConfiguration&);
-
-    WebKit::BrowsingContextGroup& browsingContextGroup() const;
-    void setBrowsingContextGroup(RefPtr<WebKit::BrowsingContextGroup>&&);
+    void ensureLazyInitializedRefsAreInitialized();
 
     struct OpenerInfo {
         Ref<WebKit::WebProcessProxy> process;
-        WebKit::Site site;
+        Ref<WebKit::BrowsingContextGroup> browsingContextGroup;
         WebCore::FrameIdentifier frameID;
+        WebCore::SecurityOriginData securityOrigin;
         bool operator==(const OpenerInfo&) const;
     };
-    const std::optional<OpenerInfo>& openerInfo() const;
+    const std::optional<OpenerInfo>& NODELETE openerInfo() const;
     void setOpenerInfo(std::optional<OpenerInfo>&&);
+    void consumeOpenerInfo();
+
+    const WebCore::Site& NODELETE openedSite() const;
+    void setOpenedSite(const WebCore::Site&);
+
+    bool processInheritedFromOpener() const { return m_data.processInheritedFromOpener; }
+    void setProcessInheritedFromOpener(bool value) { m_data.processInheritedFromOpener = value; }
+
+    const WTF::String& NODELETE openedMainFrameName() const;
+    void setOpenedMainFrameName(const WTF::String&);
+
+    WebCore::SandboxFlags initialSandboxFlags() const { return m_data.initialSandboxFlags; }
+    void NODELETE setInitialSandboxFlags(WebCore::SandboxFlags);
+
+    WebCore::ReferrerPolicy initialReferrerPolicy() const { return m_data.initialReferrerPolicy; }
+    void NODELETE setInitialReferrerPolicy(WebCore::ReferrerPolicy);
+
+    const std::optional<WebCore::WindowFeatures>& NODELETE windowFeatures() const;
+    void setWindowFeatures(WebCore::WindowFeatures&&);
 
     WebKit::WebProcessPool& processPool() const;
     void setProcessPool(RefPtr<WebKit::WebProcessPool>&&);
@@ -119,37 +155,36 @@ public:
     void setUserContentController(RefPtr<WebKit::WebUserContentControllerProxy>&&);
 
 #if ENABLE(WK_WEB_EXTENSIONS)
-    const WTF::URL& requiredWebExtensionBaseURL() const;
+    const WTF::URL& NODELETE requiredWebExtensionBaseURL() const;
     void setRequiredWebExtensionBaseURL(WTF::URL&&);
 
-    WebKit::WebExtensionController* webExtensionController() const;
+    WebKit::WebExtensionController* NODELETE webExtensionController() const;
     void setWebExtensionController(RefPtr<WebKit::WebExtensionController>&&);
 
-    WebKit::WebExtensionController* weakWebExtensionController() const;
-    void setWeakWebExtensionController(WebKit::WebExtensionController*);
+    WebKit::WebExtensionController* NODELETE weakWebExtensionController() const;
+    void NODELETE setWeakWebExtensionController(WebKit::WebExtensionController*);
 #endif
 
-    WebKit::WebPageGroup* pageGroup();
+    WebKit::WebPageGroup* NODELETE pageGroup();
     void setPageGroup(RefPtr<WebKit::WebPageGroup>&&);
 
     WebKit::WebPreferences& preferences() const;
     void setPreferences(RefPtr<WebKit::WebPreferences>&&);
 
-    WebKit::WebPageProxy* relatedPage() const;
-    void setRelatedPage(WeakPtr<WebKit::WebPageProxy>&&);
+    WebKit::WebPageProxy* NODELETE relatedPage() const;
+    void setRelatedPage(WeakPtr<WebKit::WebPageProxy>&& relatedPage) { m_data.relatedPage = WTF::move(relatedPage); }
 
-    WebKit::WebPageProxy* pageToCloneSessionStorageFrom() const;
-    void setPageToCloneSessionStorageFrom(WeakPtr<WebKit::WebPageProxy>&&);
+    WebKit::WebPageProxy* NODELETE pageToCloneSessionStorageFrom() const;
+    void NODELETE setPageToCloneSessionStorageFrom(WeakPtr<WebKit::WebPageProxy>&&);
 
-    WebKit::WebPageProxy* alternateWebViewForNavigationGestures() const;
-    void setAlternateWebViewForNavigationGestures(WeakPtr<WebKit::WebPageProxy>&&);
+    WebKit::WebPageProxy* NODELETE alternateWebViewForNavigationGestures() const;
+    void NODELETE setAlternateWebViewForNavigationGestures(WeakPtr<WebKit::WebPageProxy>&&);
 
     WebKit::VisitedLinkStore& visitedLinkStore() const;
     void setVisitedLinkStore(RefPtr<WebKit::VisitedLinkStore>&&);
 
     WebKit::WebsiteDataStore& websiteDataStore() const;
-    WebKit::WebsiteDataStore* websiteDataStoreIfExists() const;
-    Ref<WebKit::WebsiteDataStore> protectedWebsiteDataStore() const;
+    WebKit::WebsiteDataStore* NODELETE websiteDataStoreIfExists() const;
     void setWebsiteDataStore(RefPtr<WebKit::WebsiteDataStore>&&);
 
     WebsitePolicies& defaultWebsitePolicies() const;
@@ -160,7 +195,7 @@ public:
     void setCanShowWhileLocked(bool canShowWhileLocked) { m_data.canShowWhileLocked = canShowWhileLocked; }
 
     const RetainPtr<_UIClickInteractionDriving>& clickInteractionDriverForTesting() const { return m_data.clickInteractionDriverForTesting; }
-    void setClickInteractionDriverForTesting(RetainPtr<_UIClickInteractionDriving>&& driver) { m_data.clickInteractionDriverForTesting = WTFMove(driver); }
+    void setClickInteractionDriverForTesting(RetainPtr<_UIClickInteractionDriving>&& driver) { m_data.clickInteractionDriverForTesting = WTF::move(driver); }
 
     bool inlineMediaPlaybackRequiresPlaysInlineAttribute() const { return m_data.inlineMediaPlaybackRequiresPlaysInlineAttribute; }
     void setInlineMediaPlaybackRequiresPlaysInlineAttribute(bool requiresAttribute) { m_data.inlineMediaPlaybackRequiresPlaysInlineAttribute = requiresAttribute; }
@@ -219,15 +254,15 @@ public:
     bool isControlledByAutomation() const { return m_data.controlledByAutomation; }
     void setControlledByAutomation(bool controlledByAutomation) { m_data.controlledByAutomation = controlledByAutomation; }
 
-    const WTF::String& overrideContentSecurityPolicy() const { return m_data.overrideContentSecurityPolicy; }
+    const WTF::String& overrideContentSecurityPolicy() const LIFETIME_BOUND { return m_data.overrideContentSecurityPolicy; }
     void setOverrideContentSecurityPolicy(const WTF::String& overrideContentSecurityPolicy) { m_data.overrideContentSecurityPolicy = overrideContentSecurityPolicy; }
 
 #if PLATFORM(COCOA)
-    ClassStructPtr attachmentFileWrapperClass() const { return m_data.attachmentFileWrapperClass.get(); }
+    ClassStructPtr attachmentFileWrapperClassSingleton() const { return m_data.attachmentFileWrapperClass.get(); }
     void setAttachmentFileWrapperClass(ClassStructPtr c) { m_data.attachmentFileWrapperClass = c; }
 
-    const std::optional<Vector<WTF::String>>& additionalSupportedImageTypes() const { return m_data.additionalSupportedImageTypes; }
-    void setAdditionalSupportedImageTypes(std::optional<Vector<WTF::String>>&& additionalSupportedImageTypes) { m_data.additionalSupportedImageTypes = WTFMove(additionalSupportedImageTypes); }
+    const std::optional<Vector<WTF::String>>& additionalSupportedImageTypes() const LIFETIME_BOUND { return m_data.additionalSupportedImageTypes; }
+    void setAdditionalSupportedImageTypes(std::optional<Vector<WTF::String>>&& additionalSupportedImageTypes) { m_data.additionalSupportedImageTypes = WTF::move(additionalSupportedImageTypes); }
 
     bool clientNavigationsRunAtForegroundPriority() const { return m_data.clientNavigationsRunAtForegroundPriority; }
     void setClientNavigationsRunAtForegroundPriority(bool value) { m_data.clientNavigationsRunAtForegroundPriority = value; }
@@ -237,34 +272,31 @@ public:
 #endif
 
 #if ENABLE(APPLICATION_MANIFEST)
-    ApplicationManifest* applicationManifest() const;
+    ApplicationManifest* NODELETE applicationManifest() const;
     void setApplicationManifest(RefPtr<ApplicationManifest>&&);
 #endif
 
     RefPtr<WebKit::WebURLSchemeHandler> urlSchemeHandlerForURLScheme(const WTF::String&);
     void setURLSchemeHandlerForURLScheme(Ref<WebKit::WebURLSchemeHandler>&&, const WTF::String&);
-    const HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>>& urlSchemeHandlers() { return m_data.urlSchemeHandlers; }
+    const HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>>& urlSchemeHandlers() LIFETIME_BOUND { return m_data.urlSchemeHandlers; }
 
-    const Vector<WTF::String>& corsDisablingPatterns() const { return m_data.corsDisablingPatterns; }
-    void setCORSDisablingPatterns(Vector<WTF::String>&& patterns) { m_data.corsDisablingPatterns = WTFMove(patterns); }
+    const Vector<WTF::String>& corsDisablingPatterns() const LIFETIME_BOUND { return m_data.corsDisablingPatterns; }
+    void setCORSDisablingPatterns(Vector<WTF::String>&& patterns) { m_data.corsDisablingPatterns = WTF::move(patterns); }
 
     HashSet<WTF::String> maskedURLSchemes() const;
-    void setMaskedURLSchemes(HashSet<WTF::String>&& schemes) { m_data.maskedURLSchemesWasSet = true; m_data.maskedURLSchemes = WTFMove(schemes); }
-
-    bool userScriptsShouldWaitUntilNotification() const { return m_data.userScriptsShouldWaitUntilNotification; }
-    void setUserScriptsShouldWaitUntilNotification(bool value) { m_data.userScriptsShouldWaitUntilNotification = value; }
+    void setMaskedURLSchemes(HashSet<WTF::String>&& schemes) { m_data.maskedURLSchemesWasSet = true; m_data.maskedURLSchemes = WTF::move(schemes); }
 
     bool crossOriginAccessControlCheckEnabled() const { return m_data.crossOriginAccessControlCheckEnabled; }
     void setCrossOriginAccessControlCheckEnabled(bool enabled) { m_data.crossOriginAccessControlCheckEnabled = enabled; }
 
-    const WTF::String& processDisplayName() const { return m_data.processDisplayName; }
+    const WTF::String& processDisplayName() const LIFETIME_BOUND { return m_data.processDisplayName; }
     void setProcessDisplayName(const WTF::String& name) { m_data.processDisplayName = name; }
 
     bool loadsSubresources() const { return m_data.loadsSubresources; }
     void setLoadsSubresources(bool loads) { m_data.loadsSubresources = loads; }
 
-    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>& allowedNetworkHosts() const { return m_data.allowedNetworkHosts; }
-    void setAllowedNetworkHosts(std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>&& hosts) { m_data.allowedNetworkHosts = WTFMove(hosts); }
+    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>& allowedNetworkHosts() const LIFETIME_BOUND { return m_data.allowedNetworkHosts; }
+    void setAllowedNetworkHosts(std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<WTF::String>>&& hosts) { m_data.allowedNetworkHosts = WTF::move(hosts); }
 
 #if ENABLE(APP_BOUND_DOMAINS)
     bool ignoresAppBoundDomains() const { return m_data.ignoresAppBoundDomains; }
@@ -307,8 +339,8 @@ public:
 #endif
 
 #if ENABLE(APPLE_PAY)
-    bool applePayEnabled() const { return m_data.applePayEnabled; }
-    void setApplePayEnabled(bool enabled) { m_data.applePayEnabled = enabled; }
+    bool applePayEnabled() const;
+    void NODELETE setApplePayEnabled(bool);
 #endif
 
 #if ENABLE(APP_HIGHLIGHTS)
@@ -321,14 +353,14 @@ public:
     void setMultiRepresentationHEICInsertionEnabled(bool enabled) { m_data.multiRepresentationHEICInsertionEnabled = enabled; }
 #endif
 
-    const WTF::String& groupIdentifier() const { return m_data.groupIdentifier; }
-    void setGroupIdentifier(WTF::String&& identifier) { m_data.groupIdentifier = WTFMove(identifier); }
+    const WTF::String& groupIdentifier() const LIFETIME_BOUND { return m_data.groupIdentifier; }
+    void setGroupIdentifier(WTF::String&& identifier) { m_data.groupIdentifier = WTF::move(identifier); }
 
-    const WTF::String& mediaContentTypesRequiringHardwareSupport() const { return m_data.mediaContentTypesRequiringHardwareSupport; }
-    void setMediaContentTypesRequiringHardwareSupport(WTF::String&& types) { m_data.mediaContentTypesRequiringHardwareSupport = WTFMove(types); }
+    const WTF::String& mediaContentTypesRequiringHardwareSupport() const LIFETIME_BOUND { return m_data.mediaContentTypesRequiringHardwareSupport; }
+    void setMediaContentTypesRequiringHardwareSupport(WTF::String&& types) { m_data.mediaContentTypesRequiringHardwareSupport = WTF::move(types); }
 
-    const std::optional<WTF::String>& applicationNameForUserAgent() const { return m_data.applicationNameForUserAgent; }
-    void setApplicationNameForUserAgent(std::optional<WTF::String>&& name) { m_data.applicationNameForUserAgent = WTFMove(name); }
+    const std::optional<WTF::String>& applicationNameForUserAgent() const LIFETIME_BOUND { return m_data.applicationNameForUserAgent; }
+    void setApplicationNameForUserAgent(std::optional<WTF::String>&& name) { m_data.applicationNameForUserAgent = WTF::move(name); }
 
     double sampledPageTopColorMaxDifference() const { return m_data.sampledPageTopColorMaxDifference; }
     void setSampledPageTopColorMaxDifference(double difference) { m_data.sampledPageTopColorMaxDifference = difference; }
@@ -369,8 +401,11 @@ public:
     bool incompleteImageBorderEnabled() const { return m_data.incompleteImageBorderEnabled; }
     void setIncompleteImageBorderEnabled(bool enabled) { m_data.incompleteImageBorderEnabled = enabled; }
 
-    bool shouldDeferAsynchronousScriptsUntilAfterDocumentLoad() const { return m_data.shouldDeferAsynchronousScriptsUntilAfterDocumentLoad; }
-    void setShouldDeferAsynchronousScriptsUntilAfterDocumentLoad(bool defer) { m_data.shouldDeferAsynchronousScriptsUntilAfterDocumentLoad = defer; }
+    bool showsSystemScreenTimeBlockingView() const { return m_data.showsSystemScreenTimeBlockingView; }
+    void setShowsSystemScreenTimeBlockingView(bool shows) { m_data.showsSystemScreenTimeBlockingView = shows; }
+
+    bool shouldSendConsoleLogsToUIProcessForTesting() const { return m_data.shouldSendConsoleLogsToUIProcessForTesting; }
+    void setShouldSendConsoleLogsToUIProcessForTesting(bool should) { m_data.shouldSendConsoleLogsToUIProcessForTesting = should; }
 
     bool undoManagerAPIEnabled() const { return m_data.undoManagerAPIEnabled; }
     void setUndoManagerAPIEnabled(bool enabled) { m_data.undoManagerAPIEnabled = enabled; }
@@ -398,8 +433,8 @@ public:
     void setShouldRelaxThirdPartyCookieBlocking(WebCore::ShouldRelaxThirdPartyCookieBlocking value) { m_data.shouldRelaxThirdPartyCookieBlocking = value; }
     WebCore::ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking() const { return m_data.shouldRelaxThirdPartyCookieBlocking; }
 
-    void setAttributedBundleIdentifier(WTF::String&& identifier) { m_data.attributedBundleIdentifier = WTFMove(identifier); }
-    const WTF::String& attributedBundleIdentifier() const { return m_data.attributedBundleIdentifier; }
+    void setAttributedBundleIdentifier(WTF::String&& identifier) { m_data.attributedBundleIdentifier = WTF::move(identifier); }
+    const WTF::String& attributedBundleIdentifier() const LIFETIME_BOUND { return m_data.attributedBundleIdentifier; }
 
 #if HAVE(TOUCH_BAR)
     bool requiresUserActionForEditingControlsManager() const { return m_data.requiresUserActionForEditingControlsManager; }
@@ -409,6 +444,8 @@ public:
     bool isLockdownModeExplicitlySet() const;
     bool lockdownModeEnabled() const;
     
+    bool isEnhancedSecurityEnabled() const;
+
     void setAllowTestOnlyIPC(bool enabled) { m_data.allowTestOnlyIPC = enabled; }
     bool allowTestOnlyIPC() const { return m_data.allowTestOnlyIPC; }
 
@@ -424,21 +461,47 @@ public:
     void setDelaysWebProcessLaunchUntilFirstLoad(bool);
     bool delaysWebProcessLaunchUntilFirstLoad() const;
 
+    void NODELETE setAllowPostingLegacySynchronousMessages(bool);
+    bool NODELETE allowPostingLegacySynchronousMessages() const;
+
     void setContentSecurityPolicyModeForExtension(WebCore::ContentSecurityPolicyModeForExtension mode) { m_data.contentSecurityPolicyModeForExtension = mode; }
     WebCore::ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_data.contentSecurityPolicyModeForExtension; }
 
-#if PLATFORM(VISION) && ENABLE(GAMEPAD)
+    void setBackgroundTextExtractionEnabled(bool enabled) { m_data.backgroundTextExtractionEnabled = enabled; }
+    bool backgroundTextExtractionEnabled() const { return m_data.backgroundTextExtractionEnabled; }
+
+    WebKit::BrowsingContextGroup* preferredBrowsingContextGroup() const;
+
+#if PLATFORM(VISION)
+
+#if ENABLE(GAMEPAD)
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent() const { return m_data.gamepadAccessRequiresExplicitConsent; }
     void setGamepadAccessRequiresExplicitConsent(WebCore::ShouldRequireExplicitConsentForGamepadAccess value) { m_data.gamepadAccessRequiresExplicitConsent = value; }
+#endif // ENABLE(GAMEPAD)
+
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+    bool cssTransformStyleSeparatedEnabled() const { return m_data.cssTransformStyleSeparatedEnabled; }
+    void setCSSTransformStyleSeparatedEnabled(bool value) { m_data.cssTransformStyleSeparatedEnabled = value; }
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    bool allowsImmersiveEnvironments() const { return m_data.allowsImmersiveEnvironments; }
+    void setAllowsImmersiveEnvironments(bool allows) { m_data.allowsImmersiveEnvironments = allows; }
+#endif
+
+#endif // PLATFORM(VISION)
+
 private:
+    bool defaultDelaysWebProcessLaunchUntilFirstLoad() const;
     struct Data {
+        Data();
+
         template<typename T, Ref<T>(*initializer)()> class LazyInitializedRef {
         public:
             LazyInitializedRef() = default;
-            void operator=(const LazyInitializedRef& other) { m_value = &other.get(); }
-            void operator=(RefPtr<T>&& t) { m_value = WTFMove(t); }
+            LazyInitializedRef(const LazyInitializedRef&) = default;
+            void operator=(const LazyInitializedRef& other) { m_value = other.m_value; }
+            void operator=(RefPtr<T>&& t) { m_value = WTF::move(t); }
             T& get() const
             {
                 if (!m_value)
@@ -449,7 +512,6 @@ private:
         private:
             mutable RefPtr<T> m_value;
         };
-        static Ref<WebKit::BrowsingContextGroup> createBrowsingContextGroup();
         static Ref<WebKit::WebProcessPool> createWebProcessPool();
         static Ref<WebKit::WebUserContentControllerProxy> createWebUserContentControllerProxy();
         static Ref<WebKit::WebPreferences> createWebPreferences();
@@ -460,10 +522,9 @@ private:
         static WebKit::DragLiftDelay defaultDragLiftDelay();
 #endif
 #if PLATFORM(COCOA)
-        uintptr_t defaultMediaTypesRequiringUserActionForPlayback();
+        uintptr_t NODELETE defaultMediaTypesRequiringUserActionForPlayback();
 #endif
 
-        LazyInitializedRef<WebKit::BrowsingContextGroup, createBrowsingContextGroup> browsingContextGroup;
         LazyInitializedRef<WebKit::WebProcessPool, createWebProcessPool> processPool;
         LazyInitializedRef<WebKit::WebUserContentControllerProxy, createWebUserContentControllerProxy> userContentController;
         LazyInitializedRef<WebKit::WebPreferences, createWebPreferences> preferences;
@@ -478,7 +539,13 @@ private:
 #endif
         RefPtr<WebKit::WebPageGroup> pageGroup;
         WeakPtr<WebKit::WebPageProxy> relatedPage;
-        std::optional<OpenerInfo> openerInfo;
+        Box<std::optional<OpenerInfo>> openerInfo;
+        WebCore::Site openedSite;
+        bool processInheritedFromOpener { false };
+        WTF::String openedMainFrameName;
+        std::optional<WebCore::WindowFeatures> windowFeatures;
+        WebCore::SandboxFlags initialSandboxFlags;
+        WebCore::ReferrerPolicy initialReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
         WeakPtr<WebKit::WebPageProxy> pageToCloneSessionStorageFrom;
         WeakPtr<WebKit::WebPageProxy> alternateWebViewForNavigationGestures;
 
@@ -535,7 +602,6 @@ private:
         Vector<WTF::String> corsDisablingPatterns;
         HashSet<WTF::String> maskedURLSchemes;
         bool maskedURLSchemesWasSet { false };
-        bool userScriptsShouldWaitUntilNotification { true };
         bool crossOriginAccessControlCheckEnabled { true };
         WTF::String processDisplayName;
         bool loadsSubresources { true };
@@ -560,7 +626,7 @@ private:
         WebCore::UserInterfaceDirectionPolicy userInterfaceDirectionPolicy { WebCore::UserInterfaceDirectionPolicy::Content };
 #endif
 #if ENABLE(APPLE_PAY)
-        bool applePayEnabled { DEFAULT_VALUE_FOR_ApplePayEnabled };
+        std::optional<bool> applePayEnabledOverride;
 #endif
 #if ENABLE(APP_HIGHLIGHTS)
         bool appHighlightsEnabled { DEFAULT_VALUE_FOR_AppHighlightsEnabled };
@@ -584,7 +650,6 @@ private:
         bool allowMediaContentTypesRequiringHardwareSupportAsFallback { true };
         bool colorFilterEnabled { false };
         bool incompleteImageBorderEnabled { false };
-        bool shouldDeferAsynchronousScriptsUntilAfterDocumentLoad { true };
         bool undoManagerAPIEnabled { false };
         bool mainContentUserGestureOverrideEnabled { false };
         bool invisibleAutoplayForbidden { false };
@@ -593,9 +658,26 @@ private:
         bool allowsInlinePredictions { false };
         bool scrollToTextFragmentIndicatorEnabled { true };
         bool scrollToTextFragmentMarkingEnabled { true };
-#if PLATFORM(VISION) && ENABLE(GAMEPAD)
+        bool showsSystemScreenTimeBlockingView { true };
+        bool shouldSendConsoleLogsToUIProcessForTesting { false };
+        bool allowPostingLegacySynchronousMessages { false };
+        bool backgroundTextExtractionEnabled { false };
+
+#if PLATFORM(VISION)
+
+#if ENABLE(GAMEPAD)
         WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { WebCore::ShouldRequireExplicitConsentForGamepadAccess::No };
+#endif // ENABLE(GAMEPAD)
+
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+        bool cssTransformStyleSeparatedEnabled { false };
 #endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+        bool allowsImmersiveEnvironments { false };
+#endif
+
+#endif // PLATFORM(VISION)
 
 #if ENABLE(WRITING_TOOLS)
         WebCore::WritingTools::Behavior writingToolsBehavior { WebCore::WritingTools::Behavior::Default };
@@ -616,3 +698,5 @@ private:
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(PageConfiguration);

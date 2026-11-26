@@ -26,37 +26,38 @@
 #pragma once
 
 #include "CSSNumericValue.h"
+#include "CSSOMKeywordValue.h"
 #include "CSSTransformComponent.h"
 
 namespace WebCore {
 
 template<typename> class ExceptionOr;
 class CSSFunctionValue;
-class CSSKeywordValue;
-using CSSPerspectiveValue = std::variant<RefPtr<CSSNumericValue>, String, RefPtr<CSSKeywordValue>>;
+using CSSPerspectiveValue = Variant<Ref<CSSNumericValue>, String, Ref<CSSOMKeywordValue>>;
+class Document;
 
 class CSSPerspective : public CSSTransformComponent {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CSSPerspective);
+    WTF_MAKE_TZONE_ALLOCATED(CSSPerspective);
 public:
     static ExceptionOr<Ref<CSSPerspective>> create(CSSPerspectiveValue);
-    static ExceptionOr<Ref<CSSPerspective>> create(CSSFunctionValue&);
+    static ExceptionOr<Ref<CSSPerspective>> create(Ref<const CSSFunctionValue>, Document&);
 
     virtual ~CSSPerspective();
 
-    const CSSPerspectiveValue& length() const { return m_length; }
+    const CSSPerspectiveValue& length() const LIFETIME_BOUND { return m_length; }
     ExceptionOr<void> setLength(CSSPerspectiveValue);
 
     void serialize(StringBuilder&) const final;
     ExceptionOr<Ref<DOMMatrix>> toMatrix() final;
     
-    CSSTransformType getType() const final { return CSSTransformType::Perspective; }
+    CSSTransformType transformType() const final { return CSSTransformType::Perspective; }
 
     RefPtr<CSSValue> toCSSValue() const final;
 
 private:
-    CSSPerspective(CSSPerspectiveValue);
+    explicit CSSPerspective(CSSPerspectiveValue);
 
-    void setIs2D(bool);
+    void NODELETE setIs2D(bool);
 
     CSSPerspectiveValue m_length;
 };
@@ -64,5 +65,5 @@ private:
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CSSPerspective)
-    static bool isType(const WebCore::CSSTransformComponent& transform) { return transform.getType() == WebCore::CSSTransformType::Perspective; }
+    static bool isType(const WebCore::CSSTransformComponent& transform) { return transform.transformType() == WebCore::CSSTransformType::Perspective; }
 SPECIALIZE_TYPE_TRAITS_END()

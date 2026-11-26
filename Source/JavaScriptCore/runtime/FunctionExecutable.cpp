@@ -28,9 +28,12 @@
 
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
+#include "FunctionConstructor.h"
 #include "FunctionExecutableInlines.h"
 #include "FunctionOverrides.h"
+#include "SourceCodeKey.h"
 #include "IsoCellSetInlines.h"
+#include "JSArray.h"
 #include "JSCJSValueInlines.h"
 
 namespace JSC {
@@ -54,10 +57,10 @@ void FunctionExecutable::destroy(JSCell* cell)
 FunctionCodeBlock* FunctionExecutable::baselineCodeBlockFor(CodeSpecializationKind kind)
 {
     CodeBlock* codeBlock = nullptr;
-    if (kind == CodeForCall)
+    if (kind == CodeSpecializationKind::CodeForCall)
         codeBlock = codeBlockForCall();
     else {
-        RELEASE_ASSERT(kind == CodeForConstruct);
+        RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
         codeBlock = codeBlockForConstruct();
     }
     if (!codeBlock)
@@ -76,7 +79,7 @@ template<typename Visitor>
 void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     VM& vm = visitor.vm();
-    FunctionExecutable* thisObject = jsCast<FunctionExecutable*>(cell);
+    FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_topLevelExecutable);
@@ -109,7 +112,7 @@ template<typename Visitor>
 void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     VM& vm = visitor.vm();
-    auto* executable = jsCast<FunctionExecutable*>(cell);
+    auto* executable = uncheckedDowncast<FunctionExecutable>(cell);
     auto* codeBlockForCall = executable->m_codeBlockForCall.get();
     if (codeBlockForCall) {
         if (!visitor.isMarked(codeBlockForCall))
@@ -127,17 +130,26 @@ void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(FunctionExecutable);
 
-FunctionExecutable* FunctionExecutable::fromGlobalCode(
-    const Identifier& name, JSGlobalObject* globalObject, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures,
-    JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition)
+FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, JSGlobalObject* globalObject, String&& program, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedOrigin, const String& sourceURL, const TextPosition& position, LexicallyScopedFeatures lexicallyScopedFeatures, JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode)
 {
+    if (overrideLineNumber == overrideLineNumberNotFound) {
+        if (auto* executable = globalObject->tryGetCachedFunctionExecutableForFunctionConstructor(name, program, sourceOrigin, taintedOrigin, sourceURL, position, lexicallyScopedFeatures, functionConstructionMode))
+            return executable;
+    }
+
+    auto source = makeSource(WTF::move(program), sourceOrigin, taintedOrigin, sourceURL, position);
     UnlinkedFunctionExecutable* unlinkedExecutable = 
         UnlinkedFunctionExecutable::fromGlobalCode(
             name, globalObject, source, lexicallyScopedFeatures, exception, overrideLineNumber, functionConstructorParametersEndPosition);
     if (!unlinkedExecutable)
         return nullptr;
 
-    return unlinkedExecutable->link(globalObject->vm(), nullptr, source, overrideLineNumber);
+    auto* executable = unlinkedExecutable->link(globalObject->vm(), nullptr, source, overrideLineNumber);
+    if (overrideLineNumber == overrideLineNumberNotFound) {
+        if (executable)
+            globalObject->cachedFunctionExecutableForFunctionConstructor(executable);
+    }
+    return executable;
 }
 
 FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
@@ -150,7 +162,7 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
     rareData->m_functionStart = functionStart();
     rareData->m_functionEnd = functionEnd();
     WTF::storeStoreFence();
-    m_rareData = WTFMove(rareData);
+    m_rareData = WTF::move(rareData);
     return *m_rareData;
 }
 

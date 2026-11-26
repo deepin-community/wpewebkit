@@ -33,6 +33,7 @@
 
 #include <WebCore/CBORWriter.h>
 #include <limits>
+#include <wtf/StdLibExtras.h>
 
 // Leveraging RFC 7049 examples from https://github.com/cbor/test-vectors/blob/master/appendix_a.json.
 namespace TestWebKitAPI {
@@ -41,16 +42,12 @@ using namespace cbor;
 
 bool eq(const Vector<uint8_t>& cbor, const CString& expect)
 {
-    if (cbor.size() != expect.length())
-        return false;
-    return !memcmp(cbor.data(), expect.data(), cbor.size());
+    return equalSpans(cbor.span(), expect.span());
 }
 
-bool eq(const Vector<uint8_t>& cbor, const uint8_t* expect, const size_t expectLength)
+bool eq(const Vector<uint8_t>& cbor, std::span<const uint8_t> expect)
 {
-    if (cbor.size() != expectLength)
-        return false;
-    return !memcmp(cbor.data(), expect, expectLength);
+    return equalSpans(cbor.span(), expect);
 }
 
 TEST(CBORWriterTest, TestWriteUint)
@@ -63,7 +60,7 @@ TEST(CBORWriterTest, TestWriteUint)
     static const UintTestCase kUintTestCases[] = {
         // Reminder: must specify length when creating string pieces
         // with null bytes, else the string will truncate prematurely.
-        { 0, CString({ "\x00", 1 }) },
+        { 0, CString(std::span { "\x00", 1 }) },
         { 1, CString("\x01") },
         { 10, CString("\x0a") },
         { 23, CString("\x17") },
@@ -71,10 +68,10 @@ TEST(CBORWriterTest, TestWriteUint)
         { 25, CString("\x18\x19") },
         { 100, CString("\x18\x64") },
         { 1000, CString("\x19\x03\xe8") },
-        { 1000000, CString({ "\x1a\x00\x0f\x42\x40", 5 }) },
+        { 1000000, CString(std::span { "\x1a\x00\x0f\x42\x40", 5 }) },
         { 0xFFFFFFFF, CString("\x1a\xff\xff\xff\xff") },
         { 0x100000000,
-            CString({ "\x1b\x00\x00\x00\x01\x00\x00\x00\x00", 9 }) },
+            CString(std::span { "\x1b\x00\x00\x00\x01\x00\x00\x00\x00", 9 }) },
         { std::numeric_limits<int64_t>::max(),
             CString("\x1b\x7f\xff\xff\xff\xff\xff\xff\xff") }
     };
@@ -101,7 +98,7 @@ TEST(CBORWriterTest, TestWriteNegativeInteger)
         { -1000LL, CString("\x39\x03\xe7") },
         { -4294967296LL, CString("\x3a\xff\xff\xff\xff") },
         { -4294967297LL,
-            CString({ "\x3b\x00\x00\x00\x01\x00\x00\x00\x00", 9 }) },
+            CString(std::string { "\x3b\x00\x00\x00\x01\x00\x00\x00\x00", 9 }) },
         { std::numeric_limits<int64_t>::min(),
             CString("\x3b\x7f\xff\xff\xff\xff\xff\xff\xff") },
     };
@@ -169,7 +166,7 @@ TEST(CBORWriterTest, TestWriteArray)
         array.append(CBORValue(i));
     auto cbor = CBORWriter::write(CBORValue(array));
     ASSERT_TRUE(cbor.has_value());
-    EXPECT_TRUE(eq(cbor.value(), kArrayTestCaseCbor, sizeof(kArrayTestCaseCbor)));
+    EXPECT_TRUE(eq(cbor.value(), std::span { kArrayTestCaseCbor }));
 }
 
 TEST(CBORWriterTest, TestWriteMapWithMapValue)
@@ -279,7 +276,7 @@ TEST(CBORWriterTest, TestWriteMapWithMapValue)
     map[CBORValue(std::numeric_limits<int64_t>::max())] = CBORValue("j");
     auto cbor = CBORWriter::write(CBORValue(map));
     ASSERT_TRUE(cbor.has_value());
-    EXPECT_TRUE(eq(cbor.value(), kMapTestCaseCbor, sizeof(kMapTestCaseCbor)));
+    EXPECT_TRUE(eq(cbor.value(), std::span { kMapTestCaseCbor }));
 }
 
 TEST(CBORWriterTest, TestWriteMapWithArray)
@@ -302,7 +299,7 @@ TEST(CBORWriterTest, TestWriteMapWithArray)
     map[CBORValue("b")] = CBORValue(array);
     auto cbor = CBORWriter::write(CBORValue(map));
     ASSERT_TRUE(cbor.has_value());
-    EXPECT_TRUE(eq(cbor.value(), kMapArrayTestCaseCbor, sizeof(kMapArrayTestCaseCbor)));
+    EXPECT_TRUE(eq(cbor.value(), std::span { kMapArrayTestCaseCbor }));
 }
 
 TEST(CBORWriterTest, TestWriteNestedMap)
@@ -328,7 +325,7 @@ TEST(CBORWriterTest, TestWriteNestedMap)
     map[CBORValue("b")] = CBORValue(nestedMap);
     auto cbor = CBORWriter::write(CBORValue(map));
     ASSERT_TRUE(cbor.has_value());
-    EXPECT_TRUE(eq(cbor.value(), kNestedMapTestCase, sizeof(kNestedMapTestCase)));
+    EXPECT_TRUE(eq(cbor.value(), std::span { kNestedMapTestCase }));
 }
 
 TEST(CBORWriterTest, TestWriteSimpleValue)

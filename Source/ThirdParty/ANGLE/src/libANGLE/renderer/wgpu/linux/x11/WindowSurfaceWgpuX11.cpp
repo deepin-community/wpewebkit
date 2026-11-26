@@ -26,22 +26,24 @@ WindowSurfaceWgpuX11::WindowSurfaceWgpuX11(const egl::SurfaceState &surfaceState
 {}
 
 angle::Result WindowSurfaceWgpuX11::createWgpuSurface(const egl::Display *display,
-                                                      wgpu::Surface *outSurface)
+                                                      webgpu::SurfaceHandle *outSurface)
 {
     DisplayWgpu *displayWgpu = webgpu::GetImpl(display);
+    const DawnProcTable *wgpu = displayWgpu->getProcs();
 
     EGLNativeWindowType window = getNativeWindow();
 
-    wgpu::Instance instance = displayWgpu->getInstance();
+    webgpu::InstanceHandle instance = displayWgpu->getInstance();
 
-    wgpu::SurfaceDescriptorFromXlibWindow x11Desc;
+    WGPUSurfaceSourceXlibWindow x11Desc = WGPU_SURFACE_SOURCE_XLIB_WINDOW_INIT;
     x11Desc.display = reinterpret_cast<Display *>(display->getNativeDisplayId());
     x11Desc.window  = window;
 
-    wgpu::SurfaceDescriptor surfaceDesc;
-    surfaceDesc.nextInChain = &x11Desc;
+    WGPUSurfaceDescriptor surfaceDesc = WGPU_SURFACE_DESCRIPTOR_INIT;
+    surfaceDesc.nextInChain           = &x11Desc.chain;
 
-    wgpu::Surface surface = instance.CreateSurface(&surfaceDesc);
+    webgpu::SurfaceHandle surface = webgpu::SurfaceHandle::Acquire(
+        wgpu, wgpu->instanceCreateSurface(instance.get(), &surfaceDesc));
     *outSurface           = surface;
 
     return angle::Result::Continue;
@@ -64,8 +66,8 @@ angle::Result WindowSurfaceWgpuX11::getCurrentWindowSize(const egl::Display *dis
     return angle::Result::Continue;
 }
 
-WindowSurfaceWgpu *CreateWgpuWindowSurface(const egl::SurfaceState &surfaceState,
-                                           EGLNativeWindowType window)
+WindowSurfaceWgpu *CreateWgpuX11WindowSurface(const egl::SurfaceState &surfaceState,
+                                              EGLNativeWindowType window)
 {
     return new WindowSurfaceWgpuX11(surfaceState, window);
 }

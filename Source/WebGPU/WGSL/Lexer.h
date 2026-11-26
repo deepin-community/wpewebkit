@@ -25,32 +25,26 @@
 
 #pragma once
 
-#include "Token.h"
-#include <wtf/ASCIICType.h>
+#include "SourceSpan.h"
 #include <wtf/text/StringParsingBuffer.h>
-#include <wtf/text/WTFString.h>
 
 namespace WGSL {
+
+enum class TokenType : uint32_t;
+
+struct Token;
 
 template<typename T>
 class Lexer {
 public:
-    Lexer(const String& wgsl)
+    Lexer(std::span<const T> code)
+        : m_code { code }
+        , m_current { m_code.hasCharactersRemaining() ? m_code[0] : T { } }
     {
-        if constexpr (std::is_same<T, LChar>::value)
-            m_code = wgsl.span8();
-        else {
-            static_assert(std::is_same<T, UChar>::value, "The lexer expects its template parameter to be either LChar or UChar");
-            m_code = wgsl.span16();
-            ASSERT(!(wgsl.sizeInBytes() % 2));
-        }
-
-        m_current = m_code.hasCharactersRemaining() ? m_code[0] : 0;
-        m_currentPosition = { 1, 0, 0 };
     }
 
     Vector<Token> lex();
-    bool isAtEndOfFile() const;
+    bool NODELETE isAtEndOfFile() const;
 
 private:
     Token nextToken();
@@ -58,35 +52,21 @@ private:
     unsigned currentOffset() const { return m_currentPosition.offset; }
     unsigned currentTokenLength() const { return currentOffset() - m_tokenStartingPosition.offset; }
 
-    Token makeToken(TokenType type)
-    {
-        return { type, m_tokenStartingPosition, currentTokenLength() };
-    }
-    Token makeFloatToken(TokenType type, double floatValue)
-    {
-        return { type, m_tokenStartingPosition, currentTokenLength(), floatValue };
-    }
+    Token NODELETE makeToken(TokenType);
+    Token NODELETE makeFloatToken(TokenType, double);
+    Token NODELETE makeIntegerToken(TokenType, int64_t);
+    Token NODELETE makeIdentifierToken(String&&);
 
-    Token makeIntegerToken(TokenType type, int64_t integerValue)
-    {
-        return { type, m_tokenStartingPosition, currentTokenLength(), integerValue };
-    }
+    T NODELETE shift(unsigned = 1);
+    T NODELETE peek(unsigned = 0);
+    void NODELETE newLine();
+    bool NODELETE skipBlockComments();
+    bool NODELETE skipLineComment();
+    bool NODELETE skipWhitespaceAndComments();
 
-    Token makeIdentifierToken(String&& identifier)
-    {
-        return { WGSL::TokenType::Identifier, m_tokenStartingPosition, currentTokenLength(), WTFMove(identifier) };
-    }
-
-    T shift(unsigned = 1);
-    T peek(unsigned = 0);
-    void newLine();
-    bool skipBlockComments();
-    void skipLineComment();
-    bool skipWhitespaceAndComments();
-
-    T m_current;
     StringParsingBuffer<T> m_code;
-    SourcePosition m_currentPosition { 0, 0, 0 };
+    T m_current;
+    SourcePosition m_currentPosition { 1, 0, 0 };
     SourcePosition m_tokenStartingPosition { 0, 0, 0 };
 };
 

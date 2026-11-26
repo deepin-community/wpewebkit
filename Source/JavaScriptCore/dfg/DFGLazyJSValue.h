@@ -30,6 +30,7 @@
 #include "DFGCommon.h"
 #include "DFGFrozenValue.h"
 #include "GPRInfo.h"
+#include "SpeculatedType.h"
 #include <wtf/text/StringImpl.h>
 
 namespace JSC {
@@ -59,7 +60,7 @@ public:
         u.value = value;
     }
     
-    static LazyJSValue singleCharacterString(UChar character)
+    static LazyJSValue singleCharacterString(char16_t character)
     {
         LazyJSValue result;
         result.m_kind = SingleCharacterString;
@@ -95,7 +96,7 @@ public:
         return u.value;
     }
     
-    UChar character() const
+    char16_t character() const
     {
         ASSERT(m_kind == SingleCharacterString);
         return u.character;
@@ -111,7 +112,7 @@ public:
 
     TriState strictEqual(const LazyJSValue& other) const;
     
-    uintptr_t switchLookupValue(SwitchKind) const;
+    uintptr_t NODELETE switchLookupValue(SwitchKind) const;
 
     void emit(CCallHelpers&, JSValueRegs, Plan&) const;
     
@@ -119,11 +120,11 @@ public:
     void dumpInContext(PrintStream&, DumpContext*) const;
     
 private:
-    const StringImpl* tryGetStringImpl() const;
+    const StringImpl* NODELETE tryGetStringImpl() const;
     
     union {
         FrozenValue* value;
-        UChar character;
+        char16_t character;
         StringImpl* stringImpl;
     } u;
     LazinessKind m_kind;

@@ -32,7 +32,9 @@
 #include <span>
 #include <unicode/umachine.h>
 #include <wtf/Forward.h>
+#include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace PAL {
 
@@ -41,7 +43,8 @@ class TextEncoding;
 using UnencodableReplacementArray = std::array<char, 32>;
 
 class TextCodec {
-    WTF_MAKE_NONCOPYABLE(TextCodec); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(TextCodec);
+    WTF_MAKE_NONCOPYABLE(TextCodec);
 public:
     TextCodec() = default;
     virtual ~TextCodec() = default;
@@ -54,7 +57,7 @@ public:
     // Fills a null-terminated string representation of the given
     // unencodable character into the given replacement buffer.
     // The length of the string (not including the null) will be returned.
-    static int getUnencodableReplacement(char32_t, UnencodableHandling, UnencodableReplacementArray&);
+    static std::span<char> getUnencodableReplacement(char32_t, UnencodableHandling, UnencodableReplacementArray& replacement LIFETIME_BOUND);
 };
 
 Function<void(char32_t, Vector<uint8_t>&)> unencodableHandler(UnencodableHandling);

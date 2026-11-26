@@ -34,7 +34,7 @@ namespace WGSL {
 struct ValueVariable {
     unsigned id;
 };
-using AbstractValue = std::variant<ValueVariable, unsigned>;
+using AbstractValue = Variant<ValueVariable, unsigned>;
 
 struct TypeVariable {
     unsigned id;
@@ -51,7 +51,7 @@ struct AbstractPointer;
 struct AbstractArray;
 struct AbstractAtomic;
 
-using AbstractTypeImpl = std::variant<
+using AbstractTypeImpl = Variant<
     AbstractVector,
     AbstractMatrix,
     AbstractTexture,
@@ -122,6 +122,8 @@ struct OverloadCandidate {
     AbstractType result;
 };
 
+using ValidationFunction = std::optional<String>(*)(const FixedVector<std::optional<ConstantValue>>&, const FixedVector<const Type*>&);
+
 struct OverloadedDeclaration {
     enum Kind : uint8_t {
         Operator,
@@ -133,6 +135,7 @@ struct OverloadedDeclaration {
     bool mustUse;
 
     Expected<ConstantValue, String> (*constantFunction)(const Type*, const FixedVector<ConstantValue>&);
+    ValidationFunction validationFunction;
     OptionSet<ShaderStage> visibility;
     Vector<OverloadCandidate> overloads;
 };
@@ -153,7 +156,7 @@ static AbstractType allocateAbstractType(const T& type)
 template<typename T>
 static AbstractType allocateAbstractType(T&& type)
 {
-    return std::unique_ptr<AbstractTypeImpl>(new AbstractTypeImpl(WTFMove(type)));
+    return std::unique_ptr<AbstractTypeImpl>(new AbstractTypeImpl(WTF::move(type)));
 }
 
 } // namespace WGSL

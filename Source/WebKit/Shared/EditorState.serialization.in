@@ -43,23 +43,26 @@ enum class WebKit::TextAlignment : uint8_t {
 
 struct WebKit::EditorState {
     WebKit::EditorStateIdentifier identifier;
+    WebCore::SelectionType selectionType;
     bool shouldIgnoreSelectionChanges;
-    bool selectionIsNone;
-    bool selectionIsRange;
     bool selectionIsRangeInsideImageOverlay;
     bool selectionIsRangeInAutoFilledAndViewableField;
     bool isContentEditable;
     bool isContentRichlyEditable;
     bool isInPasswordField;
-    bool isInPlugin;
     bool hasComposition;
     bool triggeredByAccessibilitySelectionChange;
+    bool isInPlugin;
 #if PLATFORM(MAC)
     bool canEnableAutomaticSpellingCorrection;
+    bool inputMethodUsesCorrectKeyEventOrder;
+    bool inputMethodMustUseCompositionEvents;
 #endif
     std::optional<WebKit::EditorState::PostLayoutData> postLayoutData;
     std::optional<WebKit::EditorState::VisualData> visualData;
 };
+
+using WebCore::ScrollOffset = WebCore::IntPoint;
 
 [Nested] struct WebKit::EditorState::PostLayoutData {
     OptionSet<WebKit::TypingAttribute> typingAttributes;
@@ -69,8 +72,9 @@ struct WebKit::EditorState {
     WebCore::Color textColor;
     WebKit::ListType enclosingListType;
     WebCore::WritingDirection baseWritingDirection;
-    bool editableRootIsTransparentOrFullyClipped;
+    bool selectionIsTransparentOrFullyClipped;
     bool canEnableWritingSuggestions;
+    bool insideFixedPosition;
 #endif
 #if PLATFORM(IOS_FAMILY)
     String markedText;
@@ -86,7 +90,6 @@ struct WebKit::EditorState {
     bool isReplaceAllowed;
     bool hasContent;
     bool isStableStateUpdate;
-    bool insideFixedPosition;
     bool hasPlainText;
     WebCore::Color caretColor;
     bool hasCaretColorAuto;
@@ -107,22 +110,116 @@ struct WebKit::EditorState {
     uint64_t surroundingContextCursorPosition;
     uint64_t surroundingContextSelectionPosition;
 #endif
-    std::optional<WebCore::FontAttributes> fontAttributes;
     bool canCut;
     bool canCopy;
     bool canPaste;
 };
 
 [Nested] struct WebKit::EditorState::VisualData {
-#if PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || PLATFORM(WPE)
+    Markable<WebCore::FrameIdentifier> rootFrameID;
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     WebCore::IntRect caretRectAtStart;
+#endif
+#if PLATFORM(COCOA)
+    Vector<WebCore::SelectionGeometry> selectionGeometries;
+    Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
+        WebCore::IntRect caretRectAtEnd;
 #endif
 #if PLATFORM(IOS_FAMILY)
     WebCore::IntRect selectionClipRect;
-    WebCore::IntRect caretRectAtEnd;
-    Vector<WebCore::SelectionGeometry> selectionGeometries;
+    WebCore::IntRect editableRootBounds;
     Vector<WebCore::SelectionGeometry> markedTextRects;
     WebCore::IntRect markedTextCaretRectAtStart;
     WebCore::IntRect markedTextCaretRectAtEnd;
+    std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
+    std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
+    std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtStart;
+    std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtEnd;
+    WebCore::ScrollOffset enclosingScrollOffset;
+    bool enclosingLayerUsesContentsLayer;
+    bool needsHideSelectionDuringOverflowScrollQuirk;
 #endif
+};
+
+[Nested] enum class WebCore::FontAttributes::SubscriptOrSuperscript : uint8_t {
+    None,
+    Subscript,
+    Superscript
+};
+
+[Nested] enum class WebCore::FontAttributes::HorizontalAlignment : uint8_t {
+    Left,
+    Center,
+    Right,
+    Justify,
+    Natural
+};
+
+[CustomHeader, Nested] struct WebCore::Style::ListStyleType::NoneData {
+};
+
+[CustomHeader, Nested] struct WebCore::Style::ListStyleType::StringData {
+    AtomString identifier;
+};
+
+[CustomHeader, Nested] struct WebCore::Style::ListStyleType::CounterStyleData {
+    AtomString identifier;
+};
+
+header: <WebCore/StyleListStyleType.h>
+[CustomHeader, Nested] struct WebCore::Style::ListStyleType {
+    Variant<WebCore::Style::ListStyleType::NoneData, WebCore::Style::ListStyleType::StringData, WebCore::Style::ListStyleType::CounterStyleData> ipcData()
+};
+
+header: <WebCore/FontAttributes.h>
+[CustomHeader] struct WebCore::TextList {
+    WebCore::Style::ListStyleType styleType;
+    int startingItemNumber
+    bool ordered
+};
+
+struct WebCore::FontShadow {
+    WebCore::Color color;
+    WebCore::FloatSize offset;
+    double blurRadius;
+};
+
+[CustomHeader] struct WebCore::FontAttributes {
+    RefPtr<WebCore::Font> font
+    WebCore::Color backgroundColor
+    WebCore::Color foregroundColor
+    WebCore::FontShadow fontShadow
+    WebCore::FontAttributes::SubscriptOrSuperscript subscriptOrSuperscript
+    WebCore::FontAttributes::HorizontalAlignment horizontalAlignment
+    Vector<WebCore::TextList> textLists
+    bool hasUnderline
+    bool hasStrikeThrough
+    bool hasMultipleFonts
+};
+
+header: <WebCore/FontAttributeChanges.h>
+enum class WebCore::VerticalAlignChange : uint8_t {
+    Superscript,
+    Baseline,
+    Subscript
+};
+
+header: <WebCore/FontAttributeChanges.h>
+[CustomHeader] class WebCore::FontChanges {
+    String m_fontName;
+    String m_fontFamily;
+    std::optional<double> m_fontSize;
+    [Validator='!*m_fontSize || !*m_fontSizeDelta'] std::optional<double> m_fontSizeDelta;
+    std::optional<bool> m_bold;
+    std::optional<bool> m_italic;
+};
+
+class WebCore::FontAttributeChanges {
+    std::optional<WebCore::VerticalAlignChange> m_verticalAlign;
+    std::optional<WebCore::Color> m_backgroundColor;
+    std::optional<WebCore::Color> m_foregroundColor;
+    std::optional<WebCore::FontShadow> m_shadow;
+    std::optional<bool> m_strikeThrough;
+    std::optional<bool> m_underline;
+    WebCore::FontChanges m_fontChanges;
 };

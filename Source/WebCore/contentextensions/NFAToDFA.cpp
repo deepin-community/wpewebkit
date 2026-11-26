@@ -36,11 +36,13 @@
 #include "SerializedNFA.h"
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
+#include <wtf/IndexedRange.h>
 
 namespace WebCore {
 
 namespace ContentExtensions {
 
+typedef HashSet<unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> NFANodeIndexSet;
 typedef MutableRange<signed char, NFANodeIndexSet> NFANodeRange;
 typedef MutableRangeList<signed char, NFANodeIndexSet> NFANodeRangeList;
 typedef MutableRangeList<signed char, NFANodeIndexSet, 128> PreallocatedNFANodeRangeList;
@@ -89,18 +91,18 @@ static ALWAYS_INLINE void extendSetWithClosure(const NFANodeClosures& nfaNodeClo
     ASSERT(set.contains(nodeId));
     const UniqueNodeList& nodeClosure = nfaNodeClosures[nodeId];
     if (!nodeClosure.isEmpty())
-        set.add(nodeClosure.begin(), nodeClosure.end());
+        set.addAll(nodeClosure);
 }
 
 struct UniqueNodeIdSetImpl {
-    unsigned* buffer()
+    std::span<unsigned> NODELETE buffer()
     {
-        return m_buffer;
+        return unsafeMakeSpan(m_buffer, m_size);
     }
 
-    const unsigned* buffer() const
+    std::span<const unsigned> NODELETE buffer() const
     {
-        return m_buffer;
+        return unsafeMakeSpan(m_buffer, m_size);
     }
 
     unsigned m_size;
@@ -136,11 +138,10 @@ public:
         m_uniqueNodeIdSetBuffer->m_hash = hash;
         m_uniqueNodeIdSetBuffer->m_dfaNodeId = dfaNodeId;
 
-        unsigned* buffer = m_uniqueNodeIdSetBuffer->buffer();
-        for (unsigned nodeId : nodeIdSet) {
-            *buffer = nodeId;
-            ++buffer;
-        }
+        auto buffer = m_uniqueNodeIdSetBuffer->buffer();
+        size_t bufferIndex = 0;
+        for (unsigned nodeId : nodeIdSet)
+            buffer[bufferIndex++] = nodeId;
     }
 
     UniqueNodeIdSet(UniqueNodeIdSet&& other)
@@ -149,7 +150,7 @@ public:
         other.m_uniqueNodeIdSetBuffer = nullptr;
     }
 
-    UniqueNodeIdSet& operator=(UniqueNodeIdSet&& other)
+    UniqueNodeIdSet& NODELETE operator=(UniqueNodeIdSet&& other)
     {
         m_uniqueNodeIdSetBuffer = other.m_uniqueNodeIdSetBuffer;
         other.m_uniqueNodeIdSetBuffer = nullptr;
@@ -161,13 +162,13 @@ public:
         fastFree(m_uniqueNodeIdSetBuffer);
     }
 
-    friend bool operator==(const UniqueNodeIdSet&, const UniqueNodeIdSet&) = default;
+    friend bool NODELETE operator==(const UniqueNodeIdSet&, const UniqueNodeIdSet&) = default;
 
-    bool operator==(const NodeIdSet& other) const
+    bool NODELETE operator==(const NodeIdSet& other) const
     {
         if (m_uniqueNodeIdSetBuffer->m_size != static_cast<unsigned>(other.size()))
             return false;
-        unsigned* buffer = m_uniqueNodeIdSetBuffer->buffer();
+        auto buffer = m_uniqueNodeIdSetBuffer->buffer();
         for (unsigned i = 0; i < m_uniqueNodeIdSetBuffer->m_size; ++i) {
             if (!other.contains(buffer[i]))
                 return false;
@@ -175,23 +176,23 @@ public:
         return true;
     }
 
-    UniqueNodeIdSetImpl* impl() const { return m_uniqueNodeIdSetBuffer; }
+    UniqueNodeIdSetImpl* NODELETE impl() const { return m_uniqueNodeIdSetBuffer; }
 
-    unsigned hash() const { return m_uniqueNodeIdSetBuffer->m_hash; }
-    bool isEmptyValue() const { return !m_uniqueNodeIdSetBuffer; }
-    bool isDeletedValue() const { return m_uniqueNodeIdSetBuffer == reinterpret_cast<UniqueNodeIdSetImpl*>(-1); }
+    unsigned NODELETE hash() const { return m_uniqueNodeIdSetBuffer->m_hash; }
+    bool NODELETE isEmptyValue() const { return !m_uniqueNodeIdSetBuffer; }
+    bool NODELETE isDeletedValue() const { return m_uniqueNodeIdSetBuffer == reinterpret_cast<UniqueNodeIdSetImpl*>(-1); }
 
 private:
     UniqueNodeIdSetImpl* m_uniqueNodeIdSetBuffer = nullptr;
 };
 
 struct UniqueNodeIdSetHash {
-    static unsigned hash(const UniqueNodeIdSet& p)
+    static unsigned NODELETE hash(const UniqueNodeIdSet& p)
     {
         return p.hash();
     }
 
-    static bool equal(const UniqueNodeIdSet& a, const UniqueNodeIdSet& b)
+    static bool NODELETE equal(const UniqueNodeIdSet& a, const UniqueNodeIdSet& b)
     {
         return a == b;
     }
@@ -206,7 +207,7 @@ struct UniqueNodeIdSetHashHashTraits : public WTF::CustomHashTraits<UniqueNodeId
     static const int minimumTableSize = 128;
 };
 
-typedef HashSet<std::unique_ptr<UniqueNodeIdSet>, UniqueNodeIdSetHash, UniqueNodeIdSetHashHashTraits> UniqueNodeIdSetTable;
+using UniqueNodeIdSetTable = HashSet<std::unique_ptr<UniqueNodeIdSet>, UniqueNodeIdSetHash, UniqueNodeIdSetHashHashTraits>;
 
 struct NodeIdSetToUniqueNodeIdSetSource {
     NodeIdSetToUniqueNodeIdSetSource(DFA& dfa, const SerializedNFA& nfa, const NodeIdSet& nodeIdSet)
@@ -227,12 +228,12 @@ struct NodeIdSetToUniqueNodeIdSetSource {
 };
 
 struct NodeIdSetToUniqueNodeIdSetTranslator {
-    static unsigned hash(const NodeIdSetToUniqueNodeIdSetSource& source)
+    static unsigned NODELETE hash(const NodeIdSetToUniqueNodeIdSetSource& source)
     {
         return source.hash;
     }
 
-    static inline bool equal(const UniqueNodeIdSet& a, const NodeIdSetToUniqueNodeIdSetSource& b)
+    static inline bool NODELETE equal(const UniqueNodeIdSet& a, const NodeIdSetToUniqueNodeIdSetSource& b)
     {
         return a == b.nodeIdSet;
     }
@@ -274,8 +275,7 @@ struct DataConverterWithEpsilonClosure {
         NFANodeIndexSet result;
         for (unsigned nodeId : iterable) {
             result.add(nodeId);
-            const UniqueNodeList& nodeClosure = nfaNodeclosures[nodeId];
-            result.add(nodeClosure.begin(), nodeClosure.end());
+            result.addAll(nfaNodeclosures[nodeId]);
         }
         return result;
     }
@@ -285,10 +285,8 @@ struct DataConverterWithEpsilonClosure {
     {
         for (unsigned nodeId : iterable) {
             auto addResult = destination.add(nodeId);
-            if (addResult.isNewEntry) {
-                const UniqueNodeList& nodeClosure = nfaNodeclosures[nodeId];
-                destination.add(nodeClosure.begin(), nodeClosure.end());
-            }
+            if (addResult.isNewEntry)
+                destination.addAll(nfaNodeclosures[nodeId]);
         }
     }
 };
@@ -297,7 +295,7 @@ static inline void createCombinedTransition(PreallocatedNFANodeRangeList& combin
 {
     combinedRangeList.clear();
 
-    const unsigned* buffer = sourceNodeSet.buffer();
+    auto buffer = sourceNodeSet.buffer();
 
     DataConverterWithEpsilonClosure converter { nfaNodeclosures };
     for (unsigned i = 0; i < sourceNodeSet.m_size; ++i) {
@@ -319,7 +317,7 @@ static ALWAYS_INLINE unsigned getOrCreateDFANode(const NodeIdSet& nfaNodeSet, co
 
 std::optional<DFA> NFAToDFA::convert(NFA&& nfa)
 {
-    auto serializedNFA = SerializedNFA::serialize(WTFMove(nfa));
+    auto serializedNFA = SerializedNFA::serialize(WTF::move(nfa));
     if (!serializedNFA)
         return std::nullopt;
 

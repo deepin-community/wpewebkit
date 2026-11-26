@@ -28,6 +28,7 @@
 #include "WebFindOptions.h"
 #include "WebFoundTextRange.h"
 #include <WebCore/FindOptions.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PageOverlay.h>
 #include <WebCore/PlatformLayerIdentifier.h>
@@ -41,6 +42,8 @@
 
 namespace WebCore {
 class Document;
+class HTMLMediaElement;
+class LocalFrame;
 }
 
 namespace WebKit {
@@ -54,7 +57,7 @@ class WebFoundTextRangeController : private WebCore::PageOverlayClient {
 public:
     explicit WebFoundTextRangeController(WebPage&);
 
-    void findTextRangesForStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(Vector<WebKit::WebFoundTextRange>&&)>&&);
+    void findTextRangesForStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Vector<WebFoundTextRange>>&&)>&&);
 
     void replaceFoundTextRangeWithString(const WebFoundTextRange&, const String&);
 
@@ -65,12 +68,14 @@ public:
 
     void didBeginTextSearchOperation();
 
-    void addLayerForFindOverlay(CompletionHandler<void(WebCore::PlatformLayerIdentifier)>&&);
+    void addLayerForFindOverlay(CompletionHandler<void(std::optional<WebCore::PlatformLayerIdentifier>)>&&);
     void removeLayerForFindOverlay();
 
     void requestRectForFoundTextRange(const WebFoundTextRange&, CompletionHandler<void(WebCore::FloatRect)>&&);
 
     void redraw();
+
+    void clearCachedRanges();
 
 private:
     // PageOverlayClient.
@@ -83,18 +88,28 @@ private:
     void setTextIndicatorWithRange(const WebCore::SimpleRange&);
     void flashTextIndicatorAndUpdateSelectionWithRange(const WebCore::SimpleRange&);
 
+    RefPtr<WebCore::TextIndicator> createTextIndicatorForPDFRange(const WebFoundTextRange&, WebCore::TextIndicatorPresentationTransition);
+    void setTextIndicatorWithPDFRange(const WebFoundTextRange&);
+    void flashTextIndicatorAndUpdateSelectionWithPDFRange(const WebFoundTextRange&);
+
     Vector<WebCore::FloatRect> rectsForTextMatchesInRect(WebCore::IntRect clipRect);
 
+    WebCore::LocalFrame* frameForFoundTextRange(const WebFoundTextRange&) const;
     WebCore::Document* documentForFoundTextRange(const WebFoundTextRange&) const;
     std::optional<WebCore::SimpleRange> simpleRangeFromFoundTextRange(WebFoundTextRange);
+
+#if ENABLE(VIDEO)
+    RefPtr<WebCore::HTMLMediaElement> mediaElementForCueRange(const WebFoundTextRange&) const;
+#endif
 
     WeakPtr<WebPage> m_webPage;
     RefPtr<WebCore::PageOverlay> m_findPageOverlay;
 
     WebFoundTextRange m_highlightedRange;
 
-    HashMap<WebFoundTextRange, std::optional<WebCore::SimpleRange>> m_cachedFoundRanges;
+    HashMap<WebFoundTextRange, std::optional<WebCore::WeakSimpleRange>> m_cachedFoundRanges;
     HashMap<WebFoundTextRange, FindDecorationStyle> m_decoratedRanges;
+    HashSet<WebFoundTextRange> m_unhighlightedFoundRanges;
 
     RefPtr<WebCore::TextIndicator> m_textIndicator;
 };

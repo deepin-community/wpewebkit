@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(JIT)
 
-#include "CodeLocation.h"
-#include "PropertyOffset.h"
+#include <JavaScriptCore/CodeLocation.h>
+#include <JavaScriptCore/PropertyOffset.h>
 
 namespace JSC {
 
@@ -36,7 +38,7 @@ class CodeBlock;
 class InlineCacheHandler;
 class JSArray;
 class Structure;
-class StructureStubInfo;
+class PropertyInlineCache;
 class VM;
 
 class InlineAccess {
@@ -91,14 +93,14 @@ public:
         return std::max(size, sizeForPropertyAccess());
     }
 
-    static bool generateSelfPropertyAccess(StructureStubInfo&, Structure*, PropertyOffset);
-    static bool canGenerateSelfPropertyReplace(StructureStubInfo&, PropertyOffset);
-    static bool generateSelfPropertyReplace(StructureStubInfo&, Structure*, PropertyOffset);
-    static bool isCacheableArrayLength(StructureStubInfo&, JSArray*);
-    static bool isCacheableStringLength(StructureStubInfo&);
-    static bool generateArrayLength(StructureStubInfo&, JSArray*);
-    static bool generateSelfInAccess(StructureStubInfo&, Structure*);
-    static bool generateStringLength(StructureStubInfo&);
+    static bool generateSelfPropertyAccess(PropertyInlineCache&, Structure*, PropertyOffset);
+    static bool canGenerateSelfPropertyReplace(PropertyInlineCache&, PropertyOffset);
+    static bool generateSelfPropertyReplace(PropertyInlineCache&, Structure*, PropertyOffset);
+    static bool isCacheableArrayLength(PropertyInlineCache&, JSArray*);
+    static bool isCacheableStringLength(PropertyInlineCache&);
+    static bool generateArrayLength(PropertyInlineCache&, JSArray*);
+    static bool generateSelfInAccess(PropertyInlineCache&, Structure*);
+    static bool generateStringLength(PropertyInlineCache&);
 
     // This is helpful when determining the size of an IC on
     // various platforms. When adding a new type of IC, implement

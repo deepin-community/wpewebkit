@@ -31,8 +31,8 @@
 
 namespace WebKit {
 
-enum class ShapeDetectionIdentifierType { };
-using ShapeDetectionIdentifier = LegacyNullableObjectIdentifier<ShapeDetectionIdentifierType>;
+struct ShapeDetectionIdentifierType;
+using ShapeDetectionIdentifier = ObjectIdentifier<ShapeDetectionIdentifierType>;
 
 } // namespace WebKit
 

@@ -51,14 +51,17 @@
 #include "SVGStyleElement.h"
 #include "ScriptElement.h"
 #include "ScriptSourceCode.h"
-#include "StyleScope.h"
+#include "StyleDocumentScope.h"
 #include "TextResourceDecoder.h"
 #include "XMLNSNames.h"
 #include <wtf/Ref.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(XMLDocumentParser);
 
 using namespace HTMLNames;
 
@@ -70,10 +73,9 @@ void XMLDocumentParser::pushCurrentNode(ContainerNode* n)
     ASSERT(m_currentNode);
     if (n != document())
         n->ref();
-    m_currentNodeStack.append(m_currentNode);
-    m_currentNode = n;
+    m_currentNodeStack.append(std::exchange(m_currentNode, n));
     if (m_currentNodeStack.size() > maxXMLTreeDepth)
-        handleError(XMLErrors::fatal, "Excessive node nesting.", textPosition());
+        handleError(XMLErrors::Type::Fatal, "Excessive node nesting.", textPosition());
 }
 
 void XMLDocumentParser::popCurrentNode()
@@ -85,8 +87,7 @@ void XMLDocumentParser::popCurrentNode()
     if (m_currentNode != document())
         m_currentNode->deref();
 
-    m_currentNode = m_currentNodeStack.last();
-    m_currentNodeStack.removeLast();
+    m_currentNode = m_currentNodeStack.takeLast();
 }
 
 void XMLDocumentParser::clearCurrentNodeStack()
@@ -97,8 +98,10 @@ void XMLDocumentParser::clearCurrentNodeStack()
     m_leafTextNode = nullptr;
 
     if (m_currentNodeStack.size()) { // Aborted parsing.
-        for (size_t i = m_currentNodeStack.size() - 1; i != 0; --i)
-            m_currentNodeStack[i]->deref();
+        for (size_t i = m_currentNodeStack.size() - 1; i != 0; --i) {
+            if (m_currentNodeStack[i])
+                m_currentNodeStack[i]->deref();
+        }
         if (m_currentNodeStack[0] && m_currentNodeStack[0] != document())
             m_currentNodeStack[0]->deref();
         m_currentNodeStack.clear();
@@ -112,7 +115,7 @@ void XMLDocumentParser::insert(SegmentedString&&)
 
 void XMLDocumentParser::append(RefPtr<StringImpl>&& inputSource)
 {
-    String source { WTFMove(inputSource) };
+    String source { WTF::move(inputSource) };
 
     if (m_sawXSLTransform || !m_sawFirstElement)
         m_originalSourceForTransform.append(source);
@@ -128,14 +131,14 @@ void XMLDocumentParser::append(RefPtr<StringImpl>&& inputSource)
     doWrite(source);
 }
 
-void XMLDocumentParser::handleError(XMLErrors::ErrorType type, const char* m, TextPosition position)
+void XMLDocumentParser::handleError(XMLErrors::Type type, const char* m, TextPosition position)
 {
     if (!m_xmlErrors)
-        m_xmlErrors = makeUnique<XMLErrors>(*document());
+        m_xmlErrors = makeUnique<XMLErrors>(*protect(document()));
     m_xmlErrors->handleError(type, m, position);
-    if (type != XMLErrors::warning)
+    if (type != XMLErrors::Type::Warning)
         m_sawError = true;
-    if (type == XMLErrors::fatal)
+    if (type == XMLErrors::Type::Fatal)
         stopParsing();
 }
 
@@ -146,8 +149,9 @@ void XMLDocumentParser::createLeafTextNode()
 
     ASSERT(m_bufferedText.size() == 0);
     ASSERT(!m_leafTextNode);
-    m_leafTextNode = Text::create(m_currentNode->document(), String { emptyString() });
-    m_currentNode->parserAppendChild(*m_leafTextNode);
+    m_leafTextNode = Text::create(protect(m_currentNode->document()), String { emptyString() });
+    if (RefPtr currentNode = m_currentNode.get())
+        currentNode->parserAppendChild(*protect(m_leafTextNode));
 }
 
 bool XMLDocumentParser::updateLeafTextNode()
@@ -158,11 +162,12 @@ bool XMLDocumentParser::updateLeafTextNode()
     if (!m_leafTextNode)
         return true;
 
-    if (isXHTMLDocument())
-        m_leafTextNode->parserAppendData(String::fromUTF8(m_bufferedText.span()));
-    else {
+    if (isXHTMLDocument()) {
+        StringBuilder buffer;
+        protect(m_leafTextNode)->parserAppendData(String::fromUTF8(m_bufferedText.span()), buffer);
+    } else {
         // This operation might fire mutation event, see below.
-        m_leafTextNode->appendData(String::fromUTF8(m_bufferedText.span()));
+        protect(m_leafTextNode)->appendData(String::fromUTF8(m_bufferedText.span()));
     }
     m_bufferedText = { };
 
@@ -175,6 +180,7 @@ bool XMLDocumentParser::updateLeafTextNode()
 
 void XMLDocumentParser::detach()
 {
+    m_scriptWaitingForStylesheets = nullptr;
     clearCurrentNodeStack();
     ScriptableDocumentParser::detach();
 }
@@ -202,14 +208,25 @@ void XMLDocumentParser::end()
             return;
     } else {
         updateLeafTextNode();
+
+        // Appending to the leaf text node may have fired mutation events, which can run arbitrary scripts.
+        if (isDetached())
+            return;
         document()->styleScope().didChangeStyleSheetEnvironment();
     }
 
     if (isParsing())
         prepareToStopParsing();
-    document()->setReadyState(Document::ReadyState::Interactive);
+
+    Ref document = *this->document();
+    document->setReadyState(Document::ReadyState::Interactive);
+
+    // Setting the ready state above dispatches readystatechange, which can run arbitrary scripts.
+    if (isDetached())
+        return;
+
     clearCurrentNodeStack();
-    document()->finishedParsing();
+    document->finishedParsing();
 }
 
 void XMLDocumentParser::finish()
@@ -248,6 +265,31 @@ void XMLDocumentParser::notifyFinished(PendingScript& pendingScript)
         resumeParsing();
 }
 
+bool XMLDocumentParser::hasScriptsWaitingForStylesheets() const
+{
+    return !!m_scriptWaitingForStylesheets;
+}
+
+void XMLDocumentParser::executeScriptsWaitingForStylesheets()
+{
+    ASSERT(!isDetached());
+
+    RefPtr document = this->document();
+    if (document->styleScope().hasPendingSheets())
+        return;
+
+    ASSERT(m_scriptWaitingForStylesheets);
+
+    RefPtr pendingScript = std::exchange(m_scriptWaitingForStylesheets, nullptr);
+    if (!pendingScript)
+        return;
+
+    pendingScript->element().executePendingScript(*pendingScript);
+
+    if (!isDetached() && !m_requestingScript)
+        resumeParsing();
+}
+
 void XMLDocumentParser::pauseParsing()
 {
     ASSERT(!m_parserPaused);
@@ -272,10 +314,10 @@ static XMLParsingNamespaces findXMLParsingNamespaces(Element* contextElement)
 
     result.defaultNamespace = contextElement->lookupNamespaceURI(nullAtom());
 
-    for (auto& element : lineageOfType<Element>(*contextElement)) {
-        if (!element.hasAttributes())
+    for (Ref element : lineageOfType<Element>(*contextElement)) {
+        if (!element->hasAttributes())
             continue;
-        for (auto& attribute : element.attributesIterator()) {
+        for (auto& attribute : element->attributes()) {
             if (attribute.prefix() == xmlnsAtom())
                 result.prefixNamespaces.set(attribute.localName(), attribute.value());
         }
@@ -293,12 +335,12 @@ bool XMLDocumentParser::parseDocumentFragment(const String& chunk, DocumentFragm
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-xhtml-syntax.html#xml-fragment-parsing-algorithm
     // For now we have a hack for script/style innerHTML support:
     if (contextElement && (contextElement->hasLocalName(HTMLNames::scriptTag->localName()) || contextElement->hasLocalName(HTMLNames::styleTag->localName()))) {
-        fragment.parserAppendChild(fragment.document().createTextNode(String { chunk }));
+        fragment.parserAppendChild(protect(fragment.document())->createTextNode(String { chunk }));
         return true;
     }
 
     auto namespaces = findXMLParsingNamespaces(contextElement);
-    auto parser = XMLDocumentParser::create(fragment, WTFMove(namespaces.prefixNamespaces), namespaces.defaultNamespace, parserContentPolicy);
+    auto parser = XMLDocumentParser::create(fragment, WTF::move(namespaces.prefixNamespaces), namespaces.defaultNamespace, parserContentPolicy);
     bool wellFormed = parser->appendFragmentSource(chunk);
     // Do not call finish(). The finish() and doEnd() implementations touch the main document and loader and can cause crashes in the fragment case.
     parser->detach(); // Allows ~DocumentParser to assert it was detached before destruction.

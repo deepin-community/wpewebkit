@@ -25,19 +25,21 @@
 
 #pragma once
 
-#include "AffineTransform.h"
-#include "FloatRoundedRect.h"
-#include "IntRect.h"
-#include "IntRectHash.h"
-#include "InteractionRegion.h"
-#include "Node.h"
-#include "Region.h"
-#include "RegionContext.h"
-#include "RenderStyleConstants.h"
-#include "TouchAction.h"
+#include <WebCore/AffineTransform.h>
+#include <WebCore/EventTrackingRegions.h>
+#include <WebCore/FloatRoundedRect.h>
+#include <WebCore/IntRect.h>
+#include <WebCore/IntRectHash.h>
+#include <WebCore/InteractionRegion.h>
+#include <WebCore/NodeIdentifier.h>
+#include <WebCore/Region.h>
+#include <WebCore/RegionContext.h>
+#include <WebCore/RenderStyleConstants.h>
+#include <WebCore/TouchAction.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -45,10 +47,14 @@ namespace WebCore {
 class EventRegion;
 class Path;
 class RenderObject;
-class RenderStyle;
+enum class TrackingType : uint8_t;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class EventRegionContext final : public RegionContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(EventRegionContext, WEBCORE_EXPORT);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventRegionContext);
 public:
     WEBCORE_EXPORT explicit EventRegionContext(EventRegion&);
@@ -56,16 +62,18 @@ public:
 
     bool isEventRegionContext() const final { return true; }
 
-    WEBCORE_EXPORT void unite(const FloatRoundedRect&, RenderObject&, const RenderStyle&, bool overrideUserModifyIsEditable = false);
+    enum class ContributeToInteractionRegions : bool { No, Yes };
+    WEBCORE_EXPORT void unite(const FloatRoundedRect&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false, ContributeToInteractionRegions = ContributeToInteractionRegions::Yes);
     bool contains(const IntRect&) const;
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    void uniteInteractionRegions(RenderObject&, const FloatRect&, const FloatSize&, const std::optional<AffineTransform>&);
-    bool shouldConsolidateInteractionRegion(RenderObject&, const IntRect&, const ElementIdentifier&);
-    void convertGuardContainersToInterationIfNeeded(float minimumCornerRadius);
+    void uniteInteractionRegions(const RenderObject&, const FloatRect&, const FloatSize&, const std::optional<AffineTransform>&);
+    bool shouldConsolidateInteractionRegion(const RenderObject&, const IntRect&, const NodeIdentifier&);
+    void convertGuardContainersToInteractionIfNeeded(float minimumCornerRadius);
     void removeSuperfluousInteractionRegions();
     void shrinkWrapInteractionRegions();
     void copyInteractionRegionsToEventRegion(float minimumCornerRadius);
+    void reserveCapacityForInteractionRegions(size_t);
 #endif
 
 private:
@@ -77,11 +85,26 @@ private:
     HashSet<IntRect> m_occlusionRects;
     enum class Inflated : bool { No, Yes };
     HashMap<IntRect, Inflated> m_guardRects;
-    HashSet<ElementIdentifier> m_containerRemovalCandidates;
-    HashSet<ElementIdentifier> m_containersToRemove;
-    HashMap<ElementIdentifier, Vector<InteractionRegion>> m_discoveredRegionsByElement;
+    HashSet<NodeIdentifier> m_containerRemovalCandidates;
+    HashSet<NodeIdentifier> m_containersToRemove;
+    HashMap<NodeIdentifier, Vector<InteractionRegion>> m_discoveredRegionsByElement;
 #endif
 };
+
+#if ENABLE(TOUCH_EVENT_REGIONS)
+struct TouchEventListenerRegion {
+    bool operator==(const TouchEventListenerRegion&) const = default;
+
+    bool isEmpty() const { return start.isEmpty() && end.isEmpty() && move.isEmpty() && cancel.isEmpty(); }
+
+    Region start;
+    Region end;
+    Region move;
+    Region cancel;
+};
+
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const TouchEventListenerRegion&);
+#endif
 
 class EventRegion {
 public:
@@ -93,6 +116,9 @@ public:
 #if ENABLE(WHEEL_EVENT_REGIONS)
     , WebCore::Region wheelEventListenerRegion
     , WebCore::Region nonPassiveWheelEventListenerRegion
+#endif
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    , EventTrackingRegions touchEventListenerRegion
 #endif
 #if ENABLE(EDITABLE_REGION)
     , std::optional<WebCore::Region>
@@ -108,24 +134,29 @@ public:
 
     friend bool operator==(const EventRegion&, const EventRegion&) = default;
 
-    void unite(const Region&, RenderObject&, const RenderStyle&, bool overrideUserModifyIsEditable = false);
-    void translate(const IntSize&);
+    void unite(const Region&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false);
+    void NODELETE translate(const IntSize&);
 
     bool contains(const IntPoint& point) const { return m_region.contains(point); }
     bool contains(const IntRect& rect) const { return m_region.contains(rect); }
     bool intersects(const IntRect& rect) const { return m_region.intersects(rect); }
 
-    const Region& region() const { return m_region; }
+    const Region& region() const LIFETIME_BOUND { return m_region; }
 
 #if ENABLE(TOUCH_ACTION_REGIONS)
     bool hasTouchActions() const { return !m_touchActionRegions.isEmpty(); }
     WEBCORE_EXPORT OptionSet<TouchAction> touchActionsForPoint(const IntPoint&) const;
-    const Region* regionForTouchAction(TouchAction) const;
+    const Region* regionForTouchAction(TouchAction) const LIFETIME_BOUND;
+#endif
+
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    WEBCORE_EXPORT TrackingType eventTrackingTypeForPoint(EventTrackingRegionsEventType, const IntPoint&) const;
+    const EventTrackingRegions& touchEventListenerRegion() const LIFETIME_BOUND { return m_touchEventListenerRegion; }
 #endif
 
 #if ENABLE(WHEEL_EVENT_REGIONS)
-    WEBCORE_EXPORT OptionSet<EventListenerRegionType> eventListenerRegionTypesForPoint(const IntPoint&) const;
-    const Region& eventListenerRegionForType(EventListenerRegionType) const;
+    WEBCORE_EXPORT OptionSet<EventListenerRegionType> NODELETE eventListenerRegionTypesForPoint(const IntPoint&) const;
+    const Region& NODELETE eventListenerRegionForType(EventListenerRegionType) const LIFETIME_BOUND;
 #endif
 
 #if ENABLE(EDITABLE_REGION)
@@ -138,15 +169,16 @@ public:
     void dump(TextStream&) const;
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    const Vector<InteractionRegion>& interactionRegions() const { return m_interactionRegions; }
+    const Vector<InteractionRegion>& interactionRegions() const LIFETIME_BOUND { return m_interactionRegions; }
     void appendInteractionRegions(const Vector<InteractionRegion>&);
     void clearInteractionRegions();
 #endif
 
 private:
-    friend struct IPC::ArgumentCoder<EventRegion, void>;
+    friend struct IPC::ArgumentCoder<EventRegion>;
 #if ENABLE(TOUCH_ACTION_REGIONS)
     void uniteTouchActions(const Region&, OptionSet<TouchAction>);
+    void subtractAutoFromTouchActions(const Region&);
 #endif
     void uniteEventListeners(const Region&, OptionSet<EventListenerRegionType>);
 
@@ -157,6 +189,9 @@ private:
 #if ENABLE(WHEEL_EVENT_REGIONS)
     Region m_wheelEventListenerRegion;
     Region m_nonPassiveWheelEventListenerRegion;
+#endif
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    EventTrackingRegions m_touchEventListenerRegion;
 #endif
 #if ENABLE(EDITABLE_REGION)
     std::optional<Region> m_editableRegion;

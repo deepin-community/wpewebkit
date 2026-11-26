@@ -31,6 +31,8 @@
 
 #include <wtf/PrintStream.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DirectJITCode);
@@ -149,6 +151,11 @@ JITCode::CodeRef<JSEntryPtrTag> JITCode::swapCodeRefForDebugger(JITCode::CodeRef
     return CodeRef<JSEntryPtrTag>();
 }
 
+CodePtr<JSEntryPtrTag> JITCode::swapCodePtrWithArityCheckForDebugger(CodePtr<JSEntryPtrTag>)
+{
+    return CodePtr<JSEntryPtrTag>();
+}
+
 JITCodeWithCodeRef::JITCodeWithCodeRef(JITType jitType)
     : JITCode(jitType)
 {
@@ -195,7 +202,7 @@ unsigned JITCodeWithCodeRef::offsetOf(void* pointerIntoCode)
 
 size_t JITCodeWithCodeRef::size()
 {
-    if (RefPtr memory = m_executableMemory)
+    if (auto* memory = m_executableMemory.get())
         return memory->sizeInBytes();
     return 0;
 }
@@ -211,8 +218,14 @@ JITCode::CodeRef<JSEntryPtrTag> JITCodeWithCodeRef::swapCodeRefForDebugger(JITCo
     ASSERT(canSwapCodeRefForDebugger());
     RELEASE_ASSERT(m_addressForCall);
     RELEASE_ASSERT(ref);
-    auto old = CodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(m_addressForCall);
-    ASSERT(!m_executableMemory);
+
+    CodeRef<JSEntryPtrTag> old;
+    if (m_executableMemory) {
+        old = CodeRef<JSEntryPtrTag>(m_executableMemory.releaseNonNull());
+        RELEASE_ASSERT(old.code() == m_addressForCall);
+    } else
+        old = CodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(m_addressForCall);
+
     m_addressForCall = ref.code();
     m_executableMemory = ref.executableMemory();
     return old;
@@ -255,15 +268,24 @@ void DirectJITCode::initializeCodeRefForDFG(JITCode::CodeRef<JSEntryPtrTag> ref,
 CodePtr<JSEntryPtrTag> DirectJITCode::addressForCall(ArityCheckMode arity)
 {
     switch (arity) {
-    case ArityCheckNotRequired:
+    case ArityCheckMode::ArityCheckNotRequired:
         RELEASE_ASSERT(m_addressForCall);
         return m_addressForCall;
-    case MustCheckArity:
+    case ArityCheckMode::MustCheckArity:
         RELEASE_ASSERT(m_withArityCheck);
         return m_withArityCheck;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return CodePtr<JSEntryPtrTag>();
+}
+
+CodePtr<JSEntryPtrTag> DirectJITCode::swapCodePtrWithArityCheckForDebugger(CodePtr<JSEntryPtrTag> withArityCheck)
+{
+    RELEASE_ASSERT(m_withArityCheck);
+    RELEASE_ASSERT(withArityCheck);
+    auto old = m_withArityCheck;
+    m_withArityCheck = withArityCheck;
+    return old;
 }
 
 NativeJITCode::NativeJITCode(JITType jitType)
@@ -282,7 +304,7 @@ NativeJITCode::~NativeJITCode() = default;
 CodePtr<JSEntryPtrTag> NativeJITCode::addressForCall(ArityCheckMode arity)
 {
     RELEASE_ASSERT(m_addressForCall);
-    ASSERT_UNUSED(arity, arity == ArityCheckNotRequired || arity == MustCheckArity);
+    ASSERT_UNUSED(arity, arity == ArityCheckMode::ArityCheckNotRequired || arity == ArityCheckMode::MustCheckArity);
     return m_addressForCall;
 }
 
@@ -293,7 +315,7 @@ NativeDOMJITCode::NativeDOMJITCode(CodeRef<JSEntryPtrTag> ref, JITType type, Int
 }
 
 #if ENABLE(JIT)
-RegisterSetBuilder JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex)
+RegisterSet JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex)
 {
     return { };
 }
@@ -310,3 +332,4 @@ void printInternal(PrintStream& out, JSC::JITType type)
 
 } // namespace WTF
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

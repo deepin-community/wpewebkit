@@ -27,7 +27,7 @@
 namespace WebCore {
 
 class RenderCombineText final : public RenderText {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderCombineText);
+    WTF_MAKE_TZONE_ALLOCATED(RenderCombineText);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderCombineText);
 public:
     RenderCombineText(Text&, const String&);
@@ -36,7 +36,7 @@ public:
     Text& textNode() const { return downcast<Text>(nodeForNonAnonymous()); }
 
     void combineTextIfNeeded();
-    std::optional<FloatPoint> computeTextOrigin(const FloatRect& boxRect) const;
+    std::optional<FloatPoint> NODELETE computeTextOrigin(const FloatRect& boxRect) const;
     String combinedStringForRendering() const;
     bool isCombined() const { return m_isCombined; }
     float combinedTextWidth(const FontCascade& font) const { return font.size(); }
@@ -47,10 +47,10 @@ private:
     void node() const = delete;
 
     ASCIILiteral renderName() const override { return "RenderCombineText"_s; }
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
     void setRenderedText(const String&) override;
 
-    std::unique_ptr<RenderStyle> m_combineFontStyle;
+    std::unique_ptr<Style::ComputedStyle> m_combineFontStyle;
     float m_combinedTextWidth { 0 };
     float m_combinedTextAscent { 0 };
     float m_combinedTextDescent { 0 };

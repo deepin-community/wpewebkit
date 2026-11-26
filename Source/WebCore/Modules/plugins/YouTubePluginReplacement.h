@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "PluginReplacement.h"
+#include <WebCore/PluginReplacement.h>
 #include <wtf/HashMap.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomStringHash.h>
@@ -50,14 +50,13 @@ private:
     static bool supportsMIMEType(const String&);
     static bool supportsFileExtension(StringView);
     static bool supportsURL(const URL&);
-    static bool isEnabledBySettings(const Settings&);
 
     void installReplacement(ShadowRoot&) final;
 
     AtomString youTubeURL(const AtomString& rawURL);
 
     bool willCreateRenderer() final { return m_embedShadowElement; }
-    RenderPtr<RenderElement> createElementRenderer(HTMLPlugInElement&, RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(HTMLPlugInElement&, Style::ComputedStyle&&, const RenderTreePosition&) final;
 
     WeakPtr<HTMLPlugInElement, WeakPtrImplWithEventTargetData> m_parentElement;
     RefPtr<YouTubeEmbedShadowElement> m_embedShadowElement;

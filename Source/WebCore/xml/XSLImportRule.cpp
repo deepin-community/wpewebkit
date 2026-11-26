@@ -28,8 +28,16 @@
 #include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "Document.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(XSLImportRule);
+
+Ref<XSLImportRule> XSLImportRule::create(XSLStyleSheet& parentSheet, const String& href)
+{
+    return adoptRef(*new XSLImportRule(parentSheet, href));
+}
 
 XSLImportRule::XSLImportRule(XSLStyleSheet& parent, const String& href)
     : m_parentStyleSheet(parent)
@@ -40,7 +48,7 @@ XSLImportRule::XSLImportRule(XSLStyleSheet& parent, const String& href)
 XSLImportRule::~XSLImportRule()
 {
     if (m_styleSheet)
-        m_styleSheet->setParentStyleSheet(nullptr);
+        styleSheet()->setParentStyleSheet(nullptr);
 
     if (m_cachedSheet)
         m_cachedSheet->removeClient(*this);
@@ -49,13 +57,13 @@ XSLImportRule::~XSLImportRule()
 void XSLImportRule::setXSLStyleSheet(const String& href, const URL& baseURL, const String& sheet)
 {
     if (m_styleSheet)
-        m_styleSheet->setParentStyleSheet(nullptr);
+        styleSheet()->setParentStyleSheet(nullptr);
 
     // FIXME: parentStyleSheet() should never be null here.
     RefPtr parent = parentStyleSheet();
     m_styleSheet = XSLStyleSheet::create(parent.get(), href, baseURL);
 
-    m_styleSheet->parseString(sheet);
+    protect(styleSheet())->parseString(sheet);
     m_loading = false;
 
     if (parent)
@@ -64,13 +72,13 @@ void XSLImportRule::setXSLStyleSheet(const String& href, const URL& baseURL, con
 
 bool XSLImportRule::isLoading()
 {
-    return (m_loading || (m_styleSheet && m_styleSheet->isLoading()));
+    return (m_loading || (m_styleSheet && protect(m_styleSheet)->isLoading()));
 }
 
 void XSLImportRule::loadSheet()
 {
     RefPtr rootSheet = parentStyleSheet();
-    while (auto* parentSheet = rootSheet->parentStyleSheet())
+    while (RefPtr parentSheet = rootSheet->parentStyleSheet())
         rootSheet = parentSheet;
 
     RefPtr cachedResourceLoader = rootSheet->cachedResourceLoader();
@@ -89,14 +97,17 @@ void XSLImportRule::loadSheet()
     }
 
     if (m_cachedSheet)
-        m_cachedSheet->removeClient(*this);
+        protect(m_cachedSheet)->removeClient(*this);
 
     auto options = CachedResourceLoader::defaultCachedResourceOptions();
     options.mode = FetchOptions::Mode::SameOrigin;
-    m_cachedSheet = cachedResourceLoader->requestXSLStyleSheet({ResourceRequest(cachedResourceLoader->document()->completeURL(absHref)), options}).value_or(nullptr);
+    if (auto result = cachedResourceLoader->requestXSLStyleSheet({ ResourceRequest(protect(cachedResourceLoader->document())->encodingParseURL(absHref)), options }))
+        m_cachedSheet = WTF::move(result.value());
+    else
+        m_cachedSheet = nullptr;
 
     if (m_cachedSheet) {
-        m_cachedSheet->addClient(*this);
+        protect(m_cachedSheet)->addClient(*this);
 
         // If the imported sheet is in the cache, then setXSLStyleSheet gets called,
         // and the sheet even gets parsed (via parseString).  In this case we have

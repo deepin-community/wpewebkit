@@ -182,6 +182,13 @@ EOF
         ["enum Tmps : uint8_t {"].concat(@tmps.map {|(tmp, type)| "        #{tmp},"}).push("    };").join("\n")
     end
 
+    def emitImpl
+        operand_args = (@args || []).map(&:name)
+        operand_args << @metadata.emitter_local.name unless @metadata.empty?
+        all_args = ["opcodeID"] + operand_args
+        "            gen->template writeOpcode<__size>(#{all_args.join(", ")});"
+    end
+
     def emitter
         op_wide16 = Argument.new(wide16, opcodeIDType, 0)
         op_wide32 = Argument.new(wide32, opcodeIDType, 0)
@@ -253,12 +260,7 @@ private:
         if (checkImpl<__size>(gen#{untyped_args}#{metadata_arg})) {
             if (recordOpcode)
                 gen->recordOpcode(opcodeID);
-            if (__size == OpcodeSize::Wide16)
-                #{op_wide16.fits_write Size::Narrow}
-            else if (__size == OpcodeSize::Wide32)
-                #{op_wide32.fits_write Size::Narrow}
-            #{Argument.new("opcodeID", opcodeIDType, 0).fits_write "OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, __size>::opcodeIDSize"}
-#{map_operands_with_size("            ", "__size", &:fits_write).join "\n"}
+#{emitImpl}
             return true;
         }
         return false;
@@ -290,29 +292,29 @@ EOF
     #{capitalized_name}(const uint8_t* stream)
         #{init.call("OpcodeSize::Narrow")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(bitwise_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeType*>(stream)[-1]) == opcodeID);
     }
 
     #{capitalized_name}(const uint16_t* stream)
         #{init.call("OpcodeSize::Wide16")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(bitwise_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeType*>(stream)[-1]) == opcodeID);
     }
 
 
     #{capitalized_name}(const uint32_t* stream)
         #{init.call("OpcodeSize::Wide32")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(bitwise_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeType*>(stream)[-1]) == opcodeID);
     }
 
     static #{capitalized_name} decode(const uint8_t* stream)
     {
         // A pointer is pointing to the first operand (opcode and prefix are not included).
         if (*stream == #{wide32})
-            return { bitwise_cast<const uint32_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize) };
+            return { std::bit_cast<const uint32_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize) };
         if (*stream == #{wide16})
-            return { bitwise_cast<const uint16_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeIDSize) };
+            return { std::bit_cast<const uint16_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeIDSize) };
         return { stream + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeIDSize };
     }
 EOF

@@ -29,6 +29,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteCompositorIntegrationMessages.h"
+#include "RemoteDeviceProxy.h"
 #include "RemoteGPUProxy.h"
 #include "WebGPUConvertToBackingContext.h"
 #include <WebCore/ImageBuffer.h>
@@ -53,24 +54,23 @@ RemoteCompositorIntegrationProxy::~RemoteCompositorIntegrationProxy()
 }
 
 #if PLATFORM(COCOA)
-Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, WebCore::WebGPU::TextureFormat textureFormat, WebCore::WebGPU::Device& device)
+Vector<MachSendRight> RemoteCompositorIntegrationProxy::recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, WebCore::WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebCore::WebGPU::Device& device)
 {
-    RemoteDeviceProxy& proxyDevice = static_cast<RemoteDeviceProxy&>(device);
-    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::RecreateRenderBuffers(width, height, WTFMove(destinationColorSpace), alphaMode, textureFormat, proxyDevice.backing()));
+    RemoteDeviceProxy& proxyDevice = downcast<RemoteDeviceProxy>(device);
+    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::RecreateRenderBuffers(width, height, WTF::move(destinationColorSpace), alphaMode, textureFormat, bufferCount, proxyDevice.backing()));
     if (!sendResult.succeeded())
         return { };
 
     auto [renderBuffers] = sendResult.takeReply();
-    return WTFMove(renderBuffers);
+    return WTF::move(renderBuffers);
 }
 #endif
 
-void RemoteCompositorIntegrationProxy::prepareForDisplay(CompletionHandler<void()>&& completionHandler)
+void RemoteCompositorIntegrationProxy::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
 {
-    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::PrepareForDisplay());
+    auto sendResult = sendSync(Messages::RemoteCompositorIntegration::PrepareForDisplay(frameIndex));
     UNUSED_VARIABLE(sendResult);
-
-    m_presentationContext->present();
+    protect(m_presentationContext)->present(frameIndex);
 
     completionHandler();
 }
@@ -85,6 +85,12 @@ void RemoteCompositorIntegrationProxy::paintCompositedResultsToCanvas(WebCore::I
 void RemoteCompositorIntegrationProxy::withDisplayBufferAsNativeImage(uint32_t, Function<void(WebCore::NativeImage*)>)
 {
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+void RemoteCompositorIntegrationProxy::updateContentsHeadroom(float headroom)
+{
+    auto result = send(Messages::RemoteCompositorIntegration::UpdateContentsHeadroom(headroom));
+    UNUSED_VARIABLE(result);
 }
 
 } // namespace WebKit::WebGPU

@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "InternalFunction.h"
+#include <JavaScriptCore/InternalFunction.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -150,7 +151,9 @@ private:
 JSC_DECLARE_HOST_FUNCTION(uint8ArrayConstructorFromBase64);
 JSC_DECLARE_HOST_FUNCTION(uint8ArrayConstructorFromHex);
 
-WARN_UNUSED_RETURN size_t decodeHex(std::span<const LChar>, std::span<uint8_t> result);
-WARN_UNUSED_RETURN size_t decodeHex(std::span<const UChar>, std::span<uint8_t> result);
+[[nodiscard]] size_t decodeHex(std::span<const Latin1Character>, std::span<uint8_t> result);
+[[nodiscard]] size_t decodeHex(std::span<const char16_t>, std::span<uint8_t> result);
+
+constinit const ASCIILiteral arrayBufferViewErrorMessageOutOfRangeOfBuffer = "Length out of range of buffer"_s;
 
 } // namespace JSC

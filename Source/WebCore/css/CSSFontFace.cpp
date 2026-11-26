@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,51 +28,62 @@
 
 #include "CSSFontFaceSource.h"
 #include "CSSFontFaceSrcValue.h"
+#include "CSSFontFamilyNameValue.h"
 #include "CSSFontFeatureValue.h"
 #include "CSSFontSelector.h"
 #include "CSSFontStyleRangeValue.h"
-#include "CSSPrimitiveValueMappings.h"
+#include "CSSMarkup.h"
 #include "CSSUnicodeRangeValue.h"
 #include "CSSValue.h"
 #include "CSSValueList.h"
+#include "CSSValuePair.h"
 #include "CachedFont.h"
+#include "ContextDestructionObserverInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Font.h"
 #include "FontCache.h"
 #include "FontDescription.h"
 #include "FontFace.h"
 #include "FontPaletteValues.h"
+#include "SVGFontFaceElement.h"
+#include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
-#include "StyleBuilderConverter.h"
+#include "StyleKeyword+Mappings.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+DeprecatedCSSValueConversion.h"
+#include "StylePrimitiveNumericTypes+DeprecatedConversions.h"
 #include "StyleProperties.h"
+#include "StyleResolveForFont.h"
 #include "StyleRule.h"
 
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSFontFace);
 
-template<typename T> void iterateClients(WeakHashSet<CSSFontFaceClient>& clients, T callback)
+static void iterateClients(WeakHashSet<CSSFontFaceClient>& clients, NOESCAPE const Function<void(CSSFontFaceClient&)>& callback)
 {
-    for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients))
-        callback(client);
+    ScriptDisallowedScope scope;
+    for (auto& client : copyToVectorOf<Ref<CSSFontFaceClient>>(clients)) {
+        if (clients.contains(client))
+            callback(client);
+    }
 }
 
 void CSSFontFace::appendSources(CSSFontFace& fontFace, CSSValueList& srcList, ScriptExecutionContext* context, bool isInitiatingElementInUserAgentShadowTree)
 {
     bool allowDownloading = context && (context->settingsValues().downloadableBinaryFontTrustedTypes != DownloadableBinaryFontTrustedTypes::None);
-    for (auto& src : srcList) {
+    for (Ref src : srcList) {
         // An item in the list either specifies a string (local font name) or a URL (remote font to download).
-        if (auto local = dynamicDowncast<CSSFontFaceSrcLocalValue>(src)) {
+        if (RefPtr local = dynamicDowncast<CSSFontFaceSrcLocalValue>(src)) {
             if (!local->svgFontFaceElement())
-                fontFace.adoptSource(makeUnique<CSSFontFaceSource>(fontFace, local->fontFaceName()));
+                fontFace.adoptSource(makeUniqueWithoutRefCountedCheck<CSSFontFaceSource>(fontFace, local->fontFaceName()));
             else if (allowDownloading)
-                fontFace.adoptSource(makeUnique<CSSFontFaceSource>(fontFace, local->fontFaceName(), *local->svgFontFaceElement()));
+                fontFace.adoptSource(makeUniqueWithoutRefCountedCheck<CSSFontFaceSource>(fontFace, local->fontFaceName(),  CheckedRef { *local->svgFontFaceElement() }));
         } else {
             if (allowDownloading) {
-                if (auto request = downcast<CSSFontFaceSrcResourceValue>(const_cast<CSSValue&>(src)).fontLoadRequest(*context, isInitiatingElementInUserAgentShadowTree))
-                    fontFace.adoptSource(makeUnique<CSSFontFaceSource>(fontFace, *context->cssFontSelector(), makeUniqueRefFromNonNullUniquePtr(WTFMove(request))));
+                if (auto request = downcast<CSSFontFaceSrcResourceValue>(const_cast<CSSValue&>(src.get())).fontLoadRequest(*context, isInitiatingElementInUserAgentShadowTree))
+                    fontFace.adoptSource(makeUniqueWithoutRefCountedCheck<CSSFontFaceSource>(fontFace, protect(*context->cssFontSelector()), request.releaseNonNull()));
             }
         }
     }
@@ -81,21 +92,21 @@ void CSSFontFace::appendSources(CSSFontFace& fontFace, CSSValueList& srcList, Sc
 
 Ref<CSSFontFace> CSSFontFace::create(CSSFontSelector& fontSelector, StyleRuleFontFace* cssConnection, FontFace* wrapper, bool isLocalFallback)
 {
-    auto* context = fontSelector.scriptExecutionContext();
+    RefPtr context = fontSelector.scriptExecutionContext();
     const auto* settings = context ? &context->settingsValues() : nullptr;
     auto result = adoptRef(*new CSSFontFace(settings, cssConnection, wrapper, isLocalFallback));
     result->addClient(fontSelector);
     return result;
 }
 
-static std::variant<Ref<MutableStyleProperties>, Ref<StyleRuleFontFace>> propertiesOrCSSConnection(StyleRuleFontFace* connection)
+static Variant<Ref<MutableStyleProperties>, Ref<StyleRuleFontFace>> propertiesOrCSSConnection(StyleRuleFontFace* connection)
 {
     if (connection)
-        return Ref { *connection };
+        return protect(*connection);
     return MutableStyleProperties::create();
 }
 
-CSSFontFace::CSSFontFace(const Settings::Values* settings, StyleRuleFontFace* connection, FontFace* wrapper, bool isLocalFallback)
+CSSFontFace::CSSFontFace(const SettingsValues* settings, StyleRuleFontFace* connection, FontFace* wrapper, bool isLocalFallback)
     : m_propertiesOrCSSConnection(propertiesOrCSSConnection(connection))
     , m_wrapper(wrapper)
     , m_isLocalFallback(isLocalFallback)
@@ -103,6 +114,7 @@ CSSFontFace::CSSFontFace(const Settings::Values* settings, StyleRuleFontFace* co
     , m_shouldIgnoreFontLoadCompletions(settings && settings->shouldIgnoreFontLoadCompletions)
     , m_fontLoadTimingOverride(settings ? settings->fontLoadTimingOverride : FontLoadTimingOverride::None)
     , m_allowUserInstalledFonts(settings && !settings->shouldAllowUserInstalledFonts ? AllowUserInstalledFonts::No : AllowUserInstalledFonts::Yes)
+    , m_trustedType(settings ? settings->downloadableBinaryFontTrustedTypes : DownloadableBinaryFontTrustedTypes::Any)
     , m_timeoutTimer(*this, &CSSFontFace::timeoutFired)
 {
 }
@@ -145,13 +157,10 @@ StyleRuleFontFace* CSSFontFace::cssConnection() const
     );
 }
 
-// FIXME: Don't use a list here and rename to setFamily. https://bugs.webkit.org/show_bug.cgi?id=196381
-void CSSFontFace::setFamilies(CSSValueList& family)
+void CSSFontFace::setFamily(CSSValue& family)
 {
-    ASSERT(family.length());
-
-    RefPtr oldFamily = std::exchange(m_families, &family);
-    mutableProperties().setProperty(CSSPropertyFontFamily, &family);
+    RefPtr oldFamily = std::exchange(m_family, &family);
+    protect(mutableProperties())->setProperty(CSSPropertyFontFamily, family);
 
     iterateClients(m_clients, [&](CSSFontFaceClient& client) {
         client.fontPropertyChanged(*this, oldFamily.get());
@@ -165,27 +174,19 @@ FontFace* CSSFontFace::existingWrapper()
 
 static FontSelectionRange calculateWeightRange(CSSValue& value)
 {
-    if (auto* valueList = dynamicDowncast<CSSValueList>(value)) {
-        ASSERT(valueList->length() == 2);
-        if (valueList->length() != 2)
-            return { normalWeightValue(), normalWeightValue() };
-        ASSERT(valueList->item(0)->isPrimitiveValue());
-        ASSERT(valueList->item(1)->isPrimitiveValue());
-        auto& value0 = downcast<CSSPrimitiveValue>(*valueList->item(0));
-        auto& value1 = downcast<CSSPrimitiveValue>(*valueList->item(1));
-        auto result0 = Style::BuilderConverter::convertFontWeightFromValue(value0);
-        auto result1 = Style::BuilderConverter::convertFontWeightFromValue(value1);
+    if (auto* pair = dynamicDowncast<CSSValuePair>(value)) {
+        auto result0 = Style::fontWeightFromCSSValueDeprecated(pair->first());
+        auto result1 = Style::fontWeightFromCSSValueDeprecated(pair->second());
         return { result0, result1 };
     }
 
-    auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
-    FontSelectionValue result = Style::BuilderConverter::convertFontWeightFromValue(primitiveValue);
+    FontSelectionValue result = Style::fontWeightFromCSSValueDeprecated(value);
     return { result, result };
 }
 
 void CSSFontFace::setWeight(CSSValue& weight)
 {
-    mutableProperties().setProperty(CSSPropertyFontWeight, &weight);
+    protect(mutableProperties())->setProperty(CSSPropertyFontWeight, weight);
 
     auto range = calculateWeightRange(weight);
     if (m_fontSelectionCapabilities.weight == range)
@@ -198,31 +199,23 @@ void CSSFontFace::setWeight(CSSValue& weight)
     });
 }
 
-static FontSelectionRange calculateStretchRange(CSSValue& value)
+static FontSelectionRange calculateWidthRange(CSSValue& value)
 {
-    if (auto* valueList = dynamicDowncast<CSSValueList>(value)) {
-        ASSERT(valueList->length() == 2);
-        if (valueList->length() != 2)
-            return { normalStretchValue(), normalStretchValue() };
-        ASSERT(valueList->item(0)->isPrimitiveValue());
-        ASSERT(valueList->item(1)->isPrimitiveValue());
-        auto& value0 = downcast<CSSPrimitiveValue>(*valueList->item(0));
-        auto& value1 = downcast<CSSPrimitiveValue>(*valueList->item(1));
-        auto result0 = Style::BuilderConverter::convertFontStretchFromValue(value0);
-        auto result1 = Style::BuilderConverter::convertFontStretchFromValue(value1);
+    if (auto* pair = dynamicDowncast<CSSValuePair>(value)) {
+        auto result0 = Style::fontStretchFromCSSValueDeprecated(pair->first());
+        auto result1 = Style::fontStretchFromCSSValueDeprecated(pair->second());
         return { result0, result1 };
     }
 
-    const auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
-    FontSelectionValue result = Style::BuilderConverter::convertFontStretchFromValue(primitiveValue);
+    FontSelectionValue result = Style::fontStretchFromCSSValueDeprecated(value);
     return { result, result };
 }
 
-void CSSFontFace::setStretch(CSSValue& style)
+void CSSFontFace::setWidth(CSSValue& style)
 {
-    mutableProperties().setProperty(CSSPropertyFontStretch, &style);
+    protect(mutableProperties())->setProperty(CSSPropertyFontWidth, style);
 
-    auto range = calculateStretchRange(style);
+    auto range = calculateWidthRange(style);
     if (m_fontSelectionCapabilities.width == range)
         return;
 
@@ -233,39 +226,53 @@ void CSSFontFace::setStretch(CSSValue& style)
     });
 }
 
-static FontSelectionRange calculateItalicRange(CSSValue& value)
+struct FontFaceStyleInfo {
+    FontSelectionRange range;
+    FontStyleAxis axis;
+};
+
+static FontFaceStyleInfo calculateFontFaceStyleInfo(CSSValue& value)
 {
     auto* rangeValue = dynamicDowncast<CSSFontStyleRangeValue>(value);
-    if (!rangeValue)
-        return FontSelectionRange { Style::BuilderConverter::convertFontStyleFromValue(value).value_or(normalItalicValue()) };
-
-    auto keyword = rangeValue->fontStyleValue->valueID();
-    if (!rangeValue->obliqueValues) {
-        if (keyword == CSSValueNormal)
-            return FontSelectionRange { normalItalicValue() };
-        ASSERT(keyword == CSSValueItalic || keyword == CSSValueOblique);
-        return FontSelectionRange { italicValue() };
+    if (!rangeValue) {
+        auto slope = Style::fontStyleFromCSSValueDeprecated(value);
+        if (!slope)
+            return { FontSelectionRange { normalItalicValue() }, FontStyleAxis::normal };
+        auto axis = isValueID(value, CSSValueItalic) ? FontStyleAxis::ital : FontStyleAxis::slnt;
+        return { FontSelectionRange { *slope }, axis };
     }
-    ASSERT(keyword == CSSValueOblique);
-    auto length = rangeValue->obliqueValues->length();
-    ASSERT(length == 1 || length == 2);
-    auto angleAtIndex = [&] (size_t index) {
-        return Style::BuilderConverter::convertFontStyleAngle(*rangeValue->obliqueValues->itemWithoutBoundsCheck(index));
-    };
-    if (length == 1)
-        return FontSelectionRange { angleAtIndex(0) };
-    return { angleAtIndex(0), angleAtIndex(1) };
+
+    return WTF::switchOn(rangeValue->fontStyleRange(),
+        [](const CSS::Keyword::Normal&) -> FontFaceStyleInfo {
+            return { FontSelectionRange { normalItalicValue() }, FontStyleAxis::normal };
+        },
+        [](const CSS::Keyword::Italic&) -> FontFaceStyleInfo {
+            return { FontSelectionRange { italicValue() }, FontStyleAxis::ital };
+        },
+        [](const CSS::FontStyleRange::Oblique& oblique) -> FontFaceStyleInfo {
+            auto resolveAngle = [](auto& angle) {
+                if (requiresConversionData(angle))
+                    return FontSelectionValue { 0 };
+                return FontSelectionValue { narrowPrecisionToFloat(Style::toStyle(angle, NoConversionDataRequiredToken { }).value) };
+            };
+
+            if (!oblique.angle)
+                return { FontSelectionRange { italicValue() }, FontStyleAxis::slnt };
+            return { FontSelectionRange { resolveAngle(oblique.angle->first()), resolveAngle(oblique.angle->second()) }, FontStyleAxis::slnt };
+        }
+    );
 }
 
 void CSSFontFace::setStyle(CSSValue& style)
 {
-    mutableProperties().setProperty(CSSPropertyFontStyle, &style);
+    protect(mutableProperties())->setProperty(CSSPropertyFontStyle, style);
 
-    auto range = calculateItalicRange(style);
-    if (m_fontSelectionCapabilities.slope == range)
+    auto [range, axis] = calculateFontFaceStyleInfo(style);
+    if (m_fontSelectionCapabilities.slope == range && m_fontSelectionCapabilities.faceAxis == axis)
         return;
 
     m_fontSelectionCapabilities.slope = range;
+    m_fontSelectionCapabilities.faceAxis = axis;
 
     iterateClients(m_clients, [&](CSSFontFaceClient& client) {
         client.fontPropertyChanged(*this);
@@ -274,7 +281,7 @@ void CSSFontFace::setStyle(CSSValue& style)
 
 void CSSFontFace::setUnicodeRange(CSSValueList& list)
 {
-    mutableProperties().setProperty(CSSPropertyUnicodeRange, &list);
+    protect(mutableProperties())->setProperty(CSSPropertyUnicodeRange, list);
 
     auto ranges = WTF::map(list, [](auto& rangeValue) {
         auto& range = downcast<CSSUnicodeRangeValue>(rangeValue);
@@ -284,7 +291,7 @@ void CSSFontFace::setUnicodeRange(CSSValueList& list)
     if (ranges == m_ranges)
         return;
 
-    m_ranges = WTFMove(ranges);
+    m_ranges = WTF::move(ranges);
 
     iterateClients(m_clients, [&](CSSFontFaceClient& client) {
         client.fontPropertyChanged(*this);
@@ -294,23 +301,26 @@ void CSSFontFace::setUnicodeRange(CSSValueList& list)
 void CSSFontFace::setFeatureSettings(CSSValue& featureSettings)
 {
     // Can only call this with a primitive value of normal, or a value list containing font feature values.
-    ASSERT(is<CSSPrimitiveValue>(featureSettings) || is<CSSValueList>(featureSettings));
+    ASSERT(is<CSSKeywordValue>(featureSettings) || is<CSSValueList>(featureSettings));
 
-    mutableProperties().setProperty(CSSPropertyFontFeatureSettings, &featureSettings);
+    protect(mutableProperties())->setProperty(CSSPropertyFontFeatureSettings, featureSettings);
 
     FontFeatureSettings settings;
 
     if (auto* list = dynamicDowncast<CSSValueList>(featureSettings)) {
-        for (auto& rangeValue : *list) {
-            auto& feature = downcast<CSSFontFeatureValue>(rangeValue);
-            settings.insert({ feature.tag(), feature.value() });
+        for (Ref rangeValue : *list) {
+            Ref feature = downcast<CSSFontFeatureValue>(rangeValue);
+            settings.insert({
+                feature->tag(),
+                Style::deprecatedToStyle(feature->value()).value,
+            });
         }
     }
 
     if (m_featureSettings == settings)
         return;
 
-    m_featureSettings = WTFMove(settings);
+    m_featureSettings = WTF::move(settings);
 
     iterateClients(m_clients, [&](CSSFontFaceClient& client) {
         client.fontPropertyChanged(*this);
@@ -319,10 +329,10 @@ void CSSFontFace::setFeatureSettings(CSSValue& featureSettings)
 
 void CSSFontFace::setSizeAdjust(CSSValue& value)
 {
-    mutableProperties().setProperty(CSSPropertySizeAdjust, &value);
+    protect(mutableProperties())->setProperty(CSSPropertySizeAdjust, value);
 
     auto& sizeAdjustValue = downcast<CSSPrimitiveValue>(value);
-    auto sizeAdjust = sizeAdjustValue.floatValue() / 100;
+    auto sizeAdjust = Style::deprecatedToStyleFromCSSValue<Style::Percentage<CSS::Nonnegative, float>>(sizeAdjustValue)->value / 100;
 
     if (m_sizeAdjust == sizeAdjust)
         return;
@@ -334,9 +344,9 @@ void CSSFontFace::setSizeAdjust(CSSValue& value)
     });
 }
 
-void CSSFontFace::setDisplay(CSSPrimitiveValue& loadingBehaviorValue)
+void CSSFontFace::setDisplay(CSSValue& loadingBehaviorValue)
 {
-    mutableProperties().setProperty(CSSPropertyFontDisplay, &loadingBehaviorValue);
+    protect(mutableProperties())->setProperty(CSSPropertyFontDisplay, loadingBehaviorValue);
 
     auto loadingBehavior = fromCSSValue<FontLoadingBehavior>(loadingBehaviorValue);
 
@@ -350,18 +360,39 @@ void CSSFontFace::setDisplay(CSSPrimitiveValue& loadingBehaviorValue)
     });
 }
 
-String CSSFontFace::family() const
+void CSSFontFace::setAscentOverride(CSSValue& value)
 {
-    // Code to extract the name of the first family is needed because we incorrectly use a list of families.
-    // FIXME: Consider switching to getPropertyValue after https://bugs.webkit.org/show_bug.cgi?id=196381 is fixed.
-    auto family = properties().getPropertyCSSValue(CSSPropertyFontFamily);
-    auto familyList = dynamicDowncast<CSSValueList>(family.get());
-    if (!familyList)
+    protect(mutableProperties())->setProperty(CSSPropertyAscentOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
+void CSSFontFace::setDescentOverride(CSSValue& value)
+{
+    protect(mutableProperties())->setProperty(CSSPropertyDescentOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
+void CSSFontFace::setLineGapOverride(CSSValue& value)
+{
+    protect(mutableProperties())->setProperty(CSSPropertyLineGapOverride, value);
+
+    iterateClients(m_clients, [&](CSSFontFaceClient& client) {
+        client.fontPropertyChanged(*this);
+    });
+}
+
+AtomString CSSFontFace::family() const
+{
+    RefPtr value = dynamicDowncast<CSSFontFamilyNameValue>(properties().getPropertyCSSValue(CSSPropertyFontFamily));
+    if (!value)
         return { };
-    auto firstFamily = dynamicDowncast<CSSPrimitiveValue>(familyList->item(0));
-    if (!firstFamily || !firstFamily->isFontFamily())
-        return { };
-    return firstFamily->stringValue();
+    return AtomString(serializeFontFamily(value->fontFamilyName().value));
 }
 
 String CSSFontFace::style() const
@@ -374,9 +405,9 @@ String CSSFontFace::weight() const
     return properties().getPropertyValue(CSSPropertyFontWeight);
 }
 
-String CSSFontFace::stretch() const
+String CSSFontFace::width() const
 {
-    return properties().getPropertyValue(CSSPropertyFontStretch);
+    return properties().getPropertyValue(CSSPropertyFontWidth);
 }
 
 String CSSFontFace::unicodeRange() const
@@ -394,14 +425,29 @@ String CSSFontFace::sizeAdjust() const
     return properties().getPropertyValue(CSSPropertySizeAdjust);
 }
 
+String CSSFontFace::ascentOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyAscentOverride);
+}
+
+String CSSFontFace::descentOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyDescentOverride);
+}
+
+String CSSFontFace::lineGapOverride() const
+{
+    return properties().getPropertyValue(CSSPropertyLineGapOverride);
+}
+
 String CSSFontFace::display() const
 {
     return properties().getPropertyValue(CSSPropertyFontDisplay);
 }
 
-RefPtr<CSSValueList> CSSFontFace::families() const
+RefPtr<CSSValue> CSSFontFace::familyCSSValue() const
 {
-    return m_families;
+    return m_family;
 }
 
 bool CSSFontFace::rangesMatchCodePoint(char32_t character) const
@@ -431,8 +477,6 @@ void CSSFontFace::fontLoadEventOccurred()
 
 void CSSFontFace::timeoutFired()
 {
-    Ref<CSSFontFace> protectedThis(*this);
-    
     switch (status()) {
     case Status::Loading:
         setStatus(Status::TimedOut);
@@ -453,7 +497,7 @@ void CSSFontFace::timeoutFired()
     fontLoadEventOccurred();
 }
 
-Document* CSSFontFace::document()
+Document* CSSFontFace::document() const
 {
     if (m_wrapper)
         return dynamicDowncast<Document>(m_wrapper->scriptExecutionContext());
@@ -484,23 +528,24 @@ void CSSFontFace::removeClient(CSSFontFaceClient& client)
 
 void CSSFontFace::initializeWrapper()
 {
+    Ref wrapper = *m_wrapper;
     switch (m_status) {
     case Status::Pending:
         break;
     case Status::Loading:
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
         break;
     case Status::TimedOut:
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
-        m_wrapper->fontStateChanged(*this, Status::Loading, Status::TimedOut);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
+        wrapper->fontStateChanged(*this, Status::Loading, Status::TimedOut);
         break;
     case Status::Success:
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Success);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Success);
         break;
     case Status::Failure:
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
-        m_wrapper->fontStateChanged(*this, Status::Pending, Status::Failure);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Loading);
+        wrapper->fontStateChanged(*this, Status::Pending, Status::Failure);
         break;
     }
     m_mayBePurged = false;
@@ -525,9 +570,9 @@ void CSSFontFace::setWrapper(FontFace& newWrapper)
     initializeWrapper();
 }
 
-void CSSFontFace::adoptSource(std::unique_ptr<CSSFontFaceSource>&& source)
+void CSSFontFace::adoptSource(std::unique_ptr<CSSFontFaceSource> source)
 {
-    m_sources.append(WTFMove(source));
+    m_sources.append(WTF::move(source));
 
     // We should never add sources in the middle of loading.
     ASSERT(!m_sourcesPopulated);
@@ -625,11 +670,11 @@ void CSSFontFace::fontLoaded(CSSFontFaceSource&)
     fontLoadEventOccurred();
 }
 
-void CSSFontFace::opportunisticallyStartFontDataURLLoading()
+void CSSFontFace::opportunisticallyStartFontDataURLLoading(DownloadableBinaryFontTrustedTypes trustedType)
 {
     // We don't want to go crazy here and blow the cache. Usually these data URLs are the first item in the src: list, so let's just check that one.
     if (!m_sources.isEmpty())
-        m_sources[0]->opportunisticallyStartFontDataURLLoading();
+        protect(*m_sources[0])->opportunisticallyStartFontDataURLLoading(trustedType);
 }
 
 size_t CSSFontFace::pump(ExternalResourceDownloadPolicy policy)
@@ -654,9 +699,9 @@ size_t CSSFontFace::pump(ExternalResourceDownloadPolicy policy)
             // but it seems that this behavior is a requirement of the design of FontRanges. FIXME: Perhaps rethink
             // this design.
             if (policy == ExternalResourceDownloadPolicy::Allow || !source->requiresExternalResource()) {
-                if (policy == ExternalResourceDownloadPolicy::Allow && m_status == Status::Pending)
+                if (m_status == Status::Pending)
                     setStatus(Status::Loading);
-                source->load(document());
+                source->load(m_trustedType, protect(document()).get());
             }
         }
 
@@ -677,7 +722,7 @@ size_t CSSFontFace::pump(ExternalResourceDownloadPolicy policy)
                 setStatus(Status::Success);
             return i;
         case CSSFontFaceSource::Status::Failure:
-            if (policy == ExternalResourceDownloadPolicy::Allow && m_status == Status::Pending)
+            if ((policy == ExternalResourceDownloadPolicy::Allow || !source->requiresExternalResource()) && m_status == Status::Pending)
                 setStatus(Status::Loading);
             break;
         }
@@ -694,7 +739,7 @@ void CSSFontFace::load()
     pump(ExternalResourceDownloadPolicy::Allow);
 }
 
-static Font::Visibility visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
+static Font::Visibility NODELETE visibility(CSSFontFace::Status status, CSSFontFace::FontLoadTiming timing)
 {
     switch (status) {
     case CSSFontFace::Status::Pending:
@@ -728,13 +773,13 @@ RefPtr<Font> CSSFontFace::font(const FontDescription& fontDescription, bool synt
     for (size_t i = startIndex; i < m_sources.size(); ++i) {
         auto& source = m_sources[i];
         if (source->status() == CSSFontFaceSource::Status::Pending && (policy == ExternalResourceDownloadPolicy::Allow || !source->requiresExternalResource()))
-            source->load(document());
+            source->load(m_trustedType, protect(document()).get());
 
         switch (source->status()) {
         case CSSFontFaceSource::Status::Pending:
         case CSSFontFaceSource::Status::Loading: {
             Font::Visibility visibility = WebCore::visibility(status(), fontLoadTiming());
-            return Font::create(FontCache::forCurrentThread().lastResortFallbackFont(fontDescription)->platformData(), Font::Origin::Local, Font::IsInterstitial::Yes, visibility);
+            return Font::create(protect(FontCache::forCurrentThread())->lastResortFallbackFont(fontDescription)->platformData(), Font::Origin::Local, Font::IsInterstitial::Yes, visibility);
         }
         case CSSFontFaceSource::Status::Success: {
             FontCreationContext fontCreationContext { m_featureSettings, m_fontSelectionCapabilities, fontPaletteValues, fontFeatureValues, m_sizeAdjust };
@@ -764,12 +809,9 @@ void CSSFontFace::updateStyleIfNeeded()
 
 bool CSSFontFace::hasSVGFontFaceSource() const
 {
-    size_t size = m_sources.size();
-    for (size_t i = 0; i < size; i++) {
-        if (m_sources[i]->isSVGFontFaceSource())
-            return true;
-    }
-    return false;
+    return m_sources.containsIf([](auto& source) {
+        return protect(*source)->isSVGFontFaceSource();
+    });
 }
 
 void CSSFontFace::setErrorState()

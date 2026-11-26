@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, Google Inc. All rights reserved.
+ * Copyright (c) 2012-2013 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -30,18 +30,23 @@
 
 #pragma once
 
-#include "FloatPoint.h"
-#include "LayoutSize.h"
+#include <WebCore/DoublePoint.h>
+#include <WebCore/FloatPoint.h>
+#include <WebCore/LayoutSize.h>
 
 namespace WebCore {
 
 class LayoutPoint {
 public:
     constexpr LayoutPoint() = default;
-    template<typename T, typename U> LayoutPoint(T x, U y) : m_x(x), m_y(y) { }
+    template<typename T, typename U> constexpr LayoutPoint(T x, U y) : m_x(x), m_y(y) { }
     LayoutPoint(const IntPoint& point) : m_x(point.x()), m_y(point.y()) { }
-    explicit LayoutPoint(const FloatPoint& size) : m_x(size.x()), m_y(size.y()) { }
-    explicit LayoutPoint(const LayoutSize& size) : m_x(size.width()), m_y(size.height()) { }
+    explicit LayoutPoint(const FloatPoint& size)
+        : m_x(size.x()), m_y(size.y()) { }
+    explicit LayoutPoint(const DoublePoint& size)
+        : m_x(size.x()), m_y(size.y()) { }
+    explicit LayoutPoint(const LayoutSize& size)
+        : m_x(size.width()), m_y(size.height()) { }
 
     static constexpr LayoutPoint zero() { return LayoutPoint(); }
     constexpr bool isZero() const { return !m_x && !m_y; }
@@ -80,7 +85,7 @@ public:
         return { m_x * sx, m_y * sy };
     }
 
-    LayoutPoint constrainedBetween(const LayoutPoint& min, const LayoutPoint& max) const;
+    WEBCORE_EXPORT LayoutPoint constrainedBetween(const LayoutPoint& min, const LayoutPoint& max) const;
 
     LayoutPoint expandedTo(const LayoutPoint& other) const
     {
@@ -108,6 +113,7 @@ public:
     }
 
     operator FloatPoint() const { return { m_x, m_y }; }
+    operator DoublePoint() const { return { m_x, m_y }; }
 
 private:
     LayoutUnit m_x, m_y;
@@ -225,5 +231,12 @@ inline FloatSize snapSizeToDevicePixel(const LayoutSize& size, const LayoutPoint
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const LayoutPoint&);
 
-} // namespace WebCore
+struct LayoutPointLimits {
+    LayoutPoint m_min;
+    LayoutPoint m_max;
+    LayoutPoint clamp(const LayoutPoint& point) { return point.constrainedBetween(m_min, m_max); }
+    bool fits(const LayoutPoint& point) { return point == clamp(point); }
+    LayoutSize distance(const LayoutPoint& point) { return point - clamp(point); }
+};
 
+} // namespace WebCore

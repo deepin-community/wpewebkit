@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,7 +44,7 @@ static void encodeHashSet(KeyedEncoder& encoder, const String& label,  const Str
     if (hashSet.isEmpty())
         return;
 
-    encoder.encodeObjects(label, hashSet.begin(), hashSet.end(), [&key](KeyedEncoder& encoderInner, const RegistrableDomain& domain) {
+    encoder.encodeObjects(label, hashSet, [&key](KeyedEncoder& encoderInner, const RegistrableDomain& domain) {
         encoderInner.encodeString(key, domain.string());
     });
 }
@@ -65,7 +65,7 @@ static void encodeHashSet(KeyedEncoder& encoder, const String& label,  const Str
     if (hashSet.isEmpty())
         return;
 
-    encoder.encodeObjects(label, hashSet.begin(), hashSet.end(), [&key](KeyedEncoder& encoderInner, const String& origin) {
+    encoder.encodeObjects(label, hashSet, [&key](KeyedEncoder& encoderInner, const String& origin) {
         encoderInner.encodeString(key, origin);
     });
 }
@@ -79,7 +79,7 @@ static void encodeCanvasActivityRecord(KeyedEncoder& encoder, const String& labe
 {
     encoder.encodeObject(label, canvasActivityRecord, [] (KeyedEncoder& encoderInner, const CanvasActivityRecord& canvasActivityRecord) {
         encoderInner.encodeBool("wasDataRead"_s, canvasActivityRecord.wasDataRead);
-        encoderInner.encodeObjects("textWritten"_s, canvasActivityRecord.textWritten.begin(), canvasActivityRecord.textWritten.end(), [] (KeyedEncoder& encoderInner2, const String& text) {
+        encoderInner.encodeObjects("textWritten"_s, canvasActivityRecord.textWritten, [] (KeyedEncoder& encoderInner2, const String& text) {
             encoderInner2.encodeString("text"_s, text);
         });
     });
@@ -365,7 +365,8 @@ static void appendHashSet(StringBuilder& builder, const String& label, const Has
 }
 
 #if ENABLE(WEB_API_STATISTICS)
-static void appendHashSet(StringBuilder& builder, const String& label, const HashSet<String>& hashSet)
+template<typename HashSetType>
+static void appendHashSet(StringBuilder& builder, const String& label, const HashSetType& hashSet)
 {
     if (hashSet.isEmpty())
         return;

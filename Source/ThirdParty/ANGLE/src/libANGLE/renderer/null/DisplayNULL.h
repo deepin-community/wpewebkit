@@ -23,7 +23,19 @@ class ShareGroupNULL : public ShareGroupImpl
 
 class AllocationTrackerNULL;
 
-class DisplayNULL : public DisplayImpl
+class ThreadSafeDisplayNULL : public ThreadSafeDisplayImpl
+{
+  public:
+    ThreadSafeDisplayNULL()           = default;
+    ~ThreadSafeDisplayNULL() override = default;
+
+    bool testDeviceLost() override;
+    egl::Error restoreLostDevice(const egl::ThreadSafeDisplay *display) override;
+
+  private:
+};
+
+class DisplayNULL : public DisplayImpl, public ThreadSafeDisplayNULL
 {
   public:
     DisplayNULL(const egl::DisplayState &state);
@@ -39,9 +51,6 @@ class DisplayNULL : public DisplayImpl
 
     egl::ConfigSet generateConfigs() override;
 
-    bool testDeviceLost() override;
-    egl::Error restoreLostDevice(const egl::Display *display) override;
-
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
 
     std::string getRendererDescription() override;
@@ -54,7 +63,6 @@ class DisplayNULL : public DisplayImpl
     egl::Error waitNative(const gl::Context *context, EGLint engine) override;
     gl::Version getMaxSupportedESVersion() const override;
     gl::Version getMaxConformantESVersion() const override;
-    Optional<gl::Version> getMaxSupportedDesktopVersion() const override;
 
     SurfaceImpl *createWindowSurface(const egl::SurfaceState &state,
                                      EGLNativeWindowType window,
@@ -86,6 +94,8 @@ class DisplayNULL : public DisplayImpl
     ShareGroupImpl *createShareGroup(const egl::ShareGroupState &state) override;
 
     void populateFeatureList(angle::FeatureList *features) override {}
+
+    ThreadSafeDisplayImpl *getThreadSafeDisplayImpl() override { return this; }
 
   private:
     void generateExtensions(egl::DisplayExtensions *outExtensions) const override;

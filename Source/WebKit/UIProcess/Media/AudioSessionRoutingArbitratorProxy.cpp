@@ -70,14 +70,9 @@ void AudioSessionRoutingArbitratorProxy::endRoutingArbitration()
 
 #endif // ENABLE(AVAUDIO_ROUTING_ARBITER)
 
-Ref<WebProcessProxy> AudioSessionRoutingArbitratorProxy::protectedProcess()
-{
-    return m_process.get();
-}
-
 Logger& AudioSessionRoutingArbitratorProxy::logger()
 {
-    return m_process->logger();
+    return protect(m_process)->logger();
 }
 
 WTFLogChannel& AudioSessionRoutingArbitratorProxy::logChannel() const
@@ -85,6 +80,21 @@ WTFLogChannel& AudioSessionRoutingArbitratorProxy::logChannel() const
     return WebKit2LogMedia;
 }
 
+void AudioSessionRoutingArbitratorProxy::ref() const
+{
+    return m_process->ref();
 }
+
+void AudioSessionRoutingArbitratorProxy::deref() const
+{
+    return m_process->deref();
+}
+
+std::optional<SharedPreferencesForWebProcess> AudioSessionRoutingArbitratorProxy::sharedPreferencesForWebProcess() const
+{
+    return m_process->sharedPreferencesForWebProcess();
+}
+
+} // namespace WebKit
 
 #endif // ENABLE(ROUTING_ARBITRATION)

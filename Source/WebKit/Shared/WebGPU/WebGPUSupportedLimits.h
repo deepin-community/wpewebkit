@@ -55,7 +55,6 @@ struct SupportedLimits {
     uint64_t maxBufferSize { 0 };
     uint32_t maxVertexAttributes { 0 };
     uint32_t maxVertexBufferArrayStride { 0 };
-    uint32_t maxInterStageShaderComponents { 0 };
     uint32_t maxInterStageShaderVariables { 0 };
     uint32_t maxColorAttachments { 0 };
     uint32_t maxColorAttachmentBytesPerSample { 0 };
@@ -65,6 +64,10 @@ struct SupportedLimits {
     uint32_t maxComputeWorkgroupSizeY { 0 };
     uint32_t maxComputeWorkgroupSizeZ { 0 };
     uint32_t maxComputeWorkgroupsPerDimension { 0 };
+    uint32_t maxStorageBuffersInFragmentStage { 0 };
+    uint32_t maxStorageTexturesInFragmentStage { 0 };
+    uint32_t maxStorageBuffersInVertexStage { 0 };
+    uint32_t maxStorageTexturesInVertexStage { 0 };
 };
 
 } // namespace WebKit::WebGPU

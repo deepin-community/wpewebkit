@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "IDBKeyRangeData.h"
-#include "IDBObjectStoreIdentifier.h"
-#include "IDBResourceIdentifier.h"
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBKeyRangeData.h>
+#include <WebCore/IDBObjectStoreIdentifier.h>
+#include <WebCore/IDBResourceIdentifier.h>
 #include <wtf/ArgumentCoder.h>
 
 namespace WebCore {
@@ -49,40 +50,39 @@ enum class CursorDuplicity {
 
 class IDBCursorInfo {
 public:
-    static IDBCursorInfo objectStoreCursor(IDBTransaction&, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
-    static IDBCursorInfo indexCursor(IDBTransaction&, IDBObjectStoreIdentifier, uint64_t indexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    static IDBCursorInfo NODELETE objectStoreCursor(IDBTransaction&, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    static IDBCursorInfo NODELETE indexCursor(IDBTransaction&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
 
     IDBResourceIdentifier identifier() const { return m_cursorIdentifier; }
     IDBResourceIdentifier transactionIdentifier() const { return m_transactionIdentifier; }
-    uint64_t sourceIdentifier() const { return m_sourceIdentifier; }
+    Variant<IDBObjectStoreIdentifier, IDBIndexIdentifier> sourceIdentifier() const { return m_sourceIdentifier; }
+    std::optional<IDBIndexIdentifier> sourceIndexIdentifier() const;
     IDBObjectStoreIdentifier objectStoreIdentifier() const { return m_objectStoreIdentifier; }
 
     IndexedDB::CursorSource cursorSource() const { return m_source; }
     IndexedDB::CursorDirection cursorDirection() const { return m_direction; }
     IndexedDB::CursorType cursorType() const { return m_type; }
-    const IDBKeyRangeData& range() const { return m_range; }
+    const IDBKeyRangeData& range() const LIFETIME_BOUND { return m_range; }
 
-    bool isDirectionForward() const;
-    CursorDuplicity duplicity() const;
+    bool NODELETE isDirectionForward() const;
+    CursorDuplicity NODELETE duplicity() const;
 
     WEBCORE_EXPORT IDBCursorInfo isolatedCopy() const;
-
-    WEBCORE_EXPORT IDBCursorInfo();
 
 #if !LOG_DISABLED
     String loggingString() const;
 #endif
 
 private:
-    friend struct IPC::ArgumentCoder<IDBCursorInfo, void>;
-    WEBCORE_EXPORT IDBCursorInfo(const IDBResourceIdentifier&, const IDBResourceIdentifier&, IDBObjectStoreIdentifier, uint64_t, const IDBKeyRangeData&, IndexedDB::CursorSource, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    friend struct IPC::ArgumentCoder<IDBCursorInfo>;
+    WEBCORE_EXPORT IDBCursorInfo(const IDBResourceIdentifier&, const IDBResourceIdentifier&, IDBObjectStoreIdentifier, Variant<IDBObjectStoreIdentifier, IDBIndexIdentifier>, const IDBKeyRangeData&, IndexedDB::CursorSource, IndexedDB::CursorDirection, IndexedDB::CursorType);
     IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
-    IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, uint64_t indexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
+    IDBCursorInfo(IDBTransaction&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const IDBKeyRangeData&, IndexedDB::CursorDirection, IndexedDB::CursorType);
 
     IDBResourceIdentifier m_cursorIdentifier;
     IDBResourceIdentifier m_transactionIdentifier;
     IDBObjectStoreIdentifier m_objectStoreIdentifier;
-    uint64_t m_sourceIdentifier { 0 };
+    Variant<IDBObjectStoreIdentifier, IDBIndexIdentifier> m_sourceIdentifier;
 
     IDBKeyRangeData m_range;
 

@@ -37,12 +37,12 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLLIElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLLIElement);
 
 using namespace HTMLNames;
 
 HTMLLIElement::HTMLLIElement(const QualifiedName& tagName, Document& document)
-    : HTMLElement(tagName, document, TypeFlag::HasCustomStyleResolveCallbacks)
+    : HTMLElement(tagName, document)
 {
     ASSERT(hasTagName(liTag));
 }
@@ -77,45 +77,19 @@ void HTMLLIElement::collectPresentationalHintsForAttribute(const QualifiedName& 
             addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueUpperRoman);
         else if (value == "1"_s)
             addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDecimal);
-        else {
-            auto valueLowerCase = value.convertToASCIILowercase();
-            if (valueLowerCase == "disc"_s)
-                addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDisc);
-            else if (valueLowerCase == "circle"_s)
-                addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueCircle);
-            else if (valueLowerCase == "round"_s)
-                addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueRound);
-            else if (valueLowerCase == "square"_s)
-                addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueSquare);
-            else if (valueLowerCase == "none"_s)
-                addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueNone);
-        }
+        else if (equalLettersIgnoringASCIICase(value, "disc"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDisc);
+        else if (equalLettersIgnoringASCIICase(value, "circle"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueCircle);
+        else if (equalLettersIgnoringASCIICase(value, "square"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueSquare);
+        else if (equalLettersIgnoringASCIICase(value, "none"_s))
+            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueNone);
     } else if (name == valueAttr) {
         if (auto parsedValue = parseHTMLInteger(value))
             addPropertyToPresentationalHintStyle(style, CSSPropertyCounterSet, makeString("list-item "_s, *parsedValue));
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
-}
-
-void HTMLLIElement::didAttachRenderers()
-{
-    CheckedPtr listItemRenderer = dynamicDowncast<RenderListItem>(*renderer());
-    if (!listItemRenderer)
-        return;
-
-    // Check if there is an enclosing list.
-    bool isInList = false;
-    for (auto& ancestor : ancestorsOfType<HTMLElement>(*this)) {
-        if (is<HTMLUListElement>(ancestor) || is<HTMLOListElement>(ancestor)) {
-            isInList = true;
-            break;
-        }
-    }
-
-    // If we are not in a list, tell the renderer so it can position us inside.
-    // We don't want to change our style to say "inside" since that would affect nested nodes.
-    if (!isInList)
-        listItemRenderer->setNotInList(true);
 }
 
 }

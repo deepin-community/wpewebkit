@@ -34,7 +34,7 @@ class JSJavaScriptCallFrame final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     template<typename CellType, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -44,14 +44,11 @@ public:
 
     DECLARE_INFO;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
 
     static JSJavaScriptCallFrame* create(JSC::VM& vm, JSC::Structure* structure, Ref<JavaScriptCallFrame>&& impl)
     {
-        JSJavaScriptCallFrame* instance = new (NotNull, JSC::allocateCell<JSJavaScriptCallFrame>(vm)) JSJavaScriptCallFrame(vm, structure, WTFMove(impl));
+        JSJavaScriptCallFrame* instance = new (NotNull, JSC::allocateCell<JSJavaScriptCallFrame>(vm)) JSJavaScriptCallFrame(vm, structure, WTF::move(impl));
         instance->finishCreation(vm);
         return instance;
     }
@@ -69,13 +66,13 @@ public:
     // Attributes.
     JSC::JSValue caller(JSC::JSGlobalObject*) const;
     JSC::JSValue sourceID(JSC::JSGlobalObject*) const;
-    JSC::JSValue line(JSC::JSGlobalObject*) const;
-    JSC::JSValue column(JSC::JSGlobalObject*) const;
+    JSC::JSValue NODELETE line(JSC::JSGlobalObject*) const;
+    JSC::JSValue NODELETE column(JSC::JSGlobalObject*) const;
     JSC::JSValue functionName(JSC::JSGlobalObject*) const;
     JSC::JSValue scopeChain(JSC::JSGlobalObject*) const;
     JSC::JSValue thisObject(JSC::JSGlobalObject*) const;
     JSC::JSValue type(JSC::JSGlobalObject*) const;
-    JSC::JSValue isTailDeleted(JSC::JSGlobalObject*) const;
+    JSC::JSValue NODELETE isTailDeleted(JSC::JSGlobalObject*) const;
 
     // Constants.
     static constexpr unsigned short GLOBAL_SCOPE = 0;

@@ -63,12 +63,12 @@ class RemoteBuffer final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteBuffer> create(WebCore::WebGPU::Buffer& buffer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, bool mappedAtCreation, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteBuffer(buffer, objectHeap, WTFMove(streamConnection), gpu, mappedAtCreation, identifier));
+        return adoptRef(*new RemoteBuffer(buffer, objectHeap, WTF::move(streamConnection), gpu, mappedAtCreation, identifier));
     }
 
     virtual ~RemoteBuffer();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -88,20 +88,23 @@ private:
 
     void getMappedRange(WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> sizeForMap, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
     void mapAsync(WebCore::WebGPU::MapModeFlags, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> sizeForMap, CompletionHandler<void(bool)>&&);
-    void copy(std::optional<WebCore::SharedMemoryHandle>&&, size_t offset, CompletionHandler<void(bool)>&&);
+    void copy(std::optional<WebCore::SharedMemoryHandle>&&, uint64_t offset, CompletionHandler<void(bool)>&&);
+    void copyWithCopy(Vector<uint8_t>&&, uint64_t offset);
     void unmap();
 
     void destroy();
+    void generateAValidationError();
     void destruct();
 
     void setLabel(String&&);
 
-    Ref<WebCore::WebGPU::Buffer> m_backing;
+    const Ref<WebCore::WebGPU::Buffer> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
     bool m_isMapped { false };
+    bool m_pendingMap { false };
     WebCore::WebGPU::MapModeFlags m_mapModeFlags;
 };
 

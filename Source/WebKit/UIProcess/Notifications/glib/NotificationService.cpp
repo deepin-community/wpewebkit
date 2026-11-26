@@ -28,6 +28,7 @@
 
 #include "WebNotification.h"
 #include <WebCore/Image.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/NotificationResources.h>
 #include <gio/gio.h>
 #include <glib/gi18n-lib.h>
@@ -47,19 +48,14 @@
 #include <wtf/glib/Sandbox.h>
 #include <wtf/text/CString.h>
 
-#if USE(CAIRO)
-#include <WebCore/RefPtrCairo.h>
-#include <cairo.h>
-#elif USE(SKIA)
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
 #include <skia/core/SkStream.h>
 #include <skia/encode/SkPngEncoder.h>
-#endif
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #if PLATFORM(GTK)
-#include <WebCore/GtkVersioning.h>
+#include "GtkVersioning.h"
 #endif
 
 #if HAVE(GDESKTOPAPPINFO)
@@ -67,10 +63,17 @@ IGNORE_CLANG_WARNINGS_END
 #endif
 
 namespace WebKit {
+class IconCache;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedTimerSmartPointerException;
+template<> struct IsDeprecatedTimerSmartPointerException<WebKit::IconCache> : std::true_type { };
+}
+
+namespace WebKit {
 
 static const Seconds s_dbusCallTimeout = 20_ms;
-
-#if USE(SKIA)
 
 // Alias to avoid conflicting with write() below.
 ssize_t (*writeToFD)(int, const void*, size_t) = write;
@@ -110,13 +113,12 @@ private:
     UnixFileDescriptor m_fd;
     size_t m_bytesWritten { 0 };
 };
-#endif
 
 class IconCache {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(IconCache);
 public:
     IconCache()
-        : m_timer(RunLoop::main(), this, &IconCache::timerFired)
+        : m_timer(RunLoop::mainSingleton(), "IconCache::Timer"_s, this, &IconCache::timerFired)
     {
         m_timer.setPriority(RunLoopSourcePriority::ReleaseUnusedResourcesTimer);
     }
@@ -148,23 +150,6 @@ public:
                 return { };
             }
 
-#if USE(CAIRO)
-            auto status = cairo_surface_write_to_png_stream(surface.get(), [](void* userData, const unsigned char* data, unsigned length) -> cairo_status_t {
-                int fd = *static_cast<int*>(userData);
-                while (length) {
-                    auto written = write(fd, data, length);
-                    if (written == -1)
-                        return CAIRO_STATUS_WRITE_ERROR;
-
-                    length -= written;
-                    data += written;
-                }
-                return CAIRO_STATUS_SUCCESS;
-            }, &fd);
-
-            close(fd);
-            return status == CAIRO_STATUS_SUCCESS ? filename.get() : CString();
-#elif USE(SKIA)
             auto stream = FileDescriptorWriteStream(fd); // Transfers fd ownership.
             SkPixmap pixmap;
             if (!surface->peekPixels(&pixmap) || !SkPngEncoder::Encode(&stream, pixmap, { })) {
@@ -173,7 +158,6 @@ public:
             }
 
             return filename.get();
-#endif
         };
 
         auto addResult = m_iconCache.add(iconURL, std::pair<uint32_t, CString>({ 0, CString() }));
@@ -183,7 +167,7 @@ public:
                 m_iconCache.remove(addResult.iterator);
                 return nullptr;
             }
-            addResult.iterator->value = { 1, WTFMove(path) };
+            addResult.iterator->value = { 1, WTF::move(path) };
         } else
             addResult.iterator->value.first++;
 
@@ -204,22 +188,8 @@ public:
             if (!surface)
                 return nullptr;
 
-#if USE(CAIRO)
-            GRefPtr<GByteArray> buffer = adoptGRef(g_byte_array_new());
-            auto status = cairo_surface_write_to_png_stream(surface.get(), [](void* userData, const unsigned char* data, unsigned length) -> cairo_status_t {
-                auto* buffer = static_cast<GByteArray*>(userData);
-                g_byte_array_append(buffer, data, length);
-                return CAIRO_STATUS_SUCCESS;
-            }, buffer.get());
-
-            if (status != CAIRO_STATUS_SUCCESS)
-                return nullptr;
-
-            return adoptGRef(g_byte_array_free_to_bytes(buffer.leakRef()));
-#elif USE(SKIA)
             // FIXME: Add Skia implementation
             return nullptr;
-#endif
         };
 
         auto addResult = m_iconCache.add(iconURL, std::pair<uint32_t, GRefPtr<GBytes>>({ 0, nullptr }));
@@ -229,7 +199,7 @@ public:
                 m_iconCache.remove(addResult.iterator);
                 return nullptr;
             }
-            addResult.iterator->value = { 1, WTFMove(bytes) };
+            addResult.iterator->value = { 1, WTF::move(bytes) };
         } else
             addResult.iterator->value.first++;
 
@@ -286,7 +256,7 @@ public:
     }
 
 private:
-    HashMap<String, std::pair<uint32_t, std::variant<CString, GRefPtr<GBytes>>>> m_iconCache;
+    HashMap<String, std::pair<uint32_t, Variant<CString, GRefPtr<GBytes>>>> m_iconCache;
     RunLoop::Timer m_timer;
 };
 
@@ -300,13 +270,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NotificationService);
 
 NotificationService& NotificationService::singleton()
 {
-    static std::once_flag onceFlag;
-    static LazyNeverDestroyed<NotificationService> service;
-
-    std::call_once(onceFlag, [] {
-        service.construct();
-    });
-
+    static NeverDestroyed<NotificationService> service;
     return service;
 }
 
@@ -416,7 +380,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
         if (tag.isEmpty())
             return Notification();
 
-        WebNotificationIdentifier notificationID;
+        std::optional<WebNotificationIdentifier> notificationID;
         for (const auto& it : m_notifications) {
             if (it.value.tag == tag) {
                 notificationID = it.key;
@@ -424,7 +388,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
             }
         }
 
-        return notificationID ? m_notifications.take(notificationID) : Notification({ 0, { }, tag, { } });
+        return notificationID ? m_notifications.take(*notificationID) : Notification({ 0, { }, tag, { } });
     };
 
     auto addResult = m_notifications.add(notification.identifier(), findNotificationByTag(notification.tag()));
@@ -547,24 +511,24 @@ void NotificationService::setNotificationID(WebNotificationIdentifier webNotific
     it->value.id = notificationID;
 }
 
-WebNotificationIdentifier NotificationService::findNotification(uint32_t notificationID)
+std::optional<WebNotificationIdentifier> NotificationService::findNotification(uint32_t notificationID)
 {
     for (const auto& it : m_notifications) {
         if (it.value.id == notificationID)
             return it.key;
     }
 
-    return  { };
+    return std::nullopt;
 }
 
-WebNotificationIdentifier NotificationService::findNotification(const String& notificationID)
+std::optional<WebNotificationIdentifier> NotificationService::findNotification(const String& notificationID)
 {
     for (const auto& it : m_notifications) {
         if (it.value.portalID == notificationID)
             return it.key;
     }
 
-    return { };
+    return std::nullopt;
 }
 
 void NotificationService::handleSignal(GDBusProxy* proxy, char*, char* signal, GVariant* parameters, NotificationService* service)
@@ -580,8 +544,8 @@ void NotificationService::handleSignal(GDBusProxy* proxy, char*, char* signal, G
             g_variant_get(parameters, "(&s&s@av)", &id, &action, nullptr);
             if (!g_strcmp0(action, "default")) {
                 if (auto notificationID = service->findNotification(String::fromUTF8(id))) {
-                    service->didClickNotification(notificationID);
-                    service->didCloseNotification(notificationID);
+                    service->didClickNotification(*notificationID);
+                    service->didCloseNotification(*notificationID);
                 }
             }
         } else {
@@ -594,24 +558,24 @@ void NotificationService::handleSignal(GDBusProxy* proxy, char*, char* signal, G
     }
 }
 
-void NotificationService::didClickNotification(WebNotificationIdentifier notificationID)
+void NotificationService::didClickNotification(std::optional<WebNotificationIdentifier> notificationID)
 {
     if (!notificationID)
         return;
 
     for (auto* observer : m_observers)
-        observer->didClickNotification(notificationID);
+        observer->didClickNotification(*notificationID);
 }
 
-void NotificationService::didCloseNotification(WebNotificationIdentifier notificationID)
+void NotificationService::didCloseNotification(std::optional<WebNotificationIdentifier> notificationID)
 {
     if (!notificationID)
         return;
 
     for (auto* observer : m_observers)
-        observer->didCloseNotification(notificationID);
+        observer->didCloseNotification(*notificationID);
 
-    auto notification = m_notifications.take(notificationID);
+    auto notification = m_notifications.take(*notificationID);
     if (!notification.iconURL.isEmpty())
         iconCache().unuseIcon(notification.iconURL);
 }

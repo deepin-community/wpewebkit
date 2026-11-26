@@ -30,7 +30,6 @@
 #include "NetworkProcessCreationParameters.h"
 #include "NetworkProcessMessages.h"
 #include "OverrideLanguages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcessMessages.h"
 #include <wtf/Language.h>
 
@@ -43,7 +42,7 @@ void WebProcessPool::platformInitializeNetworkProcess(NetworkProcessCreationPara
     parameters.languages = overrideLanguages().isEmpty() ? userPreferredLanguages() : overrideLanguages();
     parameters.memoryPressureHandlerConfiguration = s_networkProcessMemoryPressureHandlerConfiguration;
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
     if (MemoryPressureMonitor::disabled())
         parameters.shouldSuppressMemoryPressureHandler = true;
 #endif // OS(LINUX)

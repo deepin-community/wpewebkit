@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +40,9 @@ enum class WebExtensionEventListenerType : uint8_t {
     CommandsOnChanged,
     CommandsOnCommand,
     CookiesOnChanged,
+#if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
+    DeclarativeNetRequestOnRuleMatchedDebug,
+#endif
     DevToolsElementsPanelOnSelectionChanged,
     DevToolsExtensionPanelOnHidden,
     DevToolsExtensionPanelOnSearch,
@@ -75,6 +78,9 @@ enum class WebExtensionEventListenerType : uint8_t {
     TabsOnRemoved,
     TabsOnReplaced,
     TabsOnUpdated,
+    TestOnMessage,
+    TestOnTestStarted,
+    TestOnTestFinished,
     WebNavigationOnBeforeNavigate,
     WebNavigationOnCommitted,
     WebNavigationOnCompleted,
@@ -109,6 +115,10 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
         return "onCommand"_s;
     case WebExtensionEventListenerType::CookiesOnChanged:
         return "onChanged"_s;
+#if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
+    case WebExtensionEventListenerType::DeclarativeNetRequestOnRuleMatchedDebug:
+        return "onRuleMatchedDebug"_s;
+#endif
     case WebExtensionEventListenerType::DevToolsElementsPanelOnSelectionChanged:
         return "onSelectionChanged"_s;
     case WebExtensionEventListenerType::DevToolsExtensionPanelOnHidden:
@@ -179,6 +189,12 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
         return "onReplaced"_s;
     case WebExtensionEventListenerType::TabsOnUpdated:
         return "onUpdated"_s;
+    case WebExtensionEventListenerType::TestOnMessage:
+        return "onMessage"_s;
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        return "onTestStarted"_s;
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        return "onTestFinished"_s;
     case WebExtensionEventListenerType::WebNavigationOnBeforeNavigate:
         return "onBeforeNavigate"_s;
     case WebExtensionEventListenerType::WebNavigationOnCommitted:
@@ -214,6 +230,9 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
     case WebExtensionEventListenerType::WindowsOnRemoved:
         return "onRemoved"_s;
     }
+
+    ASSERT_NOT_REACHED();
+    return emptyString();
 }
 
 using WebExtensionEventListenerTypeWorldPair = std::pair<WebExtensionEventListenerType, WebExtensionContentWorldType>;

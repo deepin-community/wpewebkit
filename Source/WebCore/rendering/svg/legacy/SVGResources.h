@@ -26,6 +26,8 @@
 #include <memory>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
@@ -34,17 +36,20 @@ class Document;
 class LegacyRenderSVGResourceContainer;
 class RenderElement;
 class RenderObject;
-class RenderStyle;
 class LegacyRenderSVGRoot;
-class SVGRenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 // Holds a set of resources associated with a RenderObject
 class SVGResources {
-    WTF_MAKE_NONCOPYABLE(SVGResources); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(SVGResources);
+    WTF_MAKE_NONCOPYABLE(SVGResources);
 public:
     SVGResources();
 
-    static std::unique_ptr<SVGResources> buildCachedResources(const RenderElement&, const RenderStyle&);
+    static std::unique_ptr<SVGResources> buildCachedResources(const RenderElement&, const Style::ComputedStyle&);
     void layoutDifferentRootIfNeeded(const RenderElement& resourcesClient);
 
     bool markerReverseStart() const;
@@ -68,7 +73,7 @@ public:
     void buildSetOfResources(SingleThreadWeakHashSet<LegacyRenderSVGResourceContainer>&);
 
     // Methods operating on all cached resources
-    void removeClientFromCache(RenderElement&, bool markForInvalidation = true) const;
+    void removeClientFromCacheAndMarkForInvalidation(RenderElement&, bool markForInvalidation = true) const;
     // Returns true if the resource-to-be-destroyed is one of our resources.
     bool resourceDestroyed(LegacyRenderSVGResourceContainer&);
 
@@ -80,15 +85,15 @@ private:
     friend class SVGResourcesCycleSolver;
 
     // Only used by SVGResourcesCache cycle detection logic
-    void resetClipper();
-    void resetFilter();
-    void resetMarkerStart();
-    void resetMarkerMid();
-    void resetMarkerEnd();
-    void resetMasker();
-    void resetFill();
-    void resetStroke();
-    void resetLinkedResource();
+    void NODELETE resetClipper();
+    void NODELETE resetFilter();
+    void NODELETE resetMarkerStart();
+    void NODELETE resetMarkerMid();
+    void NODELETE resetMarkerEnd();
+    void NODELETE resetMasker();
+    void NODELETE resetFill();
+    void NODELETE resetStroke();
+    void NODELETE resetLinkedResource();
 
 private:
     bool setClipper(LegacyRenderSVGResourceClipper*);
@@ -99,7 +104,7 @@ private:
     bool setMasker(LegacyRenderSVGResourceMasker*);
     bool setFill(LegacyRenderSVGResourceContainer*);
     bool setStroke(LegacyRenderSVGResourceContainer*);
-    bool setLinkedResource(LegacyRenderSVGResourceContainer*);
+    bool NODELETE setLinkedResource(LegacyRenderSVGResourceContainer*);
 
     bool isEmpty() const { return !m_clipperFilterMaskerData && !m_markerData && !m_fillStrokeData && !m_linkedResource; }
 
@@ -109,7 +114,7 @@ private:
     // masker:  'container elements' and 'graphics elements'
     // -> a, circle, defs, ellipse, glyph, g, image, line, marker, mask, missing-glyph, path, pattern, polygon, polyline, rect, svg, switch, symbol, text, use
     struct ClipperFilterMaskerData {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED_INLINE(ClipperFilterMaskerData);
     public:
         ClipperFilterMaskerData() = default;
         SingleThreadWeakPtr<LegacyRenderSVGResourceClipper> clipper;
@@ -120,7 +125,7 @@ private:
     // From SVG 1.1 2nd Edition
     // marker: line, path, polygon, polyline
     struct MarkerData {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED_INLINE(MarkerData);
     public:
         MarkerData() = default;
         SingleThreadWeakPtr<LegacyRenderSVGResourceMarker> markerStart;
@@ -133,7 +138,7 @@ private:
     // stroke:     'shapes' and 'text content elements'
     // -> altGlyph, circle, ellipse, line, path, polygon, polyline, rect, text, textPath, tref, tspan
     struct FillStrokeData {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED_INLINE(FillStrokeData);
     public:
         FillStrokeData() = default;
         SingleThreadWeakPtr<LegacyRenderSVGResourceContainer> fill;

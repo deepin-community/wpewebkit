@@ -43,7 +43,7 @@ UseCounts::UseCounts(Procedure& procedure)
             m_counts[child].numUses++;
             children.append(child);
         }
-        std::sort(children.begin(), children.end());
+        std::ranges::sort(children);
         Value* last = nullptr;
         for (Value* child : children) {
             if (child == last)
@@ -55,7 +55,14 @@ UseCounts::UseCounts(Procedure& procedure)
     }
 }
 
-UseCounts::~UseCounts() = default;
+UseCountsWithoutUsingInstructions::UseCountsWithoutUsingInstructions(Procedure& procedure)
+    : m_counts(procedure.values().size())
+{
+    for (Value* value : procedure.values()) {
+        for (Value* child : value->children())
+            m_counts[child]++;
+    }
+}
 
 } } // namespace JSC::B3
 

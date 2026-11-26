@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, Google Inc. All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,13 +28,12 @@
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/RunLoop.h>
+#include <wtf/TZoneMalloc.h>
 
-namespace JSC {
-class ArrayBuffer;
-}
 
 namespace WebCore {
 class AudioBuffer;
+class SharedBuffer;
 
 // AsyncAudioDecoder asynchronously decodes audio file data from an ArrayBuffer in a worker thread.
 // Upon successful decoding, the DecodingTaskPromise will be resolved with the decoded AudioBuffer
@@ -42,16 +41,17 @@ class AudioBuffer;
 using DecodingTaskPromise = WTF::NativePromise<Ref<WebCore::AudioBuffer>, Exception>;
 
 class AsyncAudioDecoder final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(AsyncAudioDecoder);
     WTF_MAKE_NONCOPYABLE(AsyncAudioDecoder);
 public:
     AsyncAudioDecoder();
+    ~AsyncAudioDecoder();
 
     // Must be called on the main thread.
-    Ref<DecodingTaskPromise> decodeAsync(Ref<JSC::ArrayBuffer>&& audioData, float sampleRate);
+    Ref<DecodingTaskPromise> decodeAsync(Ref<SharedBuffer>&& audioData, float sampleRate);
 
 private:
-    Ref<RunLoop> m_runLoop;
+    const Ref<RunLoop> m_runLoop;
 };
 
 } // namespace WebCore

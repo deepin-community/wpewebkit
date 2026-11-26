@@ -31,14 +31,25 @@
 #include "GStreamerQuirkAmLogic.h"
 #include "GStreamerQuirkBcmNexus.h"
 #include "GStreamerQuirkBroadcom.h"
+#include "GStreamerQuirkOpenMAX.h"
+#include "GStreamerQuirkQualcomm.h"
 #include "GStreamerQuirkRealtek.h"
 #include "GStreamerQuirkRialto.h"
 #include "GStreamerQuirkWesteros.h"
+#include <optional>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OptionSet.h>
+#include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/StringCommon.h>
 #include <wtf/text/StringView.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerQuirkBase);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerQuirk);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerHolePunchQuirk);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerQuirksManager);
 
 GST_DEBUG_CATEGORY_STATIC(webkit_quirks_debug);
 #define GST_CAT_DEFAULT webkit_quirks_debug
@@ -54,6 +65,12 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
 {
     static std::once_flag debugRegisteredFlag;
     std::call_once(debugRegisteredFlag, [] {
+        if (isInWebProcess())
+            ensureGStreamerInitialized();
+        else
+            // This is needed, e.g. when running in NetworkProcess to determine MIME type support
+            ensureGStreamerInitializedNonWebProcess();
+
         GST_DEBUG_CATEGORY_INIT(webkit_quirks_debug, "webkitquirks", 0, "WebKit Quirks");
     });
 
@@ -67,16 +84,15 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
     if (!loadQuirksFromEnvironment)
         return;
 
-    const char* quirksList = g_getenv("WEBKIT_GST_QUIRKS");
-    GST_DEBUG("Attempting to parse requested quirks: %s", GST_STR_NULL(quirksList));
-    if (quirksList) {
-        StringView quirks { std::span { quirksList, strlen(quirksList) } };
-        if (WTF::equalLettersIgnoringASCIICase(quirks, "help"_s)) {
-            WTFLogAlways("Supported quirks for WEBKIT_GST_QUIRKS are: amlogic, broadcom, bcmnexus, realtek, westeros");
+    auto quirksString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_QUIRKS"));
+    GST_DEBUG("Attempting to parse requested quirks: %s", GST_STR_NULL(quirksString.utf8()));
+    if (quirksString) {
+        if (WTF::equalLettersIgnoringASCIICase(quirksString.span(), "help"_s)) {
+            gst_printerrln("Supported quirks for WEBKIT_GST_QUIRKS are: amlogic, broadcom, bcmnexus, openmax, qualcomm, realtek, rialto, westeros");
             return;
         }
 
-        for (const auto& identifier : quirks.split(',')) {
+        for (const auto& identifier : String(quirksString.span()).split(',')) {
             std::unique_ptr<GStreamerQuirk> quirk;
             if (WTF::equalLettersIgnoringASCIICase(identifier, "amlogic"_s))
                 quirk = WTF::makeUnique<GStreamerQuirkAmLogic>();
@@ -84,6 +100,10 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
                 quirk = WTF::makeUnique<GStreamerQuirkBroadcom>();
             else if (WTF::equalLettersIgnoringASCIICase(identifier, "bcmnexus"_s))
                 quirk = WTF::makeUnique<GStreamerQuirkBcmNexus>();
+            else if (WTF::equalLettersIgnoringASCIICase(identifier, "openmax"_s))
+                quirk = WTF::makeUnique<GStreamerQuirkOpenMAX>();
+            else if (WTF::equalLettersIgnoringASCIICase(identifier, "qualcomm"_s))
+                quirk = WTF::makeUnique<GStreamerQuirkQualcomm>();
             else if (WTF::equalLettersIgnoringASCIICase(identifier, "realtek"_s))
                 quirk = WTF::makeUnique<GStreamerQuirkRealtek>();
             else if (WTF::equalLettersIgnoringASCIICase(identifier, "rialto"_s))
@@ -91,7 +111,7 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
             else if (WTF::equalLettersIgnoringASCIICase(identifier, "westeros"_s))
                 quirk = WTF::makeUnique<GStreamerQuirkWesteros>();
             else {
-                GST_WARNING("Unknown quirk requested: %s. Skipping", identifier.toStringWithoutCopying().ascii().data());
+                GST_WARNING("Unknown quirk requested: %s. Skipping", identifier.ascii().data());
                 continue;
             }
 
@@ -99,32 +119,52 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
                 GST_WARNING("Quirk %s was requested but is not supported on this platform. Skipping", quirk->identifier().characters());
                 continue;
             }
-            m_quirks.append(WTFMove(quirk));
+            m_quirks.append(WTF::move(quirk));
         }
+    } else {
+        GST_DEBUG("WEBKIT_GST_QUIRKS was not set, now performing automatic quirks detection.");
+#define ADD_QUIRK(name) m_quirks.append(WTF::makeUnique<GStreamerQuirk##name>())
+        ADD_QUIRK(AmLogic);
+        ADD_QUIRK(Broadcom);
+        ADD_QUIRK(BcmNexus);
+        ADD_QUIRK(OpenMAX);
+        ADD_QUIRK(Qualcomm);
+        ADD_QUIRK(Realtek);
+        ADD_QUIRK(Rialto);
+        ADD_QUIRK(Westeros);
+#undef ADD_QUIRK
+
+        m_quirks.removeAllMatching([](auto& quirk) -> bool {
+            bool isPlatformSupported = quirk->isPlatformSupported();
+            if (isPlatformSupported)
+                GST_INFO("Enabling quirk %s", quirk->identifier().characters());
+            return !isPlatformSupported;
+        });
     }
 
-    const char* holePunchQuirk = g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK");
-    GST_DEBUG("Attempting to parse requested hole-punch quirk: %s", GST_STR_NULL(holePunchQuirk));
-    if (!holePunchQuirk)
+    GST_DEBUG("%zu quirks enabled", m_quirks.size());
+
+    auto identifierString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK"));
+    GST_DEBUG("Attempting to parse requested hole-punch quirk: %s", GST_STR_NULL(identifierString.utf8()));
+    if (!identifierString)
         return;
 
-    StringView identifier { std::span { holePunchQuirk, strlen(holePunchQuirk) } };
-    if (WTF::equalLettersIgnoringASCIICase(identifier, "help"_s)) {
-        WTFLogAlways("Supported quirks for WEBKIT_GST_HOLE_PUNCH_QUIRK are: fake, westeros, bcmnexus");
+    if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "help"_s)) {
+        gst_printerrln("Supported quirks for WEBKIT_GST_HOLE_PUNCH_QUIRK are: fake, bcmnexus, rialto, westeros");
         return;
     }
 
     // TODO: Maybe check this is coherent (somehow) with the quirk(s) selected above.
-    if (WTF::equalLettersIgnoringASCIICase(identifier, "bcmnexus"_s))
+    if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "bcmnexus"_s))
         m_holePunchQuirk = WTF::makeUnique<GStreamerHolePunchQuirkBcmNexus>();
-    else if (WTF::equalLettersIgnoringASCIICase(identifier, "rialto"_s))
+    else if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "rialto"_s))
         m_holePunchQuirk = WTF::makeUnique<GStreamerHolePunchQuirkRialto>();
-    else if (WTF::equalLettersIgnoringASCIICase(identifier, "westeros"_s))
+    else if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "westeros"_s))
         m_holePunchQuirk = WTF::makeUnique<GStreamerHolePunchQuirkWesteros>();
-    else if (WTF::equalLettersIgnoringASCIICase(identifier, "fake"_s))
+    else if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "fake"_s))
         m_holePunchQuirk = WTF::makeUnique<GStreamerHolePunchQuirkFake>();
     else
-        GST_WARNING("HolePunch quirk %s un-supported.", identifier.toStringWithoutCopying().ascii().data());
+        GST_WARNING("HolePunch quirk %s un-supported.", identifierString.utf8());
 }
 
 bool GStreamerQuirksManager::isEnabled() const
@@ -157,7 +197,7 @@ GstElement* GStreamerQuirksManager::createWebAudioSink()
     }
 
     GST_DEBUG("Quirks didn't specify a WebAudioSink, falling back to default sink");
-    return createPlatformAudioSink("music"_s);
+    return createPlatformAudioSink("webaudio"_s);
 }
 
 GstElement* GStreamerQuirksManager::createHolePunchVideoSink(bool isLegacyPlaybin, const MediaPlayer* player)
@@ -192,6 +232,8 @@ bool GStreamerQuirksManager::sinksRequireClockSynchronization() const
 
 void GStreamerQuirksManager::configureElement(GstElement* element, OptionSet<ElementRuntimeCharacteristics>&& characteristics)
 {
+    if (m_quirks.isEmpty())
+        return;
     GST_DEBUG("Configuring element %" GST_PTR_FORMAT, element);
     for (const auto& quirk : m_quirks)
         quirk->configureElement(element, characteristics);
@@ -204,11 +246,12 @@ std::optional<bool> GStreamerQuirksManager::isHardwareAccelerated(GstElementFact
         if (!result)
             continue;
 
-        GST_DEBUG("Setting %" GST_PTR_FORMAT " as %s accelerated from quirk %s", factory, quirk->identifier().characters(), *result ? "hardware" : "software");
+        GST_DEBUG("Setting %" GST_PTR_FORMAT " as %s accelerated from quirk %s", factory, *result ? "hardware" : "software",  quirk->identifier().characters());
         return *result;
     }
 
-    return std::nullopt;
+    auto klassStr = CStringView::unsafeFromUTF8(gst_element_factory_get_klass(factory));
+    return contains(klassStr.span(), "Hardware"_s);
 }
 
 bool GStreamerQuirksManager::supportsVideoHolePunchRendering() const
@@ -265,13 +308,31 @@ unsigned GStreamerQuirksManager::getAdditionalPlaybinFlags() const
     return flags;
 }
 
-bool GStreamerQuirksManager::shouldParseIncomingLibWebRTCBitStream() const
+GRefPtr<GstCaps> GStreamerQuirksManager::videoSinkGLCapsFormat() const
 {
     for (auto& quirk : m_quirks) {
-        if (!quirk->shouldParseIncomingLibWebRTCBitStream())
+        if (auto caps = quirk->videoSinkGLCapsFormat())
+            return caps;
+    }
+    return nullptr;
+}
+
+bool GStreamerQuirksManager::isVideoCapsGLCompatible(const GRefPtr<GstCaps>& caps) const
+{
+    for (auto& quirk : m_quirks) {
+        if (!quirk->isVideoCapsGLCompatible(caps))
             return false;
     }
     return true;
+}
+
+GstState GStreamerQuirksManager::eosMediaPlayerState() const
+{
+    for (auto& quirk : m_quirks) {
+        if (auto state = quirk->eosMediaPlayerState())
+            return *state;
+    }
+    return GST_STATE_READY;
 }
 
 bool GStreamerQuirksManager::needsBufferingPercentageCorrection() const
@@ -326,10 +387,98 @@ void GStreamerQuirksManager::setupBufferingPercentageCorrection(MediaPlayerPriva
             // We're moving the element to the inner method. If this loop ever needs to call the method twice,
             // think about a solution to avoid passing a dummy element (after first move) to the method the second
             // time it's called.
-            quirk->setupBufferingPercentageCorrection(playerPrivate, currentState, newState, WTFMove(element));
+            quirk->setupBufferingPercentageCorrection(playerPrivate, currentState, newState, WTF::move(element));
             return;
         }
     }
+}
+
+bool GStreamerQuirksManager::needsCustomInstantRateChange() const
+{
+    for (auto& quirk : m_quirks) {
+        if (quirk->needsCustomInstantRateChange())
+            return true;
+    }
+    return false;
+}
+
+// Returning processed and didInstantRateChange.
+std::pair<bool, bool> GStreamerQuirksManager::applyCustomInstantRateChange(
+    bool isPipelinePlaying, bool isPipelineWaitingPreroll, float playbackRate, bool mute, GstElement* pipeline) const
+{
+    for (auto& quirk : m_quirks) {
+        if (quirk->needsCustomInstantRateChange()) {
+            return quirk->applyCustomInstantRateChange(isPipelinePlaying, isPipelineWaitingPreroll, playbackRate,
+                mute, pipeline);
+        }
+    }
+    return { false, false };
+}
+
+// Returning forwardToAllPads.
+bool GStreamerQuirksManager::analyzeWebKitMediaSrcCustomEvent(GRefPtr<GstEvent> event) const
+{
+    for (auto& quirk : m_quirks) {
+        if (quirk->needsCustomInstantRateChange())
+            return quirk->analyzeWebKitMediaSrcCustomEvent(event);
+    }
+    return false;
+}
+
+// Returning rate.
+std::optional<double> GStreamerQuirksManager::processWebKitMediaSrcCustomEvent(GRefPtr<GstEvent> event, bool handledByAnyStream,
+    bool handledByAllStreams) const
+{
+    for (auto& quirk : m_quirks) {
+        if (quirk->needsCustomInstantRateChange())
+            return quirk->processWebKitMediaSrcCustomEvent(event, handledByAnyStream, handledByAllStreams);
+    }
+    return std::nullopt;
+}
+
+// Returning processed and didInstantRateChange.
+std::pair<bool, bool> GStreamerQuirk::applyCustomInstantRateChange(
+    bool isPipelinePlaying, bool isPipelineWaitingPreroll, float playbackRate, bool mute, GstElement* pipeline) const
+{
+    // This check allows to implement a common behaviour for this instant rate change family of methods
+    // in the superclass, but ensure that the code will only run on subclasses actually supporting
+    // instant rate change. This is better than copypasting the code to all the subclasses, and better
+    // than creating a common base class. Common base classes for features instead of for platforms
+    // is a strategy that would quickly become unmaintainable.
+    if (!needsCustomInstantRateChange())
+        return std::pair<bool, bool>(false, false);
+
+    bool didInstantRateChange = false;
+    if (isPipelinePlaying && !isPipelineWaitingPreroll) {
+        GstStructure* s = gst_structure_new("custom-instant-rate-change",
+            "rate", G_TYPE_DOUBLE, playbackRate, nullptr);
+        didInstantRateChange = gst_element_send_event(
+            pipeline, gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM_OOB, s));
+        if (didInstantRateChange)
+            g_object_set(pipeline, "mute", mute, nullptr);
+    }
+
+    return { true, didInstantRateChange };
+}
+
+// Returning forwardToAllPads.
+bool GStreamerQuirk::analyzeWebKitMediaSrcCustomEvent(GRefPtr<GstEvent> event) const
+{
+    return needsCustomInstantRateChange() && gst_event_has_name(event.get(), "custom-instant-rate-change");
+}
+
+// Returning rate.
+std::optional<double> GStreamerQuirk::processWebKitMediaSrcCustomEvent(GRefPtr<GstEvent> event, bool,
+    bool handledByAllStreams) const
+{
+    if (!needsCustomInstantRateChange())
+        return std::nullopt;
+    if (gst_event_has_name(event.get(), "custom-instant-rate-change") && handledByAllStreams) {
+        auto eventRate = gstStructureGet<double>(gst_event_get_structure(event.get()), "rate"_s);
+        if (eventRate.has_value())
+            return eventRate.value();
+    }
+    return std::nullopt;
 }
 
 #undef GST_CAT_DEFAULT

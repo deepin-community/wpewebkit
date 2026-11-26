@@ -49,7 +49,7 @@ public:
     Identifier& name() { return m_name; }
     Identifier& originalName() { return m_originalName; }
     Expression& type() { return m_type; }
-    Attribute::List& attributes() { return m_attributes; }
+    Attribute::List& attributes() LIFETIME_BOUND { return m_attributes; }
 
     bool invariant() const { return m_invariant; }
     std::optional<Builtin> builtin() const { return m_builtin; }
@@ -65,10 +65,10 @@ public:
 private:
     StructureMember(SourceSpan span, Identifier&& name, Expression::Ref&& type, Attribute::List&& attributes)
         : Node(span)
-        , m_name(WTFMove(name))
+        , m_name(WTF::move(name))
         , m_originalName(m_name)
-        , m_attributes(WTFMove(attributes))
-        , m_type(WTFMove(type))
+        , m_attributes(WTF::move(attributes))
+        , m_type(WTF::move(type))
     { }
 
     Identifier m_name;

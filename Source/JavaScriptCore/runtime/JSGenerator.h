@@ -25,20 +25,14 @@
 
 #pragma once
 
-#include "JSInternalFieldObjectImpl.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <wtf/EnumClassOperatorOverloads.h>
 
 namespace JSC {
 
-class JSGenerator final : public JSInternalFieldObjectImpl<6> {
+class JSGenerator final : public JSInternalFieldObjectImpl<4> {
 public:
-    using Base = JSInternalFieldObjectImpl<6>;
-
-    // JSGenerator has one inline storage slot, which is pointing internalField(0).
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSGenerator);
-    }
+    using Base = JSInternalFieldObjectImpl<4>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -70,30 +64,54 @@ public:
     };
 
     enum class Field : uint32_t {
-        // FIXME: JSGenerator should support PolyProto, since generator tends to be created with poly proto mode.
-        // We reserve the first internal field for PolyProto property. This offset is identical to JSFinalObject's first inline storage slot which will be used for PolyProto.
-        PolyProto = 0,
-        State,
+        State = 0,
         Next,
         This,
         Frame,
-        Context,
     };
-    static_assert(numberOfInternalFields == 6);
+    static_assert(numberOfInternalFields == 4);
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
         return { {
-            jsNull(),
             jsNumber(static_cast<int32_t>(State::Init)),
-            jsUndefined(),
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
         } };
     }
 
+    using Base::internalField;
+    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
     static JSGenerator* create(VM&, Structure*);
+    static JSGenerator* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+
+    int32_t state() const
+    {
+        return internalField(Field::State).get().asInt32AsAnyInt();
+    }
+
+    void setState(int32_t state)
+    {
+        Base::internalField(static_cast<unsigned>(Field::State)).setWithoutWriteBarrier(jsNumber(state));
+    }
+
+    JSValue next() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::Next)).get();
+    }
+
+    JSValue thisValue() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::This)).get();
+    }
+
+    JSValue frame() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::Frame)).get();
+    }
 
     DECLARE_EXPORT_INFO;
 

@@ -30,20 +30,14 @@
 #include "RenderStyleConstants.h"
 #include "Settings.h"
 #include "TextFlags.h"
+#include "TrustedFonts.h"
 #include <memory>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/HashSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class CSSFontFaceClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CSSFontFaceClient> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -67,28 +61,34 @@ class StyleRuleFontFace;
 enum class ExternalResourceDownloadPolicy : bool;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSFontFace);
-class CSSFontFace final : public RefCounted<CSSFontFace> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSFontFace);
+class CSSFontFace final : public RefCountedAndCanMakeWeakPtr<CSSFontFace> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSFontFace, CSSFontFace);
 public:
     static Ref<CSSFontFace> create(CSSFontSelector&, StyleRuleFontFace* cssConnection = nullptr, FontFace* wrapper = nullptr, bool isLocalFallback = false);
-    virtual ~CSSFontFace();
+    ~CSSFontFace();
 
-    void setFamilies(CSSValueList&);
+    void setFamily(CSSValue&);
     void setStyle(CSSValue&);
     void setWeight(CSSValue&);
-    void setStretch(CSSValue&);
+    void setWidth(CSSValue&);
     void setSizeAdjust(CSSValue&);
     void setUnicodeRange(CSSValueList&);
     void setFeatureSettings(CSSValue&);
-    void setDisplay(CSSPrimitiveValue&);
+    void setDisplay(CSSValue&);
+    void setAscentOverride(CSSValue&);
+    void setDescentOverride(CSSValue&);
+    void setLineGapOverride(CSSValue&);
 
-    String family() const;
+    AtomString family() const;
     String style() const;
     String weight() const;
-    String stretch() const;
+    String width() const;
     String unicodeRange() const;
     String featureSettings() const;
     String display() const;
+    String ascentOverride() const;
+    String descentOverride() const;
+    String lineGapOverride() const;
     String sizeAdjust() const;
 
     // Pending => Loading  => TimedOut
@@ -102,10 +102,16 @@ public:
     //             Success    Failure
     enum class Status : uint8_t { Pending, Loading, TimedOut, Success, Failure };
 
-    struct UnicodeRange;
+    struct UnicodeRange {
+        char32_t from;
+        char32_t to;
 
-    RefPtr<CSSValueList> families() const;
-    std::span<const UnicodeRange> ranges() const { ASSERT(m_status != Status::Failure); return m_ranges.span(); }
+        bool operator==(const UnicodeRange&) const = default;
+    };
+
+    std::span<const UnicodeRange> ranges() const LIFETIME_BOUND { ASSERT(m_status != Status::Failure); return m_ranges.span(); }
+
+    RefPtr<CSSValue> NODELETE familyCSSValue() const;
 
     void setFontSelectionCapabilities(FontSelectionCapabilities capabilities) { m_fontSelectionCapabilities = capabilities; }
     FontSelectionCapabilities fontSelectionCapabilities() const { ASSERT(m_status != Status::Failure); return m_fontSelectionCapabilities.computeFontSelectionCapabilities(); }
@@ -117,11 +123,11 @@ public:
     void addClient(CSSFontFaceClient&);
     void removeClient(CSSFontFaceClient&);
 
-    bool computeFailureState() const;
+    bool NODELETE computeFailureState() const;
 
-    void opportunisticallyStartFontDataURLLoading();
+    void opportunisticallyStartFontDataURLLoading(DownloadableBinaryFontTrustedTypes);
 
-    void adoptSource(std::unique_ptr<CSSFontFaceSource>&&);
+    void adoptSource(std::unique_ptr<CSSFontFaceSource>);
     void sourcesPopulated() { m_sourcesPopulated = true; }
     size_t sourceCount() const { return m_sources.size(); }
 
@@ -133,24 +139,18 @@ public:
 
     static void appendSources(CSSFontFace&, CSSValueList&, ScriptExecutionContext*, bool isInitiatingElementInUserAgentShadowTree);
 
-    struct UnicodeRange {
-        char32_t from;
-        char32_t to;
-        friend bool operator==(const UnicodeRange&, const UnicodeRange&) = default;
-    };
-
-    bool rangesMatchCodePoint(char32_t) const;
+    bool NODELETE rangesMatchCodePoint(char32_t) const;
 
     // We don't guarantee that the FontFace wrapper will be the same every time you ask for it.
     Ref<FontFace> wrapper(ScriptExecutionContext*);
     void setWrapper(FontFace&);
-    FontFace* existingWrapper();
+    FontFace* NODELETE existingWrapper();
 
     struct FontLoadTiming {
         Seconds blockPeriod;
         Seconds swapPeriod;
     };
-    FontLoadTiming fontLoadTiming() const;
+    FontLoadTiming NODELETE fontLoadTiming() const;
     bool shouldIgnoreFontLoadCompletions() const { return m_shouldIgnoreFontLoadCompletions; }
 
     bool purgeable() const;
@@ -163,7 +163,7 @@ public:
     void setErrorState();
 
 private:
-    CSSFontFace(const Settings::Values*, StyleRuleFontFace*, FontFace*, bool isLocalFallback);
+    CSSFontFace(const SettingsValues*, StyleRuleFontFace*, FontFace*, bool isLocalFallback);
 
     size_t pump(ExternalResourceDownloadPolicy);
     void setStatus(Status);
@@ -177,10 +177,10 @@ private:
     const StyleProperties& properties() const;
     MutableStyleProperties& mutableProperties();
 
-    Document* document();
+    Document* NODELETE document() const;
 
-    const std::variant<Ref<MutableStyleProperties>, Ref<StyleRuleFontFace>> m_propertiesOrCSSConnection;
-    RefPtr<CSSValueList> m_families;
+    const Variant<Ref<MutableStyleProperties>, Ref<StyleRuleFontFace>> m_propertiesOrCSSConnection;
+    RefPtr<CSSValue> m_family;
     Vector<UnicodeRange> m_ranges;
 
     FontFeatureSettings m_featureSettings;
@@ -194,25 +194,24 @@ private:
     FontSelectionSpecifiedCapabilities m_fontSelectionCapabilities;
     
     Status m_status { Status::Pending };
-    bool m_isLocalFallback { false };
-    bool m_sourcesPopulated { false };
-    bool m_mayBePurged { true };
-    bool m_shouldIgnoreFontLoadCompletions { false };
+    bool m_isLocalFallback : 1 { false };
+    bool m_sourcesPopulated : 1 { false };
+    bool m_mayBePurged : 1 { true };
+    bool m_shouldIgnoreFontLoadCompletions : 1 { false };
     FontLoadTimingOverride m_fontLoadTimingOverride { FontLoadTimingOverride::None };
     AllowUserInstalledFonts m_allowUserInstalledFonts { AllowUserInstalledFonts::Yes };
+    DownloadableBinaryFontTrustedTypes m_trustedType { DownloadableBinaryFontTrustedTypes::Any };
 
     Timer m_timeoutTimer;
 };
 
-class CSSFontFaceClient : public CanMakeWeakPtr<CSSFontFaceClient> {
+class CSSFontFaceClient : public AbstractRefCountedAndCanMakeWeakPtr<CSSFontFaceClient> {
 public:
     virtual ~CSSFontFaceClient() = default;
     virtual void fontLoaded(CSSFontFace&) { }
     virtual void fontStateChanged(CSSFontFace&, CSSFontFace::Status /*oldState*/, CSSFontFace::Status /*newState*/) { }
-    virtual void fontPropertyChanged(CSSFontFace&, CSSValueList* /*oldFamilies*/ = nullptr) { }
+    virtual void fontPropertyChanged(CSSFontFace&, CSSValue* /*oldFamily*/ = nullptr) { }
     virtual void updateStyleIfNeeded(CSSFontFace&) { }
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
 };
 
 }

@@ -26,24 +26,26 @@
 #pragma once
 
 #include "BackgroundFetchEvent.h"
-#include "JSDOMPromiseDeferred.h"
+#include "JSDOMPromiseDeferredForward.h"
 
 namespace WebCore {
 
 struct BackgroundFetchUIOptions;
 
 class BackgroundFetchUpdateUIEvent final : public BackgroundFetchEvent {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(BackgroundFetchUpdateUIEvent);
+    WTF_MAKE_TZONE_ALLOCATED(BackgroundFetchUpdateUIEvent);
 public:
     using Init = BackgroundFetchEventInit;
     static Ref<BackgroundFetchUpdateUIEvent> create(const AtomString&, Init&&, IsTrusted = IsTrusted::No);
 
     ~BackgroundFetchUpdateUIEvent();
 
-    void updateUI(BackgroundFetchUIOptions&&, DOMPromiseDeferred<void>&&);
+    void NODELETE updateUI(BackgroundFetchUIOptions&&, DOMPromiseDeferred<void>&&);
 
 private:
-    BackgroundFetchUpdateUIEvent(const AtomString&, ExtendableEventInit&&, RefPtr<BackgroundFetchRegistration>&&, IsTrusted);
+    BackgroundFetchUpdateUIEvent(const AtomString&, ExtendableEventInit&&, Ref<BackgroundFetchRegistration>&&, IsTrusted);
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EXTENDABLEEVENT(BackgroundFetchUpdateUIEvent)

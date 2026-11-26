@@ -25,8 +25,11 @@
 
 #pragma once
 
+#include <pal/crypto/CryptoTypes.h>
+
 namespace WebCore {
 
+constexpr auto sha224DeprecationMessage = "SHA224 is not supported";
 enum class CryptoAlgorithmIdentifier : uint8_t {
     RSAES_PKCS1_v1_5 = 1,
     RSASSA_PKCS1_v1_5,
@@ -41,7 +44,7 @@ enum class CryptoAlgorithmIdentifier : uint8_t {
     AES_KW,
     HMAC,
     SHA_1,
-    SHA_224,
+    DEPRECATED_SHA_224,
     SHA_256,
     SHA_384,
     SHA_512,
@@ -50,5 +53,10 @@ enum class CryptoAlgorithmIdentifier : uint8_t {
     Ed25519,
     X25519
 };
+
+inline bool isValidHashParameter(CryptoAlgorithmIdentifier hash)
+{
+    return hash == CryptoAlgorithmIdentifier::SHA_1 || hash == CryptoAlgorithmIdentifier::SHA_256 || hash == CryptoAlgorithmIdentifier::SHA_512 || hash == CryptoAlgorithmIdentifier::SHA_384;
+}
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Google Inc.  All rights reserved.
+ * Copyright (C) 2012 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebKitMediaKeyNeededEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebKitMediaKeyNeededEvent);
 
 WebKitMediaKeyNeededEvent::WebKitMediaKeyNeededEvent(const AtomString& type, Uint8Array* initData)
     : Event(EventInterfaceType::WebKitMediaKeyNeededEvent, type, CanBubble::No, IsCancelable::No)
@@ -41,9 +41,9 @@ WebKitMediaKeyNeededEvent::WebKitMediaKeyNeededEvent(const AtomString& type, Uin
 {
 }
 
-WebKitMediaKeyNeededEvent::WebKitMediaKeyNeededEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
-    : Event(EventInterfaceType::WebKitMediaKeyNeededEvent, type, initializer, isTrusted)
-    , m_initData(initializer.initData)
+WebKitMediaKeyNeededEvent::WebKitMediaKeyNeededEvent(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
+    : Event(EventInterfaceType::WebKitMediaKeyNeededEvent, type, WTF::move(initializer), isTrusted)
+    , m_initData(WTF::move(initializer.initData))
 {
 }
 

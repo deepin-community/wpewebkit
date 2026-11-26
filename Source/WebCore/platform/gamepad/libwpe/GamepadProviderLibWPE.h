@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 RDK Management  All rights reserved.
+ * Copyright (C) 2020 RDK Management All rights reserved.
  * Copyright (C) 2022 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,18 +29,18 @@
 #if ENABLE(GAMEPAD) && USE(LIBWPE)
 
 #include "GamepadProvider.h"
+#include <wpe/wpe.h>
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/RunLoop.h>
 
-struct wpe_gamepad;
-struct wpe_gamepad_provider;
-struct wpe_view_backend;
+#if WPE_CHECK_VERSION(1, 13, 90)
 
 namespace WebCore {
 
 class GamepadLibWPE;
 
-class GamepadProviderLibWPE final : public GamepadProvider {
+class GamepadProviderLibWPE final : public GamepadProvider, public CanMakeWeakPtr<GamepadProviderLibWPE> {
     WTF_MAKE_NONCOPYABLE(GamepadProviderLibWPE);
     friend class NeverDestroyed<GamepadProviderLibWPE>;
 
@@ -49,9 +49,13 @@ public:
 
     virtual ~GamepadProviderLibWPE();
 
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
+
     void startMonitoringGamepads(GamepadProviderClient&) final;
     void stopMonitoringGamepads(GamepadProviderClient&) final;
-    const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() final { return m_gamepadVector; }
+    const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() LIFETIME_BOUND final { return m_gamepadVector; }
     void playEffect(unsigned, const String&, GamepadHapticEffectType, const GamepadEffectParameters&, CompletionHandler<void(bool)>&&) final;
     void stopEffects(unsigned, const String&, CompletionHandler<void()>&&) final;
 
@@ -83,5 +87,7 @@ private:
 };
 
 } // namespace WebCore
+
+#endif // WPE_CHECK_VERSION(1, 13, 90)
 
 #endif // ENABLE(GAMEPAD) && USE(LIBWPE)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "VisitedLinkStore.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -42,12 +43,13 @@ public:
     }
     ~RemotePageVisitedLinkStoreRegistration()
     {
-        if (m_page)
-            m_process->removeVisitedLinkStoreUser(m_page->visitedLinkStore(), m_page->identifier());
+        if (RefPtr page = m_page)
+            m_process->removeVisitedLinkStoreUser(page->visitedLinkStore(), page->identifier());
     }
+
 private:
     WeakPtr<WebPageProxy> m_page;
-    Ref<WebProcessProxy> m_process;
+    const Ref<WebProcessProxy> m_process;
 };
 
 }

@@ -30,13 +30,9 @@
 #include <WebCore/LibWebRTCMacros.h>
 #include <wtf/Forward.h>
 
-ALLOW_COMMA_BEGIN
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/async_packet_socket.h>
-
-ALLOW_DEPRECATED_DECLARATIONS_END
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebKit {
 
@@ -68,23 +64,25 @@ struct RTCPacketOptions {
     };
 
     struct SerializableData {
-        DifferentiatedServicesCodePoint dscp;
         int32_t packetId;
+#if !PLATFORM(COCOA)
+        DifferentiatedServicesCodePoint dscp;
         int rtpSendtimeExtensionId;
         int64_t srtpAuthTagLength;
         std::span<const char> srtpAuthKey;
         int64_t srtpPacketIndex;
+#endif
     };
 
-    explicit RTCPacketOptions(const rtc::PacketOptions& options)
+    explicit RTCPacketOptions(const webrtc::AsyncSocketPacketOptions& options)
         : options(options)
     { }
 
     explicit RTCPacketOptions(const SerializableData&);
 
-    SerializableData serializableData() const;
+    SerializableData NODELETE serializableData() const;
 
-    rtc::PacketOptions options;
+    webrtc::AsyncSocketPacketOptions options;
 };
 
 }

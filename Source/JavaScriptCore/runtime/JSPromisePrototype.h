@@ -29,6 +29,8 @@
 
 namespace JSC {
 
+class JSPromise;
+
 class JSPromisePrototype : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -53,5 +55,8 @@ protected:
 private:
     void addOwnInternalSlots(VM&, JSGlobalObject*);
 };
+
+bool promiseSpeciesWatchpointIsValid(VM&, JSPromise*);
+JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncThen);
 
 } // namespace JSC

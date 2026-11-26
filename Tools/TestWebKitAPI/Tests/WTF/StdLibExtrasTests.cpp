@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,11 @@
 
 #include "config.h"
 
+#include <tuple>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 
 #if !USE(SYSTEM_MALLOC)
 #include <bmalloc/Algorithm.h>
@@ -116,16 +118,16 @@ TEST(WTF_StdLibExtras, findBitInWord_uint64_t) { testFindBitInWord<uint64_t>(); 
 
 // Tests that function-local types can be instantiated with makeUnique.
 // Style check would complain about use of std::make_unique, enforcing use of
-// makeUnique. The makeUnique needs WTF_..._MAKE_FAST_ALLOCATED.
+// makeUnique. The makeUnique needs WTF_DEPRECATED_..._DEPRECATED_MAKE_FAST_ALLOCATED.
 // There used to be a warn-unused-typedef errors when using these.
 TEST(WTF_StdLibExtras, MakeUniqueFunctionLocalTypeCompiles)
 {
     struct LocalStruct {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LocalStruct);
     };
     IGNORE_CLANG_WARNINGS_BEGIN("unused-local-typedef")
     class LocalClass {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(LocalClass);
     };
     IGNORE_CLANG_WARNINGS_END
     auto s = makeUnique<LocalStruct>();
@@ -204,6 +206,168 @@ TEST(WTF_StdLibExtras, ByteCast)
     static_assert(std::same_as<std::span<const char>, decltype(byteCast<char>(scu8))>);
     static_assert(std::same_as<std::span<const char8_t>, decltype(byteCast<char8_t>(scu8))>);
     static_assert(std::same_as<std::span<const std::byte>, decltype(byteCast<std::byte>(scu8))>);
+}
+
+TEST(WTF_StdLibExtras, SpanReinterpretCast_DynamicExtent)
+{
+    Vector<int32_t> signedInt { -3, -2, -1, 0, 1, 2 };
+    auto signedIntSpan = signedInt.span();
+    static_assert(std::same_as<std::span<const int32_t, std::dynamic_extent>, decltype(signedIntSpan)>);
+
+    // Cast from 4 bytes to 1 byte per item.
+    auto unsignedIntByteSpan = asByteSpan(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint8_t, std::dynamic_extent>, decltype(unsignedIntByteSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedIntByteSpan.data(), unsignedIntByteSpan.size_bytes()));
+
+    // Cast from 4 bytes to 4 bytes per item.
+    auto unsignedIntSpan = spanReinterpretCast<const uint32_t>(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint32_t, std::dynamic_extent>, decltype(unsignedIntSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedIntSpan.data(), unsignedIntSpan.size_bytes()));
+
+    // Cast from 4 bytes to 8 bytes per item.
+    auto unsignedLongSpan = spanReinterpretCast<const uint64_t>(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint64_t, std::dynamic_extent>, decltype(unsignedLongSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedLongSpan.data(), unsignedLongSpan.size_bytes()));
+}
+
+/*
+TEST(WTF_StdLibExtras, SpanReinterpretCast_DynamicExtent_ManualRuntimeErrors)
+{
+    // Manual tests to check this release assert in WTF::spanReinterpretCast<>.
+    // if constexpr (sizeof(U) < sizeof(T) || sizeof(U) % sizeof(T))
+    //     RELEASE_ASSERT_WITH_MESSAGE(!(span.size_bytes() % sizeof(T)), "spanReinterpretCast will not change size in bytes from source");
+
+    // Cast from 1 byte per item to 4 bytes per item, with non-multiple of 4.
+    // Test 'sizeof(U) < sizeof(T)' results in a runtime crash.
+    //Vector<int8_t> signedIntByte { 1, 2, 3, 4, 5, 6, 7 };
+    //auto signedIntByteSpan = signedIntByte.span();
+    //(void)spanReinterpretCast<const int>(signedIntByteSpan);
+
+    // Cast from 4 bytes per item to 3 bytes per item, with non-multiple of 3.
+    // Test that '(sizeof(U) > sizeof(T)) && (sizeof(U) % sizeof(T))' results in a runtime crash.
+    //Vector<int32_t> signedInt { 1, 2, 3, 4 };
+    //auto signedIntSpan = signedInt.span();
+    //(void)spanReinterpretCast<const int8_t[3]>(signedIntSpan);
+}
+*/
+
+TEST(WTF_StdLibExtras, SpanReinterpretCast_NonDynamicExtent)
+{
+    Vector<int32_t> signedInt { -3, -2, -1, 0, 1, 2 };
+    std::span<const int32_t, 6> signedIntSpan { signedInt.span() };
+    static_assert(std::same_as<std::span<const int32_t, 6>, decltype(signedIntSpan)>);
+
+    // Cast from 4 bytes to 1 byte per item.
+    auto unsignedIntByteSpan = asByteSpan(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint8_t>, decltype(unsignedIntByteSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedIntByteSpan.data(), unsignedIntByteSpan.size_bytes()));
+
+    // Cast from 4 bytes to 4 bytes per item.
+    auto unsignedIntSpan = spanReinterpretCast<const uint32_t>(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint32_t, 6>, decltype(unsignedIntSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedIntSpan.data(), unsignedIntSpan.size_bytes()));
+
+    // Cast from 4 bytes to 8 bytes per item.
+    auto unsignedLongSpan = spanReinterpretCast<const uint64_t>(signedIntSpan);
+    static_assert(std::same_as<std::span<const uint64_t, 3>, decltype(unsignedLongSpan)>);
+    EXPECT_TRUE(!memcmp(signedIntSpan.data(), unsignedLongSpan.data(), unsignedLongSpan.size_bytes()));
+}
+
+/*
+TEST(WTF_StdLibExtras, SpanReinterpretCast_NonDynamicExtent_CompileTimeErros)
+{
+    // Manual tests to check this static assert in WTF::spanReinterpretCast<>.
+    //     static_assert(!((sizeof(U) * Extent) % sizeof(T)), "spanReinterpretCast will not change size in bytes from source");
+
+    // Cast from 1 byte per item to 4 bytes per item, with non-multiple of 4.
+    //Vector<int8_t> signedIntByte { 1, 2, 3, 4, 5, 6, 7 };
+    //std::span<const int8_t, 7> signedIntByteSpan { signedIntByte.data(), signedIntByte.size() };
+    //(void)spanReinterpretCast<const int>(signedIntByteSpan);
+
+    // Cast from 4 bytes per item to 3 bytes per item, with non-multiple of 3.
+    //Vector<int32_t> signedInt { 1, 2, 3, 4 };
+    //std::span<const int32_t, 4> signedIntSpan { signedInt.data(), signedInt.size() };
+    //(void)spanReinterpretCast<const int8_t[3]>(signedIntSpan);
+}
+*/
+
+TEST(WTF_StdLibExtras, HoldsAlternativeByIndex)
+{
+    using V = Variant<int, double, float>;
+
+    V intVariant = 42;
+    EXPECT_TRUE((WTF::holdsAlternative<0>(intVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<1>(intVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<2>(intVariant)));
+
+    V doubleVariant = 3.14;
+    EXPECT_FALSE((WTF::holdsAlternative<0>(doubleVariant)));
+    EXPECT_TRUE((WTF::holdsAlternative<1>(doubleVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<2>(doubleVariant)));
+
+    V floatVariant = 1.0f;
+    EXPECT_FALSE((WTF::holdsAlternative<0>(floatVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<1>(floatVariant)));
+    EXPECT_TRUE((WTF::holdsAlternative<2>(floatVariant)));
+}
+
+TEST(WTF_StdLibExtras, HoldsAlternativeByType)
+{
+    using V = Variant<int, double, float>;
+
+    V intVariant = 42;
+    EXPECT_TRUE((WTF::holdsAlternative<int>(intVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<double>(intVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<float>(intVariant)));
+
+    V doubleVariant = 3.14;
+    EXPECT_FALSE((WTF::holdsAlternative<int>(doubleVariant)));
+    EXPECT_TRUE((WTF::holdsAlternative<double>(doubleVariant)));
+    EXPECT_FALSE((WTF::holdsAlternative<float>(doubleVariant)));
+}
+
+TEST(WTF_StdLibExtras, SwitchOnTupleAtIndex)
+{
+    std::tuple<int, double, float> tuple { 42, 3.14, 1.5f };
+
+    // Visit index 0 (int).
+    bool visitedInt = false;
+    WTF::switchOnTupleAtIndex(0, tuple,
+        [&](const int& value) { visitedInt = true; EXPECT_EQ(42, value); },
+        [&](const double&) { FAIL(); },
+        [&](const float&) { FAIL(); }
+    );
+    EXPECT_TRUE(visitedInt);
+
+    // Visit index 1 (double).
+    bool visitedDouble = false;
+    WTF::switchOnTupleAtIndex(1, tuple,
+        [&](const int&) { FAIL(); },
+        [&](const double& value) { visitedDouble = true; EXPECT_DOUBLE_EQ(3.14, value); },
+        [&](const float&) { FAIL(); }
+    );
+    EXPECT_TRUE(visitedDouble);
+
+    // Visit index 2 (float).
+    bool visitedFloat = false;
+    WTF::switchOnTupleAtIndex(2, tuple,
+        [&](const int&) { FAIL(); },
+        [&](const double&) { FAIL(); },
+        [&](const float& value) { visitedFloat = true; EXPECT_FLOAT_EQ(1.5f, value); }
+    );
+    EXPECT_TRUE(visitedFloat);
+}
+
+TEST(WTF_StdLibExtras, VisitTupleElementAtIndex)
+{
+    std::tuple<int, double, float> tuple { 10, 2.5, 0.5f };
+
+    // Verify return value works through visitTupleElementAtIndex.
+    auto result = WTF::visitTupleElementAtIndex(
+        [](const auto& value) -> double { return static_cast<double>(value); },
+        1, tuple
+    );
+    EXPECT_DOUBLE_EQ(2.5, result);
 }
 
 } // namespace TestWebKitAPI

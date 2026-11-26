@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,31 +44,29 @@ class GPUAdapter : public RefCounted<GPUAdapter> {
 public:
     static Ref<GPUAdapter> create(Ref<WebGPU::Adapter>&& backing)
     {
-        return adoptRef(*new GPUAdapter(WTFMove(backing)));
+        return adoptRef(*new GPUAdapter(WTF::move(backing)));
     }
 
-    String name() const;
-    Ref<GPUSupportedFeatures> features() const;
-    Ref<GPUSupportedLimits> limits() const;
-    bool isFallbackAdapter() const;
+    String NODELETE name() const;
+    Ref<GPUSupportedFeatures> NODELETE features() const;
+    Ref<GPUSupportedLimits> NODELETE limits() const;
+    bool NODELETE isFallbackAdapter() const;
 
     using RequestDevicePromise = DOMPromiseDeferred<IDLInterface<GPUDevice>>;
     void requestDevice(ScriptExecutionContext&, const std::optional<GPUDeviceDescriptor>&, RequestDevicePromise&&);
 
-    using RequestAdapterInfoPromise = DOMPromiseDeferred<IDLInterface<GPUAdapterInfo>>;
-    void requestAdapterInfo(const std::optional<Vector<String>>&, RequestAdapterInfoPromise&&);
-    Ref<GPUAdapterInfo> info();
+    Ref<GPUAdapterInfo> NODELETE info();
 
     WebGPU::Adapter& backing() { return m_backing; }
     const WebGPU::Adapter& backing() const { return m_backing; }
 
 private:
-    GPUAdapter(Ref<WebGPU::Adapter>&& backing)
-        : m_backing(WTFMove(backing))
-    {
-    }
+    GPUAdapter(Ref<WebGPU::Adapter>&& backing);
 
-    Ref<WebGPU::Adapter> m_backing;
+    const Ref<WebGPU::Adapter> m_backing;
+    const Ref<GPUSupportedFeatures> m_features;
+    const Ref<GPUSupportedLimits> m_limits;
+    const Ref<GPUAdapterInfo> m_info;
 };
 
 }

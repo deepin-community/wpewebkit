@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2013 Nokia Corporation and/or its subsidiary(-ies).
  * Copyright (C) 2015 Ericsson AB. All rights reserved.
- * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,6 +37,8 @@
 #include "PlatformMediaSessionManager.h"
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/NativePromise.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 #include <wtf/UUID.h>
 
 #if PLATFORM(COCOA)
@@ -48,53 +50,52 @@
 #endif
 
 namespace WebCore {
-class MediaStreamTrackPrivateSourceObserverSourceProxy;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MediaStreamTrackPrivateSourceObserverSourceProxy> : std::true_type { };
-}
-
-namespace WebCore {
 
 Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::create(Ref<const Logger>&& logger, Ref<RealtimeMediaSource>&& source, std::function<void(Function<void()>&&)>&& postTask)
 {
-    return create(WTFMove(logger), WTFMove(source), createVersion4UUIDString(), WTFMove(postTask));
+    return create(WTF::move(logger), WTF::move(source), createVersion4UUIDString(), WTF::move(postTask));
 }
 
 Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::create(Ref<const Logger>&& logger, Ref<RealtimeMediaSource>&& source, String&& id, std::function<void(Function<void()>&&)>&& postTask)
 {
-    auto privateTrack = adoptRef(*new MediaStreamTrackPrivate(WTFMove(logger), WTFMove(source), WTFMove(id), WTFMove(postTask)));
+    auto privateTrack = adoptRef(*new MediaStreamTrackPrivate(WTF::move(logger), WTF::move(source), WTF::move(id), WTF::move(postTask)));
     privateTrack->initialize();
     return privateTrack;
 }
 
 Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::create(Ref<const Logger>&& logger, UniqueRef<MediaStreamTrackDataHolder>&& dataHolder, std::function<void(Function<void()>&&)>&& postTask)
 {
-    auto privateTrack = adoptRef(*new MediaStreamTrackPrivate(WTFMove(logger), WTFMove(dataHolder), WTFMove(postTask)));
+    auto privateTrack = adoptRef(*new MediaStreamTrackPrivate(WTF::move(logger), WTF::move(dataHolder), WTF::move(postTask)));
     privateTrack->initialize();
     return privateTrack;
 }
 
-class MediaStreamTrackPrivateSourceObserverSourceProxy final : public RealtimeMediaSourceObserver {
-    WTF_MAKE_FAST_ALLOCATED;
+class MediaStreamTrackPrivateSourceObserverSourceProxy final : public RealtimeMediaSourceObserver, public CanMakeCheckedPtr<MediaStreamTrackPrivateSourceObserverSourceProxy> {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(MediaStreamTrackPrivateSourceObserverSourceProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaStreamTrackPrivateSourceObserverSourceProxy);
 public:
     MediaStreamTrackPrivateSourceObserverSourceProxy(WeakPtr<MediaStreamTrackPrivate>&& privateTrack, Ref<RealtimeMediaSource>&& source, std::function<void(Function<void()>&&)>&& postTask)
-        : m_privateTrack(WTFMove(privateTrack))
-        , m_source(WTFMove(source))
-        , m_postTask(WTFMove(postTask))
+        : m_privateTrack(WTF::move(privateTrack))
+        , m_source(WTF::move(source))
+        , m_postTask(WTF::move(postTask))
     {
         ASSERT(m_postTask);
         ASSERT(isMainThread());
     }
+
+    // RealtimeMediaSourceObserver.
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     std::function<void(Function<void()>&&)> getPostTask()
     {
         return m_postTask;
     }
 
-    void initialize(bool interrupted, bool muted)
+    void initialize(bool interrupted, bool muted, size_t settingsCapabilitiesUpdateCount)
     {
         ASSERT(isMainThread());
         if (m_source->isEnded()) {
@@ -105,7 +106,8 @@ public:
         if (muted != m_source->muted() || interrupted != m_source->interrupted())
             sourceMutedChanged();
 
-        // FIXME: We should check for settings capabilities changes.
+        if (settingsCapabilitiesUpdateCount != m_source->settingsCapabilitiesUpdateCount())
+            sourceSettingsChanged();
 
         m_isStarted = true;
         m_source->addObserver(*this);
@@ -153,12 +155,12 @@ public:
 
     void applyConstraints(const MediaConstraints& constraints, RealtimeMediaSource::ApplyConstraintsHandler&& completionHandler)
     {
-        m_source->applyConstraints(constraints, WTFMove(completionHandler));
+        m_source->applyConstraints(constraints, WTF::move(completionHandler));
     }
 
     void postTask(Function<void()>&& task)
     {
-        m_postTask(WTFMove(task));
+        m_postTask(WTF::move(task));
     }
 
 private:
@@ -185,15 +187,15 @@ private:
 
     void sourceSettingsChanged() final
     {
-        sendToMediaStreamTrackPrivate([settings = crossThreadCopy(m_source->settings()), capabilities = crossThreadCopy(m_source->capabilities())] (auto& privateTrack) mutable {
-            privateTrack.sourceSettingsChanged(WTFMove(settings), WTFMove(capabilities));
+        sendToMediaStreamTrackPrivate([settings = crossThreadCopy(m_source->settings()), capabilities = crossThreadCopy(m_source->capabilities()), settingsCapabilitiesUpdateCount = m_source->settingsCapabilitiesUpdateCount()] (auto& privateTrack) mutable {
+            privateTrack.sourceSettingsChanged(WTF::move(settings), WTF::move(capabilities), settingsCapabilitiesUpdateCount);
         });
     }
 
     void sourceConfigurationChanged() final
     {
-        sendToMediaStreamTrackPrivate([name = crossThreadCopy(m_source->name()), settings = crossThreadCopy(m_source->settings()), capabilities = crossThreadCopy(m_source->capabilities())] (auto& privateTrack) mutable {
-            privateTrack.sourceConfigurationChanged(WTFMove(name), WTFMove(settings), WTFMove(capabilities));
+        sendToMediaStreamTrackPrivate([name = crossThreadCopy(m_source->name()), settings = crossThreadCopy(m_source->settings()), capabilities = crossThreadCopy(m_source->capabilities()), settingsCapabilitiesUpdateCount = m_source->settingsCapabilitiesUpdateCount()] (auto& privateTrack) mutable {
+            privateTrack.sourceConfigurationChanged(WTF::move(name), WTF::move(settings), WTF::move(capabilities), settingsCapabilitiesUpdateCount);
         });
     }
 
@@ -206,7 +208,7 @@ private:
 
     void sendToMediaStreamTrackPrivate(Function<void(MediaStreamTrackPrivate&)>&& task)
     {
-        m_postTask([task = WTFMove(task), privateTrack = m_privateTrack] () mutable {
+        m_postTask([task = WTF::move(task), privateTrack = m_privateTrack] () mutable {
             if (RefPtr protectedPrivateTrack = privateTrack.get())
                 task(*protectedPrivateTrack);
         });
@@ -215,118 +217,111 @@ private:
     bool preventSourceFromEnding() { return m_shouldPreventSourceFromEnding; }
 
     WeakPtr<MediaStreamTrackPrivate> m_privateTrack;
-    Ref<RealtimeMediaSource> m_source;
+    const Ref<RealtimeMediaSource> m_source;
     std::function<void(Function<void()>&&)> m_postTask;
     bool m_shouldPreventSourceFromEnding { true };
     bool m_isStarted { false };
 };
 
-class MediaStreamTrackPrivateSourceObserver : public ThreadSafeRefCounted<MediaStreamTrackPrivateSourceObserver, WTF::DestructionThread::Main> {
-public:
-    static Ref<MediaStreamTrackPrivateSourceObserver> create(Ref<RealtimeMediaSource>&& source, std::function<void(Function<void()>&&)>&& postTask) { return adoptRef(*new MediaStreamTrackPrivateSourceObserver(WTFMove(source), WTFMove(postTask))); }
+MediaStreamTrackPrivateSourceObserver::MediaStreamTrackPrivateSourceObserver(Ref<RealtimeMediaSource>&& source, std::function<void(Function<void()>&&)>&& postTask)
+    : m_source(WTF::move(source))
+    , m_postTask(WTF::move(postTask))
+{
+    ASSERT(m_postTask || isMainThread());
+    if (!m_postTask)
+        m_postTask = [](Function<void()>&& function) { function(); };
+}
 
-    void initialize(MediaStreamTrackPrivate& privateTrack)
-    {
-        ensureOnMainThread([this, protectedThis = Ref { *this }, privateTrack = WeakPtr { privateTrack }, postTask = m_postTask, source = m_source, interrupted = privateTrack.interrupted(), muted = privateTrack.muted()] () mutable {
-            m_sourceProxy = makeUnique<MediaStreamTrackPrivateSourceObserverSourceProxy>(WTFMove(privateTrack), WTFMove(source), WTFMove(postTask));
-            m_sourceProxy->initialize(interrupted, muted);
-        });
-    }
+MediaStreamTrackPrivateSourceObserver::~MediaStreamTrackPrivateSourceObserver() = default;
 
-    std::function<void(Function<void()>&&)> getPostTask()
-    {
-        return m_postTask;
-    }
+void MediaStreamTrackPrivateSourceObserver::initialize(MediaStreamTrackPrivate& privateTrack)
+{
+    ensureOnMainThread([this, protectedThis = Ref { *this }, privateTrack = WeakPtr { privateTrack }, postTask = m_postTask, source = m_source, interrupted = privateTrack.interrupted(), muted = privateTrack.muted(), settingsCapabilitiesUpdateCount = privateTrack.settingsCapabilitiesUpdateCount()] () mutable {
+        lazyInitialize(m_sourceProxy, makeUnique<MediaStreamTrackPrivateSourceObserverSourceProxy>(WTF::move(privateTrack), WTF::move(source), WTF::move(postTask)));
+        m_sourceProxy->initialize(interrupted, muted, settingsCapabilitiesUpdateCount);
+    });
+}
 
-    RealtimeMediaSource& source() { return m_source.get(); }
+void MediaStreamTrackPrivateSourceObserver::start()
+{
+    ensureOnMainThread([protectedThis = Ref { *this }] {
+        protectedThis->m_sourceProxy->start();
+    });
+}
 
-    void start()
-    {
-        ensureOnMainThread([protectedThis = Ref { *this }] {
-            protectedThis->m_sourceProxy->start();
-        });
-    }
+void MediaStreamTrackPrivateSourceObserver::stop()
+{
+    ensureOnMainThread([protectedThis = Ref { *this }] {
+        protectedThis->m_sourceProxy->stop();
+    });
+}
 
-    void stop()
-    {
-        ensureOnMainThread([protectedThis = Ref { *this }] {
-            protectedThis->m_sourceProxy->stop();
-        });
-    }
+void MediaStreamTrackPrivateSourceObserver::requestToEnd()
+{
+    ensureOnMainThread([protectedThis = Ref { *this }] {
+        protectedThis->m_sourceProxy->requestToEnd();
+    });
+}
 
-    void requestToEnd()
-    {
-        ensureOnMainThread([protectedThis = Ref { *this }] {
-            protectedThis->m_sourceProxy->requestToEnd();
-        });
-    }
+void MediaStreamTrackPrivateSourceObserver::setMuted(bool muted)
+{
+    ensureOnMainThread([protectedThis = Ref { *this }, muted] {
+        protectedThis->m_sourceProxy->setMuted(muted);
+    });
+}
 
-    void setMuted(bool muted)
-    {
-        ensureOnMainThread([protectedThis = Ref { *this }, muted] {
-            protectedThis->m_sourceProxy->setMuted(muted);
-        });
-    }
+void MediaStreamTrackPrivateSourceObserver::close()
+{
+    auto callbacks = std::exchange(m_applyConstraintsCallbacks, { });
+    for (auto& callback : callbacks.values())
+        callback(RealtimeMediaSource::ApplyConstraintsError { MediaConstraintType::Unknown, "applyConstraint cancelled"_s }, { }, { });
+}
 
-    void close()
-    {
-        auto callbacks = std::exchange(m_applyConstraintsCallbacks, { });
-        for (auto& callback : callbacks.values())
-            callback(RealtimeMediaSource::ApplyConstraintsError { MediaConstraintType::Unknown, "applyConstraint cancelled"_s }, { }, { });
-    }
-
-    using ApplyConstraintsHandler = CompletionHandler<void(std::optional<RealtimeMediaSource::ApplyConstraintsError>&&, RealtimeMediaSourceSettings&&, RealtimeMediaSourceCapabilities&&)>;
-    void applyConstraints(const MediaConstraints& constraints, ApplyConstraintsHandler&& completionHandler)
-    {
-        m_applyConstraintsCallbacks.add(++m_applyConstraintsCallbacksIdentifier, WTFMove(completionHandler));
-        ensureOnMainThread([this, protectedThis = Ref { *this }, constraints = crossThreadCopy(constraints), identifier = m_applyConstraintsCallbacksIdentifier] () mutable {
-            m_sourceProxy->applyConstraints(constraints, [weakObserver = WeakPtr { *m_sourceProxy }, protectedThis = WTFMove(protectedThis), identifier] (auto&& result) mutable {
-                if (!weakObserver)
-                    return;
-                weakObserver->postTask([protectedThis = WTFMove(protectedThis), result = crossThreadCopy(WTFMove(result)), settings = crossThreadCopy(weakObserver->settings()), capabilities = crossThreadCopy(weakObserver->capabilities()), identifier] () mutable {
-                    if (auto callback = protectedThis->m_applyConstraintsCallbacks.take(identifier))
-                        callback(WTFMove(result), WTFMove(settings), WTFMove(capabilities));
-                });
+void MediaStreamTrackPrivateSourceObserver::applyConstraints(const MediaConstraints& constraints, ApplyConstraintsHandler&& completionHandler)
+{
+    m_applyConstraintsCallbacks.add(++m_applyConstraintsCallbacksIdentifier, WTF::move(completionHandler));
+    ensureOnMainThread([this, protectedThis = Ref { *this }, constraints = crossThreadCopy(constraints), identifier = m_applyConstraintsCallbacksIdentifier] () mutable {
+        m_sourceProxy->applyConstraints(constraints, [weakObserver = WeakPtr { *m_sourceProxy }, protectedThis = WTF::move(protectedThis), identifier] (auto&& result) mutable {
+            if (!weakObserver)
+                return;
+            weakObserver->postTask([protectedThis = WTF::move(protectedThis), result = crossThreadCopy(WTF::move(result)), settings = crossThreadCopy(weakObserver->settings()), capabilities = crossThreadCopy(weakObserver->capabilities()), identifier] () mutable {
+                if (auto callback = protectedThis->m_applyConstraintsCallbacks.take(identifier))
+                    callback(WTF::move(result), WTF::move(settings), WTF::move(capabilities));
             });
         });
-    }
+    });
+}
 
-private:
-    MediaStreamTrackPrivateSourceObserver(Ref<RealtimeMediaSource>&& source, std::function<void(Function<void()>&&)>&& postTask)
-        : m_source(WTFMove(source))
-        , m_postTask(WTFMove(postTask))
-    {
-        ASSERT(m_postTask || isMainThread());
-        if (!m_postTask)
-            m_postTask = [] (Function<void()>&& function) { function(); };
-    }
-
-    Ref<RealtimeMediaSource> m_source;
-    std::unique_ptr<MediaStreamTrackPrivateSourceObserverSourceProxy> m_sourceProxy;
-    std::function<void(Function<void()>&&)> m_postTask;
-    HashMap<uint64_t, ApplyConstraintsHandler> m_applyConstraintsCallbacks;
-    uint64_t m_applyConstraintsCallbacksIdentifier { 0 };
-};
+static MediaStreamTrackData fromIdAndSource(String&& id, RealtimeMediaSource& source)
+{
+    return  {
+        .trackId = WTF::move(id),
+        .label = source.name(),
+        .type = source.type(),
+        .deviceType = source.deviceType(),
+        .isEnabled = true,
+        .isEnded = false,
+        .contentHint = MediaStreamTrackHintValue::Empty,
+        .isProducingData = source.isProducingData(),
+        .isMuted = source.muted(),
+        .isInterrupted = source.interrupted(),
+        .settings = source.settings(),
+        .capabilities = source.capabilities(),
+        .settingsCapabilitiesUpdateCount = source.settingsCapabilitiesUpdateCount()
+    };
+}
 
 MediaStreamTrackPrivate::MediaStreamTrackPrivate(Ref<const Logger>&& trackLogger, Ref<RealtimeMediaSource>&& source, String&& id, std::function<void(Function<void()>&&)>&& postTask)
-    : m_sourceObserver(MediaStreamTrackPrivateSourceObserver::create(WTFMove(source), WTFMove(postTask)))
-    , m_id(WTFMove(id))
-    , m_label(m_sourceObserver->source().name())
-    , m_type(m_sourceObserver->source().type())
-    , m_deviceType(m_sourceObserver->source().deviceType())
+    : m_sourceObserver(MediaStreamTrackPrivateSourceObserver::create(WTF::move(source), WTF::move(postTask)))
+    , m_data(fromIdAndSource(WTF::move(id), m_sourceObserver->source()))
     , m_isCaptureTrack(m_sourceObserver->source().isCaptureSource())
     , m_captureDidFail(m_sourceObserver->source().captureDidFail())
-    , m_logger(WTFMove(trackLogger))
+    , m_logger(WTF::move(trackLogger))
 #if !RELEASE_LOG_DISABLED
     , m_logIdentifier(uniqueLogIdentifier())
 #endif
-    , m_isProducingData(m_sourceObserver->source().isProducingData())
-    , m_isMuted(m_sourceObserver->source().muted())
-    , m_isInterrupted(m_sourceObserver->source().interrupted())
-    , m_settings(m_sourceObserver->source().settings())
-    , m_capabilities(m_sourceObserver->source().capabilities())
 #if ASSERT_ENABLED
-    , m_creationThreadId(isMainThread() ? 0 : Thread::current().uid())
+    , m_creationThreadId(isMainThread() ? 0 : Thread::currentSingleton().uid())
 #endif
 {
     UNUSED_PARAM(trackLogger);
@@ -340,25 +335,16 @@ MediaStreamTrackPrivate::MediaStreamTrackPrivate(Ref<const Logger>&& trackLogger
 }
 
 MediaStreamTrackPrivate::MediaStreamTrackPrivate(Ref<const Logger>&& logger, UniqueRef<MediaStreamTrackDataHolder>&& dataHolder, std::function<void(Function<void()>&&)>&& postTask)
-    : m_sourceObserver(MediaStreamTrackPrivateSourceObserver::create(WTFMove(dataHolder->source), WTFMove(postTask)))
-    , m_id(WTFMove(dataHolder->trackId))
-    , m_label(WTFMove(dataHolder->label))
-    , m_type(dataHolder->type)
-    , m_deviceType(dataHolder->deviceType)
+    : m_sourceObserver(MediaStreamTrackPrivateSourceObserver::create(WTF::move(dataHolder->source()), WTF::move(postTask)))
+    , m_data(WTF::move(dataHolder->data()))
     , m_isCaptureTrack(false)
     , m_captureDidFail(false)
-    , m_contentHint(dataHolder->contentHint)
-    , m_logger(WTFMove(logger))
+    , m_logger(WTF::move(logger))
 #if !RELEASE_LOG_DISABLED
     , m_logIdentifier(uniqueLogIdentifier())
 #endif
-    , m_isProducingData(dataHolder->isProducingData)
-    , m_isMuted(dataHolder->isMuted)
-    , m_isInterrupted(dataHolder->isInterrupted)
-    , m_settings(WTFMove(dataHolder->settings))
-    , m_capabilities(WTFMove(dataHolder->capabilities))
 #if ASSERT_ENABLED
-    , m_creationThreadId(isMainThread() ? 0 : Thread::current().uid())
+    , m_creationThreadId(isMainThread() ? 0 : Thread::currentSingleton().uid())
 #endif
 {
 }
@@ -380,11 +366,20 @@ MediaStreamTrackPrivate::~MediaStreamTrackPrivate()
 #if ASSERT_ENABLED
 bool MediaStreamTrackPrivate::isOnCreationThread()
 {
-    return m_creationThreadId ? m_creationThreadId == Thread::current().uid() : isMainThread();
+    return m_creationThreadId ? m_creationThreadId == Thread::currentSingleton().uid() : isMainThread();
 }
 #endif
 
-void MediaStreamTrackPrivate::forEachObserver(const Function<void(MediaStreamTrackPrivateObserver&)>& apply)
+void MediaStreamTrackPrivate::updateLabelIfRemoteTrack()
+{
+    if (!isMainThread() || !(protect(source())->isIncomingAudioSource() || protect(source())->isIncomingVideoSource()))
+        return;
+
+    m_data.label = makeString(m_data.label, " - "_s, m_data.trackId);
+}
+
+
+void MediaStreamTrackPrivate::forEachObserver(NOESCAPE const Function<void(MediaStreamTrackPrivateObserver&)>& apply)
 {
     ASSERT(isOnCreationThread());
     ASSERT(!m_observers.hasNullReferences());
@@ -406,7 +401,7 @@ void MediaStreamTrackPrivate::removeObserver(MediaStreamTrackPrivateObserver& ob
 
 void MediaStreamTrackPrivate::setContentHint(MediaStreamTrackHintValue hintValue)
 {
-    m_contentHint = hintValue;
+    m_data.contentHint = hintValue;
 }
 
 void MediaStreamTrackPrivate::startProducingData()
@@ -435,7 +430,7 @@ void MediaStreamTrackPrivate::setIsInBackground(bool value)
 void MediaStreamTrackPrivate::setMuted(bool muted)
 {
     ASSERT(isOnCreationThread());
-    m_isMuted = muted;
+    m_data.isMuted = muted;
 
     m_sourceObserver->setMuted(muted);
 }
@@ -443,13 +438,13 @@ void MediaStreamTrackPrivate::setMuted(bool muted)
 void MediaStreamTrackPrivate::setEnabled(bool enabled)
 {
     ASSERT(isOnCreationThread());
-    if (m_isEnabled == enabled)
+    if (m_data.isEnabled == enabled)
         return;
 
     ALWAYS_LOG(LOGIDENTIFIER, enabled);
 
     // Always update the enabled state regardless of the track being ended.
-    m_isEnabled = enabled;
+    m_data.isEnabled = enabled;
 
     forEachObserver([this](auto& observer) {
         observer.trackEnabledChanged(*this);
@@ -459,15 +454,15 @@ void MediaStreamTrackPrivate::setEnabled(bool enabled)
 void MediaStreamTrackPrivate::endTrack()
 {
     ASSERT(isOnCreationThread());
-    if (m_isEnded)
+    if (m_data.isEnded)
         return;
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    // Set m_isEnded to true before telling the source it can stop, so if this is the
+    // Set m_data.isEnded to true before telling the source it can stop, so if this is the
     // only track using the source and it does stop, we will only call each observer's
     // trackEnded method once.
-    m_isEnded = true;
+    m_data.isEnded = true;
     updateReadyState();
 
     m_sourceObserver->requestToEnd();
@@ -482,7 +477,7 @@ Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::clone()
     ASSERT(isOnCreationThread());
 
     auto postTask = m_sourceObserver->getPostTask();
-    auto clonedMediaStreamTrackPrivate = create(m_logger.copyRef(), toDataHolder(ShouldClone::Yes), WTFMove(postTask));
+    auto clonedMediaStreamTrackPrivate = create(m_logger.copyRef(), toDataHolder(ShouldClone::Yes), WTF::move(postTask));
 
     ALWAYS_LOG(LOGIDENTIFIER, clonedMediaStreamTrackPrivate->logIdentifier());
 
@@ -490,7 +485,7 @@ Ref<MediaStreamTrackPrivate> MediaStreamTrackPrivate::clone()
     clonedMediaStreamTrackPrivate->m_captureDidFail = this->m_captureDidFail;
     clonedMediaStreamTrackPrivate->updateReadyState();
 
-    if (m_isProducingData)
+    if (m_data.isProducingData && !m_data.isMuted && !m_data.isInterrupted)
         clonedMediaStreamTrackPrivate->startProducingData();
 
     return clonedMediaStreamTrackPrivate;
@@ -535,19 +530,19 @@ Ref<RealtimeMediaSource::PhotoSettingsNativePromise> MediaStreamTrackPrivate::ge
 Ref<RealtimeMediaSource::TakePhotoNativePromise> MediaStreamTrackPrivate::takePhoto(PhotoSettings&& settings)
 {
     ASSERT(isMainThread());
-    return m_sourceObserver->source().takePhoto(WTFMove(settings));
+    return m_sourceObserver->source().takePhoto(WTF::move(settings));
 }
 
 void MediaStreamTrackPrivate::applyConstraints(const MediaConstraints& constraints, RealtimeMediaSource::ApplyConstraintsHandler&& completionHandler)
 {
-    MediaStreamTrackPrivateSourceObserver::ApplyConstraintsHandler callback = [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)] (auto&& result, auto&& settings, auto&& capabilities) mutable {
+    MediaStreamTrackPrivateSourceObserver::ApplyConstraintsHandler callback = [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] (auto&& result, auto&& settings, auto&& capabilities) mutable {
         if (RefPtr protectedThis = weakThis.get()) {
-            protectedThis->m_settings = WTFMove(settings);
-            protectedThis->m_capabilities = WTFMove(capabilities);
+            protectedThis->m_data.settings = WTF::move(settings);
+            protectedThis->m_data.capabilities = WTF::move(capabilities);
         }
-        completionHandler(WTFMove(result));
+        completionHandler(WTF::move(result));
     };
-    m_sourceObserver->applyConstraints(constraints, WTFMove(callback));
+    m_sourceObserver->applyConstraints(constraints, WTF::move(callback));
 }
 
 #if ENABLE(WEB_AUDIO)
@@ -571,7 +566,7 @@ void MediaStreamTrackPrivate::sourceStarted()
     ASSERT(isOnCreationThread());
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_isProducingData = true;
+    m_data.isProducingData = true;
     forEachObserver([this](auto& observer) {
         observer.trackStarted(*this);
     });
@@ -580,14 +575,14 @@ void MediaStreamTrackPrivate::sourceStarted()
 void MediaStreamTrackPrivate::sourceStopped(bool captureDidFail)
 {
     ASSERT(isOnCreationThread());
-    m_isProducingData = false;
+    m_data.isProducingData = false;
 
-    if (m_isEnded)
+    if (m_data.isEnded)
         return;
 
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_isEnded = true;
+    m_data.isEnded = true;
     m_captureDidFail = captureDidFail;
     updateReadyState();
 
@@ -601,32 +596,35 @@ void MediaStreamTrackPrivate::sourceMutedChanged(bool interrupted, bool muted)
     ASSERT(isOnCreationThread());
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_isInterrupted = interrupted;
-    m_isMuted = muted;
+    m_data.isInterrupted = interrupted;
+    m_data.isMuted = muted;
     forEachObserver([this](auto& observer) {
         observer.trackMutedChanged(*this);
     });
 }
 
-void MediaStreamTrackPrivate::sourceSettingsChanged(RealtimeMediaSourceSettings&& settings, RealtimeMediaSourceCapabilities&& capabilities)
+void MediaStreamTrackPrivate::sourceSettingsChanged(RealtimeMediaSourceSettings&& settings, RealtimeMediaSourceCapabilities&& capabilities, size_t settingsCapabilitiesUpdateCount)
 {
     ASSERT(isOnCreationThread());
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_settings = WTFMove(settings);
-    m_capabilities = WTFMove(capabilities);
+    m_data.settings = WTF::move(settings);
+    m_data.capabilities = WTF::move(capabilities);
+    m_data.settingsCapabilitiesUpdateCount = settingsCapabilitiesUpdateCount;
     forEachObserver([this](auto& observer) {
         observer.trackSettingsChanged(*this);
     });
 }
-void MediaStreamTrackPrivate::sourceConfigurationChanged(String&& label, RealtimeMediaSourceSettings&& settings, RealtimeMediaSourceCapabilities&& capabilities)
+
+void MediaStreamTrackPrivate::sourceConfigurationChanged(String&& label, RealtimeMediaSourceSettings&& settings, RealtimeMediaSourceCapabilities&& capabilities, size_t settingsCapabilitiesUpdateCount)
 {
     ASSERT(isOnCreationThread());
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    m_label = WTFMove(label);
-    m_settings = WTFMove(settings);
-    m_capabilities = WTFMove(capabilities);
+    m_data.label = WTF::move(label);
+    m_data.settings = WTF::move(settings);
+    m_data.capabilities = WTF::move(capabilities);
+    m_data.settingsCapabilitiesUpdateCount = settingsCapabilitiesUpdateCount;
     forEachObserver([this](auto& observer) {
         observer.trackConfigurationChanged(*this);
     });
@@ -647,7 +645,7 @@ void MediaStreamTrackPrivate::updateReadyState()
     ASSERT(isOnCreationThread());
     ReadyState state = ReadyState::None;
 
-    if (m_isEnded)
+    if (m_data.isEnded)
         state = ReadyState::Ended;
     else if (m_hasStartedProducingData)
         state = ReadyState::Live;
@@ -665,20 +663,7 @@ void MediaStreamTrackPrivate::updateReadyState()
 
 UniqueRef<MediaStreamTrackDataHolder> MediaStreamTrackPrivate::toDataHolder(ShouldClone shouldClone)
 {
-    return makeUniqueRef<MediaStreamTrackDataHolder>(
-        shouldClone == ShouldClone::Yes ? createVersion4UUIDString() : m_id.isolatedCopy(),
-        m_label.isolatedCopy(),
-        m_type,
-        m_deviceType,
-        m_isEnabled,
-        m_isEnded,
-        m_contentHint,
-        m_isProducingData,
-        m_isMuted,
-        m_isInterrupted,
-        m_settings.isolatedCopy(),
-        m_capabilities.isolatedCopy(),
-        shouldClone == ShouldClone::Yes ? m_sourceObserver->source().clone() : Ref { m_sourceObserver->source() });
+    return makeUniqueRef<MediaStreamTrackDataHolder>(m_data.isolatedCopy(shouldClone), shouldClone == ShouldClone::Yes ? m_sourceObserver->source().clone() : Ref { m_sourceObserver->source() });
 }
 
 #if !RELEASE_LOG_DISABLED

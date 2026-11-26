@@ -46,6 +46,8 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
         this._suppressLayoutAfterSelectorOrGroupChange = false;
 
         this._emptyFilterResultsElement = WI.createMessageTextView(WI.UIString("No Results Found"));
+
+        WI.settings.showUserAgentStyles.addEventListener(WI.Setting.Event.Changed, this._handleShowUserAgentStylesChanged, this);
     }
 
     // Public
@@ -220,11 +222,23 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
             section.propertyVisibilityMode = propertyVisibilityMode;
     }
 
+    spreadsheetCSSStyleDeclarationSectionStyleLockedChanged(section, locked)
+    {
+        if (locked)
+            return;
+
+        if (this._shouldRefreshSubviews)
+            this.needsLayout();
+    }
+
     // Protected
 
     layout()
     {
         if (!this._shouldRefreshSubviews)
+            return;
+
+        if (this._sections.some((section) => section.style.locked))
             return;
 
         this._shouldRefreshSubviews = false;
@@ -293,27 +307,26 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
                 return;
 
             // Add all pseudo styles before any inherited rules.
-            let beforePseudoId = null;
-            let afterPseudoId = null;
-            if (InspectorBackend.Enum.CSS.PseudoId) {
-                beforePseudoId = WI.CSSManager.PseudoSelectorNames.Before;
-                afterPseudoId = WI.CSSManager.PseudoSelectorNames.After;
-            } else {
-                // Compatibility (iOS 12.2): CSS.PseudoId did not exist.
-                beforePseudoId = 4;
-                afterPseudoId = 5;
-            }
 
-            for (let [pseudoId, pseudoElementInfo] of this.nodeStyles.pseudoElements) {
+            for (let [pseudoId, uniqueOrderedStyles] of this.nodeStyles.pseudoElements) {
                 let pseudoElement = null;
-                if (pseudoId === beforePseudoId)
+                if (pseudoId === WI.CSSManager.PseudoSelectorNames.Before)
                     pseudoElement = this.nodeStyles.node.beforePseudoElement();
-                else if (pseudoId === afterPseudoId)
+                else if (pseudoId === WI.CSSManager.PseudoSelectorNames.After)
                     pseudoElement = this.nodeStyles.node.afterPseudoElement();
-                addHeader(WI.UIString("Pseudo-Element"), pseudoElement || pseudoId);
 
-                for (let style of WI.DOMNodeStyles.uniqueOrderedStyles(pseudoElementInfo.orderedStyles))
+                let didAddHeader = false;
+                for (let style of uniqueOrderedStyles) {
+                    if (!this._shouldIncludeStyle(style))
+                        continue;
+
+                    if (!didAddHeader) {
+                        didAddHeader = true;
+                        addHeader(WI.UIString("Pseudo-Element"), pseudoElement || pseudoId);
+                    }
+
                     createSection(style);
+                }
             }
 
             addedPseudoStyles = true;
@@ -322,6 +335,10 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
         for (let style of this.nodeStyles.uniqueOrderedStyles) {
             if (style.inherited)
                 addPseudoStyles();
+
+            if (!this._shouldIncludeStyle(style))
+                continue;
+
             createSection(style);
         }
 
@@ -367,6 +384,17 @@ WI.SpreadsheetRulesStyleDetailsPanel = class SpreadsheetRulesStyleDetailsPanel e
     _handleSectionSelectorOrGroupingWillChange(event)
     {
         this._suppressLayoutAfterSelectorOrGroupChange = true;
+    }
+
+    _shouldIncludeStyle(style)
+    {
+        return WI.settings.showUserAgentStyles.value || style.ownerRule?.type !== WI.CSSStyleSheet.Type.UserAgent;
+    }
+
+    _handleShowUserAgentStylesChanged(event)
+    {
+        const significantChange = true;
+        this.refresh(significantChange);
     }
 };
 

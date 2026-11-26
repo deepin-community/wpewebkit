@@ -27,9 +27,12 @@
 #include "InlineQuirks.h"
 
 #include "InlineFormattingContext.h"
+#include "FontCascadeInlines.h"
 #include "InlineLineBox.h"
 #include "LayoutBoxGeometry.h"
-#include "RenderStyleInlines.h"
+#include "LayoutBoxInlines.h"
+#include "LayoutElementBox.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Layout {
@@ -66,8 +69,12 @@ bool InlineQuirks::lineBreakBoxAffectsParentInlineBox(const LineBox& lineBox)
     // At this point we either have only the <br> on the line or inline boxes with or without content.
     auto& inlineLevelBoxes = lineBox.nonRootInlineLevelBoxes();
     ASSERT(!inlineLevelBoxes.isEmpty());
-    if (inlineLevelBoxes.size() == 1)
-        return true;
+    if (inlineLevelBoxes.size() == 1) {
+        // When the BR has explicit line-height, don't mark the parent as having content —
+        // the BR's own layout bounds will drive the line height directly.
+        auto& lineBreakBox = inlineLevelBoxes.first();
+        return lineBreakBox.isLineBreakBox() && lineBreakBox.isPreferredLineHeightFontMetricsBased();
+    }
     for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
         // Filter out empty inline boxes e.g. <div><span></span><span></span><br></div>
         if (inlineLevelBox.isInlineBox() && inlineLevelBox.hasContent())
@@ -90,7 +97,7 @@ bool InlineQuirks::inlineBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox)
         // The side effect of having no marker is that in quirks mode we have to specifically check for list-item
         // and make sure it is treated as if it had content and stretched the line.
         // see LegacyInlineFlowBox c'tor.
-        return inlineLevelBox.layoutBox().style().isOriginalDisplayListItemType();
+        return inlineLevelBox.layoutBox().style().originalDisplay().isListItemType();
     }
     // Non-root inline boxes (e.g. <span>).
     auto& boxGeometry = formattingContext().geometryForBox(inlineLevelBox.layoutBox());
@@ -101,19 +108,20 @@ bool InlineQuirks::inlineBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox)
     return false;
 }
 
-std::optional<LayoutUnit> InlineQuirks::initialLetterAlignmentOffset(const Box& floatBox, const RenderStyle& lineBoxStyle) const
+std::optional<LayoutUnit> InlineQuirks::initialLetterAlignmentOffset(const Box& floatBox, const Style::ComputedStyle& lineBoxStyle) const
 {
     ASSERT(floatBox.isFloatingPositioned());
-    if (!floatBox.style().lineBoxContain().contains(LineBoxContain::InitialLetter))
+    if (!floatBox.style().lineBoxContain().contains(Style::WebkitLineBoxContainValue::InitialLetter))
         return { };
     auto& primaryFontMetrics = lineBoxStyle.fontCascade().metricsOfPrimaryFont();
     auto lineHeight = [&]() -> InlineLayoutUnit {
         if (lineBoxStyle.lineHeight().isNormal())
-            return primaryFontMetrics.intAscent() + primaryFontMetrics.intDescent();
+            return primaryFontMetrics.ascent(FontBaseline::Alphabetic) + primaryFontMetrics.descent(FontBaseline::Alphabetic);
         return lineBoxStyle.computedLineHeight();
     };
     auto& floatBoxGeometry = formattingContext().geometryForBox(floatBox);
-    return LayoutUnit { primaryFontMetrics.intAscent() + (lineHeight() - primaryFontMetrics.intHeight()) / 2 - primaryFontMetrics.intCapHeight() - floatBoxGeometry.marginBorderAndPaddingBefore() };
+    auto fontHeight = primaryFontMetrics.ascent() + primaryFontMetrics.descent();
+    return LayoutUnit { primaryFontMetrics.ascent(FontBaseline::Alphabetic) + (lineHeight() - fontHeight) / 2 - primaryFontMetrics.capHeight().value_or(0.f) - floatBoxGeometry.marginBorderAndPaddingBefore() };
 }
 
 std::optional<InlineRect> InlineQuirks::adjustedRectForLineGridLineAlign(const InlineRect& rect) const
@@ -204,6 +212,54 @@ std::optional<InlineLayoutUnit> InlineQuirks::adjustmentForLineGridLineSnap(cons
         return { };
 
     return gridLineHeight - remainder;
+}
+
+bool InlineQuirks::shouldCollapseLineBoxHeight(const Line::RunList& lineContent, size_t numberOfOutsideListMarkers) const
+{
+    // This quirk is needed as we put the marker in seemingly random places in the list item's subtree.
+    // (instead of having a well defined place and layout behavior).
+    if (!lineContent.size() || numberOfOutsideListMarkers != 1)
+        return false;
+
+    auto& marker = lineContent[0];
+    auto* markerBox = dynamicDowncast<Layout::ElementBox>(marker.layoutBox());
+    ASSERT(markerBox);
+    if (!markerBox)
+        return false;
+
+    if (!marker.isListMarkerOutside()) {
+        ASSERT(marker.isListMarkerInside());
+        return false;
+    }
+
+    size_t emptyInlineBoxCount = 0;
+    for (auto& run : lineContent) {
+        if (run.isListMarkerOutside())
+            continue;
+        if (Line::Run::isContentfulOrHasDecoration(run, formattingContext()))
+            return false;
+        if (run.isInlineBoxStart())
+            ++emptyInlineBoxCount;
+    }
+
+    // This is to handle non-contentful lines introduced by block boxes. They are supposed to be collapsed so that
+    // the block content can be placed next to the list marker.
+    // Regular inline content would never produced a line with inline box only runs. Also inline content like <li><span><br>
+    // is not supposed to produce a collapsed line box.
+    // The underlying issue is the assumption that we shouldn’t collapse when rootBox is a list item (see below).
+    if (emptyInlineBoxCount && emptyInlineBoxCount == lineContent.size() - 1)
+        return true;
+
+    // When an outside marker ends up in an anonymous block because blockification (e.g., by a flex/grid container)
+    // prevented finding a line box parent, collapse the line box so it doesn’t inflate the list item.
+    if (markerBox->shouldCollapseAnonymousBlockParentForListMarker())
+        return true;
+
+    auto& rootBox = formattingContext().root();
+    if (rootBox.isAnonymous() || rootBox.isListItem())
+        return false;
+
+    return true;
 }
 
 }

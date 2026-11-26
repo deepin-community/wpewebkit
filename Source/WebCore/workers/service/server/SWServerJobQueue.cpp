@@ -36,9 +36,12 @@
 #include "ServiceWorkerUpdateViaCache.h"
 #include "WorkerFetchResult.h"
 #include "WorkerType.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SWServerJobQueue);
 
 SWServerJobQueue::SWServerJobQueue(SWServer& server, const ServiceWorkerRegistrationKey& key)
     : m_jobTimer(*this, &SWServerJobQueue::runNextJobSynchronously)
@@ -47,9 +50,7 @@ SWServerJobQueue::SWServerJobQueue(SWServer& server, const ServiceWorkerRegistra
 {
 }
 
-SWServerJobQueue::~SWServerJobQueue()
-{
-}
+SWServerJobQueue::~SWServerJobQueue() = default;
 
 bool SWServerJobQueue::isCurrentlyProcessingJob(const ServiceWorkerJobDataIdentifier& jobDataIdentifier) const
 {
@@ -97,6 +98,15 @@ void SWServerJobQueue::scriptFetchFinished(const ServiceWorkerJobDataIdentifier&
 
     registration->setLastUpdateTime(WallTime::now());
 
+    // If the newest worker needs script loading (lazy import from store), load scripts before comparison.
+    if (newestWorker && newestWorker->needsScriptLoading()) {
+        server->loadWorkerScripts(*newestWorker, [weakThis = WeakPtr { *this }, jobDataIdentifier, requestingProcessIdentifier, result = WTF::move(result)](auto) mutable {
+            if (CheckedPtr checkedThis = weakThis.get())
+                checkedThis->scriptFetchFinished(jobDataIdentifier, requestingProcessIdentifier, WTF::move(result));
+        });
+        return;
+    }
+
     // If newestWorker is not null, newestWorker's script url equals job's script url with the exclude fragments
     // flag set, and script's source text is a byte-for-byte match with newestWorker's script resource's source
     // text, then:
@@ -104,8 +114,8 @@ void SWServerJobQueue::scriptFetchFinished(const ServiceWorkerJobDataIdentifier&
 
         auto scriptURLs = newestWorker->importedScriptURLs();
         if (!scriptURLs.isEmpty()) {
-            m_workerFetchResult = WTFMove(result);
-            protectedServer()->refreshImportedScripts(job, *registration, scriptURLs, requestingProcessIdentifier);
+            m_workerFetchResult = WTF::move(result);
+            server->refreshImportedScripts(job, *registration, scriptURLs, requestingProcessIdentifier);
             return;
         }
 
@@ -116,7 +126,7 @@ void SWServerJobQueue::scriptFetchFinished(const ServiceWorkerJobDataIdentifier&
         return;
     }
 
-    protectedServer()->updateWorker(job.identifier(), requestingProcessIdentifier, *registration, job.scriptURL, result.script, result.certificateInfo, result.contentSecurityPolicy, result.crossOriginEmbedderPolicy, result.referrerPolicy, job.workerType, { }, job.serviceWorkerPageIdentifier());
+    server->updateWorker(job.identifier(), requestingProcessIdentifier, *registration, job.scriptURL, result.script, result.certificateInfo, result.contentSecurityPolicy, result.crossOriginEmbedderPolicy, result.referrerPolicy, job.workerType, { }, job.serviceWorkerPageIdentifier());
 }
 
 void SWServerJobQueue::importedScriptsFetchFinished(const ServiceWorkerJobDataIdentifier& jobDataIdentifier, const Vector<std::pair<URL, ScriptBuffer>>& importedScripts, const std::optional<ProcessIdentifier>& requestingProcessIdentifier)
@@ -126,7 +136,7 @@ void SWServerJobQueue::importedScriptsFetchFinished(const ServiceWorkerJobDataId
 
     auto& job = firstJob();
 
-    RefPtr registration = protectedServer()->getRegistration(m_registrationKey);
+    RefPtr registration = protect(server())->getRegistration(m_registrationKey);
     if (!registration)
         return;
 
@@ -137,13 +147,13 @@ void SWServerJobQueue::importedScriptsFetchFinished(const ServiceWorkerJobDataId
         return;
     }
 
-    protectedServer()->updateWorker(job.identifier(), requestingProcessIdentifier, *registration, job.scriptURL, m_workerFetchResult.script, m_workerFetchResult.certificateInfo, m_workerFetchResult.contentSecurityPolicy, m_workerFetchResult.crossOriginEmbedderPolicy, m_workerFetchResult.referrerPolicy, job.workerType, { }, job.serviceWorkerPageIdentifier());
+    protect(server())->updateWorker(job.identifier(), requestingProcessIdentifier, *registration, job.scriptURL, m_workerFetchResult.script, m_workerFetchResult.certificateInfo, m_workerFetchResult.contentSecurityPolicy, m_workerFetchResult.crossOriginEmbedderPolicy, m_workerFetchResult.referrerPolicy, job.workerType, { }, job.serviceWorkerPageIdentifier());
 }
 
 void SWServerJobQueue::scriptAndImportedScriptsFetchFinished(const ServiceWorkerJobData& job, SWServerRegistration& registration)
 {
     // Invoke Resolve Job Promise with job and registration.
-    protectedServer()->resolveRegistrationJob(job, registration.data(), ShouldNotifyWhenResolved::No);
+    protect(server())->resolveRegistrationJob(job, registration.data(), ShouldNotifyWhenResolved::No);
 
     // Invoke Finish Job with job and abort these steps.
     finishCurrentJob();
@@ -165,7 +175,7 @@ void SWServerJobQueue::scriptContextFailedToStart(const ServiceWorkerJobDataIden
     }
 
     ASSERT(registration->preInstallationWorker());
-    registration->preInstallationWorker()->terminate();
+    protect(registration->preInstallationWorker())->terminate();
     registration->setPreInstallationWorker(nullptr);
 
     // Invoke Reject Job Promise with job and TypeError.
@@ -184,7 +194,7 @@ void SWServerJobQueue::scriptContextStarted(const ServiceWorkerJobDataIdentifier
     if (!isCurrentlyProcessingJob(jobDataIdentifier))
         return;
 
-    RefPtr registration = protectedServer()->getRegistration(m_registrationKey);
+    RefPtr registration = protect(server())->getRegistration(m_registrationKey);
     ASSERT(registration);
     if (!registration) {
         RELEASE_LOG_ERROR(ServiceWorker, "SWServerJobQueue::scriptContextStarted registration is null");
@@ -236,7 +246,7 @@ void SWServerJobQueue::didResolveRegistrationPromise()
 
     // Queue a task to fire the InstallEvent.
     ASSERT(registration->installingWorker());
-    server->fireInstallEvent(*registration->installingWorker());
+    server->fireInstallEvent(*protect(registration->installingWorker()));
 }
 
 // https://w3c.github.io/ServiceWorker/#install
@@ -343,7 +353,7 @@ void SWServerJobQueue::runRegisterJob(const ServiceWorkerJobData& job)
         RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: Found registration %" PRIu64 " for job %s but it needs updating", this, registration->identifier().toUInt64(), job.identifier().loggingString().utf8().data());
     } else {
         Ref newRegistration = SWServerRegistration::create(server.get(), m_registrationKey, job.registrationOptions->updateViaCache, job.scopeURL, job.scriptURL, job.serviceWorkerPageIdentifier(), NavigationPreloadState::defaultValue());
-        server->addRegistration(WTFMove(newRegistration));
+        server->addRegistration(WTF::move(newRegistration));
 
         RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: No existing registration for job %s, constructing a new one.", this, job.identifier().loggingString().utf8().data());
     }
@@ -404,7 +414,7 @@ void SWServerJobQueue::runUpdateJob(const ServiceWorkerJobData& job)
 
 void SWServerJobQueue::rejectCurrentJob(const ExceptionData& exceptionData)
 {
-    protectedServer()->rejectJob(firstJob(), exceptionData);
+    protect(server())->rejectJob(firstJob(), exceptionData);
 
     finishCurrentJob();
 }
@@ -419,7 +429,7 @@ void SWServerJobQueue::finishCurrentJob()
         runNextJob();
 }
 
-void SWServerJobQueue::removeAllJobsMatching(const Function<bool(ServiceWorkerJobData&)>& matches)
+void SWServerJobQueue::removeAllJobsMatching(NOESCAPE const Function<bool(ServiceWorkerJobData&)>& matches)
 {
     bool isFirst = true;
     bool didRemoveFirstJob = false;

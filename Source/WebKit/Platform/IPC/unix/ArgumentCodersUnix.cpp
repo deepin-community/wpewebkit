@@ -39,12 +39,14 @@ void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, const UnixFileD
 
 void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, UnixFileDescriptor&& fd)
 {
-    encoder.addAttachment(WTFMove(fd));
+    encoder.addAttachment(WTF::move(fd));
 }
 
+#if !OS(ANDROID)
 std::optional<UnixFileDescriptor> ArgumentCoder<UnixFileDescriptor>::decode(Decoder& decoder)
 {
     return decoder.takeLastAttachment();
 }
+#endif // OS(ANDROID)
 
 }

@@ -25,12 +25,13 @@
 
 #pragma once
 
-#include "InlineDisplayContent.h"
 #include "InlineFormattingConstraints.h"
 #include "InlineFormattingUtils.h"
-#include "InlineLayoutState.h"
-#include "InlineQuirks.h"
 #include "IntrinsicWidthHandler.h"
+#include <WebCore/InlineDisplayContent.h>
+#include <WebCore/InlineLayoutState.h>
+#include <WebCore/InlineQuirks.h>
+#include <WebCore/LayoutIntegrationUtils.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -48,52 +49,56 @@ struct InlineLayoutResult {
         PartialFromDamage // Display content represents part of the inline content starting from damaged line until damage stops -result of partial layout with damage that does not cover the entire inline content
     };
     Range range { Range::Full };
+    bool didDiscardContent { false };
+
+    WTF_MAKE_TZONE_ALLOCATED(InlineLayoutResult);
 };
 
 // This class implements the layout logic for inline formatting context.
 // https://www.w3.org/TR/CSS22/visuren.html#inline-formatting
 class InlineFormattingContext {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(InlineFormattingContext);
+    WTF_MAKE_TZONE_ALLOCATED(InlineFormattingContext);
 public:
     InlineFormattingContext(const ElementBox& formattingContextRoot, LayoutState&, BlockLayoutState& parentBlockLayoutState);
 
-    InlineLayoutResult layout(const ConstraintsForInlineContent&, InlineDamage* = nullptr);
+    // Nullptr signals that there was no actual inline content to lay out and no lines were generated.
+    std::unique_ptr<InlineLayoutResult> layout(const ConstraintsForInlineContent&, InlineDamage* = nullptr);
 
     std::pair<LayoutUnit, LayoutUnit> minimumMaximumContentSize(InlineDamage* = nullptr);
     LayoutUnit minimumContentSize(InlineDamage* = nullptr);
     LayoutUnit maximumContentSize(InlineDamage* = nullptr);
 
     const ElementBox& root() const { return m_rootBlockContainer; }
-    const InlineFormattingUtils& formattingUtils() const { return m_inlineFormattingUtils; }
-    const InlineQuirks& quirks() const { return m_inlineQuirks; }
-    const FloatingContext& floatingContext() const { return m_floatingContext; }
+    const InlineFormattingUtils& formattingUtils() const LIFETIME_BOUND { return m_inlineFormattingUtils; }
+    const InlineQuirks& quirks() const LIFETIME_BOUND { return m_inlineQuirks; }
+    const FloatingContext& floatingContext() const LIFETIME_BOUND { return m_floatingContext; }
 
-    InlineLayoutState& layoutState() { return m_inlineLayoutState; }
-    const InlineLayoutState& layoutState() const { return m_inlineLayoutState; }
-
-    void layoutWithFormattingContextForBox(const ElementBox&, std::optional<LayoutUnit> widthConstraint = { });
+    InlineLayoutState& layoutState() LIFETIME_BOUND { return m_inlineLayoutState; }
+    const InlineLayoutState& layoutState() const LIFETIME_BOUND { return m_inlineLayoutState; }
 
     enum class EscapeReason {
         InkOverflowNeedsInitialContiningBlockForStrokeWidth
     };
-    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const;
-    BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt);
+    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const LIFETIME_BOUND;
+    BoxGeometry& geometryForBox(const Box&) LIFETIME_BOUND;
+
+    const IntegrationUtils& integrationUtils() const LIFETIME_BOUND { return m_integrationUtils; }
 
 private:
-    InlineLayoutResult lineLayout(AbstractLineBuilder&, const InlineItemList&, InlineItemRange, std::optional<PreviousLine>, const ConstraintsForInlineContent&, const InlineDamage* = nullptr);
+    UniqueRef<InlineLayoutResult> lineLayout(AbstractLineBuilder&, const InlineItemList&, InlineItemRange, std::optional<PreviousLine>, const ConstraintsForInlineContent&, const InlineDamage*, bool mayUseSimplifiedDisplayContentBuild = false);
     void layoutFloatContentOnly(const ConstraintsForInlineContent&);
 
     void collectContentIfNeeded();
-    InlineRect createDisplayContentForInlineContent(const LineBox&, const LineLayoutResult&, const ConstraintsForInlineContent&, InlineDisplay::Content&, size_t numberOfPreviousLinesWithInlineContent = 0);
-    void updateInlineLayoutStateWithLineLayoutResult(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&);
+    InlineRect createDisplayContentForInlineContent(const LineBox&, const LineLayoutResult&, const ConstraintsForInlineContent&, InlineDisplay::Content&, bool canUseSimplifiedDisplayContentBuild = false);
+    void updateLayoutStateWithLineLayoutResult(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&);
     void updateBoxGeometryForPlacedFloats(const LineLayoutResult::PlacedFloatList&);
-    void resetGeometryForClampedContent(const InlineItemRange& needsDisplayContentRange, const LineLayoutResult::SuspendedFloatList& suspendedFloats, LayoutPoint topleft);
-    bool createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent&, InlineLayoutResult&);
-    void createDisplayContentForEmptyInlineContent(const ConstraintsForInlineContent&, InlineLayoutResult&);
-    void initializeInlineLayoutState(const LayoutState&);
+    void resetBoxGeometriesForDiscardedContent(const InlineItemRange& discardedRange, const LineLayoutResult::SuspendedFloatList& suspendedFloats);
+    bool createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent&, InlineLayoutResult&, bool mayUseSimplifiedDisplayContentBuild);
+    bool createDisplayContentForEmptyInlineContent(const ConstraintsForInlineContent&, const InlineItemList&, InlineLayoutResult&);
+    void NODELETE initializeInlineLayoutState(const LayoutState&);
     void rebuildInlineItemListIfNeeded(InlineDamage*);
 
-    InlineContentCache& inlineContentCache() { return m_inlineContentCache; }
+    InlineContentCache& inlineContentCache() LIFETIME_BOUND { return m_inlineContentCache; }
 
 private:
     const ElementBox& m_rootBlockContainer;
@@ -101,6 +106,7 @@ private:
     const FloatingContext m_floatingContext;
     const InlineFormattingUtils m_inlineFormattingUtils;
     const InlineQuirks m_inlineQuirks;
+    const IntegrationUtils m_integrationUtils;
     InlineContentCache& m_inlineContentCache;
     InlineLayoutState m_inlineLayoutState;
 };

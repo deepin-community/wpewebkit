@@ -27,6 +27,8 @@
 #include "WebPluginInfoProvider.h"
 
 #include <WebCore/Page.h>
+#include <WebCore/Settings.h>
+#include <wtf/NeverDestroyed.h>
 
 #if ENABLE(PDF_PLUGIN)
 #include "PDFPluginBase.h"
@@ -36,8 +38,8 @@ namespace WebKit {
 
 WebPluginInfoProvider& WebPluginInfoProvider::singleton()
 {
-    static auto& pluginInfoProvider = adoptRef(*new WebPluginInfoProvider).leakRef();
-    return pluginInfoProvider;
+    static MainRunLoopNeverDestroyed<Ref<WebPluginInfoProvider>> pluginInfoProvider = adoptRef(*new WebPluginInfoProvider);
+    return pluginInfoProvider.get();
 }
 
 void WebPluginInfoProvider::refreshPlugins()

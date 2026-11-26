@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,17 +27,16 @@
 
 #if ENABLE(IMAGE_ANALYSIS)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 OBJC_CLASS NSAttributedString;
 OBJC_CLASS NSData;
 OBJC_CLASS VKCImageAnalysis;
-#endif
 
 #if ENABLE(DATA_DETECTION)
 OBJC_CLASS DDScannerResult;
 #endif
 
-#include "FloatQuad.h"
+#include <WebCore/AttributedString.h>
+#include <WebCore/FloatQuad.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -48,7 +47,7 @@ struct CharacterRange;
 struct TextRecognitionWordData {
     TextRecognitionWordData(const String& theText, FloatQuad&& quad, bool leadingWhitespace)
         : text(theText)
-        , normalizedQuad(WTFMove(quad))
+        , normalizedQuad(WTF::move(quad))
         , hasLeadingWhitespace(leadingWhitespace)
     {
     }
@@ -60,8 +59,8 @@ struct TextRecognitionWordData {
 
 struct TextRecognitionLineData {
     TextRecognitionLineData(FloatQuad&& quad, Vector<TextRecognitionWordData>&& theChildren, bool newline, bool isVertical)
-        : normalizedQuad(WTFMove(quad))
-        , children(WTFMove(theChildren))
+        : normalizedQuad(WTF::move(quad))
+        , children(WTF::move(theChildren))
         , hasTrailingNewline(newline)
         , isVertical(isVertical)
     {
@@ -78,8 +77,8 @@ struct TextRecognitionLineData {
 struct TextRecognitionDataDetector {
     TextRecognitionDataDetector() = default;
     TextRecognitionDataDetector(RetainPtr<DDScannerResult>&& scannerResult, Vector<FloatQuad>&& quads)
-        : result(WTFMove(scannerResult))
-        , normalizedQuads(WTFMove(quads))
+        : result(WTF::move(scannerResult))
+        , normalizedQuads(WTF::move(quads))
     {
     }
 
@@ -92,7 +91,7 @@ struct TextRecognitionDataDetector {
 struct TextRecognitionBlockData {
     TextRecognitionBlockData(const String& theText, FloatQuad&& quad)
         : text(theText)
-        , normalizedQuad(WTFMove(quad))
+        , normalizedQuad(WTF::move(quad))
     {
     }
 
@@ -109,12 +108,8 @@ struct TextRecognitionResult {
 
     Vector<TextRecognitionBlockData> blocks;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    RetainPtr<NSData> imageAnalysisData;
-
-    WEBCORE_EXPORT static RetainPtr<NSData> encodeVKCImageAnalysis(RetainPtr<VKCImageAnalysis>);
-    WEBCORE_EXPORT static RetainPtr<VKCImageAnalysis> decodeVKCImageAnalysis(RetainPtr<NSData>);
-#endif
+    std::optional<WebCore::AttributedString> imageAnalysisData;
+    WEBCORE_EXPORT static std::optional<WebCore::AttributedString> extractAttributedString(VKCImageAnalysis *);
 
     bool isEmpty() const
     {
@@ -133,9 +128,7 @@ struct TextRecognitionResult {
     }
 };
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 RetainPtr<NSAttributedString> stringForRange(const TextRecognitionResult&, const CharacterRange&);
-#endif
 
 } // namespace WebCore
 

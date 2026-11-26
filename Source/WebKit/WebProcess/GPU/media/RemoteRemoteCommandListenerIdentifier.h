@@ -31,8 +31,8 @@
 
 namespace WebKit {
 
-enum class RemoteRemoteCommandListenerIdentifierType { };
-using RemoteRemoteCommandListenerIdentifier = LegacyNullableObjectIdentifier<RemoteRemoteCommandListenerIdentifierType>;
+struct RemoteRemoteCommandListenerIdentifierType;
+using RemoteRemoteCommandListenerIdentifier = ObjectIdentifier<RemoteRemoteCommandListenerIdentifierType>;
 
 } // namespace WebKit
 

@@ -31,6 +31,7 @@
 #include "JSWebExtensionAPIWebPageRuntime.h"
 #include "WebExtensionAPIEvent.h"
 #include "WebExtensionAPIObject.h"
+#include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSString;
@@ -43,8 +44,8 @@ class WebExtensionAPIRuntime;
 
 class WebExtensionAPIRuntimeBase : public JSWebExtensionWrappable {
 public:
-    JSValue *reportError(NSString *errorMessage, JSGlobalContextRef, Function<void()>&& = nullptr);
-    JSValue *reportError(NSString *errorMessage, WebExtensionCallbackHandler&);
+    JSValue *reportError(String errorMessage, JSGlobalContextRef, NOESCAPE const Function<void()>& = nullptr);
+    JSValue *reportError(const String& errorMessage, WebExtensionCallbackHandler&);
 
 private:
     friend class WebExtensionAPIRuntime;
@@ -65,26 +66,28 @@ public:
 #if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
 
-    NSURL *getURL(NSString *resourcePath, NSString **outExceptionString);
-    NSDictionary *getManifest();
+    NSURL *getURL(const String& resourcePath, NSString **outExceptionString);
+    NSDictionary *NODELETE getManifest();
+    String getVersion();
     void getPlatformInfo(Ref<WebExtensionCallbackHandler>&&);
     void getBackgroundPage(Ref<WebExtensionCallbackHandler>&&);
     double getFrameId(JSValue *);
+    String getDocumentId(JSValue *, NSString **outExceptionString);
 
     void setUninstallURL(URL, Ref<WebExtensionCallbackHandler>&&);
 
     void openOptionsPage(Ref<WebExtensionCallbackHandler>&&);
     void reload();
 
-    NSString *runtimeIdentifier();
+    String NODELETE runtimeIdentifier();
 
-    JSValue *lastError();
+    JSValue *NODELETE lastError();
 
-    void sendMessage(WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
+    void sendMessage(WebPageProxyIdentifier, WebFrame&, const String& extensionID, const String& messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    RefPtr<WebExtensionAPIPort> connect(WebPageProxyIdentifier, WebFrame&, JSContextRef, const String& extensionID, NSDictionary *options, NSString **outExceptionString);
 
-    void sendNativeMessage(WebFrame&, NSString *applicationID, NSString *messageJSON, Ref<WebExtensionCallbackHandler>&&);
-    RefPtr<WebExtensionAPIPort> connectNative(WebFrame&, JSContextRef, NSString *applicationID);
+    void sendNativeMessage(WebFrame&, const String& applicationID, const String& messageJSON, Ref<WebExtensionCallbackHandler>&&);
+    RefPtr<WebExtensionAPIPort> connectNative(WebPageProxyIdentifier, JSContextRef, const String& applicationID);
 
     WebExtensionAPIEvent& onConnect();
     WebExtensionAPIEvent& onInstalled();
@@ -96,7 +99,7 @@ public:
 private:
     friend class WebExtensionAPIWebPageRuntime;
 
-    static bool parseConnectOptions(NSDictionary *, std::optional<String>& name, NSString *sourceKey, NSString **outExceptionString);
+    static bool parseConnectOptions(NSDictionary *, std::optional<String>& name, const String& sourceKey, NSString **outExceptionString);
 
     RefPtr<WebExtensionAPIEvent> m_onConnect;
     RefPtr<WebExtensionAPIEvent> m_onInstalled;
@@ -114,13 +117,16 @@ public:
     WebExtensionAPIWebPageRuntime& runtime() const final { return const_cast<WebExtensionAPIWebPageRuntime&>(*this); }
 
 #if PLATFORM(COCOA)
-    void sendMessage(WebFrame&, NSString *extensionID, NSString *messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, NSString *extensionID, NSDictionary *options, NSString **outExceptionString);
+    void sendMessage(WebPage&, WebFrame&, const String& extensionID, const String& messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    RefPtr<WebExtensionAPIPort> connect(WebPage&, WebFrame&, JSContextRef, const String& extensionID, NSDictionary *options, NSString **outExceptionString);
 #endif
 };
 
 NSDictionary *toWebAPI(const WebExtensionMessageSenderParameters&);
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIRuntime, runtime);
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIWebPageRuntime, webPageRuntime);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "JSCPtrTag.h"
-#include "OpcodeSize.h"
+#include <JavaScriptCore/JSCPtrTag.h>
+#include <JavaScriptCore/OpcodeSize.h>
 #include <wtf/CodePtr.h>
 
 namespace JSC {
@@ -40,12 +40,12 @@ namespace LLInt {
 
 void setEntrypoint(CodeBlock*);
 
-unsigned frameRegisterCountFor(CodeBlock*);
+unsigned NODELETE frameRegisterCountFor(CodeBlock*);
 
 MacroAssemblerCodeRef<JSEntryPtrTag> defaultCall();
 MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueEntrypoint();
 MacroAssemblerCodeRef<JSEntryPtrTag> fuzzerReturnEarlyFromLoopHintEntrypoint();
 MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize);
-CodePtr<JITThunkPtrTag> arityFixup();
+CodePtr<JITThunkPtrTag> NODELETE arityFixup();
 
 } } // namespace JSC::LLInt

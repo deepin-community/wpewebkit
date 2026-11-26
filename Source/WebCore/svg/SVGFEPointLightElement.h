@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2005 Oliver Hunt <ojh16@student.canterbury.ac.nz>
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,7 +25,7 @@
 namespace WebCore {
 
 class SVGFEPointLightElement final : public SVGFELightElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFEPointLightElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFEPointLightElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFEPointLightElement);
 public:
     static Ref<SVGFEPointLightElement> create(const QualifiedName&, Document&);

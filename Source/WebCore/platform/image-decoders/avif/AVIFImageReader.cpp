@@ -30,11 +30,14 @@
 
 #include "AVIFImageReader.h"
 #include "AVIFImageDecoder.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AVIFImageReader);
+
 AVIFImageReader::AVIFImageReader(RefPtr<AVIFImageDecoder>&& decoder)
-    : m_decoder(WTFMove(decoder))
+    : m_decoder(WTF::move(decoder))
     , m_avifDecoder(avifDecoderCreate())
 {
     // Allow the PixelInformationProperty ('pixi') to be missing in AV1 image
@@ -60,8 +63,7 @@ bool AVIFImageReader::parseHeader(const SharedBuffer& data, bool allDataReceived
         m_dataParsed = true;
 
     const avifImage* firstImage = m_avifDecoder->image;
-    m_decoder->setSize(IntSize(firstImage->width, firstImage->height));
-    return true;
+    return m_decoder->setSize(IntSize(firstImage->width, firstImage->height));
 }
 
 void AVIFImageReader::decodeFrame(size_t frameIndex, ScalableImageDecoderFrame& buffer, const SharedBuffer& data)
@@ -91,6 +93,12 @@ void AVIFImageReader::decodeFrame(size_t frameIndex, ScalableImageDecoderFrame& 
     }
 
     IntSize imageSize(m_decoder->size());
+
+    if (IntSize(m_avifDecoder->image->width, m_avifDecoder->image->height) != imageSize) {
+        m_decoder->setFailed();
+        return;
+    }
+
     if (buffer.isInvalid() && !buffer.initialize(imageSize, m_decoder->premultiplyAlpha())) {
         m_decoder->setFailed();
         return;
@@ -105,7 +113,7 @@ void AVIFImageReader::decodeFrame(size_t frameIndex, ScalableImageDecoderFrame& 
     decodedRGBImage.alphaPremultiplied = m_decoder->premultiplyAlpha();
     decodedRGBImage.format = AVIF_RGB_FORMAT_BGRA;
     decodedRGBImage.rowBytes = imageSize.width() * sizeof(uint32_t);
-    decodedRGBImage.pixels = reinterpret_cast<uint8_t*>(buffer.backingStore()->pixelAt(0, 0));
+    decodedRGBImage.pixels = reinterpret_cast<uint8_t*>(buffer.backingStore()->pixelsStartingAt(0, 0).data());
 
     if (avifImageYUVToRGB(m_avifDecoder->image, &decodedRGBImage) != AVIF_RESULT_OK) {
         m_decoder->setFailed();

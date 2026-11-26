@@ -41,6 +41,8 @@
  */
 
 struct _JSCExceptionPrivate {
+    // Never read: keeps the VM of jsException alive, since context is a weak pointer.
+    GRefPtr<JSCVirtualMachine> vm;
     GWeakPtr<JSCContext> context;
     JSC::Strong<JSC::JSObject> jsException;
     bool cached;
@@ -65,6 +67,7 @@ GRefPtr<JSCException> jscExceptionCreate(JSCContext* context, JSValueRef jsExcep
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     Ref vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+    exception->priv->vm = jsc_context_get_virtual_machine(context);
     exception->priv->jsException.set(vm, toJS(JSValueToObject(jsContext, jsException, nullptr)));
     // The context has a strong reference to the exception, so we can't ref the context. We use a weak
     // pointer instead to invalidate the exception if the context is destroyed before.
@@ -77,7 +80,7 @@ JSValueRef jscExceptionGetJSValue(JSCException* exception)
     return toRef(exception->priv->jsException.get());
 }
 
-void jscExceptionEnsureProperties(JSCException* exception)
+static void jscExceptionEnsureProperties(JSCException* exception)
 {
     JSCExceptionPrivate* priv = exception->priv;
     if (priv->cached)
@@ -85,6 +88,7 @@ void jscExceptionEnsureProperties(JSCException* exception)
 
     priv->cached = true;
 
+    ASSERT(priv->context);
     auto value = jscContextGetOrCreateValue(priv->context.get(), toRef(priv->jsException.get()));
     auto propertyValue = adoptGRef(jsc_value_object_get_property(value.get(), "name"));
     if (!jsc_value_is_undefined(propertyValue.get()))
@@ -250,7 +254,8 @@ const char* jsc_exception_get_name(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return nullptr;
 
     jscExceptionEnsureProperties(exception);
     return priv->errorName.get();
@@ -269,7 +274,8 @@ const char* jsc_exception_get_message(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return nullptr;
 
     jscExceptionEnsureProperties(exception);
     return priv->message.get();
@@ -288,7 +294,8 @@ guint jsc_exception_get_line_number(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), 0);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, 0);
+    if (!priv->context)
+        return 0;
 
     jscExceptionEnsureProperties(exception);
     return priv->lineNumber;
@@ -307,7 +314,8 @@ guint jsc_exception_get_column_number(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), 0);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, 0);
+    if (!priv->context)
+        return 0;
 
     jscExceptionEnsureProperties(exception);
     return priv->columnNumber;
@@ -319,14 +327,15 @@ guint jsc_exception_get_column_number(JSCException* exception)
  *
  * Get the source URI of @exception.
  *
- * Returns: (nullable): the the source URI of @exception, or %NULL.
+ * Returns: (nullable): the source URI of @exception, or %NULL.
  */
 const char* jsc_exception_get_source_uri(JSCException* exception)
 {
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return nullptr;
 
     jscExceptionEnsureProperties(exception);
     return priv->sourceURI.get();
@@ -345,7 +354,8 @@ const char* jsc_exception_get_backtrace_string(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return nullptr;
 
     jscExceptionEnsureProperties(exception);
     return priv->backtrace.get();
@@ -364,7 +374,8 @@ char* jsc_exception_to_string(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return g_strdup("");
 
     auto value = jscContextGetOrCreateValue(priv->context.get(), toRef(priv->jsException.get()));
     return jsc_value_to_string(value.get());
@@ -374,7 +385,7 @@ char* jsc_exception_to_string(JSCException* exception)
  * jsc_exception_report:
  * @exception: a #JSCException
  *
- * Return a report message of @exception, containing all the possible details such us
+ * Return a report message of @exception, containing all the possible details such as
  * source URI, line, column and backtrace, and formatted to be printed.
  *
  * Returns: (transfer full): a new string with the exception report
@@ -384,27 +395,27 @@ char* jsc_exception_report(JSCException* exception)
     g_return_val_if_fail(JSC_IS_EXCEPTION(exception), nullptr);
 
     JSCExceptionPrivate* priv = exception->priv;
-    g_return_val_if_fail(priv->context, nullptr);
+    if (!priv->context)
+        return g_strdup("");
 
     jscExceptionEnsureProperties(exception);
-    GString* report = g_string_new(nullptr);
+    auto report = StringBuilder();
     if (priv->sourceURI)
-        report = g_string_append(report, priv->sourceURI.get());
+        report.append(String::fromUTF8(priv->sourceURI.get()));
     if (priv->lineNumber)
-        g_string_append_printf(report, ":%d", priv->lineNumber);
+        report.append(':', priv->lineNumber);
     if (priv->columnNumber)
-        g_string_append_printf(report, ":%d", priv->columnNumber);
-    report = g_string_append_c(report, ' ');
+        report.append(':', priv->columnNumber);
+    report.append(' ');
     GUniquePtr<char> errorMessage(jsc_exception_to_string(exception));
     if (errorMessage)
-        report = g_string_append(report, errorMessage.get());
-    report = g_string_append_c(report, '\n');
+        report.append(String::fromUTF8(errorMessage.get()));
+    report.append('\n');
 
     if (priv->backtrace) {
-        GUniquePtr<char*> lines(g_strsplit(priv->backtrace.get(), "\n", 0));
-        for (unsigned i = 0; lines.get()[i]; ++i)
-            g_string_append_printf(report, "  %s\n", lines.get()[i]);
+        for (auto& line : String::fromUTF8(priv->backtrace.get()).split('\n'))
+            report.append("  "_s, line, '\n');
     }
 
-    return g_string_free(report, FALSE);
+    return g_strdup(report.toString().utf8().data());
 }

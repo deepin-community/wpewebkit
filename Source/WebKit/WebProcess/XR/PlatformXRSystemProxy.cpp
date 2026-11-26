@@ -35,36 +35,38 @@
 #include "WebPage.h"
 #include "WebProcess.h"
 #include "XRDeviceInfo.h"
+#include <WebCore/ExceptionData.h>
+#include <WebCore/Page.h>
 #include <WebCore/SecurityOrigin.h>
+#include <WebCore/Settings.h>
+#include <WebCore/XRCanvasConfiguration.h>
 #include <wtf/Vector.h>
-
-using namespace PlatformXR;
 
 namespace WebKit {
 
 PlatformXRSystemProxy::PlatformXRSystemProxy(WebPage& page)
     : m_page(page)
 {
-    WebProcess::singleton().addMessageReceiver(Messages::PlatformXRSystemProxy::messageReceiverName(), m_page.identifier(), *this);
+    WebProcess::singleton().addMessageReceiver(Messages::PlatformXRSystemProxy::messageReceiverName(), m_page->identifier(), *this);
 }
 
 PlatformXRSystemProxy::~PlatformXRSystemProxy()
 {
-    WebProcess::singleton().removeMessageReceiver(Messages::PlatformXRSystemProxy::messageReceiverName(), m_page.identifier());
+    WebProcess::singleton().removeMessageReceiver(Messages::PlatformXRSystemProxy::messageReceiverName(), m_page->identifier());
 }
 
-void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(const Instance::DeviceList&)>&& completionHandler)
+void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&& completionHandler)
 {
-    m_page.sendWithAsyncReply(Messages::PlatformXRSystem::EnumerateImmersiveXRDevices(), [this, weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)](Vector<XRDeviceInfo>&& devicesInfos) mutable {
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::EnumerateImmersiveXRDevices(), [this, weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](Vector<XRDeviceInfo>&& devicesInfos) mutable {
         if (!weakThis)
             return;
 
-        PlatformXR::Instance::DeviceList devices;
+        PlatformXR::DeviceList devices;
         for (auto& deviceInfo : devicesInfos) {
             if (auto device = deviceByIdentifier(deviceInfo.identifier))
                 devices.append(*device);
             else
-                devices.append(XRDeviceProxy::create(WTFMove(deviceInfo), *this));
+                devices.append(XRDeviceProxy::create(WTF::move(deviceInfo), *this));
         }
         m_devices.swap(devices);
         completionHandler(m_devices);
@@ -73,49 +75,101 @@ void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(c
 
 void PlatformXRSystemProxy::requestPermissionOnSessionFeatures(const WebCore::SecurityOriginData& securityOriginData, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& granted, const PlatformXR::Device::FeatureList& consentRequired, const PlatformXR::Device::FeatureList& consentOptional, const PlatformXR::Device::FeatureList& requiredFeaturesRequested, const PlatformXR::Device::FeatureList& optionalFeaturesRequested, CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
 {
-    m_page.sendWithAsyncReply(Messages::PlatformXRSystem::RequestPermissionOnSessionFeatures(securityOriginData, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested), WTFMove(completionHandler));
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::RequestPermissionOnSessionFeatures(securityOriginData, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested), WTF::move(completionHandler));
 }
 
-void PlatformXRSystemProxy::initializeTrackingAndRendering()
+void PlatformXRSystemProxy::initializeTrackingAndRendering(std::optional<WebCore::XRCanvasConfiguration>&& optionalInit)
 {
-    m_page.send(Messages::PlatformXRSystem::InitializeTrackingAndRendering());
+    std::optional<WebCore::WebGPU::TextureFormat> colorFormat;
+    std::optional<WebCore::WebGPU::TextureFormat> depthStencilFormat;
+    if (optionalInit) {
+        colorFormat = optionalInit->colorFormat;
+        depthStencilFormat = optionalInit->depthStencilFormat;
+    }
+    protect(m_page)->send(Messages::PlatformXRSystem::InitializeTrackingAndRendering(WTF::move(colorFormat), WTF::move(depthStencilFormat)));
 }
 
 void PlatformXRSystemProxy::shutDownTrackingAndRendering()
 {
-    m_page.send(Messages::PlatformXRSystem::ShutDownTrackingAndRendering());
+    protect(m_page)->send(Messages::PlatformXRSystem::ShutDownTrackingAndRendering());
 }
 
 void PlatformXRSystemProxy::didCompleteShutdownTriggeredBySystem()
 {
-    m_page.send(Messages::PlatformXRSystem::DidCompleteShutdownTriggeredBySystem());
+    protect(m_page)->send(Messages::PlatformXRSystem::DidCompleteShutdownTriggeredBySystem());
 }
 
-void PlatformXRSystemProxy::requestFrame(PlatformXR::Device::RequestFrameCallback&& callback)
+void PlatformXRSystemProxy::requestFrame(std::optional<PlatformXR::RequestData>&& requestData, PlatformXR::Device::RequestFrameCallback&& callback)
 {
-    m_page.sendWithAsyncReply(Messages::PlatformXRSystem::RequestFrame(), WTFMove(callback));
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::RequestFrame(WTF::move(requestData)), WTF::move(callback));
 }
 
-std::optional<PlatformXR::LayerHandle> PlatformXRSystemProxy::createLayerProjection(uint32_t, uint32_t, bool)
+std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
 {
-    return PlatformXRCoordinator::defaultLayerHandle();
+#if USE(OPENXR)
+    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateLayerProjection(width, height, alpha));
+    if (!result.succeeded())
+        return std::nullopt;
+    auto [layerInfo] = result.takeReply();
+    return layerInfo;
+#else
+    UNUSED_PARAM(width);
+    UNUSED_PARAM(height);
+    UNUSED_PARAM(alpha);
+    return PlatformXR::LayerInfo { PlatformXRCoordinator::defaultLayerHandle(), 1 };
+#endif
 }
 
+#if ENABLE(WEBXR_LAYERS)
+std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, PlatformXR::LayerUpdateMode updateMode)
+{
+    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateCompositionLayer(type, size, layout, updateMode));
+    if (!result.succeeded())
+        return std::nullopt;
+    auto [layerInfo] = result.takeReply();
+    return layerInfo;
+}
+
+void PlatformXRSystemProxy::deleteLayer(PlatformXR::LayerHandle handle)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteLayer(handle));
+}
+#endif
+
+#if USE(OPENXR)
+void PlatformXRSystemProxy::submitFrame(Vector<PlatformXR::DeviceLayer>&& layers)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::SubmitFrame(WTF::move(layers)));
+}
+#else
 void PlatformXRSystemProxy::submitFrame()
 {
-    m_page.send(Messages::PlatformXRSystem::SubmitFrame());
+    protect(m_page)->send(Messages::PlatformXRSystem::SubmitFrame());
 }
+#endif
 
 void PlatformXRSystemProxy::sessionDidEnd(XRDeviceIdentifier deviceIdentifier)
 {
+    RELEASE_ASSERT(webXREnabled());
+
     if (auto device = deviceByIdentifier(deviceIdentifier))
         device->sessionDidEnd();
 }
 
 void PlatformXRSystemProxy::sessionDidUpdateVisibilityState(XRDeviceIdentifier deviceIdentifier, PlatformXR::VisibilityState visibilityState)
 {
+    RELEASE_ASSERT(webXREnabled());
+
     if (auto device = deviceByIdentifier(deviceIdentifier))
         device->updateSessionVisibilityState(visibilityState);
+}
+
+void PlatformXRSystemProxy::sessionDidInitializeRendering(XRDeviceIdentifier deviceIdentifier, uint32_t width, uint32_t height, uint32_t arrayLength)
+{
+    RELEASE_ASSERT(webXREnabled());
+
+    if (auto device = deviceByIdentifier(deviceIdentifier))
+        device->sessionDidInitializeRendering(width, height, arrayLength);
 }
 
 RefPtr<XRDeviceProxy> PlatformXRSystemProxy::deviceByIdentifier(XRDeviceIdentifier identifier)
@@ -131,8 +185,51 @@ RefPtr<XRDeviceProxy> PlatformXRSystemProxy::deviceByIdentifier(XRDeviceIdentifi
 
 bool PlatformXRSystemProxy::webXREnabled() const
 {
-    return m_page.corePage() && m_page.corePage()->settings().webXREnabled();
+    Ref page = m_page.get();
+    return page->corePage() && page->corePage()->settings().webXREnabled();
 }
+
+void PlatformXRSystemProxy::ref() const
+{
+    m_page->ref();
+}
+
+void PlatformXRSystemProxy::deref() const
+{
+    m_page->deref();
+}
+
+#if ENABLE(WEBXR_HIT_TEST)
+void PlatformXRSystemProxy::requestHitTestSource(const PlatformXR::HitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&& completionHandler)
+{
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::RequestHitTestSource(options), [protectedThis = protect(*this), completionHandler = WTF::move(completionHandler)](Expected<PlatformXR::HitTestSource, WebCore::ExceptionData> exceptionOrSource) mutable {
+        if (exceptionOrSource)
+            completionHandler(WTF::move(exceptionOrSource).value());
+        else
+            completionHandler(WTF::move(exceptionOrSource).error().toException());
+    });
+}
+
+void PlatformXRSystemProxy::deleteHitTestSource(PlatformXR::HitTestSource source)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteHitTestSource(source));
+}
+
+void PlatformXRSystemProxy::requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource>)>&& completionHandler)
+{
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::RequestTransientInputHitTestSource(options), [protectedThis = protect(*this), completionHandler = WTF::move(completionHandler)](Expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData> exceptionOrSource) mutable {
+        if (exceptionOrSource)
+            completionHandler(WTF::move(exceptionOrSource).value());
+        else
+            completionHandler(WTF::move(exceptionOrSource).error().toException());
+    });
+}
+
+void PlatformXRSystemProxy::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteTransientInputHitTestSource(source));
+}
+#endif
 
 } // namespace WebKit
 

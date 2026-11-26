@@ -4,11 +4,17 @@
 // found in the LICENSE file.
 //
 // CLProgram.cpp: Implements the cl::Program class.
+//
 
-#include "libANGLE/CLProgram.h"
+#include "common/unsafe_buffers.h"
+
+#include <angle_cl.h>
 
 #include "libANGLE/CLContext.h"
-#include "libANGLE/CLPlatform.h"
+#include "libANGLE/CLDevice.h"
+#include "libANGLE/CLKernel.h"
+#include "libANGLE/CLObject.h"
+#include "libANGLE/CLProgram.h"
 #include "libANGLE/cl_utils.h"
 
 #include <cstring>
@@ -26,7 +32,7 @@ angle::Result Program::build(cl_uint numDevices,
     devices.reserve(numDevices);
     while (numDevices-- != 0u)
     {
-        devices.emplace_back(&(*deviceList++)->cast<Device>());
+        devices.emplace_back(&(*ANGLE_UNSAFE_TODO(deviceList++))->cast<Device>());
     }
     Program *notify = nullptr;
     if (pfnNotify != nullptr)
@@ -52,13 +58,13 @@ angle::Result Program::compile(cl_uint numDevices,
     devices.reserve(numDevices);
     while (numDevices-- != 0u)
     {
-        devices.emplace_back(&(*deviceList++)->cast<Device>());
+        devices.emplace_back(&(*ANGLE_UNSAFE_TODO(deviceList++))->cast<Device>());
     }
     ProgramPtrs programs;
     programs.reserve(numInputHeaders);
     while (numInputHeaders-- != 0u)
     {
-        programs.emplace_back(&(*inputHeaders++)->cast<Program>());
+        programs.emplace_back(&(*ANGLE_UNSAFE_TODO(inputHeaders++))->cast<Program>());
     }
     Program *notify = nullptr;
     if (pfnNotify != nullptr)
@@ -109,12 +115,18 @@ angle::Result Program::getInfo(ProgramInfo name,
             copySize  = devices.size() * sizeof(decltype(devices)::value_type);
             break;
         case ProgramInfo::Source:
-            copyValue = mSource.c_str();
-            copySize  = mSource.length() + 1u;
+            if (!mSource.empty())
+            {
+                copyValue = mSource.c_str();
+                copySize  = mSource.length() + 1u;
+            }
             break;
         case ProgramInfo::IL:
-            copyValue = mIL.c_str();
-            copySize  = mIL.length() + 1u;
+            if (!mIL.empty())
+            {
+                copyValue = mIL.c_str();
+                copySize  = mIL.length() + 1u;
+            }
             break;
         case ProgramInfo::BinarySizes:
         case ProgramInfo::Binaries:
@@ -137,7 +149,7 @@ angle::Result Program::getInfo(ProgramInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -173,7 +185,8 @@ angle::Result Program::createKernels(cl_uint numKernels, cl_kernel *kernels, cl_
     krnls.reserve(createFuncs.size());
     while (!createFuncs.empty())
     {
-        krnls.emplace_back(new Kernel(*this, createFuncs.front()));
+        krnls.emplace_back(KernelPtr::Create(*this, createFuncs.front()));
+
         if (krnls.back()->mImpl == nullptr)
         {
             return angle::Result::Stop;
@@ -182,7 +195,7 @@ angle::Result Program::createKernels(cl_uint numKernels, cl_kernel *kernels, cl_
     }
     for (KernelPtr &kernel : krnls)
     {
-        *kernels++ = kernel.release();
+        *ANGLE_UNSAFE_TODO(kernels++) = kernel.release();
     }
     return angle::Result::Continue;
 }

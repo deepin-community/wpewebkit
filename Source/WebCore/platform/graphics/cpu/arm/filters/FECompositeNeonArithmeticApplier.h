@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011 University of Szeged
  * Copyright (C) 2011 Felician Marton
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,13 +30,14 @@
 #if HAVE(ARM_NEON_INTRINSICS)
 
 #include "FilterEffectApplier.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class FEComposite;
 
 class FECompositeNeonArithmeticApplier final : public FilterEffectConcreteApplier<FEComposite> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FECompositeNeonArithmeticApplier);
     using Base = FilterEffectConcreteApplier<FEComposite>;
 
 public:
@@ -48,7 +49,7 @@ private:
 
     static inline void applyPlatform(const uint8_t* source, uint8_t* destination, unsigned pixelArrayLength, float k1, float k2, float k3, float k4);
 
-    bool apply(const Filter&, const FilterImageVector& inputs, FilterImage& result) const final;
+    bool apply(const Filter&, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const final;
 };
 
 } // namespace WebCore

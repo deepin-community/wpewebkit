@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,43 +27,72 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include <WebCore/DisplayListResourceHeap.h>
+#include "RemoteDisplayListIdentifier.h"
+#include "RemoteGradientIdentifier.h"
+#include "RemotePathImplIdentifier.h"
+#include <WebCore/DisplayList.h>
 #include <WebCore/RenderingResourceIdentifier.h>
+#include <wtf/HashMap.h>
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
-class ImageBuffer;
-}
-namespace WebKit {
 
-class RemoteRenderingBackend;
+class Filter;
+class Font;
+class Gradient;
+class ImageBuffer;
+class NativeImage;
+struct FontCustomPlatformData;
+
+}
+
+namespace WebKit {
 
 class RemoteResourceCache {
 public:
-    RemoteResourceCache() = default;
+    RemoteResourceCache();
+    ~RemoteResourceCache();
 
-    void cacheNativeImage(Ref<WebCore::NativeImage>&&);
-    void cacheFont(Ref<WebCore::Font>&&);
-    void cacheDecomposedGlyphs(Ref<WebCore::DecomposedGlyphs>&&);
-    void cacheGradient(Ref<WebCore::Gradient>&&);
-    void cacheFilter(Ref<WebCore::Filter>&&);
-    void cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
-
-    const WebCore::DisplayList::ResourceHeap& resourceHeap() const { return m_resourceHeap; }
-
+    bool cacheNativeImage(WebCore::RenderingResourceIdentifier, Ref<WebCore::NativeImage>&&);
+    bool releaseNativeImage(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::NativeImage> cachedNativeImage(WebCore::RenderingResourceIdentifier) const;
-    RefPtr<WebCore::Font> cachedFont(WebCore::RenderingResourceIdentifier) const;
-    RefPtr<WebCore::DecomposedGlyphs> cachedDecomposedGlyphs(WebCore::RenderingResourceIdentifier) const;
-    RefPtr<WebCore::Gradient> cachedGradient(WebCore::RenderingResourceIdentifier) const;
+
+    bool cachePathImpl(RemotePathImplIdentifier, Ref<WebCore::PathImpl>&&);
+    bool releasePathImpl(RemotePathImplIdentifier);
+    RefPtr<WebCore::PathImpl> cachedPathImpl(RemotePathImplIdentifier) const;
+
+    bool cacheGradient(RemoteGradientIdentifier, Ref<WebCore::Gradient>&&);
+    bool releaseGradient(RemoteGradientIdentifier);
+    RefPtr<WebCore::Gradient> cachedGradient(RemoteGradientIdentifier) const;
+
+    bool cacheFilter(Ref<WebCore::Filter>&&);
+    bool releaseFilter(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::Filter> cachedFilter(WebCore::RenderingResourceIdentifier) const;
+
+    bool cacheFont(Ref<WebCore::Font>&&);
+    bool releaseFont(WebCore::RenderingResourceIdentifier);
+    RefPtr<WebCore::Font> cachedFont(WebCore::RenderingResourceIdentifier) const;
+
+    bool cacheFontCustomPlatformData(Ref<WebCore::FontCustomPlatformData>&&);
+    bool releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::FontCustomPlatformData> cachedFontCustomPlatformData(WebCore::RenderingResourceIdentifier) const;
 
+    bool cacheDisplayList(RemoteDisplayListIdentifier, Ref<const WebCore::DisplayList::DisplayList>);
+    RefPtr<const WebCore::DisplayList::DisplayList> cachedDisplayList(RemoteDisplayListIdentifier) const;
+    bool releaseDisplayList(RemoteDisplayListIdentifier);
+
     void releaseAllResources();
-    void releaseAllDrawingResources();
-    void releaseAllImageResources();
-    bool releaseRenderingResource(WebCore::RenderingResourceIdentifier);
+    void releaseMemory();
 
 private:
-    WebCore::DisplayList::ResourceHeap m_resourceHeap;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::ImageBuffer>> m_imageBuffers;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::NativeImage>> m_nativeImages;
+    HashMap<RemoteGradientIdentifier, Ref<WebCore::Gradient>> m_gradients;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::Filter>> m_filters;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::Font>> m_fonts;
+    HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::FontCustomPlatformData>> m_fontCustomPlatformDatas;
+    HashMap<RemotePathImplIdentifier, Ref<WebCore::PathImpl>> m_paths;
+    HashMap<RemoteDisplayListIdentifier, Ref<const WebCore::DisplayList::DisplayList>> m_displayLists;
 };
 
 } // namespace WebKit

@@ -29,11 +29,14 @@
 
 #include "FloatRect.h"
 #include "Font.h"
+#include "FontInlines.h"
 #include "GlyphPage.h"
 #include "OpenTypeTypes.h"
 #include "SharedBuffer.h"
+#include <wtf/Compiler.h>
 #include <wtf/RefPtr.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
 
 namespace WebCore {
 using namespace std;
@@ -86,18 +89,14 @@ struct VheaTable {
     OpenType::UInt16 numOfLongVerMetrics;
 };
 
-struct HmtxTable {
-    struct Entry {
-        OpenType::UInt16 advanceWidth;
-        OpenType::Int16 lsb;
-    } entries[1];
+struct HmtxTableEntry {
+    OpenType::UInt16 advanceWidth;
+    OpenType::Int16 lsb;
 };
 
-struct VmtxTable {
-    struct Entry {
-        OpenType::UInt16 advanceHeight;
-        OpenType::Int16 topSideBearing;
-    } entries[1];
+struct VmtxTableEntry {
+    OpenType::UInt16 advanceHeight;
+    OpenType::Int16 topSideBearing;
 };
 
 struct VORGTable {
@@ -110,7 +109,7 @@ struct VORGTable {
         OpenType::Int16 vertOriginY;
     } vertOriginYMetrics[1];
 
-    size_t requiredSize() const { return sizeof(*this) + sizeof(VertOriginYMetrics) * (numVertOriginYMetrics - 1); }
+    size_t requiredSize() const { return offsetof(VORGTable, vertOriginYMetrics) + sizeof(VertOriginYMetrics) * static_cast<size_t>(numVertOriginYMetrics); }
 };
 
 struct SubstitutionSubTable : TableBase {
@@ -174,9 +173,9 @@ struct LookupTable : TableBase {
                 if (!isValidEnd(buffer, &coverage2->ranges[countRange]))
                     return false;
                 for (uint16_t i = 0, indexTo = 0; i < countRange; ++i) {
-                    uint16_t from = coverage2->ranges[i].start;
-                    uint16_t fromEnd = coverage2->ranges[i].end + 1; // OpenType "end" is inclusive
-                    if (indexTo + (fromEnd - from) > countTo)
+                    unsigned from = coverage2->ranges[i].start;
+                    unsigned fromEnd = coverage2->ranges[i].end + 1; // OpenType "end" is inclusive
+                    if (fromEnd <= from || indexTo + (fromEnd - from) > countTo)
                         return false;
                     for (; from != fromEnd; ++from, ++indexTo)
                         map->set(from, singleSubstitution2->substitute[indexTo]);
@@ -242,11 +241,14 @@ struct FeatureList : TableBase {
 
     const FeatureTable* findFeature(OpenType::Tag tag, const SharedBuffer& buffer) const
     {
-        for (uint16_t i = 0; i < featureCount; ++i) {
-            if (isValidEnd(buffer, &features[i]) && features[i].featureTag == tag)
+        uint16_t count = featureCount;
+        if (!isValidEnd(buffer, &features[count]))
+            return nullptr;
+        for (uint16_t i = 0; i < count; ++i) {
+            if (features[i].featureTag == tag)
                 return validateOffset<FeatureTable>(buffer, features[i].featureOffset);
         }
-        return 0;
+        return nullptr;
     }
 };
 
@@ -355,7 +357,7 @@ struct GSUBTable : TableBase {
         const FeatureList* features = featureList(buffer);
         if (!features)
             return 0;
-        const FeatureTable* feature = 0;
+        const FeatureTable* feature = nullptr;
         if (langSys)
             feature = langSys->feature(featureTag, features, buffer);
         if (!feature) {
@@ -383,7 +385,7 @@ struct GSUBTable : TableBase {
 static bool loadHmtxTable(const FontPlatformData& platformData, Vector<uint16_t>& advanceWidths)
 {
     auto buffer = platformData.openTypeTable(OpenType::HheaTag);
-    const OpenType::HheaTable* hhea = OpenType::validateTable<OpenType::HheaTable>(buffer);
+    auto* hhea = OpenType::validateTableSingle<OpenType::HheaTable>(buffer);
     if (!hhea)
         return false;
     uint16_t countHmtxEntries = hhea->numberOfHMetrics;
@@ -393,15 +395,16 @@ static bool loadHmtxTable(const FontPlatformData& platformData, Vector<uint16_t>
     }
 
     buffer = platformData.openTypeTable(OpenType::HmtxTag);
-    const OpenType::HmtxTable* hmtx = OpenType::validateTable<OpenType::HmtxTable>(buffer, countHmtxEntries);
-    if (!hmtx) {
+    auto hmtx = OpenType::validateTable<OpenType::HmtxTableEntry>(buffer, countHmtxEntries);
+    if (hmtx.empty()) {
         LOG_ERROR("hhea exists but hmtx does not (or broken)");
         return false;
     }
 
-    advanceWidths.resize(countHmtxEntries);
-    for (uint16_t i = 0; i < countHmtxEntries; ++i)
-        advanceWidths[i] = hmtx->entries[i].advanceWidth;
+    advanceWidths = Vector<uint16_t>(countHmtxEntries, [&](size_t i) {
+        return hmtx[i].advanceWidth;
+    });
+
     return true;
 }
 
@@ -412,11 +415,11 @@ RefPtr<OpenTypeVerticalData> OpenTypeVerticalData::create(const FontPlatformData
     if (!loadHmtxTable(platformData, advanceWidths))
         return nullptr;
 
-    return adoptRef(new OpenTypeVerticalData(platformData, WTFMove(advanceWidths)));
+    return adoptRef(new OpenTypeVerticalData(platformData, WTF::move(advanceWidths)));
 }
 
 OpenTypeVerticalData::OpenTypeVerticalData(const FontPlatformData& platformData, Vector<uint16_t>&& advanceWidths)
-    : m_advanceWidths(WTFMove(advanceWidths))
+    : m_advanceWidths(WTF::move(advanceWidths))
 {
     loadMetrics(platformData);
     loadVerticalGlyphSubstitutions(platformData);
@@ -426,7 +429,7 @@ void OpenTypeVerticalData::loadMetrics(const FontPlatformData& platformData)
 {
     // Load vhea first. This table is required for fonts that support vertical flow.
     auto buffer = platformData.openTypeTable(OpenType::VheaTag);
-    const OpenType::VheaTable* vhea = OpenType::validateTable<OpenType::VheaTable>(buffer);
+    auto* vhea = OpenType::validateTableSingle<OpenType::VheaTable>(buffer);
     if (!vhea)
         return;
     uint16_t countVmtxEntries = vhea->numOfLongVerMetrics;
@@ -437,7 +440,7 @@ void OpenTypeVerticalData::loadMetrics(const FontPlatformData& platformData)
 
     // Load VORG. This table is optional.
     buffer = platformData.openTypeTable(OpenType::VORGTag);
-    const OpenType::VORGTable* vorg = OpenType::validateTable<OpenType::VORGTable>(buffer);
+    auto* vorg = OpenType::validateTableSingle<OpenType::VORGTable>(buffer);
     if (vorg && buffer->size() >= vorg->requiredSize()) {
         m_defaultVertOriginY = vorg->defaultVertOriginY;
         uint16_t countVertOriginYMetrics = vorg->numVertOriginYMetrics;
@@ -454,21 +457,21 @@ void OpenTypeVerticalData::loadMetrics(const FontPlatformData& platformData)
 
     // Load vmtx then. This table is required for fonts that support vertical flow.
     buffer = platformData.openTypeTable(OpenType::VmtxTag);
-    const OpenType::VmtxTable* vmtx = OpenType::validateTable<OpenType::VmtxTable>(buffer, countVmtxEntries);
-    if (!vmtx) {
+    auto vmtx = OpenType::validateTable<OpenType::VmtxTableEntry>(buffer, countVmtxEntries);
+    if (vmtx.empty()) {
         LOG_ERROR("vhea exists but vmtx does not (or broken)");
         return;
     }
-    m_advanceHeights.resize(countVmtxEntries);
-    for (uint16_t i = 0; i < countVmtxEntries; ++i)
-        m_advanceHeights[i] = vmtx->entries[i].advanceHeight;
+    m_advanceHeights = Vector<uint16_t>(countVmtxEntries, [&](size_t i) {
+        return vmtx[i].advanceHeight;
+    });
 
     // VORG is preferred way to calculate vertical origin than vmtx,
     // so load topSideBearing from vmtx only if VORG is missing.
     if (hasVORG())
         return;
 
-    size_t sizeExtra = buffer->size() - sizeof(OpenType::VmtxTable::Entry) * countVmtxEntries;
+    size_t sizeExtra = buffer->size() - sizeof(OpenType::VmtxTableEntry) * countVmtxEntries;
     if (sizeExtra % sizeof(OpenType::Int16)) {
         LOG_ERROR("vmtx has incorrect tsb count");
         return;
@@ -477,9 +480,9 @@ void OpenTypeVerticalData::loadMetrics(const FontPlatformData& platformData)
     m_topSideBearings.resize(countTopSideBearings);
     size_t i;
     for (i = 0; i < countVmtxEntries; ++i)
-        m_topSideBearings[i] = vmtx->entries[i].topSideBearing;
+        m_topSideBearings[i] = vmtx[i].topSideBearing;
     if (i < countTopSideBearings) {
-        const OpenType::Int16* pTopSideBearingsExtra = reinterpret_cast<const OpenType::Int16*>(&vmtx->entries[countVmtxEntries]);
+        const OpenType::Int16* pTopSideBearingsExtra = reinterpret_cast<const OpenType::Int16*>(std::to_address(vmtx.end()));
         for (; i < countTopSideBearings; ++i, ++pTopSideBearingsExtra)
             m_topSideBearings[i] = *pTopSideBearingsExtra;
     }
@@ -488,7 +491,7 @@ void OpenTypeVerticalData::loadMetrics(const FontPlatformData& platformData)
 void OpenTypeVerticalData::loadVerticalGlyphSubstitutions(const FontPlatformData& platformData)
 {
     auto buffer = platformData.openTypeTable(OpenType::GSUBTag);
-    const OpenType::GSUBTable* gsub = OpenType::validateTable<OpenType::GSUBTable>(buffer);
+    auto* gsub = OpenType::validateTableSingle<OpenType::GSUBTable>(buffer);
     if (gsub)
         gsub->getVerticalGlyphSubstitutions(&m_verticalGlyphMap, *buffer.get());
 }
@@ -567,4 +570,7 @@ void OpenTypeVerticalData::substituteWithVerticalGlyphs(const Font* font, GlyphP
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 #endif // ENABLE(OPENTYPE_VERTICAL)

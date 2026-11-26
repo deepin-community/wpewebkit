@@ -28,13 +28,12 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Procedure.h"
 #include "DFGCommon.h"
 #include "FTLState.h"
 #include "Options.h"
 
 namespace JSC { namespace B3 {
-
-const char* const tierName = "b3  ";
 
 bool shouldDumpIR(Procedure& procedure, B3CompilationMode mode)
 {
@@ -87,4 +86,3 @@ GPRReg extendedOffsetAddrRegister()
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)
-

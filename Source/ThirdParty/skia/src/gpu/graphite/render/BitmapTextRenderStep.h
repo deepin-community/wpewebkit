@@ -8,7 +8,11 @@
 #ifndef skgpu_graphite_render_BitmapTextRenderStep_DEFINED
 #define skgpu_graphite_render_BitmapTextRenderStep_DEFINED
 
+#include "include/private/SkEnumBitMask.h"
+#include "src/core/SkVx.h"
 #include "src/gpu/graphite/Renderer.h"
+
+#include <string>
 
 namespace skgpu {
 enum class MaskFormat : int;
@@ -16,22 +20,31 @@ enum class MaskFormat : int;
 
 namespace skgpu::graphite {
 
+class DrawParams;
+class DrawWriter;
+class PipelineDataGatherer;
+struct ResourceBindingRequirements;
+
 class BitmapTextRenderStep final : public RenderStep {
 public:
-    BitmapTextRenderStep(skgpu::MaskFormat variant);
+    BitmapTextRenderStep(Layout, skgpu::MaskFormat variant);
 
     ~BitmapTextRenderStep() override;
 
-    std::string vertexSkSL() const override;
+    std::string vertexSkSL(const RootNodesInfo&) const override;
     std::string texturesAndSamplersSkSL(const ResourceBindingRequirements&,
                                         int* nextBindingIndex) const override;
     // For a given BitmapTextRenderStep instance,
     // we will only use either fragmentColorSkSL() (for color text)
     // or fragmentCoverageSKSL() (for grayscale and LCD masks), never both.
-    const char* fragmentColorSkSL() const override;
+    std::string fragmentColorSkSL(const RootNodesInfo&) const override;
     const char* fragmentCoverageSkSL() const override;
+    bool usesUniformsInFragmentSkSL() const override;
 
-    void writeVertices(DrawWriter*, const DrawParams&, skvx::ushort2 ssboIndices) const override;
+    void writeVertices(DrawWriter*,
+                       StorageContext*,
+                       const DrawParams&,
+                       uint32_t ssboIndex) const override;
     void writeUniformsAndTextures(const DrawParams&, PipelineDataGatherer*) const override;
 
 private:

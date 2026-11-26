@@ -29,20 +29,17 @@
 
 #if ENABLE(WEBXR)
 #include "EventNames.h"
+#include "ScriptWrappableInlines.h"
 #include "WebXRInputSource.h"
 #include "WebXRSession.h"
 #include "XRInputSourceEvent.h"
 #include "XRInputSourcesChangeEvent.h"
+#include <algorithm>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebXRInputSourceArray);
-
-UniqueRef<WebXRInputSourceArray> WebXRInputSourceArray::create(WebXRSession& session)
-{
-    return makeUniqueRef<WebXRInputSourceArray>(session);
-}
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRInputSourceArray);
 
 WebXRInputSourceArray::WebXRInputSourceArray(WebXRSession& session)
     : m_session(session)
@@ -71,6 +68,15 @@ WebXRInputSource* WebXRInputSourceArray::item(unsigned index) const
     return index >= m_inputSources.size() ? nullptr: m_inputSources[index].ptr();
 }
 
+RefPtr<WebXRInputSource> WebXRInputSourceArray::itemByHandle(PlatformXR::InputSourceHandle handle) const
+{
+    for (Ref item : m_inputSources) {
+        if (item->handle() == handle)
+            return item.ptr();
+    }
+    return nullptr;
+}
+
 void WebXRInputSourceArray::clear()
 {
     m_inputSources.clear();
@@ -89,13 +95,14 @@ void WebXRInputSourceArray::update(double timestamp, const InputSourceList& inpu
 
     if (!added.isEmpty() || !removed.isEmpty()) {
         // A user agent MUST dispatch an inputsourceschange event on an XRSession when the session’s list of active XR input sources has changed.
-        XRInputSourcesChangeEvent::Init init;
-        init.session = &m_session;
-        init.added = WTFMove(added);
-        init.removed = WTFMove(removed);
-        
-        auto event = XRInputSourcesChangeEvent::create(eventNames().inputsourceschangeEvent, init);
-        ActiveDOMObject::queueTaskToDispatchEvent(m_session, TaskSource::WebXR, WTFMove(event));
+        auto init = XRInputSourcesChangeEvent::Init {
+            { false, false, false },
+            m_session,
+            WTF::move(added),
+            WTF::move(removed),
+        };
+        Ref event = XRInputSourcesChangeEvent::create(eventNames().inputsourceschangeEvent, WTF::move(init));
+        ActiveDOMObject::queueTaskToDispatchEvent(m_session, TaskSource::WebXR, WTF::move(event));
     }
 
     if (!inputEvents.isEmpty()) {
@@ -106,8 +113,8 @@ void WebXRInputSourceArray::update(double timestamp, const InputSourceList& inpu
         // 4. Dispatch event on frame’s session
         // 5. Set frame’s active boolean to false.
 
-        for (auto& event : inputEvents) {
-            ActiveDOMObject::queueTaskKeepingObjectAlive(m_session, TaskSource::WebXR, [session = Ref { m_session }, event = WTFMove(event)]() {
+        for (Ref event : inputEvents) {
+            ActiveDOMObject::queueTaskKeepingObjectAlive(m_session, TaskSource::WebXR, [session = protect(m_session), event = WTF::move(event)](auto&) {
                 event->setFrameActive(true);
                 session->dispatchEvent(event.copyRef());
                 event->setFrameActive(false);
@@ -119,12 +126,14 @@ void WebXRInputSourceArray::update(double timestamp, const InputSourceList& inpu
     // make sure the inputsourceschange event for the removal happen after the input source events.
     if (!removedWithInputEvents.isEmpty()) {
         // A user agent MUST dispatch an inputsourceschange event on an XRSession when the session’s list of active XR input sources has changed.
-        XRInputSourcesChangeEvent::Init init;
-        init.session = &m_session;
-        init.removed = WTFMove(removedWithInputEvents);
-
-        auto event = XRInputSourcesChangeEvent::create(eventNames().inputsourceschangeEvent, init);
-        ActiveDOMObject::queueTaskToDispatchEvent(m_session, TaskSource::WebXR, WTFMove(event));
+        auto init = XRInputSourcesChangeEvent::Init {
+            { false, false, false },
+            m_session,
+            { },
+            WTF::move(removedWithInputEvents),
+        };
+        Ref event = XRInputSourcesChangeEvent::create(eventNames().inputsourceschangeEvent, WTF::move(init));
+        ActiveDOMObject::queueTaskToDispatchEvent(m_session, TaskSource::WebXR, WTF::move(event));
     }
 }
 
@@ -138,7 +147,7 @@ void WebXRInputSourceArray::handleRemovedInputSources(const InputSourceList& inp
     //  3.1 Let inputSource be the XRInputSource in session's list of active XR input sources associated with the XR input source.
     //  3.2 Add inputSource to removed.
     m_inputSources.removeAllMatching([&inputSources, &removed, &removedWithInputEvents, &inputEvents](auto& source) {
-        if (!WTF::anyOf(inputSources, [&source](auto& item) { return item.handle == source->handle(); })) {
+        if (std::ranges::none_of(inputSources, [&source](auto& item) { return item.handle == source->handle(); })) {
             Vector<Ref<XRInputSourceEvent>> sourceInputEvents;
             source->disconnect();
             source->pollEvents(sourceInputEvents);
@@ -170,10 +179,10 @@ void WebXRInputSourceArray::handleAddedOrUpdatedInputSources(double timestamp, c
             //   3.1 Let inputSource be a new XRInputSource in the relevant realm of this XRSession.
             //   3.2 Add inputSource to added.
 
-            auto input = WebXRInputSource::create(*document, m_session, timestamp, inputSource);
+            Ref input = WebXRInputSource::create(*document, m_session, timestamp, inputSource);
             added.append(input);
             input->pollEvents(inputEvents);
-            m_inputSources.append(WTFMove(input));
+            m_inputSources.append(WTF::move(input));
             continue;
         }
 
@@ -197,12 +206,12 @@ void WebXRInputSourceArray::handleAddedOrUpdatedInputSources(double timestamp, c
             else
                 removedWithInputEvents.append(input);
             inputEvents.appendVector(sourceInputEvents);
-            m_inputSources.remove(index);
+            m_inputSources.removeAt(index);
 
-            auto newInputSource = WebXRInputSource::create(*document, m_session, timestamp, inputSource);
+            Ref newInputSource = WebXRInputSource::create(*document, m_session, timestamp, inputSource);
             added.append(newInputSource);
             newInputSource->pollEvents(inputEvents);
-            m_inputSources.append(WTFMove(newInputSource));
+            m_inputSources.append(WTF::move(newInputSource));
         } else {
             input->update(timestamp, inputSource);
             input->pollEvents(inputEvents);
@@ -213,4 +222,3 @@ void WebXRInputSourceArray::handleAddedOrUpdatedInputSources(double timestamp, c
 } // namespace WebCore
 
 #endif // ENABLE(WEBXR)
-

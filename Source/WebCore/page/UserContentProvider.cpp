@@ -43,9 +43,7 @@
 
 namespace WebCore {
 
-UserContentProvider::UserContentProvider()
-{
-}
+UserContentProvider::UserContentProvider() = default;
 
 UserContentProvider::~UserContentProvider()
 {
@@ -82,18 +80,19 @@ void UserContentProvider::unregisterForUserMessageHandlerInvalidation(UserConten
 
 void UserContentProvider::invalidateAllRegisteredUserMessageHandlerInvalidationClients()
 {
-    for (auto& client : m_userMessageHandlerInvalidationClients)
+    m_userMessageHandlerInvalidationClients.forEach([&](auto& client) {
         client.didInvalidate(*this);
+    });
 }
 
 void UserContentProvider::invalidateInjectedStyleSheetCacheInAllFramesInAllPages()
 {
-    for (auto& page : m_pages)
-        page.invalidateInjectedStyleSheetCacheInAllFrames();
+    for (Ref page : m_pages)
+        page->invalidateInjectedStyleSheetCacheInAllFrames();
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static DocumentLoader* mainDocumentLoader(DocumentLoader& loader)
+static DocumentLoader* NODELETE mainDocumentLoader(DocumentLoader& loader)
 {
     if (auto frame = loader.frame()) {
         if (frame->isMainFrame())
@@ -115,9 +114,9 @@ static ContentExtensions::ContentExtensionsBackend::RuleListFilter ruleListFilte
         };
     }
 
-    auto policySourceLoader = mainLoader;
+    RefPtr policySourceLoader = mainLoader;
     if (!mainLoader->request().url().hasSpecialScheme() && documentLoader.request().url().protocolIsInHTTPFamily())
-        policySourceLoader = &documentLoader;
+        policySourceLoader = documentLoader;
 
     auto& exceptions = policySourceLoader->contentExtensionEnablement().second;
     switch (policySourceLoader->contentExtensionEnablement().first) {
@@ -140,18 +139,18 @@ static ContentExtensions::ContentExtensionsBackend::RuleListFilter ruleListFilte
 
 static void applyLinkDecorationFilteringIfNeeded(ContentRuleListResults& results, Page& page, const URL& url, const DocumentLoader& initiatingDocumentLoader)
 {
-    if (RefPtr frame = initiatingDocumentLoader.frame(); !frame || !frame->isMainFrame())
+    if (auto* frame = initiatingDocumentLoader.frame(); !frame || !frame->isMainFrame())
         return;
 
     if (auto adjustedURL = page.chrome().client().applyLinkDecorationFiltering(url, LinkDecorationFilteringTrigger::Navigation); adjustedURL != url)
         results.summary.redirectActions.append({ { ContentExtensions::RedirectAction::URLAction { adjustedURL.string() } }, adjustedURL });
 }
 
-ContentRuleListResults UserContentProvider::processContentRuleListsForLoad(Page& page, const URL& url, OptionSet<ContentExtensions::ResourceType> resourceType, DocumentLoader& initiatingDocumentLoader, const URL& redirectFrom)
+ContentRuleListResults UserContentProvider::processContentRuleListsForLoad(Page& page, const URL& url, OptionSet<ContentExtensions::ResourceType> resourceType, DocumentLoader& initiatingDocumentLoader, const URL& redirectFrom) const
 {
     auto results = userContentExtensionBackend().processContentRuleListsForLoad(page, url, resourceType, initiatingDocumentLoader, redirectFrom, ruleListFilter(initiatingDocumentLoader));
 
-    if (resourceType.contains(ContentExtensions::ResourceType::Document))
+    if (resourceType.containsAny({ ContentExtensions::ResourceType::TopDocument, ContentExtensions::ResourceType::ChildDocument }))
         applyLinkDecorationFilteringIfNeeded(results, page, url, initiatingDocumentLoader);
 
     return results;

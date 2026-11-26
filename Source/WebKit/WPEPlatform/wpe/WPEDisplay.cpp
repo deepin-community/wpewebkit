@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WPEDisplay.h"
 
+#include "WPEDRMDevicePrivate.h"
 #include "WPEDisplayPrivate.h"
 #include "WPEEGLError.h"
 #include "WPEExtensions.h"
@@ -40,6 +41,7 @@
 #include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/CStringView.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -48,29 +50,66 @@
 #include <xf86drm.h>
 #endif
 
+#if USE(MANETTE)
+#include "WPEGamepadManagerManette.h"
+#endif
+
 /**
  * WPEDisplay:
  *
+ * A connection to a native display.
+ *
+ * [class@Display] is an abstract class that platform implementations derive to
+ * represent a connection to a native display, such as a Wayland or DRM
+ * display. It is the root of the WPE platform API: a [class@Display] creates the
+ * [class@View] and [class@Toplevel] instances used to show web content, and gives
+ * access to the platform's keymap, clipboard, screens and preferred buffer
+ * formats.
+ *
+ * Use [func@Display.get_default] to get the default display, which is
+ * obtained by loading the available platform implementations and connecting
+ * to the first one that succeeds. A platform implementation may also be
+ * instantiated directly, in which case [method@Display.connect] must be
+ * called before the display is used.
+ *
+ * When a connected [class@Display] is passed to a WebKitWebView on construction,
+ * the web view is rendered using the WPE platform API.
  */
 struct _WPEDisplayPrivate {
     bool eglInitialized;
     EGLDisplay eglDisplay;
     GUniqueOutPtr<GError> eglDisplayError;
     HashMap<String, bool> extensionsMap;
-    GRefPtr<WPEBufferDMABufFormats> preferredDMABufFormats;
+    GRefPtr<WPEBufferFormats> preferredBufferFormats;
     GRefPtr<WPEKeymap> keymap;
+    GRefPtr<WPEClipboard> clipboard;
+    GRefPtr<WPESettings> settings;
+    WPEAvailableInputDevices availableInputDevices;
+    GRefPtr<WPEDRMDevice> overridenDRMDevice;
 };
 
 WEBKIT_DEFINE_ABSTRACT_TYPE(WPEDisplay, wpe_display, G_TYPE_OBJECT)
 
 enum {
+    PROP_0,
+
+    PROP_AVAILABLE_INPUT_DEVICES,
+
+    N_PROPERTIES
+};
+
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
+
+enum {
     SCREEN_ADDED,
     SCREEN_REMOVED,
+
+    DISCONNECTED,
 
     LAST_SIGNAL
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 /**
  * wpe_display_error_quark:
@@ -93,11 +132,35 @@ static void wpeDisplayConstructed(GObject* object)
 
 static void wpeDisplayDispose(GObject* object)
 {
-    auto* priv = WPE_DISPLAY(object)->priv;
-
-    g_clear_pointer(&priv->eglDisplay, eglTerminate);
+    wpeDisplayTerminateEGL(WPE_DISPLAY(object));
 
     G_OBJECT_CLASS(wpe_display_parent_class)->dispose(object);
+}
+
+static void wpeDisplaySetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
+{
+    auto* display = WPE_DISPLAY(object);
+
+    switch (propId) {
+    case PROP_AVAILABLE_INPUT_DEVICES:
+        wpe_display_set_available_input_devices(display, static_cast<WPEAvailableInputDevices>(g_value_get_flags(value)));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
+    }
+}
+
+static void wpeDisplayGetProperty(GObject* object, guint propId, GValue* value, GParamSpec* paramSpec)
+{
+    auto* display = WPE_DISPLAY(object);
+
+    switch (propId) {
+    case PROP_AVAILABLE_INPUT_DEVICES:
+        g_value_set_flags(value, wpe_display_get_available_input_devices(display));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
+    }
 }
 
 static void wpe_display_class_init(WPEDisplayClass* displayClass)
@@ -105,6 +168,25 @@ static void wpe_display_class_init(WPEDisplayClass* displayClass)
     GObjectClass* objectClass = G_OBJECT_CLASS(displayClass);
     objectClass->constructed = wpeDisplayConstructed;
     objectClass->dispose = wpeDisplayDispose;
+    objectClass->set_property = wpeDisplaySetProperty;
+    objectClass->get_property = wpeDisplayGetProperty;
+
+    /**
+     * WPEDisplay:available-input-devices:
+     *
+     * The input devices (e.g. mouse, keyboard or touchscreen) available to use for this display.
+     *
+     * This property can be used by creators to adjust their UI based on the available interactions.
+     */
+    sObjProperties[PROP_AVAILABLE_INPUT_DEVICES] =
+        g_param_spec_flags(
+            "available-input-devices",
+            nullptr, nullptr,
+            WPE_TYPE_AVAILABLE_INPUT_DEVICES,
+            WPE_AVAILABLE_INPUT_DEVICE_NONE,
+            static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY));
+
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WPEDisplay::screen-added:
@@ -138,27 +220,58 @@ static void wpe_display_class_init(WPEDisplayClass* displayClass)
         g_cclosure_marshal_generic,
         G_TYPE_NONE, 1,
         WPE_TYPE_SCREEN);
+
+    /**
+     * WPEDisplay::disconnected:
+     * @display: a #WPEDisplay
+     * @error: (nullable): a #GError or %NULL
+     *
+     * Emitted when the @display is disconnected from the platform display.
+     */
+    signals[DISCONNECTED] = g_signal_new(
+        "disconnected",
+        G_TYPE_FROM_CLASS(displayClass),
+        G_SIGNAL_RUN_LAST,
+        0, nullptr, nullptr,
+        g_cclosure_marshal_generic,
+        G_TYPE_NONE, 1,
+        G_TYPE_ERROR);
 }
 
 WPEView* wpeDisplayCreateView(WPEDisplay* display)
 {
     auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
-    return wpeDisplayClass->create_view(display);
+    auto* view = wpeDisplayClass->create_view(display);
+    if (view && wpeDisplayClass->create_toplevel && wpe_settings_get_boolean(wpe_display_get_settings(display), WPE_SETTING_CREATE_VIEWS_WITH_A_TOPLEVEL, nullptr)) {
+        if (GRefPtr<WPEToplevel> toplevel = adoptGRef(wpeDisplayClass->create_toplevel(display, 1)))
+            wpe_view_set_toplevel(view, toplevel.get());
+    }
+    return view;
+}
+
+void wpeDisplayTerminateEGL(WPEDisplay* display)
+{
+    if (auto* eglDisplay = std::exchange(display->priv->eglDisplay, nullptr))
+        eglTerminate(eglDisplay);
 }
 
 bool wpeDisplayCheckEGLExtension(WPEDisplay* display, const char* extensionName)
 {
     auto addResult = display->priv->extensionsMap.ensure(ASCIILiteral::fromLiteralUnsafe(extensionName), [&] {
         auto* eglDisplay = wpe_display_get_egl_display(display, nullptr);
-        return eglDisplay ? epoxy_has_egl_extension(eglDisplay, extensionName) : false;
+        return eglDisplay && epoxy_has_egl_extension(eglDisplay, extensionName);
     });
     return addResult.iterator->value;
 }
 
-WPEInputMethodContext* wpeDisplayCreateInputMethodContext(WPEDisplay* display)
+WPEInputMethodContext* wpeDisplayCreateInputMethodContext(WPEDisplay* display, WPEView* view)
 {
     auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
-    return wpeDisplayClass->create_input_method_context ? wpeDisplayClass->create_input_method_context(display) : wpeInputMethodContextNoneNew();
+
+    auto* inputMethodContext = wpeDisplayClass->create_input_method_context ? wpeDisplayClass->create_input_method_context(display, view) : nullptr;
+    if (!inputMethodContext)
+        inputMethodContext = wpeInputMethodContextNoneNew(view);
+    return inputMethodContext;
 }
 
 /**
@@ -176,18 +289,27 @@ WPEDisplay* wpe_display_get_default(void)
         wpeEnsureExtensionPointsLoaded();
         auto* extensionPoint = g_io_extension_point_lookup(WPE_DISPLAY_EXTENSION_POINT_NAME);
 
-        const char* extensionName = g_getenv("WPE_DISPLAY");
-        if (extensionName && *extensionName) {
-            if (auto* extension = g_io_extension_point_get_extension_by_name(extensionPoint, extensionName)) {
+        CStringView extensionName = CStringView::unsafeFromUTF8(g_getenv("WPE_PLATFORM"));
+        if (!extensionName) {
+            static constexpr auto displayNamePrefix = "wpe-display-"_s;
+            extensionName = CStringView::unsafeFromUTF8(g_getenv("WPE_DISPLAY"));
+            if (extensionName.lengthInBytes() > displayNamePrefix.length() && equalSpans(extensionName.span().first(displayNamePrefix.length()), displayNamePrefix.span())) {
+                auto nullTerminatedSpan = extensionName.spanIncludingNullTerminator();
+                extensionName = CStringView::fromUTF8(nullTerminatedSpan.last(nullTerminatedSpan.size() - displayNamePrefix.length()));
+            }
+        }
+
+        if (extensionName) {
+            if (auto* extension = g_io_extension_point_get_extension_by_name(extensionPoint, extensionName.utf8())) {
                 GUniqueOutPtr<GError> error;
                 GRefPtr<WPEDisplay> display = adoptGRef(WPE_DISPLAY(g_object_new(g_io_extension_get_type(extension), nullptr)));
                 if (wpe_display_connect(display.get(), &error.outPtr())) {
-                    s_defaultDisplay = WTFMove(display);
+                    s_defaultDisplay = WTF::move(display);
                     return;
                 }
-                g_error("Failed to connect to display of type %s: %s", extensionName, error->message);
+                g_error("Failed to connect to display of type %s: %s", extensionName.utf8(), error->message);
             } else
-                g_error("Display of type %s was not found", extensionName);
+                g_error("Display of type %s was not found", extensionName.utf8());
             return;
         }
 
@@ -196,7 +318,7 @@ WPEDisplay* wpe_display_get_default(void)
             auto* extension = static_cast<GIOExtension*>(i->data);
             GRefPtr<WPEDisplay> display = adoptGRef(WPE_DISPLAY(g_object_new(g_io_extension_get_type(extension), nullptr)));
             if (wpe_display_connect(display.get(), nullptr)) {
-                s_defaultDisplay = WTFMove(display);
+                s_defaultDisplay = WTF::move(display);
                 return;
             }
         }
@@ -235,7 +357,7 @@ void wpe_display_set_primary(WPEDisplay* display)
 }
 
 /**
- * wpe_display_connect
+ * wpe_display_connect:
  * @display: a #WPEDisplay
  * @error: return location for error or %NULL to ignore
  *
@@ -252,13 +374,30 @@ gboolean wpe_display_connect(WPEDisplay* display, GError** error)
 }
 
 /**
+ * wpe_display_disconnected:
+ * @display: a #WPEDisplay
+ * @error: (nullable): a #GError or %NULL
+ *
+ * Emit the signal #WPEDisplay::disconnected with the given @error
+ *
+ * This function should only be called by platform implementations.
+ */
+void wpe_display_disconnected(WPEDisplay* display, GError* error)
+{
+    g_return_if_fail(WPE_IS_DISPLAY(display));
+    g_return_if_fail(!error || g_error_matches(error, WPE_DISPLAY_ERROR, WPE_DISPLAY_ERROR_CONNECTION_LOST));
+
+    g_signal_emit(display, signals[DISCONNECTED], 0, error);
+}
+
+/**
  * wpe_display_get_egl_display: (skip)
  * @display: a #WPEDisplay
  * @error: return location for error or %NULL to ignore
  *
  * Get the `EGLDisplay` of @display
  *
- * Retrurns: (transfer none) (nullable): a `EGLDisplay` or %NULL
+ * Returns: (transfer none) (nullable): an `EGLDisplay` or %NULL
  */
 gpointer wpe_display_get_egl_display(WPEDisplay* display, GError** error)
 {
@@ -300,32 +439,76 @@ gpointer wpe_display_get_egl_display(WPEDisplay* display, GError** error)
 /**
  * wpe_display_get_keymap:
  * @display: a #WPEDisplay
- * @error: return location for error or %NULL to ignore
  *
  * Get the #WPEKeymap of @display
  *
  * As a fallback, a #WPEKeymapXKB for the pc105 "US" layout is returned if the actual display
  * implementation does not provide a keymap itself.
  *
- * Returns: (transfer none): a #WPEKeymap or %NULL in case of error
+ * Returns: (transfer none): a #WPEKeymap
  */
-WPEKeymap* wpe_display_get_keymap(WPEDisplay* display, GError** error)
+WPEKeymap* wpe_display_get_keymap(WPEDisplay* display)
 {
     g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
 
-    auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
-    if (!wpeDisplayClass->get_keymap) {
-        auto* priv = display->priv;
+    auto* priv = display->priv;
+    if (!priv->keymap) {
+        auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
+        if (wpeDisplayClass->get_keymap)
+            priv->keymap = wpeDisplayClass->get_keymap(display);
+
         if (!priv->keymap)
             priv->keymap = adoptGRef(wpe_keymap_xkb_new());
-        return priv->keymap.get();
     }
+    return priv->keymap.get();
+}
 
-    return wpeDisplayClass->get_keymap(display, error);
+/**
+ * wpe_display_get_clipboard:
+ * @display: a #WPEDisplay
+ *
+ * Get the #WPEClipboard of @display. If the platform doesn't
+ * support clipboard, a local #WPEClipboard is created.
+ *
+ * Returns: (transfer none): a #WPEClipboard
+ */
+WPEClipboard* wpe_display_get_clipboard(WPEDisplay* display)
+{
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
+
+    auto* priv = display->priv;
+    if (!priv->clipboard) {
+        auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
+        if (wpeDisplayClass->get_clipboard)
+            priv->clipboard = wpeDisplayClass->get_clipboard(display);
+
+        if (!priv->clipboard)
+            priv->clipboard = adoptGRef(wpe_clipboard_new(display));
+    }
+    return priv->clipboard.get();
+}
+
+/**
+ * wpe_display_get_settings:
+ * @display: a #WPEDisplay
+ *
+ * Get the #WPESettings of @display
+ *
+ * Returns: (transfer none): a #WPESettings
+ */
+WPESettings* wpe_display_get_settings(WPEDisplay* display)
+{
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
+
+    auto* priv = display->priv;
+    if (!priv->settings)
+        priv->settings = adoptGRef(WPE_SETTINGS(g_object_new(WPE_TYPE_SETTINGS, nullptr)));
+
+    return priv->settings.get();
 }
 
 #if USE(LIBDRM)
-static GRefPtr<WPEBufferDMABufFormats> wpeDisplayPreferredDMABufFormats(WPEDisplay* display)
+static GRefPtr<WPEBufferFormats> wpeDisplayPreferredBufferFormats(WPEDisplay* display)
 {
     auto eglDisplay = static_cast<EGLDisplay>(wpe_display_get_egl_display(display, nullptr));
     if (!eglDisplay)
@@ -344,7 +527,7 @@ static GRefPtr<WPEBufferDMABufFormats> wpeDisplayPreferredDMABufFormats(WPEDispl
         return nullptr;
 
     Vector<EGLint> formats(formatsCount);
-    if (!s_eglQueryDmaBufFormatsEXT(eglDisplay, formatsCount, reinterpret_cast<EGLint*>(formats.data()), &formatsCount))
+    if (!s_eglQueryDmaBufFormatsEXT(eglDisplay, formatsCount, reinterpret_cast<EGLint*>(formats.mutableSpan().data()), &formatsCount))
         return nullptr;
 
     static PFNEGLQUERYDMABUFMODIFIERSEXTPROC s_eglQueryDmaBufModifiersEXT = wpeDisplayCheckEGLExtension(display, "EXT_image_dma_buf_import_modifiers") ?
@@ -359,48 +542,48 @@ static GRefPtr<WPEBufferDMABufFormats> wpeDisplayPreferredDMABufFormats(WPEDispl
             return { DRM_FORMAT_MOD_INVALID };
 
         Vector<EGLuint64KHR> modifiers(modifiersCount);
-        if (!s_eglQueryDmaBufModifiersEXT(eglDisplay, format, modifiersCount, reinterpret_cast<EGLuint64KHR*>(modifiers.data()), nullptr, &modifiersCount))
+        if (!s_eglQueryDmaBufModifiersEXT(eglDisplay, format, modifiersCount, reinterpret_cast<EGLuint64KHR*>(modifiers.mutableSpan().data()), nullptr, &modifiersCount))
             return { DRM_FORMAT_MOD_INVALID };
 
         return modifiers;
     };
 
-    auto* builder = wpe_buffer_dma_buf_formats_builder_new(wpe_display_get_drm_render_node(display));
-    wpe_buffer_dma_buf_formats_builder_append_group(builder, nullptr, WPE_BUFFER_DMA_BUF_FORMAT_USAGE_RENDERING);
+    auto* builder = wpe_buffer_formats_builder_new(wpe_display_get_drm_device(display));
+    wpe_buffer_formats_builder_append_group(builder, nullptr, WPE_BUFFER_FORMAT_USAGE_RENDERING);
     for (auto format : formats) {
         auto modifiers = modifiersForFormat(format);
         for (auto modifier : modifiers)
-            wpe_buffer_dma_buf_formats_builder_append_format(builder, format, modifier);
+            wpe_buffer_formats_builder_append_format(builder, format, modifier);
     }
-    return adoptGRef(wpe_buffer_dma_buf_formats_builder_end(builder));
+    return adoptGRef(wpe_buffer_formats_builder_end(builder));
 }
 #endif
 
 /**
- * wpe_display_get_preferred_dma_buf_formats:
+ * wpe_display_get_preferred_buffer_formats:
  * @display: a #WPEDisplay
  *
- * Get the list of preferred DMA-BUF buffer formats for @display.
+ * Get the list of preferred buffer formats for @display.
  *
- * Returns: (transfer none) (nullable): a #WPEBufferDMABufFormats
+ * Returns: (transfer none) (nullable): a #WPEBufferFormats
  */
-WPEBufferDMABufFormats* wpe_display_get_preferred_dma_buf_formats(WPEDisplay* display)
+WPEBufferFormats* wpe_display_get_preferred_buffer_formats(WPEDisplay* display)
 {
     g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
 
     auto* priv = display->priv;
-    if (!priv->preferredDMABufFormats) {
+    if (!priv->preferredBufferFormats) {
         auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
-        if (wpeDisplayClass->get_preferred_dma_buf_formats)
-            priv->preferredDMABufFormats = adoptGRef(wpeDisplayClass->get_preferred_dma_buf_formats(display));
+        if (wpeDisplayClass->get_preferred_buffer_formats)
+            priv->preferredBufferFormats = adoptGRef(wpeDisplayClass->get_preferred_buffer_formats(display));
 
 #if USE(LIBDRM)
-        if (!priv->preferredDMABufFormats)
-            priv->preferredDMABufFormats = wpeDisplayPreferredDMABufFormats(display);
+        if (!priv->preferredBufferFormats)
+            priv->preferredBufferFormats = wpeDisplayPreferredBufferFormats(display);
 #endif
     }
 
-    return display->priv->preferredDMABufFormats.get();
+    return display->priv->preferredBufferFormats.get();
 }
 
 /**
@@ -496,46 +679,35 @@ static bool isSotfwareRast()
  * wpe_display_get_drm_device:
  * @display: a #WPEDisplay
  *
- * Get the DRM device of @display.
+ * Get the DRM device of @display. This is the main device that
+ * will be used to initialize the EGL display and allocate GBM
+ * buffers by default. The DRM device required to allocate GBM
+ * buffers for direct scanout will be set as main or group device
+ * in #WPEBufferFormats.
  *
- * Returns: (transfer none) (nullable): the filename of the DRM device node, or %NULL
+ * Returns: (transfer none) (nullable): a #WPEDRMDevice or %NULL
  */
-const char* wpe_display_get_drm_device(WPEDisplay* display)
+WPEDRMDevice* wpe_display_get_drm_device(WPEDisplay* display)
 {
     g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
 
     if (isSotfwareRast())
         return nullptr;
 
+    if (display->priv->overridenDRMDevice)
+        return display->priv->overridenDRMDevice.get();
+
     static const char* envDeviceFile = getenv("WPE_DRM_DEVICE");
-    if (envDeviceFile && *envDeviceFile)
-        return envDeviceFile;
+    if (envDeviceFile && *envDeviceFile) {
+        display->priv->overridenDRMDevice = wpeDRMDeviceCreateForDevice(envDeviceFile);
+        if (display->priv->overridenDRMDevice)
+            return display->priv->overridenDRMDevice.get();
+
+        g_warning("Invalid device %s set in WPE_DRM_DEVICE, ignoring...", envDeviceFile);
+    }
 
     auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
     return wpeDisplayClass->get_drm_device ? wpeDisplayClass->get_drm_device(display) : nullptr;
-}
-
-/**
- * wpe_display_get_drm_render_node:
- * @display: a #WPEDisplay
- *
- * Get the DRM render node of @display.
- *
- * Returns: (transfer none) (nullable): the filename of the DRM render node, or %NULL
- */
-const char* wpe_display_get_drm_render_node(WPEDisplay* display)
-{
-    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
-
-    if (isSotfwareRast())
-        return nullptr;
-
-    static const char* envDeviceFile = getenv("WPE_DRM_RENDER_NODE");
-    if (envDeviceFile && *envDeviceFile)
-        return envDeviceFile;
-
-    auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
-    return wpeDisplayClass->get_drm_render_node ? wpeDisplayClass->get_drm_render_node(display) : nullptr;
 }
 
 /**
@@ -557,4 +729,81 @@ gboolean wpe_display_use_explicit_sync(WPEDisplay* display)
 
     auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
     return wpeDisplayClass->use_explicit_sync ? wpeDisplayClass->use_explicit_sync(display) : FALSE;
+}
+
+/**
+ * wpe_display_get_available_input_devices:
+ * @display: a #WPEDisplay
+ *
+ * Get the available input devices of @display that can be used by creators to adjust their UI based on the available interactions.
+ *
+ * Returns: a #WPEAvailableInputDevices
+ */
+WPEAvailableInputDevices wpe_display_get_available_input_devices(WPEDisplay* display)
+{
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), WPE_AVAILABLE_INPUT_DEVICE_NONE);
+
+    return display->priv->availableInputDevices;
+}
+
+/**
+ * wpe_display_set_available_input_devices:
+ * @display: a #WPEDisplay
+ * @devices: a #WPEAvailableInputDevices
+ *
+ * Sets the available input devices for a @display.
+ *
+ * This function should only be called by platform implementations.
+ */
+void wpe_display_set_available_input_devices(WPEDisplay* display, WPEAvailableInputDevices devices)
+{
+    g_return_if_fail(WPE_IS_DISPLAY(display));
+
+    if (display->priv->availableInputDevices == devices)
+        return;
+
+    display->priv->availableInputDevices = devices;
+    g_object_notify_by_pspec(G_OBJECT(display), sObjProperties[PROP_AVAILABLE_INPUT_DEVICES]);
+}
+
+/**
+ * wpe_display_create_gamepad_manager:
+ * @display: a #WPEDisplay
+ *
+ * Create a #WPEGamepadManager to handle gamepads
+ *
+ * Returns: (transfer full) (nullable): a new #WPEGamepadManager or %NULL if not supported
+ */
+WPEGamepadManager* wpe_display_create_gamepad_manager(WPEDisplay* display)
+{
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
+
+    auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
+    auto* manager = wpeDisplayClass->create_gamepad_manager ? wpeDisplayClass->create_gamepad_manager(display) : nullptr;
+#if USE(MANETTE)
+    if (!manager)
+        manager = wpeGamepadManagerManetteCreate();
+#endif
+    return manager;
+}
+
+/**
+ * wpe_display_create_toplevel:
+ * @display: a #WPEDisplay
+ * @max_views: the maximum number of views allowed, or 0 for no limit
+ *
+ * Create a new #WPEToplevel on @display with @max_views allowed.
+ * The parameter @max_views will be ignored if @display doesn't support
+ * multiple views per toplevel.
+ * This function returns %NULL if the platform implementation doesn't
+ * support explicit creation of #WPEToplevel.
+ *
+ * Returns: (transfer full) (nullable): a new #WPEToplevel or %NULL if not supported
+ */
+WPEToplevel* wpe_display_create_toplevel(WPEDisplay* display, guint maxViews)
+{
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
+
+    auto* wpeDisplayClass = WPE_DISPLAY_GET_CLASS(display);
+    return wpeDisplayClass->create_toplevel ? wpeDisplayClass->create_toplevel(display, maxViews) : nullptr;
 }

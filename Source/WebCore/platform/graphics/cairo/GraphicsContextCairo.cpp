@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Alp Toker <alp@atoker.com>
  * Copyright (C) 2008, 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) 2008 Nuanti Ltd.
@@ -37,12 +37,12 @@
 
 #include "AffineTransform.h"
 #include "CairoOperations.h"
-#include "DecomposedGlyphs.h"
 #include "FloatRect.h"
 #include "FloatRoundedRect.h"
 #include "Gradient.h"
 #include "ImageBuffer.h"
 #include "IntRect.h"
+#include "NativeImage.h"
 #include "NotImplemented.h"
 #include "RefPtrCairo.h"
 
@@ -51,7 +51,7 @@
 #endif
 
 #if USE(THEME_ADWAITA)
-#include "ThemeAdwaita.h"
+#include "Adwaita.h"
 #endif
 
 namespace WebCore {
@@ -69,7 +69,7 @@ public:
 };
 
 GraphicsContextCairo::GraphicsContextCairo(RefPtr<cairo_t>&& context)
-    : m_cr(WTFMove(context))
+    : m_cr(WTF::move(context))
 {
     m_cairoStateStack.append(CairoState());
     m_cairoState = &m_cairoStateStack.last();
@@ -142,7 +142,7 @@ void GraphicsContextCairo::drawRect(const FloatRect& rect, float borderThickness
     Cairo::drawRect(*this, rect, borderThickness, fillColor(), strokeStyle(), strokeColor());
 }
 
-void GraphicsContextCairo::drawNativeImageInternal(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     auto& state = this->state();
     Cairo::drawPlatformImage(*this, nativeImage.platformImage().get(), destRect, srcRect, { options, state.imageInterpolationQuality() }, state.alpha(), Cairo::ShadowState(state));
@@ -224,10 +224,10 @@ void GraphicsContextCairo::clipToImageBuffer(ImageBuffer& buffer, const FloatRec
         Cairo::clipToImageBuffer(*this, nativeImage->platformImage().get(), destRect);
 }
 
-void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color)
+void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
-    ThemeAdwaita::paintFocus(*this, path, color);
+    Adwaita::paintFocus(*this, path, color);
     UNUSED_PARAM(outlineWidth);
     return;
 #else
@@ -235,24 +235,22 @@ void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, c
 #endif
 }
 
-void GraphicsContextCairo::drawFocusRing(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+void GraphicsContextCairo::drawFocusRing(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float)
 {
 #if USE(THEME_ADWAITA)
-    ThemeAdwaita::paintFocus(*this, rects, color);
-    UNUSED_PARAM(outlineOffset);
+    Adwaita::paintFocus(*this, rects, color);
     UNUSED_PARAM(outlineWidth);
     return;
 #else
-    UNUSED_PARAM(outlineOffset);
     Cairo::drawFocusRing(*this, rects, outlineWidth, color);
 #endif
 }
 
-void GraphicsContextCairo::drawLinesForText(const FloatPoint& point, float thickness, const DashArray& widths, bool printing, bool doubleUnderlines, StrokeStyle)
+void GraphicsContextCairo::drawLinesForText(const FloatPoint& point, float thickness, std::span<const FloatSegment> lineSegments, bool printing, bool doubleUnderlines, StrokeStyle)
 {
-    if (widths.isEmpty())
+    if (lineSegments.empty())
         return;
-    Cairo::drawLinesForText(*this, point, thickness, widths, printing, doubleUnderlines, strokeColor());
+    Cairo::drawLinesForText(*this, point, thickness, lineSegments, printing, doubleUnderlines, strokeColor());
 }
 
 void GraphicsContextCairo::drawDotsForDocumentMarker(const FloatRect& rect, DocumentMarkerLineStyle style)
@@ -369,7 +367,7 @@ void GraphicsContextCairo::fillRectWithRoundedHole(const FloatRect& rect, const 
     Cairo::fillRectWithRoundedHole(*this, rect, roundedHoleRect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::drawPattern(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;

@@ -34,6 +34,7 @@
 #include <WebCore/ThreadableWebSocketChannel.h>
 #include <WebCore/WebSocketChannelInspector.h>
 #include <WebCore/WebSocketFrame.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace IPC {
@@ -49,36 +50,33 @@ namespace WebKit {
 
 class WebSocketChannel : public IPC::MessageSender, public IPC::MessageReceiver, public WebCore::ThreadableWebSocketChannel, public RefCounted<WebSocketChannel> {
 public:
-    static Ref<WebSocketChannel> create(WebPageProxyIdentifier, WebCore::Document&, WebCore::WebSocketChannelClient&);
+    static Ref<WebSocketChannel> create(WebPageProxyIdentifier, WebCore::Document&, WebCore::WebSocketChannelClient&, WebCore::IsInitiatedByDedicatedWorker = WebCore::IsInitiatedByDedicatedWorker::No);
     ~WebSocketChannel();
 
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
+    // IPC::MessageReceiver, WebCore::ThreadableWebSocketChannel.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
     void networkProcessCrashed();
 
-    using RefCounted<WebSocketChannel>::ref;
-    using RefCounted<WebSocketChannel>::deref;
-
 private:
-    WebSocketChannel(WebPageProxyIdentifier, WebCore::Document&, WebCore::WebSocketChannelClient&);
+    WebSocketChannel(WebPageProxyIdentifier, WebCore::Document&, WebCore::WebSocketChannelClient&, WebCore::IsInitiatedByDedicatedWorker);
 
-    static WebCore::NetworkSendQueue createMessageQueue(WebCore::Document&, WebSocketChannel&);
+    static Ref<WebCore::NetworkSendQueue> createMessageQueue(WebCore::Document&, WebSocketChannel&);
 
     // ThreadableWebSocketChannel
     ConnectStatus connect(const URL&, const String& protocol) final;
     String subprotocol() final;
     String extensions() final;
-    SendResult send(CString&&) final;
-    SendResult send(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength) final;
-    SendResult send(WebCore::Blob&) final;
-    unsigned bufferedAmount() const final;
+    void send(CString&&) final;
+    void send(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength) final;
+    void send(WebCore::Blob&) final;
     void close(int code, const String& reason) final;
     void fail(String&& reason) final;
     void disconnect() final;
     void suspend() final;
     void resume() final;
-    void refThreadableWebSocketChannel() final { ref(); }
-    void derefThreadableWebSocketChannel() final { deref(); }
 
     void notifySendFrame(WebCore::WebSocketFrame::OpCode, std::span<const uint8_t> data);
     void logErrorMessage(const String&);
@@ -100,25 +98,27 @@ private:
     void decreaseBufferedAmount(size_t);
     template<typename T> void sendMessageInternal(T&&, size_t byteLength);
 
-    const WebCore::WebSocketChannelInspector* channelInspector() const final { return &m_inspector; }
+    const WebCore::WebSocketChannelInspector* channelInspector() const LIFETIME_BOUND final { return &m_inspector; }
     WebCore::WebSocketChannelIdentifier progressIdentifier() const final { return m_inspector.progressIdentifier(); }
     bool hasCreatedHandshake() const final { return !m_url.isNull(); }
     bool isConnected() const final { return !m_handshakeResponse.isNull(); }
     WebCore::ResourceRequest clientHandshakeRequest(const CookieGetter&) const final { return m_handshakeRequest; }
-    const WebCore::ResourceResponse& serverHandshakeResponse() const final { return m_handshakeResponse; }
+    const WebCore::ResourceResponse& serverHandshakeResponse() const LIFETIME_BOUND final { return m_handshakeResponse; }
 
     WeakPtr<WebCore::Document, WebCore::WeakPtrImplWithEventTargetData> m_document;
-    WeakPtr<WebCore::WebSocketChannelClient> m_client;
+    ThreadSafeWeakPtr<WebCore::WebSocketChannelClient> m_client;
     URL m_url;
     String m_subprotocol;
     String m_extensions;
     size_t m_bufferedAmount { 0 };
     bool m_isClosing { false };
-    WebCore::NetworkSendQueue m_messageQueue;
+    bool m_needsToCallClose { false };
+    const Ref<WebCore::NetworkSendQueue> m_messageQueue;
     WebCore::WebSocketChannelInspector m_inspector;
     WebCore::ResourceRequest m_handshakeRequest;
     WebCore::ResourceResponse m_handshakeResponse;
     WebPageProxyIdentifier m_webPageProxyID;
+    WebCore::IsInitiatedByDedicatedWorker m_isInitiatedByDedicatedWorker { WebCore::IsInitiatedByDedicatedWorker::No };
 };
 
 } // namespace WebKit

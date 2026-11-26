@@ -14,16 +14,55 @@ EXTRA_CMAKE_ARGUMENTS = -DPORT=WPE \
 	   -DCMAKE_CXX_FLAGS_DEBUG="" \
 	   -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
 	   -DENABLE_WPE_QT_API=OFF \
-	   -DUSE_LIBBACKTRACE=OFF \
-	   -DENABLE_MINIBROWSER=ON
+	   -DENABLE_MINIBROWSER=ON \
+	   -DUSE_LIBBACKTRACE=OFF
 DH_GENCONTROL_ARGS =
+
+# Skia strongly recommends using clang
+# https://skia.org/docs/user/build/#supported-and-preferred-compilers
+ifneq (,$(filter $(DEB_HOST_ARCH),amd64 arm64 armel i386 ppc64el riscv64))
+	EXTRA_CMAKE_ARGUMENTS += \
+	   -DCMAKE_C_COMPILER=clang \
+	   -DCMAKE_CXX_COMPILER=clang++
+endif
+
+# The armhf build fails with clang 20 and 21
+# https://bugs.webkit.org/show_bug.cgi?id=290167
+ifneq (,$(filter $(DEB_HOST_ARCH),armhf))
+	EXTRA_CMAKE_ARGUMENTS += \
+	   -DCMAKE_C_COMPILER=clang-22 \
+	   -DCMAKE_CXX_COMPILER=clang++-22
+endif
+
+# The WebKit build scripts look at the CPU to detect the architecture.
+# This is a problem if we e.g. build for i386 on an amd64 machine.
+# Forcing a 32-bit build solves this.
+ifeq ($(DEB_HOST_ARCH_BITS),32)
+	EXTRA_CMAKE_ARGUMENTS += -DFORCE_32BIT=ON
+endif
 
 # Sacrifice speed in order to make it more likely resource limits
 # won't be hit.
 ifeq ($(DEB_BUILD_ARCH_BITS),32)
-	EXTRA_CMAKE_ARGUMENTS += -DFORCE_32BIT=ON
 	LDFLAGS += -Wl,--no-keep-memory
 endif
+
+# Additional flags to reduce memory usage (#1125347) and try to avoid
+# some compiler crashes.
+ifneq (,$(filter $(DEB_HOST_ARCH),sh4))
+	CPPFLAGS += -no-integrated-cpp
+	CFLAGS := $(CFLAGS:-O2=-O1)
+	CXXFLAGS := $(CXXFLAGS:-O1=-O1)
+endif
+
+# Try to reduce memory usage even more. This significantly increases
+# the build time, so use only when strictly needed.
+ifneq (,$(filter $(DEB_HOST_ARCH),armhf x32))
+	CPPFLAGS += --param ggc-min-expand=10
+endif
+
+# This is only for testing, it should not be enabled in release builds
+# EXTRA_CMAKE_ARGUMENTS += -DENABLE_SWIFT_DEMO_URI_SCHEME=ON
 
 # The debug packages produced by webkit are huge and cause problems in
 # most buildds. Use -g1 in all architectures to make them smaller.
@@ -33,23 +72,15 @@ CXXFLAGS := $(CXXFLAGS:-g=-g1)
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=949621
 LDFLAGS += -Wl,--reduce-memory-overheads
 
-# Don't build with -gsplit-dwarf (see #1016936)
-EXTRA_CMAKE_ARGUMENTS += -DDEBUG_FISSION=OFF
-
-# Use the CLoop Javascript interpreter and disable the JIT. This is
-# slow but it is the most compatible solution for old (non-SSE2) CPUs.
-ifneq (,$(filter $(DEB_HOST_ARCH),i386))
-	EXTRA_CMAKE_ARGUMENTS += -DENABLE_JIT=OFF -DENABLE_C_LOOP=ON
-endif
-
-# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1085312
-ifneq (,$(filter $(DEB_HOST_ARCH),loong64))
-	EXTRA_CMAKE_ARGUMENTS += -DUSE_SKIA=OFF
-endif
-
-# See https://bugs.webkit.org/show_bug.cgi?id=197192
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1104703
 ifneq (,$(filter $(DEB_HOST_ARCH),arm64))
-	EXTRA_CMAKE_ARGUMENTS += -DWTF_CPU_ARM64_CORTEXA53=OFF
+	CFLAGS := $(patsubst -mbranch-protection=%,-mbranch-protection=pac-ret,$(CFLAGS))
+	CXXFLAGS := $(patsubst -mbranch-protection=%,-mbranch-protection=pac-ret,$(CXXFLAGS))
+endif
+
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1101547
+ifneq (,$(filter $(DEB_HOST_ARCH),alpha))
+	CPPFLAGS += -mlarge-data -mlarge-text
 endif
 
 ifneq (,$(filter noopt,$(DEB_BUILD_OPTIONS)))
@@ -72,8 +103,7 @@ else
 	CPPFLAGS += -DNDEBUG -DG_DISABLE_CAST_CHECKS
 endif
 
-# Disable the bubblewrap sandbox if libseccomp-dev is not available
-ifeq ($(shell pkg-config --exists libseccomp && echo yes),yes)
+ifneq (,$(filter $(DEB_HOST_ARCH),amd64 arm64 armel armhf i386 ppc64el riscv64 loong64 x32))
 	EXTRA_CMAKE_ARGUMENTS += -DENABLE_BUBBLEWRAP_SANDBOX=ON
 	DH_GENCONTROL_ARGS += -Vbwrap:Depends="bubblewrap (>= 0.3.1), xdg-dbus-proxy"
 else
@@ -108,10 +138,8 @@ override_dh_install-indep:
 override_dh_shlibdeps:
 	dh_shlibdeps -XMiniBrowser
 
-override_dh_builddeb:
-	DEB_BUILD_OPTIONS="$(filter-out parallel=%,$(DEB_BUILD_OPTIONS))" \
-		dh_builddeb
-
+# Release tarballs don't ship the files needed to run tests
 override_dh_auto_test:
 
+# dwz breaks the build (#1016936 and #1081000)
 override_dh_dwz:

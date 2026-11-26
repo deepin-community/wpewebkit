@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,14 +26,14 @@
 #include "config.h"
 #include "WebKitPlaybackTargetAvailabilityEvent.h"
 
+#if ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
+
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#if ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
-
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebKitPlaybackTargetAvailabilityEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebKitPlaybackTargetAvailabilityEvent);
 
 static const AtomString& stringForPlaybackTargetAvailability(bool available)
 {
@@ -49,9 +49,9 @@ WebKitPlaybackTargetAvailabilityEvent::WebKitPlaybackTargetAvailabilityEvent(con
 {
 }
 
-WebKitPlaybackTargetAvailabilityEvent::WebKitPlaybackTargetAvailabilityEvent(const AtomString& eventType, const Init& initializer, IsTrusted isTrusted)
-    : Event(EventInterfaceType::WebKitPlaybackTargetAvailabilityEvent, eventType, initializer, isTrusted)
-    , m_availability(initializer.availability)
+WebKitPlaybackTargetAvailabilityEvent::WebKitPlaybackTargetAvailabilityEvent(const AtomString& eventType, Init&& initializer, IsTrusted isTrusted)
+    : Event(EventInterfaceType::WebKitPlaybackTargetAvailabilityEvent, eventType, WTF::move(initializer), isTrusted)
+    , m_availability(WTF::move(initializer.availability))
 {
 }
 

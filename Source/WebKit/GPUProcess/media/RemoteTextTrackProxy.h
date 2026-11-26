@@ -33,6 +33,7 @@
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/TrackBase.h>
 #include <wtf/Ref.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -49,6 +50,7 @@ struct TextTrackPrivateRemoteConfiguration;
 class RemoteTextTrackProxy final
     : public ThreadSafeRefCounted<RemoteTextTrackProxy, WTF::DestructionThread::Main>
     , private WebCore::InbandTextTrackPrivateClient {
+    WTF_MAKE_TZONE_ALLOCATED(RemoteTextTrackProxy);
 public:
     static Ref<RemoteTextTrackProxy> create(GPUConnectionToWebProcess& connectionToWebProcess, WebCore::InbandTextTrackPrivate& trackPrivate, WebCore::MediaPlayerIdentifier mediaPlayerIdentifier)
     {
@@ -56,6 +58,10 @@ public:
     }
 
     virtual ~RemoteTextTrackProxy();
+
+    // WebCore::InbandTextTrackPrivateClient.
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
     WebCore::TrackID id() const { return m_trackPrivate->id(); }
     void setMode(WebCore::InbandTextTrackPrivate::Mode mode) { m_trackPrivate->setMode(mode); }
@@ -83,15 +89,15 @@ private:
 
     // TrackPrivateBaseClient
     void idChanged(WebCore::TrackID) final;
-    void labelChanged(const AtomString&) final;
-    void languageChanged(const AtomString&) final;
+    void labelChanged(const String&) final;
+    void languageChanged(const String&) final;
     void willRemove() final;
 
     TextTrackPrivateRemoteConfiguration& configuration();
     void configurationChanged();
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_connectionToWebProcess;
-    Ref<WebCore::InbandTextTrackPrivate> m_trackPrivate;
+    const Ref<WebCore::InbandTextTrackPrivate> m_trackPrivate;
     WebCore::TrackID m_id;
     WebCore::MediaPlayerIdentifier m_mediaPlayerIdentifier;
     size_t m_clientId { 0 };

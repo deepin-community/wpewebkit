@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Google, Inc.
  * Copyright (C) 2020, 2021, 2022 Igalia S.L.
  *
@@ -32,14 +32,13 @@ namespace WebCore {
 class SVGForeignObjectElement;
 
 class RenderSVGForeignObject final : public RenderSVGBlock {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGForeignObject);
+    WTF_MAKE_TZONE_ALLOCATED(RenderSVGForeignObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGForeignObject);
 public:
-    RenderSVGForeignObject(SVGForeignObjectElement&, RenderStyle&&);
+    RenderSVGForeignObject(SVGForeignObjectElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGForeignObject();
 
-    SVGForeignObjectElement& foreignObjectElement() const;
-    Ref<SVGForeignObjectElement> protectedForeignObjectElement() const;
+    SVGForeignObjectElement& NODELETE foreignObjectElement() const;
 
     void paint(PaintInfo&, const LayoutPoint&) override;
 
@@ -48,6 +47,10 @@ public:
     FloatRect objectBoundingBox() const final { return m_viewport; }
     FloatRect strokeBoundingBox() const final { return m_viewport; }
     FloatRect repaintRectInLocalCoordinates(RepaintRectCalculation = RepaintRectCalculation::Fast) const final { return SVGBoundingBoxComputation::computeRepaintBoundingBox(*this); }
+    FloatRect decoratedBoundingBox() const final { return m_viewport; }
+
+    bool isObjectBoundingBoxValid() const { return !m_viewport.isEmpty(); }
+    bool objectBoundingBoxIsEmpty() const final { return !isObjectBoundingBoxValid(); }
 
 private:
     void graphicsElement() const = delete;
@@ -56,7 +59,7 @@ private:
     void updateLogicalWidth() override;
     LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
 
-    LayoutRect overflowClipRect(const LayoutPoint& location, RenderFragmentContainer* = nullptr, OverlayScrollbarSizeRelevancy = IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;
+    LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;
 
     void updateFromStyle() final;
 
@@ -65,7 +68,7 @@ private:
     // fixed position content uses the <fO> as ancestor layer (when computing offsets from the container).
     bool needsHasSVGTransformFlags() const final { return true; }
 
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const final;
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
 
     FloatRect m_viewport;
 };

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2011 Google Inc. All Rights Reserved.
- * Copyright (C) 2020 Apple Inc.  All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
+ * Copyright (C) 2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,11 +27,17 @@
 #include "config.h"
 #include "ScriptedAnimationController.h"
 
+#include "DOMWrapperWorld.h"
+#include "DocumentPage.h"
+#include "FrameDestructionObserverInlines.h"
 #include "InspectorInstrumentation.h"
+#include "JSRequestAnimationFrameCallback.h"
 #include "Logging.h"
 #include "OpportunisticTaskScheduler.h"
 #include "Page.h"
+#include "RenderObjectStyle.h"
 #include "RequestAnimationFrameCallback.h"
+#include "ScriptController.h"
 #include "Settings.h"
 #include "UserGestureIndicator.h"
 #include <wtf/SystemTracing.h>
@@ -90,7 +96,7 @@ OptionSet<ThrottlingReason> ScriptedAnimationController::throttlingReasons() con
 
 bool ScriptedAnimationController::isThrottledRelativeToPage() const
 {
-    if (auto* page = this->page())
+    if (RefPtr page = this->page())
         return preferredScriptedAnimationInterval() > page->preferredRenderingUpdateInterval();
     return false;
 }
@@ -111,7 +117,7 @@ ScriptedAnimationController::CallbackId ScriptedAnimationController::registerCal
     RefPtr<ImminentlyScheduledWorkScope> workScope;
     if (RefPtr page = this->page())
         workScope = page->opportunisticTaskScheduler().makeScheduledWorkScope();
-    m_callbackDataList.append({ WTFMove(callback), UserGestureIndicator::currentUserGesture(), WTFMove(workScope) });
+    m_callbackDataList.append({ WTF::move(callback), UserGestureIndicator::currentUserGesture(), WTF::move(workScope) });
 
     if (RefPtr document = m_document.get())
         InspectorInstrumentation::didRequestAnimationFrame(*document, callbackId);
@@ -131,7 +137,7 @@ void ScriptedAnimationController::cancelCallback(CallbackId callbackId)
     });
 
     if (cancelled && m_document)
-        InspectorInstrumentation::didCancelAnimationFrame(*protectedDocument(), callbackId);
+        InspectorInstrumentation::didCancelAnimationFrame(*protect(m_document), callbackId);
 }
 
 void ScriptedAnimationController::serviceRequestAnimationFrameCallbacks(ReducedResolutionSeconds timestamp)
@@ -147,7 +153,7 @@ void ScriptedAnimationController::serviceRequestAnimationFrameCallbacks(ReducedR
     
     TraceScope tracingScope(RAFCallbackStart, RAFCallbackEnd);
 
-    auto highResNowMs = std::round(1000 * timestamp.seconds());
+    auto highResNowMs = timestamp.milliseconds();
 
     LOG_WITH_STREAM(RequestAnimationFrame, stream << "ScriptedAnimationController::serviceRequestAnimationFrameCallbacks at " << highResNowMs << " (throttling reasons " << throttlingReasons() << ", preferred interval " << preferredScriptedAnimationInterval().milliseconds() << "ms)");
 
@@ -160,20 +166,42 @@ void ScriptedAnimationController::serviceRequestAnimationFrameCallbacks(ReducedR
     Ref protectedThis { *this };
     Ref document = *m_document;
 
+    RefPtr frame = document->frame();
+    if (!frame)
+        return;
+
+    CheckedRef script = frame->script();
+    if (script->isPaused())
+        return;
+
+    bool canExecuteScriptsInAnyWorld = false;
     for (auto& [callback, userGestureTokenToForward, scheduledWorkScope] : callbackDataList) {
         if (callback->m_firedOrCancelled)
             continue;
+
+        DOMWrapperWorld* world = nullptr;
+        if (RefPtr jsCallback = dynamicDowncast<JSRequestAnimationFrameCallback>(callback.get())) {
+            if (auto* globalObject = jsCallback->callbackData()->globalObject())
+                world = &globalObject->world();
+        }
+        if (!script->canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript, world))
+            continue;
+
+        canExecuteScriptsInAnyWorld = true;
         callback->m_firedOrCancelled = true;
 
-        if (userGestureTokenToForward && userGestureTokenToForward->hasExpired(UserGestureToken::maximumIntervalForUserGestureForwarding))
+        if (userGestureTokenToForward && Ref { *userGestureTokenToForward }->hasExpired(UserGestureToken::maximumIntervalForUserGestureForwarding))
             userGestureTokenToForward = nullptr;
         UserGestureIndicator gestureIndicator(userGestureTokenToForward);
 
         auto identifier = callback->m_id;
         InspectorInstrumentation::willFireAnimationFrame(document, identifier);
-        callback->handleEvent(highResNowMs);
+        Ref { callback }->invoke(highResNowMs);
         InspectorInstrumentation::didFireAnimationFrame(document, identifier);
     }
+
+    if (!canExecuteScriptsInAnyWorld)
+        return;
 
     // Remove any callbacks we fired from the list of pending callbacks.
     m_callbackDataList.removeAllMatching([](auto& data) {
@@ -192,9 +220,5 @@ void ScriptedAnimationController::scheduleAnimation()
         page->scheduleRenderingUpdate(RenderingUpdateStep::AnimationFrameCallbacks);
 }
 
-RefPtr<Document> ScriptedAnimationController::protectedDocument()
-{
-    return m_document.get();
-}
 
 }

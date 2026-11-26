@@ -24,12 +24,19 @@
  */
 
 #include "config.h"
-#include "PlatformWebView.h"
+#include "Helpers/PlatformWebView.h"
 
-#include <WPEToolingBackends/HeadlessViewBackend.h>
 #include <WebKit/WKPagePrivateWPE.h>
 #include <WebKit/WKRetainPtr.h>
 #include <WebKit/WKView.h>
+
+#if USE(LIBWPE)
+#include <WPEToolingBackends/HeadlessViewBackend.h>
+#endif
+
+#if ENABLE(WPE_PLATFORM)
+#include <wpe/headless/wpe-headless.h>
+#endif
 
 namespace TestWebKitAPI {
 
@@ -53,7 +60,9 @@ PlatformWebView::PlatformWebView(WKPageRef relatedPage)
 {
     WKRetainPtr<WKPageConfigurationRef> configuration = adoptWK(WKPageConfigurationCreate());
     WKPageConfigurationSetContext(configuration.get(), WKPageGetContext(relatedPage));
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     WKPageConfigurationSetRelatedPage(configuration.get(), relatedPage);
+    ALLOW_DEPRECATED_DECLARATIONS_END
 
     auto relatedConfiguration = adoptWK(WKPageCopyPageConfiguration(relatedPage));
     if (auto* preferences = WKPageConfigurationGetPreferences(relatedConfiguration.get()))
@@ -65,13 +74,32 @@ PlatformWebView::PlatformWebView(WKPageRef relatedPage)
 PlatformWebView::~PlatformWebView()
 {
     WKRelease(m_view);
-    delete m_window;
+#if ENABLE(WPE_PLATFORM)
+    if (g_type_class_peek(WPE_TYPE_DISPLAY))
+        return;
+#endif
+#if USE(LIBWPE)
+    delete static_cast<WPEToolingBackends::HeadlessViewBackend*>(m_window);
+#endif
 }
 
 void PlatformWebView::initialize(WKPageConfigurationRef configuration)
 {
+#if ENABLE(WPE_PLATFORM)
+    if (g_type_class_peek(WPE_TYPE_DISPLAY)) {
+        auto* display = wpe_display_get_primary();
+        g_assert(WPE_IS_DISPLAY_HEADLESS(display));
+        m_view = WKViewCreate(display, configuration);
+        auto* wpeView = WKViewGetView(m_view);
+        m_window = wpe_view_get_toplevel(wpeView);
+        wpe_toplevel_resize(WPE_TOPLEVEL(m_window), 800, 600);
+        return;
+    }
+#endif
+#if USE(LIBWPE)
     m_window = new WPEToolingBackends::HeadlessViewBackend(800, 600);
-    m_view = WKViewCreateDeprecated(m_window->backend(), configuration);
+    m_view = WKViewCreateDeprecated(static_cast<WPEToolingBackends::HeadlessViewBackend*>(m_window)->backend(), configuration);
+#endif
 }
 
 WKPageRef PlatformWebView::page() const

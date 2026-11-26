@@ -39,20 +39,20 @@ public:
     public:
         CounterBlockHelper(const Vector<uint8_t>& counterVector, size_t counterLength);
 
-        size_t countToOverflowSaturating() const;
+        size_t NODELETE countToOverflowSaturating() const;
         Vector<uint8_t> counterVectorAfterOverflow() const;
 
     private:
         // 128 bits integer with miminum required operators.
         struct CounterBlockBits {
-            void set();
-            bool all() const;
-            bool any() const;
+            void NODELETE set();
+            bool NODELETE all() const;
+            bool NODELETE any() const;
 
-            CounterBlockBits operator&(const CounterBlockBits&) const;
-            CounterBlockBits operator~() const;
-            CounterBlockBits& operator <<=(unsigned);
-            CounterBlockBits& operator &=(const CounterBlockBits&);
+            CounterBlockBits NODELETE operator&(const CounterBlockBits&) const;
+            CounterBlockBits NODELETE operator~() const;
+            CounterBlockBits& NODELETE operator <<=(unsigned);
+            CounterBlockBits& NODELETE operator &=(const CounterBlockBits&);
 
             uint64_t m_hi { 0 };
             uint64_t m_lo { 0 };
@@ -73,9 +73,9 @@ private:
     void encrypt(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;
     void decrypt(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
-    void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&, UseCryptoKit = UseCryptoKit::No) final;
-    void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&, UseCryptoKit = UseCryptoKit::No) final;
-    ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&) final;
+    void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
+    void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
+    ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&) final;
 
     static ExceptionOr<Vector<uint8_t>> platformEncrypt(const CryptoAlgorithmAesCtrParams&, const CryptoKeyAES&, const Vector<uint8_t>&);
     static ExceptionOr<Vector<uint8_t>> platformDecrypt(const CryptoAlgorithmAesCtrParams&, const CryptoKeyAES&, const Vector<uint8_t>&);

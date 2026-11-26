@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "AnimationFrameRate.h"
-#include "DisplayRefreshMonitor.h"
-#include "PlatformScreen.h"
+#include <WebCore/AnimationFrameRate.h>
+#include <WebCore/DisplayRefreshMonitor.h>
+#include <WebCore/PlatformScreen.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
@@ -40,7 +40,7 @@ class DisplayRefreshMonitorManager {
     friend class NeverDestroyed<DisplayRefreshMonitorManager>;
     friend class DisplayRefreshMonitor;
 public:
-    WEBCORE_EXPORT static DisplayRefreshMonitorManager& sharedManager();
+    WEBCORE_EXPORT static DisplayRefreshMonitorManager& NODELETE sharedManager();
 
     void unregisterClient(DisplayRefreshMonitorClient&);
 
@@ -57,13 +57,13 @@ private:
     DisplayRefreshMonitorManager() = default;
     virtual ~DisplayRefreshMonitorManager();
 
-    void displayMonitorDisplayDidRefresh(DisplayRefreshMonitor&);
+    void NODELETE displayMonitorDisplayDidRefresh(DisplayRefreshMonitor&);
 
     size_t findMonitorForDisplayID(PlatformDisplayID) const;
     DisplayRefreshMonitor* monitorForDisplayID(PlatformDisplayID) const;
-    DisplayRefreshMonitor* monitorForClient(DisplayRefreshMonitorClient&);
+    RefPtr<DisplayRefreshMonitor> monitorForClient(DisplayRefreshMonitorClient&);
 
-    DisplayRefreshMonitor* ensureMonitorForDisplayID(PlatformDisplayID, DisplayRefreshMonitorFactory*);
+    RefPtr<DisplayRefreshMonitor> ensureMonitorForDisplayID(PlatformDisplayID, DisplayRefreshMonitorFactory*);
 
     struct DisplayRefreshMonitorWrapper {
         ~DisplayRefreshMonitorWrapper()

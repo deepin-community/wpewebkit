@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "CollectionScope.h"
+#include <JavaScriptCore/CollectionScope.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -55,7 +55,7 @@ public:
     void clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM&);
 
     bool contains(const AbstractLocker&, void* candidateCodeBlock);
-    Lock& getLock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
     // This is expected to run only when we're not adding to the set for now. If
     // this needs to run concurrently in the future, we'll need to lock around this.
@@ -75,8 +75,8 @@ public:
     void remove(CodeBlock*);
 
 private:
-    HashSet<CodeBlock*> m_codeBlocks;
-    HashSet<CodeBlock*> m_currentlyExecuting;
+    UncheckedKeyHashSet<CodeBlock*> m_codeBlocks;
+    UncheckedKeyHashSet<CodeBlock*> m_currentlyExecuting;
     Lock m_lock;
 };
 

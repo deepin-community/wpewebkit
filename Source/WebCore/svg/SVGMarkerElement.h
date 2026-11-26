@@ -24,36 +24,38 @@
 #include "SVGElement.h"
 #include "SVGFitToViewBox.h"
 #include "SVGMarkerTypes.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class SVGMarkerElement final : public SVGElement, public SVGFitToViewBox {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGMarkerElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGMarkerElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGMarkerElement);
 public:
     // Forward declare enumerations in the W3C naming scheme, for IDL generation.
     enum {
-        SVG_MARKERUNITS_UNKNOWN = SVGMarkerUnitsUnknown,
-        SVG_MARKERUNITS_USERSPACEONUSE = SVGMarkerUnitsUserSpaceOnUse,
-        SVG_MARKERUNITS_STROKEWIDTH = SVGMarkerUnitsStrokeWidth
+        SVG_MARKERUNITS_UNKNOWN = std::underlying_type_t<SVGMarkerUnitsType>(SVGMarkerUnitsType::Unknown),
+        SVG_MARKERUNITS_USERSPACEONUSE = std::underlying_type_t<SVGMarkerUnitsType>(SVGMarkerUnitsType::UserSpaceOnUse),
+        SVG_MARKERUNITS_STROKEWIDTH = std::underlying_type_t<SVGMarkerUnitsType>(SVGMarkerUnitsType::StrokeWidth)
     };
 
     enum {
         SVG_MARKER_ORIENT_UNKNOWN = SVGMarkerOrientUnknown,
         SVG_MARKER_ORIENT_AUTO = SVGMarkerOrientAuto,
-        SVG_MARKER_ORIENT_ANGLE = SVGMarkerOrientAngle
+        SVG_MARKER_ORIENT_ANGLE = SVGMarkerOrientAngle,
+        SVG_MARKER_ORIENT_AUTO_START_REVERSE = SVGMarkerOrientAutoStartReverse
     };
 
     static Ref<SVGMarkerElement> create(const QualifiedName&, Document&);
 
     AffineTransform viewBoxToViewTransform(float viewWidth, float viewHeight) const;
 
-    const SVGLengthValue& refX() const { return m_refX->currentValue(); }
-    const SVGLengthValue& refY() const { return m_refY->currentValue(); }
-    const SVGLengthValue& markerWidth() const { return m_markerWidth->currentValue(); }
-    const SVGLengthValue& markerHeight() const { return m_markerHeight->currentValue(); }
+    const SVGLengthValue& refX() const LIFETIME_BOUND { return m_refX->currentValue(); }
+    const SVGLengthValue& refY() const LIFETIME_BOUND { return m_refY->currentValue(); }
+    const SVGLengthValue& markerWidth() const LIFETIME_BOUND { return m_markerWidth->currentValue(); }
+    const SVGLengthValue& markerHeight() const LIFETIME_BOUND { return m_markerHeight->currentValue(); }
     SVGMarkerUnitsType markerUnits() const { return m_markerUnits->currentValue<SVGMarkerUnitsType>(); }
-    const SVGAngleValue& orientAngle() const { return m_orientAngle->currentValue(); }
+    const SVGAngleValue& orientAngle() const LIFETIME_BOUND { return m_orientAngle->currentValue(); }
     SVGMarkerOrientType orientType() const { return m_orientType->currentValue<SVGMarkerOrientType>(); }
 
     SVGAnimatedLength& refXAnimated() { return m_refX; }
@@ -69,6 +71,7 @@ public:
 
     void setOrientToAuto();
     void setOrientToAngle(const SVGAngle&);
+    void setOrientToAutoStartReverse();
 
 private:
     SVGMarkerElement(const QualifiedName&, Document&);
@@ -79,8 +82,8 @@ private:
     void svgAttributeChanged(const QualifiedName&) override;
     void childrenChanged(const ChildChange&) override;
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    bool rendererIsNeeded(const RenderStyle&) override { return true; }
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    bool rendererIsNeeded(const Style::ComputedStyle&) override { return true; }
 
     bool needsPendingResourceHandling() const override { return false; }
 
@@ -90,13 +93,13 @@ private:
 
     void invalidateMarkerResource();
 
-    Ref<SVGAnimatedLength> m_refX { SVGAnimatedLength::create(this, SVGLengthMode::Width) };
-    Ref<SVGAnimatedLength> m_refY { SVGAnimatedLength::create(this, SVGLengthMode::Height) };
-    Ref<SVGAnimatedLength> m_markerWidth { SVGAnimatedLength::create(this, SVGLengthMode::Width, "3"_s) };
-    Ref<SVGAnimatedLength> m_markerHeight { SVGAnimatedLength::create(this, SVGLengthMode::Height, "3"_s) };
-    Ref<SVGAnimatedEnumeration> m_markerUnits { SVGAnimatedEnumeration::create(this, SVGMarkerUnitsStrokeWidth) };
-    Ref<SVGAnimatedAngle> m_orientAngle { SVGAnimatedAngle::create(this) };
-    Ref<SVGAnimatedOrientType> m_orientType { SVGAnimatedOrientType::create(this, SVGMarkerOrientAngle) };
+    const Ref<SVGAnimatedLength> m_refX { SVGAnimatedLength::create(this, SVGLengthMode::Width) };
+    const Ref<SVGAnimatedLength> m_refY { SVGAnimatedLength::create(this, SVGLengthMode::Height) };
+    const Ref<SVGAnimatedLength> m_markerWidth { SVGAnimatedLength::create(this, SVGLengthMode::Width, "3"_s) };
+    const Ref<SVGAnimatedLength> m_markerHeight { SVGAnimatedLength::create(this, SVGLengthMode::Height, "3"_s) };
+    const Ref<SVGAnimatedEnumeration> m_markerUnits { SVGAnimatedEnumeration::create(this, SVGMarkerUnitsType::StrokeWidth) };
+    const Ref<SVGAnimatedAngle> m_orientAngle { SVGAnimatedAngle::create(this) };
+    const Ref<SVGAnimatedOrientType> m_orientType { SVGAnimatedOrientType::create(this, SVGMarkerOrientAngle) };
 };
 
 } // namespace WebCore

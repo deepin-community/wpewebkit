@@ -32,6 +32,8 @@
 #include "VM.h"
 #include <wtf/RefPtr.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 using namespace JSC;
 
 int testJSONParse()
@@ -46,9 +48,9 @@ int testJSONParse()
     JSValue v0 = JSONParse(globalObject, ""_s);
     JSValue v1 = JSONParse(globalObject, "#$%^"_s);
     JSValue v2 = JSONParse(globalObject, String());
-    UChar emptyUCharArray[1] = { '\0' };
+    char16_t emptyChar16Array[1] = { '\0' };
     unsigned zeroLength = 0;
-    JSValue v3 = JSONParse(globalObject, String({ emptyUCharArray, zeroLength }));
+    JSValue v3 = JSONParse(globalObject, String({ emptyChar16Array, zeroLength }));
     JSValue v4;
     JSValue v5 = JSONParse(globalObject, "123"_s);
     
@@ -67,3 +69,5 @@ int testJSONParse()
 
     return failed;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

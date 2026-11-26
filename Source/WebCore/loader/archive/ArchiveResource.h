@@ -28,8 +28,8 @@
 
 #pragma once
 
-#include "ArchiveError.h"
-#include "SubstituteResource.h"
+#include <WebCore/ArchiveError.h>
+#include <WebCore/SubstituteResource.h>
 
 namespace WebCore {
 
@@ -37,11 +37,12 @@ class ArchiveResource : public SubstituteResource {
 public:
     static RefPtr<ArchiveResource> create(RefPtr<FragmentedSharedBuffer>&&, const URL&, const ResourceResponse&);
     WEBCORE_EXPORT static RefPtr<ArchiveResource> create(RefPtr<FragmentedSharedBuffer>&&, const URL&, const String& mimeType, const String& textEncoding, const String& frameName, const ResourceResponse& = ResourceResponse(), const String& fileName = { });
+    WEBCORE_EXPORT static Ref<ArchiveResource> createWithData(Ref<FragmentedSharedBuffer>&&, const URL&, const String& mimeType, const String& textEncoding, const String& frameName, const ResourceResponse& = ResourceResponse(), const String& fileName = { });
 
-    const String& mimeType() const { return m_mimeType; }
-    const String& textEncoding() const { return m_textEncoding; }
-    const String& frameName() const { return m_frameName; }
-    const String& relativeFilePath() const { return m_relativeFilePath; }
+    const String& mimeType() const LIFETIME_BOUND { return m_mimeType; }
+    const String& textEncoding() const LIFETIME_BOUND { return m_textEncoding; }
+    const String& frameName() const LIFETIME_BOUND { return m_frameName; }
+    const String& relativeFilePath() const LIFETIME_BOUND { return m_relativeFilePath; }
 
     void ignoreWhenUnarchiving() { m_shouldIgnoreWhenUnarchiving = true; }
     bool shouldIgnoreWhenUnarchiving() const { return m_shouldIgnoreWhenUnarchiving; }

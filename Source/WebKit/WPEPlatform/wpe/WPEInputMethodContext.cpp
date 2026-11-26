@@ -29,6 +29,7 @@
 #include "WPEDisplayPrivate.h"
 #include "WPEEnumTypes.h"
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 
 struct _WPEInputMethodUnderline {
@@ -46,7 +47,7 @@ struct _WPEInputMethodUnderline {
 /**
  * WPEInputMethodUnderline:
  *
- * Range of text in an preedit string to be shown underlined.
+ * Range of text in a preedit string to be shown underlined.
  */
 
 G_DEFINE_BOXED_TYPE(WPEInputMethodUnderline, wpe_input_method_underline, wpe_input_method_underline_copy, wpe_input_method_underline_free)
@@ -156,7 +157,7 @@ const WPEColor* wpe_input_method_underline_get_color(WPEInputMethodUnderline* un
 }
 
 struct _WPEInputMethodContextPrivate {
-    WPEView* view;
+    GWeakPtr<WPEView> view;
     WPEInputPurpose purpose;
     WPEInputHints hints;
 };
@@ -174,30 +175,28 @@ enum {
 
 enum {
     PROP_0,
+    PROP_VIEW,
     PROP_INPUT_PURPOSE,
     PROP_INPUT_HINTS,
     N_PROPERTIES
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<unsigned, LAST_SIGNAL> signals;
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 static void wpeInputMethodContextSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
     auto* ime = WPE_INPUT_METHOD_CONTEXT(object);
 
     switch (propId) {
+    case PROP_VIEW:
+        ime->priv->view.reset(WPE_VIEW(g_value_get_object(value)));
+        break;
     case PROP_INPUT_PURPOSE:
-        if (ime->priv->purpose != g_value_get_enum(value)) {
-            ime->priv->purpose = static_cast<WPEInputPurpose>(g_value_get_enum(value));
-            g_object_notify_by_pspec(object, paramSpec);
-        }
+        wpe_input_method_context_set_input_purpose(ime, static_cast<WPEInputPurpose>(g_value_get_enum(value)));
         break;
     case PROP_INPUT_HINTS:
-        if (ime->priv->hints != g_value_get_flags(value))  {
-            ime->priv->hints =  static_cast<WPEInputHints>(g_value_get_flags(value));
-            g_object_notify_by_pspec(object, paramSpec);
-        }
+        wpe_input_method_context_set_input_hints(ime, static_cast<WPEInputHints>(g_value_get_flags(value)));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -209,11 +208,14 @@ static void wpeInputMethodContextGetProperty(GObject* object, guint propId, GVal
     auto* ime = WPE_INPUT_METHOD_CONTEXT(object);
 
     switch (propId) {
+    case PROP_VIEW:
+        g_value_set_object(value, wpe_input_method_context_get_view(ime));
+        break;
     case PROP_INPUT_PURPOSE:
-        g_value_set_enum(value, ime->priv->purpose);
+        g_value_set_enum(value, wpe_input_method_context_get_input_purpose(ime));
         break;
     case PROP_INPUT_HINTS:
-        g_value_set_flags(value, ime->priv->hints);
+        g_value_set_flags(value, wpe_input_method_context_get_input_hints(ime));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -227,12 +229,24 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
     objectClass->get_property = wpeInputMethodContextGetProperty;
 
     /**
+     * WPEInputMethodContext:view:
+     *
+     * The #WPEView associated with the #WPEInputMethodContext
+     */
+    sObjProperties[PROP_VIEW] =
+        g_param_spec_object(
+            "view",
+            nullptr, nullptr,
+            WPE_TYPE_VIEW,
+            static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT_ONLY));
+
+    /**
      * WPEInputMethodContext:input-purpose:
      *
      * The purpose of the text field that the #WPEInputMethodContext is connected to.
      *
      * This property can be used by on-screen keyboards and other input
-     * methods to adjust their behaviour.
+     * methods to adjust their behavior.
      */
     sObjProperties[PROP_INPUT_PURPOSE] =
         g_param_spec_enum(
@@ -246,7 +260,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
      * WPEInputMethodContext:input-hints:
      *
      * Additional hints that allow input methods to fine-tune
-     * their behaviour.
+     * their behavior.
      */
     sObjProperties[PROP_INPUT_HINTS] =
         g_param_spec_flags(
@@ -256,11 +270,11 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
             WPE_INPUT_HINT_NONE,
             static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY));
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
      /**
-     * WPEInputMethodContextClass::preedit-started:
-     * @context: the #WPEInputMethodContextClass on which the signal is emitted
+     * WPEInputMethodContext::preedit-started:
+     * @context: the #WPEInputMethodContext on which the signal is emitted
      *
      * Emitted when a new preediting sequence starts.
      */
@@ -278,7 +292,7 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
      *
      * Emitted whenever the preedit sequence currently being entered has changed.
      * It is also emitted at the end of a preedit sequence, in which case
-     * wpe_input_method_context_get_preedit() returns the empty string.
+     * wpe_input_method_context_get_preedit_string() returns the empty string.
      */
     signals[PREEDIT_CHANGED] = g_signal_new(
         "preedit-changed",
@@ -323,11 +337,18 @@ static void wpe_input_method_context_class_init(WPEInputMethodContextClass* klas
     /**
      * WPEInputMethodContext::delete-surrounding:
      * @context: the #WPEInputMethodContext on which the signal is emitted
-     * @offset: the character offset from the cursor position of the text to be deleted.
-     * @n_chars: the number of characters to be deleted
+     * @offset: the offset of the text to be deleted from the start of the selection, in UTF-16 code units
+     * @n_chars: the number of UTF-16 code units to be deleted
      *
      * Emitted when the input method wants to delete the context surrounding the cursor.
-     * If @offset is a negative value, it means a position before the cursor.
+     * If @offset is a negative value, it means a position before the start of the selection,
+     * or before the cursor if there is no selection. The text to be deleted can include
+     * part of the selection. If @n_chars is 0, nothing is deleted and the cursor is moved
+     * by @offset.
+     *
+     * Both @offset and @n_chars are counted in UTF-16 code units, not in characters:
+     * a character outside the Basic Multilingual Plane, like most emoji, counts as 2.
+     * Note that the indexes passed to wpe_input_method_context_set_surrounding() are in bytes instead.
      */
     signals[DELETE_SURROUNDING] = g_signal_new(
         "delete-surrounding",
@@ -352,10 +373,7 @@ WPEInputMethodContext* wpe_input_method_context_new(WPEView* view)
 {
     g_return_val_if_fail(WPE_IS_VIEW(view), nullptr);
 
-    auto display = wpe_view_get_display(view);
-    auto imeContext = wpeDisplayCreateInputMethodContext(display);
-    imeContext->priv->view = view;
-    return imeContext;
+    return wpeDisplayCreateInputMethodContext(wpe_view_get_display(view), view);
 }
 
 /**
@@ -364,14 +382,14 @@ WPEInputMethodContext* wpe_input_method_context_new(WPEView* view)
  *
  * Get the #WPEView of @context
  *
- * Returns: (transfer none): a #WPEView
+ * Returns: (transfer none) (nullable): a #WPEView
  */
 
 WPEView* wpe_input_method_context_get_view(WPEInputMethodContext   *context)
 {
     g_return_val_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context), nullptr);
 
-    return context->priv->view;
+    return context->priv->view.get();
 }
 
 /**
@@ -386,7 +404,73 @@ WPEDisplay* wpe_input_method_context_get_display(WPEInputMethodContext* context)
 {
     g_return_val_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context), nullptr);
 
-    return wpe_view_get_display(context->priv->view);
+    return context->priv->view ? wpe_view_get_display(context->priv->view.get()) : nullptr;
+}
+
+/**
+ * wpe_input_method_context_get_input_purpose:
+ * @context: a #WPEInputMethodContext
+ *
+ * Get the purpose of the text field that @context is connected to.
+ *
+ * Returns: a #WPEInputPurpose
+ */
+WPEInputPurpose wpe_input_method_context_get_input_purpose(WPEInputMethodContext* context)
+{
+    g_return_val_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context), WPE_INPUT_PURPOSE_FREE_FORM);
+
+    return context->priv->purpose;
+}
+
+/**
+ * wpe_input_method_context_set_input_purpose:
+ * @context: a #WPEInputMethodContext
+ * @purpose: a #WPEInputPurpose
+ *
+ * Set the purpose of the text field that @context is connected to.
+ */
+void wpe_input_method_context_set_input_purpose(WPEInputMethodContext* context, WPEInputPurpose purpose)
+{
+    g_return_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context));
+
+    if (context->priv->purpose == purpose)
+        return;
+
+    context->priv->purpose = purpose;
+    g_object_notify_by_pspec(G_OBJECT(context), sObjProperties[PROP_INPUT_PURPOSE]);
+}
+
+/**
+ * wpe_input_method_context_get_input_hints:
+ * @context: a #WPEInputMethodContext
+ *
+ * Get hints of @context that allow input methods to fine-tune their behavior.
+ *
+ * Returns: a #WPEInputHints
+ */
+WPEInputHints wpe_input_method_context_get_input_hints(WPEInputMethodContext* context)
+{
+    g_return_val_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context), WPE_INPUT_HINT_NONE);
+
+    return context->priv->hints;
+}
+
+/**
+ * wpe_input_method_context_set_input_hints:
+ * @context: a #WPEInputMethodContext
+ * @hints: a #WPEInputHints
+ *
+ * Set hints of @context that allow input methods to fine-tune their behavior.
+ */
+void wpe_input_method_context_set_input_hints(WPEInputMethodContext* context, WPEInputHints hints)
+{
+    g_return_if_fail(WPE_IS_INPUT_METHOD_CONTEXT(context));
+
+    if (context->priv->hints == hints)
+        return;
+
+    context->priv->hints = hints;
+    g_object_notify_by_pspec(G_OBJECT(context), sObjProperties[PROP_INPUT_HINTS]);
 }
 
 /**
@@ -435,7 +519,7 @@ gboolean wpe_input_method_context_filter_key_event(WPEInputMethodContext* contex
  * wpe_input_method_context_focus_in:
  * @context: a #WPEInputMethodContext
  *
- * Notify @context that input associated has gained focus.
+ * Notify @context that the associated input has gained focus.
  */
 void wpe_input_method_context_focus_in(WPEInputMethodContext* context)
 {
@@ -450,7 +534,7 @@ void wpe_input_method_context_focus_in(WPEInputMethodContext* context)
  * wpe_input_method_context_focus_out:
  * @context: a #WPEInputMethodContext
  *
- * Notify @context that input associated has lost focus.
+ * Notify @context that the associated input has lost focus.
  */
 void wpe_input_method_context_focus_out(WPEInputMethodContext* context)
 {
@@ -469,7 +553,7 @@ void wpe_input_method_context_focus_out(WPEInputMethodContext* context)
  * @width: the width of cursor area
  * @height: the height of cursor area
  *
- * Notify @context that cursor area changed in input associated.
+ * Notify @context that the cursor area changed in the associated input.
  */
 void wpe_input_method_context_set_cursor_area(WPEInputMethodContext* context, int x, int y, int width, int height)
 {

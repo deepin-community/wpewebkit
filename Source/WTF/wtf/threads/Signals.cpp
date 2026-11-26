@@ -35,8 +35,8 @@ extern "C" {
 #endif
 
 #include <cstdio>
-#include <mutex>
 #include <signal.h>
+#include <wtf/StdLibExtras.h>
 
 #if HAVE(MACH_EXCEPTIONS)
 #include <dispatch/dispatch.h>
@@ -48,20 +48,14 @@ extern "C" {
 #endif
 
 #if OS(DARWIN)
-#include <mach/vm_param.h>
 #endif
 
-#include <unistd.h>
-#include <wtf/Atomics.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
-#include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PlatformRegisters.h>
-#include <wtf/Scope.h>
 #include <wtf/ThreadGroup.h>
 #include <wtf/Threading.h>
-#include <wtf/TranslatedProcess.h>
 #include <wtf/WTFConfig.h>
 
 namespace WTF {
@@ -86,19 +80,19 @@ void SignalHandlers::add(Signal signal, SignalHandler&& handler)
 #endif
     RELEASE_ASSERT(nextFree < maxNumberOfHandlers);
     SignalHandlerMemory* memory = &handlers[signalIndex][nextFree];
-    new (memory) SignalHandler(WTFMove(handler));
+    new (memory) SignalHandler(WTF::move(handler));
 
     numberOfHandlers[signalIndex]++;
 }
 
 template<typename Func>
-inline void SignalHandlers::forEachHandler(Signal signal, const Func& func) const
+inline void SignalHandlers::forEachHandler(Signal signal, NOESCAPE const Func& func) const
 {
     size_t signalIndex = static_cast<size_t>(signal);
     size_t handlerIndex = numberOfHandlers[signalIndex];
     while (handlerIndex--) {
         auto* memory = const_cast<SignalHandlerMemory*>(&handlers[signalIndex][handlerIndex]);
-        const SignalHandler& handler = *bitwise_cast<SignalHandler*>(memory);
+        const SignalHandler& handler = *std::bit_cast<SignalHandler*>(memory);
         func(handler);
     }
 }
@@ -137,16 +131,7 @@ static void initMachExceptionHandlerThread()
     if (!handlers.addedExceptions)
         return;
 
-    uint16_t flags = MPO_INSERT_SEND_RIGHT;
-
-    // This provisional flag can be removed once macos sonoma is no longer supported
-#ifdef MPO_PROVISIONAL_ID_PROT_OPTOUT
-    flags |= MPO_PROVISIONAL_ID_PROT_OPTOUT;
-#endif
-
-#if CPU(ARM64) && HAVE(HARDENED_MACH_EXCEPTIONS)
-    flags |= MPO_EXCEPTION_PORT;
-#endif
+    uint16_t flags = MPO_INSERT_SEND_RIGHT | MPO_EXCEPTION_PORT;
 
     mach_port_options_t options { };
     options.flags = flags;
@@ -194,7 +179,7 @@ static void initMachExceptionHandlerThread()
     dispatch_resume(source);
 }
 
-static exception_mask_t toMachMask(Signal signal)
+static exception_mask_t NODELETE toMachMask(Signal signal)
 {
     switch (signal) {
     case Signal::AccessFault: return EXC_MASK_BAD_ACCESS;
@@ -206,7 +191,7 @@ static exception_mask_t toMachMask(Signal signal)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Signal fromMachException(exception_type_t type)
+static Signal NODELETE fromMachException(exception_type_t type)
 {
     switch (type) {
     case EXC_BAD_ACCESS: return Signal::AccessFault;
@@ -219,7 +204,7 @@ static Signal fromMachException(exception_type_t type)
 }
 
 #if CPU(ARM64E) && OS(DARWIN)
-inline ptrauth_generic_signature_t hashThreadState(const thread_state_t source)
+inline ptrauth_generic_signature_t hashThreadState(std::span<const natural_t> source)
 {
     constexpr size_t threadStatePCPointerIndex = (offsetof(arm_unified_thread_state, ts_64) + offsetof(arm_thread_state64_t, __opaque_pc)) / sizeof(uintptr_t);
     constexpr size_t threadStateSizeInPointers = sizeof(arm_unified_thread_state) / sizeof(uintptr_t);
@@ -228,17 +213,17 @@ inline ptrauth_generic_signature_t hashThreadState(const thread_state_t source)
 
     hash = ptrauth_sign_generic_data(hash, mach_thread_self());
 
-    const uintptr_t* srcPtr = reinterpret_cast<const uintptr_t*>(source);
+    auto srcSpan = spanReinterpretCast<const uintptr_t>(source).first(threadStateSizeInPointers);
 
     // Exclude the __opaque_flags field which is reserved for OS use.
     // __opaque_flags is at the end of the payload.
     for (size_t i = 0; i < threadStateSizeInPointers - 1; ++i) {
         if (i != threadStatePCPointerIndex)
-            hash = ptrauth_sign_generic_data(srcPtr[i], hash);
+            hash = ptrauth_sign_generic_data(srcSpan[i], hash);
     }
-    const uint32_t* cpsrPtr = reinterpret_cast<const uint32_t*>(&srcPtr[threadStateSizeInPointers - 1]);
+    const uint32_t* cpsrPtr = reinterpret_cast<const uint32_t*>(&srcSpan[threadStateSizeInPointers - 1]);
     hash = ptrauth_sign_generic_data(static_cast<uint64_t>(*cpsrPtr), hash);
-    
+
     return hash;
 }
 #endif
@@ -261,8 +246,10 @@ kern_return_t catch_mach_exception_raise_state_identity(mach_port_t, mach_port_t
     return KERN_FAILURE;
 }
 
-static kern_return_t runSignalHandlers(Signal signal, PlatformRegisters& registers, mach_msg_type_number_t dataCount, mach_exception_data_t exceptionData)
+static kern_return_t runSignalHandlers(Signal signal, PlatformRegisters& registers, mach_msg_type_number_t dataCount, mach_exception_data_t rawExceptionData)
 {
+    auto exceptionData = unsafeMakeSpan(rawExceptionData, dataCount);
+
     SigInfo info;
     SignalHandlers& handlers = g_wtfConfig.signalHandlers;
     if (signal == Signal::AccessFault) {
@@ -273,7 +260,7 @@ static kern_return_t runSignalHandlers(Signal signal, PlatformRegisters& registe
         // not have any reason to handle it. Just let the default handler take care of it.
         static constexpr unsigned validAddressBits = OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH);
         static constexpr uintptr_t invalidAddressMask = ~((1ull << validAddressBits) - 1);
-        if (bitwise_cast<uintptr_t>(info.faultingAddress) & invalidAddressMask)
+        if (std::bit_cast<uintptr_t>(info.faultingAddress) & invalidAddressMask)
             return KERN_FAILURE;
 #endif
     }
@@ -315,11 +302,13 @@ kern_return_t catch_mach_exception_raise_state(
     const mach_exception_data_t exceptionData,
     mach_msg_type_number_t dataCount,
     int* stateFlavor,
-    const thread_state_t inState,
+    const thread_state_t rawInState,
     mach_msg_type_number_t inStateCount,
-    thread_state_t outState,
+    thread_state_t rawOutState,
     mach_msg_type_number_t* outStateCount)
 {
+    auto inState = unsafeMakeSpan(rawInState, inStateCount);
+    auto outState = unsafeMakeSpan(rawOutState, inStateCount);
     ASSERT(g_wtfConfig.isPermanentlyFrozen || g_wtfConfig.disabledFreezingForTesting);
     SignalHandlers& handlers = g_wtfConfig.signalHandlers;
     RELEASE_ASSERT(port == handlers.exceptionPort);
@@ -339,20 +328,20 @@ kern_return_t catch_mach_exception_raise_state(
     ptrauth_generic_signature_t inStateHash = hashThreadState(inState);
 #endif
 
-    memcpy(outState, inState, inStateCount * sizeof(inState[0]));
+    memcpySpan(outState, inState);
 
 #if CPU(X86_64)
     RELEASE_ASSERT(*stateFlavor == x86_THREAD_STATE);
-    PlatformRegisters& registers = reinterpret_cast<x86_thread_state_t*>(outState)->uts.ts64;
+    PlatformRegisters& registers = reinterpretCastSpanStartTo<x86_thread_state_t>(outState).uts.ts64;
 #elif CPU(X86)
     RELEASE_ASSERT(*stateFlavor == x86_THREAD_STATE);
-    PlatformRegisters& registers = reinterpret_cast<x86_thread_state_t*>(outState)->uts.ts32;
+    PlatformRegisters& registers = reinterpretCastSpanStartTo<x86_thread_state_t>(outState).uts.ts32;
 #elif CPU(ARM64)
     RELEASE_ASSERT(*stateFlavor == ARM_THREAD_STATE);
-    PlatformRegisters& registers = reinterpret_cast<arm_unified_thread_state*>(outState)->ts_64;
+    PlatformRegisters& registers = reinterpretCastSpanStartTo<arm_unified_thread_state>(outState).ts_64;
 #elif CPU(ARM)
     RELEASE_ASSERT(*stateFlavor == ARM_THREAD_STATE);
-    PlatformRegisters& registers = reinterpret_cast<arm_unified_thread_state*>(outState)->ts_32;
+    PlatformRegisters& registers = reinterpretCastSpanStartTo<arm_unified_thread_state>(outState).ts_32;
 #endif
 
     kern_return_t kr = runSignalHandlers(signal, registers, dataCount, exceptionData);
@@ -395,12 +384,8 @@ inline void setExceptionPorts(const AbstractLocker& threadGroupLocker, Thread& t
 
 static ThreadGroup& activeThreads()
 {
-    static LazyNeverDestroyed<std::shared_ptr<ThreadGroup>> activeThreads;
-    static std::once_flag initializeKey;
-    std::call_once(initializeKey, [&] {
-        activeThreads.construct(ThreadGroup::create());
-    });
-    return (*activeThreads.get());
+    static NeverDestroyed<Ref<ThreadGroup>> activeThreads = ThreadGroup::create();
+    return activeThreads.get();
 }
 
 void registerThreadForMachExceptionHandling(Thread& thread)
@@ -411,7 +396,7 @@ void registerThreadForMachExceptionHandling(Thread& thread)
         return;
 
     Locker locker { activeThreads().getLock() };
-    if (activeThreads().add(locker, thread) == ThreadGroupAddResult::NewlyAdded)
+    if (Ref { activeThreads() }->add(locker, thread) == ThreadGroupAddResult::NewlyAdded)
         setExceptionPorts(locker, thread);
 }
 
@@ -433,7 +418,7 @@ inline std::tuple<int, std::optional<int>> toSystemSignal(Signal signal)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline Signal fromSystemSignal(int signal)
+inline Signal NODELETE fromSystemSignal(int signal)
 {
     switch (signal) {
     case SIGSEGV: return Signal::AccessFault;
@@ -449,7 +434,7 @@ inline Signal fromSystemSignal(int signal)
     }
 }
 
-inline size_t offsetForSystemSignal(int sig)
+inline size_t NODELETE offsetForSystemSignal(int sig)
 {
     Signal signal = fromSystemSignal(sig);
     return static_cast<size_t>(signal) + (sig == SIGBUS);
@@ -481,7 +466,7 @@ void activateSignalHandlersFor(Signal signal)
 
 void addSignalHandler(Signal signal, SignalHandler&& handler)
 {
-    g_wtfConfig.signalHandlers.add(signal, WTFMove(handler));
+    g_wtfConfig.signalHandlers.add(signal, WTF::move(handler));
 }
 
 static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
@@ -536,7 +521,7 @@ static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
     }
 
     unsigned oldActionIndex = static_cast<size_t>(signal) + (sig == SIGBUS);
-    struct sigaction& oldAction = handlers.oldActions[static_cast<size_t>(oldActionIndex)];
+    struct sigaction& oldAction = handlers.oldActions[oldActionIndex];
     if (signal == Signal::Usr) {
         if (oldAction.sa_sigaction)
             oldAction.sa_sigaction(sig, info, ucontext);

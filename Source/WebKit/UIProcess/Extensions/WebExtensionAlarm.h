@@ -31,7 +31,7 @@
 #include <WebCore/Timer.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -39,7 +39,7 @@ namespace WebKit {
 
 class WebExtensionContext;
 
-class WebExtensionAlarm : public RefCounted<WebExtensionAlarm> {
+class WebExtensionAlarm : public RefCountedAndCanMakeWeakPtr<WebExtensionAlarm> {
     WTF_MAKE_NONCOPYABLE(WebExtensionAlarm);
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionAlarm);
 
@@ -52,15 +52,15 @@ public:
 
     explicit WebExtensionAlarm(String name, Seconds initialInterval, Seconds repeatInterval, Function<void(WebExtensionAlarm&)>&& handler = nullptr)
         : m_parameters({ name, initialInterval, repeatInterval, MonotonicTime::nan() })
-        , m_handler(WTFMove(handler))
+        , m_handler(WTF::move(handler))
     {
         ASSERT(!name.isNull());
         schedule();
     }
 
-    const WebExtensionAlarmParameters& parameters() const { return m_parameters; }
+    const WebExtensionAlarmParameters& parameters() const LIFETIME_BOUND { return m_parameters; }
 
-    const String& name() const { return m_parameters.name; }
+    const String& name() const LIFETIME_BOUND { return m_parameters.name; }
     Seconds initialInterval() const { return m_parameters.initialInterval; }
     Seconds repeatInterval() const { return m_parameters.repeatInterval; }
     MonotonicTime nextScheduledTime() const { return m_parameters.nextScheduledTime; }

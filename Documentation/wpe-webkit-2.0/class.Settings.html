@@ -37,6 +37,16 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
 
   
+  <noscript>
+    <style>
+      #search-form { cursor: not-allowed; }
+      #search-input { opacity: 0.5; pointer-events: none; }
+      #search-help { display: none; }
+    </style>
+  </noscript>
+  
+
+  
   <script src="wpe2-urlmap.js"></script>
   
   
@@ -44,6 +54,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   <script src="search.js"></script>
   
   <script src="main.js"></script>
+
+  
 </head>
 
 <body>
@@ -55,6 +67,33 @@ SPDX-License-Identifier: BSD, LGPL-2.1
       <div class="search section">
         <form id="search-form" autocomplete="off">
           <input id="search-input" type="text" name="do-not-autocomplete" placeholder="Click, or press 's' to search" autocomplete="off"/>
+          <button id="search-clear" type="button" class="hidden" aria-label="Clear search">✕</button>
+          <button id="search-help" type="button" aria-label="Search syntax help" aria-describedby="search-help-popover">?</button>
+          <div id="search-help-popover" role="tooltip">
+            
+            <p class="search-help-title">Filter results by type:</p>
+            <dl class="search-help-types">
+              <dt>alias:</dt><dd>alias</dd>
+              <dt>bitfield:</dt><dd>flags</dd>
+              <dt>callback:</dt><dd>callback</dd>
+              <dt>class:</dt><dd>class</dd>
+              <dt>constant:</dt><dd>constant</dd>
+              <dt>content:</dt><dd>content</dd>
+              <dt>ctor:</dt><dd>constructor</dd>
+              <dt>domain:</dt><dd>error domain</dd>
+              <dt>enum:</dt><dd>enum</dd>
+              <dt>function:</dt><dd>function</dd>
+              <dt>function_macro:</dt><dd>macro</dd>
+              <dt>interface:</dt><dd>interface</dd>
+              <dt>method:</dt><dd>method</dd>
+              <dt>property:</dt><dd>property</dd>
+              <dt>record:</dt><dd>struct</dd>
+              <dt>signal:</dt><dd>signal</dd>
+              <dt>type_func:</dt><dd>type function</dd>
+              <dt>union:</dt><dd>union</dd>
+              <dt>vfunc:</dt><dd>virtual function</dd>
+            </dl>
+          </div>
         </form>
       </div>
       
@@ -62,7 +101,7 @@ SPDX-License-Identifier: BSD, LGPL-2.1
         <h3><a href="index.html">WPEWebKit</a></h3>
         <p>API Version: 2.0</p>
         
-        <p>Library Version: 2.46.3</p>
+        <p>Library Version: 2.54.3</p>
         
       </div>
       
@@ -74,6 +113,7 @@ SPDX-License-Identifier: BSD, LGPL-2.1
 </div>
 
 
+  
 <div class="section">
   <h5>Constructors</h5>
   <div class="links">
@@ -87,6 +127,7 @@ SPDX-License-Identifier: BSD, LGPL-2.1
 
 
 
+  
 <div class="section">
   <h5>Functions</h5>
   <div class="links">
@@ -102,6 +143,7 @@ SPDX-License-Identifier: BSD, LGPL-2.1
 
 
 
+  
 <div class="section">
   <h5>Instance methods</h5>
   <div class="links">
@@ -196,6 +238,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
     <a class="method" href="method.Settings.get_load_icons_ignoring_image_load_setting.html">get_load_icons_ignoring_image_load_setting</a>
   
+    <a class="method" href="method.Settings.get_math_font_family.html">get_math_font_family</a>
+  
     <a class="method" href="method.Settings.get_media_content_types_requiring_hardware_support.html">get_media_content_types_requiring_hardware_support</a>
   
     <a class="method" href="method.Settings.get_media_playback_allows_inline.html">get_media_playback_allows_inline</a>
@@ -215,6 +259,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
     <a class="method" href="method.Settings.get_serif_font_family.html">get_serif_font_family</a>
   
     <a class="method" href="method.Settings.get_user_agent.html">get_user_agent</a>
+  
+    <a class="method" href="method.Settings.get_webrtc_udp_ports_range.html">get_webrtc_udp_ports_range</a>
   
     <a class="method" href="method.Settings.get_zoom_text_only.html">get_zoom_text_only</a>
   
@@ -306,6 +352,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
     <a class="method" href="method.Settings.set_load_icons_ignoring_image_load_setting.html">set_load_icons_ignoring_image_load_setting</a>
   
+    <a class="method" href="method.Settings.set_math_font_family.html">set_math_font_family</a>
+  
     <a class="method" href="method.Settings.set_media_content_types_requiring_hardware_support.html">set_media_content_types_requiring_hardware_support</a>
   
     <a class="method" href="method.Settings.set_media_playback_allows_inline.html">set_media_playback_allows_inline</a>
@@ -328,6 +376,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
     <a class="method" href="method.Settings.set_user_agent_with_application_details.html">set_user_agent_with_application_details</a>
   
+    <a class="method" href="method.Settings.set_webrtc_udp_ports_range.html">set_webrtc_udp_ports_range</a>
+  
     <a class="method" href="method.Settings.set_zoom_text_only.html">set_zoom_text_only</a>
   
   </div>
@@ -335,6 +385,7 @@ SPDX-License-Identifier: BSD, LGPL-2.1
 
 
 
+  
 <div class="section">
   <h5>Properties</h5>
   <div class="links">
@@ -425,6 +476,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
     <a class="property" href="property.Settings.load-icons-ignoring-image-load-setting.html">load-icons-ignoring-image-load-setting</a>
   
+    <a class="property" href="property.Settings.math-font-family.html">math-font-family</a>
+  
     <a class="property" href="property.Settings.media-content-types-requiring-hardware-support.html">media-content-types-requiring-hardware-support</a>
   
     <a class="property" href="property.Settings.media-playback-allows-inline.html">media-playback-allows-inline</a>
@@ -445,6 +498,8 @@ SPDX-License-Identifier: BSD, LGPL-2.1
   
     <a class="property" href="property.Settings.user-agent.html">user-agent</a>
   
+    <a class="property" href="property.Settings.webrtc-udp-ports-range.html">webrtc-udp-ports-range</a>
+  
     <a class="property" href="property.Settings.zoom-text-only.html">zoom-text-only</a>
   
   </div>
@@ -452,14 +507,18 @@ SPDX-License-Identifier: BSD, LGPL-2.1
 
 
 
+  
 
 
+  
 
+
+  
 
 
 
       <div class="section generator">
-        <p>Generated by <a href="https://gitlab.gnome.org/GNOME/gi-docgen">gi-docgen</a> 2023.1</p>
+        <p>Generated by <a href="https://gitlab.gnome.org/GNOME/gi-docgen">gi-docgen</a> 2026.2</p>
       </div>
     </nav>
 
@@ -483,16 +542,23 @@ SPDX-License-Identifier: BSD, LGPL-2.1
           Description
           <a href="#description" class="anchor"></a>
           
-          <a class="srclink" title="go to source location" href="https://github.com/WebKit/WebKit/tree/main/Source/WebKit/UIProcess/API/glib/WebKitSettings.cpp#L94">[src]</a>
+          <a class="srclink" title="go to source location" href="https://github.com/WebKit/WebKit/tree/main/Source/WebKit/UIProcess/API/glib/WebKitSettings.cpp#L102">[src]</a>
           
         </h4>
 
-        <pre><code>final class WPEWebKit.Settings : GObject.Object {
+        <pre><code>final class WPEWebKit.Settings : GObject.Object
+{
   /* No available fields */
 }</pre></code>
 
         <div class="docblock">
-          <p>Control the behaviour of a <code>WebKitWebView</code>.</p>
+          
+          
+          
+        </div>
+
+        <div class="docblock">
+          <p>Control the behavior of a <code>WebKitWebView</code>.</p>
 <p><code>WebKitSettings</code> can be applied to a <code>WebKitWebView</code> to control text charset,
 color, font sizes, printing mode, script support, loading of images and various
 other things on a <code>WebKitWebView</code>. After creation, a <code>WebKitSettings</code> object
@@ -501,12 +567,6 @@ contains default&nbsp;settings.</p>
 <span class="n">WebKitSettings</span><span class="w"> </span><span class="o">*</span><span class="n">settings</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">webkit_web_view_group_get_settings</span><span class="w"> </span><span class="p">(</span><span class="n">my_view_group</span><span class="p">);</span>
 <span class="n">webkit_settings_set_enable_javascript</span><span class="w"> </span><span class="p">(</span><span class="n">settings</span><span class="p">,</span><span class="w"> </span><span class="n">FALSE</span><span class="p">);</span>
 </code></pre></div>
-        </div>
-
-        <div class="docblock">
-          
-          
-          
         </div>
 
         
@@ -520,22 +580,19 @@ contains default&nbsp;settings.</p>
         <a href="#hierarchy" class="anchor"></a>
       </h4>
       <div class="docblock" alt="Hierarchy for WPEWebKit.Settings">
-        <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
- "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<!-- Generated by graphviz version 2.40.1 (20161225.0304)
+        <!-- Generated by graphviz version 14.1.2 (0)
  -->
 <!-- Title: hierarchy Pages: 1 -->
-<svg width="113pt" height="116pt"
- viewBox="0.00 0.00 113.43 116.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="136pt" height="116pt"
+ viewBox="0.00 0.00 136.00 116.00">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 112)">
 <title>hierarchy</title>
 <!-- this -->
 <g id="node1" class="node">
 <title>this</title>
 <g id="a_node1"><a xlink:title="WebKitSettings">
-<path fill="none" stroke="#000000" d="M93.6468,-36C93.6468,-36 11.7838,-36 11.7838,-36 5.7838,-36 -.2162,-30 -.2162,-24 -.2162,-24 -.2162,-12 -.2162,-12 -.2162,-6 5.7838,0 11.7838,0 11.7838,0 93.6468,0 93.6468,0 99.6468,0 105.6468,-6 105.6468,-12 105.6468,-12 105.6468,-24 105.6468,-24 105.6468,-30 99.6468,-36 93.6468,-36"/>
-<text text-anchor="middle" x="52.7153" y="-13.8" font-family="Times,serif" font-size="14.00" fill="#000000">WebKitSettings</text>
+<path fill="none" stroke="black" d="M115.75,-36C115.75,-36 12,-36 12,-36 6,-36 0,-30 0,-24 0,-24 0,-12 0,-12 0,-6 6,0 12,0 12,0 115.75,0 115.75,0 121.75,0 127.75,-6 127.75,-12 127.75,-12 127.75,-24 127.75,-24 127.75,-30 121.75,-36 115.75,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="63.88" y="-13.32" font-family="Times,serif" font-size="14.00">WebKitSettings</text>
 </a>
 </g>
 </g>
@@ -543,15 +600,15 @@ contains default&nbsp;settings.</p>
 <g id="node2" class="node">
 <title>ancestor_0</title>
 <g id="a_node2"><a xlink:title="GObject.Object">
-<path fill="none" stroke="#000000" d="M72.6403,-108C72.6403,-108 32.7903,-108 32.7903,-108 26.7903,-108 20.7903,-102 20.7903,-96 20.7903,-96 20.7903,-84 20.7903,-84 20.7903,-78 26.7903,-72 32.7903,-72 32.7903,-72 72.6403,-72 72.6403,-72 78.6403,-72 84.6403,-78 84.6403,-84 84.6403,-84 84.6403,-96 84.6403,-96 84.6403,-102 78.6403,-108 72.6403,-108"/>
-<text text-anchor="middle" x="52.7153" y="-85.8" font-family="Times,serif" font-size="14.00" fill="#000000">GObject</text>
+<path fill="none" stroke="black" d="M88.75,-108C88.75,-108 39,-108 39,-108 33,-108 27,-102 27,-96 27,-96 27,-84 27,-84 27,-78 33,-72 39,-72 39,-72 88.75,-72 88.75,-72 94.75,-72 100.75,-78 100.75,-84 100.75,-84 100.75,-96 100.75,-96 100.75,-102 94.75,-108 88.75,-108"/>
+<text xml:space="preserve" text-anchor="middle" x="63.88" y="-85.33" font-family="Times,serif" font-size="14.00">GObject</text>
 </a>
 </g>
 </g>
 <!-- ancestor_0&#45;&#45;this -->
 <g id="edge1" class="edge">
 <title>ancestor_0&#45;&#45;this</title>
-<path fill="none" stroke="#000000" d="M52.7153,-71.8314C52.7153,-61 52.7153,-47.2876 52.7153,-36.4133"/>
+<path fill="none" stroke="black" d="M63.88,-71.7C63.88,-60.85 63.88,-46.92 63.88,-36.1"/>
 </g>
 </g>
 </svg>
@@ -671,7 +728,7 @@ contains default&nbsp;settings.</p>
         <div class="">
           <h6><a href="method.Settings.apply_from_key_file.html">webkit_settings_apply_from_key_file</a></h6>
           <div class="docblock">
-            <p>Reads the contents of the given <code>group_name</code> from the given <code>key_file</code> and apply the value of
+            <p>Reads the contents of the given <code>group_name</code> from the given <code>key_file</code> and applies the value of
 each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
           <div class="docblock">
@@ -829,13 +886,13 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="method.Settings.get_enable_dns_prefetching.html">webkit_settings_get_enable_dns_prefetching</a></h6>
           <div class="docblock">
             <p>Get the <code>WebKitSettings:enable-dns-prefetching</code> property.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.48.</span>&nbsp;</p>
           </div>
         </div>
       
@@ -879,13 +936,13 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="method.Settings.get_enable_hyperlink_auditing.html">webkit_settings_get_enable_hyperlink_auditing</a></h6>
           <div class="docblock">
             <p>Get the <code>WebKitSettings:enable-hyperlink-auditing</code> property.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.50.</span>&nbsp;</p>
           </div>
         </div>
       
@@ -1120,6 +1177,16 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
         </div>
       
         <div class="">
+          <h6><a href="method.Settings.get_math_font_family.html">webkit_settings_get_math_font_family</a></h6>
+          <div class="docblock">
+            <p>Gets the <code>WebKitSettings:math-font-family</code> property.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.52</span></p>
+          </div>
+        </div>
+      
+        <div class="">
           <h6><a href="method.Settings.get_media_content_types_requiring_hardware_support.html">webkit_settings_get_media_content_types_requiring_hardware_support</a></h6>
           <div class="docblock">
             <p>Gets the <code>WebKitSettings:media-content-types-requiring-hardware-support</code> property.</p>
@@ -1216,6 +1283,16 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
           <div class="docblock">
             <p></p>
+          </div>
+        </div>
+      
+        <div class="">
+          <h6><a href="method.Settings.get_webrtc_udp_ports_range.html">webkit_settings_get_webrtc_udp_ports_range</a></h6>
+          <div class="docblock">
+            <p>Get the <code>WebKitSettings:webrtc-udp-ports-range</code> property.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.48</span></p>
           </div>
         </div>
       
@@ -1379,13 +1456,13 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="method.Settings.set_enable_dns_prefetching.html">webkit_settings_set_enable_dns_prefetching</a></h6>
           <div class="docblock">
             <p>Set the <code>WebKitSettings:enable-dns-prefetching</code> property.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.48.</span>&nbsp;</p>
           </div>
         </div>
       
@@ -1429,13 +1506,13 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="method.Settings.set_enable_hyperlink_auditing.html">webkit_settings_set_enable_hyperlink_auditing</a></h6>
           <div class="docblock">
             <p>Set the <code>WebKitSettings:enable-hyperlink-auditing</code> property.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.50.</span>&nbsp;</p>
           </div>
         </div>
       
@@ -1505,7 +1582,7 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
             <p>Set the <code>WebKitSettings:enable-mock-capture-devices</code> property.</p>
           </div>
           <div class="docblock">
-            <p><span class="emblem available">since: 2.4</span></p>
+            <p><span class="emblem available">since: 2.24</span></p>
           </div>
         </div>
       
@@ -1670,6 +1747,16 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
         </div>
       
         <div class="">
+          <h6><a href="method.Settings.set_math_font_family.html">webkit_settings_set_math_font_family</a></h6>
+          <div class="docblock">
+            <p>Set the <code>WebKitSettings:math-font-family</code> property.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.52</span></p>
+          </div>
+        </div>
+      
+        <div class="">
           <h6><a href="method.Settings.set_media_content_types_requiring_hardware_support.html">webkit_settings_set_media_content_types_requiring_hardware_support</a></h6>
           <div class="docblock">
             <p>Set the <code>WebKitSettings:media-content-types-requiring-hardware-support</code> property.</p>
@@ -1780,6 +1867,16 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
         </div>
       
         <div class="">
+          <h6><a href="method.Settings.set_webrtc_udp_ports_range.html">webkit_settings_set_webrtc_udp_ports_range</a></h6>
+          <div class="docblock">
+            <p>Set the <code>WebKitSettings:webrtc-udp-ports-range</code> property.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.48</span></p>
+          </div>
+        </div>
+      
+        <div class="">
           <h6><a href="method.Settings.set_zoom_text_only.html">webkit_settings_set_zoom_text_only</a></h6>
           <div class="docblock">
             <p>Set the <code>WebKitSettings:zoom-text-only</code> property.</p>
@@ -1825,7 +1922,7 @@ each key/value to the corresponding property on the <code>settings</code>.</p>
             <p>Whether file access is allowed from file URLs. By default, when
 something is loaded in a <code>WebKitWebView</code> using a file <span class="caps">URI</span>, cross
 origin requests to other file resources are not allowed. This
-setting allows you to change that behaviour, so that it would be
+setting allows you to change that behavior, so that it would be
 possible to do a XMLHttpRequest of a local file, for&nbsp;example.</p>
           </div>
           <div class="docblock">
@@ -1838,7 +1935,7 @@ possible to do a XMLHttpRequest of a local file, for&nbsp;example.</p>
           <div class="docblock">
             <p>Determine whether it&#8217;s allowed to create and run modal dialogs
 from a <code>WebKitWebView</code> through JavaScript with
-<function>window.showModalDialog</function>. If it&#8217;s set to
+<code>window.showModalDialog</code>. If it&#8217;s set to
 <code>FALSE</code>, the associated <code>WebKitWebView</code> won&#8217;t be able to create
 new modal dialogs, so not even the <code>WebKitWebView::create</code>
 signal will be&nbsp;emitted.</p>
@@ -1854,7 +1951,7 @@ signal will be&nbsp;emitted.</p>
             <p>Whether or not the top frame is allowed to navigate to data URLs. It is disabled by default
 due to the risk it poses when loading untrusted URLs, with data URLs being used in scamming
 and phishing attacks. In contrast, a scenario where it could be enabled could be an app that
-embeds a WebView and you have control of the pages being show instead of a generic&nbsp;browser.</p>
+embeds a WebView and you have control of the pages being shown instead of a generic&nbsp;browser.</p>
           </div>
           <div class="docblock">
             <p><span class="emblem available">since: 2.28</span></p>
@@ -1868,7 +1965,7 @@ embeds a WebView and you have control of the pages being show instead of a gener
 should be allowed to access content from any origin.  By default, when
 something is loaded in a <code>WebKitWebView</code> using a file scheme <span class="caps">URL</span>,
 access to the local file system and arbitrary local storage is not
-allowed. This setting allows you to change that behaviour, so that
+allowed. This setting allows you to change that behavior, so that
 it would be possible to use local storage, for&nbsp;example.</p>
           </div>
           <div class="docblock">
@@ -1995,14 +2092,14 @@ is enabled, for other reasons like its size or when willReadFrequently property 
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="property.Settings.enable-dns-prefetching.html">WPEWebKit.Settings:enable-dns-prefetching</a></h6>
           <div class="docblock">
             <p>Determines whether or not to prefetch domain names. <span class="caps">DNS</span> prefetching attempts
 to resolve domain names before a user tries to follow a&nbsp;link.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.48</span>&nbsp;</p>
           </div>
         </div>
       
@@ -2025,7 +2122,7 @@ with the ENABLE_ENCRYPTED_MEDIA&nbsp;flag.</p>
             <p>Whether to enable the Javascript Fullscreen <span class="caps">API</span>. The <span class="caps">API</span>
 allows any <span class="caps">HTML</span> element to request fullscreen display. See also
 the current draft of the spec:
-http://www.w3.org/<span class="caps">TR</span>/fullscreen/</p>
+http://www.w3.org/<span class="caps">TR</span>/fullscreen/.</p>
           </div>
           <div class="docblock">
             <p></p>
@@ -2053,13 +2150,13 @@ simple synchronous storage&nbsp;access.</p>
           </div>
         </div>
       
-        <div class="">
+        <div class="deprecated">
           <h6><a href="property.Settings.enable-hyperlink-auditing.html">WPEWebKit.Settings:enable-hyperlink-auditing</a></h6>
           <div class="docblock">
             <p>Determines whether or not hyperlink auditing is&nbsp;enabled.</p>
           </div>
           <div class="docblock">
-            <p></p>
+            <p><span class="emblem deprecated">deprecated: 2.50</span>&nbsp;</p>
           </div>
         </div>
       
@@ -2166,7 +2263,7 @@ viewers. This setting only controls the Page Cache, this cache
 is different than the disk-based or memory-based traditional
 resource caches, its point is to make going back and forth
 between pages much faster. For details about the different types
-of caches and their purposes see:&nbsp;http://webkit.org/blog/427/webkit-page-cache-i-the-basics/</p>
+of caches and their purposes see:&nbsp;http://webkit.org/blog/427/webkit-page-cache-i-the-basics/.</p>
           </div>
           <div class="docblock">
             <p></p>
@@ -2214,9 +2311,9 @@ special-case this and other cases to make some specific sites&nbsp;work.</p>
             <p>Whether to enable Spatial Navigation. This feature consists in the ability
 to navigate between focusable elements in a Web page, such as hyperlinks
 and form controls, by using Left, Right, Up and Down arrow keys.
-For example, if an user presses the Right key, heuristics determine whether
+For example, if a user presses the Right key, heuristics determine whether
 there is an element they might be trying to reach towards the right, and if
-there are multiple elements, which element they probably&nbsp;wants.</p>
+there are multiple elements, which element they probably&nbsp;want.</p>
           </div>
           <div class="docblock">
             <p><span class="emblem available">since: 2.4</span></p>
@@ -2321,9 +2418,19 @@ set to <code>TRUE</code>, document.execCommand() allows cut, copy and paste&nbsp
         </div>
       
         <div class="">
+          <h6><a href="property.Settings.math-font-family.html">WPEWebKit.Settings:math-font-family</a></h6>
+          <div class="docblock">
+            <p>The font family used as the default for content using a math&nbsp;font.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.52</span></p>
+          </div>
+        </div>
+      
+        <div class="">
           <h6><a href="property.Settings.media-content-types-requiring-hardware-support.html">WPEWebKit.Settings:media-content-types-requiring-hardware-support</a></h6>
           <div class="docblock">
-            <p>List of media content types requiring hardware support, split by semicolons (:).
+            <p>List of media content types requiring hardware support, split by colons (:).
 For example: &#8216;video/webm; codecs=&#8221;vp<em>&#8220;:video/mp4; codecs=&#8221;avc</em>&#8220;:video/&ast;&nbsp;codecs=&#8221;av1*&#8221;&#8217;.</p>
           </div>
           <div class="docblock">
@@ -2434,6 +2541,16 @@ typically better to not completely override the standard user-agent, but to use
         </div>
       
         <div class="">
+          <h6><a href="property.Settings.webrtc-udp-ports-range.html">WPEWebKit.Settings:webrtc-udp-ports-range</a></h6>
+          <div class="docblock">
+            <p>Allow customization of the WebRTC <span class="caps">UDP</span> ports&nbsp;range.</p>
+          </div>
+          <div class="docblock">
+            <p><span class="emblem available">since: 2.48</span></p>
+          </div>
+        </div>
+      
+        <div class="">
           <h6><a href="property.Settings.zoom-text-only.html">WPEWebKit.Settings:zoom-text-only</a></h6>
           <div class="docblock">
             <p>Whether <code>WebKitWebView:zoom-level</code> affects only the
@@ -2476,10 +2593,6 @@ this property is&nbsp;enabled.</p>
               <p>The notify signal is emitted on an object when one of its properties has
 its value set through g_object_set_property(), g_object_set(), et&nbsp;al.</p>
             </div>
-            <div class="docblock">
-              <p></p>
-            </div>
-          
           </div>
         </div>
         
@@ -2505,7 +2618,7 @@ its value set through g_object_set_property(), g_object_set(), et&nbsp;al.</p>
       </div>
 
       <div class="docblock">
-        No description available.
+        <p>No description available.</p>
       </div>
 
       
@@ -2515,7 +2628,7 @@ its value set through g_object_set_property(), g_object_set(), et&nbsp;al.</p>
         <dl class="members">
         
           <dt><code>parent_class: GObjectClass</code></dt>
-          <dd>No description available.</dd>
+          <dd><p>No description available.</p></dd>
         
         </dd>
       </div>

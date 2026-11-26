@@ -38,14 +38,9 @@ namespace WebKit::WebGPU {
 std::optional<ImageCopyBuffer> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::ImageCopyBuffer& imageCopyBuffer)
 {
     auto base = convertToBacking(static_cast<const WebCore::WebGPU::ImageDataLayout&>(imageCopyBuffer));
-    if (!base)
-        return std::nullopt;
+    auto buffer = convertToBacking(protect(imageCopyBuffer.buffer).get());
 
-    auto buffer = convertToBacking(imageCopyBuffer.buffer);
-    if (!buffer)
-        return std::nullopt;
-
-    return { { WTFMove(*base), buffer } };
+    return { { WTF::move(*base), buffer } };
 }
 
 std::optional<WebCore::WebGPU::ImageCopyBuffer> ConvertFromBackingContext::convertFromBacking(const ImageCopyBuffer& imageCopyBuffer)
@@ -54,11 +49,11 @@ std::optional<WebCore::WebGPU::ImageCopyBuffer> ConvertFromBackingContext::conve
     if (!base)
         return std::nullopt;
 
-    auto* buffer = convertBufferFromBacking(imageCopyBuffer.buffer);
+    WeakPtr buffer = convertBufferFromBacking(imageCopyBuffer.buffer);
     if (!buffer)
         return std::nullopt;
 
-    return { { WTFMove(*base), *buffer } };
+    return { { WTF::move(*base), *buffer } };
 }
 
 } // namespace WebKit

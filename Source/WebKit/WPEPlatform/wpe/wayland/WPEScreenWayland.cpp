@@ -31,6 +31,11 @@
 /**
  * WPEScreenWayland:
  *
+ * A [class@WPEPlatform.Screen] implementation for Wayland.
+ *
+ * [class@ScreenWayland] is the [class@WPEPlatform.Screen] implementation used
+ * by [class@DisplayWayland]. Each instance represents a `wl_output`, which can
+ * be accessed with [method@ScreenWayland.get_wl_output].
  */
 struct _WPEScreenWaylandPrivate {
     struct wl_output* wlOutput;
@@ -46,6 +51,8 @@ WEBKIT_DEFINE_FINAL_TYPE(WPEScreenWayland, wpe_screen_wayland, WPE_TYPE_SCREEN, 
 
 static void wpeScreenWaylandInvalidate(WPEScreen* screen)
 {
+    WPE_SCREEN_CLASS(wpe_screen_wayland_parent_class)->invalidate(screen);
+
     auto* priv = WPE_SCREEN_WAYLAND(screen)->priv;
     if (priv->wlOutput) {
         if (wl_output_get_version(priv->wlOutput) >= WL_OUTPUT_RELEASE_SINCE_VERSION)

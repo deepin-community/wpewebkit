@@ -62,26 +62,26 @@ const MQ::MediaQueryList& MediaList::mediaQueries() const
 {
     if (m_detachedMediaQueries)
         return *m_detachedMediaQueries;
-    if (auto* rule = dynamicDowncast<CSSImportRule>(m_parentRule))
+    if (auto* rule = dynamicDowncast<CSSImportRule>(m_parentRule.get()))
         return rule->mediaQueries();
-    if (auto* rule = dynamicDowncast<CSSMediaRule>(m_parentRule))
+    if (auto* rule = dynamicDowncast<CSSMediaRule>(m_parentRule.get()))
         return rule->mediaQueries();
     return m_parentStyleSheet->mediaQueries();
 }
 
 void MediaList::setMediaQueries(MQ::MediaQueryList&& queries)
 {
-    if (m_parentStyleSheet) {
-        m_parentStyleSheet->setMediaQueries(WTFMove(queries));
-        m_parentStyleSheet->didMutate();
+    if (RefPtr parentStyleSheet = m_parentStyleSheet.get()) {
+        parentStyleSheet->setMediaQueries(WTF::move(queries));
+        parentStyleSheet->didMutate();
         return;
     }
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_parentRule);
-    if (auto* rule = dynamicDowncast<CSSImportRule>(m_parentRule))
-        rule->setMediaQueries(WTFMove(queries));
-    if (auto* rule = dynamicDowncast<CSSMediaRule>(m_parentRule))
-        rule->setMediaQueries(WTFMove(queries));
+    CSSStyleSheet::RuleMutationScope mutationScope(m_parentRule.get());
+    if (RefPtr rule = dynamicDowncast<CSSImportRule>(m_parentRule.get()))
+        rule->setMediaQueries(WTF::move(queries));
+    if (RefPtr rule = dynamicDowncast<CSSMediaRule>(m_parentRule.get()))
+        rule->setMediaQueries(WTF::move(queries));
 }
 
 String MediaList::mediaText() const
@@ -93,7 +93,17 @@ String MediaList::mediaText() const
 
 void MediaList::setMediaText(const String& value)
 {
-    setMediaQueries(MQ::MediaQueryParser::parse(value, { }));
+    setMediaQueries(MQ::MediaQueryParser::parse(value, strictCSSParserContext()));
+}
+
+CSSRule* MediaList::parentRule() const
+{
+    return m_parentRule.get();
+}
+
+CSSStyleSheet* MediaList::parentStyleSheet() const
+{
+    return m_parentStyleSheet.get();
 }
 
 String MediaList::item(unsigned index) const
@@ -109,16 +119,28 @@ String MediaList::item(unsigned index) const
 
 ExceptionOr<void> MediaList::deleteMedium(const String& value)
 {
-    auto valueToRemove = value.convertToASCIILowercase();
+    // https://drafts.csswg.org/cssom/#dom-medialist-deletemedium
+    // The value is parsed as a single media query; bail unless parsing
+    // produces exactly one query.
+    auto parsedQueries = MQ::MediaQueryParser::parse(value, strictCSSParserContext());
+    if (parsedQueries.size() != 1)
+        return Exception { ExceptionCode::NotFoundError };
+
+    auto serializeQuery = [](const MQ::MediaQuery& query) {
+        StringBuilder builder;
+        MQ::serialize(builder, query);
+        return builder.toString();
+    };
+    auto queryToRemove = serializeQuery(parsedQueries[0]);
     auto queries = mediaQueries();
-    for (unsigned i = 0; i < queries.size(); ++i) {
-        if (item(i) == valueToRemove) {
-            queries.remove(i);
-            setMediaQueries(WTFMove(queries));
-            return { };
-        }
-    }
-    return Exception { ExceptionCode::NotFoundError };
+    auto removedCount = queries.removeAllMatching([&](auto& query) {
+        return serializeQuery(query) == queryToRemove;
+    });
+    if (!removedCount)
+        return Exception { ExceptionCode::NotFoundError };
+
+    setMediaQueries(WTF::move(queries));
+    return { };
 }
 
 void MediaList::appendMedium(const String& value)
@@ -126,11 +148,26 @@ void MediaList::appendMedium(const String& value)
     if (value.isEmpty())
         return;
 
-    auto newQuery = MQ::MediaQueryParser::parse(value, { });
+    // https://drafts.csswg.org/cssom/#dom-medialist-appendmedium
+    auto parsedQueries = MQ::MediaQueryParser::parse(value, strictCSSParserContext());
+    if (parsedQueries.size() != 1)
+        return;
+
+    StringBuilder builder;
+    MQ::serialize(builder, parsedQueries[0]);
+    auto newQueryText = builder.toString();
 
     auto queries = mediaQueries();
-    queries.appendVector(newQuery);
-    setMediaQueries(WTFMove(queries));
+    bool alreadyPresent = queries.containsIf([&](auto& query) {
+        StringBuilder existingQueryBuilder;
+        MQ::serialize(existingQueryBuilder, query);
+        return existingQueryBuilder.toString() == newQueryText;
+    });
+    if (alreadyPresent)
+        return;
+
+    queries.append(WTF::move(parsedQueries[0]));
+    setMediaQueries(WTF::move(queries));
 }
 
 TextStream& operator<<(TextStream& ts, const MediaList& mediaList)

@@ -39,9 +39,9 @@
 #include <wtf/WeakRef.h>
 
 #if PLATFORM(COCOA)
+#include <WebCore/AudioOutputUnitAdaptor.h>
 #include "SharedCARingBuffer.h"
 #endif
-
 
 namespace WebCore {
 #if PLATFORM(COCOA)
@@ -50,11 +50,11 @@ class CAAudioStreamDescription;
 class SharedMemoryHandle;
 }
 
-
 namespace WebKit {
 
 class GPUConnectionToWebProcess;
 class RemoteAudioDestination;
+struct SharedPreferencesForWebProcess;
 
 class RemoteAudioDestinationManager : private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteAudioDestinationManager);
@@ -63,19 +63,26 @@ public:
     RemoteAudioDestinationManager(GPUConnectionToWebProcess&);
     ~RemoteAudioDestinationManager();
 
+    void ref() const final;
+    void deref() const final;
+
     void didReceiveMessageFromWebProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
 
-    bool allowsExitUnderMemoryPressure() const;
+    bool NODELETE allowsExitUnderMemoryPressure() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
-    void createAudioDestination(RemoteAudioDestinationIdentifier, const String& inputDeviceId, uint32_t numberOfInputChannels, uint32_t numberOfOutputChannels, float sampleRate, float hardwareSampleRate, IPC::Semaphore&& renderSemaphore, WebCore::SharedMemoryHandle&&);
+    void createAudioDestination(RemoteAudioDestinationIdentifier, const String& inputDeviceId, uint32_t numberOfInputChannels, uint32_t numberOfOutputChannels, float sampleRate, float hardwareSampleRate, IPC::Semaphore&& renderSemaphore, WebCore::SharedMemoryHandle&&, CompletionHandler<void(uint64_t)>&&);
     void deleteAudioDestination(RemoteAudioDestinationIdentifier);
-    void startAudioDestination(RemoteAudioDestinationIdentifier, CompletionHandler<void(bool)>&&);
+    void startAudioDestination(RemoteAudioDestinationIdentifier, CompletionHandler<void(bool, uint64_t)>&&);
     void stopAudioDestination(RemoteAudioDestinationIdentifier, CompletionHandler<void(bool)>&&);
 #if PLATFORM(COCOA)
     void audioSamplesStorageChanged(RemoteAudioDestinationIdentifier, ConsumerSharedCARingBuffer::Handle&&);
+#endif
+#if PLATFORM(IOS_FAMILY)
+    void setSceneIdentifier(RemoteAudioDestinationIdentifier, String&&);
 #endif
 
     HashMap<RemoteAudioDestinationIdentifier, UniqueRef<RemoteAudioDestination>> m_audioDestinations;

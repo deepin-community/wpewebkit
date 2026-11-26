@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple, Inc. All rights reserved.
+ * Copyright (C) 2024-2025 Apple, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,24 +27,27 @@
 
 #if ENABLE(WEBXR_LAYERS)
 
-#include "WebGPUXRProjectionLayer.h"
-#include "WebXRRigidTransform.h"
+#include "PlatformXR.h"
 #include "XRCompositionLayer.h"
+#include "XRProjectionLayerInit.h"
+#include <WebCore/IntRect.h>
+#include <wtf/RefPtr.h>
+
+#if PLATFORM(COCOA)
+#include <wtf/MachSendRight.h>
+#endif
 
 namespace WebCore {
 
-namespace WebGPU {
-class XRProjectionLayer;
-}
-
 class GPUTexture;
+class WebXRRigidTransform;
 
 class XRProjectionLayer : public XRCompositionLayer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(XRProjectionLayer);
+    WTF_MAKE_TZONE_ALLOCATED(XRProjectionLayer);
 public:
-    static Ref<XRProjectionLayer> create(ScriptExecutionContext& scriptExecutionContext, Ref<WebCore::WebGPU::XRProjectionLayer>&& backing)
+    static Ref<XRProjectionLayer> create(ScriptExecutionContext& scriptExecutionContext, WebXRSession& session, Ref<XRLayerBacking>&& backing, const XRProjectionLayerInit& init)
     {
-        return adoptRef(*new XRProjectionLayer(scriptExecutionContext, WTFMove(backing)));
+        return adoptRef(*new XRProjectionLayer(scriptExecutionContext, session, WTF::move(backing), init));
     }
     virtual ~XRProjectionLayer();
 
@@ -53,22 +56,45 @@ public:
     uint32_t textureArrayLength() const;
 
     bool ignoreDepthValues() const;
+    void setIgnoreDepthValues(bool ignoreDepthValues) { m_ignoreDepthValues = ignoreDepthValues; }
+
     std::optional<float> fixedFoveation() const;
-    [[noreturn]] void setFixedFoveation(std::optional<float>);
-    WebXRRigidTransform* deltaPose() const;
-    [[noreturn]] void setDeltaPose(WebXRRigidTransform*);
+    void setFixedFoveation(std::optional<float>);
+    WebXRRigidTransform* NODELETE deltaPose() const;
+    void setDeltaPose(WebXRRigidTransform*);
+
+    void setViewport(size_t viewIndex, const IntRect&);
 
     // WebXRLayer
-    void startFrame(const PlatformXR::FrameData&) final;
-    PlatformXR::Device::Layer endFrame() final;
+    void startFrame(PlatformXR::FrameData&) final;
+    PlatformXR::DeviceLayer endFrame() final;
+#if PLATFORM(VISION)
+    bool supportsViewportScaling() const final { return false; }
+#else
+    bool supportsViewportScaling() const final { return true; }
+#endif
+#if ENABLE(WEBGPU)
+    std::optional<PlatformXR::FrameData::LayerData> layerData() const;
+#endif
 
-    WebCore::WebGPU::XRProjectionLayer& backing();
 private:
-    XRProjectionLayer(ScriptExecutionContext&, Ref<WebCore::WebGPU::XRProjectionLayer>&&);
+    XRProjectionLayer(ScriptExecutionContext&, WebXRSession&, Ref<XRLayerBacking>&&, const XRProjectionLayerInit&);
 
-    Ref<WebCore::WebGPU::XRProjectionLayer> m_backing;
+    bool isXRProjectionLayer() const final { return true; }
+    Vector<IntRect> computeViewports();
+
+    bool m_ignoreDepthValues { false };
+#if ENABLE(WEBGPU)
+    std::optional<PlatformXR::FrameData::LayerData> m_layerData;
+#endif
+    RefPtr<WebXRRigidTransform> m_deltaPose;
+    Vector<IntRect> m_viewports;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::XRProjectionLayer)
+    static bool isType(const WebCore::WebXRLayer& layer) { return layer.isXRProjectionLayer(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif

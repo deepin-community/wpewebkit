@@ -26,6 +26,7 @@
 #pragma once
 
 #include "RenderBox.h"
+#include "StyleDisplay.h"
 
 namespace WebCore {
 
@@ -33,33 +34,33 @@ class RenderTable;
 class RenderTableCell;
 
 class RenderTableCol final : public RenderBox {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderTableCol);
+    WTF_MAKE_TZONE_ALLOCATED(RenderTableCol);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTableCol);
 public:
-    RenderTableCol(Element&, RenderStyle&&);
-    RenderTableCol(Document&, RenderStyle&&);
+    RenderTableCol(Element&, Style::ComputedStyle&&);
+    RenderTableCol(Document&, Style::ComputedStyle&&);
     virtual ~RenderTableCol();
 
-    void clearPreferredLogicalWidthsDirtyBits();
+    void clearContentLogicalWidthsInvalidation();
 
     unsigned span() const { return m_span; }
     void setSpan(unsigned span) { m_span = span; }
 
     bool isTableColumnGroupWithColumnChildren() const { return firstChild(); }
-    bool isTableColumn() const { return style().display() == DisplayType::TableColumn; }
-    bool isTableColumnGroup() const { return style().display() == DisplayType::TableColumnGroup; }
+    bool isTableColumn() const { return style().display() == Style::DisplayType::TableColumn; }
+    bool isTableColumnGroup() const { return style().display() == Style::DisplayType::TableColumnGroup; }
 
-    RenderTableCol* enclosingColumnGroup() const;
+    RenderTableCol* NODELETE enclosingColumnGroup() const;
     RenderTableCol* enclosingColumnGroupIfAdjacentBefore() const;
     RenderTableCol* enclosingColumnGroupIfAdjacentAfter() const;
 
     // Returns the next column or column-group.
     RenderTableCol* nextColumn() const;
 
-    const BorderValue& borderAdjoiningCellStartBorder() const;
-    const BorderValue& borderAdjoiningCellEndBorder() const;
-    const BorderValue& borderAdjoiningCellBefore(const RenderTableCell&) const;
-    const BorderValue& borderAdjoiningCellAfter(const RenderTableCell&) const;
+    const BorderValue& NODELETE borderAdjoiningCellStartBorder() const;
+    const BorderValue& NODELETE borderAdjoiningCellEndBorder() const;
+    const BorderValue& NODELETE borderAdjoiningCellBefore(const RenderTableCell&) const;
+    const BorderValue& NODELETE borderAdjoiningCellAfter(const RenderTableCell&) const;
 
     LayoutUnit offsetLeft() const override;
     LayoutUnit offsetTop() const override;
@@ -69,12 +70,13 @@ public:
 
 private:
     ASCIILiteral renderName() const override { return "RenderTableCol"_s; }
-    void computePreferredLogicalWidths() override { ASSERT_NOT_REACHED(); }
+    void computeIntrinsicLogicalWidthContributions() override { ASSERT_NOT_REACHED(); }
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override { ASSERT_NOT_REACHED(); return { }; }
 
     void insertedIntoTree() override;
     void willBeRemovedFromTree() override;
 
-    bool isChildAllowed(const RenderObject&, const RenderStyle&) const override;
+    bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
     bool canHaveChildren() const override;
     bool requiresLayer() const override { return false; }
 
@@ -83,10 +85,10 @@ private:
 
     void imageChanged(WrappedImagePtr, const IntRect* = 0) override;
 
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
     void paint(PaintInfo&, const LayoutPoint&) override { }
 
-    RenderTable* table() const;
+    RenderTable* NODELETE table() const;
 
     unsigned m_span { 1 };
 };

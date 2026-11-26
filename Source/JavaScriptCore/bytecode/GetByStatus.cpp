@@ -36,7 +36,8 @@
 #include "InlineCallFrame.h"
 #include "IntrinsicGetterAccessCase.h"
 #include "ModuleNamespaceAccessCase.h"
-#include "StructureStubInfo.h"
+#include "PropertyInlineCache.h"
+#include "PropertyNameInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC {
@@ -86,11 +87,6 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
         break;
     }
 
-    case op_try_get_by_id:
-        structureID = instruction->as<OpTryGetById>().metadata(profiledBlock).m_structureID;
-        identifier = &(profiledBlock->identifier(instruction->as<OpTryGetById>().m_property));
-        break;
-
     case op_get_by_id_direct:
         structureID = instruction->as<OpGetByIdDirect>().metadata(profiledBlock).m_structureID;
         identifier = &(profiledBlock->identifier(instruction->as<OpGetByIdDirect>().m_property));
@@ -117,6 +113,18 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
         break;
     }
 
+    case op_async_iterator_open: {
+        ASSERT(bytecodeIndex.checkpoint() == OpAsyncIteratorOpen::getNext);
+        auto& metadata = instruction->as<OpAsyncIteratorOpen>().metadata(profiledBlock);
+
+        // FIXME: We should not just bail if we see a get_by_id_proto_load.
+        if (metadata.m_modeMetadata.mode != GetByIdMode::Default)
+            return GetByStatus(NoInformation, false);
+        structureID = metadata.m_modeMetadata.defaultMode.structureID;
+        identifier = &vm.propertyNames->next;
+        break;
+    }
+
     case op_iterator_next: {
         auto& metadata = instruction->as<OpIteratorNext>().metadata(profiledBlock);
         if (bytecodeIndex.checkpoint() == OpIteratorNext::getDone) {
@@ -130,6 +138,28 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
                 return GetByStatus(NoInformation, false);
             structureID = metadata.m_valueModeMetadata.defaultMode.structureID;
             identifier = &vm.propertyNames->value;
+        }
+        break;
+    }
+
+    case op_instanceof: {
+        auto& metadata = instruction->as<OpInstanceof>().metadata(profiledBlock);
+        switch (bytecodeIndex.checkpoint()) {
+        case OpInstanceof::getHasInstance:
+            if (metadata.m_hasInstanceModeMetadata.mode != GetByIdMode::Default)
+                return GetByStatus(NoInformation, false);
+            structureID = metadata.m_hasInstanceModeMetadata.defaultMode.structureID;
+            identifier = &vm.propertyNames->hasInstanceSymbol;
+            break;
+        case OpInstanceof::getPrototype:
+            if (metadata.m_prototypeModeMetadata.mode != GetByIdMode::Default)
+                return GetByStatus(NoInformation, false);
+            structureID = metadata.m_prototypeModeMetadata.defaultMode.structureID;
+            identifier = &vm.propertyNames->prototype;
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            break;
         }
         break;
     }
@@ -172,7 +202,7 @@ GetByStatus GetByStatus::computeFor(CodeBlock* profiledBlock, ICStatusMap& map, 
     GetByStatus result;
 
 #if ENABLE(DFG_JIT)
-    result = computeForStubInfoWithoutExitSiteFeedback(locker, profiledBlock, map.get(CodeOrigin(codeOrigin.bytecodeIndex())).stubInfo, callExitSiteData, codeOrigin);
+    result = computeForPropertyInlineCacheWithoutExitSiteFeedback(locker, profiledBlock, map.get(CodeOrigin(codeOrigin.bytecodeIndex())).propertyCache, callExitSiteData, codeOrigin);
     
     if (didExit)
         return result.slowVersion();
@@ -189,28 +219,28 @@ GetByStatus GetByStatus::computeFor(CodeBlock* profiledBlock, ICStatusMap& map, 
 }
 
 #if ENABLE(JIT)
-GetByStatus::GetByStatus(StubInfoSummary summary, StructureStubInfo* stubInfo)
+GetByStatus::GetByStatus(PropertyInlineCacheSummary summary, PropertyInlineCache* propertyCache)
     : m_wasSeenInJIT(true)
 {
     switch (summary) {
-    case StubInfoSummary::NoInformation:
+    case PropertyInlineCacheSummary::NoInformation:
         m_state = NoInformation;
         return;
-    case StubInfoSummary::Simple:
-    case StubInfoSummary::MakesCalls:
+    case PropertyInlineCacheSummary::Simple:
+    case PropertyInlineCacheSummary::MakesCalls:
         RELEASE_ASSERT_NOT_REACHED();
         return;
-    case StubInfoSummary::Megamorphic:
-        ASSERT(stubInfo);
-        m_state = stubInfo->tookSlowPath ? ObservedTakesSlowPath : Megamorphic;
+    case PropertyInlineCacheSummary::Megamorphic:
+        ASSERT(propertyCache);
+        m_state = propertyCache->tookSlowPath ? ObservedTakesSlowPath : Megamorphic;
         return;
-    case StubInfoSummary::TakesSlowPath:
-        ASSERT(stubInfo);
-        m_state = stubInfo->tookSlowPath ? ObservedTakesSlowPath : LikelyTakesSlowPath;
+    case PropertyInlineCacheSummary::TakesSlowPath:
+        ASSERT(propertyCache);
+        m_state = propertyCache->tookSlowPath ? ObservedTakesSlowPath : LikelyTakesSlowPath;
         return;
-    case StubInfoSummary::TakesSlowPathAndMakesCalls:
-        ASSERT(stubInfo);
-        m_state = stubInfo->tookSlowPath ? ObservedSlowPathAndMakesCalls : MakesCalls;
+    case PropertyInlineCacheSummary::TakesSlowPathAndMakesCalls:
+        ASSERT(propertyCache);
+        m_state = propertyCache->tookSlowPath ? ObservedSlowPathAndMakesCalls : MakesCalls;
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -223,34 +253,34 @@ GetByStatus::GetByStatus(const ModuleNamespaceAccessCase& accessCase)
 {
 }
 
-GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, StructureStubInfo* stubInfo, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin)
+GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, PropertyInlineCache* propertyCache, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin)
 {
-    StubInfoSummary summary = StructureStubInfo::summary(profiledBlock->vm(), stubInfo);
+    PropertyInlineCacheSummary summary = PropertyInlineCache::summary(locker, profiledBlock->vm(), propertyCache);
     if (!isInlineable(summary))
-        return GetByStatus(summary, stubInfo);
+        return GetByStatus(summary, propertyCache);
     
     // Finally figure out if we can derive an access strategy.
     GetByStatus result;
     result.m_state = Simple;
     result.m_wasSeenInJIT = true; // This is interesting for bytecode dumping only.
-    switch (stubInfo->cacheType()) {
+    switch (propertyCache->cacheType()) {
     case CacheType::Unset:
         return GetByStatus(NoInformation);
         
     case CacheType::GetByIdSelf: {
-        Structure* structure = stubInfo->inlineAccessBaseStructure();
+        Structure* structure = propertyCache->inlineAccessBaseStructure();
         if (structure->takesSlowPathInDFGForImpureProperty())
-            return GetByStatus(JSC::slowVersion(summary), stubInfo);
-        CacheableIdentifier identifier = stubInfo->identifier();
+            return GetByStatus(JSC::slowVersion(summary), propertyCache);
+        CacheableIdentifier identifier = propertyCache->identifier();
         UniquedStringImpl* uid = identifier.uid();
         RELEASE_ASSERT(uid);
-        GetByVariant variant(WTFMove(identifier));
+        GetByVariant variant(WTF::move(identifier));
         unsigned attributes;
         variant.m_offset = structure->getConcurrently(uid, attributes);
         if (!isValidOffset(variant.m_offset))
-            return GetByStatus(JSC::slowVersion(summary), stubInfo);
+            return GetByStatus(JSC::slowVersion(summary), propertyCache);
         if (attributes & PropertyAttribute::CustomAccessorOrValue)
-            return GetByStatus(JSC::slowVersion(summary), stubInfo);
+            return GetByStatus(JSC::slowVersion(summary), propertyCache);
         
         variant.m_structureSet.add(structure);
         bool didAppend = result.appendVariant(variant);
@@ -259,9 +289,9 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
     }
         
     case CacheType::Stub: {
-        PolymorphicAccess* list = stubInfo->m_stub.get();
-        if (list->size() == 1) {
-            const AccessCase& access = list->at(0);
+        auto list = propertyCache->listedAccessCases(locker);
+        if (list.size() == 1) {
+            const AccessCase& access = *list.at(0);
             switch (access.type()) {
             case AccessCase::ModuleNamespaceLoad:
                 return GetByStatus(access.as<ModuleNamespaceAccessCase>());
@@ -269,15 +299,22 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
             case AccessCase::IndexedProxyObjectLoad: {
                 auto status = GetByStatus(GetByStatus::ProxyObject, true);
                 auto callLinkStatus = makeUnique<CallLinkStatus>();
-                if (CallLinkInfo* callLinkInfo = stubInfo->callLinkInfoAt(locker, 0, access))
+                if (CallLinkInfo* callLinkInfo = propertyCache->callLinkInfoAt(locker, 0, access))
                     *callLinkStatus = CallLinkStatus::computeFor(locker, profiledBlock, *callLinkInfo, callExitSiteData);
-                status.appendVariant(GetByVariant(access.identifier(), { }, /* viaGlobalProxy */ false, invalidOffset, { }, WTFMove(callLinkStatus)));
+                status.appendVariant(GetByVariant(access.identifier(), { }, /* viaGlobalProxy */ false, invalidOffset, { }, WTF::move(callLinkStatus)));
                 return status;
             }
             case AccessCase::LoadMegamorphic:
             case AccessCase::IndexedMegamorphicLoad: {
-                if (!stubInfo->tookSlowPath)
+                if (!propertyCache->tookSlowPath)
                     return GetByStatus(Megamorphic, /* wasSeenInJIT */ true);
+                break;
+            }
+            case AccessCase::LoadMegamorphicGetter: {
+                // FIXME: Using MakesCalls, not Megamorphic. The value-only GetByIdMegamorphic DFG node can't
+                // service accessors, so keep it a regular GetById and let DFG/FTL install the handler.
+                if (!propertyCache->tookSlowPath)
+                    return GetByStatus(MakesCalls, /* wasSeenInJIT */ true);
                 break;
             }
             default:
@@ -285,18 +322,18 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
             }
         }
 
-        for (unsigned listIndex = 0; listIndex < list->size(); ++listIndex) {
-            const AccessCase& access = list->at(listIndex);
+        for (unsigned listIndex = 0; listIndex < list.size(); ++listIndex) {
+            const AccessCase& access = *list.at(listIndex);
             bool viaGlobalProxy = access.viaGlobalProxy();
 
             if (access.usesPolyProto())
-                return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
             if (!access.requiresIdentifierNameMatch()) {
                 // FIXME: We could use this for indexed loads in the future. This is pretty solid profiling
                 // information, and probably better than ArrayProfile when it's available.
                 // https://bugs.webkit.org/show_bug.cgi?id=204215
-                return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                return GetByStatus(JSC::slowVersion(summary), propertyCache);
             }
             
             Structure* structure = access.structure();
@@ -307,7 +344,7 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
                 // shouldn't have to use value profiling to discover something that the AccessCase
                 // could have told us. But, it works well enough. So, our only concern here is to not
                 // crash on null structure.
-                return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                return GetByStatus(JSC::slowVersion(summary), propertyCache);
             }
 
             switch (access.type()) {
@@ -320,8 +357,8 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
                 if (auto* object = access.tryGetAlternateBase())
                     currStructure = object->structure();
                 // For now, we only support cases which JSGlobalObject is the same to the currently profiledBlock.
-                if (currStructure->globalObject() != profiledBlock->globalObject())
-                    return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                if (currStructure->realm() != profiledBlock->globalObject())
+                    return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
                 auto customAccessorGetter = access.as<GetterSetterAccessCase>().customAccessor();
                 std::unique_ptr<DOMAttributeAnnotation> domAttribute;
@@ -330,22 +367,22 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
 
                 ASSERT((AccessCase::Miss == access.type() || access.isCustom()) == (access.offset() == invalidOffset));
                 GetByVariant variant(access.identifier(), StructureSet(structure), viaGlobalProxy, invalidOffset,
-                    WTFMove(conditionSet), nullptr,
+                    WTF::move(conditionSet), nullptr,
                     nullptr,
                     customAccessorGetter,
-                    WTFMove(domAttribute));
+                    WTF::move(domAttribute));
 
                 if (!result.appendVariant(variant))
-                    return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                    return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
                 if (domAttribute) {
                     // Give up when custom accesses are not merged into one.
                     if (result.numVariants() != 1)
-                        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                        return GetByStatus(JSC::slowVersion(summary), propertyCache);
                     result.m_containsDOMGetter = true;
                 } else {
                     if (result.m_containsDOMGetter)
-                        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                        return GetByStatus(JSC::slowVersion(summary), propertyCache);
                 }
                 result.m_state = CustomAccessor;
                 break;
@@ -357,7 +394,7 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
                     continue;
 
                 case ComplexGetStatus::TakesSlowPath:
-                    return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                    return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
                 case ComplexGetStatus::Inlineable: {
                     std::unique_ptr<CallLinkStatus> callLinkStatus;
@@ -374,27 +411,27 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
                     }
                     case AccessCase::Getter: {
                         callLinkStatus = makeUnique<CallLinkStatus>();
-                        if (CallLinkInfo* callLinkInfo = stubInfo->callLinkInfoAt(locker, listIndex, access))
+                        if (CallLinkInfo* callLinkInfo = propertyCache->callLinkInfoAt(locker, listIndex, access))
                             *callLinkStatus = CallLinkStatus::computeFor(locker, profiledBlock, *callLinkInfo, callExitSiteData);
                         break;
                     }
                     default: {
                         // FIXME: It would be totally sweet to support more of these at some point in the
                         // future. https://bugs.webkit.org/show_bug.cgi?id=133052
-                        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                        return GetByStatus(JSC::slowVersion(summary), propertyCache);
                     }
                     }
 
                     ASSERT((AccessCase::Miss == access.type() || access.isCustom()) == (access.offset() == invalidOffset));
                     GetByVariant variant(access.identifier(), StructureSet(structure), viaGlobalProxy, complexGetStatus.offset(),
-                        complexGetStatus.conditionSet(), WTFMove(callLinkStatus), intrinsicFunction);
+                        complexGetStatus.conditionSet(), WTF::move(callLinkStatus), intrinsicFunction);
 
                     if (!result.appendVariant(variant))
-                        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                        return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
                     // Give up when custom access and simple access are mixed.
                     if (result.m_state == CustomAccessor)
-                        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+                        return GetByStatus(JSC::slowVersion(summary), propertyCache);
                     break;
                 }
                 }
@@ -408,7 +445,7 @@ GetByStatus GetByStatus::computeForStubInfoWithoutExitSiteFeedback(const Concurr
     }
         
     default:
-        return GetByStatus(JSC::slowVersion(summary), stubInfo);
+        return GetByStatus(JSC::slowVersion(summary), propertyCache);
     }
     
     RELEASE_ASSERT_NOT_REACHED();
@@ -439,11 +476,11 @@ GetByStatus GetByStatus::computeFor(
             return result;
         };
         
-        if (status.stubInfo) {
+        if (status.propertyCache) {
             GetByStatus result;
             {
                 ConcurrentJSLocker locker(context->optimizedCodeBlock->m_lock);
-                result = computeForStubInfoWithoutExitSiteFeedback(locker, context->optimizedCodeBlock, status.stubInfo, callExitSiteData, codeOrigin);
+                result = computeForPropertyInlineCacheWithoutExitSiteFeedback(locker, context->optimizedCodeBlock, status.propertyCache, callExitSiteData, codeOrigin);
             }
             if (result.isSet())
                 return bless(result);
@@ -456,21 +493,120 @@ GetByStatus GetByStatus::computeFor(
     return computeFor(profiledBlock, baselineMap, didExit, callExitSiteData, codeOrigin);
 }
 
-GetByStatus GetByStatus::computeFor(const StructureSet& set, UniquedStringImpl* uid)
+GetByStatus GetByStatus::computeFor(JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, GetByStatus::LookupMode mode)
 {
     // For now we only handle the super simple self access case. We could handle the
     // prototype case in the future.
-    //
-    // Note that this code is also used for GetByIdDirect since this function only looks
-    // into direct properties. When supporting prototype chains, we should split this for
-    // GetById and GetByIdDirect.
-    
+
     if (set.isEmpty())
         return GetByStatus();
 
-    if (parseIndex(*uid))
+    if (parseIndex(*identifier.uid()))
         return GetByStatus(LikelyTakesSlowPath);
-    
+
+    VM& vm = globalObject->vm();
+    auto attemptToFold = [&] -> std::optional<GetByStatus> {
+        Structure* structure = set.onlyStructure();
+        if (!structure)
+            return std::nullopt;
+
+        if (structure->isDictionary())
+            return std::nullopt;
+
+        JSObject* prototype = nullptr;
+        auto* currentStructure = structure;
+        constexpr unsigned maxPrototypeWalkDepth = 8;
+        for (unsigned i = 0; i < maxPrototypeWalkDepth; ++i) {
+            if (currentStructure->typeInfo().overridesGetOwnPropertySlot())
+                return std::nullopt;
+
+            if (!currentStructure->propertyAccessesAreCacheable())
+                return std::nullopt;
+
+            unsigned attributes;
+            PropertyOffset offset = currentStructure->getConcurrently(identifier.uid(), attributes);
+            if (isValidOffset(offset)) {
+                if (!prototype)
+                    return std::nullopt; // We will handle it in the latter code.
+                if (attributes & PropertyAttribute::Accessor)
+                    return std::nullopt;
+                if (attributes & PropertyAttribute::CustomAccessorOrValue)
+                    return std::nullopt;
+
+                if (auto conditionSet = generateConditionsForPrototypePropertyHitConcurrently(vm, globalObject, structure, prototype, identifier.uid()); conditionSet.isValid()) {
+                    GetByStatus result;
+                    result.m_state = Simple;
+                    result.m_wasSeenInJIT = false;
+                    size_t i = 0;
+                    size_t totalSize = conditionSet.size();
+                    for (auto& condition : conditionSet) {
+                        auto* object = condition.object();
+                        if (!object)
+                            return std::nullopt;
+
+                        auto* currentStructure = object->structure();
+                        if (currentStructure->typeInfo().overridesGetOwnPropertySlot())
+                            return std::nullopt;
+
+                        if (!currentStructure->propertyAccessesAreCacheable())
+                            return std::nullopt;
+
+                        if ((i + 1) == totalSize) {
+                            // The last condition
+                            if (condition.kind() != PropertyCondition::Presence)
+                                return std::nullopt;
+                            if (condition.attributes() & PropertyAttribute::Accessor)
+                                return std::nullopt;
+                            if (condition.attributes() & PropertyAttribute::CustomAccessorOrValue)
+                                return std::nullopt;
+
+                            GetByVariant variant(identifier, StructureSet(structure), /* viaGlobalProxy */ false, condition.offset(), conditionSet);
+                            if (!result.appendVariant(variant))
+                                return std::nullopt;
+
+                            return result;
+                        }
+
+                        if (currentStructure->hasPolyProto())
+                            return std::nullopt;
+
+                        if (condition.kind() != PropertyCondition::Absence)
+                            return std::nullopt;
+
+                        ++i;
+                    }
+                    return std::nullopt;
+                }
+                return std::nullopt;
+            }
+
+            if (currentStructure->hasPolyProto())
+                return std::nullopt;
+
+            // We need to check the non-reified static property table here because getConcurrently won't
+            // see it and because generateConditions starts running its functor at the prototype and
+            // skips the head structure.
+            if (currentStructure->hasNonReifiedStaticProperty(identifier.uid()))
+                return std::nullopt;
+
+            JSValue value = currentStructure->prototypeForLookup(globalObject);
+            if (!value)
+                return std::nullopt;
+            if (!value.isObject())
+                return std::nullopt;
+            prototype = asObject(value);
+            currentStructure = prototype->structure();
+        }
+        return std::nullopt;
+    };
+
+    // We should do a prototype walk searching for the property only if this
+    // is a normal access. Don't consult proto for for direct accesses.
+    if (mode == GetByStatus::LookupMode::Normal) {
+        if (auto result = attemptToFold())
+            return result.value();
+    }
+
     GetByStatus result;
     result.m_state = Simple;
     result.m_wasSeenInJIT = false;
@@ -483,7 +619,7 @@ GetByStatus GetByStatus::computeFor(const StructureSet& set, UniquedStringImpl* 
             return GetByStatus(LikelyTakesSlowPath);
         
         unsigned attributes;
-        PropertyOffset offset = structure->getConcurrently(uid, attributes);
+        PropertyOffset offset = structure->getConcurrently(identifier.uid(), attributes);
         if (!isValidOffset(offset))
             return GetByStatus(LikelyTakesSlowPath); // It's probably a prototype lookup. Give up on life for now, even though we could totally be way smarter about it.
         if (attributes & PropertyAttribute::Accessor)
@@ -528,7 +664,7 @@ bool GetByStatus::makesCalls() const
 
 GetByStatus GetByStatus::slowVersion() const
 {
-    if (observedStructureStubInfoSlowPath())
+    if (observedPropertyInlineCacheSlowPath())
         return GetByStatus(makesCalls() ? ObservedSlowPathAndMakesCalls : ObservedTakesSlowPath, wasSeenInJIT());
     return GetByStatus(makesCalls() ? MakesCalls : LikelyTakesSlowPath, wasSeenInJIT());
 }
@@ -539,7 +675,7 @@ void GetByStatus::merge(const GetByStatus& other)
         return;
     
     auto mergeSlow = [&] () {
-        if (observedStructureStubInfoSlowPath() || other.observedStructureStubInfoSlowPath())
+        if (observedPropertyInlineCacheSlowPath() || other.observedPropertyInlineCacheSlowPath())
             *this = GetByStatus((makesCalls() || other.makesCalls()) ? ObservedSlowPathAndMakesCalls : ObservedTakesSlowPath);
         else
             *this = GetByStatus((makesCalls() || other.makesCalls()) ? MakesCalls : LikelyTakesSlowPath);
@@ -649,6 +785,24 @@ CacheableIdentifier GetByStatus::singleIdentifier() const
         return m_moduleNamespaceData->m_identifier;
 
     return singleIdentifierForICStatus(m_variants);
+}
+
+void GetByStatus::filterById(UniquedStringImpl* uid)
+{
+    if (m_state != Simple)
+        return;
+
+    if (m_variants.isEmpty())
+        return;
+
+    auto filtered = m_variants;
+    filtered.removeAllMatching(
+        [&] (auto& variant) -> bool {
+            return variant.identifier() != uid;
+        });
+    if (filtered.isEmpty())
+        return;
+    m_variants = WTF::move(filtered);
 }
 
 #if ENABLE(JIT)

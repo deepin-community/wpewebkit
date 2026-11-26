@@ -35,7 +35,7 @@ namespace WebCore {
 class WebGLTimerQueryEXT;
 
 class EXTDisjointTimerQuery final : public WebGLExtension<WebGLRenderingContext> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(EXTDisjointTimerQuery);
+    WTF_MAKE_TZONE_ALLOCATED(EXTDisjointTimerQuery);
     WTF_MAKE_NONCOPYABLE(EXTDisjointTimerQuery);
 public:
     explicit EXTDisjointTimerQuery(WebGLRenderingContext&);
@@ -43,14 +43,16 @@ public:
 
     static bool supported(GraphicsContextGL&);
 
-    RefPtr<WebGLTimerQueryEXT> createQueryEXT();
+    Ref<WebGLTimerQueryEXT> createQueryEXT();
     void deleteQueryEXT(WebGLTimerQueryEXT*);
     GCGLboolean isQueryEXT(WebGLTimerQueryEXT*);
     void beginQueryEXT(GCGLenum target, WebGLTimerQueryEXT&);
-    void endQueryEXT(GCGLenum target);
-    void queryCounterEXT(WebGLTimerQueryEXT&, GCGLenum target);
+    void endQueryEXT(ScriptExecutionContext&, GCGLenum target);
+    void queryCounterEXT(ScriptExecutionContext&, WebGLTimerQueryEXT&, GCGLenum target);
     WebGLAny getQueryEXT(GCGLenum target, GCGLenum pname);
     WebGLAny getQueryObjectEXT(WebGLTimerQueryEXT&, GCGLenum pname);
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_WEBGL_EXTENSION(EXTDisjointTimerQuery)

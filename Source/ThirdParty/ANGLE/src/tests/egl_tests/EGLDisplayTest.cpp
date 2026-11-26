@@ -55,6 +55,9 @@ class EGLDisplayTest : public ANGLETest<>
     }
 };
 
+class EGLDisplayTestES3 : public EGLDisplayTest
+{};
+
 // Tests that an eglInitialize can be re-initialized.  The spec says:
 //
 // > Initializing an already-initialized display is allowed, but the only effect of such a call is
@@ -99,6 +102,24 @@ TEST_P(EGLDisplayTest, InitializeMultipleTimesInDifferentThreads)
     }
 }
 
+// Test that calling eglTerminate() in parallel in multiple threads works
+TEST_P(EGLDisplayTest, TerminateMultipleTimesInDifferentThreads)
+{
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    EXPECT_EGL_TRUE(eglInitialize(display, nullptr, nullptr) != EGL_FALSE);
+
+    std::array<std::thread, 10> threads;
+    for (std::thread &thread : threads)
+    {
+        thread = std::thread([&]() { EXPECT_EGL_TRUE(eglTerminate(display) != EGL_FALSE); });
+    }
+
+    for (std::thread &thread : threads)
+    {
+        thread.join();
+    }
+}
+
 // Tests that an EGLDisplay can be re-initialized.
 TEST_P(EGLDisplayTest, InitializeTerminateInitialize)
 {
@@ -118,7 +139,15 @@ TEST_P(EGLDisplayTest, InitializeDrawSwapTerminateLoop)
     OSWindow *osWindow = OSWindow::New();
     osWindow->initialize("LockSurfaceTest", kWidth, kHeight);
 
-    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    // Not EGL_DEFAULT_DISPLAY: on Wayland the implementation would connect for itself, and that
+    // connection cannot own the window's wl_surface. anglebug.com/546514492
+    EGLAttrib dispattrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(),
+                             EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE,
+                             static_cast<EGLAttrib>(osWindow->getNativeDisplayPlatformType()),
+                             EGL_NONE};
+    EGLDisplay display    = eglGetPlatformDisplay(
+        GetEglPlatform(), reinterpret_cast<void *>(osWindow->getNativeDisplay()), dispattrs);
+    EXPECT_NE(display, EGL_NO_DISPLAY);
 
     for (int i = 0; i < kLoopCount; ++i)
     {
@@ -173,11 +202,95 @@ TEST_P(EGLDisplayTest, ContextLeakAfterTerminate)
     EXPECT_EQ(eglGetError(), EGL_NOT_INITIALIZED);
 }
 
+// Tests that eglMakeCurrent with bad display pointer fails but doesn't crash.
+TEST_P(EGLDisplayTest, MakeCurrentWithBadDisplay)
+{
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    EXPECT_EGL_TRUE(eglInitialize(display, nullptr, nullptr));
+
+    EGLConfig config   = chooseConfig(display);
+    EGLContext context = createContext(display, config);
+
+    // Call eglMakeCurrent with bad display pointer. It should fail validation but not crash.
+    EXPECT_EGL_FALSE(eglMakeCurrent(EGL_CAST(EGLDisplay, (void *)0xdeadbeef), EGL_NO_SURFACE,
+                                    EGL_NO_SURFACE, context));
+    EXPECT_EQ(eglGetError(), EGL_BAD_DISPLAY);
+
+    // Call eglMakeCurrent with no display. It should fail validation but not crash.
+    EXPECT_EGL_FALSE(eglMakeCurrent(EGL_NO_DISPLAY, EGL_NO_SURFACE, EGL_NO_SURFACE, context));
+    EXPECT_EQ(eglGetError(), EGL_BAD_DISPLAY);
+
+    EXPECT_EGL_TRUE(eglDestroyContext(display, context));
+    EXPECT_EGL_TRUE(eglTerminate(display));
+}
+
+// Tests eglGetPlatformDisplayEXT() when EGL_EXT_platform_base is enabled.
+TEST_P(EGLDisplayTest, GetPlatformDisplayEXT)
+{
+    // eglGetPlatformDisplayEXT() requires EGL_EXT_platform_base.
+    ANGLE_SKIP_TEST_IF(!IsEGLClientExtensionEnabled("EGL_EXT_platform_base"));
+
+#if !defined(EGL_EGLEXT_PROTOTYPES) || !EGL_EGLEXT_PROTOTYPES
+    ASSERT_TRUE(eglGetPlatformDisplayEXT != nullptr);
+#endif
+
+    EGLint dispattrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(), EGL_NONE};
+    EGLDisplay display = eglGetPlatformDisplayEXT(
+        GetEglPlatform(), reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), dispattrs);
+
+    ASSERT_NE(EGL_NO_DISPLAY, display);
+    ASSERT_EGL_SUCCESS();
+}
+
+// Tests eglQueryString(EGL_EXTENSIONS) with EGL_BAD_DISPLAY should not crash
+TEST_P(EGLDisplayTest, QueryEGLExtensionWithBadDisplay)
+{
+    eglQueryString(EGL_CAST(EGLDisplay, (void *)0xdeadbeef), EGL_EXTENSIONS);
+    EXPECT_EQ(eglGetError(), EGL_BAD_DISPLAY);
+}
+
+// Tests eglQueryString(EGL_EXTENSIONS) with EGL_NO_DISPLAY should succeed without error
+TEST_P(EGLDisplayTest, QueryEGLExtensionWithNoDisplay)
+{
+    eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+    ASSERT_EGL_SUCCESS();
+}
+
+// Tests eglQueryString with EGL_NO_DISPLAY should fail EGL_BAD_DISPLAY error
+TEST_P(EGLDisplayTest, QueryEGLVendorWithBadDisplay)
+{
+    eglQueryString(EGL_NO_DISPLAY, EGL_VENDOR);
+    EXPECT_EQ(eglGetError(), EGL_BAD_DISPLAY);
+}
+
+// Tests that eglGetPlatformDisplayEXT can use EGL_PLATFORM_ANDROID_KHR to get a display.
+TEST_P(EGLDisplayTestES3, GetPlatformDisplayAndroidValidation)
+{
+    ANGLE_SKIP_TEST_IF(!IsAndroid());
+    ANGLE_SKIP_TEST_IF(getDriverType() != GLESDriverType::SystemEGL);
+
+    // Get an EGLDisplay on GBM platform, expect EGL_BAD_PARAMETER
+    EGLDisplay display1 = eglGetPlatformDisplay(
+        EGL_PLATFORM_GBM_KHR, reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), nullptr);
+    ASSERT_EQ(EGL_NO_DISPLAY, display1);
+    ASSERT_EGL_ERROR(EGL_BAD_PARAMETER);
+
+    // Get an EGLDisplay on Android platform, expect EGL_SUCCESS
+    EGLDisplay display2 = eglGetPlatformDisplay(
+        EGL_PLATFORM_ANDROID_KHR, reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), nullptr);
+    ASSERT_NE(EGL_NO_DISPLAY, display2);
+    ASSERT_EGL_SUCCESS();
+}
+
 ANGLE_INSTANTIATE_TEST(EGLDisplayTest,
-                       WithNoFixture(ES2_D3D9()),
                        WithNoFixture(ES2_D3D11()),
+                       WithNoFixture(ES2_METAL()),
                        WithNoFixture(ES2_OPENGL()),
                        WithNoFixture(ES2_VULKAN()),
                        WithNoFixture(ES3_D3D11()),
+                       WithNoFixture(ES3_METAL()),
                        WithNoFixture(ES3_OPENGL()),
                        WithNoFixture(ES3_VULKAN()));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(EGLDisplayTestES3);
+ANGLE_INSTANTIATE_TEST(EGLDisplayTestES3, WithNoFixture(ES3_VULKAN()));

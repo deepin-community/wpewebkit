@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc.  All rights reserved.
+ * Copyright (C) 2016 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "Region.h"
+#include <WebCore/Region.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/StringHash.h>
@@ -42,6 +42,9 @@ enum class TrackingType : uint8_t {
 };
 
 enum class EventTrackingRegionsEventType : uint8_t {
+    Gesturechange,
+    Gestureend,
+    Gesturestart,
     Mousedown,
     Mousemove,
     Mouseup,
@@ -64,7 +67,7 @@ struct EventTrackingRegions {
     using EventType = EventTrackingRegionsEventType;
 
     WEBCORE_EXPORT static ASCIILiteral eventName(EventType);
-    WEBCORE_EXPORT static const AtomString& eventNameAtomString(const EventNames&, EventType);
+    WEBCORE_EXPORT static const AtomString& NODELETE eventNameAtomString(const EventNames&, EventType);
 
     // Region for which events can be dispatched without blocking scrolling.
     Region asynchronousDispatchRegion;
@@ -74,15 +77,17 @@ struct EventTrackingRegions {
     using EventSpecificSynchronousDispatchRegions = HashMap<EventType, Region, WTF::IntHash<EventType>, WTF::StrongEnumHashTraits<EventType>>;
     EventSpecificSynchronousDispatchRegions eventSpecificSynchronousDispatchRegions;
 
-    bool isEmpty() const;
+    bool NODELETE isEmpty() const;
 
-    void translate(IntSize);
+    void NODELETE translate(IntSize);
     void uniteSynchronousRegion(EventType, const Region&);
     void unite(const EventTrackingRegions&);
 
-    TrackingType trackingTypeForPoint(EventType, const IntPoint&);
+    TrackingType NODELETE trackingTypeForPoint(EventType, const IntPoint&) const;
 
     friend bool operator==(const EventTrackingRegions&, const EventTrackingRegions&) = default;
 };
+
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const EventTrackingRegions&);
 
 } // namespace WebCore

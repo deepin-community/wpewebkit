@@ -26,6 +26,7 @@
 #include "config.h"
 #include "Nodes.h"
 
+#include "IdentifierInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSModuleRecord.h"
 #include "ModuleAnalyzer.h"
@@ -79,15 +80,17 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
 {
     auto result = tryCreateAttributes(analyzer.vm(), attributesList());
     if (!result) {
-        analyzer.fail(WTFMove(result.error()));
+        analyzer.fail(WTF::move(result.error()));
         return false;
     }
 
-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTFMove(result.value()));
+    auto phase = m_type == ImportType::Deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
+    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), phase);
     for (auto* specifier : m_specifierList->specifiers()) {
         analyzer.moduleRecord()->addImportEntry(JSModuleRecord::ImportEntry {
-            specifier->importedName() == analyzer.vm().propertyNames->timesIdentifier
+            specifier->importedName() == analyzer.vm().propertyNames->starNamespacePrivateName
                 ? JSModuleRecord::ImportEntryType::Namespace : JSModuleRecord::ImportEntryType::Single,
+            phase,
             m_moduleName->moduleName(),
             specifier->importedName(),
             specifier->localName(),
@@ -100,11 +103,11 @@ bool ExportAllDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
 {
     auto result = tryCreateAttributes(analyzer.vm(), attributesList());
     if (!result) {
-        analyzer.fail(WTFMove(result.error()));
+        analyzer.fail(WTF::move(result.error()));
         return false;
     }
 
-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTFMove(result.value()));
+    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
     analyzer.moduleRecord()->addStarExportEntry(m_moduleName->moduleName());
     return true;
 }
@@ -124,11 +127,11 @@ bool ExportNamedDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
     if (m_moduleName) {
         auto result = tryCreateAttributes(analyzer.vm(), attributesList());
         if (!result) {
-            analyzer.fail(WTFMove(result.error()));
+            analyzer.fail(WTF::move(result.error()));
             return false;
         }
 
-        analyzer.appendRequestedModule(m_moduleName->moduleName(), WTFMove(result.value()));
+        analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
     }
 
     for (auto* specifier : m_specifierList->specifiers()) {

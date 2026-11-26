@@ -26,18 +26,26 @@
 #include "config.h"
 #include "WPEBufferSHM.h"
 
+#include "WPEBufferPrivate.h"
 #include "WPEEnumTypes.h"
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/WTFGType.h>
 
 /**
  * WPEBufferSHM:
  *
+ * A [class@Buffer] backed by shared memory.
+ *
+ * [class@BufferSHM] is a [class@Buffer] that wraps a block of shared memory holding
+ * the pixel data, used for software rendering. The only supported pixel format
+ * is %WPE_PIXEL_FORMAT_ARGB8888.
  */
 struct _WPEBufferSHMPrivate {
     WPEPixelFormat format;
     GRefPtr<GBytes> data;
     unsigned stride;
+    GRefPtr<GBytes> pixels;
 };
 WEBKIT_DEFINE_FINAL_TYPE(WPEBufferSHM, wpe_buffer_shm, WPE_TYPE_BUFFER, WPEBuffer)
 
@@ -51,7 +59,7 @@ enum {
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 static void wpeBufferSHMSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -91,9 +99,20 @@ static void wpeBufferSHMGetProperty(GObject* object, guint propId, GValue* value
     }
 }
 
-static GBytes* wpeBufferSHMImportToPixels(WPEBuffer* buffer, GError**)
+static GBytes* wpeBufferSHMImportToPixels(WPEBuffer* buffer, GError** error)
 {
-    return WPE_BUFFER_SHM(buffer)->priv->data.get();
+    auto* priv = WPE_BUFFER_SHM(buffer)->priv;
+    auto width = static_cast<unsigned>(wpe_buffer_get_width(buffer));
+    if (priv->stride == width * 4)
+        return priv->data.get();
+
+    // Copy the pixels to remove the row padding, since the returned rows must not be padded.
+    priv->pixels = wpeBufferCopyPixelsWithoutRowPadding(span(priv->data), width, wpe_buffer_get_height(buffer), priv->stride);
+    if (!priv->pixels) {
+        g_set_error_literal(error, WPE_BUFFER_ERROR, WPE_BUFFER_ERROR_IMPORT_FAILED, "Failed to import buffer to pixels: invalid buffer stride");
+        return nullptr;
+    }
+    return priv->pixels.get();
 }
 
 static void wpe_buffer_shm_class_init(WPEBufferSHMClass* bufferSHMClass)
@@ -142,29 +161,29 @@ static void wpe_buffer_shm_class_init(WPEBufferSHMClass* bufferSHMClass)
             0, G_MAXUINT, 0,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 }
 
 /**
  * wpe_buffer_shm_new:
- * @view: a #WPEView
+ * @display: a #WPEDisplay
  * @width: the buffer width
  * @height: the buffer height
  * @format: the buffer format
  * @data: the buffer data
  * @stride: the buffer stride
  *
- * Crerate a new #WPEBufferSHM for the given parameters.
+ * Create a new #WPEBufferSHM for the given parameters.
  *
  * Returns: (transfer full): a #WPEBufferSHM
  */
-WPEBufferSHM* wpe_buffer_shm_new(WPEView* view, int width, int height, WPEPixelFormat format, GBytes* data, guint stride)
+WPEBufferSHM* wpe_buffer_shm_new(WPEDisplay* display, int width, int height, WPEPixelFormat format, GBytes* data, guint stride)
 {
-    g_return_val_if_fail(WPE_IS_VIEW(view), nullptr);
+    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
     g_return_val_if_fail(data, nullptr);
 
     return WPE_BUFFER_SHM(g_object_new(WPE_TYPE_BUFFER_SHM,
-        "view", view,
+        "display", display,
         "width", width,
         "height", height,
         "format", format,

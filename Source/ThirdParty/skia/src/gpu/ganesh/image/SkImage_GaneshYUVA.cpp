@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -13,12 +13,12 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkYUVAInfo.h"
 #include "include/gpu/GpuTypes.h"
-#include "include/gpu/GrBackendSurface.h"  // IWYU pragma: keep
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/GrRecordingContext.h"
-#include "include/gpu/GrTypes.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"  // IWYU pragma: keep
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
 #include "include/private/gpu/ganesh/GrImageContext.h"
 #include "src/core/SkSamplingPriv.h"
 #include "src/gpu/SkBackingFit.h"
@@ -36,6 +36,7 @@
 #include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/SurfaceFillContext.h"
 #include "src/gpu/ganesh/effects/GrBicubicEffect.h"
 #include "src/gpu/ganesh/effects/GrYUVtoRGBEffect.h"
@@ -159,9 +160,8 @@ size_t SkImage_GaneshYUVA::textureSize() const {
     return size;
 }
 
-sk_sp<SkImage> SkImage_GaneshYUVA::onMakeColorTypeAndColorSpace(SkColorType,
-                                                                sk_sp<SkColorSpace> targetCS,
-                                                                GrDirectContext* direct) const {
+sk_sp<SkImage> SkImage_GaneshYUVA::onMakeColorTypeAndColorSpace(
+        GrDirectContext* direct, SkColorType, sk_sp<SkColorSpace> targetCS) const {
     // We explicitly ignore color type changes, for now.
 
     // we may need a mutex here but for now we expect usage to be in a single thread
@@ -185,12 +185,20 @@ sk_sp<SkImage> SkImage_GaneshYUVA::onReinterpretColorSpace(sk_sp<SkColorSpace> n
 
 std::tuple<GrSurfaceProxyView, GrColorType> SkImage_GaneshYUVA::asView(GrRecordingContext* rContext,
                                                                        skgpu::Mipmapped mipmapped,
-                                                                       GrImageTexGenPolicy) const {
+                                                                       GrImageTexGenPolicy,
+                                                                       GrRenderTargetProxy*) const {
+    return this->flattenToView(rContext, mipmapped, /*subset=*/nullptr);
+}
+
+std::tuple<GrSurfaceProxyView, GrColorType> SkImage_GaneshYUVA::flattenToView(
+        GrRecordingContext* rContext,
+        skgpu::Mipmapped mipmapped,
+        const SkRect* subset) const {
     if (!fContext->priv().matches(rContext)) {
         return {};
     }
     auto sfc = rContext->priv().makeSFC(this->imageInfo(),
-                                        "Image_GpuYUVA_ReinterpretColorSpace",
+                                        "Image_GpuYUVA_Flatten",
                                         SkBackingFit::kExact,
                                         /*sample count*/ 1,
                                         mipmapped,
@@ -202,7 +210,16 @@ std::tuple<GrSurfaceProxyView, GrColorType> SkImage_GaneshYUVA::asView(GrRecordi
     }
 
     const GrCaps& caps = *rContext->priv().caps();
-    auto fp = GrYUVtoRGBEffect::Make(fYUVAProxies, GrSamplerState::Filter::kNearest, caps);
+    // When clamping to a |subset|, use kLinear rather than kNearest. kNearest selects the
+    // "fancy upsampling" chroma path (GrTextureEffect::MakeCustomLinearFilterInset), which
+    // deliberately samples texels just outside the subset for the edge blend. If the subset is a
+    // video frame's visible rect and the coded padding beyond it is invalid (e.g. zeroed NV12
+    // chroma), that produces a colored strip along the subset edge. kLinear takes the
+    // GrTextureEffect::MakeSubset path, which hard-clamps sampling to the subset.
+    const GrSamplerState::Filter filter =
+            subset ? GrSamplerState::Filter::kLinear : GrSamplerState::Filter::kNearest;
+    auto fp = GrYUVtoRGBEffect::Make(
+            fYUVAProxies, filter, caps, SkMatrix::I(), subset, /*domain=*/subset);
     if (fFromColorSpace) {
         fp = GrColorSpaceXformEffect::Make(std::move(fp),
                                            fFromColorSpace.get(),
@@ -216,12 +233,13 @@ std::tuple<GrSurfaceProxyView, GrColorType> SkImage_GaneshYUVA::asView(GrRecordi
 }
 
 std::unique_ptr<GrFragmentProcessor> SkImage_GaneshYUVA::asFragmentProcessor(
-        GrRecordingContext* context,
+        skgpu::ganesh::SurfaceDrawContext* sdc,
         SkSamplingOptions sampling,
         const SkTileMode tileModes[2],
         const SkMatrix& m,
         const SkRect* subset,
         const SkRect* domain) const {
+    GrRecordingContext* context = sdc->recordingContext();
     if (!fContext->priv().matches(context)) {
         return {};
     }

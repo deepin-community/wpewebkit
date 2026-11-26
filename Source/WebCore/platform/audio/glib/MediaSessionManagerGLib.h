@@ -23,6 +23,8 @@
 #include "MediaSessionIdentifier.h"
 #include "NowPlayingManager.h"
 #include "PlatformMediaSessionManager.h"
+#include <wtf/TZoneMalloc.h>
+#include <wtf/TypeCasts.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebCore {
@@ -33,10 +35,14 @@ class MediaSessionGLib;
 class MediaSessionManagerGLib
     : public PlatformMediaSessionManager
     , private NowPlayingManagerClient {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(MediaSessionManagerGLib);
 public:
-    MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&&);
+    static Ref<MediaSessionManagerGLib> create(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
     ~MediaSessionManagerGLib();
+
+    // NowPlayingManagerClient.
+    void ref() const final { PlatformMediaSessionManager::ref(); }
+    void deref() const final { PlatformMediaSessionManager::deref(); }
 
     void beginInterruption(PlatformMediaSession::InterruptionType) final;
 
@@ -44,33 +50,37 @@ public:
     String lastUpdatedNowPlayingTitle() const final { return m_lastUpdatedNowPlayingTitle; }
     double lastUpdatedNowPlayingDuration() const final { return m_lastUpdatedNowPlayingDuration; }
     double lastUpdatedNowPlayingElapsedTime() const final { return m_lastUpdatedNowPlayingElapsedTime; }
-    MediaUniqueIdentifier lastUpdatedNowPlayingInfoUniqueIdentifier() const final { return m_lastUpdatedNowPlayingInfoUniqueIdentifier; }
+    std::optional<MediaUniqueIdentifier> lastUpdatedNowPlayingInfoUniqueIdentifier() const final { return m_lastUpdatedNowPlayingInfoUniqueIdentifier; }
     bool registeredAsNowPlayingApplication() const final { return m_registeredAsNowPlayingApplication; }
     bool haveEverRegisteredAsNowPlayingApplication() const final { return m_haveEverRegisteredAsNowPlayingApplication; }
 
     void dispatch(PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument);
 
     const GRefPtr<GDBusNodeInfo>& mprisInterface() const { return m_mprisInterface; }
-    void setPrimarySessionIfNeeded(PlatformMediaSession&);
-    void unregisterAllOtherSessions(PlatformMediaSession&);
+    void setPrimarySessionIfNeeded(PlatformMediaSessionInterface&);
+    void unregisterAllOtherSessions(PlatformMediaSessionInterface&);
     WeakPtr<PlatformMediaSession> nowPlayingEligibleSession();
 
     void setDBusNotificationsEnabled(bool dbusNotificationsEnabled) { m_dbusNotificationsEnabled = dbusNotificationsEnabled; }
     bool areDBusNotificationsEnabled() const { return m_dbusNotificationsEnabled; }
 
+    bool isMediaSessionManagerGLib() const final { return true; }
+
 protected:
+    MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
+
     void scheduleSessionStatusUpdate() final;
-    void updateNowPlayingInfo();
+    void updateNowPlayingInfo() final;
 
-    void removeSession(PlatformMediaSession&) final;
-    void addSession(PlatformMediaSession&) final;
-    void setCurrentSession(PlatformMediaSession&) final;
+    void removeSession(PlatformMediaSessionInterface&) final;
+    void addSession(PlatformMediaSessionInterface&) final;
+    void setCurrentSession(PlatformMediaSessionInterface&) final;
 
-    bool sessionWillBeginPlayback(PlatformMediaSession&) override;
-    void sessionWillEndPlayback(PlatformMediaSession&, DelayCallingUpdateNowPlaying) override;
-    void sessionStateChanged(PlatformMediaSession&) override;
-    void sessionDidEndRemoteScrubbing(PlatformMediaSession&) final;
-    void clientCharacteristicsChanged(PlatformMediaSession&, bool) final;
+    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
+    void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) override;
+    void sessionStateChanged(PlatformMediaSessionInterface&) override;
+    void sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&) final;
+    void clientCharacteristicsChanged(PlatformMediaSessionInterface&, bool) final;
     void sessionCanProduceAudioChanged() final;
 
     virtual void providePresentingApplicationPIDIfNecessary() { }
@@ -100,7 +110,7 @@ private:
     String m_lastUpdatedNowPlayingTitle;
     double m_lastUpdatedNowPlayingDuration { NAN };
     double m_lastUpdatedNowPlayingElapsedTime { NAN };
-    MediaUniqueIdentifier m_lastUpdatedNowPlayingInfoUniqueIdentifier;
+    Markable<MediaUniqueIdentifier> m_lastUpdatedNowPlayingInfoUniqueIdentifier;
 
     const std::unique_ptr<NowPlayingManager> m_nowPlayingManager;
     HashMap<MediaSessionIdentifier, std::unique_ptr<MediaSessionGLib>> m_sessions;
@@ -109,5 +119,9 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MediaSessionManagerGLib)
+static bool isType(const WebCore::MediaSessionManagerInterface& manager) { return manager.isMediaSessionManagerGLib(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // USE(GLIB) && ENABLE(MEDIA_SESSION)

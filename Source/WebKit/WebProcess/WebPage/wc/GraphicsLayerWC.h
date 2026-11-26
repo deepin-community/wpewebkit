@@ -53,7 +53,7 @@ public:
     void clearObserver() { m_observer = nullptr; }
 
     // GraphicsLayer
-    WebCore::PlatformLayerIdentifier primaryLayerID() const override;
+    std::optional<WebCore::PlatformLayerIdentifier> primaryLayerID() const override;
     void setNeedsDisplay() override;
     void setNeedsDisplayInRect(const WebCore::FloatRect&, ShouldClipToLayer) override;
     void setContentsNeedsDisplay() override;
@@ -100,6 +100,7 @@ public:
     void flushCompositingState(const WebCore::FloatRect& clipRect) override;
     void flushCompositingStateForThisLayerOnly() override;
     WebCore::TiledBacking* tiledBacking() const override;
+    void setShadowPath(const WebCore::Path&) override { }
 
 protected:
     friend WCTiledBacking;
@@ -108,7 +109,7 @@ protected:
     
 private:
     struct VisibleAndCoverageRects {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(VisibleAndCoverageRects);
         WebCore::FloatRect visibleRect;
         WebCore::FloatRect coverageRect;
         WebCore::TransformationMatrix animatingTransform;

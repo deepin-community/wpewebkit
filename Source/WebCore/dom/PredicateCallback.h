@@ -29,13 +29,24 @@
 #include "CallbackResult.h"
 #include <wtf/RefCounted.h>
 
+namespace JSC {
+class JSValue;
+}
+
 namespace WebCore {
 
 class PredicateCallback : public RefCounted<PredicateCallback>, public ActiveDOMCallback {
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual CallbackResult<bool> handleEvent(JSC::JSValue, uint64_t) = 0;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    virtual bool isJSPredicateCallback() const { return false; }
+
+    virtual CallbackResult<bool> invoke(JSC::JSValue, uint64_t) = 0;
+    virtual CallbackResult<bool> invokeRethrowingException(JSC::JSValue, uint64_t) = 0;
 
 private:
     virtual bool hasCallback() const = 0;

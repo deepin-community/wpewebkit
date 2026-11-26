@@ -5,10 +5,9 @@
 //
 #include "compiler/translator/tree_ops/SeparateDeclarations.h"
 
-#include <unordered_map>
-#include "compiler/translator/SymbolTable.h"
-
+#include "common/hash_containers.h"
 #include "compiler/translator/IntermRebuild.h"
+#include "compiler/translator/SymbolTable.h"
 #include "compiler/translator/util.h"
 
 namespace sh
@@ -19,7 +18,10 @@ namespace
 class Separator final : private TIntermRebuild
 {
   public:
-    Separator(TCompiler &compiler) : TIntermRebuild(compiler, true, true) {}
+    Separator(TCompiler &compiler, bool separateCompoundStructDeclarations)
+        : TIntermRebuild(compiler, true, true),
+          mSeparateCompoundStructDeclarations(separateCompoundStructDeclarations)
+    {}
     using TIntermRebuild::rebuildRoot;
 
   private:
@@ -27,40 +29,46 @@ class Separator final : private TIntermRebuild
     {
         ASSERT(!mNewStructure);  // No nested struct declarations.
         TIntermSequence &sequence = *node.getSequence();
-        if (sequence.size() <= 1)
+        if (sequence.size() <= 1 && !mSeparateCompoundStructDeclarations)
         {
             return;
         }
         TIntermTyped *declarator    = sequence.at(0)->getAsTyped();
         const TType &declaratorType = declarator->getType();
         const TStructure *structure = declaratorType.getStruct();
-        // Rewrite variable declarations that specify structs AND multiple variables at the same
-        // time. Only one variable can specify the struct and rest must be rewritten with new
-        // type.
+        // Rewrite variable declarations that specify structs AND variable(s) at the same
+        // time.
         if (!structure || !declaratorType.isStructSpecifier())
         {
             return;
         }
-        // Struct specifier changes for all variables except the first one.
-        uint32_t index = 1;
-        if (structure->symbolType() == SymbolType::Empty)
+        if (mSeparateCompoundStructDeclarations && sequence.size() == 1)
         {
-
-            TStructure *newStructure =
-                new TStructure(&mSymbolTable, kEmptyImmutableString, &structure->fields(),
-                               SymbolType::AngleInternal);
-            newStructure->setAtGlobalScope(structure->atGlobalScope());
-            structure     = newStructure;
-            mNewStructure = newStructure;
-            // Adding name causes the struct type to change, so all variables need rewriting.
+            TIntermSymbol *symbol = declarator->getAsSymbolNode();
+            if (symbol != nullptr)
+            {
+                if (symbol->variable().symbolType() == SymbolType::Empty)
+                {
+                    return;
+                }
+            }
+        }
+        // By default, struct specifier changes for all variables except the first one.
+        uint32_t index = 1;
+        if (structure->symbolType() == SymbolType::Empty || mSeparateCompoundStructDeclarations)
+        {
+            mNewStructure = structure;
+            // Separating struct and variable declaration causes the variable type to change
+            // from specifying to not-specifying, so also the first variable needs rewriting.
             index = 0;
         }
+
         for (; index < sequence.size(); ++index)
         {
             Declaration decl              = ViewDeclaration(node, index);
             const TVariable &var          = decl.symbol.variable();
             const TType &varType          = var.getType();
-            const bool newTypeIsSpecifier = index == 0;
+            const bool newTypeIsSpecifier = index == 0 && !mSeparateCompoundStructDeclarations;
             TType *newType                = new TType(structure, newTypeIsSpecifier);
             newType->setQualifier(varType.getQualifier());
             newType->makeArrays(varType.getArraySizes());
@@ -78,28 +86,29 @@ class Separator final : private TIntermRebuild
     PostResult visitDeclarationPost(TIntermDeclaration &node) override
     {
         TIntermSequence &sequence = *node.getSequence();
-        if (sequence.size() <= 1)
+        if (sequence.size() <= 1 && !mNewStructure)
         {
             return node;
         }
         std::vector<TIntermNode *> replacements;
-        uint32_t index = 0;
         if (mNewStructure)
         {
-            TType *namedType = new TType(mNewStructure, true);
-            namedType->setQualifier(EvqGlobal);
-            TIntermDeclaration *replacement = new TIntermDeclaration;
-            replacement->appendDeclarator(sequence.at(0)->getAsTyped());
+            TType *newType = new TType(mNewStructure, true);
+            if (mNewStructure->atGlobalScope())
+            {
+                newType->setQualifier(EvqGlobal);
+            }
+            TVariable *structVar =
+                new TVariable(&mSymbolTable, kEmptyImmutableString, newType, SymbolType::Empty);
+            TIntermDeclaration *replacement = new TIntermDeclaration({structVar});
             replacement->setLine(node.getLine());
             replacements.push_back(replacement);
             mNewStructure = nullptr;
-            index         = 1;
         }
-        for (; index < sequence.size(); ++index)
+        for (TIntermNode *declaratorNode : sequence)
         {
-            TIntermDeclaration *replacement = new TIntermDeclaration;
-            TIntermTyped *declarator        = sequence.at(index)->getAsTyped();
-            replacement->appendDeclarator(declarator);
+            TIntermTyped *declarator        = declaratorNode->getAsTyped();
+            TIntermDeclaration *replacement = new TIntermDeclaration({declarator});
             replacement->setLine(declarator->getLine());
             replacements.push_back(replacement);
         }
@@ -116,16 +125,21 @@ class Separator final : private TIntermRebuild
         return *new TIntermSymbol(it->second);
     }
 
+  private:
+    // New structure from compound declaration.
     const TStructure *mNewStructure = nullptr;
     // Old struct variable to new struct variable mapping.
-    std::unordered_map<const TVariable *, TVariable *> mStructVariables;
+    angle::HashMap<const TVariable *, TVariable *> mStructVariables;
+    const bool mSeparateCompoundStructDeclarations;
 };
 
 }  // namespace
 
-bool SeparateDeclarations(TCompiler &compiler, TIntermBlock &root)
+bool SeparateDeclarations(TCompiler &compiler,
+                          TIntermBlock &root,
+                          bool separateCompoundStructDeclarations)
 {
-    Separator separator(compiler);
+    Separator separator(compiler, separateCompoundStructDeclarations);
     return separator.rebuildRoot(root);
 }
 

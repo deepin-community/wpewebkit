@@ -30,8 +30,8 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(EmptyNodeList);
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ChildNodeList);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EmptyNodeList);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ChildNodeList);
 
 EmptyNodeList::~EmptyNodeList()
 {
@@ -45,7 +45,7 @@ ChildNodeList::ChildNodeList(ContainerNode& parent)
 
 ChildNodeList::~ChildNodeList()
 {
-    Ref { m_parent }->nodeLists()->removeChildNodeList(this);
+    m_parent->nodeLists()->removeChildNodeList(this);
 }
 
 unsigned ChildNodeList::length() const

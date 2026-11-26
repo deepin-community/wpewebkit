@@ -31,26 +31,33 @@
 #include "config.h"
 #include "CSSTransformListValue.h"
 
+#include "DeprecatedCSSOMValueList.h"
+
 namespace WebCore {
 
 CSSTransformListValue::CSSTransformListValue(CSSValueListBuilder builder)
-    : CSSValueContainingVector(TransformListClass, SpaceSeparator, WTFMove(builder))
+    : CSSValueContainingVector(ClassType::TransformList, SpaceSeparator, WTF::move(builder))
 {
 }
 
 CSSTransformListValue::CSSTransformListValue(Ref<CSSValue> value)
-    : CSSValueContainingVector(TransformListClass, SpaceSeparator, WTFMove(value))
+    : CSSValueContainingVector(ClassType::TransformList, SpaceSeparator, WTF::move(value))
 {
 }
 
 Ref<CSSTransformListValue> CSSTransformListValue::create(CSSValueListBuilder builder)
 {
-    return adoptRef(*new CSSTransformListValue(WTFMove(builder)));
+    return adoptRef(*new CSSTransformListValue(WTF::move(builder)));
 }
 
 Ref<CSSTransformListValue> CSSTransformListValue::create(Ref<CSSValue> value)
 {
-    return adoptRef(*new CSSTransformListValue(WTFMove(value)));
+    return adoptRef(*new CSSTransformListValue(WTF::move(value)));
 }
 
+Ref<DeprecatedCSSOMValue> CSSTransformListValue::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMValueList::create(*this, owner);
 }
+
+} // namespace WebCore

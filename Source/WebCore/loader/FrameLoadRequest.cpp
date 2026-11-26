@@ -33,51 +33,44 @@
 
 #include "Document.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "SecurityOrigin.h"
 
 namespace WebCore {
 
 FrameLoadRequest::FrameLoadRequest(Ref<Document>&& requester, SecurityOrigin& requesterSecurityOrigin, ResourceRequest&& resourceRequest, const AtomString& frameName, InitiatedByMainFrame initiatedByMainFrame, const AtomString& downloadAttribute)
-    : m_requester { WTFMove(requester) }
+    : m_requester { WTF::move(requester) }
     , m_requesterSecurityOrigin { requesterSecurityOrigin }
-    , m_resourceRequest { WTFMove(resourceRequest) }
+    , m_resourceRequest { WTF::move(resourceRequest) }
     , m_frameName { frameName }
-    , m_downloadAttribute { downloadAttribute }
-    , m_initiatedByMainFrame { initiatedByMainFrame }
 {
+    setDownloadAttribute(downloadAttribute);
+    setInitiatedByMainFrame(initiatedByMainFrame);
 }
 
-FrameLoadRequest::FrameLoadRequest(LocalFrame& frame, const ResourceRequest& resourceRequest, const SubstituteData& substituteData)
+FrameLoadRequest::FrameLoadRequest(LocalFrame& frame, ResourceRequest&& resourceRequest, SubstituteData&& substituteData)
     : m_requester { *frame.document() }
-    , m_requesterSecurityOrigin { frame.document()->securityOrigin() }
-    , m_resourceRequest { resourceRequest }
-    , m_substituteData { substituteData }
+    , m_requesterSecurityOrigin { protect(frame.document())->securityOrigin() }
+    , m_resourceRequest { WTF::move(resourceRequest) }
+    , m_substituteData { WTF::move(substituteData) }
 {
 }
 
 FrameLoadRequest::~FrameLoadRequest() = default;
 
+FrameLoadRequest::FrameLoadRequest(const FrameLoadRequest&) = default;
+FrameLoadRequest& FrameLoadRequest::operator=(const FrameLoadRequest&) = default;
 FrameLoadRequest::FrameLoadRequest(FrameLoadRequest&&) = default;
 FrameLoadRequest& FrameLoadRequest::operator=(FrameLoadRequest&&) = default;
 
-Document& FrameLoadRequest::requester()
+Document& FrameLoadRequest::requester() const
 {
     return m_requester.get();
-}
-
-Ref<Document> FrameLoadRequest::protectedRequester() const
-{
-    return m_requester;
 }
 
 const SecurityOrigin& FrameLoadRequest::requesterSecurityOrigin() const
 {
     return m_requesterSecurityOrigin.get();
-}
-
-Ref<SecurityOrigin> FrameLoadRequest::protectedRequesterSecurityOrigin() const
-{
-    return m_requesterSecurityOrigin;
 }
 
 } // namespace WebCore

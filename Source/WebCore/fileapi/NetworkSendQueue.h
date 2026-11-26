@@ -25,14 +25,12 @@
 
 #pragma once
 
-#include "ContextDestructionObserver.h"
-#include "ExceptionCode.h"
-#include <span>
-#include <variant>
+#include <WebCore/ContextDestructionObserver.h>
+#include <WebCore/ExceptionCode.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
+#include <wtf/RefCounted.h>
 #include <wtf/UniqueRef.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/CString.h>
 
 namespace JSC {
@@ -45,14 +43,18 @@ class Blob;
 class BlobLoader;
 class FragmentedSharedBuffer;
 
-class WEBCORE_EXPORT NetworkSendQueue : public ContextDestructionObserver {
+class WEBCORE_EXPORT NetworkSendQueue : public RefCounted<NetworkSendQueue>, public ContextDestructionObserver {
 public:
     using WriteString = Function<void(const CString& utf8)>;
     using WriteRawData = Function<void(std::span<const uint8_t>)>;
     enum class Continue : bool { No, Yes };
     using ProcessError = Function<Continue(ExceptionCode)>;
-    NetworkSendQueue(ScriptExecutionContext&, WriteString&&, WriteRawData&&, ProcessError&&);
+    static Ref<NetworkSendQueue> create(ScriptExecutionContext&, WriteString&&, WriteRawData&&, ProcessError&&);
     ~NetworkSendQueue();
+
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void enqueue(CString&& utf8);
     void enqueue(const JSC::ArrayBuffer&, unsigned byteOffset, unsigned byteLength);
@@ -60,15 +62,20 @@ public:
 
     void clear();
 
+    void whenEmpty(Function<void()>&&);
+
 private:
+    NetworkSendQueue(ScriptExecutionContext&, WriteString&&, WriteRawData&&, ProcessError&&);
+
     void processMessages();
 
-    using Message = std::variant<CString, Ref<FragmentedSharedBuffer>, UniqueRef<BlobLoader>>;
+    using Message = Variant<CString, Ref<FragmentedSharedBuffer>, Ref<BlobLoader>>;
     Deque<Message> m_queue;
 
     WriteString m_writeString;
     WriteRawData m_writeRawData;
     ProcessError m_processError;
+    Function<void()> m_emptyCallback;
 };
 
 } // namespace WebCore

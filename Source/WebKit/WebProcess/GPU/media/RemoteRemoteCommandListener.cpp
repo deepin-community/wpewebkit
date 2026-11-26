@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,13 +33,10 @@
 #include "RemoteRemoteCommandListenerMessages.h"
 #include "RemoteRemoteCommandListenerProxyMessages.h"
 #include "WebProcess.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 using namespace WebCore;
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteRemoteCommandListener);
 
 Ref<RemoteRemoteCommandListener> RemoteRemoteCommandListener::create(RemoteCommandListenerClient& client)
 {
@@ -54,28 +51,30 @@ RemoteRemoteCommandListener::RemoteRemoteCommandListener(RemoteCommandListenerCl
 
 RemoteRemoteCommandListener::~RemoteRemoteCommandListener()
 {
-    if (auto gpuProcessConnection = m_gpuProcessConnection.get()) {
-        gpuProcessConnection->messageReceiverMap().removeMessageReceiver(*this);
+    if (RefPtr gpuProcessConnection = m_gpuProcessConnection.get()) {
+        gpuProcessConnection->messageReceiverMap().removeMessageReceiver(Messages::RemoteRemoteCommandListener::messageReceiverName(), identifier().toUInt64());
         gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::ReleaseRemoteCommandListener(identifier()), 0);
     }
 }
 
 GPUProcessConnection& RemoteRemoteCommandListener::ensureGPUProcessConnection()
 {
-    auto gpuProcessConnection = m_gpuProcessConnection.get();
-    if (!gpuProcessConnection) {
-        gpuProcessConnection = &WebProcess::singleton().ensureGPUProcessConnection();
-        m_gpuProcessConnection = gpuProcessConnection;
+    if (!m_gpuProcessConnection.get()) {
+        Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
+        m_gpuProcessConnection = gpuProcessConnection.get();
         gpuProcessConnection->addClient(*this);
         gpuProcessConnection->messageReceiverMap().addMessageReceiver(Messages::RemoteRemoteCommandListener::messageReceiverName(), identifier().toUInt64(), *this);
         gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::CreateRemoteCommandListener(identifier()), { });
     }
-    return *gpuProcessConnection;
+    ASSERT(m_gpuProcessConnection.get() == &WebProcess::singleton().ensureGPUProcessConnection());
+    return WebProcess::singleton().ensureGPUProcessConnection();
 }
 
 void RemoteRemoteCommandListener::gpuProcessConnectionDidClose(GPUProcessConnection& gpuProcessConnection)
 {
-    gpuProcessConnection.messageReceiverMap().removeMessageReceiver(*this);
+    ASSERT(m_gpuProcessConnection.get() == &gpuProcessConnection);
+
+    gpuProcessConnection.messageReceiverMap().removeMessageReceiver(Messages::RemoteRemoteCommandListener::messageReceiverName(), identifier().toUInt64());
     m_gpuProcessConnection = nullptr;
 
     // FIXME: GPUProcess will be relaunched/RemoteCommandListener re-created when calling updateSupportedCommands().

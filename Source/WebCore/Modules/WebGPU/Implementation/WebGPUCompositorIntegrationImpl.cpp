@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,9 +37,12 @@
 #include <WebCore/NativeImage.h>
 #include <WebGPU/WebGPUExt.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
 namespace WebCore::WebGPU {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CompositorIntegrationImpl);
 
 CompositorIntegrationImpl::CompositorIntegrationImpl(ConvertToBackingContext& convertToBackingContext)
     : m_convertToBackingContext(convertToBackingContext)
@@ -48,41 +51,59 @@ CompositorIntegrationImpl::CompositorIntegrationImpl(ConvertToBackingContext& co
 
 CompositorIntegrationImpl::~CompositorIntegrationImpl() = default;
 
-void CompositorIntegrationImpl::prepareForDisplay(CompletionHandler<void()>&& completionHandler)
+void CompositorIntegrationImpl::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
 {
-    if (auto* presentationContext = m_presentationContext.get())
-        presentationContext->present();
+    if (RefPtr presentationContext = m_presentationContext)
+        presentationContext->present(frameIndex);
 
-    m_onSubmittedWorkScheduledCallback(WTFMove(completionHandler));
+    m_onSubmittedWorkScheduledCallback(WTF::move(completionHandler));
+}
+
+void CompositorIntegrationImpl::updateContentsHeadroom(float headroom)
+{
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    for (auto& ioSurface : m_renderBuffers)
+        ioSurface->setContentEDRHeadroom(headroom);
+#else
+    UNUSED_PARAM(headroom);
+#endif
 }
 
 #if PLATFORM(COCOA)
-Vector<MachSendRight> CompositorIntegrationImpl::recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&& colorSpace, WebCore::AlphaPremultiplication alphaMode, TextureFormat textureFormat, Device& device)
+Vector<MachSendRight> CompositorIntegrationImpl::recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&& colorSpace, WebCore::AlphaPremultiplication alphaMode, TextureFormat textureFormat, unsigned bufferCount, Device& device)
 {
     m_renderBuffers.clear();
     m_device = device;
+    m_alphaMode = alphaMode;
 
-    if (auto* presentationContext = m_presentationContext.get()) {
-        static_cast<PresentationContext*>(presentationContext)->unconfigure();
+    if (RefPtr presentationContext = m_presentationContext) {
+        static_cast<PresentationContext*>(presentationContext.get())->unconfigure();
         presentationContext->setSize(width, height);
     }
 
     constexpr int max2DTextureSize = 16384;
     width = std::max(1, std::min(max2DTextureSize, width));
     height = std::max(1, std::min(max2DTextureSize, height));
-    bool isRGBA = (textureFormat == TextureFormat::Rgba8unorm || textureFormat == TextureFormat::Rgba8unormSRGB);
     IOSurface::Format colorFormat;
-    if (isRGBA)
+    switch (textureFormat) {
+    case TextureFormat::Rgba8unorm:
+    case TextureFormat::Rgba8unormSRGB:
         colorFormat = alphaMode == AlphaPremultiplication::Unpremultiplied ? IOSurface::Format::RGBX : IOSurface::Format::RGBA;
-    else
+        break;
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    case TextureFormat::Rgba16float:
+        colorFormat = IOSurface::Format::RGBA16F;
+        break;
+#endif
+    default:
         colorFormat = alphaMode == AlphaPremultiplication::Unpremultiplied ? IOSurface::Format::BGRX : IOSurface::Format::BGRA;
+        break;
+    }
 
-    if (auto buffer = WebCore::IOSurface::create(nullptr, WebCore::IntSize(width, height), colorSpace, IOSurface::Name::Default, colorFormat))
-        m_renderBuffers.append(makeUniqueRefFromNonNullUniquePtr(WTFMove(buffer)));
-    if (auto buffer = WebCore::IOSurface::create(nullptr, WebCore::IntSize(width, height), colorSpace, IOSurface::Name::Default, colorFormat))
-        m_renderBuffers.append(makeUniqueRefFromNonNullUniquePtr(WTFMove(buffer)));
-    if (auto buffer = WebCore::IOSurface::create(nullptr, WebCore::IntSize(width, height), colorSpace, IOSurface::Name::Default, colorFormat))
-        m_renderBuffers.append(makeUniqueRefFromNonNullUniquePtr(WTFMove(buffer)));
+    for (unsigned bufferIndex = 0; bufferIndex < std::min<unsigned>(3u, bufferCount); ++bufferIndex) {
+        if (auto buffer = WebCore::IOSurface::create(nullptr, WebCore::IntSize(width, height), colorSpace, IOSurface::Name::WebGPU, colorFormat))
+            m_renderBuffers.append(makeUniqueRefFromNonNullUniquePtr(WTF::move(buffer)));
+    }
 
     {
         auto renderBuffers = adoptCF(CFArrayCreateMutable(kCFAllocatorDefault, m_renderBuffers.size(), &kCFTypeArrayCallBacks));
@@ -99,18 +120,23 @@ Vector<MachSendRight> CompositorIntegrationImpl::recreateRenderBuffers(int width
 
 void CompositorIntegrationImpl::withDisplayBufferAsNativeImage(uint32_t bufferIndex, Function<void(WebCore::NativeImage*)> completion)
 {
-    if (!m_renderBuffers.size() || bufferIndex >= m_renderBuffers.size() || !m_device.get())
+    if (!m_renderBuffers.size() || bufferIndex >= m_renderBuffers.size() || !m_device)
         return completion(nullptr);
 
     RefPtr<NativeImage> displayImage;
-    if (auto* presentationContextPtr = m_presentationContext.get())
-        displayImage = presentationContextPtr->getMetalTextureAsNativeImage(bufferIndex);
+    bool isIOSurfaceSupportedFormat = false;
+    if (RefPtr presentationContextPtr = m_presentationContext)
+        displayImage = presentationContextPtr->getMetalTextureAsNativeImage(bufferIndex, isIOSurfaceSupportedFormat);
 
     if (!displayImage) {
-        auto& renderBuffer = m_renderBuffers[bufferIndex];
-        RetainPtr<CGContextRef> cgContext = renderBuffer->createPlatformContext();
-        if (cgContext)
-            displayImage = NativeImage::create(renderBuffer->createImage(cgContext.get()));
+        if (!isIOSurfaceSupportedFormat)
+            return completion(nullptr);
+
+        // A premultiplied canvas must keep its alpha channel so transparent pixels
+        // composite over the page; an opaque canvas forces the alpha to be ignored.
+        // This matters for RGBA16F, whose IOSurface format cannot itself encode opacity.
+        auto shouldForceOpaque = m_alphaMode == WebCore::AlphaPremultiplication::Premultiplied ? IOSurface::ShouldForceOpaque::No : IOSurface::ShouldForceOpaque::Yes;
+        displayImage = m_renderBuffers[bufferIndex]->createNativeImage(shouldForceOpaque);
     }
 
     if (!displayImage)

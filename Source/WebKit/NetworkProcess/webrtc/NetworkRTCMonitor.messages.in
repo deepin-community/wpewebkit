@@ -22,7 +22,13 @@
 
 #if USE(LIBWEBRTC)
 
-messages -> NetworkRTCMonitor NotRefCounted {
+[
+    EnabledBy=PeerConnectionEnabled,
+    DispatchedFrom=WebContent,
+    DispatchedTo=Networking,
+    SharedPreferencesNeedsConnection
+]
+messages -> NetworkRTCMonitor {
     void StartUpdatingIfNeeded()
     void StopUpdating()
 }

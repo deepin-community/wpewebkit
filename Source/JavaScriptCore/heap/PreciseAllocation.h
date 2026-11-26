@@ -25,9 +25,11 @@
 
 #pragma once
 
-#include "MarkedBlock.h"
-#include "WeakSet.h"
+#include <JavaScriptCore/MarkedBlock.h>
+#include <JavaScriptCore/WeakSet.h>
 #include <wtf/StdLibExtras.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -42,7 +44,7 @@ class SlotVisitor;
 class PreciseAllocation : public BasicRawSentinelNode<PreciseAllocation> {
 public:
     friend class LLIntOffsetsExtractor;
-    friend class IsoSubspace;
+    friend class MarkedSpace;
 
     static PreciseAllocation* tryCreate(Heap&, size_t, Subspace*, unsigned indexInSpace);
     static PreciseAllocation* tryCreateForLowerTierPrecise(Heap&, size_t, Subspace*, uint8_t lowerTierPreciseIndex);
@@ -55,26 +57,26 @@ public:
     
     static PreciseAllocation* fromCell(const void* cell)
     {
-        return bitwise_cast<PreciseAllocation*>(bitwise_cast<char*>(cell) - headerSize());
+        return std::bit_cast<PreciseAllocation*>(std::bit_cast<char*>(cell) - headerSize());
     }
     
     HeapCell* cell() const
     {
-        return bitwise_cast<HeapCell*>(bitwise_cast<char*>(this) + headerSize());
+        return std::bit_cast<HeapCell*>(std::bit_cast<char*>(this) + headerSize());
     }
     
     static bool isPreciseAllocation(HeapCell* cell)
     {
-        return bitwise_cast<uintptr_t>(cell) & halfAlignment;
+        return std::bit_cast<uintptr_t>(cell) & halfAlignment;
     }
     
     Subspace* subspace() const { return m_subspace; }
     
     void lastChanceToFinalize();
     
-    JSC::Heap* heap() const { return m_weakSet.heap(); }
+    JSC::Heap* heap() const LIFETIME_BOUND { return m_weakSet.heap(); }
     VM& vm() const { return m_weakSet.vm(); }
-    WeakSet& weakSet() { return m_weakSet; }
+    WeakSet& weakSet() LIFETIME_BOUND { return m_weakSet; }
 
     static constexpr ptrdiff_t offsetOfWeakSet() { return OBJECT_OFFSETOF(PreciseAllocation, m_weakSet); }
 
@@ -82,7 +84,7 @@ public:
     void setIndexInSpace(unsigned indexInSpace) { m_indexInSpace = indexInSpace; }
     
     void clearNewlyAllocated() { m_isNewlyAllocated = false; }
-    void flip();
+    void NODELETE flip();
     
     bool isNewlyAllocated() const { return m_isNewlyAllocated; }
     ALWAYS_INLINE bool isMarked() { return m_isMarked.load(std::memory_order_relaxed); }
@@ -93,21 +95,21 @@ public:
     
     bool hasValidCell() const { return m_hasValidCell; }
     
-    bool isEmpty();
+    bool NODELETE isEmpty();
     
     size_t cellSize() const { return m_cellSize; }
 
     bool aboveLowerBound(const void* rawPtr)
     {
-        char* ptr = bitwise_cast<char*>(rawPtr);
-        char* begin = bitwise_cast<char*>(cell());
+        char* ptr = std::bit_cast<char*>(rawPtr);
+        char* begin = std::bit_cast<char*>(cell());
         return ptr >= begin;
     }
     
     bool belowUpperBound(const void* rawPtr)
     {
-        char* ptr = bitwise_cast<char*>(rawPtr);
-        char* begin = bitwise_cast<char*>(cell());
+        char* ptr = std::bit_cast<char*>(rawPtr);
+        char* begin = std::bit_cast<char*>(cell());
         char* end = begin + cellSize();
         // We cannot #include IndexingHeader.h because reasons. The fact that IndexingHeader is 8
         // bytes is wired deep into our engine, so this isn't so bad.
@@ -139,7 +141,7 @@ public:
     void noteMarked() { }
     
 #if ASSERT_ENABLED
-    void assertValidCell(VM&, HeapCell*) const;
+    JS_EXPORT_PRIVATE void assertValidCell(VM&, HeapCell*) const;
 #else
     void assertValidCell(VM&, HeapCell*) const { }
 #endif
@@ -184,7 +186,9 @@ private:
 
 inline void* PreciseAllocation::basePointer() const
 {
-    return bitwise_cast<char*>(this) - m_adjustment;
+    return std::bit_cast<char*>(this) - m_adjustment;
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

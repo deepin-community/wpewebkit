@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/FrameTreeSyncData.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <wtf/Vector.h>
 
@@ -33,7 +34,12 @@ namespace WebKit {
 
 struct FrameTreeCreationParameters {
     WebCore::FrameIdentifier frameID;
+    std::optional<WebCore::FrameIdentifier> openerFrameID;
     String frameName;
+    // The process that hosts this frame's content, so the process that receives this
+    // tree can record it on the RemoteFrame stub it creates. See webkit.org/b/310164.
+    WebCore::ProcessIdentifier hostingProcessID;
+    Ref<WebCore::FrameTreeSyncData> frameTreeSyncData;
     Vector<FrameTreeCreationParameters> children;
 };
 

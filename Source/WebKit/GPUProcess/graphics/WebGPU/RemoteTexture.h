@@ -58,12 +58,12 @@ class RemoteTexture final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteTexture> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::Texture& texture, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteTexture(gpuConnectionToWebProcess, gpu, texture, objectHeap, WTFMove(streamConnection), identifier));
+        return adoptRef(*new RemoteTexture(gpuConnectionToWebProcess, gpu, texture, objectHeap, WTF::move(streamConnection), identifier));
     }
 
     virtual ~RemoteTexture();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -79,20 +79,19 @@ private:
 
     WebCore::WebGPU::Texture& backing() { return m_backing; }
 
-    RefPtr<IPC::Connection> connection() const;
-
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void createView(const std::optional<WebGPU::TextureViewDescriptor>&, WebGPUIdentifier);
 
     void destroy();
+    void undestroy();
     void destruct();
 
     void setLabel(String&&);
 
-    Ref<WebCore::WebGPU::Texture> m_backing;
+    const Ref<WebCore::WebGPU::Texture> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;

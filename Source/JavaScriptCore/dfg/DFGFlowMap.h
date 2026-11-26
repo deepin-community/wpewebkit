@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,11 +39,15 @@ namespace JSC { namespace DFG {
 // values of Phis. This makes it easy to do both of those things.
 template<typename T>
 class FlowMap {
-    WTF_MAKE_TZONE_ALLOCATED(FlowMap);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_TEMPLATE(FlowMap);
 public:
     FlowMap(Graph& graph)
         : m_graph(graph)
     {
+        unsigned initialCapacity = m_graph.maxNodeCount();
+        m_map.reserveInitialCapacity(initialCapacity);
+        if (m_graph.m_form == SSA)
+            m_shadowMap.reserveInitialCapacity(initialCapacity);
         resize();
     }
     
@@ -87,7 +91,7 @@ public:
             return atShadow(nodeIndex);
         }
         RELEASE_ASSERT_NOT_REACHED();
-        return *bitwise_cast<T*>(nullptr);
+        return *std::bit_cast<T*>(nullptr);
     }
     
     ALWAYS_INLINE T& at(Node* node, NodeFlowProjection::Kind kind)
@@ -120,6 +124,8 @@ private:
     Vector<T, 0, UnsafeVectorOverflow> m_map;
     Vector<T, 0, UnsafeVectorOverflow> m_shadowMap;
 };
+
+WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_TEMPLATE_IMPL(template<typename T>, FlowMap<T>);
 
 } } // namespace JSC::DFG
 

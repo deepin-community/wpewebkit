@@ -25,9 +25,9 @@
 
 #pragma once
 
+#include <wtf/MonotonicTime.h>
 #include <wtf/OptionSet.h>
 #include <wtf/UUID.h>
-#include <wtf/WallTime.h>
 
 namespace WebCore {
 
@@ -82,7 +82,8 @@ enum class PlatformEventModifier : uint8_t {
     ShiftKey    = 1 << 3,
     CapsLockKey = 1 << 4,
 
-    // Never used in native platforms but added for initEvent
+    // Populated from native events on platforms with an AltGraph (AltGr) key
+    // (Windows, GTK/X11); also set for JS-constructed events via initEvent.
     AltGraphKey = 1 << 5,
 };
 
@@ -102,7 +103,7 @@ public:
 
     OptionSet<Modifier> modifiers() const { return m_modifiers; }
 
-    WallTime timestamp() const { return m_timestamp; }
+    MonotonicTime timestamp() const { return m_timestamp; }
     std::optional<WTF::UUID> authorizationToken() const { return m_authorizationToken; };
 
 protected:
@@ -116,14 +117,14 @@ protected:
     {
     }
 
-    PlatformEvent(Type type, OptionSet<Modifier> modifiers, WallTime timestamp)
+    PlatformEvent(Type type, OptionSet<Modifier> modifiers, MonotonicTime timestamp)
         : m_timestamp(timestamp)
         , m_type(type)
         , m_modifiers(modifiers)
     {
     }
 
-    PlatformEvent(Type type, bool shiftKey, bool ctrlKey, bool altKey, bool metaKey, WallTime timestamp)
+    PlatformEvent(Type type, bool shiftKey, bool ctrlKey, bool altKey, bool metaKey, MonotonicTime timestamp)
         : m_timestamp(timestamp)
         , m_type(type)
     {
@@ -141,7 +142,7 @@ protected:
     // delete a PlatformEvent.
     ~PlatformEvent() = default;
 
-    WallTime m_timestamp;
+    MonotonicTime m_timestamp;
     Type m_type;
     OptionSet<Modifier> m_modifiers;
     std::optional<WTF::UUID> m_authorizationToken;

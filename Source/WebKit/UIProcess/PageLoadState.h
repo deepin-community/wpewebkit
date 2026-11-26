@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,24 +28,20 @@
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/SecurityOriginData.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/URL.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
 
-namespace WebKit {
-class PageLoadStateObserverBase;
+namespace WebCore {
+enum class ResourceResponseSource : uint8_t;
 }
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::PageLoadStateObserverBase> : std::true_type { };
-}
-
 namespace WebKit {
 
 class WebPageProxy;
+enum class Source;
 
-class PageLoadStateObserverBase : public CanMakeWeakPtr<PageLoadStateObserverBase> {
+class PageLoadStateObserverBase : public AbstractRefCountedAndCanMakeWeakPtr<PageLoadStateObserverBase> {
 public:
     virtual ~PageLoadStateObserverBase() = default;
 
@@ -123,14 +119,16 @@ public:
 #endif
         };
 
-        RefPtr<WebPageProxy> m_webPageProxy;
-        PageLoadState* m_pageLoadState;
+        RefPtr<PageLoadState> m_pageLoadState;
     };
 
     struct PendingAPIRequest {
         Markable<WebCore::NavigationIdentifier> navigationID;
-        String url;
+        URL url;
     };
+
+    void NODELETE ref() const;
+    void deref() const;
 
     void addObserver(Observer&);
     void removeObserver(Observer&);
@@ -140,70 +138,76 @@ public:
 
     void reset(const Transaction::Token&);
 
-    bool isLoading() const;
+    bool isLoading() const { return isLoading(m_committedState); }
     bool isProvisional() const { return m_committedState.state == State::Provisional; }
     bool isCommitted() const { return m_committedState.state == State::Committed; }
     bool isFinished() const { return m_committedState.state == State::Finished; }
 
-    bool hasUncommittedLoad() const;
+    bool hasUncommittedLoad() const { return isLoading(m_uncommittedState); }
 
-    const String& provisionalURL() const { return m_committedState.provisionalURL; }
-    const String& url() const { return m_committedState.url; }
-    const WebCore::SecurityOriginData& origin() const { return m_committedState.origin; }
-    const String& unreachableURL() const { return m_committedState.unreachableURL; }
+    const URL& provisionalURL() const LIFETIME_BOUND { return m_committedState.provisionalURL; }
+    const URL& url() const LIFETIME_BOUND { return m_committedState.url; }
+    const WebCore::SecurityOriginData& origin() const LIFETIME_BOUND { return m_committedState.origin; }
+    const URL& unreachableURL() const LIFETIME_BOUND { return m_committedState.unreachableURL; }
 
-    String activeURL() const;
+    const URL& activeURL() const { return activeURL(m_committedState); }
 
     bool hasOnlySecureContent() const;
-    bool hasNegotiatedLegacyTLS() const;
-    void negotiatedLegacyTLS(const Transaction::Token&);
-    bool wasPrivateRelayed() const;
+    bool NODELETE hasNegotiatedLegacyTLS() const;
+    void NODELETE negotiatedLegacyTLS(const Transaction::Token&);
+    bool wasPrivateRelayed() const { return m_committedState.wasPrivateRelayed; }
+    String proxyName() { return m_committedState.proxyName; }
+    WebCore::ResourceResponseSource source() { return m_committedState.source; }
 
-    double estimatedProgress() const;
+    double NODELETE estimatedProgress() const;
     bool networkRequestsInProgress() const { return m_committedState.networkRequestsInProgress; }
 
-    const WebCore::CertificateInfo& certificateInfo() const { return m_committedState.certificateInfo; }
+    const WebCore::CertificateInfo& certificateInfo() const LIFETIME_BOUND { return m_committedState.certificateInfo; }
 
-    const URL& resourceDirectoryURL() const;
+    const URL& resourceDirectoryURL() const LIFETIME_BOUND { return m_committedState.resourceDirectoryURL; }
 
-    const String& pendingAPIRequestURL() const;
-    const PendingAPIRequest& pendingAPIRequest() const;
+    const URL& pendingAPIRequestURL() const LIFETIME_BOUND { return m_committedState.pendingAPIRequest.url; }
+    const PendingAPIRequest& pendingAPIRequest() const LIFETIME_BOUND { return m_committedState.pendingAPIRequest; }
     void setPendingAPIRequest(const Transaction::Token&, PendingAPIRequest&& pendingAPIRequest, const URL& resourceDirectoryPath = { });
     void clearPendingAPIRequest(const Transaction::Token&);
 
-    void didStartProvisionalLoad(const Transaction::Token&, const String& url, const String& unreachableURL);
-    void didExplicitOpen(const Transaction::Token&, const String& url);
-    void didReceiveServerRedirectForProvisionalLoad(const Transaction::Token&, const String& url);
+    void didStartProvisionalLoad(const Transaction::Token&, const URL&, const URL& unreachableURL);
+    void didExplicitOpen(const Transaction::Token&, const URL&);
+    void didReceiveServerRedirectForProvisionalLoad(const Transaction::Token&, const URL&);
     void didFailProvisionalLoad(const Transaction::Token&);
 
-    void didCommitLoad(const Transaction::Token&, const WebCore::CertificateInfo&, bool hasInsecureContent, bool usedLegacyTLS, bool privateRelayed, const WebCore::SecurityOriginData&);
-    void didFinishLoad(const Transaction::Token&);
-    void didFailLoad(const Transaction::Token&);
+    void didCommitLoad(const Transaction::Token&, const WebCore::CertificateInfo&, bool hasInsecureContent, bool usedLegacyTLS, bool privateRelayed, const String& proxyName, const WebCore::ResourceResponseSource, const WebCore::SecurityOriginData&);
 
-    void didSameDocumentNavigation(const Transaction::Token&, const String& url);
+    void NODELETE didFinishLoad(const Transaction::Token&);
+    void NODELETE didFailLoad(const Transaction::Token&);
 
-    void didDisplayOrRunInsecureContent(const Transaction::Token&);
+    void didSameDocumentNavigation(const Transaction::Token&, const URL&);
 
-    void setUnreachableURL(const Transaction::Token&, const String&);
+    void setUnreachableURL(const Transaction::Token&, const URL&);
 
-    const String& title() const;
-    void setTitle(const Transaction::Token&, const String&);
+    const String& NODELETE title() const LIFETIME_BOUND;
+    void setTitle(const Transaction::Token&, String&&);
     void setTitleFromBrowsingWarning(const Transaction::Token&, const String&);
 
-    bool canGoBack() const;
-    void setCanGoBack(const Transaction::Token&, bool);
+    bool NODELETE canGoBack() const;
+    void NODELETE setCanGoBack(const Transaction::Token&, bool);
 
-    bool canGoForward() const;
-    void setCanGoForward(const Transaction::Token&, bool);
+    bool NODELETE canGoForward() const;
+    void NODELETE setCanGoForward(const Transaction::Token&, bool);
 
-    void didStartProgress(const Transaction::Token&);
-    void didChangeProgress(const Transaction::Token&, double);
-    void didFinishProgress(const Transaction::Token&);
-    void setNetworkRequestsInProgress(const Transaction::Token&, bool);
+    void NODELETE didStartProgress(const Transaction::Token&);
+    void NODELETE didChangeProgress(const Transaction::Token&, double);
+    void NODELETE didFinishProgress(const Transaction::Token&);
+    void NODELETE setNetworkRequestsInProgress(const Transaction::Token&, bool);
+    void NODELETE setHTTPFallbackInProgress(const Transaction::Token&, bool);
+    bool NODELETE httpFallbackInProgress();
 
     void didSwapWebProcesses();
 
     bool committedHasInsecureContent() const { return m_committedState.hasInsecureContent; }
+
+    void NODELETE setHadSafeBrowsingWarning(const Transaction::Token&);
+    bool committedHadSafeBrowsingWarning() const { return m_committedState.hadSafeBrowsingWarning; }
 
     // FIXME: We piggy-back off PageLoadState::Observer so that both WKWebView and WKObservablePageState
     // can listen for changes. Once we get rid of WKObservablePageState these could just be part of API::NavigationClient.
@@ -226,11 +230,11 @@ private:
 
         PendingAPIRequest pendingAPIRequest;
 
-        String provisionalURL;
-        String url;
+        URL provisionalURL;
+        URL url;
         WebCore::SecurityOriginData origin;
 
-        String unreachableURL;
+        URL unreachableURL;
 
         String title;
         String titleFromBrowsingWarning;
@@ -239,24 +243,30 @@ private:
 
         bool canGoBack { false };
         bool canGoForward { false };
+        bool isHTTPFallbackInProgress { false };
+        bool hadSafeBrowsingWarning { false };
 
         double estimatedProgress { 0 };
         bool networkRequestsInProgress { false };
 
         WebCore::CertificateInfo certificateInfo;
+        String proxyName;
+        WebCore::ResourceResponseSource source;
     };
 
-    static bool isLoading(const Data&);
-    static String activeURL(const Data&);
+    static bool NODELETE isLoading(const Data&);
+    static const URL& NODELETE activeURL(const Data&);
     static bool hasOnlySecureContent(const Data&);
-    static double estimatedProgress(const Data&);
+    static double NODELETE estimatedProgress(const Data&);
 
-    WebPageProxy& m_webPageProxy;
+    WebPageProxy& page() const { return m_webPageProxy.get(); }
+
+    WeakRef<WebPageProxy> m_webPageProxy;
 
     Data m_committedState;
     Data m_uncommittedState;
 
-    String m_lastUnreachableURL;
+    URL m_lastUnreachableURL;
 
     bool m_mayHaveUncommittedChanges;
     unsigned m_outstandingTransactionCount;

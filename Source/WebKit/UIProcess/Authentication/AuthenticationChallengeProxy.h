@@ -51,16 +51,17 @@ class AuthenticationChallengeProxy : public API::ObjectImpl<API::Object::Type::A
 public:
     static Ref<AuthenticationChallengeProxy> create(WebCore::AuthenticationChallenge&& authenticationChallenge, AuthenticationChallengeIdentifier challengeID, Ref<IPC::Connection>&& connection, WeakPtrSecKeyProxyStore&& secKeyProxyStore)
     {
-        return adoptRef(*new AuthenticationChallengeProxy(WTFMove(authenticationChallenge), challengeID, WTFMove(connection), WTFMove(secKeyProxyStore)));
+        return adoptRef(*new AuthenticationChallengeProxy(WTF::move(authenticationChallenge), challengeID, WTF::move(connection), WTF::move(secKeyProxyStore)));
     }
 
     virtual ~AuthenticationChallengeProxy();
 
     WebCredential* proposedCredential() const;
+
     WebProtectionSpace* protectionSpace() const;
 
     AuthenticationDecisionListener& listener() const { return m_listener.get(); }
-    const WebCore::AuthenticationChallenge& core() { return m_coreAuthenticationChallenge; }
+    const WebCore::AuthenticationChallenge& core() LIFETIME_BOUND { return m_coreAuthenticationChallenge; }
 
 private:
     AuthenticationChallengeProxy(WebCore::AuthenticationChallenge&&, AuthenticationChallengeIdentifier, Ref<IPC::Connection>&&, WeakPtrSecKeyProxyStore&&);
@@ -72,7 +73,11 @@ private:
     WebCore::AuthenticationChallenge m_coreAuthenticationChallenge;
     mutable RefPtr<WebCredential> m_webCredential;
     mutable RefPtr<WebProtectionSpace> m_webProtectionSpace;
-    Ref<AuthenticationDecisionListener> m_listener;
+    const Ref<AuthenticationDecisionListener> m_listener;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::AuthenticationChallengeProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::AuthenticationChallenge; }
+SPECIALIZE_TYPE_TRAITS_END()

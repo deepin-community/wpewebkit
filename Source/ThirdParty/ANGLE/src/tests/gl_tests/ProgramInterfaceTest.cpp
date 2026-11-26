@@ -6,7 +6,10 @@
 
 // ProgramInterfaceTest: Tests of program interfaces.
 
+#include <array>
+
 #include "common/string_utils.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -177,6 +180,121 @@ TEST_P(ProgramInterfaceTestES31, GetResourceName)
     EXPECT_GL_NO_ERROR();
     EXPECT_EQ(7, length);
     EXPECT_EQ("oColor[", std::string(name));
+}
+
+// Tests queries for array of arrays in tessellation shader.
+TEST_P(ProgramInterfaceTestES31, ArrayofArraysQueries)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_tessellation_shader"));
+
+    const GLchar *TCS = R"(#version 310 es
+#extension GL_EXT_tessellation_shader : require
+layout(vertices = 3) out;
+in float vt[];
+out float tt[][2];
+void main()
+{
+    gl_TessLevelOuter[0] = 3.0;
+    gl_TessLevelOuter[1] = 3.0;
+    gl_TessLevelOuter[2] = 3.0;
+    gl_TessLevelInner[0] = 7.0;
+    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+    tt[gl_InvocationID][1] = vt[gl_InvocationID];
+})";
+
+    const GLchar *TES = R"(#version 310 es
+#extension GL_EXT_tessellation_shader : require
+layout(triangles, fractional_even_spacing, ccw) in;
+in float tt[][2];
+out float tg[2];
+void main()
+{
+    gl_Position.xyzw = gl_in[0].gl_Position.xyzw * gl_TessCoord.x +
+                       gl_in[1].gl_Position.xyzw * gl_TessCoord.y +
+                       gl_in[2].gl_Position.xyzw * gl_TessCoord.z;
+    tg[1] = tt[0][1];
+})";
+
+    // Create shader and init program.
+    GLuint programTCS, programTES;
+    programTCS = glCreateShaderProgramv(GL_TESS_CONTROL_SHADER, 1, &TCS);
+    ASSERT_NE(programTCS, 0u);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(programTCS, GL_LINK_STATUS, &linked);
+    ASSERT_GL_TRUE(linked);
+    programTES = glCreateShaderProgramv(GL_TESS_EVALUATION_SHADER, 1, &TES);
+    ASSERT_NE(programTES, 0u);
+    glGetProgramiv(programTES, GL_LINK_STATUS, &linked);
+    ASSERT_GL_TRUE(linked);
+
+    // Program interfaces to query for resources.
+    constexpr uint32_t kInterfaceCount = 2;
+    struct InterfaceProperties
+    {
+        uint32_t programIndex;
+        GLenum iface;
+        const GLchar *resourceName;
+    };
+    std::array<InterfaceProperties, kInterfaceCount> kInterfaceProps = {
+        {{programTCS, GL_PROGRAM_OUTPUT, "tt[0][0]"}, {programTES, GL_PROGRAM_INPUT, "tt[0][0]"}}};
+
+    // Table of queries to perform on resource.
+    constexpr GLsizei kPropCount                = 3;
+    constexpr GLenum kResourceProps[kPropCount] = {GL_NAME_LENGTH, GL_TYPE, GL_ARRAY_SIZE};
+    constexpr GLsizei kBufferSize               = 150;
+
+    // Buffer for results of resource queries.
+    GLint resourceResults[3] = {0};
+
+    // Test: Check each interface by querying for resources.
+    for (uint32_t i = 0; i < kPropCount; ++i)
+    {
+        GLint numActiveResources = 0;
+        GLchar name[64];
+        GLuint program          = kInterfaceProps[i].programIndex;
+        GLenum programInterface = kInterfaceProps[i].iface;
+        bool resourceFound      = false;
+
+        // Get the number of active resources for the given interface. Should be bigger than zero.
+        glGetProgramInterfaceiv(program, programInterface, GL_ACTIVE_RESOURCES,
+                                &numActiveResources);
+        EXPECT_GL_NO_ERROR();
+        ASSERT_NE(0, numActiveResources);
+
+        for (GLuint resourceIndex = 0; resourceIndex < (GLuint)numActiveResources; ++resourceIndex)
+        {
+            GLsizei nameLength       = 0;
+            GLint queryResourceIndex = 0;
+
+            glGetProgramResourceName(program, programInterface, resourceIndex, sizeof(name),
+                                     &nameLength, name);
+            EXPECT_GL_NO_ERROR();
+            ASSERT_NE(0, nameLength);
+
+            // Cross-reference the name back to the resource index.
+            queryResourceIndex = (GLint)glGetProgramResourceIndex(program, programInterface, name);
+            EXPECT_GL_NO_ERROR();
+            ASSERT_EQ((GLuint)queryResourceIndex, resourceIndex);
+
+            if (ANGLE_UNSAFE_TODO(strcmp(name, kInterfaceProps[i].resourceName)) == 0)
+            {
+                GLsizei length = 0;
+                glGetProgramResourceiv(program, programInterface, resourceIndex, kPropCount,
+                                       kResourceProps, kBufferSize, &length, resourceResults);
+                EXPECT_GL_NO_ERROR();
+                ASSERT_NE(0, length);
+
+                // Validate queried resource properties.
+                ASSERT_EQ(strlen(kInterfaceProps[i].resourceName) + 1, (GLuint)resourceResults[0]);
+                ASSERT_EQ(GL_FLOAT, resourceResults[1]);
+                ASSERT_EQ(2, resourceResults[2]);
+
+                resourceFound = true;
+            }
+        }
+
+        ASSERT_TRUE(resourceFound);
+    }
 }
 
 // Tests glGetProgramResourceLocation.
@@ -564,13 +682,13 @@ TEST_P(ProgramInterfaceTestES31, GetUniformBlockProperties)
                               GL_REFERENCED_BY_COMPUTE_SHADER};
     GLsizei propCount      = static_cast<GLsizei>(ArraySize(props));
     constexpr int kBufSize = 256;
-    GLint params[kBufSize];
+    std::array<GLint, kBufSize> params;
     GLint magic = 0xBEEF;
 
     // Tests bufSize is respected even some prop returns more than one value.
     params[propCount] = magic;
     glGetProgramResourceiv(program, GL_UNIFORM_BLOCK, index, propCount, props, propCount, &length,
-                           params);
+                           params.data());
     EXPECT_GL_NO_ERROR();
     EXPECT_EQ(propCount, length);
     EXPECT_EQ(2, params[0]);   // buffer_binding
@@ -584,7 +702,7 @@ TEST_P(ProgramInterfaceTestES31, GetUniformBlockProperties)
     EXPECT_EQ(magic, params[8]);
 
     glGetProgramResourceiv(program, GL_UNIFORM_BLOCK, index, propCount, props, kBufSize, &length,
-                           params);
+                           params.data());
     EXPECT_GL_NO_ERROR();
     EXPECT_EQ(propCount + 1, length);
     EXPECT_EQ(0, params[8]);  // referenced_by_compute_shader
@@ -593,7 +711,7 @@ TEST_P(ProgramInterfaceTestES31, GetUniformBlockProperties)
     GLenum actvieVariablesProperty = GL_ACTIVE_VARIABLES;
     params[1]                      = magic;
     glGetProgramResourceiv(program, GL_UNIFORM_BLOCK, index, 1, &actvieVariablesProperty, 1,
-                           &length, params);
+                           &length, params.data());
     EXPECT_GL_NO_ERROR();
     EXPECT_EQ(1, length);
     EXPECT_LE(0, params[0]);  // index of 'f1' or 'f2'

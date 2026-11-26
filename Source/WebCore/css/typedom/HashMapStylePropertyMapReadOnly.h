@@ -36,10 +36,11 @@ public:
     static Ref<HashMapStylePropertyMapReadOnly> create(HashMap<AtomString, RefPtr<CSSValue>>&&);
     ~HashMapStylePropertyMapReadOnly();
 
+    Type type() const final { return Type::HashMap; }
     RefPtr<CSSValue> propertyValue(CSSPropertyID) const final;
-    String shorthandPropertySerialization(CSSPropertyID) const final;
-    RefPtr<CSSValue> customPropertyValue(const AtomString& property) const final;
-    unsigned size() const final;
+    String NODELETE shorthandPropertySerialization(CSSPropertyID) const final;
+    RefPtr<CSSValue> NODELETE customPropertyValue(const AtomString& property) const final;
+    unsigned NODELETE size() const final;
     Vector<StylePropertyMapEntry> entries(ScriptExecutionContext*) const final;
 
 private:
@@ -49,3 +50,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_CSSOM_STYLE_PROPERTY_MAP(HashMapStylePropertyMapReadOnly, WebCore::StylePropertyMapReadOnly::Type::HashMap);

@@ -10,12 +10,13 @@
 #ifndef LIBANGLE_RENDERER_WGPU_DISPLAYWGPU_H_
 #define LIBANGLE_RENDERER_WGPU_DISPLAYWGPU_H_
 
-#include <dawn/native/DawnNative.h>
-#include <dawn/webgpu_cpp.h>
+#include <webgpu/webgpu.h>
 
 #include "libANGLE/renderer/DisplayImpl.h"
 #include "libANGLE/renderer/ShareGroupImpl.h"
 #include "libANGLE/renderer/wgpu/wgpu_format_utils.h"
+#include "libANGLE/renderer/wgpu/wgpu_utils.h"
+#include "platform/autogen/FeaturesWgpu_autogen.h"
 
 namespace rx
 {
@@ -27,7 +28,19 @@ class ShareGroupWgpu : public ShareGroupImpl
 
 class AllocationTrackerWgpu;
 
-class DisplayWgpu : public DisplayImpl
+class ThreadSafeDisplayWgpu : public ThreadSafeDisplayImpl
+{
+  public:
+    ThreadSafeDisplayWgpu()           = default;
+    ~ThreadSafeDisplayWgpu() override = default;
+
+    bool testDeviceLost() override final;
+    egl::Error restoreLostDevice(const egl::ThreadSafeDisplay *display) override final;
+
+  private:
+};
+
+class DisplayWgpu : public DisplayImpl, public ThreadSafeDisplayWgpu
 {
   public:
     DisplayWgpu(const egl::DisplayState &state);
@@ -43,8 +56,14 @@ class DisplayWgpu : public DisplayImpl
 
     egl::ConfigSet generateConfigs() override;
 
-    bool testDeviceLost() override;
-    egl::Error restoreLostDevice(const egl::Display *display) override;
+    egl::Error validateClientBuffer(const egl::Config *configuration,
+                                    EGLenum buftype,
+                                    EGLClientBuffer clientBuffer,
+                                    const egl::AttributeMap &attribs) const override;
+    egl::Error validateImageClientBuffer(const gl::Context *context,
+                                         EGLenum target,
+                                         EGLClientBuffer clientBuffer,
+                                         const egl::AttributeMap &attribs) const override;
 
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
 
@@ -58,7 +77,6 @@ class DisplayWgpu : public DisplayImpl
     egl::Error waitNative(const gl::Context *context, EGLint engine) override;
     gl::Version getMaxSupportedESVersion() const override;
     gl::Version getMaxConformantESVersion() const override;
-    Optional<gl::Version> getMaxSupportedDesktopVersion() const override;
 
     SurfaceImpl *createWindowSurface(const egl::SurfaceState &state,
                                      EGLNativeWindowType window,
@@ -77,6 +95,10 @@ class DisplayWgpu : public DisplayImpl
                            const gl::Context *context,
                            EGLenum target,
                            const egl::AttributeMap &attribs) override;
+    ExternalImageSiblingImpl *createExternalImageSibling(const gl::Context *context,
+                                                         EGLenum target,
+                                                         EGLClientBuffer buffer,
+                                                         const egl::AttributeMap &attribs) override;
 
     ContextImpl *createContext(const gl::State &state,
                                gl::ErrorSet *errorSet,
@@ -89,14 +111,18 @@ class DisplayWgpu : public DisplayImpl
 
     ShareGroupImpl *createShareGroup(const egl::ShareGroupState &state) override;
 
-    void populateFeatureList(angle::FeatureList *features) override {}
+    void populateFeatureList(angle::FeatureList *features) override;
 
     angle::NativeWindowSystem getWindowSystem() const override;
 
-    wgpu::Adapter &getAdapter() { return mAdapter; }
-    wgpu::Device &getDevice() { return mDevice; }
-    wgpu::Queue &getQueue() { return mQueue; }
-    wgpu::Instance &getInstance() { return mInstance; }
+    const DawnProcTable *getProcs() const { return &mProcTable; }
+    const angle::FeaturesWgpu &getFeatures() const { return mFeatures; }
+    webgpu::AdapterHandle getAdapter() { return mAdapter; }
+    webgpu::DeviceHandle getDevice() { return mDevice; }
+    webgpu::QueueHandle getQueue() { return mQueue; }
+    webgpu::InstanceHandle getInstance() { return mInstance; }
+
+    const WGPULimits &getLimitsWgpu() const { return mLimitsWgpu; }
 
     const gl::Caps &getGLCaps() const { return mGLCaps; }
     const gl::TextureCapsMap &getGLTextureCaps() const { return mGLTextureCaps; }
@@ -104,23 +130,35 @@ class DisplayWgpu : public DisplayImpl
     const gl::Limitations &getGLLimitations() const { return mGLLimitations; }
     const ShPixelLocalStorageOptions &getPLSOptions() const { return mPLSOptions; }
 
-    std::map<EGLNativeWindowType, wgpu::Surface> &getSurfaceCache() { return mSurfaceCache; }
-
     const webgpu::Format &getFormat(GLenum internalFormat) const
     {
         return mFormatTable[internalFormat];
     }
 
+    const webgpu::Format *getFormatForImportedTexture(const egl::AttributeMap &attribs,
+                                                      WGPUTextureFormat wgpuFormat) const;
+
+    ThreadSafeDisplayImpl *getThreadSafeDisplayImpl() override { return this; }
+
   private:
+    egl::Error validateExternalWebGPUTexture(EGLClientBuffer buffer,
+                                             const egl::AttributeMap &attribs) const;
+
     void generateExtensions(egl::DisplayExtensions *outExtensions) const override;
     void generateCaps(egl::Caps *outCaps) const override;
 
+    void initializeFeatures();
+
     egl::Error createWgpuDevice();
 
-    wgpu::Adapter mAdapter;
-    wgpu::Instance mInstance;
-    wgpu::Device mDevice;
-    wgpu::Queue mQueue;
+    DawnProcTable mProcTable;
+
+    webgpu::AdapterHandle mAdapter;
+    webgpu::InstanceHandle mInstance;
+    webgpu::DeviceHandle mDevice;
+    webgpu::QueueHandle mQueue;
+
+    WGPULimits mLimitsWgpu;
 
     gl::Caps mGLCaps;
     gl::TextureCapsMap mGLTextureCaps;
@@ -131,14 +169,11 @@ class DisplayWgpu : public DisplayImpl
     gl::Version mMaxSupportedClientVersion;
     ShPixelLocalStorageOptions mPLSOptions;
 
-    // http://anglebug.com/342213844
-    // Dawn currently holds references to the internal swap chains for an unknown amount of time
-    // after destroying a surface and can fail to create a new swap chain for the same window.
-    // ANGLE tests re-create EGL surfaces for the same window each test. As a workaround, cache the
-    // wgpu::Surface created for each window for the lifetime of the display.
-    std::map<EGLNativeWindowType, wgpu::Surface> mSurfaceCache;
-
     webgpu::FormatTable mFormatTable;
+
+    angle::FeaturesWgpu mFeatures;
+
+    angle::NativeWindowSystem mWindowSystem = angle::NativeWindowSystem::Other;
 };
 
 }  // namespace rx

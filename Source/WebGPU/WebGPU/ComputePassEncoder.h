@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,11 +25,15 @@
 
 #pragma once
 
+#import "CommandEncoder.h"
 #import "CommandsMixin.h"
+#import <WebGPU/WebGPU.h>
+#import <WebGPU/WebGPUExt.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/Ref.h>
 #import <wtf/RefCounted.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
@@ -41,7 +45,6 @@ namespace WebGPU {
 
 class BindGroup;
 class Buffer;
-class CommandEncoder;
 class ComputePipeline;
 class Device;
 class QuerySet;
@@ -70,20 +73,20 @@ public:
     void popDebugGroup();
     void pushDebugGroup(String&& groupLabel);
 
-    void setBindGroup(uint32_t groupIndex, const BindGroup&, uint32_t dynamicOffsetCount, const uint32_t* dynamicOffsets);
+    void setBindGroup(uint32_t groupIndex, const BindGroup*, std::optional<Vector<uint32_t>>&& dynamicOffsets);
     void setPipeline(const ComputePipeline&);
     void setLabel(String&&);
 
     Device& device() const { return m_device; }
 
-    bool isValid() const;
-    id<MTLComputeCommandEncoder> computeCommandEncoder() const;
+    bool NODELETE isValid() const;
+    id<MTLComputeCommandEncoder> NODELETE computeCommandEncoder() const;
 
 private:
     ComputePassEncoder(id<MTLComputeCommandEncoder>, const WGPUComputePassDescriptor&, CommandEncoder&, Device&);
     ComputePassEncoder(CommandEncoder&, Device&, NSString*);
 
-    bool validatePopDebugGroup() const;
+    bool NODELETE validatePopDebugGroup() const;
 
     void makeInvalid(NSString* = nil);
     void executePreDispatchCommands(const Buffer* = nullptr);
@@ -91,22 +94,31 @@ private:
 
     id<MTLComputeCommandEncoder> m_computeCommandEncoder { nil };
 
-    struct PendingTimestampWrites {
-        Ref<QuerySet> querySet;
-        uint32_t queryIndex;
-    };
     uint64_t m_debugGroupStackSize { 0 };
 
     const Ref<Device> m_device;
     MTLSize m_threadsPerThreadgroup;
     Vector<uint32_t> m_computeDynamicOffsets;
+    Vector<uint32_t> m_priorComputeDynamicOffsets;
     RefPtr<const ComputePipeline> m_pipeline;
-    Ref<CommandEncoder> m_parentEncoder;
+    const Ref<CommandEncoder> m_parentEncoder;
     HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroupDynamicOffsets;
     HashMap<uint32_t, Vector<const BindableResources*>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroupResources;
-    HashMap<uint32_t, RefPtr<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    HashMap<uint32_t, Ref<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    std::array<uint32_t, 32> m_maxDynamicOffsetAtIndex;
     NSString *m_lastErrorString { nil };
     bool m_passEnded { false };
-};
+} SWIFT_SHARED_REFERENCE(refComputePassEncoder, derefComputePassEncoder);
+
 
 } // namespace WebGPU
+
+inline void refComputePassEncoder(WebGPU::ComputePassEncoder* obj)
+{
+    obj->ref();
+}
+
+inline void derefComputePassEncoder(WebGPU::ComputePassEncoder* obj)
+{
+    obj->deref();
+}

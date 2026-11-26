@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include "CSSPrimitiveValue.h"
+#include <WebCore/CSSPrimitiveValue.h>
 #include <wtf/text/StringView.h>
 
 namespace WebCore {
@@ -91,7 +91,7 @@ enum HashTokenType {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSParserToken);
 class CSSParserToken {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSParserToken);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSParserToken, CSSParserToken);
 public:
     enum BlockType {
         NotBlock,
@@ -103,37 +103,38 @@ public:
     CSSParserToken(CSSParserTokenType, StringView, BlockType = NotBlock);
 
     explicit CSSParserToken(unsigned nonNewlineWhitespaceCount); // NonNewlineWhitespaceToken
-    CSSParserToken(CSSParserTokenType, UChar); // for DelimiterToken
+    CSSParserToken(CSSParserTokenType, char16_t); // for DelimiterToken
     CSSParserToken(double, NumericValueType, NumericSign, StringView originalText); // for NumberToken
 
     CSSParserToken(HashTokenType, StringView);
 
-    static CSSUnitType stringToUnitType(StringView);
+    static CSSUnitType NODELETE stringToUnitType(StringView);
 
     bool operator==(const CSSParserToken& other) const;
 
     // Converts NumberToken to DimensionToken.
-    void convertToDimensionWithUnit(StringView);
+    void convertToDimensionWithUnit(CSSUnitType);
+    void NODELETE convertToDimensionWithUnit(StringView);
 
     // Converts NumberToken to PercentageToken.
-    void convertToPercentage();
+    void NODELETE convertToPercentage();
 
     CSSParserTokenType type() const { return static_cast<CSSParserTokenType>(m_type); }
     StringView value() const { return { m_valueDataCharRaw, m_valueLength, m_valueIs8Bit }; }
 
-    UChar delimiter() const;
-    NumericSign numericSign() const;
-    NumericValueType numericValueType() const;
-    double numericValue() const;
-    StringView originalText() const;
+    char16_t NODELETE delimiter() const;
+    NumericSign NODELETE numericSign() const;
+    NumericValueType NODELETE numericValueType() const;
+    double NODELETE numericValue() const;
+    StringView NODELETE originalText() const;
     HashTokenType getHashTokenType() const { ASSERT(m_type == HashToken); return m_hashTokenType; }
     BlockType getBlockType() const { return static_cast<BlockType>(m_blockType); }
     CSSUnitType unitType() const { return static_cast<CSSUnitType>(m_unit); }
-    StringView unitString() const;
+    StringView NODELETE unitString() const;
     CSSValueID id() const;
     CSSValueID functionId() const;
 
-    bool hasStringBacking() const;
+    bool NODELETE hasStringBacking() const;
     bool tryUseStringLiteralBacking();
     bool isBackedByStringLiteral() const { return m_isBackedByStringLiteral; }
 
@@ -174,12 +175,12 @@ private:
     bool m_valueIs8Bit : 1 { false };
     bool m_isBackedByStringLiteral : 1 { false };
     unsigned m_valueLength { 0 };
-    const void* m_valueDataCharRaw { nullptr }; // Either LChar* or UChar*.
+    const void* m_valueDataCharRaw { nullptr }; // Either Latin1Character* or char16_t*.
 
     union {
-        UChar m_delimiter;
+        char16_t m_delimiter;
         HashTokenType m_hashTokenType;
-        double m_numericValue;
+        double m_numericValue { 0 };
         mutable int m_id;
         unsigned m_whitespaceCount;
     };

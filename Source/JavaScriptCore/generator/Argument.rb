@@ -54,10 +54,6 @@ class Argument
         Fits::check size, @name, @type
     end
 
-    def fits_write(size)
-        Fits::write size, @name, @type
-    end
-
     def assert_fits(size)
         "ASSERT((#{fits_check size}));"
     end
@@ -84,7 +80,7 @@ class Argument
     {
         if (!#{Fits::check "size", "value", @type})
             value = func();
-        auto* stream = bitwise_cast<typename TypeBySize<size>::unsignedType*>(reinterpret_cast<uint8_t*>(this) + #{@index} * size + PaddingBySize<size>::value + OpcodeIDWidthBySize<#{traits}, size>::opcodeIDSize);
+        auto* stream = std::bit_cast<typename TypeBySize<size>::unsignedType*>(reinterpret_cast<uint8_t*>(this) + #{@index} * size + PaddingBySize<size>::value + OpcodeIDWidthBySize<#{traits}, size>::opcodeIDSize);
         *stream = #{Fits::convert "size", "value", @type};
     }
 EOF

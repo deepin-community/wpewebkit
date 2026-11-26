@@ -28,6 +28,9 @@ headers: "ModelProcessCreationParameters.h" "AuxiliaryProcessCreationParameters.
     WebKit::AuxiliaryProcessCreationParameters auxiliaryProcessParameters;
     ProcessID parentPID;
     String applicationVisibleName;
+    bool restrictiveRenderingMode;
+    std::optional<int> debugEntityMemoryLimit;
+    std::optional<int> debugImmersiveEntityMemoryLimit;
 };
 
 #endif

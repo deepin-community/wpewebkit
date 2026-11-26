@@ -148,6 +148,25 @@ static bool isRunningOnValgrind()
     return false;
 }
 
+static bool isLibpasOrMimallocBuilt()
+{
+#if BUSE(SYSTEM_MALLOC)
+    return false;
+#else
+    return true;
+#endif
+}
+
+static bool isSystemHeapForceDisabled()
+{
+#if BUSE(SYSTEM_MALLOC)
+    return false;
+#else
+    const char* value = getenv("WebKitSystemHeapOverrideEnablement");
+    return value ? !atoi(value) : false;
+#endif
+}
+
 #if BUSE(CHECK_NANO_MALLOC)
 static bool isNanoMallocEnabled()
 {
@@ -159,7 +178,8 @@ static bool isNanoMallocEnabled()
 DEFINE_STATIC_PER_PROCESS_STORAGE(Environment);
 
 Environment::Environment(const LockHolder&)
-    : m_isDebugHeapEnabled(computeIsDebugHeapEnabled())
+    : m_isSystemHeapEnabled(computeIsSystemHeapEnabled())
+    , m_shouldBmallocAllocateThroughSystemHeap(computeShouldBmallocAllocateThroughSystemHeap())
 {
 #if BUSE(LIBPAS)
     const char* statusReporter = getenv("WebKitPasStatusReporter");
@@ -169,10 +189,20 @@ Environment::Environment(const LockHolder&)
             pas_status_reporter_enabled = enabled;
     }
 #endif
+    BASSERT(!m_shouldBmallocAllocateThroughSystemHeap || m_isSystemHeapEnabled);
 }
 
-bool Environment::computeIsDebugHeapEnabled()
+bool Environment::computeIsSystemHeapEnabled()
 {
+    return !isSystemHeapForceDisabled();
+}
+
+bool Environment::computeShouldBmallocAllocateThroughSystemHeap()
+{
+    if (!isLibpasOrMimallocBuilt())
+        return true;
+    if (isSystemHeapForceDisabled())
+        return false;
     if (isWebKitMallocForceEnabled())
         return false;
     if (isMallocEnvironmentVariableImplyingSystemMallocSet())

@@ -25,12 +25,13 @@
 
 #pragma once
 
+#include "CSSAnimation.h"
 #include "StyleOriginatedAnimationEvent.h"
 
 namespace WebCore {
 
 class CSSAnimationEvent final : public StyleOriginatedAnimationEvent {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CSSAnimationEvent);
+    WTF_MAKE_TZONE_ALLOCATED(CSSAnimationEvent);
 public:
     static Ref<CSSAnimationEvent> create(const AtomString& type, WebAnimation* animation, std::optional<Seconds> scheduledTime, double elapsedTime, const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier, const String& animationName)
     {
@@ -38,29 +39,29 @@ public:
     }
 
     struct Init : EventInit {
-        String animationName;
+        RefPtr<CSSAnimation> animation;
+        String animationName { emptyString() };
         double elapsedTime { 0 };
-        String pseudoElement;
+        String pseudoElement { emptyString() };
     };
 
-    static Ref<CSSAnimationEvent> create(const AtomString& type, const Init& initializer, IsTrusted isTrusted = IsTrusted::No)
+    static Ref<CSSAnimationEvent> create(const AtomString& type, Init&& initializer, IsTrusted isTrusted = IsTrusted::No)
     {
-        return adoptRef(*new CSSAnimationEvent(type, initializer, isTrusted));
+        return adoptRef(*new CSSAnimationEvent(type, WTF::move(initializer), isTrusted));
     }
 
     virtual ~CSSAnimationEvent();
 
-    bool isCSSAnimationEvent() const final { return true; }
-
-    const String& animationName() const { return m_animationName; }
+    RefPtr<CSSAnimation> cssAnimation() const { return dynamicDowncast<CSSAnimation>(animation()); }
+    const String& animationName() const LIFETIME_BOUND { return m_animationName; }
 
 private:
     CSSAnimationEvent(const AtomString& type, WebAnimation*, std::optional<Seconds> scheduledTime, double elapsedTime, const std::optional<Style::PseudoElementIdentifier>&, const String& animationName);
-    CSSAnimationEvent(const AtomString&, const Init&, IsTrusted);
+    CSSAnimationEvent(const AtomString&, Init&&, IsTrusted);
 
     String m_animationName;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_ANIMATION_EVENT_BASE(CSSAnimationEvent, isCSSAnimationEvent())
+SPECIALIZE_TYPE_TRAITS_EVENT(CSSAnimationEvent)

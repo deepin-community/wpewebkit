@@ -60,8 +60,8 @@ template<typename> struct IDLCallbackFunction;
 template<typename> struct IDLDictionary;
 template<typename> struct IDLEnumeration;
 template<typename> struct IDLNullable;
-template<typename> struct IDLSequence;
-template<typename> struct IDLFrozenArray;
+template<typename, size_t = 0> struct IDLSequence;
+template<typename, size_t = 0> struct IDLFrozenArray;
 template<typename, typename> struct IDLRecord;
 template<typename> struct IDLPromise;
 template<typename> struct IDLPromiseIgnoringSuspension;
@@ -70,7 +70,7 @@ struct IDLError;
 struct IDLDOMException;
 
 template<typename...> struct IDLUnion;
-template<typename> struct IDLBufferSource;
+template<typename> struct IDLBufferSourceBase;
 
 struct IDLArrayBuffer;
 struct IDLArrayBufferView;

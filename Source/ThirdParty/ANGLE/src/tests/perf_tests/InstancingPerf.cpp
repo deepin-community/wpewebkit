@@ -8,7 +8,9 @@
 //
 
 #include "ANGLEPerfTest.h"
+#include "common/unsafe_buffers.h"
 
+#include <array>
 #include <cmath>
 #include <sstream>
 
@@ -140,9 +142,9 @@ void InstancingPerfBenchmark::initializeBenchmark()
 
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
-    GLuint baseIndexData[6]     = {0, 1, 2, 1, 3, 2};
-    Vector2 basePositionData[4] = {Vector2(-1.0f, 1.0f), Vector2(1.0f, 1.0f), Vector2(-1.0f, -1.0f),
-                                   Vector2(1.0f, -1.0f)};
+    static constexpr std::array<GLuint, 6> baseIndexData = {0, 1, 2, 1, 3, 2};
+    std::array<Vector2, 4> basePositionData = {Vector2(-1.0f, 1.0f), Vector2(1.0f, 1.0f),
+                                               Vector2(-1.0f, -1.0f), Vector2(1.0f, -1.0f)};
 
     std::vector<GLuint> indexData;
     std::vector<Vector2> positionData;

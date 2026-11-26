@@ -29,7 +29,9 @@
 
 #include "PDFPresentationController.h"
 #include <WebCore/GraphicsLayerClient.h>
+#include <WebCore/TiledBacking.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 
 namespace WebCore {
 class PlatformWheelEvent;
@@ -57,8 +59,8 @@ public:
 
 
 private:
-    bool supportsDisplayMode(PDFDocumentLayout::DisplayMode) const override;
-    void willChangeDisplayMode(PDFDocumentLayout::DisplayMode) override;
+    bool supportsDisplayMode(PDFPluginDisplayMode) const override;
+    void willChangeDisplayMode(PDFPluginDisplayMode) override;
 
     void teardown() override;
 
@@ -75,23 +77,22 @@ private:
 
     void updateIsInWindow(bool isInWindow) override;
     void updateDebugBorders(bool showDebugBorders, bool showRepaintCounters) override;
-    void updateForCurrentScrollability(OptionSet<TiledBackingScrollability>) override;
+    void updateForCurrentScrollability(OptionSet<WebCore::TiledBackingScrollability>) override;
 
-    void repaintForIncrementalLoad() override;
-    void setNeedsRepaintInDocumentRect(OptionSet<RepaintRequirement>, const WebCore::FloatRect& rectInDocumentCoordinates, std::optional<PDFLayoutRow>) override;
+    Vector<LayerCoverage> layerCoveragesForRepaintPageCoverage(RepaintRequirements, const PDFPageCoverage&) override;
 
     void didGeneratePreviewForPage(PDFDocumentLayout::PageIndex) override;
 
     WebCore::GraphicsLayerClient& graphicsLayerClient() override { return *this; }
 
     std::optional<PDFLayoutRow> visibleRow() const override;
-    std::optional<PDFLayoutRow> rowForLayerID(WebCore::PlatformLayerIdentifier) const override;
+    std::optional<PDFLayoutRow> rowForLayer(const WebCore::GraphicsLayer&) const override;
 
-    WebCore::FloatSize contentsOffsetForPage(PDFDocumentLayout::PageIndex) const;
+    WebCore::FloatSize NODELETE contentsOffsetForPage(PDFDocumentLayout::PageIndex) const;
 
     bool handleKeyboardEvent(const WebKeyboardEvent&) override;
 
-    bool handleKeyboardCommand(const WebKeyboardEvent&);
+    bool NODELETE handleKeyboardCommand(const WebKeyboardEvent&);
     bool handleKeyboardEventForPageNavigation(const WebKeyboardEvent&);
 
     bool wantsWheelEvents() const override { return true; }
@@ -104,9 +105,9 @@ private:
 
     bool handleDiscreteWheelEvent(const WebCore::PlatformWheelEvent&);
 
-    bool eventCanStartPageTransition(const PlatformWheelEvent&) const;
+    bool eventCanStartPageTransition(const WebCore::PlatformWheelEvent&) const;
 
-    bool canTransitionOnSide(WebCore::BoxSide) const;
+    bool NODELETE canTransitionOnSide(WebCore::BoxSide) const;
 
     // Transition state
     enum class TransitionDirection : uint8_t {
@@ -126,7 +127,7 @@ private:
         return direction == TransitionDirection::NextHorizontal || direction == TransitionDirection::NextVertical;
     }
 
-    bool canTransitionInDirection(TransitionDirection) const;
+    bool NODELETE canTransitionInDirection(TransitionDirection) const;
 
     void startOrStopAnimationTimerIfNecessary();
     void animationTimerFired();
@@ -143,9 +144,9 @@ private:
     void updateLayerVisibilityForTransitionState(PageTransitionState previousState);
     void updateLayersForTransitionState();
 
-    void applyWheelEventDelta(FloatSize);
+    void applyWheelEventDelta(WebCore::FloatSize);
 
-    std::optional<VisiblePDFPosition> pdfPositionForCurrentView(bool preservePosition) const override;
+    std::optional<PDFDocumentLayout::PageIndex> pageIndexForCurrentView(AnchorPoint) const override;
     void restorePDFPosition(const VisiblePDFPosition&) override;
 
     void ensurePageIsVisible(PDFDocumentLayout::PageIndex) override;
@@ -154,21 +155,21 @@ private:
     void notifyFlushRequired(const WebCore::GraphicsLayer*) override;
     float pageScaleFactor() const override;
     float deviceScaleFactor() const override;
-    std::optional<float> customContentsScale(const WebCore::GraphicsLayer*) const override;
-    bool layerNeedsPlatformContext(const WebCore::GraphicsLayer*) const override;
-    void tiledBackingUsageChanged(const WebCore::GraphicsLayer*, bool /*usingTiledBacking*/) override;
-    void paintContents(const WebCore::GraphicsLayer*, WebCore::GraphicsContext&, const WebCore::FloatRect&, OptionSet<WebCore::GraphicsLayerPaintBehavior>) override;
-
-#if ENABLE(UNIFIED_PDF_SELECTION_LAYER)
-    void paintPDFSelection(const WebCore::GraphicsLayer*, WebCore::GraphicsContext&, const WebCore::FloatRect& clipRect, std::optional<PDFLayoutRow> = { });
+    std::optional<float> customContentsScale(const WebCore::GraphicsLayer&) const override;
+#if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
+    bool layerAllowsDynamicContentScaling(const WebCore::GraphicsLayer*) const override;
 #endif
+    void tiledBackingUsageChanged(const WebCore::GraphicsLayer*, bool /*usingTiledBacking*/) override;
+    void paintContents(const WebCore::GraphicsLayer&, WebCore::GraphicsContext&, const WebCore::FloatRect&, OptionSet<WebCore::GraphicsLayerPaintBehavior>) override;
+
+    void paintPDFSelection(const WebCore::GraphicsLayer*, WebCore::GraphicsContext&, const WebCore::FloatRect& clipRect, std::optional<PDFLayoutRow> = { });
 
     void paintBackgroundLayerForRow(const WebCore::GraphicsLayer*, WebCore::GraphicsContext&, const WebCore::FloatRect& clipRect, unsigned rowIndex);
 
     void buildRows();
 
-    bool canGoToNextRow() const;
-    bool canGoToPreviousRow() const;
+    bool NODELETE canGoToNextRow() const;
+    bool NODELETE canGoToPreviousRow() const;
 
     enum class Animated : bool { No, Yes };
     void goToNextRow(Animated);
@@ -178,7 +179,7 @@ private:
     void setVisibleRow(unsigned);
     void updateLayersAfterChangeInVisibleRow(std::optional<unsigned> additionalVisibleRowIndex = { });
 
-    std::optional<unsigned> additionalVisibleRowIndexForDirection(TransitionDirection) const;
+    std::optional<unsigned> NODELETE additionalVisibleRowIndexForDirection(TransitionDirection) const;
 
     // First index is layer, second index is start/end.
     static constexpr size_t topLayerIndex = 0;
@@ -187,8 +188,8 @@ private:
     static constexpr size_t endIndex = 1;
     std::array<std::array<float, 2>, 2> layerOpacitiesForStretchOffset(TransitionDirection, WebCore::FloatSize layerOffset, WebCore::FloatSize rowSize) const;
     WebCore::FloatSize layerOffsetForStretch(TransitionDirection, WebCore::FloatSize stretchDistance, WebCore::FloatSize rowSize) const;
-    static float relevantAxisForDirection(TransitionDirection, WebCore::FloatSize);
-    static void setRelevantAxisForDirection(TransitionDirection, WebCore::FloatSize&, float value);
+    static float NODELETE relevantAxisForDirection(TransitionDirection, WebCore::FloatSize);
+    static void NODELETE setRelevantAxisForDirection(TransitionDirection, WebCore::FloatSize&, float value);
 
     struct RowData {
         PDFLayoutRow pages;
@@ -197,26 +198,25 @@ private:
         RefPtr<WebCore::GraphicsLayer> leftPageContainerLayer;
         RefPtr<WebCore::GraphicsLayer> rightPageContainerLayer;
         RefPtr<WebCore::GraphicsLayer> contentsLayer;
-#if ENABLE(UNIFIED_PDF_SELECTION_LAYER)
         RefPtr<WebCore::GraphicsLayer> selectionLayer;
-#endif
-        bool isPageBackgroundLayer(const GraphicsLayer*) const;
 
-        RefPtr<WebCore::GraphicsLayer> leftPageBackgroundLayer() const;
+        bool isPageBackgroundLayer(const WebCore::GraphicsLayer*) const;
+
+        Ref<WebCore::GraphicsLayer> leftPageBackgroundLayer() const;
         RefPtr<WebCore::GraphicsLayer> rightPageBackgroundLayer() const;
 
         RefPtr<WebCore::GraphicsLayer> backgroundLayerForPageIndex(PDFDocumentLayout::PageIndex) const;
     };
 
-    const RowData* rowDataForLayerID(WebCore::PlatformLayerIdentifier) const;
+    const RowData* NODELETE rowDataForLayer(const WebCore::GraphicsLayer&) const;
     WebCore::FloatPoint positionForRowContainerLayer(const PDFLayoutRow&) const;
     WebCore::FloatSize rowContainerSize(const PDFLayoutRow&) const;
 
     RefPtr<WebCore::GraphicsLayer> m_rowsContainerLayer;
     Vector<RowData> m_rows;
 
-    HashMap<WebCore::PlatformLayerIdentifier, unsigned> m_layerIDToRowIndexMap;
-    std::optional<PDFDocumentLayout::DisplayMode> m_displayModeAtLastLayerSetup;
+    WeakHashMap<WebCore::GraphicsLayer, unsigned> m_layerToRowIndexMap;
+    std::optional<PDFPluginDisplayMode> m_displayModeAtLastLayerSetup;
 
     unsigned m_visibleRowIndex { 0 };
 

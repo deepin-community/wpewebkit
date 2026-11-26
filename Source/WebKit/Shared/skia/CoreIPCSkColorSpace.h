@@ -27,30 +27,32 @@
 
 #if USE(SKIA)
 
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebKit {
 
 class CoreIPCSkColorSpace {
 public:
     explicit CoreIPCSkColorSpace(sk_sp<SkColorSpace> skColorSpace)
-        : m_skColorSpace(WTFMove(skColorSpace))
+        : m_skColorSpace(WTF::move(skColorSpace))
     {
     }
 
-    explicit CoreIPCSkColorSpace(std::span<const uint8_t> data)
-        : m_skColorSpace(SkColorSpace::Deserialize(data.data(), data.size()))
+    static sk_sp<SkColorSpace> create(std::span<const uint8_t> data)
     {
+        return SkColorSpace::Deserialize(data.data(), data.size());
     }
-
-    sk_sp<SkColorSpace> skColorSpace() const { return m_skColorSpace; }
 
     std::span<const uint8_t> dataReference() const
     {
         if (!m_serializedColorSpace)
             m_serializedColorSpace = m_skColorSpace->serialize();
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // Skia port
         if (m_serializedColorSpace)
             return { m_serializedColorSpace->bytes(), m_serializedColorSpace->size() };
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return { };
     }
 

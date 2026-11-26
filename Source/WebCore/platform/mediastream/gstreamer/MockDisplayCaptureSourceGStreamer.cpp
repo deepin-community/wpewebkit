@@ -22,28 +22,29 @@
  */
 
 #include "config.h"
+#include "MockDisplayCaptureSourceGStreamer.h"
 
 #if ENABLE(MEDIA_STREAM) && USE(GSTREAMER)
-#include "MockDisplayCaptureSourceGStreamer.h"
+#include "ContextDestructionObserverInlines.h"
 
 namespace WebCore {
 
-CaptureSourceOrError MockDisplayCaptureSourceGStreamer::create(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
+CaptureSourceOrError MockDisplayCaptureSourceGStreamer::create(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
 {
-    auto mockSource = adoptRef(*new MockRealtimeVideoSourceGStreamer(String { device.persistentId() }, AtomString { device.label() }, MediaDeviceHashSalts { hashSalts }, pageIdentifier));
+    Ref mockSource = MockRealtimeVideoSourceGStreamer::create(String { device.persistentId() }, AtomString { device.label() }, MediaDeviceHashSalts { hashSalts }, pageIdentifier);
 
     if (constraints) {
         if (auto error = mockSource->applyConstraints(*constraints))
             return CaptureSourceOrError(CaptureSourceError { error->invalidConstraint });
     }
 
-    Ref<RealtimeMediaSource> source = adoptRef(*new MockDisplayCaptureSourceGStreamer(device, WTFMove(mockSource), WTFMove(hashSalts), pageIdentifier));
+    Ref<RealtimeMediaSource> source = adoptRef(*new MockDisplayCaptureSourceGStreamer(device, WTF::move(mockSource), WTF::move(hashSalts), pageIdentifier));
     return source;
 }
 
-MockDisplayCaptureSourceGStreamer::MockDisplayCaptureSourceGStreamer(const CaptureDevice& device, Ref<MockRealtimeVideoSourceGStreamer>&& source, MediaDeviceHashSalts&& hashSalts, PageIdentifier pageIdentifier)
-    : RealtimeVideoCaptureSource(device, WTFMove(hashSalts), pageIdentifier)
-    , m_source(WTFMove(source))
+MockDisplayCaptureSourceGStreamer::MockDisplayCaptureSourceGStreamer(const CaptureDevice& device, Ref<MockRealtimeVideoSourceGStreamer>&& source, MediaDeviceHashSalts&& hashSalts, std::optional<PageIdentifier> pageIdentifier)
+    : RealtimeVideoCaptureSource(device, WTF::move(hashSalts), pageIdentifier)
+    , m_source(WTF::move(source))
     , m_deviceType(device.type())
 {
     m_source->addVideoFrameObserver(*this);
@@ -89,7 +90,9 @@ const RealtimeMediaSourceCapabilities& MockDisplayCaptureSourceGStreamer::capabi
         capabilities.setHeight({ 1, 1080 });
         capabilities.setFrameRate({ .01, 30.0 });
 
-        m_capabilities = WTFMove(capabilities);
+        capabilities.setDeviceId(hashedId());
+
+        m_capabilities = WTF::move(capabilities);
     }
     return m_capabilities.value();
 }
@@ -118,7 +121,7 @@ const RealtimeMediaSourceSettings& MockDisplayCaptureSourceGStreamer::settings()
 
         settings.setSupportedConstraints(supportedConstraints);
 
-        m_currentSettings = WTFMove(settings);
+        m_currentSettings = WTF::move(settings);
     }
     return m_currentSettings.value();
 }

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2003-2024 Apple Inc.  All rights reserved.
- * Copyright (C) 2005 Nokia.  All rights reserved.
+ * Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2005 Nokia. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,19 +26,16 @@
 
 #pragma once
 
-#include "FloatPoint.h"
-#include "LengthBox.h"
+#include <WebCore/BoxExtents.h>
+#include <WebCore/FloatPoint.h>
+#include <wtf/Platform.h>
 
 #if USE(CG)
 typedef struct CGRect CGRect;
 #endif
 
 #if PLATFORM(MAC)
-#ifdef NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES
 typedef struct CGRect NSRect;
-#else
-typedef struct _NSRect NSRect;
-#endif
 #endif // PLATFORM(MAC)
 
 #if USE(CAIRO)
@@ -78,7 +75,7 @@ public:
         : m_location(topLeft), m_size(FloatSize(bottomRight.x() - topLeft.x(), bottomRight.y() - topLeft.y())) { }
     WEBCORE_EXPORT FloatRect(const IntRect&);
 
-    static FloatRect narrowPrecision(double x, double y, double width, double height);
+    static FloatRect NODELETE narrowPrecision(double x, double y, double width, double height);
 
     constexpr FloatPoint location() const { return m_location; }
     constexpr FloatSize size() const { return m_size; }
@@ -102,7 +99,7 @@ public:
 
     constexpr bool isEmpty() const { return m_size.isEmpty(); }
     constexpr bool isZero() const { return m_size.isZero(); }
-    bool isExpressibleAsIntRect() const;
+    bool NODELETE isExpressibleAsIntRect() const;
 
     constexpr FloatPoint center() const { return location() + size() / 2; }
 
@@ -124,6 +121,13 @@ public:
         m_size.expand(-(box.left() + box.right()), -(box.top() + box.bottom()));
     }
     void contract(float dw, float dh) { m_size.expand(-dw, -dh); }
+
+    void shiftEdgesTo(float left, float top, float right, float bottom)
+    {
+        m_location.set(left, top);
+        m_size.setWidth(right - left);
+        m_size.setHeight(bottom - top);
+    }
 
     void shiftXEdgeTo(float edge)
     {
@@ -178,9 +182,9 @@ public:
     constexpr FloatPoint minXMaxYCorner() const { return FloatPoint(m_location.x(), m_location.y() + m_size.height()); } // typically bottomLeft
     constexpr FloatPoint maxXMaxYCorner() const { return FloatPoint(m_location.x() + m_size.width(), m_location.y() + m_size.height()); } // typically bottomRight
 
-    WEBCORE_EXPORT bool intersects(const FloatRect&) const;
-    WEBCORE_EXPORT bool inclusivelyIntersects(const FloatRect&) const;
-    WEBCORE_EXPORT bool contains(const FloatRect&) const;
+    WEBCORE_EXPORT bool NODELETE intersects(const FloatRect&) const;
+    WEBCORE_EXPORT bool NODELETE inclusivelyIntersects(const FloatRect&) const;
+    WEBCORE_EXPORT bool NODELETE contains(const FloatRect&) const;
     WEBCORE_EXPORT bool contains(const FloatPoint&, ContainsMode = InsideOrOnStroke) const;
 
     WEBCORE_EXPORT void intersect(const FloatRect&);
@@ -188,7 +192,8 @@ public:
     WEBCORE_EXPORT void unite(const FloatRect&);
     void uniteEvenIfEmpty(const FloatRect&);
     void uniteIfNonZero(const FloatRect&);
-    WEBCORE_EXPORT void extend(const FloatPoint&);
+    WEBCORE_EXPORT void extend(FloatPoint);
+    void extend(FloatPoint minPoint, FloatPoint maxPoint);
 
     // Note, this doesn't match what IntRect::contains(IntPoint&) does; the int version
     // is really checking for containment of 1x1 rect, but that doesn't make sense with floats.
@@ -211,7 +216,7 @@ public:
     void inflate(float dx, float dy, float dmaxX, float dmaxY);
 
     void scale(float s) { scale(s, s); }
-    WEBCORE_EXPORT void scale(float sx, float sy);
+    WEBCORE_EXPORT void NODELETE scale(float sx, float sy);
     void scale(FloatSize size) { scale(size.width(), size.height()); }
 
     constexpr FloatRect transposedRect() const { return FloatRect(m_location.transposedPoint(), m_size.transposedSize()); }
@@ -219,11 +224,6 @@ public:
 #if USE(CG)
     WEBCORE_EXPORT FloatRect(const CGRect&);
     WEBCORE_EXPORT operator CGRect() const;
-#endif
-
-#if PLATFORM(MAC) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-    WEBCORE_EXPORT FloatRect(const NSRect&);
-    WEBCORE_EXPORT operator NSRect() const;
 #endif
 
 #if USE(SKIA)
@@ -254,28 +254,9 @@ public:
 
     friend bool operator==(const FloatRect&, const FloatRect&) = default;
 
-    struct MarkableTraits {
-        constexpr static bool isEmptyValue(const FloatRect& rect)
-        {
-            return rect.isNaN();
-        }
-
-        constexpr static FloatRect emptyValue()
-        {
-            return FloatRect::nanRect();
-        }
-    };
-
 private:
     FloatPoint m_location;
     FloatSize m_size;
-
-    void setLocationAndSizeFromEdges(float left, float top, float right, float bottom)
-    {
-        m_location.set(left, top);
-        m_size.setWidth(right - left);
-        m_size.setHeight(bottom - top);
-    }
 };
 
 inline FloatRect intersection(const FloatRect& a, const FloatRect& b)
@@ -364,7 +345,7 @@ constexpr FloatRect FloatRect::nanRect()
 
 constexpr bool FloatRect::isNaN() const
 {
-    return isNaNConstExpr(x());
+    return isNaNConstExpr(x()) || isNaNConstExpr(y());
 }
 
 inline void FloatRect::inflate(float deltaX, float deltaY, float deltaMaxX, float deltaMaxY)
@@ -397,6 +378,19 @@ struct LogArgument<WebCore::FloatRect> {
     static String toString(const WebCore::FloatRect& rect)
     {
         return rect.toJSONString();
+    }
+};
+
+template<>
+struct MarkableTraits<WebCore::FloatRect> {
+    constexpr static bool isEmptyValue(const WebCore::FloatRect& rect)
+    {
+        return rect.isNaN();
+    }
+
+    constexpr static WebCore::FloatRect emptyValue()
+    {
+        return WebCore::FloatRect::nanRect();
     }
 };
 

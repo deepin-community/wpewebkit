@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2005, 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004, 2005, 2006 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "Color.h"
-#include "FloatSize.h"
-#include "WindRule.h"
+#include <WebCore/Color.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/WindRule.h>
 #include <optional>
 #include <wtf/Forward.h>
 
@@ -173,8 +173,8 @@ enum TextAlign {
 
 String compositeOperatorName(WebCore::CompositeOperator, WebCore::BlendMode);
 String blendModeName(WebCore::BlendMode);
-bool parseBlendMode(const String&, WebCore::BlendMode&);
-bool parseCompositeAndBlendOperator(const String&, WebCore::CompositeOperator&, WebCore::BlendMode&);
+bool NODELETE parseBlendMode(const String&, WebCore::BlendMode&);
+bool NODELETE parseCompositeAndBlendOperator(const String&, WebCore::CompositeOperator&, WebCore::BlendMode&);
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, WebCore::BlendMode);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, WebCore::CompositeOperator);

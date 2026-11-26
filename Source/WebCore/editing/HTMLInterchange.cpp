@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2008 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004, 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,8 +27,8 @@
 #include "HTMLInterchange.h"
 
 #include "Editing.h"
-#include "RenderStyleInlines.h"
 #include "RenderText.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>

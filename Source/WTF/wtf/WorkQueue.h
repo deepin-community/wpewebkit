@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010, 2015 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  * Copyright (C) 2017 Sony Interactive Entertainment Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,20 +30,21 @@
 #include <wtf/Forward.h>
 #include <wtf/FunctionDispatcher.h>
 #include <wtf/Seconds.h>
-#include <wtf/Threading.h>
+#include <wtf/ThreadAssertions.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadingEnums.h>
 
 #if USE(COCOA_EVENT_LOOP)
-#include <dispatch/dispatch.h>
-#include <wtf/OSObjectPtr.h>
+#include <wtf/darwin/DispatchOSObject.h>
 #else
 #include <wtf/RunLoop.h>
 #endif
 
 namespace WTF {
 
-class WorkQueueBase : public ThreadSafeRefCounted<WorkQueueBase>, protected ThreadLike {
+class WorkQueueBase : protected ThreadLike {
 public:
-    using QOS = Thread::QOS;
+    using QOS = ThreadQOS;
 
     WTF_EXPORT_PRIVATE virtual ~WorkQueueBase();
 
@@ -55,6 +56,9 @@ public:
 #if USE(COCOA_EVENT_LOOP)
     dispatch_queue_t dispatchQueue() const { return m_dispatchQueue.get(); }
 #endif
+
+    virtual void ref() const = 0;
+    virtual void deref() const = 0;
 
 protected:
     enum class Type : bool {
@@ -69,14 +73,14 @@ protected:
 #endif
 
 #if USE(COCOA_EVENT_LOOP)
-    OSObjectPtr<dispatch_queue_t> m_dispatchQueue;
+    const OSObjectPtr<dispatch_queue_t> m_dispatchQueue;
 #else
-    RunLoop* m_runLoop;
+    RefPtr<RunLoop> m_runLoop;
 #endif
     uint32_t m_threadID { 0 };
 private:
     void platformInitialize(ASCIILiteral name, Type, QOS);
-    void platformInvalidate();
+    void NODELETE platformInvalidate();
 };
 
 /**
@@ -86,14 +90,17 @@ private:
  * They may be executed on different threads but can safely be used by objects that aren't already threadsafe.
  * Use `assertIsCurrent(m_myQueue);` in a runnable to assert that the runnable runs in a specific queue.
  */
-class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE WorkQueue : public WorkQueueBase, public RefCountedSerialFunctionDispatcher {
+class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE WorkQueue : public WorkQueueBase, public GuaranteedSerialFunctionDispatcher {
 public:
-    static WorkQueue& main();
+    static WorkQueue& mainSingleton();
     static Ref<WorkQueue> create(ASCIILiteral name, QOS = QOS::Default);
+
+
+    // WorkQueueBase
     void dispatch(Function<void()>&&) override;
     bool isCurrent() const override;
-    void ref() const override;
-    void deref() const override;
+    void ref() const override { GuaranteedSerialFunctionDispatcher::ref(); }
+    void deref() const override { GuaranteedSerialFunctionDispatcher::deref(); }
 
 #if !USE(COCOA_EVENT_LOOP)
     RunLoop& runLoop() const { return *m_runLoop; }
@@ -112,14 +119,28 @@ private:
  * A ConcurrentWorkQueue unlike a WorkQueue doesn't guarantee the order in which the dispatched runnable will run
  * and each can run concurrently on different threads.
  */
-class WTF_EXPORT_PRIVATE ConcurrentWorkQueue final : public WorkQueueBase, public FunctionDispatcher {
+class WTF_EXPORT_PRIVATE ConcurrentWorkQueue final : public WorkQueueBase, public FunctionDispatcher, public ThreadSafeRefCounted<ConcurrentWorkQueue> {
 public:
     static Ref<ConcurrentWorkQueue> create(ASCIILiteral name, QOS = QOS::Default);
     static void apply(size_t iterations, WTF::Function<void(size_t index)>&&);
     void dispatch(Function<void()>&&) override;
+
+    void ref() const final;
+    void deref() const final;
+
 private:
     ConcurrentWorkQueue(ASCIILiteral, QOS);
 };
+
+inline void ConcurrentWorkQueue::ref() const
+{
+    ThreadSafeRefCounted<ConcurrentWorkQueue>::ref();
+}
+
+inline void ConcurrentWorkQueue::deref() const
+{
+    ThreadSafeRefCounted<ConcurrentWorkQueue>::deref();
+}
 
 }
 

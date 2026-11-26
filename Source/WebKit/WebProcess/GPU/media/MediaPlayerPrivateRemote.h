@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,12 +33,16 @@
 #include "RemoteMediaPlayerManager.h"
 #include "RemoteMediaPlayerState.h"
 #include "RemoteMediaResourceIdentifier.h"
+#include "RemoteMediaResourceLoaderIdentifier.h"
 #include "RemoteMediaResourceProxy.h"
 #include "RemoteVideoFrameObjectHeapProxy.h"
 #include "RemoteVideoFrameProxy.h"
 #include "TextTrackPrivateRemote.h"
+#include "VideoLayerRemote.h"
 #include "VideoTrackPrivateRemote.h"
 #include <WebCore/MediaPlayerPrivate.h>
+#include <WebCore/MediaTimeUpdateData.h>
+#include <WebCore/PlatformLayer.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/VideoFrameMetadata.h>
 #include <wtf/Lock.h>
@@ -46,8 +50,8 @@
 #include <wtf/MediaTime.h>
 #include <wtf/StdUnorderedMap.h>
 
-#if ENABLE(MEDIA_SOURCE)
-#include "MediaSourcePrivateRemote.h"
+#if ENABLE(MACH_PORT_LAYER_HOSTING)
+#include <wtf/MachSendRightAnnotated.h>
 #endif
 
 namespace WTF {
@@ -56,6 +60,7 @@ class MachSendRight;
 
 namespace WebCore {
 struct GenericCueData;
+struct MessageForTesting;
 class ISOWebVTTCue;
 class SerializedPlatformDataCueValue;
 class VideoLayerManager;
@@ -68,69 +73,67 @@ class PixelBufferConformerCV;
 
 namespace WebKit {
 
+using WebCore::MediaTimeUpdateData;
+
 class RemoteAudioSourceProvider;
+class RemoteMediaResourceLoaderProxy;
 class UserData;
 struct AudioTrackPrivateRemoteConfiguration;
 struct TextTrackPrivateRemoteConfiguration;
 struct VideoTrackPrivateRemoteConfiguration;
 
-struct MediaTimeUpdateData {
-    MediaTime currentTime;
-    bool timeIsProgressing;
-    MonotonicTime wallTime;
-};
-
 class MediaPlayerPrivateRemote final
     : public WebCore::MediaPlayerPrivateInterface
+    , public VideoLayerRemoteParent
     , public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaPlayerPrivateRemote, WTF::DestructionThread::Main>
 #if !RELEASE_LOG_DISABLED
     , private LoggerHelper
 #endif
 {
 public:
-    static Ref<MediaPlayerPrivateRemote> create(WebCore::MediaPlayer* player, WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, WebCore::MediaPlayerIdentifier identifier, RemoteMediaPlayerManager& manager)
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
+
+    static Ref<MediaPlayerPrivateRemote> create(WebCore::MediaPlayer& player, WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, WebCore::MediaPlayerIdentifier identifier, RemoteMediaPlayerManager& manager)
     {
         return adoptRef(*new MediaPlayerPrivateRemote(player, remoteEngineIdentifier, identifier, manager));
     }
 
-    MediaPlayerPrivateRemote(WebCore::MediaPlayer*, WebCore::MediaPlayerEnums::MediaEngineIdentifier, WebCore::MediaPlayerIdentifier, RemoteMediaPlayerManager&);
+    MediaPlayerPrivateRemote(WebCore::MediaPlayer&, WebCore::MediaPlayerEnums::MediaEngineIdentifier, WebCore::MediaPlayerIdentifier, RemoteMediaPlayerManager&);
     ~MediaPlayerPrivateRemote();
 
-    void ref() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
-    void deref() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+    constexpr WebCore::MediaPlayerType mediaPlayerType() const final { return WebCore::MediaPlayerType::Remote; }
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
     WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier() const { return m_remoteEngineIdentifier; }
-    WebCore::MediaPlayerIdentifier identifier() const final { return m_id; }
-    IPC::Connection& connection() const { return m_manager.gpuProcessConnection().connection(); }
-    Ref<IPC::Connection> protectedConnection() const { return m_manager.gpuProcessConnection().protectedConnection(); }
+    std::optional<WebCore::MediaPlayerIdentifier> identifier() const final { return m_id; }
+    IPC::Connection& connection() const { return manager()->gpuProcessConnection().connection(); }
     RefPtr<WebCore::MediaPlayer> player() const { return m_player.get(); }
 
     WebCore::MediaPlayer::ReadyState readyState() const final { return m_readyState; }
     void setReadyState(WebCore::MediaPlayer::ReadyState);
 
     void commitAllTransactions(CompletionHandler<void()>&&);
+    void reportGPUMemoryFootprint(uint64_t);
     void networkStateChanged(RemoteMediaPlayerState&&);
     void readyStateChanged(RemoteMediaPlayerState&&, WebCore::MediaPlayer::ReadyState);
     void volumeChanged(double);
     void muteChanged(bool);
-    void seeked(MediaTimeUpdateData&&);
     void timeChanged(RemoteMediaPlayerState&&, MediaTimeUpdateData&&);
     void durationChanged(RemoteMediaPlayerState&&);
     void rateChanged(double, MediaTimeUpdateData&&);
     void playbackStateChanged(bool, MediaTimeUpdateData&&);
     void engineFailedToLoad(int64_t);
     void updateCachedState(RemoteMediaPlayerState&&);
-    void updatePlaybackQualityMetrics(WebCore::VideoPlaybackQualityMetrics&&);
+    void NODELETE updatePlaybackQualityMetrics(WebCore::VideoPlaybackQualityMetrics&&);
     void characteristicChanged(RemoteMediaPlayerState&&);
     void sizeChanged(WebCore::FloatSize);
     void firstVideoFrameAvailable();
     void renderingModeChanged();
 #if PLATFORM(COCOA)
-    void layerHostingContextIdChanged(std::optional<WebKit::LayerHostingContextID>&&, const WebCore::FloatSize&);
+    void layerHostingContextChanged(WebCore::HostingContext&&, const WebCore::FloatSize&);
     WebCore::FloatSize videoLayerSize() const final;
-    void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRight&&) final;
+    void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRightAnnotated&&) final;
 #endif
 
     void currentTimeChanged(MediaTimeUpdateData&&);
@@ -162,16 +165,9 @@ public:
     void updateGenericCue(WebCore::TrackID, WebCore::GenericCueData&&);
     void removeGenericCue(WebCore::TrackID, WebCore::GenericCueData&&);
 
-    void requestResource(RemoteMediaResourceIdentifier, WebCore::ResourceRequest&&, WebCore::PlatformMediaResourceLoader::LoadOptions);
-    void removeResource(RemoteMediaResourceIdentifier);
-    void sendH2Ping(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
     void resourceNotSupported();
 
-    void activeSourceBuffersChanged();
-
-#if PLATFORM(COCOA)
-    bool inVideoFullscreenOrPictureInPicture() const;
-#endif
+    bool inVideoFullscreenOrPictureInPicture() const final;
 
 #if ENABLE(ENCRYPTED_MEDIA)
     void waitingForKeyChanged(bool);
@@ -195,17 +191,27 @@ public:
     WebCore::FloatSize naturalSize() const final;
 
 #if !RELEASE_LOG_DISABLED
-    const void* mediaPlayerLogIdentifier() const { return logIdentifier(); }
+    uint64_t mediaPlayerLogIdentifier() const { return logIdentifier(); }
     const Logger& mediaPlayerLogger() const { return logger(); }
 #endif
 
-    void requestHostingContextID(LayerHostingContextIDCallback&&) override;
-    LayerHostingContextID hostingContextID()const override;
-    void setLayerHostingContextID(LayerHostingContextID  inID);
+    Ref<HostingContextPromise> requestHostingContext() override;
+    WebCore::HostingContext hostingContext() const override;
+    void setLayerHostingContext(WebCore::HostingContext&&);
+
+#if ENABLE(MACH_PORT_LAYER_HOSTING)
+    WTF::MachSendRightAnnotated sendRightAnnotated() const { return m_layerHostingContext.sendRightAnnotated; }
+#endif
 
     MediaTime duration() const final;
     MediaTime currentTime() const final;
     MediaTime currentOrPendingSeekTime() const final;
+
+#if PLATFORM(MAC)
+    void screenReservedChanged(bool) final;
+#endif
+
+    void gpuProcessConnectionDidClose();
 
 private:
     class TimeProgressEstimator final {
@@ -213,40 +219,41 @@ private:
         explicit TimeProgressEstimator(const MediaPlayerPrivateRemote& parent);
         MediaTime currentTime() const;
         MediaTime cachedTime() const;
-        bool timeIsProgressing() const;
+        bool NODELETE timeIsProgressing() const;
         void pause();
         void setTime(const MediaTimeUpdateData&);
         void setRate(double);
         Lock& lock() const { return m_lock; };
         MediaTime currentTimeWithLockHeld() const;
-        MediaTime cachedTimeWithLockHeld() const;
+        MediaTime NODELETE cachedTimeWithLockHeld() const;
+        void forceUseOfCachedTimeUntilNextSetTime();
+
     private:
         mutable Lock m_lock;
-        std::atomic<bool> m_timeIsProgressing { false };
+        std::atomic<double> m_effectiveRate { 0 };
         MediaTime m_cachedMediaTime WTF_GUARDED_BY_LOCK(m_lock);
         MonotonicTime m_cachedMediaTimeQueryTime WTF_GUARDED_BY_LOCK(m_lock);
-        double m_rate WTF_GUARDED_BY_LOCK(m_lock) { 1.0 };
-        const MediaPlayerPrivateRemote& m_parent;
+        mutable std::optional<MediaTime> m_lastReturnedTime WTF_GUARDED_BY_LOCK(m_lock);
+        bool m_forceUseCachedTime WTF_GUARDED_BY_LOCK(m_lock) { false };
+        ThreadSafeWeakRef<const MediaPlayerPrivateRemote> m_parent;
     };
     TimeProgressEstimator m_currentTimeEstimator;
-
-    MediaTime currentTimeWithLockHeld() const;
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger; }
     ASCIILiteral logClassName() const override { return "MediaPlayerPrivateRemote"_s; }
-    const void* logIdentifier() const final { return reinterpret_cast<const void*>(m_logIdentifier); }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     WTFLogChannel& logChannel() const final;
 
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
 
-    void load(const URL&, const WebCore::ContentType&, const String&) final;
+    void load(const URL&, const LoadOptions&) final;
     void prepareForPlayback(bool privateMode, WebCore::MediaPlayer::Preload, bool preservesPitch, bool prepareToPlay, bool prepareToRender) final;
 
 #if ENABLE(MEDIA_SOURCE)
-    void load(const URL&, const WebCore::ContentType&, WebCore::MediaSourcePrivateClient&) final;
+    void load(const URL&, const LoadOptions&, WebCore::MediaSourcePrivateClient&) final;
 #endif
 #if ENABLE(MEDIA_STREAM)
     void load(WebCore::MediaStreamPrivate&) final;
@@ -260,6 +267,7 @@ private:
     long platformErrorCode() const final { return m_platformErrorCode; }
 
     double rate() const final { return m_rate; }
+    void setVolumeLocked(bool) final;
     void setVolumeDouble(double) final;
     void setMuted(bool) final;
     void setPrivateBrowsingMode(bool) final;
@@ -274,7 +282,7 @@ private:
     PlatformLayerContainer createVideoFullscreenLayer() final;
     void setVideoFullscreenLayer(PlatformLayer*, WTF::Function<void()>&& completionHandler) final;
     void updateVideoFullscreenInlineImage() final;
-    void setVideoFullscreenFrame(WebCore::FloatRect) final;
+    void setVideoFullscreenFrame(const WebCore::FloatRect&) final;
     void setVideoFullscreenGravity(WebCore::MediaPlayer::VideoGravity) final;
     void setVideoFullscreenMode(WebCore::MediaPlayer::VideoFullscreenMode) final;
     void videoFullscreenStandbyChanged() final;
@@ -298,13 +306,13 @@ private:
     bool hasAudio() const final;
 
     void setPageIsVisible(bool) final;
+    void setViewportVisibility(ViewportVisibility) final;
 
     MediaTime getStartDate() const final;
 
     void willSeekToTarget(const MediaTime&) final;
     MediaTime pendingSeekTime() const final;
-    void seekToTarget(const WebCore::SeekTarget&) final;
-    bool seeking() const final;
+    Ref<WebCore::MediaTimePromise> seekToTarget(const WebCore::SeekTarget&) final;
 
     MediaTime startTime() const final;
 
@@ -338,15 +346,10 @@ private:
 
     void paint(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
     void paintCurrentFrameInContext(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
-#if !USE(AVFOUNDATION)
-    bool copyVideoTextureToPlatformTexture(WebCore::GraphicsContextGL*, PlatformGLObject, GCGLenum, GCGLint, GCGLenum, GCGLenum, GCGLenum, bool, bool) final;
-#endif
-#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-    void willBeAskedToPaintGL() final;
-#endif
     RefPtr<WebCore::VideoFrame> videoFrameForCurrentTime() final;
     RefPtr<WebCore::NativeImage> nativeImageForCurrentTime() final;
     WebCore::DestinationColorSpace colorSpace() final;
+    Ref<BitmapImagePromise> bitmapImageForCurrentTime() final;
 #if PLATFORM(COCOA)
     bool shouldGetNativeImageForCanvasDrawing() const final { return false; }
 #endif
@@ -357,12 +360,13 @@ private:
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     String wirelessPlaybackTargetName() const final;
+    String wirelessPlaybackRouteName() const final;
     WebCore::MediaPlayer::WirelessPlaybackTargetType wirelessPlaybackTargetType() const final;
 
     bool wirelessVideoPlaybackDisabled() const final;
     void setWirelessVideoPlaybackDisabled(bool) final;
 
-    bool canPlayToWirelessPlaybackTarget() const final;
+    OptionSet<WebCore::MediaPlaybackTargetType> supportedPlaybackTargetTypes() const final;
     bool isCurrentPlaybackTargetWireless() const final;
     void setWirelessPlaybackTarget(Ref<WebCore::MediaPlaybackTarget>&&) final;
 
@@ -383,8 +387,6 @@ private:
 
     MediaTime mediaTimeForTimeValue(const MediaTime& timeValue) const final;
 
-    double maximumDurationToCacheMediaTime() const final;
-
     unsigned decodedFrameCount() const final;
     unsigned droppedFrameCount() const final;
     unsigned audioDecodedByteCount() const final;
@@ -397,7 +399,7 @@ private:
 #endif
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-    std::unique_ptr<WebCore::LegacyCDMSession> createSession(const String&, WebCore::LegacyCDMSessionClient&) final;
+    RefPtr<WebCore::LegacyCDMSession> createSession(const String&, WebCore::LegacyCDMSessionClient&) final;
     void setCDM(WebCore::LegacyCDM*) final;
     void setCDMSession(WebCore::LegacyCDMSession*) final;
     void keyAdded() final;
@@ -420,9 +422,6 @@ private:
 
     void tracksChanged() final;
 
-    void beginSimulatedHDCPError() final;
-    void endSimulatedHDCPError() final;
-
     String languageOfPrimaryAudioTrack() const final;
 
     size_t extraMemoryCost() const final;
@@ -432,19 +431,18 @@ private:
 
     void notifyTrackModeChanged() final;
 
-    void notifyActiveSourceBuffersChanged() final;
-
     void setShouldDisableSleep(bool) final;
 
     void applicationWillResignActive() final;
     void applicationDidBecomeActive() final;
     void setPreferredDynamicRangeMode(WebCore::DynamicRangeMode) final;
+    void setPlatformDynamicRangeLimit(WebCore::PlatformDynamicRangeLimit) final;
 
 #if USE(AVFOUNDATION)
     AVPlayer *objCAVFoundationAVPlayer() const final { return nullptr; }
 #endif
 
-    bool performTaskAtTime(Function<void()>&&, const MediaTime&) final;
+    bool performTaskAtTime(Function<void(const MediaTime&)>&&, const MediaTime&) final;
 
     bool supportsPlayAtHostTime() const final { return m_configuration.supportsPlayAtHostTime; }
     bool supportsPauseAtHostTime() const final { return m_configuration.supportsPauseAtHostTime; }
@@ -463,10 +461,14 @@ private:
     void setShouldCheckHardwareSupport(bool) final;
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-    const String& defaultSpatialTrackingLabel() const final;
+    String defaultSpatialTrackingLabel() const final;
     void setDefaultSpatialTrackingLabel(const String&) final;
-    const String& spatialTrackingLabel() const final;
+    String spatialTrackingLabel() const final;
     void setSpatialTrackingLabel(const String&) final;
+#endif
+
+#if HAVE(SPATIAL_AUDIO_EXPERIENCE)
+    void prefersSpatialAudioExperienceChanged() final;
 #endif
 
     void isInFullscreenOrPictureInPictureChanged(bool) final;
@@ -474,22 +476,35 @@ private:
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     bool supportsLinearMediaPlayer() const final;
 #endif
-    VideoPlaybackConfiguration videoPlaybackConfiguration() const final { return m_cachedState.videoConfiguration; }
-    void videoPlaybackConfigurationChanged(const VideoPlaybackConfiguration&);
+
+    void audioOutputDeviceChanged() final;
+
+    void soundStageSizeDidChange() final;
 
 #if PLATFORM(COCOA)
     void pushVideoFrameMetadata(WebCore::VideoFrameMetadata&&, RemoteVideoFrameProxy::Properties&&);
 #endif
-    RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy() const { return m_manager.gpuProcessConnection().videoFrameObjectHeapProxy(); }
+    RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy() const { return protect(manager()->gpuProcessConnection())->videoFrameObjectHeapProxy(); }
+
+    Ref<RemoteMediaPlayerManager> manager() const;
+
+#if PLATFORM(IOS_FAMILY)
+    void sceneIdentifierDidChange() final;
+#endif
+
+    void setMessageClientForTesting(WeakPtr<WebCore::MessageClientForTesting>) final;
+    void sendInternalMessage(const WebCore::MessageForTesting&);
+
+    void createResourceLoader(RemoteMediaResourceLoaderIdentifier);
+    void destroyResourceLoader(RemoteMediaResourceLoaderIdentifier);
 
     ThreadSafeWeakPtr<WebCore::MediaPlayer> m_player;
-    Ref<WebCore::PlatformMediaResourceLoader> m_mediaResourceLoader;
 #if PLATFORM(COCOA)
     mutable UniqueRef<WebCore::VideoLayerManager> m_videoLayerManager;
-#endif
     mutable PlatformLayerContainer m_videoLayer;
+#endif
 
-    RemoteMediaPlayerManager& m_manager;
+    ThreadSafeWeakRef<RemoteMediaPlayerManager> m_manager;
     WebCore::MediaPlayerEnums::MediaEngineIdentifier m_remoteEngineIdentifier;
     WebCore::MediaPlayerIdentifier m_id;
     RemoteMediaPlayerConfiguration m_configuration;
@@ -501,12 +516,8 @@ private:
     RefPtr<RemoteAudioSourceProvider> m_audioSourceProvider;
 #endif
 
-#if ENABLE(MEDIA_SOURCE)
-    RefPtr<MediaSourcePrivateRemote> m_mediaSourcePrivate;
-#endif
-
     mutable Lock m_lock;
-    HashMap<RemoteMediaResourceIdentifier, RefPtr<WebCore::PlatformMediaResource>> m_mediaResources;
+    HashMap<RemoteMediaResourceIdentifier, Ref<WebCore::PlatformMediaResource>> m_mediaResources;
     StdUnorderedMap<WebCore::TrackID, Ref<AudioTrackPrivateRemote>> m_audioTracks WTF_GUARDED_BY_LOCK(m_lock);
     StdUnorderedMap<WebCore::TrackID, Ref<VideoTrackPrivateRemote>> m_videoTracks WTF_GUARDED_BY_LOCK(m_lock);
     StdUnorderedMap<WebCore::TrackID, Ref<TextTrackPrivateRemote>> m_textTracks WTF_GUARDED_BY_LOCK(m_lock);
@@ -527,22 +538,25 @@ private:
     bool m_waitingForKey { false };
     std::optional<bool> m_shouldMaintainAspectRatio;
     std::optional<bool> m_pageIsVisible;
+    ViewportVisibility m_viewportVisibility { ViewportVisibility::NotVisible };
     RefPtr<RemoteVideoFrameProxy> m_videoFrameForCurrentTime;
 #if PLATFORM(COCOA)
     RefPtr<RemoteVideoFrameProxy> m_videoFrameGatheredWithVideoFrameMetadata;
 #endif
 
-    Vector<LayerHostingContextIDCallback> m_layerHostingContextIDRequests;
-    LayerHostingContextID m_layerHostingContextID { 0 };
+    WebCore::HostingContext m_layerHostingContext;
     std::optional<WebCore::VideoFrameMetadata> m_videoFrameMetadata;
     bool m_isGatheringVideoFrameMetadata { false };
-#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-    bool m_hasBeenAskedToPaintGL { false };
-#endif
     String m_defaultSpatialTrackingLabel;
     String m_spatialTrackingLabel;
+    WeakPtr<WebCore::MessageClientForTesting> m_internalMessageClient;
+    HashMap<RemoteMediaResourceLoaderIdentifier, Ref<RemoteMediaResourceLoaderProxy>> m_mediaResourceLoaders;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::MediaPlayerPrivateRemote)
+static bool isType(const WebCore::MediaPlayerPrivateInterface& player) { return player.mediaPlayerType() == WebCore::MediaPlayerType::Remote; }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS) && ENABLE(VIDEO)

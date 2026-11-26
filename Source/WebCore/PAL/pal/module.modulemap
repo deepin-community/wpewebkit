@@ -1,4 +1,32 @@
-module PALSwift {
-    header "PALSwift.h"
+module pal [system] {
+    explicit module ExportMacros {
+        header "ExportMacros.h"
+        export *
+    }
+
+    explicit module spi {
+        umbrella "spi"
+
+        explicit module * {
+            export *
+        }
+
+        export *
+    }
+
+    explicit module Core {
+        umbrella "."
+
+        requires cplusplus
+
+        explicit module * {
+            export *
+        }
+
+        export *
+    }
+
     export *
 }
+
+// (v7) This comment ensures an incremental build causes this module to rebuild (rdar://170129992)

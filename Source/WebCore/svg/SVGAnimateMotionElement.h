@@ -26,9 +26,9 @@
 namespace WebCore {
 
 class AffineTransform;
-            
+
 class SVGAnimateMotionElement final : public SVGAnimationElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGAnimateMotionElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGAnimateMotionElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGAnimateMotionElement);
 public:
     static Ref<SVGAnimateMotionElement> create(const QualifiedName&, Document&);
@@ -51,10 +51,10 @@ private:
     void applyResultsToTarget() override;
     std::optional<float> calculateDistance(const String& fromString, const String& toString) override;
 
-    enum RotateMode {
-        RotateAngle,
-        RotateAuto,
-        RotateAutoReverse
+    enum class RotateMode : uint8_t {
+        Angle,
+        Auto,
+        AutoReverse
     };
     RotateMode rotateMode() const;
     void buildTransformForProgress(AffineTransform*, float percentage);

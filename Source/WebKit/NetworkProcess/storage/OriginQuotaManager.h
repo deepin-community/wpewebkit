@@ -28,6 +28,7 @@
 #include "QuotaIncreaseRequestIdentifier.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Deque.h>
+#include <wtf/Markable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
@@ -53,8 +54,8 @@ public:
     void requestSpace(uint64_t spaceRequested, RequestCallback&&);
     void didIncreaseQuota(QuotaIncreaseRequestIdentifier, std::optional<uint64_t> newQuota);
 
-    void resetQuotaUpdatedBasedOnUsageForTesting();
-    void resetQuotaForTesting();
+    void NODELETE resetQuotaUpdatedBasedOnUsageForTesting();
+    void NODELETE resetQuotaForTesting();
     void updateParametersForTesting(Parameters&&);
 
 private:
@@ -67,7 +68,7 @@ private:
     struct Request {
         uint64_t spaceRequested;
         RequestCallback callback;
-        QuotaIncreaseRequestIdentifier identifier;
+        Markable<QuotaIncreaseRequestIdentifier> identifier;
     };
     Deque<Request> m_requests;
     std::optional<Request> m_currentRequest;

@@ -7,6 +7,7 @@
 // Debug.cpp: Defines debug state used for GL_KHR_debug
 
 #include "libANGLE/Debug.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/debug.h"
 
@@ -149,11 +150,10 @@ void Debug::insertMessage(GLenum source,
                           GLuint id,
                           GLenum severity,
                           const std::string &message,
-                          gl::LogSeverity logSeverity,
-                          angle::EntryPoint entryPoint) const
+                          gl::LogSeverity logSeverity) const
 {
     std::string messageCopy(message);
-    insertMessage(source, type, id, severity, std::move(messageCopy), logSeverity, entryPoint);
+    insertMessage(source, type, id, severity, std::move(messageCopy), logSeverity);
 }
 
 void Debug::insertMessage(GLenum source,
@@ -161,18 +161,13 @@ void Debug::insertMessage(GLenum source,
                           GLuint id,
                           GLenum severity,
                           std::string &&message,
-                          gl::LogSeverity logSeverity,
-                          angle::EntryPoint entryPoint) const
+                          gl::LogSeverity logSeverity) const
 {
     {
         // output all messages to the debug log
         const char *messageTypeString = GLMessageTypeToString(type);
         const char *severityString    = GLSeverityToString(severity);
         std::ostringstream messageStream;
-        if (entryPoint != angle::EntryPoint::Invalid)
-        {
-            messageStream << GetEntryPointName(entryPoint) << ": ";
-        }
         messageStream << "GL " << messageTypeString << ": " << severityString << ": " << message;
         switch (logSeverity)
         {
@@ -255,36 +250,37 @@ size_t Debug::getMessages(GLuint count,
                 break;
             }
 
-            std::copy(m.message.begin(), m.message.end(), messageLog + messageStringIndex);
+            std::copy(m.message.begin(), m.message.end(),
+                      ANGLE_UNSAFE_TODO(messageLog + messageStringIndex));
             messageStringIndex += m.message.length();
 
-            messageLog[messageStringIndex] = '\0';
+            ANGLE_UNSAFE_TODO(messageLog[messageStringIndex]) = '\0';
             messageStringIndex += 1;
         }
 
         if (sources != nullptr)
         {
-            sources[messageCount] = m.source;
+            ANGLE_UNSAFE_TODO(sources[messageCount]) = m.source;
         }
 
         if (types != nullptr)
         {
-            types[messageCount] = m.type;
+            ANGLE_UNSAFE_TODO(types[messageCount]) = m.type;
         }
 
         if (ids != nullptr)
         {
-            ids[messageCount] = m.id;
+            ANGLE_UNSAFE_TODO(ids[messageCount]) = m.id;
         }
 
         if (severities != nullptr)
         {
-            severities[messageCount] = m.severity;
+            ANGLE_UNSAFE_TODO(severities[messageCount]) = m.severity;
         }
 
         if (lengths != nullptr)
         {
-            lengths[messageCount] = static_cast<GLsizei>(m.message.length()) + 1;
+            ANGLE_UNSAFE_TODO(lengths[messageCount]) = static_cast<GLsizei>(m.message.length()) + 1;
         }
 
         mMessages.pop_front();
@@ -327,7 +323,7 @@ void Debug::setMessageControl(GLenum source,
 void Debug::pushGroup(GLenum source, GLuint id, std::string &&message)
 {
     insertMessage(source, GL_DEBUG_TYPE_PUSH_GROUP, id, GL_DEBUG_SEVERITY_NOTIFICATION,
-                  std::string(message), gl::LOG_INFO, angle::EntryPoint::GLPushDebugGroup);
+                  std::string(message), gl::LOG_INFO);
 
     Group g;
     g.source  = source;
@@ -345,7 +341,7 @@ void Debug::popGroup()
     mGroups.pop_back();
 
     insertMessage(g.source, GL_DEBUG_TYPE_POP_GROUP, g.id, GL_DEBUG_SEVERITY_NOTIFICATION,
-                  g.message, gl::LOG_INFO, angle::EntryPoint::GLPopDebugGroup);
+                  g.message, gl::LOG_INFO);
 }
 
 size_t Debug::getGroupStackDepth() const
@@ -363,7 +359,7 @@ void Debug::insertPerfWarning(GLenum severity, bool isLastRepeat, const char *me
 
     // Note: insertMessage will acquire GetDebugMutex(), so it must be released before this call.
     insertMessage(GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_PERFORMANCE, 0, severity, std::move(msg),
-                  gl::LOG_INFO, angle::EntryPoint::Invalid);
+                  gl::LOG_INFO);
 }
 
 bool Debug::isMessageEnabled(GLenum source, GLenum type, GLuint id, GLenum severity) const
@@ -373,13 +369,10 @@ bool Debug::isMessageEnabled(GLenum source, GLenum type, GLuint id, GLenum sever
         return false;
     }
 
-    for (auto groupIter = mGroups.rbegin(); groupIter != mGroups.rend(); groupIter++)
+    for (const Group &group : angle::Reversed(mGroups))
     {
-        const auto &controls = groupIter->controls;
-        for (auto controlIter = controls.rbegin(); controlIter != controls.rend(); controlIter++)
+        for (const Control &control : angle::Reversed(group.controls))
         {
-            const auto &control = *controlIter;
-
             if (control.source != GL_DONT_CARE && control.source != source)
             {
                 continue;

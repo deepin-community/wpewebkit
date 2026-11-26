@@ -25,17 +25,29 @@
 
 #pragma once
 
-#include "GraphicsLayer.h"
 #include <wtf/RefCounted.h>
 
-#if !USE(CA)
-#include "PlatformLayer.h"
+#if !USE(CA) && !USE(COORDINATED_GRAPHICS)
+#include <WebCore/PlatformLayer.h>
 #endif
+
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#endif
+
 namespace WebCore {
 class ImageBuffer;
 #if USE(CA)
 class PlatformCALayer;
+#elif USE(COORDINATED_GRAPHICS)
+class CoordinatedPlatformLayer;
+class CoordinatedPlatformLayerBuffer;
+class Damage;
 #endif
+
+enum class GraphicsLayerCompositingCoordinatesOrientation : uint8_t;
 
 // Platform specific interface for attaching contents to GraphicsLayer.
 // Responsible for creating compositor resources to show the particular contents
@@ -48,9 +60,22 @@ public:
     virtual void prepareToDelegateDisplay(PlatformCALayer&);
     // Must not detach the platform layer backing store.
     virtual void display(PlatformCALayer&) = 0;
-    virtual GraphicsLayer::CompositingCoordinatesOrientation orientation() const;
+    virtual GraphicsLayerCompositingCoordinatesOrientation orientation() const;
+#elif USE(COORDINATED_GRAPHICS)
+    virtual void setDisplayBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&) = 0;
+    virtual bool display(CoordinatedPlatformLayer&, std::optional<Damage>&&) = 0;
+#if USE(SKIA)
+    void setThreadSafeGrContext(const sk_sp<GrContextThreadSafeProxy>&);
+    const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext() const;
+#endif
+
 #else
     virtual PlatformLayer* platformLayer() const = 0;
+#endif
+
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+protected:
+    sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
 #endif
 };
 
@@ -58,7 +83,7 @@ class GraphicsLayerAsyncContentsDisplayDelegate : public GraphicsLayerContentsDi
 public:
     virtual ~GraphicsLayerAsyncContentsDisplayDelegate() = default;
 
-    virtual bool WEBCORE_EXPORT tryCopyToLayer(ImageBuffer&) = 0;
+    virtual bool WEBCORE_EXPORT tryCopyToLayer(ImageBuffer&, bool opaque) = 0;
 
     virtual bool isGraphicsLayerAsyncContentsDisplayDelegateCocoa() const { return false; }
     virtual bool isGraphicsLayerCARemoteAsyncContentsDisplayDelegate() const { return false; }

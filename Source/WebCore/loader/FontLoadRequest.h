@@ -26,18 +26,11 @@
 
 #pragma once
 
-#include "FontTaggedSettings.h"
+#include <WebCore/FontTaggedSettings.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
-
-namespace WebCore {
-class FontLoadRequestClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::FontLoadRequestClient> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -47,23 +40,24 @@ class FontDescription;
 class FontLoadRequest;
 struct FontSelectionSpecifiedCapabilities;
 
-class FontLoadRequestClient : public CanMakeWeakPtr<FontLoadRequestClient> {
+class FontLoadRequestClient : public AbstractRefCountedAndCanMakeWeakPtr<FontLoadRequestClient> {
+    WTF_FORBID_HEAP_ALLOCATION_WITH_VALIDATION(FontLoadRequestClient);
 public:
     virtual ~FontLoadRequestClient() = default;
     virtual void fontLoaded(FontLoadRequest&) { }
 };
 
-class FontLoadRequest {
+class FontLoadRequest : public AbstractRefCounted {
 public:
     virtual ~FontLoadRequest() = default;
 
-    virtual const URL& url() const = 0;
+    virtual URL url() const = 0;
     virtual bool isPending() const = 0;
     virtual bool isLoading() const = 0;
     virtual bool errorOccurred() const = 0;
 
     virtual bool ensureCustomFontData() = 0;
-    virtual RefPtr<Font> createFont(const FontDescription&, bool syntheticBold, bool syntheticItalic, const FontCreationContext&) = 0;
+    virtual RefPtr<Font> createFont(const FontDescription&, const FontCreationContext&) = 0;
 
     virtual void setClient(FontLoadRequestClient*) = 0;
 

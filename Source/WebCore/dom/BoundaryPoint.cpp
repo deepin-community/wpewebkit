@@ -27,11 +27,13 @@
 #include "BoundaryPoint.h"
 #include "ContainerNode.h"
 #include "Document.h"
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
 template std::partial_ordering treeOrder<Tree>(const BoundaryPoint&, const BoundaryPoint&);
 template std::partial_ordering treeOrder<ShadowIncludingTree>(const BoundaryPoint&, const BoundaryPoint&);
+template std::partial_ordering treeOrder<ComposedTreeIncludingPseudoElements>(const BoundaryPoint&, const BoundaryPoint&);
 
 std::optional<BoundaryPoint> makeBoundaryPointBeforeNode(Node& node)
 {
@@ -49,7 +51,7 @@ std::optional<BoundaryPoint> makeBoundaryPointAfterNode(Node& node)
     return BoundaryPoint { parent.releaseNonNull(), node.computeNodeIndex() + 1 };
 }
 
-static bool isOffsetBeforeChild(ContainerNode& container, unsigned offset, Node& child)
+static bool NODELETE isOffsetBeforeChild(ContainerNode& container, unsigned offset, Node& child)
 {
     if (!offset)
         return true;
@@ -73,14 +75,14 @@ template<TreeType treeType> std::partial_ordering treeOrderInternal(const Bounda
         RefPtr nextAncestor = parent<treeType>(*ancestor);
         if (nextAncestor == a.container.ptr())
             return isOffsetBeforeChild(*nextAncestor, a.offset, *ancestor) ? std::strong_ordering::less : std::strong_ordering::greater;
-        ancestor = WTFMove(nextAncestor);
+        ancestor = WTF::move(nextAncestor);
     }
 
     for (RefPtr ancestor = a.container.copyRef(); ancestor; ) {
         RefPtr nextAncestor = parent<treeType>(*ancestor);
         if (nextAncestor == b.container.ptr())
             return isOffsetBeforeChild(*nextAncestor, b.offset, *ancestor) ? std::strong_ordering::greater : std::strong_ordering::less;
-        ancestor = WTFMove(nextAncestor);
+        ancestor = WTF::move(nextAncestor);
     }
 
     return treeOrder<treeType>(a.container, b.container);
@@ -105,6 +107,8 @@ std::partial_ordering treeOrderForTesting(TreeType type, const BoundaryPoint& a,
         return treeOrder<ShadowIncludingTree>(a, b);
     case ComposedTree:
         return treeOrder<ComposedTree>(a, b);
+    case ComposedTreeIncludingPseudoElements:
+        return treeOrder<ComposedTreeIncludingPseudoElements>(a, b);
     }
     ASSERT_NOT_REACHED();
     return std::partial_ordering::unordered;
@@ -114,14 +118,14 @@ TextStream& operator<<(TextStream& stream, const BoundaryPoint& boundaryPoint)
 {
     TextStream::GroupScope scope(stream);
     stream << "BoundaryPoint ";
-    stream.dumpProperty("node", boundaryPoint.container->debugDescription());
-    stream.dumpProperty("offset", boundaryPoint.offset);
+    stream.dumpProperty("node"_s, protect(boundaryPoint.container)->debugDescription());
+    stream.dumpProperty("offset"_s, boundaryPoint.offset);
     return stream;
 }
 
-Ref<Document> BoundaryPoint::protectedDocument() const
+String BoundaryPoint::debugDescription() const
 {
-    return document();
+    return makeString('{', protect(container)->debugDescription().utf8(), ", offset: "_s, offset, '}');
 }
 
 }

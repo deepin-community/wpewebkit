@@ -35,6 +35,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 class GraphicsContext;
@@ -73,17 +74,17 @@ class XRProjectionLayer;
 class XRSubImage;
 
 class GPUImpl final : public GPU, public RefCounted<GPUImpl> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GPUImpl);
 public:
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     static Ref<GPUImpl> create(WebGPUPtr<WGPUInstance>&& instance, ConvertToBackingContext& convertToBackingContext)
     {
-        return adoptRef(*new GPUImpl(WTFMove(instance), convertToBackingContext));
+        return adoptRef(*new GPUImpl(WTF::move(instance), convertToBackingContext));
     }
 
     virtual ~GPUImpl();
-
-    void ref() const final { RefCounted<GPUImpl>::ref(); }
-    void deref() const final { RefCounted<GPUImpl>::deref(); }
 
     void paintToCanvas(WebCore::NativeImage&, const WebCore::IntSize&, WebCore::GraphicsContext&) final;
 
@@ -98,13 +99,14 @@ private:
     GPUImpl& operator=(GPUImpl&&) = delete;
 
     WGPUInstance backing() const { return m_backing.get(); }
+    bool isGPUImpl() const final { return true; }
 
     void requestAdapter(const RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&) final;
 
     RefPtr<PresentationContext> createPresentationContext(const PresentationContextDescriptor&) final;
 
     RefPtr<CompositorIntegration> createCompositorIntegration() final;
-    bool isValid(const CompositorIntegration&) const final;
+    bool NODELETE isValid(const CompositorIntegration&) const final;
     bool isValid(const Buffer&) const final;
     bool isValid(const Adapter&) const final;
     bool isValid(const BindGroup&) const final;
@@ -133,9 +135,13 @@ private:
     bool isValid(const XRView&) const final;
 
     WebGPUPtr<WGPUInstance> m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
 };
 
 } // namespace WebCore::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::WebGPU::GPUImpl)
+    static bool isType(const WebCore::WebGPU::GPU& gpu) { return gpu.isGPUImpl(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // HAVE(WEBGPU_IMPLEMENTATION)

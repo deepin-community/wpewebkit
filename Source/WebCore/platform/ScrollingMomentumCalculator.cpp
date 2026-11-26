@@ -28,11 +28,14 @@
 
 #include "FloatPoint.h"
 #include "FloatSize.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollingMomentumCalculator);
+
 static const Seconds scrollSnapAnimationDuration = 1_s;
-static inline float projectedInertialScrollDistance(float initialWheelDelta)
+static inline float NODELETE projectedInertialScrollDistance(float initialWheelDelta)
 {
     // On macOS 10.10 and earlier, we don't have a platform scrolling momentum calculator, so we instead approximate the scroll destination
     // by multiplying the initial wheel delta by a constant factor. By running a few experiments (i.e. logging scroll destination and initial
@@ -235,4 +238,4 @@ float BasicScrollingMomentumCalculator::animationProgressAfterElapsedTime(Second
     return std::min(1.0, m_snapAnimationCurveMagnitude * (1.0 - std::pow(m_snapAnimationDecayFactor, -framesPerSecond * scrollSnapAnimationDuration.value() * timeProgress)));
 }
 
-}; // namespace WebCore
+} // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2018 Apple Inc.  All rights reserved.
+ * Copyright (C) 2007-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,9 +38,11 @@ namespace WebCore {
 class Document;
 
 class History final : public ScriptWrappable, public RefCounted<History>, public LocalDOMWindowProperty {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(History);
+    WTF_MAKE_TZONE_ALLOCATED(History);
 public:
     static Ref<History> create(LocalDOMWindow& window) { return adoptRef(*new History(window)); }
+
+    ~History();
 
     ExceptionOr<unsigned> length() const;
 
@@ -55,8 +57,8 @@ public:
     void setTotalStateObjectPayloadLimitOverride(std::optional<uint32_t> limit) { m_totalStateObjectPayloadLimitOverride = limit; }
 
     ExceptionOr<SerializedScriptValue*> state();
-    JSValueInWrappedObject& cachedState();
-    JSValueInWrappedObject& cachedStateForGC() { return m_cachedState; }
+    JSValueInWrappedObject& NODELETE cachedState() LIFETIME_BOUND;
+    JSValueInWrappedObject& cachedStateForGC() LIFETIME_BOUND { return m_cachedState; }
 
     ExceptionOr<void> back();
     ExceptionOr<void> forward();
@@ -66,7 +68,7 @@ public:
     ExceptionOr<void> forward(Document&);
     ExceptionOr<void> go(Document&, int);
 
-    bool isSameAsCurrentState(SerializedScriptValue*) const;
+    bool NODELETE isSameAsCurrentState(SerializedScriptValue*) const;
 
     ExceptionOr<void> pushState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString);
     ExceptionOr<void> replaceState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString);
@@ -75,12 +77,11 @@ private:
     explicit History(LocalDOMWindow&);
 
     ExceptionOr<void> stateObjectAdded(RefPtr<SerializedScriptValue>&&, const String& url, NavigationHistoryBehavior);
-    bool stateChanged() const;
+    ExceptionOr<void> updateAndCheckStateObjectQuota(const URL&, SerializedScriptValue*, NavigationHistoryBehavior);
+    bool NODELETE stateChanged() const;
 
-    URL urlForState(const String& url);
-
-    SerializedScriptValue* stateInternal() const;
-    uint32_t totalStateObjectPayloadLimit() const;
+    SerializedScriptValue* NODELETE stateInternal() const;
+    uint32_t NODELETE totalStateObjectPayloadLimit() const;
 
     RefPtr<SerializedScriptValue> m_lastStateObjectRequested;
     JSValueInWrappedObject m_cachedState;
@@ -98,12 +99,12 @@ private:
 
 inline ExceptionOr<void> History::pushState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString)
 {
-    return stateObjectAdded(WTFMove(data), urlString, NavigationHistoryBehavior::Push);
+    return stateObjectAdded(WTF::move(data), urlString, NavigationHistoryBehavior::Push);
 }
 
 inline ExceptionOr<void> History::replaceState(RefPtr<SerializedScriptValue>&& data, const String&, const String& urlString)
 {
-    return stateObjectAdded(WTFMove(data), urlString, NavigationHistoryBehavior::Replace);
+    return stateObjectAdded(WTF::move(data), urlString, NavigationHistoryBehavior::Replace);
 }
 
 } // namespace WebCore

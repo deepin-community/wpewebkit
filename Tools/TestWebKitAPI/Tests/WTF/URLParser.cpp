@@ -25,12 +25,13 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include "WTFTestUtilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/WTFTestUtilities.h"
 #include <wtf/MainThread.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace TestWebKitAPI {
 
@@ -700,7 +701,7 @@ TEST_F(WTF_URLParser, ParserDifferences)
         { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http:/"_s });
     checkRelativeURL("http:"_s, "about:blank"_s, { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http:"_s });
     checkRelativeURLDifferences("http:/"_s, "http://host"_s,
-        { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http:/"_s });
+        { "http"_s, ""_s, ""_s, "host"_s, 0, "/"_s, ""_s, ""_s, "http://host/"_s });
     checkURLDifferences("http:/"_s,
         { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http:/"_s });
     checkURL("http:"_s, { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http:"_s });
@@ -944,8 +945,13 @@ TEST_F(WTF_URLParser, ParserDifferences)
     checkURL(utf16String(u"http://ԛәлп.com"), { "http"_s, ""_s, ""_s, "xn--k1ai47bhi.com"_s, 0, "/"_s, ""_s, ""_s, "http://xn--k1ai47bhi.com/"_s });
     checkURLDifferences(utf16String(u"http://Ⱥbby.com"),
         { "http"_s, ""_s, ""_s, "xn--bby-iy0b.com"_s, 0, "/"_s, ""_s, ""_s, "http://xn--bby-iy0b.com/"_s });
-    checkURLDifferences(utf16String(u"http://\u2132"),
-        { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, utf16String(u"http://Ⅎ") });
+    if (WTF::ICU::majorVersion() >= 76) {
+        checkURLDifferences(utf16String(u"http://\u2132"),
+            { "http"_s, ""_s, ""_s, "xn--73g"_s, 0, "/"_s, ""_s, ""_s, utf16String(u"http://xn--73g/") });
+    } else {
+        checkURLDifferences(utf16String(u"http://\u2132"),
+            { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, utf16String(u"http://Ⅎ") });
+    }
     checkURLDifferences(utf16String(u"http://\u05D9\u05B4\u05D5\u05D0\u05B8/"),
         { "http"_s, ""_s, ""_s, "xn--cdbi5etas"_s, 0, "/"_s, ""_s, ""_s, "http://xn--cdbi5etas/"_s }, TestTabs::No);
     checkURLDifferences(utf16String(u"http://bidirectional\u0786\u07AE\u0782\u07B0\u0795\u07A9\u0793\u07A6\u0783\u07AA/"),
@@ -1126,6 +1132,13 @@ TEST_F(WTF_URLParser, AdditionalTests)
         { "http"_s, ""_s, ""_s, "w"_s, 0, "/"_s, "%EF%BF%BD"_s, ""_s, "http://w/?%EF%BF%BD"_s });
     checkURLDifferences(utf16String<13>({'h', 't', 't', 'p', ':', '/', '/', 'w', '/', '?', surrogateBegin, ' ', '\0'}),
         { "http"_s, ""_s, ""_s, "w"_s, 0, "/"_s, "%EF%BF%BD"_s, ""_s, "http://w/?%EF%BF%BD"_s });
+}
+
+TEST_F(WTF_URLParser, FilePathStartBackslash)
+{
+    // Backslash after empty host in file URL should be treated like forward slash in FilePathStart,
+    // triggering Windows drive letter detection. The pipe in C| must be normalized to a colon.
+    checkURL("file://\\C|\\path"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/path"_s, ""_s, ""_s, "file:///C:/path"_s }, TestTabs::No);
 }
 
 } // namespace TestWebKitAPI

@@ -36,6 +36,7 @@
 #include "DFGVariableEventStream.h"
 #include "ExecutionCounter.h"
 #include "JITCode.h"
+#include "JumpTable.h"
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/SegmentedVector.h>
 
@@ -51,21 +52,26 @@ namespace DFG {
 class JITCode;
 class JITCompiler;
 
-struct UnlinkedStructureStubInfo : JSC::UnlinkedStructureStubInfo {
+struct UnlinkedPropertyInlineCache : JSC::UnlinkedPropertyInlineCache {
+    void setUsedRegisters(ScalarRegisterSet value) { m_usedRegisters = value; }
+    void removeUsedRegister(GPRReg reg) { m_usedRegisters.remove(reg); }
+
     CodeOrigin codeOrigin;
-    ScalarRegisterSet usedRegisters;
     CallSiteIndex callSiteIndex;
     GPRReg m_baseGPR { InvalidGPRReg };
     GPRReg m_valueGPR { InvalidGPRReg };
     GPRReg m_extraGPR { InvalidGPRReg };
     GPRReg m_extra2GPR { InvalidGPRReg };
-    GPRReg m_stubInfoGPR { InvalidGPRReg };
+    GPRReg m_propertyCacheGPR { InvalidGPRReg };
 #if USE(JSVALUE32_64)
     GPRReg m_valueTagGPR { InvalidGPRReg };
     GPRReg m_baseTagGPR { InvalidGPRReg };
     GPRReg m_extraTagGPR { InvalidGPRReg };
     GPRReg m_extra2TagGPR { InvalidGPRReg };
 #endif
+
+private:
+    ScalarRegisterSet m_usedRegisters;
 };
 
 struct UnlinkedCallLinkInfo : JSC::UnlinkedCallLinkInfo {
@@ -95,14 +101,24 @@ public:
         MasqueradesAsUndefinedWatchpointSet,
         ArrayBufferDetachWatchpointSet,
         ArrayIteratorProtocolWatchpointSet,
+        SetIteratorProtocolWatchpointSet,
         NumberToStringWatchpointSet,
         StructureCacheClearedWatchpointSet,
+        StringToStringWatchpointSet,
+        StringValueOfWatchpointSet,
+        StringSymbolMatchWatchpointSet,
+        StringSymbolSearchWatchpointSet,
         StringSymbolReplaceWatchpointSet,
+        StringSymbolSplitWatchpointSet,
+        StringSymbolToPrimitiveWatchpointSet,
         RegExpPrimordialPropertiesWatchpointSet,
+        RegExpSpeciesWatchpointSet,
+        PromiseThenWatchpointSet,
         ArraySpeciesWatchpointSet,
         ArrayPrototypeChainIsSaneWatchpointSet,
         StringPrototypeChainIsSaneWatchpointSet,
         ObjectPrototypeChainIsSaneWatchpointSet,
+        PromiseSpeciesWatchpointSet,
     };
 
     using Value = JITConstant<Type>;
@@ -136,7 +152,7 @@ public:
     LinkerIR& operator=(LinkerIR&&) = default;
 
     LinkerIR(Vector<Value>&& constants)
-        : m_constants(WTFMove(constants))
+        : m_constants(WTF::move(constants))
     {
     }
 
@@ -147,10 +163,10 @@ private:
     FixedVector<Value> m_constants;
 };
 
-class JITData final : public ButterflyArray<JITData, StructureStubInfo, void*> {
+class JITData final : public ButterflyArray<JITData, HandlerPropertyInlineCache, void*> {
     friend class JSC::LLIntOffsetsExtractor;
 public:
-    using Base = ButterflyArray<JITData, StructureStubInfo, void*>;
+    using Base = ButterflyArray<JITData, HandlerPropertyInlineCache, void*>;
     using ExitVector = FixedVector<MacroAssemblerCodeRef<OSRExitPtrTag>>;
 
     static constexpr ptrdiff_t offsetOfExits() { return OBJECT_OFFSETOF(JITData, m_exits); }
@@ -160,7 +176,7 @@ public:
 
     void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
-        m_exits[exitIndex] = WTFMove(code);
+        m_exits[exitIndex] = WTF::move(code);
     }
     const MacroAssemblerCodeRef<OSRExitPtrTag>& exitCode(unsigned exitIndex) const { return m_exits[exitIndex]; }
 
@@ -171,23 +187,38 @@ public:
         m_isInvalidated = 1;
     }
 
-    auto stubInfos() -> decltype(leadingSpan())
+    auto propertyInlineCaches() -> decltype(leadingSpan())
     {
         return leadingSpan();
     }
 
-    StructureStubInfo& stubInfo(unsigned index)
+    HandlerPropertyInlineCache& propertyCache(unsigned index)
     {
-        auto span = stubInfos();
+        auto span = propertyInlineCaches();
         return span[span.size() - index - 1];
     }
 
-    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() { return m_callLinkInfos; }
+    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() LIFETIME_BOUND { return m_callLinkInfos; }
+
+    UpperTierExecutionCounter& tierUpCounter() LIFETIME_BOUND { return m_tierUpCounter; }
+    const UpperTierExecutionCounter& tierUpCounter() const LIFETIME_BOUND { return m_tierUpCounter; }
+
+    uint8_t neverExecutedEntry() const { return m_neverExecutedEntry; }
 
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(JITData, m_globalObject); }
     static constexpr ptrdiff_t offsetOfStackOffset() { return OBJECT_OFFSETOF(JITData, m_stackOffset); }
+    static constexpr ptrdiff_t offsetOfDummyArrayProfile() { return OBJECT_OFFSETOF(JITData, m_dummyArrayProfile); }
+    static constexpr ptrdiff_t offsetOfTierUpCounter() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_counter); }
+    static constexpr ptrdiff_t offsetOfTierUpActiveThreshold() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_activeThreshold); }
+    static constexpr ptrdiff_t offsetOfTierUpTotalCount() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_totalCount); }
+    static constexpr ptrdiff_t offsetOfNeverExecutedEntry() { return OBJECT_OFFSETOF(JITData, m_neverExecutedEntry); }
 
-    explicit JITData(unsigned stubInfoSize, unsigned poolSize, const JITCode&, ExitVector&&);
+    explicit JITData(unsigned propertyCacheSize, unsigned poolSize, const JITCode&, ExitVector&&);
+
+    void finalizeUnconditionally()
+    {
+        m_dummyArrayProfile.clear();
+    }
 
 private:
 
@@ -195,10 +226,13 @@ private:
 
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
+    ArrayProfile m_dummyArrayProfile { };
+    UpperTierExecutionCounter m_tierUpCounter;
     FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
     FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     ExitVector m_exits;
     uint8_t m_isInvalidated { 0 };
+    uint8_t m_neverExecutedEntry { 1 };
 };
 
 class JITCode final : public DirectJITCode {
@@ -246,9 +280,9 @@ public:
     
     void shrinkToFit() final;
 
-    RegisterSetBuilder liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
+    RegisterSet liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
 #if ENABLE(FTL_JIT)
-    CodeBlock* osrEntryBlock() { return m_osrEntryBlock.get(); }
+    CodeBlock* osrEntryBlock() LIFETIME_BOUND { return m_osrEntryBlock.get(); }
     void setOSREntryBlock(VM&, const JSCell* owner, CodeBlock* osrEntryBlock);
     void clearOSREntryBlockAndResetThresholds(CodeBlock* dfgCodeBlock);
 #endif
@@ -271,26 +305,22 @@ public:
     FixedVector<DFG::SpeculationRecovery> m_speculationRecovery;
     FixedVector<SimpleJumpTable> m_switchJumpTables;
     FixedVector<StringJumpTable> m_stringSwitchJumpTables;
-    FixedVector<UnlinkedStructureStubInfo> m_unlinkedStubInfos;
+    FixedVector<UnlinkedPropertyInlineCache> m_unlinkedPropertyInlineCaches;
     FixedVector<UnlinkedCallLinkInfo> m_unlinkedCallLinkInfos;
     DFG::VariableEventStream variableEventStream;
     DFG::MinifiedGraph minifiedDFG;
     LinkerIR m_linkerIR;
 
 #if ENABLE(FTL_JIT)
-    uint8_t neverExecutedEntry { 1 };
-
-    UpperTierExecutionCounter tierUpCounter;
-
-    // For osrEntryPoint that are in inner loop, this maps their bytecode to the bytecode
+    // For osrEntrypoint that are in inner loop, this maps their bytecode to the bytecode
     // of the outerloop entry points in order (from innermost to outermost).
     //
     // The key may not always be a target for OSR Entry but the list in the value is guaranteed
     // to be usable for OSR Entry.
-    HashMap<BytecodeIndex, FixedVector<BytecodeIndex>> tierUpInLoopHierarchy;
+    UncheckedKeyHashMap<BytecodeIndex, FixedVector<BytecodeIndex>> tierUpInLoopHierarchy;
 
     // Map each bytecode of CheckTierUpAndOSREnter to its stream index.
-    HashMap<BytecodeIndex, unsigned> bytecodeIndexToStreamIndex;
+    UncheckedKeyHashMap<BytecodeIndex, unsigned> bytecodeIndexToStreamIndex;
 
     enum class TriggerReason : uint8_t {
         DontTrigger,
@@ -301,7 +331,7 @@ public:
     // Map each bytecode of CheckTierUpAndOSREnter to its trigger forcing OSR Entry.
     // This can never be modified after it has been initialized since the addresses of the triggers
     // are used by the JIT.
-    HashMap<BytecodeIndex, TriggerReason> tierUpEntryTriggers;
+    UncheckedKeyHashMap<BytecodeIndex, TriggerReason> tierUpEntryTriggers;
 
     WriteBarrier<CodeBlock> m_osrEntryBlock;
     unsigned osrEntryRetry { 0 };
@@ -311,7 +341,7 @@ public:
 
 inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitVector&& exits)
 {
-    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedStubInfos.size(), jitCode.m_linkerIR.size(), jitCode, WTFMove(exits)) };
+    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedPropertyInlineCaches.size(), jitCode.m_linkerIR.size(), jitCode, WTF::move(exits)) };
     if (result->tryInitialize(vm, codeBlock, jitCode))
         return result;
     return nullptr;

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2009 Apple Inc. All Rights Reserved.
- * Copyright (C) 2009, 2011 Google Inc. All Rights Reserved.
+ * Copyright (C) 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2009, 2011 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,24 +26,24 @@
 
 #pragma once
 
-#include "AdvancedPrivacyProtections.h"
-#include "CertificateInfo.h"
-#include "ContentSecurityPolicyResponseHeaders.h"
-#include "CrossOriginEmbedderPolicy.h"
-#include "FetchOptions.h"
-#include "ResourceError.h"
-#include "ResourceRequest.h"
-#include "ResourceResponse.h"
-#include "ScriptBuffer.h"
-#include "ScriptExecutionContextIdentifier.h"
-#include "ServiceWorkerRegistrationData.h"
-#include "ThreadableLoader.h"
-#include "ThreadableLoaderClient.h"
+#include <WebCore/AdvancedPrivacyProtections.h>
+#include <WebCore/CertificateInfo.h>
+#include <WebCore/ContentSecurityPolicyResponseHeaders.h>
+#include <WebCore/CrossOriginEmbedderPolicy.h>
+#include <WebCore/FetchOptions.h>
+#include <WebCore/ResourceError.h>
+#include <WebCore/ResourceRequest.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/ScriptBuffer.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/ServiceWorkerRegistrationData.h>
+#include <WebCore/ThreadableLoader.h>
+#include <WebCore/ThreadableLoaderClient.h>
 #include <memory>
-#include <wtf/FastMalloc.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -58,8 +58,7 @@ struct WorkerFetchResult;
 enum class CertificateInfoPolicy : uint8_t;
 
 class WorkerScriptLoader final : public RefCounted<WorkerScriptLoader>, public ThreadableLoaderClient {
-    WTF_MAKE_FAST_ALLOCATED;
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerScriptLoader);
+    WTF_MAKE_TZONE_ALLOCATED(WorkerScriptLoader);
 public:
     static Ref<WorkerScriptLoader> create()
     {
@@ -69,33 +68,37 @@ public:
     enum class Source : uint8_t { ClassicWorkerScript, ClassicWorkerImport, ModuleScript };
 
     std::optional<Exception> loadSynchronously(ScriptExecutionContext*, const URL&, Source, FetchOptions::Mode, FetchOptions::Cache, ContentSecurityPolicyEnforcement, const String& initiatorIdentifier);
-    void loadAsynchronously(ScriptExecutionContext&, ResourceRequest&&, Source, FetchOptions&&, ContentSecurityPolicyEnforcement, ServiceWorkersMode, WorkerScriptLoaderClient&, String&& taskMode, ScriptExecutionContextIdentifier clientIdentifier = { });
+    void loadAsynchronously(ScriptExecutionContext&, ResourceRequest&&, Source, FetchOptions&&, ContentSecurityPolicyEnforcement, ServiceWorkersMode, WorkerScriptLoaderClient&, String&& taskMode, std::optional<ScriptExecutionContextIdentifier> clientIdentifier = std::nullopt);
 
-    void notifyError(ScriptExecutionContextIdentifier);
+    void notifyError(std::optional<ScriptExecutionContextIdentifier>);
+
+    // ThreadableLoaderClient.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections() const { return m_advancedPrivacyProtections; }
 
-    const ScriptBuffer& script() const { return m_script; }
-    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicy() const { return m_contentSecurityPolicy; }
-    const String& referrerPolicy() const { return m_referrerPolicy; }
-    const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const { return m_crossOriginEmbedderPolicy; }
-    const URL& url() const { return m_url; }
-    const URL& responseURL() const;
+    const ScriptBuffer& script() const LIFETIME_BOUND { return m_script; }
+    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicy() const LIFETIME_BOUND { return m_contentSecurityPolicy; }
+    const String& referrerPolicy() const LIFETIME_BOUND { return m_referrerPolicy; }
+    const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const LIFETIME_BOUND { return m_crossOriginEmbedderPolicy; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    const URL& NODELETE responseURL() const;
     ResourceResponse::Source responseSource() const { return m_responseSource; }
     bool isRedirected() const { return m_isRedirected; }
-    const CertificateInfo& certificateInfo() const { return m_certificateInfo; }
-    const String& responseMIMEType() const { return m_responseMIMEType; }
+    const CertificateInfo& certificateInfo() const LIFETIME_BOUND { return m_certificateInfo; }
+    const String& responseMIMEType() const LIFETIME_BOUND { return m_responseMIMEType; }
     ResourceResponse::Tainting responseTainting() const { return m_responseTainting; }
     bool failed() const { return m_failed; }
-    ResourceLoaderIdentifier identifier() const { return m_identifier; }
-    const ResourceError& error() const { return m_error; }
+    ResourceLoaderIdentifier identifier() const { return *m_identifier; }
+    const ResourceError& error() const LIFETIME_BOUND { return m_error; }
 
     WorkerFetchResult fetchResult() const;
 
-    void didReceiveResponse(ScriptExecutionContextIdentifier, ResourceLoaderIdentifier, const ResourceResponse&) override;
+    void didReceiveResponse(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const ResourceResponse&) override;
     void didReceiveData(const SharedBuffer&) override;
-    void didFinishLoading(ScriptExecutionContextIdentifier, ResourceLoaderIdentifier, const NetworkLoadMetrics&) override;
-    void didFail(ScriptExecutionContextIdentifier, const ResourceError&) override;
+    void didFinishLoading(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const NetworkLoadMetrics&) override;
+    void didFail(std::optional<ScriptExecutionContextIdentifier>, const ResourceError&) override;
 
     void cancel();
 
@@ -124,8 +127,8 @@ public:
     std::optional<ServiceWorkerData> takeServiceWorkerData();
     WEBCORE_EXPORT static RefPtr<ServiceWorkerDataManager> serviceWorkerDataManagerFromIdentifier(ScriptExecutionContextIdentifier);
 
-    ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
-    const String& userAgentForSharedWorker() const { return m_userAgentForSharedWorker; }
+    std::optional<ScriptExecutionContextIdentifier> clientIdentifier() const { return m_clientIdentifier; }
+    const String& userAgentForSharedWorker() const LIFETIME_BOUND { return m_userAgentForSharedWorker; }
 
 private:
     friend class RefCounted<WorkerScriptLoader>;
@@ -135,11 +138,11 @@ private:
     ~WorkerScriptLoader();
 
     std::unique_ptr<ResourceRequest> createResourceRequest(const String& initiatorIdentifier);
-    void notifyFinished(ScriptExecutionContextIdentifier);
+    void notifyFinished(std::optional<ScriptExecutionContextIdentifier>);
 
     WeakPtr<WorkerScriptLoaderClient> m_client;
     RefPtr<ThreadableLoader> m_threadableLoader;
-    RefPtr<TextResourceDecoder> m_decoder;
+    const RefPtr<TextResourceDecoder> m_decoder;
     ScriptBuffer m_script;
     URL m_url;
     URL m_responseURL;
@@ -150,7 +153,7 @@ private:
     ContentSecurityPolicyResponseHeaders m_contentSecurityPolicy;
     String m_referrerPolicy;
     CrossOriginEmbedderPolicy m_crossOriginEmbedderPolicy;
-    ResourceLoaderIdentifier m_identifier;
+    Markable<ResourceLoaderIdentifier> m_identifier;
     bool m_failed { false };
     bool m_finishing { false };
     bool m_isRedirected { false };
@@ -158,7 +161,7 @@ private:
     ResourceResponse::Source m_responseSource { ResourceResponse::Source::Unknown };
     ResourceResponse::Tainting m_responseTainting { ResourceResponse::Tainting::Basic };
     ResourceError m_error;
-    ScriptExecutionContextIdentifier m_clientIdentifier;
+    Markable<ScriptExecutionContextIdentifier> m_clientIdentifier;
     bool m_didAddToWorkerScriptLoaderMap { false };
     bool m_isMatchingServiceWorkerRegistration { false };
     std::optional<SecurityOriginData> m_topOriginForServiceWorkerRegistration;

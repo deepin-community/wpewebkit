@@ -28,7 +28,6 @@
 #include "BufferSource.h"
 #include "GPUCommandBuffer.h"
 #include "GPUExtent3DDict.h"
-#include "GPUImageCopyExternalImage.h"
 #include "GPUImageCopyTexture.h"
 #include "GPUImageCopyTextureTagged.h"
 #include "GPUImageDataLayout.h"
@@ -44,15 +43,20 @@
 namespace WebCore {
 
 class GPUBuffer;
+struct GPUImageCopyExternalImage;
+
+namespace WebGPU {
+class Device;
+}
 
 class GPUQueue : public RefCounted<GPUQueue> {
 public:
-    static Ref<GPUQueue> create(Ref<WebGPU::Queue>&& backing)
+    static Ref<GPUQueue> create(Ref<WebGPU::Queue>&& backing, WebGPU::Device& device)
     {
-        return adoptRef(*new GPUQueue(WTFMove(backing)));
+        return adoptRef(*new GPUQueue(WTF::move(backing), device));
     }
 
-    String label() const;
+    String NODELETE label() const;
     void setLabel(String&&);
 
     void submit(Vector<Ref<GPUCommandBuffer>>&&);
@@ -64,7 +68,7 @@ public:
         const GPUBuffer&,
         GPUSize64 bufferOffset,
         BufferSource&& data,
-        std::optional<GPUSize64> dataOffset,
+        GPUSize64 dataOffset,
         std::optional<GPUSize64>);
 
     void writeTexture(
@@ -83,12 +87,10 @@ public:
     const WebGPU::Queue& backing() const { return m_backing; }
 
 private:
-    GPUQueue(Ref<WebGPU::Queue>&& backing)
-        : m_backing(WTFMove(backing))
-    {
-    }
+    GPUQueue(Ref<WebGPU::Queue>&&, WebGPU::Device&);
 
-    Ref<WebGPU::Queue> m_backing;
+    const Ref<WebGPU::Queue> m_backing;
+    WeakPtr<WebGPU::Device> m_device;
 };
 
 }

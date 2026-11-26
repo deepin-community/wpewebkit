@@ -44,8 +44,8 @@ AccessibilityAtspi& AccessibilityAtspi::singleton()
 }
 
 AccessibilityAtspi::AccessibilityAtspi()
-    : m_cacheUpdateTimer(RunLoop::main(), this, &AccessibilityAtspi::cacheUpdateTimerFired)
-    , m_cacheClearTimer(RunLoop::main(), this, &AccessibilityAtspi::cacheClearTimerFired)
+    : m_cacheUpdateTimer(RunLoop::mainSingleton(), "AccessibilityAtspi::CacheUpdateTimer"_s, this, &AccessibilityAtspi::cacheUpdateTimerFired)
+    , m_cacheClearTimer(RunLoop::mainSingleton(), "AccessibilityAtspi::CacheClearTimer"_s, this, &AccessibilityAtspi::cacheClearTimerFired)
 {
     m_cacheUpdateTimer.setPriority(RunLoopSourcePriority::RunLoopDispatcher);
     m_cacheClearTimer.setPriority(RunLoopSourcePriority::ReleaseUnusedResourcesTimer);
@@ -75,14 +75,14 @@ void AccessibilityAtspi::connect(const String& busAddress, const String& busName
 
 void AccessibilityAtspi::didConnect(GRefPtr<GDBusConnection>&& connection)
 {
-    m_connection = WTFMove(connection);
+    m_connection = WTF::move(connection);
     if (!m_connection) {
         m_isConnecting = false;
         return;
     }
 
     RELEASE_ASSERT(g_dbus_is_name(m_busName.utf8().data()));
-    g_bus_own_name_on_connection(m_connection.get(), m_busName.utf8().data(), G_BUS_NAME_OWNER_FLAGS_DO_NOT_QUEUE,
+    m_nameOwnerId = g_bus_own_name_on_connection(m_connection.get(), m_busName.utf8().data(), G_BUS_NAME_OWNER_FLAGS_DO_NOT_QUEUE,
         [](GDBusConnection*, const char*, gpointer userData) {
             auto& atspi = *static_cast<AccessibilityAtspi*>(userData);
             atspi.didOwnName();
@@ -90,12 +90,38 @@ void AccessibilityAtspi::didConnect(GRefPtr<GDBusConnection>&& connection)
         nullptr, this, nullptr);
 }
 
+void AccessibilityAtspi::disconnect()
+{
+    m_isConnecting = false;
+
+    m_cacheUpdateTimer.stop();
+    m_cacheClearTimer.stop();
+    m_cacheUpdateList.clear();
+
+    for (auto& pending : std::exchange(m_pendingRootRegistrations, { }))
+        pending.completionHandler({ });
+
+    if (auto id = std::exchange(m_nameOwnerId, 0))
+        g_bus_unown_name(id);
+
+    if (auto registry = std::exchange(m_registry, nullptr))
+        g_signal_handlers_disconnect_by_data(registry.get(), this);
+
+    if (auto connection = std::exchange(m_connection, nullptr)) {
+        for (auto id : m_clients.values())
+            g_dbus_connection_signal_unsubscribe(connection.get(), id);
+        m_clients.clear();
+
+        g_dbus_connection_close_sync(connection.get(), nullptr, nullptr);
+    }
+}
+
 void AccessibilityAtspi::didOwnName()
 {
     m_isConnecting = false;
 
     for (auto& pendingRegistration : m_pendingRootRegistrations)
-        registerRoot(pendingRegistration.root, WTFMove(pendingRegistration.interfaces), WTFMove(pendingRegistration.completionHandler));
+        registerRoot(pendingRegistration.root, WTF::move(pendingRegistration.interfaces), WTF::move(pendingRegistration.completionHandler));
     m_pendingRootRegistrations.clear();
 
     initializeRegistry();
@@ -147,6 +173,7 @@ void AccessibilityAtspi::initializeRegistry()
     }, this);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
 static GUniquePtr<char*> eventConvertingDetailToNonCamelCase(const char* eventName)
 {
     GUniquePtr<char*> event(g_strsplit(eventName, ":", 3));
@@ -193,6 +220,7 @@ static bool eventIsSubtype(char** needle, char** haystack)
 
     return true;
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void AccessibilityAtspi::removeEventListener(const char* dbusName, const char* eventName)
 {
@@ -298,7 +326,7 @@ GVariant* AccessibilityAtspi::applicationReference() const
 void AccessibilityAtspi::registerRoot(AccessibilityRootAtspi& rootObject, Vector<std::pair<GDBusInterfaceInfo*, GDBusInterfaceVTable*>>&& interfaces, CompletionHandler<void(const String&)>&& completionHandler)
 {
     if (m_isConnecting) {
-        m_pendingRootRegistrations.append({ rootObject, WTFMove(interfaces), WTFMove(completionHandler) });
+        m_pendingRootRegistrations.append({ rootObject, WTF::move(interfaces), WTF::move(completionHandler) });
         return;
     }
 
@@ -312,9 +340,9 @@ void AccessibilityAtspi::registerRoot(AccessibilityRootAtspi& rootObject, Vector
     auto registeredObjects = WTF::map<3>(interfaces, [&](auto& interface) -> unsigned {
         return g_dbus_connection_register_object(m_connection.get(), path.utf8().data(), interface.first, interface.second, &rootObject, nullptr, nullptr);
     });
-    m_rootObjects.add(&rootObject, WTFMove(registeredObjects));
+    m_rootObjects.add(&rootObject, WTF::move(registeredObjects));
     String reference = makeString(m_busName, ':', path);
-    rootObject.setPath(WTFMove(path));
+    rootObject.setPath(WTF::move(path));
     completionHandler(reference);
 }
 
@@ -324,7 +352,7 @@ void AccessibilityAtspi::unregisterRoot(AccessibilityRootAtspi& rootObject)
         auto& pendingRootRegistration = m_pendingRootRegistrations[i];
         if (pendingRootRegistration.root.ptr() == &rootObject) {
             pendingRootRegistration.completionHandler({ });
-            m_pendingRootRegistrations.remove(i);
+            m_pendingRootRegistrations.removeAt(i);
             return;
         }
     }
@@ -353,7 +381,7 @@ String AccessibilityAtspi::registerObject(AccessibilityObjectAtspi& atspiObject,
     auto registeredObjects = WTF::map<7>(interfaces, [&](auto& interface) -> unsigned {
         return g_dbus_connection_register_object(m_connection.get(), path.utf8().data(), interface.first, interface.second, &atspiObject, nullptr, nullptr);
     });
-    m_atspiObjects.add(&atspiObject, WTFMove(registeredObjects));
+    m_atspiObjects.add(&atspiObject, WTF::move(registeredObjects));
 
     m_cacheUpdateList.add(&atspiObject);
     if (!m_cacheUpdateTimer.isActive())
@@ -393,21 +421,21 @@ void AccessibilityAtspi::unregisterObject(AccessibilityObjectAtspi& atspiObject)
 
 String AccessibilityAtspi::registerHyperlink(AccessibilityObjectAtspi& atspiObject, Vector<std::pair<GDBusInterfaceInfo*, GDBusInterfaceVTable*>>&& interfaces)
 {
-    if (!m_connection)
+    if (!isConnected())
         return { };
 
     String path = makeString("/org/a11y/atspi/accessible/"_s, makeStringByReplacingAll(createVersion4UUIDString(), '-', '_'));
     auto registeredObjects = WTF::map<1>(interfaces, [&](auto& interface) -> unsigned {
         return g_dbus_connection_register_object(m_connection.get(), path.utf8().data(), interface.first, interface.second, &atspiObject, nullptr, nullptr);
     });
-    m_atspiHyperlinks.add(&atspiObject, WTFMove(registeredObjects));
+    m_atspiHyperlinks.add(&atspiObject, WTF::move(registeredObjects));
 
     return path;
 }
 
 void AccessibilityAtspi::parentChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit parentChanged when there are clients because the atspi cache always consumes it.
@@ -424,7 +452,7 @@ void AccessibilityAtspi::parentChanged(AccessibilityObjectAtspi& atspiObject)
 
 void AccessibilityAtspi::parentChanged(AccessibilityRootAtspi& rootObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit parentChanged when there are clients because the atspi cache always consumes it.
@@ -437,7 +465,7 @@ void AccessibilityAtspi::parentChanged(AccessibilityRootAtspi& rootObject)
 
 void AccessibilityAtspi::childrenChanged(AccessibilityObjectAtspi& atspiObject, AccessibilityObjectAtspi& child, ChildrenChanged change)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit ChildrenChanged when there are clients because the atspi cache always consumes it.
@@ -451,7 +479,7 @@ void AccessibilityAtspi::childrenChanged(AccessibilityObjectAtspi& atspiObject, 
 
 void AccessibilityAtspi::childrenChanged(AccessibilityRootAtspi& rootObject, AccessibilityObjectAtspi& child, ChildrenChanged change)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit ChildrenChanged when there are clients because the atspi cache always consumes it.
@@ -469,7 +497,7 @@ void AccessibilityAtspi::stateChanged(AccessibilityObjectAtspi& atspiObject, con
     notifyStateChanged(atspiObject, name, value);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "StateChanged", name))
@@ -485,7 +513,7 @@ void AccessibilityAtspi::textChanged(AccessibilityObjectAtspi& atspiObject, cons
     notifyTextChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextChanged", changeType))
@@ -497,7 +525,7 @@ void AccessibilityAtspi::textChanged(AccessibilityObjectAtspi& atspiObject, cons
 
 void AccessibilityAtspi::textAttributesChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextAttributesChanged"))
@@ -513,7 +541,7 @@ void AccessibilityAtspi::textCaretMoved(AccessibilityObjectAtspi& atspiObject, u
     notifyTextCaretMoved(atspiObject, caretOffset);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextCaretMoved"))
@@ -525,7 +553,7 @@ void AccessibilityAtspi::textCaretMoved(AccessibilityObjectAtspi& atspiObject, u
 
 void AccessibilityAtspi::textSelectionChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextSelectionChanged"))
@@ -541,7 +569,7 @@ void AccessibilityAtspi::valueChanged(AccessibilityObjectAtspi& atspiObject, dou
     notifyValueChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "PropertyChange", "accessible-value"))
@@ -557,7 +585,7 @@ void AccessibilityAtspi::activeDescendantChanged(AccessibilityObjectAtspi& atspi
     notifyActiveDescendantChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "ActiveDescendantChanged"))
@@ -579,7 +607,7 @@ void AccessibilityAtspi::selectionChanged(AccessibilityObjectAtspi& atspiObject)
         notifySelectionChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "SelectionChanged"))
@@ -595,7 +623,7 @@ void AccessibilityAtspi::loadEvent(AccessibilityObjectAtspi& atspiObject, CStrin
     notifyLoadEvent(atspiObject, event);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Document", event.data()))
@@ -610,7 +638,7 @@ struct RoleNameEntry {
     const char* localizedName;
 };
 
-static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
+static constexpr SortedArrayMap roleNamesMap { WTF::toArray<std::pair<AccessibilityRole, RoleNameEntry>>({
     { AccessibilityRole::Application, { "application", N_("application") } },
     { AccessibilityRole::ApplicationAlert, { "notification", N_("notification") } },
     { AccessibilityRole::ApplicationAlertDialog, { "alert", N_("alert") } },
@@ -641,7 +669,6 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::DocumentNote, { "comment", N_("comment") } },
     { AccessibilityRole::Feed, { "panel", N_("panel") } },
     { AccessibilityRole::Figure, { "panel", N_("panel") } },
-    { AccessibilityRole::Footer, { "footer", N_("footer") } },
     { AccessibilityRole::Footnote, { "footnote", N_("footnote") } },
     { AccessibilityRole::Form, { "form", N_("form") } },
     { AccessibilityRole::Generic, { "section", N_("section") } },
@@ -656,7 +683,6 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::Inline, { "text", N_("text") } },
     { AccessibilityRole::Image, { "image", N_("image") } },
     { AccessibilityRole::ImageMap, { "image map", N_("image map") } },
-    { AccessibilityRole::ImageMapLink, { "link", N_("link") } },
     { AccessibilityRole::Insertion, { "content insertion", N_("content insertion") } },
     { AccessibilityRole::Label, { "label", N_("label") } },
     { AccessibilityRole::LandmarkBanner, { "landmark", N_("landmark") } },
@@ -678,7 +704,6 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::MathElement, { "math", N_("math") } },
     { AccessibilityRole::Menu, { "menu", N_("menu") } },
     { AccessibilityRole::MenuBar, { "menu bar", N_("menu bar") } },
-    { AccessibilityRole::MenuButton, { "menu item", N_("menu item") } },
     { AccessibilityRole::MenuItem, { "menu item", N_("menu item") } },
     { AccessibilityRole::MenuItemCheckbox, { "check menu item", N_("check menu item") } },
     { AccessibilityRole::MenuItemRadio, { "radio menu item", N_("radio menu item") } },
@@ -696,6 +721,8 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::ScrollArea, { "scroll pane", N_("scroll pane") } },
     { AccessibilityRole::ScrollBar, { "scroll bar", N_("scroll bar") } },
     { AccessibilityRole::SearchField, { "entry", N_("entry") } },
+    { AccessibilityRole::SectionFooter, { "section footer", N_("section footer") } },
+    { AccessibilityRole::SectionHeader, { "section header", N_("section header") } },
     { AccessibilityRole::Slider, { "slider", N_("slider") } },
     { AccessibilityRole::SpinButton, { "spin button", N_("spin button") } },
     { AccessibilityRole::Splitter, { "separator", N_("separator") } },
@@ -726,12 +753,10 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::UserInterfaceTooltip, { "tool tip", N_("tool tip") } },
     { AccessibilityRole::Video, { "video", N_("video") } },
     { AccessibilityRole::WebArea, { "document web", N_("document web") } },
-    { AccessibilityRole::WebCoreLink, { "link", N_("link") } },
-};
+}) };
 
 const char* AccessibilityAtspi::localizedRoleName(AccessibilityRole role)
 {
-    static constexpr SortedArrayMap roleNamesMap { roleNames };
     if (auto entry = roleNamesMap.tryGet(role))
         return entry->localizedName;
 
@@ -840,7 +865,7 @@ namespace Accessibility {
 PlatformRoleMap createPlatformRoleMap()
 {
     PlatformRoleMap roleMap;
-    for (const auto& entry : roleNames)
+    for (const auto& entry : roleNamesMap.array())
         roleMap.add(static_cast<unsigned>(entry.first), String::fromUTF8(entry.second.name));
     return roleMap;
 }
@@ -851,7 +876,7 @@ PlatformRoleMap createPlatformRoleMap()
 void AccessibilityAtspi::addNotificationObserver(void* context, NotificationObserver&& observer)
 {
     AXObjectCache::enableAccessibility();
-    m_notificationObservers.add(context, WTFMove(observer));
+    m_notificationObservers.add(context, WTF::move(observer));
 }
 
 void AccessibilityAtspi::removeNotificationObserver(void* context)
@@ -903,7 +928,7 @@ void AccessibilityAtspi::notifyStateChanged(AccessibilityObjectAtspi& atspiObjec
     const char* notification = notificationName(name);
     if (!notification)
         return;
-    
+
     notify(atspiObject, notification, value);
 }
 
@@ -913,7 +938,7 @@ void AccessibilityAtspi::notifyActiveDescendantChanged(AccessibilityObjectAtspi&
 }
 
 void AccessibilityAtspi::notifySelectionChanged(AccessibilityObjectAtspi& atspiObject) const
-{   
+{
     notify(atspiObject, "AXSelectedChildrenChanged", nullptr);
 }
 
@@ -939,7 +964,7 @@ void AccessibilityAtspi::notifyValueChanged(AccessibilityObjectAtspi& atspiObjec
 
 void AccessibilityAtspi::notifyLoadEvent(AccessibilityObjectAtspi& atspiObject, const CString& event) const
 {
-    if (event != "LoadComplete")
+    if (event != "LoadComplete"_s)
         return;
 
     notify(atspiObject, "AXLoadComplete", nullptr);

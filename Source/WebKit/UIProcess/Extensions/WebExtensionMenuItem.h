@@ -27,14 +27,13 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#include "CocoaImage.h"
 #include "WebExtension.h"
 #include "WebExtensionCommand.h"
 #include "WebExtensionMenuItemContextType.h"
 #include "WebExtensionMenuItemType.h"
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 OBJC_CLASS NSArray;
@@ -66,7 +65,7 @@ class WebExtensionContext;
 struct WebExtensionMenuItemContextParameters;
 struct WebExtensionMenuItemParameters;
 
-class WebExtensionMenuItem : public RefCounted<WebExtensionMenuItem>, public CanMakeWeakPtr<WebExtensionMenuItem> {
+class WebExtensionMenuItem : public RefCountedAndCanMakeWeakPtr<WebExtensionMenuItem> {
     WTF_MAKE_NONCOPYABLE(WebExtensionMenuItem);
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionMenuItem);
 
@@ -81,23 +80,23 @@ public:
 
     static NSArray *matchingPlatformMenuItems(const MenuItemVector&, const WebExtensionMenuItemContextParameters&, size_t limit = 0);
 
-    bool operator==(const WebExtensionMenuItem&) const;
+    bool NODELETE operator==(const WebExtensionMenuItem&) const;
 
-    WebExtensionMenuItemParameters minimalParameters() const;
+    WebExtensionMenuItemParameters NODELETE minimalParameters() const;
 
-    WebExtensionContext* extensionContext() const;
+    WebExtensionContext* NODELETE extensionContext() const;
 
     bool matches(const WebExtensionMenuItemContextParameters&) const;
 
     void update(const WebExtensionMenuItemParameters&);
 
     WebExtensionMenuItemType type() const { return m_type; }
-    const String& identifier() const { return m_identifier; }
-    const String& title() const { return m_title; }
+    const String& identifier() const LIFETIME_BOUND { return m_identifier; }
+    const String& title() const LIFETIME_BOUND { return m_title; }
 
     WebExtensionCommand* command() const { return m_command.get(); }
 
-    CocoaImage *icon(CGSize) const;
+    RefPtr<WebCore::Icon> icon(WebCore::FloatSize) const;
 
     bool isChecked() const { return m_checked; }
     void setChecked(bool checked) { ASSERT(isCheckedType(type())); m_checked = checked; }
@@ -107,12 +106,12 @@ public:
     bool isEnabled() const { return m_enabled; }
     bool isVisible() const { return m_visible; }
 
-    const WebExtension::MatchPatternSet& documentPatterns() const { return m_documentPatterns; }
-    const WebExtension::MatchPatternSet& targetPatterns() const { return m_targetPatterns; }
+    const WebExtension::MatchPatternSet& documentPatterns() const LIFETIME_BOUND { return m_documentPatterns; }
+    const WebExtension::MatchPatternSet& targetPatterns() const LIFETIME_BOUND { return m_targetPatterns; }
     OptionSet<WebExtensionMenuItemContextType> contexts() const { return m_contexts; }
 
     WebExtensionMenuItem* parentMenuItem() const { return m_parentMenuItem.get(); }
-    const MenuItemVector& submenuItems() const { return m_submenuItems; }
+    const MenuItemVector& submenuItems() const LIFETIME_BOUND { return m_submenuItems; }
 
     void addSubmenuItem(WebExtensionMenuItem&);
     void removeSubmenuItem(WebExtensionMenuItem&);
@@ -121,6 +120,8 @@ private:
     explicit WebExtensionMenuItem(WebExtensionContext&, const WebExtensionMenuItemParameters&);
 
     static String removeAmpersands(const String&);
+
+    void clearIconCache() const;
 
     enum class ForceUnchecked : bool { No, Yes };
     CocoaMenuItem *platformMenuItem(const WebExtensionMenuItemContextParameters&, ForceUnchecked = ForceUnchecked::No) const;
@@ -132,7 +133,15 @@ private:
     String m_title;
 
     RefPtr<WebExtensionCommand> m_command;
-    RetainPtr<NSDictionary> m_icons;
+
+    mutable RefPtr<WebCore::Icon> m_cachedIcon;
+    mutable Vector<double> m_cachedIconScales;
+    mutable WebCore::FloatSize m_cachedIconIdealSize;
+
+    RefPtr<JSON::Object> m_icons;
+#if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
+    RefPtr<JSON::Array> m_iconVariants;
+#endif
 
     bool m_checked : 1 { false };
     bool m_enabled : 1 { true };

@@ -74,15 +74,15 @@ TEST(WTF_Packed, AssignAndGet)
         static_assert(OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) != 64);
         PackableUint8* candidates[] = {
             0,
-            bitwise_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) / 2)) - 1)),
-            bitwise_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 1)) - 1)),
+            std::bit_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) / 2)) - 1)),
+            std::bit_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 1)) - 1)),
 #if !CPU(X86_64) || OS(DARWIN) || OS(LINUX) || OS(WINDOWS)
             // These OSes will never allocate user space addresses with
             // bit 47 (i.e. OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 1) set.
-            bitwise_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1)),
+            std::bit_cast<PackableUint8*>(static_cast<uintptr_t>((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1)),
 #else
-            bitwise_cast<PackableUint8*>(static_cast<uintptr_t>(~((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 1)) - 1))), // min higher half
-            bitwise_cast<PackableUint8*>(std::numeric_limits<uintptr_t>::max()), // max higher half
+            std::bit_cast<PackableUint8*>(static_cast<uintptr_t>(~((1ULL << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 1)) - 1))), // min higher half
+            std::bit_cast<PackableUint8*>(std::numeric_limits<uintptr_t>::max()), // max higher half
 #endif
         };
         int count = sizeof(candidates) / sizeof(uint8_t*);
@@ -107,6 +107,36 @@ TEST(WTF_Packed, PackedAlignedPtr)
         EXPECT_LE(sizeof(key), 6U);
 #endif
     }
+}
+
+TEST(WTF_Packed, PackedAlignedPtrSetNonNull)
+{
+    {
+        PackedAlignedPtr<PackableUint8, 256> ptr;
+        auto* testValue = std::bit_cast<PackableUint8*>(static_cast<uintptr_t>(256));
+        ptr.set(testValue);
+        EXPECT_EQ(ptr.get(), testValue);
+    }
+    {
+        PackedAlignedPtr<PackableUint8, 256> ptr;
+        auto* testValue = std::bit_cast<PackableUint8*>(static_cast<uintptr_t>(256 * 1024));
+        ptr.set(testValue);
+        EXPECT_EQ(ptr.get(), testValue);
+    }
+}
+
+TEST(WTF_Packed, PackedPtrSwapWithRawPointer)
+{
+    PackableUint8 a { 1 };
+    PackableUint8 b { 2 };
+
+    PackedPtr<PackableUint8> packed { &a };
+    PackableUint8* raw = &b;
+
+    packed.swap(raw);
+
+    EXPECT_EQ(packed.get(), &b);
+    EXPECT_EQ(raw, &a);
 }
 
 struct PackingTarget {

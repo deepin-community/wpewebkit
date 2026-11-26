@@ -65,9 +65,29 @@ ResourceTiming::ResourceTiming(const URL& url, const String& initiatorType, cons
 {
 }
 
+ResourceTiming::ResourceTiming(URL&& url, String&& initiatorType, ResourceLoadTiming&& resourceLoadTiming, NetworkLoadMetrics&& networkLoadMetrics, Vector<ServerTiming>&& serverTiming, bool isLoadedFromServiceWorker, bool isSameOriginRequest)
+    : m_url(WTF::move(url))
+    , m_initiatorType(WTF::move(initiatorType))
+    , m_resourceLoadTiming(WTF::move(resourceLoadTiming))
+    , m_networkLoadMetrics(WTF::move(networkLoadMetrics))
+    , m_serverTiming(WTF::move(serverTiming))
+    , m_isLoadedFromServiceWorker(isLoadedFromServiceWorker)
+    , m_isSameOriginRequest(isSameOriginRequest)
+{
+}
+
 void ResourceTiming::updateExposure(const SecurityOrigin& origin)
 {
     m_isSameOriginRequest = m_isSameOriginRequest && origin.canRequest(m_url, OriginAccessPatternsForWebProcess::singleton());
+}
+
+String ResourceTiming::deliveryType() const
+{
+    if (m_networkLoadMetrics.fromPrefetch)
+        return "navigational-prefetch"_s;
+    if (m_networkLoadMetrics.fromCache)
+        return "cache"_s;
+    return emptyString();
 }
 
 Vector<Ref<PerformanceServerTiming>> ResourceTiming::populateServerTiming() const
@@ -88,18 +108,22 @@ ResourceTiming ResourceTiming::isolatedCopy() const &
         m_initiatorType.isolatedCopy(),
         m_resourceLoadTiming.isolatedCopy(),
         m_networkLoadMetrics.isolatedCopy(),
-        crossThreadCopy(m_serverTiming)
+        crossThreadCopy(m_serverTiming),
+        m_isLoadedFromServiceWorker,
+        m_isSameOriginRequest
     };
 }
 
 ResourceTiming ResourceTiming::isolatedCopy() &&
 {
     return ResourceTiming {
-        WTFMove(m_url).isolatedCopy(),
-        WTFMove(m_initiatorType).isolatedCopy(),
-        WTFMove(m_resourceLoadTiming).isolatedCopy(),
-        WTFMove(m_networkLoadMetrics).isolatedCopy(),
-        crossThreadCopy(WTFMove(m_serverTiming))
+        WTF::move(m_url).isolatedCopy(),
+        WTF::move(m_initiatorType).isolatedCopy(),
+        WTF::move(m_resourceLoadTiming).isolatedCopy(),
+        WTF::move(m_networkLoadMetrics).isolatedCopy(),
+        crossThreadCopy(WTF::move(m_serverTiming)),
+        m_isLoadedFromServiceWorker,
+        m_isSameOriginRequest
     };
 }
 

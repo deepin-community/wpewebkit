@@ -8,7 +8,11 @@
 #ifndef LIBANGLE_CL_UTILS_H_
 #define LIBANGLE_CL_UTILS_H_
 
+#include "common/PackedCLEnums_autogen.h"
+#include "libANGLE/renderer/FormatID_autogen.h"
 #include "libANGLE/renderer/cl_types.h"
+
+#include <stack>
 
 #define ANGLE_CL_SET_ERROR(error) cl::gClErrorTls = error
 
@@ -29,12 +33,44 @@
         }                                                  \
     } while (0)
 
-#define ANGLE_CL_IMPL_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, (void))
+#define ANGLE_CL_IMPL_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, static_cast<void>(0), (void))
 #define ANGLE_CL_IMPL_TRY_ERROR(EXPR, ERROR) \
-    ANGLE_TRY_TEMPLATE(EXPR, ANGLE_CL_RETURN_ERROR(ERROR); (void))
+    ANGLE_TRY_TEMPLATE(EXPR, static_cast<void>(0), ANGLE_CL_RETURN_ERROR(ERROR); (void))
 
 namespace cl
 {
+
+template <typename CallbackT>
+class DestructorCallbacks final
+{
+  public:
+    void add(CallbackT callback, void *userData) { mCallbacks->push({callback, userData}); }
+
+    template <typename ObjectT>
+    void invoke(ObjectT *object)
+    {
+        // Invoke callbacks in reverse registration order without holding the lock.
+        CallbackStack callbacks;
+        mCallbacks->swap(callbacks);
+        while (!callbacks.empty())
+        {
+            const CallbackData callbackData = callbacks.top();
+            callbacks.pop();
+            callbackData.callback(object, callbackData.userData);
+        }
+    }
+
+  private:
+    struct CallbackData
+    {
+        CallbackT callback;
+        void *userData;
+    };
+
+    using CallbackStack = std::stack<CallbackData>;
+
+    angle::SynchronizedValue<CallbackStack> mCallbacks;
+};
 
 size_t GetChannelCount(cl_channel_order channelOrder);
 
@@ -49,7 +85,34 @@ inline bool OverlapRegions(size_t offset1, size_t offset2, size_t size)
            (offset2 <= offset1 && offset1 <= offset2 + size - 1u);
 }
 
+inline constexpr ChannelMapping GetChannelOrderMapping(cl_channel_order order)
+{
+    switch (order)
+    {
+        case CL_BGRA:
+            return {2, 1, 0, 3};  // B,G,R,A
+        case CL_ARGB:
+            return {3, 0, 1, 2};  // A,R,G,B
+        case CL_A:
+            return {3, 3, 3, 3};  // Alpha-only
+        default:
+            return {0, 1, 2, 3};  // R,G,B,A
+    }
+}
+
 bool IsValidImageFormat(const cl_image_format *imageFormat, const rx::CLExtensions &extensions);
+
+bool IsImageType(cl::MemObjectType memObjectType);
+bool IsBufferType(cl::MemObjectType memObjectType);
+bool IsArrayType(cl::MemObjectType memObjectType);
+bool Is3DImage(cl::MemObjectType memObjectType);
+bool Is2DImage(cl::MemObjectType memObjectType);
+bool Is1DImage(cl::MemObjectType memObjectType);
+bool Is1DImageBuffer(cl::MemObjectType memObjectType);
+
+cl::Extents GetExtentFromDescriptor(cl::ImageDescriptor desc);
+angle::FormatID GetImageAngleFormat(cl_image_format format);
+bool IsDepthOrder(cl_channel_order channelOrder);
 
 extern thread_local cl_int gClErrorTls;
 

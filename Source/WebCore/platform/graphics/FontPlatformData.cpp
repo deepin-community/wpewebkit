@@ -29,31 +29,36 @@
 #include "StyleFontSizeFunctions.h"
 
 #include <wtf/SortedArrayMap.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FontPlatformData);
 
 FontPlatformData::FontPlatformData(WTF::HashTableDeletedValueType)
     : m_isHashTableDeletedValue(true)
 {
 }
 
-FontPlatformData::FontPlatformData()
-{
-}
+FontPlatformData::FontPlatformData() = default;
 
 FontPlatformData::FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation orientation, FontWidthVariant widthVariant, TextRenderingMode textRenderingMode, const FontCustomPlatformData* customPlatformData)
-    : m_size(size)
-    , m_orientation(orientation)
-    , m_widthVariant(widthVariant)
-    , m_textRenderingMode(textRenderingMode)
-    , m_customPlatformData(customPlatformData)
-    , m_syntheticBold(syntheticBold)
-    , m_syntheticOblique(syntheticOblique)
+: m_metadata { size, orientation, widthVariant, textRenderingMode, syntheticBold, syntheticOblique }
+, m_customPlatformData(customPlatformData)
 {
 }
 
+FontPlatformData::FontPlatformData(const FontMetadata& metadata, const FontCustomPlatformData* customPlatformData)
+    : m_metadata(metadata)
+    , m_customPlatformData(customPlatformData)
+{
+}
+
+#if !USE(SKIA)
 FontPlatformData::~FontPlatformData() = default;
+#endif
+
 FontPlatformData::FontPlatformData(const FontPlatformData&) = default;
 FontPlatformData& FontPlatformData::operator=(const FontPlatformData&) = default;
 
@@ -61,14 +66,7 @@ FontPlatformData& FontPlatformData::operator=(const FontPlatformData&) = default
 FontPlatformData FontPlatformData::cloneWithOrientation(const FontPlatformData& source, FontOrientation orientation)
 {
     FontPlatformData copy(source);
-    copy.m_orientation = orientation;
-    return copy;
-}
-
-FontPlatformData FontPlatformData::cloneWithSyntheticOblique(const FontPlatformData& source, bool syntheticOblique)
-{
-    FontPlatformData copy(source);
-    copy.m_syntheticOblique = syntheticOblique;
+    copy.m_metadata.orientation = orientation;
     return copy;
 }
 #endif
@@ -85,7 +83,7 @@ FontPlatformData FontPlatformData::cloneWithSize(const FontPlatformData& source,
 #if !USE(SKIA)
 void FontPlatformData::updateSize(float size)
 {
-    m_size = size;
+    m_metadata.pointSize = size;
 }
 #endif
 #endif
@@ -95,7 +93,12 @@ void FontPlatformData::updateSizeWithFontSizeAdjust(const FontSizeAdjust& fontSi
     if (!fontSizeAdjust.value)
         return;
 
-    auto tmpFont = FontCache::forCurrentThread().fontForPlatformData(*this);
+    if (!*fontSizeAdjust.value) {
+        updateSize(0);
+        return;
+    }
+
+    auto tmpFont = protect(FontCache::forCurrentThread())->fontForPlatformData(*this);
     auto adjustedFontSize = Style::adjustedFontSize(computedSize, fontSizeAdjust, tmpFont->fontMetrics());
 
     if (adjustedFontSize == size())

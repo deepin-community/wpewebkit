@@ -28,13 +28,18 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "Logging.h"
 #include "RemoteBufferMessages.h"
+#include "RemoteBufferProxy.h"
 #include "StreamServerConnection.h"
 #include "WebGPUObjectHeap.h"
 
 #include <WebCore/SharedMemory.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMalloc.h>
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_streamConnection)
+#define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, m_streamConnection, completion)
 
 namespace WebKit {
 
@@ -43,63 +48,98 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteBuffer);
 RemoteBuffer::RemoteBuffer(WebCore::WebGPU::Buffer& buffer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, bool mappedAtCreation, WebGPUIdentifier identifier)
     : m_backing(buffer)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
     , m_isMapped(mappedAtCreation)
     , m_mapModeFlags(mappedAtCreation ? WebCore::WebGPU::MapModeFlags(WebCore::WebGPU::MapMode::Write) : WebCore::WebGPU::MapModeFlags())
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteBuffer::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteBuffer::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteBuffer::~RemoteBuffer() = default;
 
 void RemoteBuffer::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteBuffer::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteBuffer::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteBuffer::mapAsync(WebCore::WebGPU::MapModeFlags mapModeFlags, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> size, CompletionHandler<void(bool)>&& callback)
 {
-    m_isMapped = true;
-    m_mapModeFlags = mapModeFlags;
+    if (m_pendingMap) {
+        callback(false);
+        return;
+    }
 
-    m_backing->mapAsync(mapModeFlags, offset, size, [protectedThis = Ref<RemoteBuffer>(*this), callback = WTFMove(callback)] (bool success) mutable {
+    m_pendingMap = true;
+
+    protect(m_backing)->mapAsync(mapModeFlags, offset, size, [protectedThis = Ref<RemoteBuffer>(*this), callback = WTF::move(callback), mapModeFlags] (bool success) mutable {
+        bool mapWasPending = protectedThis->m_pendingMap;
+        protectedThis->m_pendingMap = false;
         if (!success) {
             callback(false);
             return;
         }
 
+        if (mapWasPending) {
+            protectedThis->m_isMapped = true;
+            protectedThis->m_mapModeFlags = mapModeFlags;
+        }
         callback(true);
     });
 }
 
 void RemoteBuffer::getMappedRange(WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> size, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& callback)
 {
-    m_backing->getMappedRange(offset, size, [&] (auto mappedRange) {
-        m_isMapped = true;
+    MESSAGE_CHECK_COMPLETION(m_isMapped, callback(std::nullopt));
+    protect(m_backing)->getMappedRange(offset, size, [protectedThis = protect(*this), &callback] (auto mappedRange) {
+        protectedThis->m_isMapped = true;
         callback(mappedRange);
     });
 }
 
 void RemoteBuffer::unmap()
 {
-    if (m_isMapped)
-        m_backing->unmap();
+    if (m_isMapped || m_pendingMap)
+        protect(m_backing)->unmap();
     m_isMapped = false;
+    m_pendingMap = false;
     m_mapModeFlags = { };
 }
 
-void RemoteBuffer::copy(std::optional<WebCore::SharedMemoryHandle>&& dataHandle, size_t offset, CompletionHandler<void(bool)>&& completionHandler)
+void RemoteBuffer::copyWithCopy(Vector<uint8_t>&& data, uint64_t offset)
 {
-    auto sharedData = dataHandle ? WebCore::SharedMemory::map(WTFMove(*dataHandle), WebCore::SharedMemory::Protection::ReadOnly) : nullptr;
-    auto data = sharedData ? sharedData->span() : std::span<const uint8_t> { };
-    if (!m_isMapped || !m_mapModeFlags.contains(WebCore::WebGPU::MapMode::Write)) {
+    if (m_pendingMap || !m_isMapped || !m_mapModeFlags.contains(WebCore::WebGPU::MapMode::Write))
+        return;
+
+    auto buffer = protect(m_backing)->getBufferContents();
+    if (buffer.empty())
+        return;
+
+    auto dataSize = data.size();
+    auto endOffset = checkedSum<size_t>(offset, dataSize);
+    if (endOffset.hasOverflowed() || endOffset.value() > buffer.size())
+        return;
+
+    memcpySpan(buffer.subspan(offset), data.span());
+}
+
+void RemoteBuffer::copy(std::optional<WebCore::SharedMemoryHandle>&& dataHandle, uint64_t offset, CompletionHandler<void(bool)>&& completionHandler)
+{
+    if (m_pendingMap || !m_isMapped || !m_mapModeFlags.contains(WebCore::WebGPU::MapMode::Write)) {
         completionHandler(false);
         return;
     }
 
-    auto buffer = m_backing->getBufferContents();
+    auto sharedData = dataHandle ? WebCore::SharedMemory::map(WTF::move(*dataHandle), WebCore::SharedMemory::Protection::ReadOnly) : nullptr;
+    auto data = sharedData ? sharedData->span() : std::span<const uint8_t> { };
+    if (data.size() <= WebGPU::maxCrossProcessResourceCopySize) {
+        completionHandler(false);
+        return;
+    }
+
+#if !ENABLE(WEBGPU_SWIFT)
+    auto buffer = protect(m_backing)->getBufferContents();
     if (buffer.empty()) {
         completionHandler(false);
         return;
@@ -112,23 +152,32 @@ void RemoteBuffer::copy(std::optional<WebCore::SharedMemoryHandle>&& dataHandle,
     }
 
     memcpySpan(buffer.subspan(offset), data);
+#else
+    backing().copyFrom(data, offset);
+#endif
     completionHandler(true);
+
 }
 
 void RemoteBuffer::destroy()
 {
     unmap();
-    m_backing->destroy();
+    protect(m_backing)->destroy();
+}
+
+void RemoteBuffer::generateAValidationError()
+{
+    protect(m_backing)->generateAValidationError();
 }
 
 void RemoteBuffer::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteBuffer::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

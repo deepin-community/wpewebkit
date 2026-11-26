@@ -27,9 +27,9 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-#include "CombinedFiltersAlphabet.h"
-#include "ContentExtensionsDebugging.h"
-#include "NFA.h"
+#include <WebCore/CombinedFiltersAlphabet.h>
+#include <WebCore/ContentExtensionsDebugging.h>
+#include <WebCore/NFA.h>
 #include <wtf/Function.h>
 #include <wtf/Forward.h>
 
@@ -46,7 +46,7 @@ public:
 
     void addPattern(uint64_t actionId, const Vector<Term>& pattern);
     bool processNFAs(size_t maxNFASize, Function<bool(NFA&&)>&&);
-    bool isEmpty() const;
+    bool NODELETE isEmpty() const;
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     size_t memoryUsed() const;
@@ -57,7 +57,7 @@ public:
     
 private:
     CombinedFiltersAlphabet m_alphabet;
-    std::unique_ptr<PrefixTreeVertex> m_prefixTreeRoot;
+    const UniqueRef<PrefixTreeVertex> m_prefixTreeRoot;
     HashMap<const PrefixTreeVertex*, ActionList> m_actions;
 };
 

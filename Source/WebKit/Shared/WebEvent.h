@@ -29,15 +29,14 @@
 // FIXME: We should probably move to making the WebCore/PlatformFooEvents trivial classes so that
 // we can use them as the event type.
 
-#include "WebEvent.h"
 #include "WebEventModifier.h"
 #include "WebEventType.h"
-
+#include <wtf/CheckedPtr.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UUID.h>
-#include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
 
 namespace IPC {
@@ -47,11 +46,19 @@ class Encoder;
 
 namespace WebKit {
 
-class WebEvent {
+enum class WebEventInputSource : uint8_t { UserDriven, Automation };
+
+class WebEvent : public CanMakeThreadSafeCheckedPtr<WebEvent, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
     WTF_MAKE_TZONE_ALLOCATED(WebEvent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebEvent);
 public:
-    WebEvent(WebEventType, OptionSet<WebEventModifier>, WallTime timestamp, WTF::UUID authorizationToken);
-    WebEvent(WebEventType, OptionSet<WebEventModifier>, WallTime timestamp);
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    WebEvent(WebEventType, OptionSet<WebEventModifier>, MonotonicTime timestamp, WTF::UUID authorizationToken, uintptr_t signpostIdentifier);
+#endif
+    WebEvent(WebEventType, OptionSet<WebEventModifier>, MonotonicTime timestamp, WTF::UUID authorizationToken);
+    WebEvent(WebEventType, OptionSet<WebEventModifier>, MonotonicTime timestamp);
+
+    virtual ~WebEvent() = default;
 
     WebEventType type() const { return m_type; }
 
@@ -63,16 +70,23 @@ public:
 
     OptionSet<WebEventModifier> modifiers() const { return m_modifiers; }
 
-    WallTime timestamp() const { return m_timestamp; }
+    MonotonicTime timestamp() const { return m_timestamp; }
 
-    bool isActivationTriggeringEvent() const;
+    bool NODELETE isActivationTriggeringEvent() const;
     WTF::UUID authorizationToken() const { return m_authorizationToken; }
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    uintptr_t signpostIdentifier() const { return m_signpostIdentifier; }
+#endif
 
 private:
     WebEventType m_type;
     OptionSet<WebEventModifier> m_modifiers;
-    WallTime m_timestamp;
+    MonotonicTime m_timestamp;
     WTF::UUID m_authorizationToken;
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    uintptr_t m_signpostIdentifier;
+#endif
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, WebEventType);

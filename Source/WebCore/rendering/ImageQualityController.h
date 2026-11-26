@@ -28,6 +28,7 @@
 #include "GraphicsTypes.h"
 #include "Timer.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -35,15 +36,21 @@ class GraphicsContext;
 class Image;
 class LayoutSize;
 class RenderBoxModelObject;
+class RenderElement;
 class RenderView;
-class RenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class ImageQualityController {
-    WTF_MAKE_NONCOPYABLE(ImageQualityController); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ImageQualityController);
+    WTF_MAKE_NONCOPYABLE(ImageQualityController);
 public:
     explicit ImageQualityController(const RenderView&);
 
-    static std::optional<InterpolationQuality> interpolationQualityFromStyle(const RenderStyle&);
+    static std::optional<InterpolationQuality> NODELETE interpolationQualityFromStyle(const Style::ComputedStyle&);
+    static InterpolationQuality chooseInterpolationQualityForSVG(GraphicsContext&, const RenderElement&, Image&);
     InterpolationQuality chooseInterpolationQuality(GraphicsContext&, RenderBoxModelObject*, Image&, const void* layer, const LayoutSize&);
 
     void rendererWillBeDestroyed(RenderBoxModelObject& renderer) { removeObject(&renderer); }
@@ -58,7 +65,7 @@ private:
     void restartTimer();
     void removeObject(RenderBoxModelObject*);
 
-    const RenderView& m_renderView;
+    const CheckedRef<const RenderView> m_renderView;
     ObjectLayerSizeMap m_objectLayerSizeMap;
     DeferrableOneShotTimer m_timer;
     bool m_animatedResizeIsActive { false };

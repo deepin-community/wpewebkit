@@ -36,14 +36,12 @@
 namespace API {
 
 ContentRuleList::ContentRuleList(Ref<WebKit::WebCompiledContentRuleList>&& contentRuleList, WebKit::NetworkCache::Data&& mappedFile)
-    : m_compiledRuleList(WTFMove(contentRuleList))
-    , m_mappedFile(WTFMove(mappedFile))
+    : m_compiledRuleList(WTF::move(contentRuleList))
+    , m_mappedFile(WTF::move(mappedFile))
 {
 }
 
-ContentRuleList::~ContentRuleList()
-{
-}
+ContentRuleList::~ContentRuleList() = default;
 
 const WTF::String& ContentRuleList::name() const
 {
@@ -78,9 +76,9 @@ bool ContentRuleList::supportsRegularExpression(const WTF::String& regex)
     return false;
 }
 
-std::error_code ContentRuleList::parseRuleList(const WTF::String& ruleList)
+std::error_code ContentRuleList::parseRuleList(const WTF::String& ruleList, WebCore::ContentExtensions::CSSSelectorsAllowed cssSelectorsAllowed)
 {
-    auto result = WebCore::ContentExtensions::parseRuleList(ruleList);
+    auto result = WebCore::ContentExtensions::parseRuleList(ruleList, cssSelectorsAllowed);
     if (result.has_value())
         return { };
 

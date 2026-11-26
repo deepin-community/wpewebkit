@@ -75,7 +75,7 @@ struct _WebKitAuthenticationRequestPrivate {
     std::optional<bool> canSaveCredentials;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitAuthenticationRequest, webkit_authentication_request, G_TYPE_OBJECT, GObject)
 
@@ -438,7 +438,7 @@ gboolean webkit_authentication_request_is_for_proxy(WebKitAuthenticationRequest*
  * webkit_authentication_request_is_retry:
  * @request: a #WebKitAuthenticationRequest
  *
- * Determine whether this this is a first attempt or a retry for this authentication challenge.
+ * Determine whether this is a first attempt or a retry for this authentication challenge.
  *
  * Returns: %TRUE if authentication attempt is a retry or %FALSE otherwise.
  *

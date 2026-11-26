@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  * Copyright (C) 2011 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "ContainerNodeInlines.h"
 #include "Document.h"
 #include "HTMLElementStack.h"
 #include "HTMLFormattingElementList.h"
@@ -74,10 +75,6 @@ struct HTMLConstructionSiteTask {
         return downcast<ContainerNode>(child.get());
     }
 
-    Ref<ContainerNode> protectedNonNullParent() const { return *parent; }
-    Ref<Node> protectedNonNullChild() const { return *child; }
-    Ref<Node> protectedNonNullNextChild() const { return *nextChild; }
-
     Operation operation;
     RefPtr<ContainerNode> parent;
     RefPtr<Node> nextChild;
@@ -93,25 +90,20 @@ template<> struct VectorTraits<WebCore::HTMLConstructionSiteTask> : SimpleClassV
 
 namespace WebCore {
 
-enum WhitespaceMode {
-    AllWhitespace,
-    NotAllWhitespace,
-    WhitespaceUnknown
-};
-
 class AtomHTMLToken;
-struct CustomElementConstructionData;
+class CustomElementRegistry;
 class Document;
 class Element;
 class HTMLFormElement;
 class HTMLTemplateElement;
 class JSCustomElementInterface;
+struct CustomElementConstructionData;
 
 class HTMLConstructionSite {
     WTF_MAKE_NONCOPYABLE(HTMLConstructionSite);
 public:
     HTMLConstructionSite(Document&, OptionSet<ParserContentPolicy>, unsigned maximumDOMTreeDepth);
-    HTMLConstructionSite(DocumentFragment&, OptionSet<ParserContentPolicy>, unsigned maximumDOMTreeDepth);
+    HTMLConstructionSite(DocumentFragment&, OptionSet<ParserContentPolicy>, unsigned maximumDOMTreeDepth, CustomElementRegistry*);
     ~HTMLConstructionSite();
 
     void executeQueuedTasks();
@@ -149,10 +141,10 @@ public:
 
     HTMLStackItem createElementFromSavedToken(const HTMLStackItem&);
 
-    bool shouldFosterParent() const;
+    bool NODELETE shouldFosterParent() const;
     void fosterParent(Ref<Node>&&);
 
-    std::optional<unsigned> indexOfFirstUnopenFormattingElement() const;
+    std::optional<unsigned> NODELETE indexOfFirstUnopenFormattingElement() const;
     void reconstructTheActiveFormattingElements();
 
     void generateImpliedEndTags();
@@ -161,25 +153,27 @@ public:
 
     bool inQuirksMode() { return m_inQuirksMode; }
 
+    bool hasReachedMaxDOMTreeDepth() const { return m_hasReachedMaxDOMTreeDepth; }
+
     bool isEmpty() const { return !m_openElements.stackDepth(); }
     Element& currentElement() const { return m_openElements.top(); }
     ContainerNode& currentNode() const { return m_openElements.topNode(); }
-    Ref<ContainerNode> protectedCurrentNode() const { return m_openElements.topNode(); }
     ElementName currentElementName() const { return m_openElements.topElementName(); }
-    HTMLStackItem& currentStackItem() const { return m_openElements.topStackItem(); }
-    HTMLStackItem* oneBelowTop() const { return m_openElements.oneBelowTop(); }
+    HTMLStackItem& currentStackItem() const LIFETIME_BOUND { return m_openElements.topStackItem(); }
+    HTMLStackItem* oneBelowTop() const LIFETIME_BOUND { return m_openElements.oneBelowTop(); }
+    TreeScope& treeScopeForCurrentNode();
+    ContainerNode& containerForCurrentNode();
     Document& ownerDocumentForCurrentNode();
-    Ref<Document> protectedOwnerDocumentForCurrentNode() { return ownerDocumentForCurrentNode(); }
-    HTMLElementStack& openElements() const { return m_openElements; }
-    HTMLFormattingElementList& activeFormattingElements() const { return m_activeFormattingElements; }
+    HTMLElementStack& openElements() const LIFETIME_BOUND { return m_openElements; }
+    HTMLFormattingElementList& activeFormattingElements() const LIFETIME_BOUND { return m_activeFormattingElements; }
     bool currentIsRootNode() { return &m_openElements.topNode() == &m_openElements.rootNode(); }
 
     Element& head() const { return m_head.element(); }
-    HTMLStackItem& headStackItem() { return m_head; }
+    HTMLStackItem& headStackItem() LIFETIME_BOUND { return m_head; }
 
     void setForm(HTMLFormElement*);
     HTMLFormElement* form() const { return m_form.get(); }
-    RefPtr<HTMLFormElement> takeForm();
+    RefPtr<HTMLFormElement> NODELETE takeForm();
 
     OptionSet<ParserContentPolicy> parserContentPolicy() { return m_parserContentPolicy; }
 
@@ -198,10 +192,10 @@ public:
         SetForScope<bool> m_redirectAttachToFosterParentChange;
     };
 
-    static bool isFormattingTag(TagName);
+    static bool NODELETE isFormattingTag(TagName);
 
 private:
-    Document& document() const { return m_document.get(); }
+    Document& document() const { return m_document; }
 
     // In the common case, this queue will have only one task because most
     // tokens produce only one DOM mutation.
@@ -214,15 +208,12 @@ private:
 
     void findFosterSite(HTMLConstructionSiteTask&);
 
-    RefPtr<HTMLElement> createHTMLElementOrFindCustomElementInterface(AtomHTMLToken&, JSCustomElementInterface**);
+    std::tuple<RefPtr<HTMLElement>, RefPtr<JSCustomElementInterface>, RefPtr<CustomElementRegistry>> createHTMLElementOrFindCustomElementInterface(AtomHTMLToken&);
     Ref<HTMLElement> createHTMLElement(AtomHTMLToken&);
     Ref<Element> createElement(AtomHTMLToken&, const AtomString& namespaceURI);
 
     void mergeAttributesFromTokenIntoElement(AtomHTMLToken&&, Element&);
     void dispatchDocumentElementAvailableIfNeeded();
-
-    Ref<Document> protectedDocument() const;
-    Ref<ContainerNode> protectedAttachmentRoot() const;
 
     // m_head has to be destroyed after destroying CheckedRef of m_document and m_attachmentRoot
     HTMLStackItem m_head;
@@ -241,6 +232,7 @@ private:
     TaskQueue m_taskQueue;
 
     OptionSet<ParserContentPolicy> m_parserContentPolicy;
+    RefPtr<CustomElementRegistry> m_registry;
     bool m_isParsingFragment;
 
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#parsing-main-intable
@@ -252,6 +244,11 @@ private:
     unsigned m_maximumDOMTreeDepth;
 
     bool m_inQuirksMode;
+
+    bool m_hasReachedMaxDOMTreeDepth { false };
+
+    std::unique_ptr<StringBuilder> m_textNodeBuffer;
+    RefPtr<Text> m_currentTextNode;
 };
 
 } // namespace WebCore

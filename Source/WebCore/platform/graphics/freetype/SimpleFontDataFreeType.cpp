@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Michael Emmel mike.emmel@gmail.com
  * Copyright (C) 2007, 2008 Alp Toker <alp@atoker.com>
  * Copyright (C) 2007 Holger Hans Peter Freyther
@@ -40,6 +40,7 @@
 #include "FontCache.h"
 #include "FontDescription.h"
 #include "GlyphBuffer.h"
+#include "NotImplemented.h"
 #include "OpenTypeTypes.h"
 #include "RefPtrCairo.h"
 #include <cairo-ft.h>
@@ -208,6 +209,13 @@ RefPtr<Font> Font::platformCreateScaledFont(const FontDescription& fontDescripti
         fontDescription.orientation(),
         m_platformData.customPlatformData()),
         origin(), IsInterstitial::No);
+}
+
+RefPtr<Font> Font::platformCreateHalfWidthFont() const
+{
+    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=281333 : implement half width font for this platform.
+    notImplemented();
+    return nullptr;
 }
 
 void Font::determinePitch()

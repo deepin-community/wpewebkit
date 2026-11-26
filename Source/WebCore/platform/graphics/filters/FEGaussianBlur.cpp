@@ -28,7 +28,13 @@
 
 #include "FEGaussianBlurSoftwareApplier.h"
 #include "Filter.h"
+#include "GraphicsContext.h"
+#include <numbers>
 #include <wtf/text/TextStream.h>
+
+#if USE(CORE_IMAGE)
+#include "FEGaussianBlurCoreImageApplier.h"
+#endif
 
 #if USE(SKIA)
 #include "FEGaussianBlurSkiaApplier.h"
@@ -81,9 +87,16 @@ bool FEGaussianBlur::setEdgeMode(EdgeModeType edgeMode)
     return true;
 }
 
+FloatSize FEGaussianBlur::effectiveStdDeviation(OptionSet<FilterRenderingOption> renderingOptions) const
+{
+    if (renderingOptions.contains(FilterRenderingOption::FastAndLowQuality))
+        return { std::min(m_stdX, 20.0f), std::min(m_stdY, 20.0f) };
+    return { m_stdX, m_stdY };
+}
+
 static inline float gaussianKernelFactor()
 {
-    return 3 / 4.f * sqrtf(2 * piFloat);
+    return 3 / 4.f * sqrtf(2 * std::numbers::pi_v<float>);
 }
 
 static int clampedToKernelSize(float value)
@@ -132,7 +145,8 @@ FloatRect FEGaussianBlur::calculateImageRect(const Filter& filter, std::span<con
     if (m_edgeMode != EdgeModeType::None)
         return enclosingIntRect(imageRect);
 
-    auto kernelSize = calculateUnscaledKernelSize(filter.resolvedSize({ m_stdX, m_stdY }));
+    auto stdDeviation = effectiveStdDeviation(filter.renderingOptions());
+    auto kernelSize = calculateUnscaledKernelSize(filter.resolvedSize(stdDeviation));
 
     // We take the half kernel size and multiply it with three, because we run box blur three times.
     imageRect.inflateX(3 * kernelSize.width() * 0.5f);
@@ -147,29 +161,32 @@ IntOutsets FEGaussianBlur::calculateOutsets(const FloatSize& stdDeviation)
     return { outsetSize.height(), outsetSize.width(), outsetSize.height(), outsetSize.width() };
 }
 
-bool FEGaussianBlur::resultIsAlphaImage(const FilterImageVector& inputs) const
+bool FEGaussianBlur::resultIsAlphaImage(std::span<const Ref<FilterImage>> inputs) const
 {
     return inputs[0]->isAlphaImage();
 }
 
-OptionSet<FilterRenderingMode> FEGaussianBlur::supportedFilterRenderingModes() const
+OptionSet<FilterRenderingMode> FEGaussianBlur::supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const
 {
     OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
-#if USE(SKIA)
+#if USE(CORE_IMAGE)
+    modes.add(FilterRenderingMode::Accelerated);
+#elif USE(SKIA)
     if (m_edgeMode == EdgeModeType::None)
         modes.add(FilterRenderingMode::Accelerated);
 #endif
-    // FIXME: Ensure the correctness of the CG GaussianBlur filter (http://webkit.org/b/243816).
-#if 0 && HAVE(CGSTYLE_COLORMATRIX_BLUR)
+#if HAVE(CGSTYLE_COLORMATRIX_BLUR) && HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
     if (m_stdX == m_stdY)
         modes.add(FilterRenderingMode::GraphicsContext);
 #endif
-    return modes;
+    return modes & preferredFilterRenderingModes;
 }
 
 std::unique_ptr<FilterEffectApplier> FEGaussianBlur::createAcceleratedApplier() const
 {
-#if USE(SKIA)
+#if USE(CORE_IMAGE)
+    return FilterEffectApplier::create<FEGaussianBlurCoreImageApplier>(*this);
+#elif USE(SKIA)
     return FilterEffectApplier::create<FEGaussianBlurSkiaApplier>(*this);
 #else
     return nullptr;
@@ -187,18 +204,19 @@ std::unique_ptr<FilterEffectApplier> FEGaussianBlur::createSoftwareApplier() con
 
 std::optional<GraphicsStyle> FEGaussianBlur::createGraphicsStyle(GraphicsContext&, const Filter& filter) const
 {
-    auto radius = calculateUnscaledKernelSize(filter.resolvedSize({ m_stdX, m_stdY }));
+    auto stdDeviation = effectiveStdDeviation(filter.renderingOptions());
+    auto radius = calculateUnscaledKernelSize(filter.resolvedSize(stdDeviation));
     return GraphicsGaussianBlur { radius };
 }
 
 TextStream& FEGaussianBlur::externalRepresentation(TextStream& ts, FilterRepresentation representation) const
 {
-    ts << indent << "[feGaussianBlur";
+    ts << indent << "[feGaussianBlur"_s;
     FilterEffect::externalRepresentation(ts, representation);
 
-    ts << " stdDeviation=\"" << m_stdX << ", " << m_stdY << "\"";
+    ts << " stdDeviation=\""_s << m_stdX << ", "_s << m_stdY << '"';
 
-    ts << "]\n";
+    ts << "]\n"_s;
     return ts;
 }
 

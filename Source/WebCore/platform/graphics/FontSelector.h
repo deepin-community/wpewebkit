@@ -25,21 +25,26 @@
 
 #pragma once
 
-#include "FontRanges.h"
+#include <WebCore/FontRanges.h>
 #include <wtf/Forward.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+
+namespace WTF {
+class TextStream;
+}
 
 namespace WebCore {
 
 class FontCache;
 class FontCascadeDescription;
 class FontDescription;
+struct FontFamily;
 class FontSelectorClient;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FontAccessor);
 
 class FontAccessor : public RefCounted<FontAccessor> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FontAccessor);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FontAccessor, FontAccessor);
 public:
     virtual ~FontAccessor() = default;
 
@@ -47,11 +52,11 @@ public:
     virtual bool isLoading() const = 0;
 };
 
-class FontSelector : public RefCounted<FontSelector>, public CanMakeWeakPtr<FontSelector> {
+class FontSelector : public RefCountedAndCanMakeWeakPtr<FontSelector> {
 public:
     virtual ~FontSelector() = default;
 
-    virtual FontRanges fontRangesForFamily(const FontDescription&, const AtomString&) = 0;
+    virtual FontRanges fontRangesForFamily(const FontDescription&, const FontFamily&) = 0;
     virtual RefPtr<Font> fallbackFontAt(const FontDescription&, size_t) = 0;
 
     virtual size_t fallbackFontCount() = 0;
@@ -64,7 +69,14 @@ public:
     virtual void unregisterForInvalidationCallbacks(FontSelectorClient&) = 0;
 
     virtual unsigned uniqueId() const = 0;
-    virtual unsigned version() const = 0;
+    virtual unsigned NODELETE version() const = 0;
+
+    virtual bool isSimpleFontSelectorForDescription() const = 0;
+
+    virtual bool isCSSFontSelector() const { return false; }
+
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, const FontSelector&);
 
 }

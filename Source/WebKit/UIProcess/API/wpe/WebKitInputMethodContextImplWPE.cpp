@@ -50,6 +50,8 @@ static WPEInputPurpose toWPEInputPurpose(WebKitInputPurpose purpose)
         return WPE_INPUT_PURPOSE_EMAIL;
     case WEBKIT_INPUT_PURPOSE_PASSWORD:
         return WPE_INPUT_PURPOSE_PASSWORD;
+    case WEBKIT_INPUT_PURPOSE_SEARCH:
+        return WPE_INPUT_PURPOSE_SEARCH;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -75,12 +77,12 @@ static WPEInputHints toWPEInputHints(WebKitInputHints hints)
 
 static void inputPurposeChangedCallback(WebKitInputMethodContextImplWPE* context)
 {
-    g_object_set(context->priv->context.get(), "input-purpose", toWPEInputPurpose(webkit_input_method_context_get_input_purpose(WEBKIT_INPUT_METHOD_CONTEXT(context))), nullptr);
+    wpe_input_method_context_set_input_purpose(context->priv->context.get(), toWPEInputPurpose(webkit_input_method_context_get_input_purpose(WEBKIT_INPUT_METHOD_CONTEXT(context))));
 }
 
 static void inputHintsChangedCallback(WebKitInputMethodContextImplWPE* context)
 {
-    g_object_set(context->priv->context.get(), "input-hints", toWPEInputHints(webkit_input_method_context_get_input_hints(WEBKIT_INPUT_METHOD_CONTEXT(context))), nullptr);
+    wpe_input_method_context_set_input_hints(context->priv->context.get(), toWPEInputHints(webkit_input_method_context_get_input_hints(WEBKIT_INPUT_METHOD_CONTEXT(context))));
 }
 
 static void wpeIMContextPreeditStartCallback(WebKitInputMethodContextImplWPE* context)

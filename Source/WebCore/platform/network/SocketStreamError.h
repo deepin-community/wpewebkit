@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009, 2016 Apple Inc. All rights reserved.
- * Copyright (C) 2009 Google Inc.  All rights reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -38,7 +38,7 @@ namespace WebCore {
 
 class SocketStreamError {
 private:
-    friend struct IPC::ArgumentCoder<SocketStreamError, void>;
+    friend struct IPC::ArgumentCoder<SocketStreamError>;
 public:
     SocketStreamError() = default;
 
@@ -58,8 +58,8 @@ public:
 
     bool isNull() const { return m_isNull; }
     int errorCode() const { return m_errorCode; }
-    const String& failingURL() const { return m_failingURL; }
-    const String& localizedDescription() const { return m_localizedDescription; }
+    const String& failingURL() const LIFETIME_BOUND { return m_failingURL; }
+    const String& localizedDescription() const LIFETIME_BOUND { return m_localizedDescription; }
 
 private:
     int m_errorCode { 0 };

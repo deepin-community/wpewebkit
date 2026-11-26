@@ -25,11 +25,14 @@
 #include "config.h"
 #include "CSSCustomPropertySyntax.h"
 
+#include "CSSMarkup.h"
 #include "CSSParserIdioms.h"
 #include "CSSParserTokenRange.h"
+#include "CSSPropertyParserConsumer+Primitives.h"
 #include "CSSTokenizer.h"
-#include "ParsingUtilities.h"
 #include <wtf/SortedArrayMap.h>
+#include <wtf/text/ParsingUtilities.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
@@ -47,12 +50,12 @@ auto CSSCustomPropertySyntax::parseComponent(std::span<const CharacterType> span
     };
 
     if (skipExactly(buffer, '<')) {
-        auto begin = buffer.position();
+        auto begin = buffer.span();
         skipUntil(buffer, '>');
-        if (buffer.position() == begin)
+        if (buffer.position() == begin.data())
             return { };
 
-        auto dataTypeName = StringView(std::span(begin, buffer.position()));
+        auto dataTypeName = StringView(begin.first(buffer.position() - begin.data()));
         if (!skipExactly(buffer, '>'))
             return { };
 
@@ -72,12 +75,12 @@ auto CSSCustomPropertySyntax::parseComponent(std::span<const CharacterType> span
         return Component { type, multiplier };
     }
 
-    auto begin = buffer.position();
+    auto begin = buffer.span();
     while (buffer.hasCharactersRemaining() && (*buffer != '+' && *buffer != '#'))
         ++buffer;
 
     auto ident = [&] {
-        auto tokenizer = CSSTokenizer::tryCreate(StringView(std::span(begin, buffer.position())).toStringWithoutCopying());
+        auto tokenizer = CSSTokenizer::tryCreate(StringView(begin.first(buffer.position() - begin.data())).toStringWithoutCopying());
         if (!tokenizer)
             return nullAtom();
 
@@ -95,7 +98,7 @@ auto CSSCustomPropertySyntax::parseComponent(std::span<const CharacterType> span
 
     auto multiplier = consumeMultiplier();
 
-    return Component { Type::CustomIdent, multiplier, ident };
+    return Component { Type::Ident, multiplier, ident };
 }
 
 std::optional<CSSCustomPropertySyntax> CSSCustomPropertySyntax::parse(StringView syntax)
@@ -115,18 +118,21 @@ std::optional<CSSCustomPropertySyntax> CSSCustomPropertySyntax::parse(StringView
         Definition definition;
 
         while (buffer.hasCharactersRemaining()) {
-            auto begin = buffer.position();
+            auto begin = buffer.span();
 
             skipUntil(buffer, '|');
 
-            auto component = parseComponent(std::span { begin, buffer.position() });
+            auto component = parseComponent(begin.first(buffer.position() - begin.data()));
             if (!component)
                 return { };
 
             definition.append(*component);
 
-            skipExactly(buffer, '|');
-            skipWhile<isCSSSpace>(buffer);
+            if (skipExactly(buffer, '|')) {
+                skipWhile<isCSSSpace>(buffer);
+                if (!buffer.hasCharactersRemaining())
+                    return { };
+            }
         }
 
         if (definition.isEmpty())
@@ -136,28 +142,139 @@ std::optional<CSSCustomPropertySyntax> CSSCustomPropertySyntax::parse(StringView
     });
 }
 
+std::optional<CSSCustomPropertySyntax> CSSCustomPropertySyntax::consumeType(CSSParserTokenRange& range)
+{
+    // https://drafts.csswg.org/css-mixins/#typedef-css-type
+    // <css-type> = <syntax-component> | <type()>
+
+    if (range.peek().type() == FunctionToken) {
+        // <type()> = type( <syntax> )
+        if (!equalLettersIgnoringASCIICase(range.peek().value(), "type"_s))
+            return { };
+
+        auto typeRange = CSSPropertyParserHelpers::consumeFunction(range);
+        auto type = CSSCustomPropertySyntax::parse(typeRange.serialize());
+        if (!type || type->containsUnknownType())
+            return { };
+        return type;
+    }
+
+    auto typeRangeStart = range;
+    while (!range.atEnd()) {
+        auto peekType = range.peek().type();
+        if (peekType == ColonToken || peekType == CommaToken || CSSTokenizer::isWhitespace(peekType))
+            break;
+        range.consume();
+    }
+    range.consumeWhitespace();
+
+    auto typeRange = typeRangeStart.rangeUntil(range);
+    auto type = CSSCustomPropertySyntax::parse(typeRange.serialize());
+    if (!type || type->definition.size() != 1 || type->containsUnknownType())
+        return { };
+
+    return type;
+}
+
+bool CSSCustomPropertySyntax::containsUnknownType() const
+{
+    for (auto& component : definition) {
+        if (component.type == Type::Unknown)
+            return true;
+    }
+    return false;
+}
+
 auto CSSCustomPropertySyntax::typeForTypeName(StringView dataTypeName) -> Type
 {
-    static constexpr std::pair<ComparableASCIILiteral, Type> mappings[] = {
-        { "angle", Type::Angle },
-        { "color", Type::Color },
-        { "custom-ident", Type::CustomIdent },
-        { "image", Type::Image },
-        { "integer", Type::Integer },
-        { "length", Type::Length },
-        { "length-percentage", Type::LengthPercentage },
-        { "number", Type::Number },
-        { "percentage", Type::Percentage },
-        { "resolution", Type::Resolution },
-        { "string", Type::String },
-        { "time", Type::Time },
-        { "transform-function", Type::TransformFunction },
-        { "transform-list", Type::TransformList },
-        { "url", Type::URL },
-    };
-
-    static constexpr SortedArrayMap typeMap { mappings };
+    static constexpr SortedArrayMap typeMap { WTF::toArray<std::pair<ComparableASCIILiteral, Type>>({
+        { "angle"_s, Type::Angle },
+        { "color"_s, Type::Color },
+        { "custom-ident"_s, Type::CustomIdent },
+        { "image"_s, Type::Image },
+        { "integer"_s, Type::Integer },
+        { "length"_s, Type::Length },
+        { "length-percentage"_s, Type::LengthPercentage },
+        { "number"_s, Type::Number },
+        { "percentage"_s, Type::Percentage },
+        { "resolution"_s, Type::Resolution },
+        { "string"_s, Type::String },
+        { "time"_s, Type::Time },
+        { "transform-function"_s, Type::TransformFunction },
+        { "transform-list"_s, Type::TransformList },
+        { "url"_s, Type::URL },
+    }) };
     return typeMap.get(dataTypeName, Type::Unknown);
+}
+
+static ASCIILiteral typeNameForType(CSSCustomPropertySyntax::Type type)
+{
+    using Type = CSSCustomPropertySyntax::Type;
+    switch (type) {
+    case Type::Length: return "length"_s;
+    case Type::LengthPercentage: return "length-percentage"_s;
+    case Type::Percentage: return "percentage"_s;
+    case Type::Integer: return "integer"_s;
+    case Type::Number: return "number"_s;
+    case Type::Angle: return "angle"_s;
+    case Type::Time: return "time"_s;
+    case Type::Resolution: return "resolution"_s;
+    case Type::Color: return "color"_s;
+    case Type::Image: return "image"_s;
+    case Type::URL: return "url"_s;
+    case Type::CustomIdent: return "custom-ident"_s;
+    case Type::String: return "string"_s;
+    case Type::TransformFunction: return "transform-function"_s;
+    case Type::TransformList: return "transform-list"_s;
+    case Type::Ident:
+    case Type::Unknown:
+        break;
+    }
+    return { };
+}
+
+void serializeCustomPropertySyntax(StringBuilder& builder, const CSSCustomPropertySyntax& syntax)
+{
+    if (syntax.isUniversal()) {
+        builder.append('*');
+        return;
+    }
+
+    auto separator = ""_s;
+    for (auto& component : syntax.definition) {
+        builder.append(separator);
+        separator = " | "_s;
+
+        // The Ident type is a literal custom identifier rather than a named data type.
+        if (component.type == CSSCustomPropertySyntax::Type::Ident)
+            serializeIdentifier(builder, component.ident);
+        else
+            builder.append('<', typeNameForType(component.type), '>');
+
+        switch (component.multiplier) {
+        case CSSCustomPropertySyntax::Multiplier::Single:
+            break;
+        case CSSCustomPropertySyntax::Multiplier::SpaceList:
+            builder.append('+');
+            break;
+        case CSSCustomPropertySyntax::Multiplier::CommaList:
+            builder.append('#');
+            break;
+        }
+    }
+}
+
+void serializeCustomPropertySyntaxAsCSSType(StringBuilder& builder, const CSSCustomPropertySyntax& syntax)
+{
+    ASSERT(!syntax.isUniversal());
+    // A single syntax component is written bare. Anything else must be wrapped in type().
+    if (syntax.definition.size() == 1) {
+        serializeCustomPropertySyntax(builder, syntax);
+        return;
+    }
+    builder.append("type("_s);
+    serializeCustomPropertySyntax(builder, syntax);
+    builder.append(')');
 }
 
 }

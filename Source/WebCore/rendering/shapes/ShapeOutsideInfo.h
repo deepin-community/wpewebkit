@@ -29,27 +29,24 @@
 
 #pragma once
 
-#include "LayoutSize.h"
-#include "Shape.h"
+#include <WebCore/LayoutShape.h>
+#include <WebCore/LayoutSize.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class RenderBlockFlow;
 class RenderBox;
-class StyleImage;
 class FloatingObject;
 
-Ref<const Shape> makeShapeForShapeOutside(const RenderBox&);
+Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox&);
 
 class ShapeOutsideDeltas final {
+    WTF_MAKE_TZONE_ALLOCATED(ShapeOutsideDeltas);
 public:
-    ShapeOutsideDeltas()
-        : m_lineOverlapsShape(false)
-        , m_isValid(false)
-    {
-    }
+    ShapeOutsideDeltas() = default;
 
     ShapeOutsideDeltas(LayoutUnit leftMarginBoxDelta, LayoutUnit rightMarginBoxDelta, bool lineOverlapsShape, LayoutUnit borderBoxLineTop, LayoutUnit lineHeight)
         : m_leftMarginBoxDelta(leftMarginBoxDelta)
@@ -76,12 +73,12 @@ private:
     LayoutUnit m_rightMarginBoxDelta;
     LayoutUnit m_borderBoxLineTop;
     LayoutUnit m_lineHeight;
-    unsigned m_lineOverlapsShape : 1;
-    unsigned m_isValid : 1;
+    unsigned m_lineOverlapsShape : 1 { false };
+    unsigned m_isValid : 1 { false };
 };
 
 class ShapeOutsideInfo final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ShapeOutsideInfo);
 public:
     ShapeOutsideInfo(const RenderBox& renderer)
         : m_renderer(renderer)
@@ -100,9 +97,9 @@ public:
     bool isShapeDirty() { return !m_shape; }
 
     LayoutRect computedShapePhysicalBoundingBox() const;
-    FloatPoint shapeToRendererPoint(const FloatPoint&) const;
+    FloatPoint NODELETE shapeToRendererPoint(const FloatPoint&) const;
 
-    const Shape& computedShape() const;
+    const LayoutShape& computedShape() const;
 
 private:
     LayoutUnit logicalTopOffset() const;
@@ -110,7 +107,7 @@ private:
 
     const RenderBox& m_renderer;
 
-    mutable RefPtr<const Shape> m_shape;
+    mutable RefPtr<const LayoutShape> m_shape;
     LayoutSize m_cachedShapeLogicalSize;
 
     ShapeOutsideDeltas m_shapeOutsideDeltas;

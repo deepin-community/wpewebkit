@@ -35,12 +35,12 @@
 namespace WebCore {
 
 class ViewTransitionTypeSet : public RefCounted<ViewTransitionTypeSet> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ViewTransitionTypeSet);
+    WTF_MAKE_TZONE_ALLOCATED(ViewTransitionTypeSet);
 
 public:
     static Ref<ViewTransitionTypeSet> create(Document& document, Vector<AtomString>&& initialActiveTypes)
     {
-        return adoptRef(*new ViewTransitionTypeSet(document, WTFMove(initialActiveTypes)));
+        return adoptRef(*new ViewTransitionTypeSet(document, WTF::move(initialActiveTypes)));
     }
 
     void initializeSetLike(DOMSetAdapter&) const;
@@ -49,13 +49,13 @@ public:
     void addToSetLike(const AtomString&);
     bool removeFromSetLike(const AtomString&);
 
-    bool hasType(const AtomString&) const;
+    bool NODELETE hasType(const AtomString&) const;
 
 private:
     ViewTransitionTypeSet(Document&, Vector<AtomString>&&);
 
     ListHashSet<AtomString> m_typeSet;
-    Document& m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
 };
 
 }

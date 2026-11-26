@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "IDBObjectStoreIdentifier.h"
-#include "IDBObjectStoreInfo.h"
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBObjectStoreIdentifier.h>
+#include <WebCore/IDBObjectStoreInfo.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -34,7 +35,7 @@
 namespace WebCore {
 
 class IDBDatabaseInfo {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(IDBDatabaseInfo, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(IDBDatabaseInfo, WEBCORE_EXPORT);
 public:
     WEBCORE_EXPORT explicit IDBDatabaseInfo(const String& name, uint64_t version, uint64_t maxIndexID, HashMap<IDBObjectStoreIdentifier, IDBObjectStoreInfo>&& objectStoreMap = { });
     IDBDatabaseInfo() = default;
@@ -44,15 +45,15 @@ public:
 
     IDBDatabaseInfo isolatedCopy() const;
 
-    const String& name() const { return m_name; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
 
     void setVersion(uint64_t version) { m_version = version; }
     uint64_t version() const { return m_version; }
 
-    bool hasObjectStore(const String& name) const;
+    bool NODELETE hasObjectStore(const String& name) const;
     IDBObjectStoreInfo createNewObjectStore(const String& name, std::optional<IDBKeyPath>&&, bool autoIncrement);
     void addExistingObjectStore(const IDBObjectStoreInfo&);
-    IDBObjectStoreInfo* infoForExistingObjectStore(IDBObjectStoreIdentifier);
+    IDBObjectStoreInfo* NODELETE infoForExistingObjectStore(IDBObjectStoreIdentifier);
     IDBObjectStoreInfo* infoForExistingObjectStore(const String& objectStoreName);
     const IDBObjectStoreInfo* infoForExistingObjectStore(IDBObjectStoreIdentifier) const;
     const IDBObjectStoreInfo* infoForExistingObjectStore(const String& objectStoreName) const;
@@ -60,21 +61,21 @@ public:
     void renameObjectStore(IDBObjectStoreIdentifier, const String& newName);
 
     Vector<String> objectStoreNames() const;
-    const HashMap<IDBObjectStoreIdentifier, IDBObjectStoreInfo>& objectStoreMap() const { return m_objectStoreMap; }
+    const HashMap<IDBObjectStoreIdentifier, IDBObjectStoreInfo>& objectStoreMap() const LIFETIME_BOUND { return m_objectStoreMap; }
 
     void deleteObjectStore(const String& objectStoreName);
     void deleteObjectStore(IDBObjectStoreIdentifier);
 
-    void setMaxIndexID(uint64_t maxIndexID);
-    uint64_t generateNextIndexID() { return ++m_maxIndexID; }
+    void NODELETE setMaxIndexID(uint64_t maxIndexID);
+    IDBIndexIdentifier generateNextIndexID() { return IDBIndexIdentifier { ++m_maxIndexID }; }
 
 #if !LOG_DISABLED
     String loggingString() const;
 #endif
 
 private:
-    friend struct IPC::ArgumentCoder<IDBDatabaseInfo, void>;
-    IDBObjectStoreInfo* getInfoForExistingObjectStore(const String& objectStoreName);
+    friend struct IPC::ArgumentCoder<IDBDatabaseInfo>;
+    IDBObjectStoreInfo* NODELETE getInfoForExistingObjectStore(const String& objectStoreName);
     IDBObjectStoreInfo* getInfoForExistingObjectStore(IDBObjectStoreIdentifier);
 
     String m_name;

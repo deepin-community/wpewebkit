@@ -40,12 +40,12 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLScriptElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLScriptElement);
 
 using namespace HTMLNames;
 
 inline HTMLScriptElement::HTMLScriptElement(const QualifiedName& tagName, Document& document, bool wasInsertedByParser, bool alreadyStarted)
-    : HTMLElement(tagName, document)
+    : HTMLElement(tagName, document, TypeFlag::HasDidMoveToNewDocument)
     , ScriptElement(*this, wasInsertedByParser, alreadyStarted)
 {
     ASSERT(hasTagName(scriptTag));
@@ -53,7 +53,9 @@ inline HTMLScriptElement::HTMLScriptElement(const QualifiedName& tagName, Docume
 
 Ref<HTMLScriptElement> HTMLScriptElement::create(const QualifiedName& tagName, Document& document, bool wasInsertedByParser, bool alreadyStarted)
 {
-    return adoptRef(*new HTMLScriptElement(tagName, document, wasInsertedByParser, alreadyStarted));
+    Ref scriptElement = adoptRef(*new HTMLScriptElement(tagName, document, wasInsertedByParser, alreadyStarted));
+    scriptElement->suspendIfNeeded();
+    return scriptElement;
 }
 
 bool HTMLScriptElement::isURLAttribute(const Attribute& attribute) const
@@ -73,10 +75,11 @@ void HTMLScriptElement::finishParsingChildren()
     ScriptElement::finishParsingChildren();
 }
 
-void HTMLScriptElement::removedFromAncestor(RemovalType type, ContainerNode& container)
+void HTMLScriptElement::removingSteps(RemovalType type, ContainerNode& container)
 {
-    HTMLElement::removedFromAncestor(type, container);
+    HTMLElement::removingSteps(type, container);
     unblockRendering();
+    unregisterSpeculationRules();
 }
 
 void HTMLScriptElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
@@ -86,37 +89,38 @@ void HTMLScriptElement::attributeChanged(const QualifiedName& name, const AtomSt
     else if (name == asyncAttr)
         handleAsyncAttribute();
     else if (name == blockingAttr) {
-        blocking().associatedAttributeValueChanged();
-        if (!blocking().contains("render"_s))
+        Ref blocking = this->blocking();
+        blocking->associatedAttributeValueChanged();
+        if (!blocking->contains("render"_s))
             unblockRendering();
     } else
         HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-Node::InsertedIntoAncestorResult HTMLScriptElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLScriptElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
-    return ScriptElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
+    return ScriptElement::insertionSteps(insertionType, parentOfInsertedTree);
 }
 
-void HTMLScriptElement::didFinishInsertingNode()
+void HTMLScriptElement::postConnectionSteps()
 {
-    ScriptElement::didFinishInsertingNode();
+    ScriptElement::postConnectionSteps();
 }
 
 void HTMLScriptElement::setText(String&& value)
 {
-    setTextContent(WTFMove(value));
+    setTextContent(WTF::move(value));
 }
 
 DOMTokenList& HTMLScriptElement::blocking()
 {
     if (!m_blockingList) {
-        m_blockingList = makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, HTMLNames::blockingAttr, [](Document&, StringView token) {
+        lazyInitialize(m_blockingList, makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, HTMLNames::blockingAttr, [](Document&, StringView token) {
             if (equalLettersIgnoringASCIICase(token, "render"_s))
                 return true;
             return false;
-        });
+        }));
     }
     return *m_blockingList;
 }
@@ -132,7 +136,7 @@ void HTMLScriptElement::potentiallyBlockRendering()
 {
     bool explicitRenderBlocking = m_blockingList && m_blockingList->contains("render"_s);
     if (explicitRenderBlocking || isImplicitlyPotentiallyRenderBlocking()) {
-        document().blockRenderingOn(*this, explicitRenderBlocking ? Document::ImplicitRenderBlocking::No : Document::ImplicitRenderBlocking::Yes);
+        protect(document())->blockRenderingOn(*this, explicitRenderBlocking ? Document::ImplicitRenderBlocking::No : Document::ImplicitRenderBlocking::Yes);
         m_isRenderBlocking = true;
     }
 }
@@ -140,20 +144,20 @@ void HTMLScriptElement::potentiallyBlockRendering()
 void HTMLScriptElement::unblockRendering()
 {
     if (m_isRenderBlocking) {
-        document().unblockRenderingOn(*this);
+        protect(document())->unblockRenderingOn(*this);
         m_isRenderBlocking = false;
     }
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#dom-script-text
-ExceptionOr<void> HTMLScriptElement::setText(std::variant<RefPtr<TrustedScript>, String>&& value)
+ExceptionOr<void> HTMLScriptElement::setText(Variant<Ref<TrustedScript>, String>&& value)
 {
-    return setTextContent(trustedTypeCompliantString(*scriptExecutionContext(), WTFMove(value), "HTMLScriptElement text"_s));
+    return setTextContent(trustedTypeCompliantString(*protect(scriptExecutionContext()), WTF::move(value), "HTMLScriptElement text"_s));
 }
 
-ExceptionOr<void> HTMLScriptElement::setTextContent(std::optional<std::variant<RefPtr<TrustedScript>, String>>&& value)
+ExceptionOr<void> HTMLScriptElement::setTextContent(std::optional<Variant<Ref<TrustedScript>, String>>&& value)
 {
-    return setTextContent(trustedTypeCompliantString(*scriptExecutionContext(), value ? WTFMove(*value) : emptyString(), "HTMLScriptElement textContent"_s));
+    return setTextContent(trustedTypeCompliantString(*protect(scriptExecutionContext()), value ? WTF::move(*value) : emptyString(), "HTMLScriptElement textContent"_s));
 }
 
 ExceptionOr<void> HTMLScriptElement::setTextContent(ExceptionOr<String> value)
@@ -164,20 +168,20 @@ ExceptionOr<void> HTMLScriptElement::setTextContent(ExceptionOr<String> value)
     auto newValue = value.releaseReturnValue();
 
     setTrustedScriptText(newValue);
-    setTextContent(WTFMove(newValue));
+    setTextContent(WTF::move(newValue));
     return { };
 }
 
-ExceptionOr<void> HTMLScriptElement::setInnerText(std::variant<RefPtr<TrustedScript>, String>&& value)
+ExceptionOr<void> HTMLScriptElement::setInnerText(Variant<Ref<TrustedScript>, String>&& value)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*scriptExecutionContext(), WTFMove(value), "HTMLScriptElement innerText"_s);
+    auto stringValueHolder = trustedTypeCompliantString(*protect(scriptExecutionContext()), WTF::move(value), "HTMLScriptElement innerText"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
     auto newValue = stringValueHolder.releaseReturnValue();
 
     setTrustedScriptText(newValue);
-    setInnerText(WTFMove(newValue));
+    setInnerText(WTF::move(newValue));
     return { };
 }
 
@@ -192,11 +196,6 @@ bool HTMLScriptElement::async() const
     return hasAttributeWithoutSynchronization(asyncAttr) || forceAsync();
 }
 
-void HTMLScriptElement::setCrossOrigin(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(crossoriginAttr, value);
-}
-
 String HTMLScriptElement::crossOrigin() const
 {
     return parseCORSSettingsAttribute(attributeWithoutSynchronization(crossoriginAttr));
@@ -207,9 +206,9 @@ String HTMLScriptElement::src() const
     return getURLAttributeForBindings(WebCore::HTMLNames::srcAttr).string();
 }
 
-ExceptionOr<void> HTMLScriptElement::setSrc(std::variant<RefPtr<TrustedScriptURL>, String>&& value)
+ExceptionOr<void> HTMLScriptElement::setSrc(Variant<Ref<TrustedScriptURL>, String>&& value)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*scriptExecutionContext(), WTFMove(value), "HTMLScriptElement src"_s);
+    auto stringValueHolder = trustedTypeCompliantString(*protect(scriptExecutionContext()), WTF::move(value), "HTMLScriptElement src"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
@@ -217,11 +216,11 @@ ExceptionOr<void> HTMLScriptElement::setSrc(std::variant<RefPtr<TrustedScriptURL
     return { };
 }
 
-void HTMLScriptElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLScriptElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLElement::addSubresourceAttributeURLs(urls);
 
-    addSubresourceURL(urls, document().completeURL(sourceAttributeValue()));
+    addSubresourceURL(urls, protect(document())->encodingParseURL(sourceAttributeValue()));
 }
 
 String HTMLScriptElement::sourceAttributeValue() const
@@ -229,9 +228,9 @@ String HTMLScriptElement::sourceAttributeValue() const
     return attributeWithoutSynchronization(srcAttr).string();
 }
 
-String HTMLScriptElement::charsetAttributeValue() const
+AtomString HTMLScriptElement::charsetAttributeValue() const
 {
-    return attributeWithoutSynchronization(charsetAttr).string();
+    return attributeWithoutSynchronization(charsetAttr);
 }
 
 String HTMLScriptElement::typeAttributeValue() const
@@ -266,6 +265,9 @@ bool HTMLScriptElement::hasSourceAttribute() const
 
 void HTMLScriptElement::dispatchLoadEvent()
 {
+    // Keep the JS wrapper alive until the end of this method.
+    Ref wrapperProtector = makePendingActivity(*this);
+
     ASSERT(!haveFiredLoadEvent());
     setHaveFiredLoadEvent(true);
 
@@ -277,24 +279,19 @@ bool HTMLScriptElement::isScriptPreventedByAttributes() const
     auto& eventAttribute = attributeWithoutSynchronization(eventAttr);
     auto& forAttribute = attributeWithoutSynchronization(forAttr);
     if (!eventAttribute.isNull() && !forAttribute.isNull()) {
-        if (!equalLettersIgnoringASCIICase(StringView(forAttribute).trim(isASCIIWhitespace<UChar>), "window"_s))
+        if (!equalLettersIgnoringASCIICase(StringView(forAttribute).trim(isASCIIWhitespace<char16_t>), "window"_s))
             return true;
 
-        auto eventAttributeView = StringView(eventAttribute).trim(isASCIIWhitespace<UChar>);
+        auto eventAttributeView = StringView(eventAttribute).trim(isASCIIWhitespace<char16_t>);
         if (!equalLettersIgnoringASCIICase(eventAttributeView, "onload"_s) && !equalLettersIgnoringASCIICase(eventAttributeView, "onload()"_s))
             return true;
     }
     return false;
 }
 
-Ref<Element> HTMLScriptElement::cloneElementWithoutAttributesAndChildren(Document& targetDocument)
+Ref<Element> HTMLScriptElement::cloneElementWithoutAttributesAndChildren(Document& document, CustomElementRegistry*) const
 {
-    return adoptRef(*new HTMLScriptElement(tagQName(), targetDocument, false, alreadyStarted()));
-}
-
-void HTMLScriptElement::setReferrerPolicyForBindings(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(referrerpolicyAttr, value);
+    return HTMLScriptElement::create(tagQName(), document, false, alreadyStarted());
 }
 
 String HTMLScriptElement::referrerPolicyForBindings() const
@@ -307,21 +304,25 @@ ReferrerPolicy HTMLScriptElement::referrerPolicy() const
     return parseReferrerPolicy(attributeWithoutSynchronization(referrerpolicyAttr), ReferrerPolicySource::ReferrerPolicyAttribute).value_or(ReferrerPolicy::EmptyString);
 }
 
-void HTMLScriptElement::setFetchPriorityForBindings(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(fetchpriorityAttr, value);
-}
-
 String HTMLScriptElement::fetchPriorityForBindings() const
 {
-    return convertEnumerationToString(fetchPriorityHint());
+    return convertEnumerationToString(fetchPriority());
 }
 
-RequestPriority HTMLScriptElement::fetchPriorityHint() const
+RequestPriority HTMLScriptElement::fetchPriority() const
 {
-    if (document().settings().fetchPriorityEnabled())
-        return parseEnumerationFromString<RequestPriority>(attributeWithoutSynchronization(fetchpriorityAttr)).value_or(RequestPriority::Auto);
-    return RequestPriority::Auto;
+    return parseEnumerationFromString<RequestPriority>(attributeWithoutSynchronization(fetchpriorityAttr)).value_or(RequestPriority::Auto);
+}
+
+void HTMLScriptElement::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
+{
+    HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
+    ScriptElement::didMoveToNewDocument(newDocument);
+}
+
+void HTMLScriptElement::eventListenersDidChange()
+{
+    setHasRelevantLoadEventsListener(hasEventListeners(eventNames().errorEvent) || hasEventListeners(eventNames().loadEvent));
 }
 
 }

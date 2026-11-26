@@ -27,9 +27,12 @@
 #include "config.h"
 #include "JPEGXLImageDecoder.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // non-Apple ports
+
 #if USE(JPEGXL)
 
 #include "PixelBufferConversion.h"
+#include <wtf/MallocSpan.h>
 
 #if USE(LCMS)
 #include "LCMSUniquePtr.h"
@@ -78,8 +81,9 @@ void JPEGXLImageDecoder::clear()
 #endif
 }
 
-size_t JPEGXLImageDecoder::frameCount() const
+size_t JPEGXLImageDecoder::decodeIfNeededAndGetFrameCount() const
 {
+    assertIsHeld(m_lock);
     if (!hasAnimation())
         return 1;
 
@@ -103,11 +107,12 @@ RepetitionCount JPEGXLImageDecoder::repetitionCount() const
 
 ScalableImageDecoderFrame* JPEGXLImageDecoder::frameBufferAtIndex(size_t index)
 {
+    assertIsHeld(m_lock);
     if (ScalableImageDecoder::encodedDataStatus() < EncodedDataStatus::SizeAvailable)
         return nullptr;
 
-    if (index >= frameCount())
-        index = frameCount() - 1;
+    if (index >= decodeIfNeededAndGetFrameCount())
+        index = decodeIfNeededAndGetFrameCount() - 1;
 
     if (m_frameBufferCache.isEmpty())
         m_frameBufferCache.grow(1);
@@ -118,13 +123,15 @@ ScalableImageDecoderFrame* JPEGXLImageDecoder::frameBufferAtIndex(size_t index)
     return &frame;
 }
 
-void JPEGXLImageDecoder::clearFrameBufferCache(size_t clearBeforeFrame)
+void JPEGXLImageDecoder::clearDecodedPixelDataIfNeeded(size_t clearBeforeFrame)
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return;
 
     // Unlike the png and gif cases, we can always try to clear frames before "clearBeforeFrame" because
     // the dependenciy to the previous frame is handled by libjxl.
+    clearBeforeFrame = std::min(clearBeforeFrame, m_frameBufferCache.size());
     const Vector<ScalableImageDecoderFrame>::iterator end(m_frameBufferCache.begin() + clearBeforeFrame);
 
     for (Vector<ScalableImageDecoderFrame>::iterator i(m_frameBufferCache.begin()); i != end; ++i) {
@@ -224,6 +231,7 @@ void JPEGXLImageDecoder::updateFrameCount()
     if (failed())
         return;
 
+    assertIsHeld(m_lock);
     decode(Query::FrameCount, 0, isAllDataReceived());
 
     if (m_frameCount != m_frameBufferCache.size())
@@ -268,12 +276,15 @@ void JPEGXLImageDecoder::decode(Query query, size_t frameIndex, bool allDataRece
         return;
     }
 
+    ASSERT(!failed());
+
     size_t remainingDataSize = JxlDecoderReleaseInput(m_decoder.get());
     m_readOffset = dataSize - remainingDataSize;
 }
 
 JxlDecoderStatus JPEGXLImageDecoder::processInput(Query query)
 {
+    assertIsHeld(m_lock);
     while (true) {
         auto status = JxlDecoderProcessInput(m_decoder.get());
 
@@ -297,7 +308,8 @@ JxlDecoderStatus JPEGXLImageDecoder::processInput(Query query)
             if (query == Query::Size) {
                 // setSize() must be called only if the query is Query::Size,
                 // otherwise this would roll back the encoded data status from completed.
-                setSize(IntSize(m_basicInfo->xsize, m_basicInfo->ysize));
+                if (!setSize(IntSize(m_basicInfo->xsize, m_basicInfo->ysize)))
+                    return JXL_DEC_ERROR;
                 return status;
             }
 
@@ -332,7 +344,10 @@ JxlDecoderStatus JPEGXLImageDecoder::processInput(Query query)
                 m_frameBufferCache.grow(m_frameCount + 1);
 
             auto& buffer = m_frameBufferCache[m_currentFrame];
-            if (buffer.isInvalid() && buffer.initialize(size(), m_premultiplyAlpha)) {
+            if (buffer.isInvalid()) {
+                if (!buffer.initialize(size(), m_premultiplyAlpha))
+                    return JXL_DEC_ERROR;
+
                 buffer.setDecodingStatus(DecodingStatus::Partial);
                 buffer.setHasAlpha(hasAlpha());
                 if (m_basicInfo && m_basicInfo->have_animation) {
@@ -364,20 +379,21 @@ JxlDecoderStatus JPEGXLImageDecoder::processInput(Query query)
     }
 }
 
-void JPEGXLImageDecoder::imageOutCallback(void* that, size_t x, size_t y, size_t numPixels, const void* pixels)
+void JPEGXLImageDecoder::imageOutCallback(void* that, size_t x, size_t y, size_t numPixelsInRow, const void* pixels)
 {
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wthread-safety-analysis"
 #endif
-    static_cast<JPEGXLImageDecoder*>(that)->imageOut(x, y, numPixels, static_cast<const uint8_t*>(pixels));
+    static_cast<JPEGXLImageDecoder*>(that)->imageOut(x, y, numPixelsInRow, static_cast<const uint8_t*>(pixels));
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
 }
 
-void JPEGXLImageDecoder::imageOut(size_t x, size_t y, size_t numPixels, const uint8_t* pixels)
+void JPEGXLImageDecoder::imageOut(size_t x, size_t y, size_t numPixelsInRow, const uint8_t* pixels)
 {
+    assertIsHeld(m_lock);
     if (m_currentFrame >= m_frameBufferCache.size())
         return;
 
@@ -385,17 +401,24 @@ void JPEGXLImageDecoder::imageOut(size_t x, size_t y, size_t numPixels, const ui
     if (buffer.isInvalid())
         return;
 
-    uint32_t* row = buffer.backingStore()->pixelAt(x, y);
-    uint32_t* currentAddress = row;
-    for (size_t i = 0; i < numPixels; i++) {
+    auto canvasSize = size();
+    if (x >= static_cast<size_t>(canvasSize.width()) || y >= static_cast<size_t>(canvasSize.height()))
+        return;
+    numPixelsInRow = std::min(numPixelsInRow, static_cast<size_t>(canvasSize.width()) - x);
+
+    auto row = buffer.backingStore()->pixelsStartingAt(x, y);
+    auto currentAddress = row;
+    for (size_t i = 0; i < numPixelsInRow; i++) {
         uint8_t r = *pixels++;
         uint8_t g = *pixels++;
         uint8_t b = *pixels++;
         uint8_t a = *pixels++;
-        buffer.backingStore()->setPixel(currentAddress++, r, g, b, a);
+        buffer.backingStore()->setPixel(currentAddress[0], r, g, b, a);
+        currentAddress = currentAddress.subspan(1);
     }
 
-    maybePerformColorSpaceConversion(row, row, numPixels);
+    auto rowBytes = spanReinterpretCast<uint8_t>(row);
+    maybePerformColorSpaceConversion(rowBytes, rowBytes, numPixelsInRow);
 }
 
 #if USE(LCMS)
@@ -428,26 +451,26 @@ LCMSProfilePtr JPEGXLImageDecoder::tryDecodeICCColorProfile()
         return nullptr;
 
     Vector<uint8_t> profileData(profileSize);
-    if (JxlDecoderGetColorAsICCProfile(m_decoder.get(), &s_pixelFormat, JXL_COLOR_PROFILE_TARGET_DATA, profileData.data(), profileData.size()) != JXL_DEC_SUCCESS)
+    if (JxlDecoderGetColorAsICCProfile(m_decoder.get(), &s_pixelFormat, JXL_COLOR_PROFILE_TARGET_DATA, profileData.mutableSpan().data(), profileData.size()) != JXL_DEC_SUCCESS)
         return nullptr;
 #else
     if (JxlDecoderGetICCProfileSize(m_decoder.get(), JXL_COLOR_PROFILE_TARGET_DATA, &profileSize) != JXL_DEC_SUCCESS)
         return nullptr;
 
     Vector<uint8_t> profileData(profileSize);
-    if (JxlDecoderGetColorAsICCProfile(m_decoder.get(), JXL_COLOR_PROFILE_TARGET_DATA, profileData.data(), profileData.size()) != JXL_DEC_SUCCESS)
+    if (JxlDecoderGetColorAsICCProfile(m_decoder.get(), JXL_COLOR_PROFILE_TARGET_DATA, profileData.mutableSpan().data(), profileData.size()) != JXL_DEC_SUCCESS)
         return nullptr;
 #endif
 
-    return LCMSProfilePtr(cmsOpenProfileFromMem(profileData.data(), profileData.size()));
+    return LCMSProfilePtr(cmsOpenProfileFromMem(profileData.span().data(), profileData.size()));
 }
 
-void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void* inputBuffer, void* outputBuffer, unsigned numberOfPixels)
+void JPEGXLImageDecoder::maybePerformColorSpaceConversion(std::span<uint8_t> inputBuffer, std::span<uint8_t> outputBuffer, unsigned numberOfPixels)
 {
     if (!m_iccTransform)
         return;
 
-    cmsDoTransform(m_iccTransform.get(), inputBuffer, outputBuffer, numberOfPixels);
+    cmsDoTransform(m_iccTransform.get(), inputBuffer.data(), outputBuffer.data(), numberOfPixels);
 }
 
 #elif USE(CG)
@@ -482,7 +505,7 @@ RetainPtr<CGColorSpaceRef> JPEGXLImageDecoder::tryDecodeICCColorProfile()
     return adoptCF(CGColorSpaceCreateWithICCData(data.get()));
 }
 
-void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void* inputBuffer, void* outputBuffer, unsigned numberOfPixels)
+void JPEGXLImageDecoder::maybePerformColorSpaceConversion(std::span<uint8_t> inputBuffer, std::span<uint8_t> outputBuffer, unsigned numberOfPixels)
 {
     if (!m_profile)
         return;
@@ -490,7 +513,7 @@ void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void* inputBuffer, voi
     // https://developer.apple.com/documentation/accelerate/1399134-vimageconvert_anytoany?language=objc
     // "The destination buffer may only alias the srcs buffers if vImageConverter_MustOperateOutOfPlace returns 0 and the respective scanlines of the aliasing buffers start at the same address."
     // convertImagePixels() doesn't have any logic for this, so we can just pessimize here and assume aliasing is illegal.
-    std::unique_ptr<uint8_t[]> intermediateBuffer(new uint8_t[4 * numberOfPixels]);
+    auto intermediateBuffer = MallocSpan<uint8_t>::malloc(4 * numberOfPixels);
     auto alphaFormat = m_premultiplyAlpha ? AlphaPremultiplication::Premultiplied : AlphaPremultiplication::Unpremultiplied;
     ConstPixelBufferConversionView source {
         .format = {
@@ -499,7 +522,7 @@ void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void* inputBuffer, voi
             .colorSpace = DestinationColorSpace(m_profile.get()),
         },
         .bytesPerRow = static_cast<unsigned>(4 * size().width()),
-        .rows = static_cast<const uint8_t*>(inputBuffer),
+        .rows = inputBuffer,
     };
     PixelBufferConversionView destination {
         .format = {
@@ -508,15 +531,15 @@ void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void* inputBuffer, voi
             .colorSpace = DestinationColorSpace::SRGB(),
         },
         .bytesPerRow = static_cast<unsigned>(4 * size().width()),
-        .rows = intermediateBuffer.get(),
+        .rows = intermediateBuffer.mutableSpan()
     };
     convertImagePixels(source, destination, { static_cast<int>(numberOfPixels), 1 });
-    memcpy(outputBuffer, intermediateBuffer.get(), numberOfPixels * 4);
+    memcpySpan(outputBuffer, intermediateBuffer.span());
 }
 
 #else
 
-void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void*, void*, unsigned)
+void JPEGXLImageDecoder::maybePerformColorSpaceConversion(std::span<uint8_t>, std::span<uint8_t>, unsigned)
 {
 }
 
@@ -524,3 +547,5 @@ void JPEGXLImageDecoder::maybePerformColorSpaceConversion(void*, void*, unsigned
 
 }
 #endif // USE(JPEGXL)
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

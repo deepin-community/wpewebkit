@@ -58,6 +58,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
 
+        WI.SourceCode.addEventListener(WI.SourceCode.Event.SourceMapAdded, this._handleSourceCodeSourceMapAdded, this);
+
         this._breakpointsEnabledSetting = new WI.Setting("breakpoints-enabled", true);
         this._asyncStackTraceDepthSetting = new WI.Setting("async-stack-trace-depth", 200);
 
@@ -218,6 +220,9 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     initializeTarget(target)
     {
+        if (!target.hasDomain("Debugger"))
+            return;
+
         let targetData = this.dataForTarget(target);
 
         // Initialize global state.
@@ -261,15 +266,17 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
                     target.DebuggerAgent.setShouldBlackboxURL(data.url, shouldBlackbox, data.caseSensitive, isRegex);
                 }
             }
+
+            for (let sourceMap of WI.SourceMap.instances) {
+                if (sourceMap.originalSourceCode.supportsScriptBlackboxing)
+                    this._updateBlackbox([target], sourceMap.originalSourceCode);
+            }
         }
 
         this._setBlackboxBreakpointEvaluations(target);
 
-        if (WI.engineeringSettingsAllowed()) {
-            // COMPATIBILITY (iOS 12): DebuggerAgent.setPauseForInternalScripts did not exist yet.
-            if (target.hasCommand("Debugger.setPauseForInternalScripts"))
-                target.DebuggerAgent.setPauseForInternalScripts(WI.settings.engineeringPauseForInternalScripts.value);
-        }
+        if (WI.engineeringSettingsAllowed())
+            target.DebuggerAgent.setPauseForInternalScripts(WI.settings.engineeringPauseForInternalScripts.value);
 
         if (this.paused)
             targetData.pauseIfNeeded();
@@ -296,7 +303,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     static supportsBlackboxingBreakpointEvaluations()
     {
-        // COMPATIBILITY (macOS 12.3, iOS 15.4): Debugger.setBlackboxBreakpointEvaluations did not exist yet.
+        // COMPATIBILITY (iOS 15.4): Debugger.setBlackboxBreakpointEvaluations did not exist yet.
         return InspectorBackend.hasCommand("Debugger.setBlackboxBreakpointEvaluations");
     }
 
@@ -373,6 +380,11 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     dataForTarget(target)
     {
+        console.assert(target.hasDomain("Debugger"), `Target of type "${target.type}" does not have "Debugger" domain.`);
+
+        if (!target.hasDomain("Debugger"))
+            return this.dataForTarget(WI.assumingMainTarget());
+
         let targetData = this._targetDebuggerDataMap.get(target);
         if (targetData)
             return targetData;
@@ -493,7 +505,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         this._breakpointsEnabledSetting.value = enabled;
 
-        for (let target of WI.targets) {
+        for (let target of this.#allSupportedTargets()) {
             target.DebuggerAgent.setBreakpointsActive(enabled);
             this._setPauseOnExceptions(target);
         }
@@ -508,12 +520,18 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     scriptForIdentifier(id, target)
     {
+        if (target instanceof WI.ImportedTarget)
+            return null;
+
         console.assert(target instanceof WI.Target);
         return this.dataForTarget(target).scriptForIdentifier(id);
     }
 
     scriptsForURL(url, target)
     {
+        if (target instanceof WI.ImportedTarget)
+            return [];
+
         // FIXME: This may not be safe. A Resource's URL may differ from a Script's URL.
         console.assert(target instanceof WI.Target);
         return this.dataForTarget(target).scriptsForURL(url);
@@ -545,6 +563,9 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     blackboxDataForSourceCode(sourceCode)
     {
+        if (sourceCode instanceof WI.SourceMapResource && sourceCode.ignored)
+            return {type: DebuggerManager.BlackboxType.URL};
+
         for (let regex of this._blackboxedPatternDataMap.keys()) {
             if (regex.test(sourceCode.contentIdentifier))
                 return {type: DebuggerManager.BlackboxType.Pattern, regex};
@@ -563,21 +584,19 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     setShouldBlackboxScript(sourceCode, shouldBlackbox)
     {
-        console.assert(DebuggerManager.supportsBlackboxingScripts());
-        console.assert(sourceCode instanceof WI.SourceCode);
-        console.assert(sourceCode.contentIdentifier);
-        console.assert(!isWebKitInjectedScript(sourceCode.contentIdentifier));
-        console.assert(shouldBlackbox !== ((this.blackboxDataForSourceCode(sourceCode) || {}).type === DebuggerManager.BlackboxType.URL));
+        console.assert(sourceCode instanceof WI.SourceCode, sourceCode);
+        console.assert(sourceCode.supportsScriptBlackboxing, sourceCode);
+        console.assert(sourceCode.contentIdentifier, sourceCode);
+        console.assert(!isWebKitInjectedScript(sourceCode.contentIdentifier, sourceCode));
+        console.assert(shouldBlackbox !== (this.blackboxDataForSourceCode(sourceCode)?.type === DebuggerManager.BlackboxType.URL), sourceCode);
 
         this._blackboxedURLsSetting.value.toggleIncludes(sourceCode.contentIdentifier, shouldBlackbox);
         this._blackboxedURLsSetting.save();
 
-        const caseSensitive = true;
-        for (let target of WI.targets) {
-            // COMPATIBILITY (iOS 13): Debugger.setShouldBlackboxURL did not exist yet.
-            if (target.hasCommand("Debugger.setShouldBlackboxURL"))
-                target.DebuggerAgent.setShouldBlackboxURL(sourceCode.contentIdentifier, !!shouldBlackbox, caseSensitive);
-        }
+        if (!shouldBlackbox && sourceCode instanceof WI.SourceMapResource)
+            sourceCode.ignored = false;
+
+        this._updateBlackbox(this.#allSupportedTargets(), sourceCode);
 
         this.dispatchEventToListeners(DebuggerManager.Event.BlackboxChanged);
     }
@@ -604,10 +623,15 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         this._blackboxedPatternsSetting.save();
 
         const isRegex = true;
-        for (let target of WI.targets) {
+        for (let target of this.#allSupportedTargets()) {
             // COMPATIBILITY (iOS 13): Debugger.setShouldBlackboxURL did not exist yet.
             if (target.hasCommand("Debugger.setShouldBlackboxURL"))
                 target.DebuggerAgent.setShouldBlackboxURL(regex.source, !!shouldBlackbox, !regex.ignoreCase, isRegex);
+        }
+
+        for (let sourceMap of WI.SourceMap.instances) {
+            if (sourceMap.originalSourceCode.supportsScriptBlackboxing)
+                this._updateBlackbox(WI.targets, sourceMap.originalSourceCode);
         }
 
         this.dispatchEventToListeners(DebuggerManager.Event.BlackboxChanged);
@@ -644,7 +668,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         this._asyncStackTraceDepthSetting.value = x;
 
-        for (let target of WI.targets)
+        for (let target of this.#allSupportedTargets())
             target.DebuggerAgent.setAsyncStackTraceDepth(this._asyncStackTraceDepthSetting.value);
     }
 
@@ -677,14 +701,18 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             return Promise.resolve();
 
         let promises = [this.awaitEvent(WI.DebuggerManager.Event.Resumed, this)];
-        for (let targetData of this._targetDebuggerDataMap.values())
-            promises.push(targetData.resumeIfNeeded());
+        for (let [target, targetData] of this._targetDebuggerDataMap) {
+            // Only resume targets that are actually paused. Frame targets in separate
+            // processes should not receive spurious resume commands.
+            if (targetData.paused || targetData.pausing)
+                promises.push(targetData.resumeIfNeeded());
+        }
         return Promise.all(promises);
     }
 
     stepNext()
     {
-        if (!this.paused)
+        if (!this.paused || !this._activeCallFrame)
             return Promise.reject(new Error("Cannot step next because debugger is not paused."));
 
         return Promise.all([
@@ -695,7 +723,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     stepOver()
     {
-        if (!this.paused)
+        if (!this.paused || !this._activeCallFrame)
             return Promise.reject(new Error("Cannot step over because debugger is not paused."));
 
         return Promise.all([
@@ -706,7 +734,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     stepInto()
     {
-        if (!this.paused)
+        if (!this.paused || !this._activeCallFrame)
             return Promise.reject(new Error("Cannot step into because debugger is not paused."));
 
         return Promise.all([
@@ -717,7 +745,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     stepOut()
     {
-        if (!this.paused)
+        if (!this.paused || !this._activeCallFrame)
             return Promise.reject(new Error("Cannot step out because debugger is not paused."));
 
         return Promise.all([
@@ -826,7 +854,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         this._symbolicBreakpoints.push(breakpoint);
 
         if (!breakpoint.disabled) {
-            for (let target of WI.targets)
+            for (let target of this.#allSupportedTargets())
                 this._setSymbolicBreakpoint(breakpoint, target);
         }
 
@@ -907,7 +935,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
                 let newProbe = new WI.Probe(probeIdentifier, breakpoint, probeAction.data);
                 this._probesByIdentifier.set(probeIdentifier, newProbe);
                 probeSet.addProbe(newProbe);
-                break;
+                continue;
             }
 
             let probe = this._probesByIdentifier.get(probeIdentifier);
@@ -919,7 +947,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         // Look for missing probes based on what we saw last.
         for (let probeIdentifier of knownProbeIdentifiers) {
             if (seenProbeIdentifiers.has(probeIdentifier))
-                break;
+                continue;
 
             // The probe has gone missing, remove it.
             let probeSet = this._probeSetForBreakpoint(breakpoint);
@@ -953,7 +981,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         if (!breakpoint.sourceCodeLocation.sourceCode)
             breakpoint.sourceCodeLocation.sourceCode = sourceCodeLocation.sourceCode;
 
-        breakpoint.addResolvedLocation(sourceCodeLocation);
+        if (!breakpoint.hasResolvedLocation(sourceCodeLocation))
+            breakpoint.addResolvedLocation(sourceCodeLocation);
     }
 
     globalObjectCleared(target)
@@ -1038,8 +1067,16 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         // Pause other targets because at least one target has paused.
         // FIXME: Should this be done on the backend?
-        for (let [otherTarget, otherTargetData] of this._targetDebuggerDataMap)
-            otherTargetData.pauseIfNeeded();
+        // Don't propagate pause to/from frame targets — they run in separate processes
+        // under site isolation with independent execution. A frame target pausing should
+        // not freeze the page, and the page pausing should not force-pause frame targets.
+        if (!(target instanceof WI.FrameTarget)) {
+            for (let [otherTarget, otherTargetData] of this._targetDebuggerDataMap) {
+                if (otherTarget instanceof WI.FrameTarget)
+                    continue;
+                otherTargetData.pauseIfNeeded();
+            }
+        }
 
         let activeCallFrameDidChange = this._activeCallFrame && this._activeCallFrame.target === target;
         if (activeCallFrameDidChange)
@@ -1244,7 +1281,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             breakpoint.clearResolvedLocations();
 
         if (breakpoint.contentIdentifier) {
-            let targets = specificTarget ? [specificTarget] : WI.targets;
+            let targets = specificTarget ? [specificTarget] : this.#allSupportedTargets();
             for (let target of targets) {
                 target.DebuggerAgent.setBreakpointByUrl.invoke({
                     lineNumber: breakpoint.sourceCodeLocation.lineNumber,
@@ -1288,7 +1325,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         }
 
         if (breakpoint.contentIdentifier) {
-            for (let target of WI.targets)
+            for (let target of this.#allSupportedTargets())
                 target.DebuggerAgent.removeBreakpoint(breakpoint.identifier, didRemoveBreakpoint.bind(this, target));
         } else if (breakpoint.scriptIdentifier) {
             let target = breakpoint.target;
@@ -1367,7 +1404,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         if (!breakpoint.disabled && !this._restoringBreakpoints && !this.breakpointsDisabledTemporarily)
             this.breakpointsEnabled = true;
 
-        let targets = specificTarget ? [specificTarget] : WI.targets;
+        let targets = specificTarget ? [specificTarget] : this.#allSupportedTargets();
 
         let setting = null;
         let command = null;
@@ -1416,9 +1453,34 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         }
     }
 
+    _updateBlackbox(targets, sourceCode)
+    {
+        if (sourceCode instanceof WI.SourceMapResource)
+            sourceCode = sourceCode.sourceMap.originalSourceCode;
+
+        let commandArguments = {
+            url: sourceCode.contentIdentifier,
+            caseSensitive: true,
+        };
+
+        let sourceRanges = sourceCode.sourceMaps.flatMap((sourceMap) => sourceMap.calculateBlackboxSourceRangesForProtocol());
+        console.assert(sourceCode instanceof WI.Script || !sourceRanges.length, sourceCode);
+        if (sourceRanges.length) {
+            commandArguments.shouldBlackbox = true;
+            commandArguments.sourceRanges = sourceRanges;
+        } else
+            commandArguments.shouldBlackbox = !!this.blackboxDataForSourceCode(sourceCode);
+
+        for (let target of targets) {
+            // COMPATIBILITY (iOS 13): Debugger.setShouldBlackboxURL did not exist yet.
+            if (target.hasCommand("Debugger.setShouldBlackboxURL"))
+                target.DebuggerAgent.setShouldBlackboxURL.invoke(commandArguments);
+        }
+    }
+
     _setBlackboxBreakpointEvaluations(target)
     {
-        // COMPATIBILITY (macOS 12.3, iOS 15.4): Debugger.setBlackboxBreakpointEvaluations did not exist yet.
+        // COMPATIBILITY (iOS 15.4): Debugger.setBlackboxBreakpointEvaluations did not exist yet.
         if (target.hasCommand("Debugger.setBlackboxBreakpointEvaluations"))
             target.DebuggerAgent.setBlackboxBreakpointEvaluations(WI.settings.blackboxBreakpointEvaluations.value);
     }
@@ -1431,6 +1493,13 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         let breakpoint = event.target;
         if (!breakpoint.identifier || breakpoint.disabled)
             return;
+
+        if (!this._restoringBreakpoints) {
+            // The stored key is derived from the breakpoint's original location, so first get rid
+            // of that association before saving the new location (which creates a new association).
+            WI.objectStores.breakpoints.deleteObject(breakpoint);
+            WI.objectStores.breakpoints.putObject(breakpoint);
+        }
 
         // Remove the breakpoint with its old id.
         this._removeBreakpoint(breakpoint, (target) => {
@@ -1502,7 +1571,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
     {
         let breakpoint = event.target;
 
-        for (let target of WI.targets) {
+        for (let target of this.#allSupportedTargets()) {
             if (breakpoint.disabled)
                 this._removeSymbolicBreakpoint(breakpoint, target);
             else
@@ -1524,7 +1593,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             return;
 
         this._restoringBreakpoints = true;
-        for (let target of WI.targets) {
+        for (let target of this.#allSupportedTargets()) {
             // Clear the old breakpoint from the backend before setting the new one.
             this._removeSymbolicBreakpoint(breakpoint, target);
             this._setSymbolicBreakpoint(breakpoint, target);
@@ -1574,7 +1643,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     _handleTimelineCapturingStateChanged(event)
     {
-        switch (WI.timelineManager.capturingState) {
+        switch (event.data.capturingState) {
         case WI.TimelineManager.CapturingState.Starting:
             this._startDisablingBreakpointsTemporarily();
             if (this.paused)
@@ -1612,7 +1681,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     _handleBlackboxBreakpointEvaluationsChange(event)
     {
-        for (let target of WI.targets)
+        for (let target of this.#allSupportedTargets())
             this._setBlackboxBreakpointEvaluations(target);
     }
 
@@ -1625,10 +1694,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     _handleEngineeringPauseForInternalScriptsSettingChanged(event)
     {
-        for (let target of WI.targets) {
-            if (target.hasCommand("Debugger.setPauseForInternalScripts"))
-                target.DebuggerAgent.setPauseForInternalScripts(WI.settings.engineeringPauseForInternalScripts.value);
-        }
+        for (let target of this.#allSupportedTargets())
+            target.DebuggerAgent.setPauseForInternalScripts(WI.settings.engineeringPauseForInternalScripts.value);
     }
 
     _mainResourceDidChange(event)
@@ -1637,6 +1704,12 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             return;
 
         this._didResumeInternal(WI.mainTarget);
+    }
+
+    _handleSourceCodeSourceMapAdded(event)
+    {
+        if (event.target.supportsScriptBlackboxing)
+            this._updateBlackbox(this.#allSupportedTargets(), event.target);
     }
 
     _didResumeInternal(target)
@@ -1687,6 +1760,13 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             this.dispatchEventToListeners(WI.DebuggerManager.Event.ProbeSetAdded, {probeSet});
         }
         return probeSet;
+    }
+
+    *#allSupportedTargets() {
+        for (let target of WI.targets) {
+            if (target.hasDomain("Debugger"))
+                yield target;
+        }
     }
 };
 

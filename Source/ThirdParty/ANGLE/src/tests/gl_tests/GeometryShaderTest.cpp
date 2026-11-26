@@ -6,6 +6,7 @@
 
 // GeometryShaderTest.cpp : Tests of the implementation of geometry shader
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -108,7 +109,11 @@ class GeometryShaderTestES32 : public GeometryShaderTest
 // ES 3.1 is required.
 TEST_P(GeometryShaderTestES3, CreateGeometryShaderInES3)
 {
-    EXPECT_TRUE(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+    // Only run the test against OpenGL ES 3.0.
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() == 3 && getClientMinorVersion() > 0);
+    // GL_EXT_geometry_shader requires OpenGL ES 3.1.
+    ASSERT_FALSE(IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
     GLuint geometryShader = glCreateShader(GL_GEOMETRY_SHADER_EXT);
     EXPECT_EQ(0u, geometryShader);
     EXPECT_GL_ERROR(GL_INVALID_ENUM);
@@ -195,6 +200,294 @@ TEST_P(GeometryShaderTest, CreateAndAttachGeometryShaderOES)
 TEST_P(GeometryShaderTestES32, CreateAndAttachGeometryShader)
 {
     testCreateAndAttachGeometryShader(APIExtensionVersion::Core);
+}
+
+// Basic functionality test.
+TEST_P(GeometryShaderTest, Basic)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+precision highp float;
+layout(location = 0) in highp vec4 position;
+void main()
+{
+    gl_Position = position;
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+uniform vec4 u_color;
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+out vec4 gs_out;
+void main()
+{
+    gl_Position = gl_in[0].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[1].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[2].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+in vec4 gs_out;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+    oColor = gs_out;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    glUniform4f(glGetUniformLocation(program, "u_color"), 0, 1, 0, 1);
+    drawQuad(program, "position", 0.0f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that redeclaring gl_in works.
+TEST_P(GeometryShaderTest, RedeclareGlIn)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+layout(location = 0) in highp vec4 position;
+out gl_PerVertex
+{
+    highp vec4 gl_Position;
+};
+void main()
+{
+    gl_Position = position;
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+uniform vec4 u_color;
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+in gl_PerVertex
+{
+    highp vec4 gl_Position;
+} gl_in[];
+out vec4 gs_out;
+void main()
+{
+    gl_Position = gl_in[0].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[1].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[2].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+in vec4 gs_out;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+    oColor = gs_out;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    glUniform4f(glGetUniformLocation(program, "u_color"), 0, 1, 0, 1);
+    drawQuad(program, "position", 0.0f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that redeclaring gl_PerVertex for output works.
+TEST_P(GeometryShaderTest, RedeclareGlOut)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+precision highp float;
+layout(location = 0) in highp vec4 position;
+void main()
+{
+    gl_Position = position;
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+uniform vec4 u_color;
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+out gl_PerVertex
+{
+    highp vec4 gl_Position;
+};
+out vec4 gs_out;
+void main()
+{
+    gl_Position = gl_in[0].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[1].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[2].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+in vec4 gs_out;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+    oColor = gs_out;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    glUniform4f(glGetUniformLocation(program, "u_color"), 0, 1, 0, 1);
+    drawQuad(program, "position", 0.0f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that redeclaring gl_in works when geometry shader array input size
+// is set after shader input variables.
+TEST_P(GeometryShaderTest, RedeclareGlInBeforeInputSize)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+layout(location = 0) in highp vec4 position;
+out gl_PerVertex
+{
+    highp vec4 gl_Position;
+};
+void main()
+{
+    gl_Position = position;
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+uniform vec4 u_color;
+in gl_PerVertex
+{
+    highp vec4 gl_Position;
+} gl_in[];
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+out vec4 gs_out;
+void main()
+{
+    gl_Position = gl_in[0].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[1].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = gl_in[2].gl_Position;
+    gs_out = u_color;
+    EmitVertex();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+in vec4 gs_out;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+    oColor = gs_out;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    glUniform4f(glGetUniformLocation(program, "u_color"), 0, 1, 0, 1);
+    drawQuad(program, "position", 0.0f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that redeclaring gl_in works when geometry shader array input size
+// is set after shader input variables, but gl_in itself is not used.
+TEST_P(GeometryShaderTest, RedeclareGlInBeforeInputSizeButUnused)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+layout(location = 0) in highp vec4 position;
+out gl_PerVertex
+{
+    highp vec4 gl_Position;
+};
+void main()
+{
+    gl_Position = vec4(0, 0, 0, position.w);
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+uniform vec4 u_color;
+in gl_PerVertex
+{
+    highp vec4 gl_Position;
+} gl_in[];
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+out vec4 gs_out;
+void main()
+{
+    gl_Position = vec4(-1, -1, 0, 1);
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = vec4(3, -1, 0, 1);
+    gs_out = u_color;
+    EmitVertex();
+    gl_Position = vec4(-1, 3, 0, 1);
+    gs_out = u_color;
+    EmitVertex();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+in vec4 gs_out;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+    oColor = gs_out;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    glUniform4f(glGetUniformLocation(program, "u_color"), 0, 1, 0, 1);
+    drawQuad(program, "position", 0.0f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
 }
 
 // Verify that Geometry Shader can be compiled when geometry shader array input size
@@ -639,6 +932,8 @@ void main()
 // EXT_geometry_shader, or we will get an INVALID_ENUM error.
 TEST_P(GeometryShaderTest, ReferencedByGeometryShaderWithoutExtensionEnabled)
 {
+    // ES 3.2 supports geometry shaders.
+    ANGLE_SKIP_TEST_IF(isAtLeastClientVersion(3, 2));
     ANGLE_SKIP_TEST_IF(IsGLExtensionEnabled("GL_EXT_geometry_shader"));
 
     constexpr char kFS[] = R"(#version 310 es
@@ -1179,10 +1474,10 @@ void GeometryShaderTest::verifyLayeredFramebufferColor(GLuint colorTexture,
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, colorTexture, 0, layer);
         EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
-        EXPECT_PIXEL_COLOR_NEAR(0, 0, expected[layer], 1);
-        EXPECT_PIXEL_COLOR_NEAR(kWidth - 1, 0, expected[layer], 1);
-        EXPECT_PIXEL_COLOR_NEAR(0, kHeight - 1, expected[layer], 1);
-        EXPECT_PIXEL_COLOR_NEAR(kWidth - 1, kHeight - 1, expected[layer], 1);
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_COLOR_NEAR(0, 0, expected[layer], 1));
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_COLOR_NEAR(kWidth - 1, 0, expected[layer], 1));
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_COLOR_NEAR(0, kHeight - 1, expected[layer], 1));
+        ANGLE_UNSAFE_TODO(EXPECT_PIXEL_COLOR_NEAR(kWidth - 1, kHeight - 1, expected[layer], 1));
     }
 }
 
@@ -1228,16 +1523,18 @@ void GeometryShaderTest::verifyLayeredFramebufferDepthStencil(GLuint depthStenci
 
         glClear(GL_COLOR_BUFFER_BIT);
 
-        glStencilFunc(GL_EQUAL, expectedStencil[layer], 0xFF);
+        glStencilFunc(GL_EQUAL, ANGLE_UNSAFE_TODO(expectedStencil[layer]), 0xFF);
 
         // Pass depth slightly less than expected
         glDepthFunc(GL_LESS);
         glUniform4f(colorUniformLocation, 0.1f, 0.2f, 0.3f, 0.4f);
-        drawQuad(drawColor, essl1_shaders::PositionAttrib(), expectedDepth[layer] * 2 - 1 - 0.01f);
+        drawQuad(drawColor, essl1_shaders::PositionAttrib(),
+                 ANGLE_UNSAFE_TODO(expectedDepth[layer]) * 2 - 1 - 0.01f);
 
         // Fail depth slightly greater than expected
         glUniform4f(colorUniformLocation, 0.5f, 0.6f, 0.7f, 0.8f);
-        drawQuad(drawColor, essl1_shaders::PositionAttrib(), expectedDepth[layer] * 2 - 1 + 0.01f);
+        drawQuad(drawColor, essl1_shaders::PositionAttrib(),
+                 ANGLE_UNSAFE_TODO(expectedDepth[layer]) * 2 - 1 + 0.01f);
 
         ASSERT_GL_NO_ERROR();
 
@@ -1479,6 +1776,189 @@ void GeometryShaderTest::layeredFramebufferMidRenderClearTest(GLenum colorTarget
     verifyLayeredFramebufferColor(color1, colorTarget, kExpectedColor1, kColor1Layers);
     verifyLayeredFramebufferDepthStencil(depthStencil, kExpectedDepth, kExpectedStencil,
                                          kDepthStencilLayers);
+}
+
+// Verify that Geometry Shader's gl_Layer is ineffective when the framebuffer is not layered.
+TEST_P(GeometryShaderTest, GLLayerIneffectiveWithoutLayeredFramebuffer)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    constexpr char kVS[] = R"(#version 310 es
+in highp vec4 position;
+void main()
+{
+    gl_Position = position;
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+layout (invocations = 3, triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+
+void main()
+{
+    for (int n = 0; n < gl_in.length(); n++)
+    {
+        gl_Position = gl_in[n].gl_Position;
+        gl_Layer = gl_InvocationID;
+        EmitVertex();
+    }
+    EndPrimitive();
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision mediump float;
+
+layout(location = 0) out mediump vec4 color;
+
+void main()
+{
+    if (gl_Layer == 0)
+        color = vec4(0, 1, 0, 1);
+    else
+        color = vec4(1, 0, 0, 1);
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    EXPECT_GL_NO_ERROR();
+
+    GLFramebuffer fbo;
+    GLTexture color;
+
+    glBindTexture(GL_TEXTURE_2D_ARRAY, color);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, kWidth, kHeight, 4);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, color, 0, 1);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    drawQuad(program, "position", 0.3f);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test FBO without attachment and change the framebuffer layer.
+TEST_P(GeometryShaderTest, LayeredRenderingFBONoAttachment)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    std::vector<GLColor> initialData(kColor0Layers * kWidth * kHeight, GLColor::red);
+
+    GLVertexArray vao;
+    glBindVertexArray(vao);
+
+    // Configure program object to be used for functional part of the test
+    constexpr char kVS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+void main()
+{
+})";
+
+    constexpr char kGS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+layout(points)                          in;
+layout(triangle_strip, max_vertices=16) out;
+out vec2 uv;
+flat out int  layer_id;
+void main()
+{
+     for (int n = 0; n < 4; ++n)
+     {
+         gl_Position = vec4(1, -1, 0, 1);
+         gl_Layer    = n;
+         layer_id    = n;
+         uv          = vec2(1, 0);
+         EmitVertex();
+
+         gl_Position = vec4(1,  1, 0, 1);
+         gl_Layer    = n;
+         layer_id    = n;
+         uv          = vec2(1, 1);
+         EmitVertex();
+
+         gl_Position = vec4(-1, -1, 0, 1);
+         gl_Layer    = n;
+         layer_id    = n;
+         uv          = vec2(0, 0);
+         EmitVertex();
+
+         gl_Position = vec4(-1,  1, 0, 1);
+         gl_Layer    = n;
+         layer_id    = n;
+         uv          = vec2(0, 1);
+         EmitVertex();
+
+         EndPrimitive();
+     }
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+precision highp float;
+layout(rgba8, binding = 0) writeonly uniform highp image2DArray array_image;
+in  vec2 uv;
+flat in  int  layer_id;
+out vec4 color;
+void main()
+{
+ imageStore(array_image, ivec3( int(16.0 * uv.x), int(16.0 * uv.y), layer_id ), vec4(0, 1, 0, 1) );
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    // Generate and bind a framebuffer object
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, kWidth);
+    glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, kHeight);
+    glViewport(0, 0, kWidth, kHeight);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, kWidth, kHeight, kColor0Layers);
+    glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, kWidth, kHeight, kColor0Layers, GL_RGBA,
+                    GL_UNSIGNED_BYTE, initialData.data());
+    glBindImageTexture(0, texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+    // Set the default number of layers to kColor0Layers
+    glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_LAYERS, kColor0Layers);
+    glDrawArrays(GL_POINTS, 0, 1);
+    // Verify result texture data
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    for (int layer = 0; layer < kColor0Layers; ++layer)
+    {
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, layer);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    }
+
+    // Reset data
+    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, kWidth, kHeight, kColor0Layers, GL_RGBA,
+                    GL_UNSIGNED_BYTE, initialData.data());
+
+    // Set the default number of layers to 0
+    glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_LAYERS, 0);
+    glDrawArrays(GL_POINTS, 0, 1);
+    // Verify result texture data
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    for (int layer = 0; layer < kColor0Layers; ++layer)
+    {
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, layer);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
+
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+    }
+    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
 }
 
 // Verify mid-render clear of layered attachments.  Uses 3D color textures.
@@ -1727,6 +2207,147 @@ void main()
     drawQuad(drawRed, essl1_shaders::PositionAttrib(), -0.5f + 0.01f);
 
     EXPECT_PIXEL_RECT_EQ(0, 0, w, h, GLColor::blue);
+}
+
+// Test that implicitly sized geometry shader input and an explicitly sized array are compatible.
+// The explicitly sized array is declared after the implicitly sized one.
+TEST_P(GeometryShaderTest, ImplicitSizedArrayMatchesExplicitSizedArray)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    const char *kVS = R"(#version 310 es
+precision mediump float;
+in vec4 position;
+out vec4 vgVarying;
+uniform vec4 uniVec;
+void main()
+{
+   vgVarying = uniVec;
+   gl_Position = position;
+})";
+
+    const char *kGS = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+
+precision mediump float;
+
+in vec4 vgVarying[];
+layout(location = 5) out vec4 gfVarying;
+
+// The layout is intentionally provided after the input varying is specified, such that its size
+// cannot be determined at declaration time.
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 4) out;
+
+void main()
+{
+    // Use an explicit array type that matches the implicitly typed one.
+    vec4 varyingCopy[3];
+    // Make sure the types are compatible
+    varyingCopy = vgVarying;
+
+    for (int n = 0; n < gl_in.length(); n++)
+    {
+        gl_Position = gl_in[n].gl_Position;
+        gfVarying = varyingCopy[n];
+        EmitVertex();
+    }
+    EndPrimitive();
+})";
+
+    const char *kFS = R"(#version 310 es
+precision mediump float;
+
+layout(location = 5) in vec4 gfVarying;
+out vec4 fOut;
+
+void main()
+{
+    fOut = gfVarying;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    GLint uniLoc = glGetUniformLocation(program, "uniVec");
+    ASSERT_NE(-1, uniLoc);
+    glUniform4f(uniLoc, 0, 1, 0, 1);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(program, "position", 0.5f, 1.0f);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Test that implicitly sized geometry shader input and an explicitly sized array are compatible.
+// The explicitly sized array is declared before the implicitly sized one.
+TEST_P(GeometryShaderTest, ImplicitSizedArrayMatchesExplicitSizedArray2)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_geometry_shader"));
+
+    const char *kVS = R"(#version 310 es
+precision mediump float;
+in vec4 position;
+out vec4 vgVarying;
+uniform vec4 uniVec;
+void main()
+{
+   vgVarying = uniVec;
+   gl_Position = position;
+})";
+
+    const char *kGS = R"(#version 310 es
+#extension GL_EXT_geometry_shader : require
+
+precision mediump float;
+
+// Use an explicit array type that will match the implicitly typed one.
+vec4 varyingCopy[3];
+
+in vec4 vgVarying[];
+layout(location = 5) out vec4 gfVarying;
+
+// The layout is intentionally provided after the input varying is specified, such that its size
+// cannot be determined at declaration time.
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 4) out;
+
+void main()
+{
+    // Make sure the types are compatible
+    varyingCopy = vgVarying;
+
+    for (int n = 0; n < gl_in.length(); n++)
+    {
+        gl_Position = gl_in[n].gl_Position;
+        gfVarying = varyingCopy[n];
+        EmitVertex();
+    }
+    EndPrimitive();
+})";
+
+    const char *kFS = R"(#version 310 es
+precision mediump float;
+
+layout(location = 5) in vec4 gfVarying;
+out vec4 fOut;
+
+void main()
+{
+    fOut = gfVarying;
+})";
+
+    ANGLE_GL_PROGRAM_WITH_GS(program, kVS, kGS, kFS);
+    glUseProgram(program);
+
+    GLint uniLoc = glGetUniformLocation(program, "uniVec");
+    ASSERT_NE(-1, uniLoc);
+    glUniform4f(uniLoc, 0, 1, 0, 1);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(program, "position", 0.5f, 1.0f);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
 // Tests separating the VS from the GS/FS and then modifying the shader.
@@ -2005,7 +2626,7 @@ void main()
 }
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GeometryShaderTestES3);
-ANGLE_INSTANTIATE_TEST_ES3(GeometryShaderTestES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND_ES31_AND_ES32(GeometryShaderTestES3);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GeometryShaderTest);
 ANGLE_INSTANTIATE_TEST_ES31_AND(GeometryShaderTest,

@@ -27,65 +27,57 @@
 #include "CSSSelectorParserContext.h"
 
 #include "CSSParserContext.h"
-#include "Document.h"
+#include "DocumentQuirks.h"
+#include "Settings.h"
 #include <wtf/Hasher.h>
 
 namespace WebCore {
 
 CSSSelectorParserContext::CSSSelectorParserContext(const CSSParserContext& context)
     : mode(context.mode)
-    , cssNestingEnabled(context.cssNestingEnabled)
-    , customStateSetEnabled(context.customStateSetEnabled)
-    , grammarAndSpellingPseudoElementsEnabled(context.grammarAndSpellingPseudoElementsEnabled)
-    , highlightAPIEnabled(context.highlightAPIEnabled)
 #if ENABLE(SERVICE_CONTROLS)
     , imageControlsEnabled(context.imageControlsEnabled)
 #endif
     , popoverAttributeEnabled(context.popoverAttributeEnabled)
+    , cssPickerPseudoElementEnabled(context.cssPickerPseudoElementEnabled)
+    , htmlEnhancedSelectEnabled(context.htmlEnhancedSelectEnabled)
     , targetTextPseudoElementEnabled(context.targetTextPseudoElementEnabled)
-    , thumbAndTrackPseudoElementsEnabled(context.thumbAndTrackPseudoElementsEnabled)
-    , viewTransitionsEnabled(context.propertySettings.viewTransitionsEnabled)
-    , viewTransitionClassesEnabled(viewTransitionsEnabled && context.propertySettings.viewTransitionClassesEnabled)
-    , viewTransitionTypesEnabled(viewTransitionsEnabled && context.viewTransitionTypesEnabled)
+    , cssAppearanceBaseEnabled(context.cssAppearanceBaseEnabled)
+    , webkitMediaTextTrackDisplayQuirkEnabled(context.webkitMediaTextTrackDisplayQuirkEnabled)
+    , openPseudoClassEnabled(context.openPseudoClassEnabled)
 {
 }
 
 CSSSelectorParserContext::CSSSelectorParserContext(const Document& document)
     : mode(document.inQuirksMode() ? HTMLQuirksMode : HTMLStandardMode)
-    , cssNestingEnabled(document.settings().cssNestingEnabled())
-    , customStateSetEnabled(document.settings().customStateSetEnabled())
-    , grammarAndSpellingPseudoElementsEnabled(document.settings().grammarAndSpellingPseudoElementsEnabled())
-    , highlightAPIEnabled(document.settings().highlightAPIEnabled())
 #if ENABLE(SERVICE_CONTROLS)
     , imageControlsEnabled(document.settings().imageControlsEnabled())
 #endif
     , popoverAttributeEnabled(document.settings().popoverAttributeEnabled())
+    , cssPickerPseudoElementEnabled(document.settings().cssPickerPseudoElementEnabled())
+    , htmlEnhancedSelectEnabled(document.settings().htmlEnhancedSelectEnabled())
     , targetTextPseudoElementEnabled(document.settings().targetTextPseudoElementEnabled())
-    , thumbAndTrackPseudoElementsEnabled(document.settings().thumbAndTrackPseudoElementsEnabled())
-    , viewTransitionsEnabled(document.settings().viewTransitionsEnabled())
-    , viewTransitionClassesEnabled(viewTransitionsEnabled && document.settings().viewTransitionClassesEnabled())
-    , viewTransitionTypesEnabled(viewTransitionsEnabled && document.settings().viewTransitionTypesEnabled())
+    , cssAppearanceBaseEnabled(document.settings().cssAppearanceBaseEnabled())
+    , webkitMediaTextTrackDisplayQuirkEnabled(document.quirks().needsWebKitMediaTextTrackDisplayQuirk())
+    , openPseudoClassEnabled(document.settings().openPseudoClassEnabled())
 {
 }
 
 void add(Hasher& hasher, const CSSSelectorParserContext& context)
 {
-    add(hasher,
-        context.mode,
-        context.cssNestingEnabled,
-        context.customStateSetEnabled,
-        context.grammarAndSpellingPseudoElementsEnabled,
-        context.highlightAPIEnabled,
+    auto bits = WTF::packBools(
 #if ENABLE(SERVICE_CONTROLS)
         context.imageControlsEnabled,
 #endif
         context.popoverAttributeEnabled,
+        context.cssPickerPseudoElementEnabled,
+        context.htmlEnhancedSelectEnabled,
         context.targetTextPseudoElementEnabled,
-        context.thumbAndTrackPseudoElementsEnabled,
-        context.viewTransitionsEnabled,
-        context.viewTransitionClassesEnabled,
-        context.viewTransitionTypesEnabled
+        context.cssAppearanceBaseEnabled,
+        context.webkitMediaTextTrackDisplayQuirkEnabled,
+        context.openPseudoClassEnabled
     );
+    add(hasher, context.mode, bits);
 }
 
 } // namespace WebCore

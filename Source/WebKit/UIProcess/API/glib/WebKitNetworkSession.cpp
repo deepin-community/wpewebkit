@@ -17,13 +17,14 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#if ENABLE(2022_GLIB_API)
-
 #include "config.h"
+
+#if ENABLE(2022_GLIB_API)
 #include "WebKitNetworkSession.h"
 
 #include "APIDownloadClient.h"
 #include "FrameInfoData.h"
+#include "ITPThirdPartyData.h"
 #include "NetworkProcessMessages.h"
 #include "WebKitCookieManagerPrivate.h"
 #include "WebKitDownloadPrivate.h"
@@ -65,7 +66,7 @@ enum {
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 enum {
     DOWNLOAD_STARTED,
@@ -73,7 +74,7 @@ enum {
     LAST_SIGNAL
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 struct _WebKitNetworkSessionPrivate {
     _WebKitNetworkSessionPrivate()
@@ -137,8 +138,8 @@ static void webkitNetworkSessionConstructed(GObject* object)
     WebKitNetworkSessionPrivate* priv = WEBKIT_NETWORK_SESSION(object)->priv;
     if (!priv->websiteDataManager) {
         priv->websiteDataManager = adoptGRef(webkitWebsiteDataManagerCreate(
-            !priv->dataDirectory.isNull() ? WTFMove(priv->dataDirectory) : WebsiteDataStore::defaultBaseDataDirectory().utf8(),
-            !priv->cacheDirectory.isNull() ? WTFMove(priv->cacheDirectory) : WebsiteDataStore::defaultBaseCacheDirectory().utf8())
+            !priv->dataDirectory.isNull() ? WTF::move(priv->dataDirectory) : WebsiteDataStore::defaultBaseDataDirectory().utf8(),
+            !priv->cacheDirectory.isNull() ? WTF::move(priv->cacheDirectory) : WebsiteDataStore::defaultBaseCacheDirectory().utf8())
         );
     }
 
@@ -186,7 +187,7 @@ static void webkit_network_session_class_init(WebKitNetworkSessionClass* session
     /**
      * WebKitNetworkSession:is-ephemeral:
      *
-     * Whether to create an ephermeral #WebKitWebsiteDataManager for the session.
+     * Whether to create an ephemeral #WebKitWebsiteDataManager for the session.
      *
      * Since: 2.40
      */
@@ -197,7 +198,7 @@ static void webkit_network_session_class_init(WebKitNetworkSessionClass* session
             FALSE,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WebKitNetworkSession::download-started:
@@ -257,9 +258,12 @@ WebKitNetworkSession* webkit_network_session_get_default()
  * %NULL is passed, the default directory will be passed to #WebKitWebsiteDataManager
  * so that webkit_website_data_manager_get_base_data_directory() and
  * webkit_website_data_manager_get_base_cache_directory() always return a value for
- * non ephemeral sessions.
+ * non-ephemeral sessions.
  *
- * It must be passed as construct parameter of a #WebKitWebView.
+ * It can be passed as the #WebKitWebView:network-session construct parameter
+ * of a #WebKitWebView. A web view created without a network session uses the
+ * one of its related view, if any, or the default one returned by
+ * webkit_network_session_get_default().
  *
  * Returns: (transfer full): the newly created #WebKitNetworkSession
  *
@@ -293,7 +297,7 @@ WebKitNetworkSession* webkit_network_session_new_ephemeral()
  * A #WebKitNetworkSession is ephemeral when its #WebKitWebsiteDataManager is ephemeral.
  * See #WebKitWebsiteDataManager:is-ephemeral for more details.
  *
- * Returns: %TRUE if @session is pehmeral, or %FALSE otherwise
+ * Returns: %TRUE if @session is ephemeral, or %FALSE otherwise
  *
  * Since: 2.40
  */
@@ -351,7 +355,7 @@ WebKitCookieManager* webkit_network_session_get_cookie_manager(WebKitNetworkSess
  * When ITP is enabled resource load statistics
  * are collected and used to decide whether to allow or block third-party cookies and prevent user tracking.
  * Note that while ITP is enabled the accept policy %WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY is ignored and
- * %WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS is used instead. See also webkit_cookie_session_set_accept_policy().
+ * %WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS is used instead. See also webkit_cookie_manager_set_accept_policy().
  *
  * Since: 2.40
  */
@@ -389,7 +393,7 @@ gboolean webkit_network_session_get_itp_enabled(WebKitNetworkSession* session)
  * Enable or disable persistent credential storage.
  *
  * When enabled, which is the default for
- * non-ephemeral sessions, the network process will try to read and write HTTP authentiacation
+ * non-ephemeral sessions, the network process will try to read and write HTTP authentication
  * credentials from persistent storage.
  *
  * Since: 2.40
@@ -466,7 +470,7 @@ WebKitTLSErrorsPolicy webkit_network_session_get_tls_errors_policy(WebKitNetwork
  * @certificate: a #GTlsCertificate
  * @host: the host for which a certificate is to be allowed
  *
- * Ignore further TLS errors on the @host for the certificate present in @info.
+ * Ignore further TLS errors on the @host for @certificate.
  *
  * If @host is an IPv6 address, it should not be surrounded by brackets. This
  * expectation matches g_uri_get_host().
@@ -490,7 +494,7 @@ void webkit_network_session_allow_tls_certificate_for_host(WebKitNetworkSession*
  * @proxy_mode: a #WebKitNetworkProxyMode
  * @proxy_settings: (allow-none): a #WebKitNetworkProxySettings, or %NULL
  *
- * Set the network proxy settings to be used by connections started in @session session.
+ * Set the network proxy settings to be used by connections started in @session.
  *
  * By default %WEBKIT_NETWORK_PROXY_MODE_DEFAULT is used, which means that the
  * system settings will be used (g_proxy_resolver_get_default()).
@@ -521,7 +525,7 @@ void webkit_network_session_set_proxy_settings(WebKitNetworkSession* session, We
             g_warning("Invalid attempt to set custom network proxy settings with an empty WebKitNetworkProxySettings. Use "
                 "WEBKIT_NETWORK_PROXY_MODE_NO_PROXY to not use any proxy or WEBKIT_NETWORK_PROXY_MODE_DEFAULT to use the default system settings");
         } else
-            websiteDataStore->setNetworkProxySettings(WTFMove(settings));
+            websiteDataStore->setNetworkProxySettings(WTF::move(settings));
         break;
     }
 }
@@ -574,7 +578,7 @@ void webkit_network_session_get_itp_summary(WebKitNetworkSession* session, GCanc
 
     Ref websiteDataStore = webkitWebsiteDataManagerGetDataStore(session->priv->websiteDataManager.get());
     GRefPtr<GTask> task = adoptGRef(g_task_new(session, cancellable, callback, userData));
-    websiteDataStore->getResourceLoadStatisticsDataSummary([task = WTFMove(task)](Vector<ITPThirdPartyData>&& thirdPartyList) {
+    websiteDataStore->getResourceLoadStatisticsDataSummary([task = WTF::move(task)](Vector<ITPThirdPartyData>&& thirdPartyList) {
         GList* result = nullptr;
         while (!thirdPartyList.isEmpty())
             result = g_list_prepend(result, webkitITPThirdPartyCreate(thirdPartyList.takeLast()));
@@ -593,7 +597,7 @@ void webkit_network_session_get_itp_summary(WebKitNetworkSession* session, GCanc
  * Finish an asynchronous operation started with webkit_network_session_get_itp_summary().
  *
  * Returns: (transfer full) (element-type WebKitITPThirdParty): a #GList of #WebKitITPThirdParty.
- *    You must free the #GList with g_list_free() and unref the #WebKitITPThirdParty<!-- -->s with
+ *    You must free the #GList with g_list_free() and unref the #WebKitITPThirdParty objects with
  *    webkit_itp_third_party_unref() when you're done with them.
  *
  * Since: 2.40
@@ -635,7 +639,7 @@ void webkit_network_session_prefetch_dns(WebKitNetworkSession* session, const ch
  *
  * Requests downloading of the specified URI string.
  *
- * The download operation will not be associated to any #WebKitWebView,
+ * The download operation will not be associated with any #WebKitWebView,
  * if you are interested in starting a download from a particular #WebKitWebView use
  * webkit_web_view_download_uri() instead.
  *

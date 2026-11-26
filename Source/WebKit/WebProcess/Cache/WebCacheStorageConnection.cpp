@@ -31,20 +31,15 @@
 #include "NetworkProcessMessages.h"
 #include "NetworkStorageManagerMessages.h"
 #include "WebCacheStorageProvider.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <wtf/MainThread.h>
 #include <wtf/NativePromise.h>
 
 namespace WebKit {
 
-WebCacheStorageConnection::WebCacheStorageConnection()
-{
-}
+WebCacheStorageConnection::WebCacheStorageConnection() = default;
 
-WebCacheStorageConnection::~WebCacheStorageConnection()
-{
-}
+WebCacheStorageConnection::~WebCacheStorageConnection() = default;
 
 Ref<IPC::Connection> WebCacheStorageConnection::connection()
 {
@@ -56,7 +51,7 @@ Ref<IPC::Connection> WebCacheStorageConnection::connection()
 
     RefPtr<IPC::Connection> connection;
     callOnMainRunLoopAndWait([this, &connection]() mutable {
-        connection = &WebProcess::singleton().ensureNetworkProcessConnection().connection();
+        connection = WebProcess::singleton().ensureNetworkProcessConnection().connection();
         {
             Locker lock(m_connectionLock);
             m_connection = connection;
@@ -67,7 +62,7 @@ Ref<IPC::Connection> WebCacheStorageConnection::connection()
 }
 
 struct WebCacheStorageConnection::PromiseConverter {
-    static auto convertError(IPC::Error)
+    static auto NODELETE convertError(IPC::Error)
     {
         return makeUnexpected(WebCore::DOMCacheEngine::Error::Internal);
     }
@@ -100,35 +95,35 @@ auto WebCacheStorageConnection::batchDeleteOperation(WebCore::DOMCacheIdentifier
 
 auto WebCacheStorageConnection::batchPutOperation(WebCore::DOMCacheIdentifier cacheIdentifier, Vector<WebCore::DOMCacheEngine::CrossThreadRecord>&& records) -> Ref<BatchPromise>
 {
-    return connection()->sendWithPromisedReply<PromiseConverter>(Messages::NetworkStorageManager::CacheStoragePutRecords { cacheIdentifier, WTFMove(records) });
+    return connection()->sendWithPromisedReply<PromiseConverter>(Messages::NetworkStorageManager::CacheStoragePutRecords { cacheIdentifier, WTF::move(records) });
 }
 
 void WebCacheStorageConnection::reference(WebCore::DOMCacheIdentifier cacheIdentifier)
 {
     Locker connectionLocker { m_connectionLock };
     if (m_connectedIdentifierCounters.add(cacheIdentifier).isNewEntry && m_connection)
-        m_connection->send(Messages::NetworkStorageManager::CacheStorageReference(cacheIdentifier), 0);
+        RefPtr { m_connection }->send(Messages::NetworkStorageManager::CacheStorageReference(cacheIdentifier), 0);
 }
 
 void WebCacheStorageConnection::dereference(WebCore::DOMCacheIdentifier cacheIdentifier)
 {
     Locker connectionLocker { m_connectionLock };
     if (m_connectedIdentifierCounters.remove(cacheIdentifier) && m_connection)
-        m_connection->send(Messages::NetworkStorageManager::CacheStorageDereference(cacheIdentifier), 0);
+        RefPtr { m_connection }->send(Messages::NetworkStorageManager::CacheStorageDereference(cacheIdentifier), 0);
 }
 
 void WebCacheStorageConnection::lockStorage(const WebCore::ClientOrigin& origin)
 {
     Locker connectionLocker { m_connectionLock };
     if (m_clientOriginLockRequestCounters.add(origin).isNewEntry && m_connection)
-        m_connection->send(Messages::NetworkStorageManager::LockCacheStorage { origin }, 0);
+        RefPtr { m_connection }->send(Messages::NetworkStorageManager::LockCacheStorage { origin }, 0);
 }
 
 void WebCacheStorageConnection::unlockStorage(const WebCore::ClientOrigin& origin)
 {
     Locker connectionLocker { m_connectionLock };
     if (m_clientOriginLockRequestCounters.remove(origin) && m_connection)
-        m_connection->send(Messages::NetworkStorageManager::UnlockCacheStorage { origin }, 0);
+        RefPtr { m_connection }->send(Messages::NetworkStorageManager::UnlockCacheStorage { origin }, 0);
 }
 
 auto WebCacheStorageConnection::clearMemoryRepresentation(const WebCore::ClientOrigin& origin) -> Ref<CompletionPromise>

@@ -27,7 +27,6 @@
 
 #include "IDBCursor.h"
 #include "IDBIndexInfo.h"
-#include "IDBRequest.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 
@@ -38,23 +37,26 @@ class CallFrame;
 namespace WebCore {
 
 class IDBKeyRange;
+class IDBRequest;
 class WebCoreOpaqueRoot;
 
+struct IDBGetAllOptions;
 struct IDBKeyRangeData;
+struct ParsedGetAllQueryOrOptions;
 
 class IDBIndex final : public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(IDBIndex);
+    WTF_MAKE_TZONE_ALLOCATED(IDBIndex);
 public:
     static UniqueRef<IDBIndex> create(ScriptExecutionContext&, const IDBIndexInfo&, IDBObjectStore&);
 
     virtual ~IDBIndex();
 
-    const String& name() const;
+    const String& NODELETE name() const;
     ExceptionOr<void> setName(const String&);
-    IDBObjectStore& objectStore();
-    const IDBKeyPath& keyPath() const;
-    bool unique() const;
-    bool multiEntry() const;
+    IDBObjectStore& NODELETE objectStore();
+    const IDBKeyPath& NODELETE keyPath() const;
+    bool NODELETE unique() const;
+    bool NODELETE multiEntry() const;
 
     void rollbackInfoForVersionChangeAbort();
 
@@ -71,21 +73,20 @@ public:
     ExceptionOr<Ref<IDBRequest>> getKey(IDBKeyRange*);
     ExceptionOr<Ref<IDBRequest>> getKey(JSC::JSGlobalObject&, JSC::JSValue key);
 
-    ExceptionOr<Ref<IDBRequest>> getAll(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllRecords(JSC::JSGlobalObject&, IDBGetAllOptions&&);
 
-    const IDBIndexInfo& info() const { return m_info; }
+    const IDBIndexInfo& info() const LIFETIME_BOUND { return m_info; }
 
-    void markAsDeleted();
+    void NODELETE markAsDeleted();
     bool isDeleted() const { return m_deleted; }
 
     // ActiveDOMObject.
-    void ref() const final;
+    void NODELETE ref() const final;
     void deref() const final;
 
-    WebCoreOpaqueRoot opaqueRoot();
+    WebCoreOpaqueRoot NODELETE opaqueRoot();
 
 private:
     IDBIndex(ScriptExecutionContext&, const IDBIndexInfo&, IDBObjectStore&);
@@ -93,10 +94,9 @@ private:
     ExceptionOr<Ref<IDBRequest>> doCount(const IDBKeyRangeData&);
     ExceptionOr<Ref<IDBRequest>> doGet(ExceptionOr<IDBKeyRangeData>);
     ExceptionOr<Ref<IDBRequest>> doGetKey(ExceptionOr<IDBKeyRangeData>);
-    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doGetAll(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doGetAllKeys(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
+    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, NOESCAPE Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
+    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, NOESCAPE Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
+    ExceptionOr<Ref<IDBRequest>> doGetAllShared(IndexedDB::GetAllType, NOESCAPE Function<ExceptionOr<ParsedGetAllQueryOrOptions>()>&&);
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
@@ -108,9 +108,9 @@ private:
 
     // IDBIndex objects are always owned by their referencing IDBObjectStore.
     // Indexes will never outlive ObjectStores so its okay to keep a raw C++ reference here.
-    IDBObjectStore& m_objectStore;
+    const CheckedRef<IDBObjectStore> m_objectStore;
 };
 
-WebCoreOpaqueRoot root(IDBIndex*);
+WebCoreOpaqueRoot NODELETE root(IDBIndex*);
 
 } // namespace WebCore

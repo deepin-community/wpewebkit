@@ -22,15 +22,17 @@
 
 #pragma once
 
-#include "HTMLElement.h"
+#include <WebCore/HTMLElement.h>
 
 namespace WebCore {
 
 class HTMLParamElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLParamElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLParamElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLParamElement);
 public:
     static Ref<HTMLParamElement> create(const QualifiedName&, Document&);
+
+    ~HTMLParamElement();
 
 private:
     HTMLParamElement(const QualifiedName&, Document&);

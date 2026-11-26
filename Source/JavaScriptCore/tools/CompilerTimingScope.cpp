@@ -31,7 +31,6 @@
 #include <wtf/Lock.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
-#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -48,7 +47,9 @@ public:
         Locker locker { lock };
 
         for (auto& tuple : totals) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             if (!strcmp(std::get<0>(tuple), compilerName) && !strcmp(std::get<1>(tuple), name)) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 std::get<2>(tuple) += duration;
                 std::get<3>(tuple) = std::max(std::get<3>(tuple), duration);
                 return std::get<2>(tuple);
@@ -86,13 +87,13 @@ CompilerTimingScope::CompilerTimingScope(ASCIILiteral compilerName, ASCIILiteral
     : m_compilerName(compilerName)
     , m_name(name)
 {
-    if (UNLIKELY(Options::logPhaseTimes() || Options::reportTotalPhaseTimes()))
+    if (Options::logPhaseTimes() || Options::reportTotalPhaseTimes()) [[unlikely]]
         m_before = MonotonicTime::now();
 }
 
 CompilerTimingScope::~CompilerTimingScope()
 {
-    if (UNLIKELY(Options::logPhaseTimes() || Options::reportTotalPhaseTimes())) {
+    if (Options::logPhaseTimes() || Options::reportTotalPhaseTimes()) [[unlikely]] {
         Seconds duration = MonotonicTime::now() - m_before;
         auto total = compilerTimingScopeState().addToTotal(m_compilerName, m_name, duration);
         if (Options::logPhaseTimes()) {

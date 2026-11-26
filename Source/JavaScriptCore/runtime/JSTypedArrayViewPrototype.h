@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
 
@@ -56,8 +56,7 @@ JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsSharedTypedArrayView);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsResizableOrGrowableSharedTypedArrayView);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncTypedArrayFromFast);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsDetached);
+JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsOutOfBounds);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncLength);
-JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncContentType);
-JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncGetOriginalConstructor);
 
 } // namespace JSC

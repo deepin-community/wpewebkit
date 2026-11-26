@@ -34,29 +34,27 @@ namespace WebCore::Style {
 
 class PseudoElementRequest {
 public:
-    PseudoElementRequest(PseudoId pseudoId, std::optional<StyleScrollbarState> scrollbarState = std::nullopt)
-        : m_identifier({ pseudoId })
+    PseudoElementRequest(PseudoElementType type, std::optional<StyleScrollbarState> scrollbarState = std::nullopt)
+        : m_identifier({ type })
         , m_scrollbarState(scrollbarState)
     {
-        ASSERT(pseudoId != PseudoId::None);
     }
 
-    PseudoElementRequest(PseudoId pseudoId, const AtomString& nameArgument)
-        : m_identifier({ pseudoId, nameArgument })
+    PseudoElementRequest(PseudoElementType type, const AtomString& nameOrPart)
+        : m_identifier({ type, nameOrPart })
     {
-        ASSERT(pseudoId == PseudoId::Highlight || pseudoId == PseudoId::ViewTransitionGroup || pseudoId == PseudoId::ViewTransitionImagePair || pseudoId == PseudoId::ViewTransitionOld || pseudoId == PseudoId::ViewTransitionNew);
+        ASSERT(type == PseudoElementType::Highlight || type == PseudoElementType::ViewTransitionGroup || type == PseudoElementType::ViewTransitionImagePair || type == PseudoElementType::ViewTransitionOld || type == PseudoElementType::ViewTransitionNew);
     }
 
     PseudoElementRequest(const PseudoElementIdentifier& pseudoElementIdentifier)
         : m_identifier(pseudoElementIdentifier)
     {
-        ASSERT(pseudoElementIdentifier.pseudoId != PseudoId::None);
     }
 
-    const PseudoElementIdentifier& identifier() const { return m_identifier; }
-    PseudoId pseudoId() const { return m_identifier.pseudoId; }
-    const AtomString& nameArgument() const { return m_identifier.nameArgument; }
-    const std::optional<StyleScrollbarState>& scrollbarState() const { return m_scrollbarState; }
+    const PseudoElementIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
+    PseudoElementType type() const { return m_identifier.type; }
+    const AtomString& nameOrPart() const LIFETIME_BOUND { return m_identifier.nameOrPart; }
+    const std::optional<StyleScrollbarState>& scrollbarState() const LIFETIME_BOUND { return m_scrollbarState; }
 
 private:
     PseudoElementIdentifier m_identifier;

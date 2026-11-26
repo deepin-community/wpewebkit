@@ -25,14 +25,29 @@
 #include "config.h"
 #include <wtf/SIMDUTF.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 IGNORE_WARNINGS_BEGIN("error=undef")
 IGNORE_WARNINGS_BEGIN("undef")
 IGNORE_WARNINGS_BEGIN("missing-prototypes")
 IGNORE_WARNINGS_BEGIN("cast-qual")
 IGNORE_WARNINGS_BEGIN("cast-align")
 IGNORE_WARNINGS_BEGIN("documentation")
+IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage")
 
-#include <wtf/simdutf/simdutf_impl.cpp.h>
+// FIXME: Temporary fix to be removed when the SDK is updated in the future.
+#if PLATFORM(PLAYSTATION)
+#ifndef __AVX512F__
+#define __AVX512F__ 1
+#endif
+#endif
+
+#include "simdutf/simdutf_impl.cpp.h"
+
+#if PLATFORM(PLAYSTATION)
+#ifdef __AVX512F__
+#undef __AVX512F__
+#endif
+#endif
 
 IGNORE_WARNINGS_END
 IGNORE_WARNINGS_END
@@ -40,3 +55,4 @@ IGNORE_WARNINGS_END
 IGNORE_WARNINGS_END
 IGNORE_WARNINGS_END
 IGNORE_WARNINGS_END
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

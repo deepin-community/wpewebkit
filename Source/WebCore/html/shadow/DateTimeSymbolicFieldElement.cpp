@@ -27,21 +27,19 @@
 #include "config.h"
 #include "DateTimeSymbolicFieldElement.h"
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
-
 #include "EventNames.h"
 #include "FontCascade.h"
 #include "KeyboardEvent.h"
 #include "RenderBlock.h"
-#include "RenderStyleInlines.h"
-#include "RenderStyleSetters.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextBreakIterator.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(DateTimeSymbolicFieldElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DateTimeSymbolicFieldElement);
 
 DateTimeSymbolicFieldElement::DateTimeSymbolicFieldElement(Document& document, DateTimeFieldElementFieldOwner& fieldOwner, const Vector<String>& symbols, int placeholderIndex)
     : DateTimeFieldElement(document, fieldOwner)
@@ -52,18 +50,16 @@ DateTimeSymbolicFieldElement::DateTimeSymbolicFieldElement(Document& document, D
     ASSERT(!m_symbols.isEmpty());
 }
 
-void DateTimeSymbolicFieldElement::adjustMinInlineSize(RenderStyle& style) const
+void DateTimeSymbolicFieldElement::adjustMinInlineSize(Style::ComputedStyle& style) const
 {
-    auto& font = style.fontCascade();
+    CheckedRef font = style.fontCascade();
 
     float inlineSize = 0;
-    for (auto& symbol : m_symbols)
-        inlineSize = std::max(inlineSize, font.width(RenderBlock::constructTextRun(symbol, style)));
-
-    if (style.isHorizontalWritingMode())
-        style.setMinWidth({ inlineSize, LengthType::Fixed });
-    else
-        style.setMinHeight({ inlineSize, LengthType::Fixed });
+    for (auto& symbol : m_symbols) {
+        auto textRun = RenderBlock::constructTextRun(symbol, style);
+        inlineSize = std::max(inlineSize, font->width(protect(textRun)));
+    }
+    style.setLogicalMinWidth(Style::MinimumSize::Fixed { inlineSize / style.usedZoomForLength().value });
 }
 
 bool DateTimeSymbolicFieldElement::hasValue() const
@@ -99,9 +95,11 @@ void DateTimeSymbolicFieldElement::stepUp()
     setValueAsInteger(newValue, DispatchInputAndChangeEvents);
 }
 
-String DateTimeSymbolicFieldElement::value() const
+ValueOrReference<String> DateTimeSymbolicFieldElement::value() const
 {
-    return hasValue() ? m_symbols[m_selectedIndex] : emptyString();
+    if (hasValue())
+        return m_symbols[m_selectedIndex];
+    return emptyString();
 }
 
 String DateTimeSymbolicFieldElement::placeholderValue() const
@@ -138,5 +136,3 @@ String DateTimeSymbolicFieldElement::optionAtIndex(int index) const
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(DATE_AND_TIME_INPUT_TYPES)

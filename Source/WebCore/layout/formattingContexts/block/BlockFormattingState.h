@@ -26,7 +26,7 @@
 #pragma once
 
 #include "FormattingState.h"
-#include "PlacedFloats.h"
+#include <WebCore/PlacedFloats.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -35,19 +35,19 @@ namespace Layout {
 
 // BlockFormattingState holds the state for a particular block formatting context tree.
 class BlockFormattingState : public FormattingState {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(BlockFormattingState);
+    WTF_MAKE_TZONE_ALLOCATED(BlockFormattingState);
 public:
     BlockFormattingState(LayoutState&, const ElementBox& blockFormattingContextRoot);
     ~BlockFormattingState();
 
-    const PlacedFloats& placedFloats() const { return m_placedFloats; }
-    PlacedFloats& placedFloats() { return m_placedFloats; }
+    const PlacedFloats& placedFloats() const LIFETIME_BOUND { return m_placedFloats; }
+    PlacedFloats& placedFloats() LIFETIME_BOUND { return m_placedFloats; }
 
     // Since we layout the out-of-flow boxes at the end of the formatting context layout, it's okay to store them in the formatting state -as opposed to the containing block level.
     using OutOfFlowBoxList = Vector<CheckedRef<const Box>>;
     void addOutOfFlowBox(const Box& outOfFlowBox) { m_outOfFlowBoxes.append(outOfFlowBox); }
-    void setOutOfFlowBoxes(OutOfFlowBoxList&& outOfFlowBoxes) { m_outOfFlowBoxes = WTFMove(outOfFlowBoxes); }
-    const OutOfFlowBoxList& outOfFlowBoxes() const { return m_outOfFlowBoxes; }
+    void setOutOfFlowBoxes(OutOfFlowBoxList&& outOfFlowBoxes) { m_outOfFlowBoxes = WTF::move(outOfFlowBoxes); }
+    const OutOfFlowBoxList& outOfFlowBoxes() const LIFETIME_BOUND { return m_outOfFlowBoxes; }
 
     void setUsedVerticalMargin(const Box& layoutBox, const UsedVerticalMargin& usedVerticalMargin) { m_usedVerticalMargins.set(layoutBox, usedVerticalMargin); }
     UsedVerticalMargin usedVerticalMargin(const Box& layoutBox) const { return m_usedVerticalMargins.get(layoutBox); }

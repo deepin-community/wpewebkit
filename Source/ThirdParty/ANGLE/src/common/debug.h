@@ -87,11 +87,6 @@ void InitializeDebugMutexIfNeeded();
 angle::SimpleMutex &GetDebugMutex();
 }  // namespace gl
 
-// The state tracked by ANGLE will be validated with the driver state before each call
-#if defined(ANGLE_ENABLE_DEBUG_TRACE)
-#    define ANGLE_STATE_VALIDATION_ENABLED
-#endif
-
 #if defined(__GNUC__)
 #    define ANGLE_CRASH() __builtin_trap()
 #else
@@ -176,5 +171,16 @@ angle::SimpleMutex &GetDebugMutex();
 #    define ANGLE_DISABLE_UNUSED_FUNCTION_WARNING
 #    define ANGLE_REENABLE_UNUSED_FUNCTION_WARNING
 #endif
+
+// clang-format off
+#if defined(__clang__)
+#    define ANGLE_DISABLE_NONLITERAL_FORMAT_WARNING \
+        _Pragma("clang diagnostic push") _Pragma("clang diagnostic ignored \"-Wformat-nonliteral\"")
+#    define ANGLE_REENABLE_NONLITERAL_FORMAT_WARNING _Pragma("clang diagnostic pop")
+#else
+#    define ANGLE_DISABLE_NONLITERAL_FORMAT_WARNING
+#    define ANGLE_REENABLE_NONLITERAL_FORMAT_WARNING
+#endif
+// clang-format on
 
 #endif  // COMMON_DEBUG_H_

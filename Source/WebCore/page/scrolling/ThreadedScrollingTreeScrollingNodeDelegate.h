@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "ScrollingTreeScrollingNodeDelegate.h"
+#include <WebCore/ScrollingTreeScrollingNodeDelegate.h>
 
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
 
-#include "ScrollingEffectsController.h"
+#include <WebCore/ScrollingEffectsController.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -41,8 +42,13 @@ class ScrollingTreeScrollingNode;
 class ScrollingTree;
 
 class ThreadedScrollingTreeScrollingNodeDelegate : public ScrollingTreeScrollingNodeDelegate, private ScrollingEffectsControllerClient {
+    WTF_MAKE_TZONE_ALLOCATED(ThreadedScrollingTreeScrollingNodeDelegate);
 public:
     void updateSnapScrollState();
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    float rubberbandHyperbolicCoefficientForTesting() const final { return m_scrollController.rubberbandHyperbolicCoefficientForTesting(); }
+#endif
 
 protected:
     explicit ThreadedScrollingTreeScrollingNodeDelegate(ScrollingTreeScrollingNode&);
@@ -53,11 +59,12 @@ protected:
     void updateFromStateNode(const ScrollingStateScrollingNode&) override;
 
     bool startAnimatedScrollToPosition(FloatPoint) override;
-    void stopAnimatedScroll() override;
+    void stopAnimatedScroll(EnumSet<AnimatedScrollType>) override;
     void serviceScrollAnimation(MonotonicTime) override;
 
     // ScrollingEffectsControllerClient.
     std::unique_ptr<ScrollingEffectsControllerTimer> createTimer(Function<void()>&&) override;
+    void destroyTimer(std::unique_ptr<ScrollingEffectsControllerTimer>) override;
     void startAnimationCallback(ScrollingEffectsController&) override;
     void stopAnimationCallback(ScrollingEffectsController&) override;
 

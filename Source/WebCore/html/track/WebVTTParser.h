@@ -1,7 +1,7 @@
 /*
- * Copyright (C) 2011, 2013 Google Inc.  All rights reserved.
+ * Copyright (C) 2011, 2013 Google Inc. All rights reserved.
  * Copyright (C) 2013 Cable Television Labs, Inc.
- * Copyright (C) 2014 Apple Inc.  All rights reserved.
+ * Copyright (C) 2014 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -34,13 +34,14 @@
 
 #if ENABLE(VIDEO)
 
-#include "BufferedLineReader.h"
-#include "DocumentFragment.h"
-#include "HTMLNames.h"
-#include "TextResourceDecoder.h"
-#include "VTTRegion.h"
+#include <WebCore/BufferedLineReader.h>
+#include <WebCore/DocumentFragment.h>
+#include <WebCore/HTMLNames.h>
+#include <WebCore/TextResourceDecoder.h>
+#include <WebCore/VTTRegion.h>
 #include <memory>
 #include <wtf/MediaTime.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
@@ -62,10 +63,9 @@ public:
 };
 
 class WebVTTCueData final : public RefCounted<WebVTTCueData> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(WebVTTCueData, WEBCORE_EXPORT);
 public:
-
     static Ref<WebVTTCueData> create() { return adoptRef(*new WebVTTCueData()); }
-    ~WebVTTCueData() = default;
 
     MediaTime startTime() const { return m_startTime; }
     void setStartTime(const MediaTime& startTime) { m_startTime = startTime; }
@@ -73,8 +73,8 @@ public:
     MediaTime endTime() const { return m_endTime; }
     void setEndTime(const MediaTime& endTime) { m_endTime = endTime; }
 
-    AtomString id() const { return m_id; }
-    void setId(const AtomString& id) { m_id = id; }
+    String id() const { return m_id; }
+    void setId(const String& id) { m_id = id; }
 
     String content() const { return m_content; }
     void setContent(const String& content) { m_content = content; }
@@ -91,13 +91,13 @@ private:
     MediaTime m_startTime;
     MediaTime m_endTime;
     MediaTime m_originalStartTime;
-    AtomString m_id;
+    String m_id;
     String m_content;
     String m_settings;
 };
 
 class WEBCORE_EXPORT WebVTTParser final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(WebVTTParser, WEBCORE_EXPORT);
 public:
     enum ParseState {
         Initial,
@@ -116,17 +116,17 @@ public:
 
     static inline bool isRecognizedTag(const AtomString& tagName)
     {
-        return tagName == iTag
-            || tagName == bTag
-            || tagName == uTag
-            || tagName == rubyTag
-            || tagName == rtTag;
+        return iTag->hasLocalName(tagName)
+            || bTag->hasLocalName(tagName)
+            || uTag->hasLocalName(tagName)
+            || rubyTag->hasLocalName(tagName)
+            || rtTag->hasLocalName(tagName);
     }
 
     static bool collectTimeStamp(const String&, MediaTime&);
 
     // Useful functions for parsing percentage settings.
-    static bool parseFloatPercentageValue(VTTScanner& valueScanner, float&);
+    static bool parseFloatPercentageValue(VTTScanner& valueScanner, double&);
     static bool parseFloatPercentageValuePair(VTTScanner& valueScanner, char, FloatPoint&);
 
     // Input data to the parser to parse.
@@ -147,7 +147,7 @@ public:
 private:
     void parse();
     void flushPendingCue();
-    bool hasRequiredFileIdentifier(const String&);
+    bool NODELETE hasRequiredFileIdentifier(const String&);
     ParseState collectCueId(const String&);
     ParseState collectTimingsAndSettings(const String&);
     ParseState collectCueText(const String&);
@@ -167,12 +167,12 @@ private:
 
     static bool collectTimeStamp(VTTScanner& input, MediaTime& timeStamp);
 
-    Document& m_document;
+    const WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     ParseState m_state { Initial };
 
     BufferedLineReader m_lineReader;
-    RefPtr<TextResourceDecoder> m_decoder;
-    AtomString m_currentId;
+    const Ref<TextResourceDecoder> m_decoder;
+    String m_currentId;
     MediaTime m_currentStartTime;
     MediaTime m_currentEndTime;
     StringBuilder m_currentContent;

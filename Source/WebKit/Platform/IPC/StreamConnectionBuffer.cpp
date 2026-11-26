@@ -27,13 +27,12 @@
 #include "StreamConnectionBuffer.h"
 
 #include "Decoder.h"
-#include "WebCoreArgumentCoders.h"
 
 namespace IPC {
 
 StreamConnectionBuffer::StreamConnectionBuffer(Ref<WebCore::SharedMemory>&& memory)
     : m_dataSize(memory->size() - headerSize())
-    , m_sharedMemory(WTFMove(memory))
+    , m_sharedMemory(WTF::move(memory))
 {
     ASSERT(sharedMemorySizeIsValid(m_sharedMemory->size()));
 }
@@ -42,10 +41,10 @@ StreamConnectionBuffer::~StreamConnectionBuffer() = default;
 
 StreamConnectionBuffer::Handle StreamConnectionBuffer::createHandle()
 {
-    auto handle = Ref { m_sharedMemory }->createHandle(WebCore::SharedMemory::Protection::ReadWrite);
+    auto handle = protect(m_sharedMemory)->createHandle(WebCore::SharedMemory::Protection::ReadWrite);
     if (!handle)
         CRASH();
-    return { WTFMove(*handle) };
+    return { WTF::move(*handle) };
 }
 
 std::span<uint8_t> StreamConnectionBuffer::headerForTesting()

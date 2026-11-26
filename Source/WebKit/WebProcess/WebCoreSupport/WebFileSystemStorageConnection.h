@@ -32,24 +32,10 @@
 namespace IPC {
 class Connection;
 
-template<> struct AsyncReplyError<Expected<WebCore::FileSystemHandleIdentifier, WebKit::FileSystemStorageError>> {
-    static Expected<WebCore::FileSystemHandleIdentifier, WebKit::FileSystemStorageError> create()
+template<> struct AsyncReplyError<WebKit::FileSystemStorageError> {
+    static WebKit::FileSystemStorageError create()
     {
-        return makeUnexpected(WebKit::FileSystemStorageError::Unknown);
-    }
-};
-
-template<> struct AsyncReplyError<Expected<Vector<String>, WebKit::FileSystemStorageError>> {
-    static Expected<Vector<String>, WebKit::FileSystemStorageError> create()
-    {
-        return makeUnexpected(WebKit::FileSystemStorageError::Unknown);
-    }
-};
-
-template<> struct AsyncReplyError<Expected<std::pair<String, bool>, WebKit::FileSystemStorageError>> {
-    static Expected<std::pair<String, bool>, WebKit::FileSystemStorageError> create()
-    {
-        return makeUnexpected(WebKit::FileSystemStorageError::Unknown);
+        return WebKit::FileSystemStorageError::Unknown;
     }
 };
 
@@ -82,6 +68,9 @@ private:
     void resolve(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemHandleIdentifier, WebCore::FileSystemStorageConnection::ResolveCallback&&) final;
     void getHandleNames(WebCore::FileSystemHandleIdentifier, FileSystemStorageConnection::GetHandleNamesCallback&&) final;
     void getHandle(WebCore::FileSystemHandleIdentifier, const String& name, FileSystemStorageConnection::GetHandleCallback&&) final;
+    void addGlobalIdentifierReference(WebCore::ClientOrigin&&, WebCore::FileSystemHandleGlobalIdentifier) final;
+    void removeGlobalIdentifierReferences(WebCore::ClientOrigin&&, Vector<WebCore::FileSystemHandleGlobalIdentifier>&&) final;
+    void resolveGlobalIdentifier(WebCore::ClientOrigin&&, WebCore::FileSystemHandleGlobalIdentifier, ResolveGlobalIdentifierCallback&&) final;
     void getFile(WebCore::FileSystemHandleIdentifier, StringCallback&&) final;
 
     void createSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemStorageConnection::GetAccessHandleCallback&&) final;
@@ -90,8 +79,15 @@ private:
     void registerSyncAccessHandle(WebCore::FileSystemSyncAccessHandleIdentifier, WebCore::ScriptExecutionContextIdentifier) final;
     void unregisterSyncAccessHandle(WebCore::FileSystemSyncAccessHandleIdentifier) final;
     void invalidateAccessHandle(WebCore::FileSystemSyncAccessHandleIdentifier) final;
+    void createWritable(WebCore::ScriptExecutionContextIdentifier, WebCore::FileSystemHandleIdentifier, bool keepExistingData, StreamCallback&&) final;
+    void closeWritable(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemWritableFileStreamIdentifier, WebCore::FileSystemWriteCloseReason, VoidCallback&&) final;
+    void executeCommandForWritable(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemWritableFileStreamIdentifier, WebCore::FileSystemWriteCommandType, std::optional<uint64_t> position, std::optional<uint64_t> size, std::span<const uint8_t> dataBytes, bool hasDataError, VoidCallback&&) final;
+
+    void invalidateWritable(WebCore::FileSystemWritableFileStreamIdentifier);
+    void errorWritable(WebCore::ScriptExecutionContextIdentifier, WebCore::FileSystemWritableFileStreamIdentifier);
 
     HashMap<WebCore::FileSystemSyncAccessHandleIdentifier, WebCore::ScriptExecutionContextIdentifier> m_syncAccessHandles;
+    HashMap<WebCore::FileSystemWritableFileStreamIdentifier, WebCore::ScriptExecutionContextIdentifier> m_writableIdentifiers;
     RefPtr<IPC::Connection> m_connection;
 };
 

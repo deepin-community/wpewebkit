@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "RenderSVGResourceFilterPrimitive.h"
+#include "RenderObjectNode.h"
 
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourceFilter.h"
@@ -35,15 +36,15 @@
 #include "SVGFESpecularLightingElement.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
 #include "SVGNames.h"
-#include "SVGRenderStyle.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderSVGResourceFilterPrimitive);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceFilterPrimitive);
 
-RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& element, RenderStyle&& style)
-    : RenderSVGHiddenContainer(Type::SVGResourceFilterPrimitive, element, WTFMove(style))
+RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& element, Style::ComputedStyle&& style)
+    : RenderSVGHiddenContainer(Type::SVGResourceFilterPrimitive, element, WTF::move(style))
 {
     ASSERT(isRenderSVGResourceFilterPrimitive());
 }
@@ -74,24 +75,24 @@ SVGFilterPrimitiveStandardAttributes& RenderSVGResourceFilterPrimitive::filterPr
     return static_cast<SVGFilterPrimitiveStandardAttributes&>(RenderSVGHiddenContainer::element());
 }
 
-void RenderSVGResourceFilterPrimitive::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
+void RenderSVGResourceFilterPrimitive::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderSVGHiddenContainer::styleDidChange(diff, oldStyle);
 
-    if (diff == StyleDifference::Equal || !oldStyle)
+    if (diff == Style::DifferenceResult::Equal || !oldStyle)
         return;
 
-    Ref newStyle = style().svgStyle();
-    if (is<SVGFEFloodElement>(filterPrimitiveElement()) || is<SVGFEDropShadowElement>(filterPrimitiveElement())) {
-        if (newStyle->floodColor() != oldStyle->svgStyle().floodColor())
-            filterPrimitiveElement().primitiveAttributeChanged(SVGNames::flood_colorAttr);
-        if (newStyle->floodOpacity() != oldStyle->svgStyle().floodOpacity())
-            filterPrimitiveElement().primitiveAttributeChanged(SVGNames::flood_opacityAttr);
+    CheckedRef newStyle = style();
+    if (isAnyOf<SVGFEFloodElement, SVGFEDropShadowElement>(filterPrimitiveElement())) {
+        if (newStyle->floodColor() != oldStyle->floodColor())
+            protect(filterPrimitiveElement())->primitiveAttributeChanged(SVGNames::flood_colorAttr);
+        if (newStyle->floodOpacity() != oldStyle->floodOpacity())
+            protect(filterPrimitiveElement())->primitiveAttributeChanged(SVGNames::flood_opacityAttr);
         return;
     }
-    if (is<SVGFEDiffuseLightingElement>(filterPrimitiveElement()) || is<SVGFESpecularLightingElement>(filterPrimitiveElement())) {
-        if (newStyle->lightingColor() != oldStyle->svgStyle().lightingColor())
-            filterPrimitiveElement().primitiveAttributeChanged(SVGNames::lighting_colorAttr);
+    if (isAnyOf<SVGFEDiffuseLightingElement, SVGFESpecularLightingElement>(filterPrimitiveElement())) {
+        if (newStyle->lightingColor() != oldStyle->lightingColor())
+            protect(filterPrimitiveElement())->primitiveAttributeChanged(SVGNames::lighting_colorAttr);
     }
 }
 

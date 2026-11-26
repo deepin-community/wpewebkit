@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,8 +49,9 @@ private:
     CanvasLayerContextSwitcher(CanvasRenderingContext2DBase&, const FloatRect& bounds, std::unique_ptr<GraphicsContextSwitcher>&&);
 
     FloatBoxExtent outsets() const;
+    Ref<CanvasRenderingContext2DBase> context() const { return m_context.get(); }
 
-    CanvasRenderingContext2DBase& m_context;
+    WeakRef<CanvasRenderingContext2DBase> m_context;
     GraphicsContext* m_effectiveDrawingContext;
     FloatRect m_bounds;
     std::unique_ptr<GraphicsContextSwitcher> m_targetSwitcher;

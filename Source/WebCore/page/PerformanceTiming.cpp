@@ -37,9 +37,11 @@
 #include "DocumentLoader.h"
 #include "FrameLoader.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "NetworkLoadMetrics.h"
 #include "Performance.h"
 #include "ResourceResponse.h"
+#include <wtf/ReducedResolutionSeconds.h>
 
 namespace WebCore {
 
@@ -363,28 +365,24 @@ const DocumentEventTiming* PerformanceTiming::documentEventTiming() const
     if (!frame)
         return nullptr;
 
-    auto* document = frame->document();
-    if (!document)
-        return nullptr;
+    if (auto* document = frame->document())
+        return &document->eventTiming();
 
-    return &document->eventTiming();
+    return nullptr;
 }
 
 const DocumentLoadTiming* PerformanceTiming::documentLoadTiming() const
 {
-    auto* loader = documentLoader();
-    if (!loader)
-        return nullptr;
-
-    return &loader->timing();
+    if (auto* loader = documentLoader())
+        return &loader->timing();
+    return nullptr;
 }
 
 const NetworkLoadMetrics* PerformanceTiming::networkLoadMetrics() const
 {
-    auto* loader = documentLoader();
-    if (!loader)
-        return nullptr;
-    return loader->response().deprecatedNetworkLoadMetricsOrNull();
+    if (auto* loader = documentLoader())
+        return loader->response().deprecatedNetworkLoadMetricsOrNull();
+    return nullptr;
 }
 
 unsigned long long PerformanceTiming::monotonicTimeToIntegerMilliseconds(MonotonicTime timeStamp) const
@@ -392,7 +390,7 @@ unsigned long long PerformanceTiming::monotonicTimeToIntegerMilliseconds(Monoton
     ASSERT(timeStamp.secondsSinceEpoch().seconds() >= 0);
     if (!timeStamp)
         return 0;
-    Seconds reduced = Performance::reduceTimeResolution(timeStamp.approximateWallTime().secondsSinceEpoch());
+    auto reduced = Performance::reduceTimeResolution(timeStamp.approximate<WallTime>().secondsSinceEpoch());
     return static_cast<unsigned long long>(reduced.milliseconds());
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,13 +29,20 @@
 
 #include "AdvancedPrivacyProtections.h"
 #include "IDBConnectionProxy.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObject.h"
 #include "ScriptSourceCode.h"
 #include "SecurityOrigin.h"
 #include "SocketProvider.h"
+#include "WorkerBadgeProxy.h"
+#include "WorkerDebuggerProxy.h"
 #include "WorkerGlobalScope.h"
+#include "WorkerLoaderProxy.h"
+#include "WorkerReportingProxy.h"
 #include "WorkerScriptFetcher.h"
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/SetForScope.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
 namespace WebCore {
@@ -69,12 +76,14 @@ WorkerParameters WorkerParameters::isolatedCopy() const
         crossThreadCopy(serviceWorkerData),
         clientIdentifier,
         advancedPrivacyProtections,
-        noiseInjectionHashSalt
+        noiseInjectionHashSalt,
+        agentClusterID.isolatedCopy()
     };
 }
 
 struct WorkerThreadStartupData {
-    WTF_MAKE_NONCOPYABLE(WorkerThreadStartupData); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(WorkerThreadStartupData);
+    WTF_MAKE_NONCOPYABLE(WorkerThreadStartupData);
 public:
     WorkerThreadStartupData(const WorkerParameters& params, const ScriptBuffer& sourceCode, WorkerThreadStartMode, const SecurityOrigin& topOrigin);
 
@@ -118,21 +127,24 @@ Ref<Thread> WorkerThread::createThread()
 {
     if (is<WorkerMainRunLoop>(runLoop())) {
         // This worker should run on the main thread.
-        RunLoop::main().dispatch([protectedThis = Ref { *this }] {
+        RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
             protectedThis->workerOrWorkletThread();
         });
         ASSERT(isMainThread());
-        return Thread::current();
+        return Thread::currentSingleton();
     }
 
-    return Thread::create(threadName(), [this] {
-        workerOrWorkletThread();
+    return Thread::create(threadName(), [protectedThis = Ref { *this }] mutable {
+        protectedThis->workerOrWorkletThread();
+
+        // Release this reference on the main thread, where the worker is destroyed.
+        callOnMainThread([protectedThis = WTF::move(protectedThis)] { });
     }, ThreadType::JavaScript);
 }
 
 RefPtr<WorkerOrWorkletGlobalScope> WorkerThread::createGlobalScope()
 {
-    return createWorkerGlobalScope(m_startupData->params, WTFMove(m_startupData->origin), WTFMove(m_startupData->topOrigin));
+    return createWorkerGlobalScope(m_startupData->params, WTF::move(m_startupData->origin), WTF::move(m_startupData->topOrigin));
 }
 
 bool WorkerThread::shouldWaitForWebInspectorOnStartup() const
@@ -152,14 +164,26 @@ void WorkerThread::evaluateScriptIfNecessary(String& exceptionMessage)
     WeakPtr<ScriptBufferSourceProvider> sourceProvider;
     if (m_startupData->params.workerType == WorkerType::Classic) {
         ScriptSourceCode sourceCode(m_startupData->sourceCode, URL(m_startupData->params.scriptURL));
-        sourceProvider = static_cast<ScriptBufferSourceProvider&>(sourceCode.provider());
-        globalScope->script()->evaluate(sourceCode, &exceptionMessage);
+        sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
+
+        NakedPtr<JSC::Exception> uncaughtException;
+        auto parseResult = globalScope->script()->evaluate(sourceCode, uncaughtException, &exceptionMessage);
+        if (uncaughtException && !globalScope->vm().isTerminationException(uncaughtException)) {
+            // Per the spec, if the script has a parse error, fire a simple Event at
+            // the Worker object rather than an ErrorEvent.
+            if (globalScope->settingsValues().workerParseErrorReportingEnabled && parseResult == WorkerOrWorkletScriptController::ParseResult::Failed)
+                globalScope->reportErrorToWorkerObject(exceptionMessage);
+            else {
+                JSC::JSLockHolder lock(globalScope->vm());
+                reportException(globalScope->script()->globalScopeWrapper(), uncaughtException);
+            }
+        }
         finishedEvaluatingScript();
     } else {
         auto parameters = ModuleFetchParameters::create(JSC::ScriptFetchParameters::Type::JavaScript, emptyString(), /* isTopLevelModule */ true);
-        auto scriptFetcher = WorkerScriptFetcher::create(WTFMove(parameters), globalScope->credentials(), globalScope->destination(), globalScope->referrerPolicy());
+        auto scriptFetcher = WorkerScriptFetcher::create(WTF::move(parameters), globalScope->credentials(), globalScope->destination(), globalScope->referrerPolicy());
         ScriptSourceCode sourceCode(m_startupData->sourceCode, URL(m_startupData->params.scriptURL), { }, { }, JSC::SourceProviderSourceType::Module, scriptFetcher.copyRef());
-        sourceProvider = static_cast<ScriptBufferSourceProvider&>(sourceCode.provider());
+        sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
         bool success = globalScope->script()->loadModuleSynchronously(scriptFetcher.get(), sourceCode);
         if (success) {
             if (auto error = scriptFetcher->error()) {
@@ -183,19 +207,9 @@ void WorkerThread::evaluateScriptIfNecessary(String& exceptionMessage)
     m_startupData = nullptr;
 }
 
-IDBClient::IDBConnectionProxy* WorkerThread::idbConnectionProxy()
-{
-    return m_idbConnectionProxy.get();
-}
-
-SocketProvider* WorkerThread::socketProvider()
-{
-    return m_socketProvider.get();
-}
-
 WorkerGlobalScope* WorkerThread::globalScope()
 {
-    ASSERT(!thread() || thread() == &Thread::current());
+    ASSERT(!thread() || thread() == &Thread::currentSingleton());
     return downcast<WorkerGlobalScope>(WorkerOrWorkletThread::globalScope());
 }
 

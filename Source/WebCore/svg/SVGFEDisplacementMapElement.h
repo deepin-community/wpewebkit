@@ -22,12 +22,13 @@
 
 #include "FEDisplacementMap.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
  
 template<>
 struct SVGPropertyTraits<ChannelSelectorType> {
-    static unsigned highestEnumValue() { return enumToUnderlyingType(ChannelSelectorType::CHANNEL_A); }
+    static unsigned highestEnumValue() { return std::to_underlying(ChannelSelectorType::CHANNEL_A); }
 
     static String toString(ChannelSelectorType type)
     {
@@ -48,7 +49,7 @@ struct SVGPropertyTraits<ChannelSelectorType> {
         return emptyString();
     }
 
-    static ChannelSelectorType fromString(const String& value)
+    static ChannelSelectorType fromString(SVGElement&, const String& value)
     {
         if (value == "R"_s)
             return ChannelSelectorType::CHANNEL_R;
@@ -63,7 +64,7 @@ struct SVGPropertyTraits<ChannelSelectorType> {
 };
 
 class SVGFEDisplacementMapElement final : public SVGFilterPrimitiveStandardAttributes {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFEDisplacementMapElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFEDisplacementMapElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFEDisplacementMapElement);
 public:
     static Ref<SVGFEDisplacementMapElement> create(const QualifiedName&, Document&);
@@ -82,23 +83,24 @@ public:
     SVGAnimatedEnumeration& yChannelSelectorAnimated() { return m_yChannelSelector; }
     SVGAnimatedNumber& scaleAnimated() { return m_scale; }
 
+    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFEDisplacementMapElement, SVGFilterPrimitiveStandardAttributes>;
+
 private:
     SVGFEDisplacementMapElement(const QualifiedName& tagName, Document&);
-
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFEDisplacementMapElement, SVGFilterPrimitiveStandardAttributes>;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
     bool setFilterEffectAttribute(FilterEffect&, const QualifiedName& attrName) override;
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() }, AtomString { in2() } }; }
+    IntOutsets outsets(const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits) const override;
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedString> m_in2 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedEnumeration> m_xChannelSelector { SVGAnimatedEnumeration::create(this, ChannelSelectorType::CHANNEL_A) };
-    Ref<SVGAnimatedEnumeration> m_yChannelSelector { SVGAnimatedEnumeration::create(this, ChannelSelectorType::CHANNEL_A) };
-    Ref<SVGAnimatedNumber> m_scale { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedString> m_in2 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_xChannelSelector { SVGAnimatedEnumeration::create(this, ChannelSelectorType::CHANNEL_A) };
+    const Ref<SVGAnimatedEnumeration> m_yChannelSelector { SVGAnimatedEnumeration::create(this, ChannelSelectorType::CHANNEL_A) };
+    const Ref<SVGAnimatedNumber> m_scale { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

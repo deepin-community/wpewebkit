@@ -50,14 +50,17 @@
 namespace WebCore {
 
 using TrackID = uint64_t;
+typedef MediaSourcePrivateGStreamer::StreamType StreamType;
+typedef MediaSourcePrivateGStreamer::RegisteredTrack RegisteredTrack;
 
 class AppendPipeline;
 class MediaSourcePrivateGStreamer;
 
-class SourceBufferPrivateGStreamer final : public SourceBufferPrivate, public CanMakeWeakPtr<SourceBufferPrivateGStreamer> {
+class SourceBufferPrivateGStreamer final : public SourceBufferPrivate, public CanMakeWeakPtr<SourceBufferPrivateGStreamer>
+{
 public:
     static bool isContentTypeSupported(const ContentType&);
-    static Ref<SourceBufferPrivateGStreamer> create(MediaSourcePrivateGStreamer&, const ContentType&, MediaPlayerPrivateGStreamerMSE&);
+    static Ref<SourceBufferPrivateGStreamer> create(MediaSourcePrivateGStreamer&, const ContentType&);
     ~SourceBufferPrivateGStreamer();
 
     constexpr MediaPlatformType platformType() const final { return MediaPlatformType::GStreamer; }
@@ -65,6 +68,9 @@ public:
     Ref<MediaPromise> appendInternal(Ref<SharedBuffer>&&) final;
     void resetParserStateInternal() final;
     void removedFromMediaSource() final;
+
+    bool canSwitchToType(const ContentType &) final;
+    void startChangingType() final;
 
     void flush(TrackID) final;
     void enqueueSample(Ref<MediaSample>&&, TrackID) final;
@@ -77,17 +83,20 @@ public:
     void didReceiveAllPendingSamples();
     void appendParsingFailed();
 
-    auto& tracks() const { return m_tracks; }
+    auto& tracks() const LIFETIME_BOUND { return m_tracks; }
 
     ContentType type() const { return m_type; }
+
+    RegisteredTrack registerTrack(TrackID, StreamType);
+    void unregisterTrack(TrackID);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
     ASCIILiteral logClassName() const override { return "SourceBufferPrivateGStreamer"_s; }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     WTFLogChannel& logChannel() const final;
     const Logger& sourceBufferLogger() const final { return m_logger; }
-    const void* sourceBufferLogIdentifier() final { return logIdentifier(); }
+    uint64_t sourceBufferLogIdentifier() final { return logIdentifier(); }
 #endif
 
     size_t platformMaximumBufferSize() const override;
@@ -96,20 +105,24 @@ public:
 private:
     friend class AppendPipeline;
 
-    SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer&, const ContentType&, MediaPlayerPrivateGStreamerMSE&);
+    SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer&, const ContentType&);
+    RefPtr<MediaPlayerPrivateGStreamerMSE> player() const;
 
     void notifyClientWhenReadyForMoreSamples(TrackID) override;
 
+    void detach() final;
+
     bool m_hasBeenRemovedFromMediaSource { false };
     ContentType m_type;
-    MediaPlayerPrivateGStreamerMSE& m_playerPrivate;
     std::unique_ptr<AppendPipeline> m_appendPipeline;
     StdUnorderedMap<TrackID, RefPtr<MediaSourceTrackGStreamer>> m_tracks;
     std::optional<MediaPromise::Producer> m_appendPromise;
 
+    bool m_pendingInitializationSegmentForChangeType { false };
+
 #if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
 };
 

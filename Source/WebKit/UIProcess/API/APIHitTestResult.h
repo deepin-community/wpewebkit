@@ -32,11 +32,6 @@
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
-namespace IPC {
-class Decoder;
-class Encoder;
-}
-
 namespace WebCore {
 class HitTestResult;
 }
@@ -53,10 +48,10 @@ public:
     WTF::String absolutePDFURL() const { return m_data.absolutePDFURL; }
     WTF::String absoluteLinkURL() const { return m_data.absoluteLinkURL; }
     WTF::String absoluteMediaURL() const { return m_data.absoluteMediaURL; }
+    WTF::String absoluteModelURL() const { return m_data.absoluteModelURL; }
 
     WTF::String linkLabel() const { return m_data.linkLabel; }
     WTF::String linkTitle() const { return m_data.linkTitle; }
-    WTF::String linkLocalDataMIMEType() const { return m_data.linkLocalDataMIMEType; }
     WTF::String linkSuggestedFilename() const { return m_data.linkSuggestedFilename; }
     WTF::String imageSuggestedFilename() const { return m_data.imageSuggestedFilename; }
     WTF::String lookupText() const { return m_data.lookupText; }
@@ -82,9 +77,14 @@ public:
 
     WebKit::WebPageProxy* page() { return m_page.get(); }
 
-    const std::optional<WebKit::FrameInfoData>& frameInfo() const { return m_data.frameInfo; }
+    const std::optional<WebKit::FrameInfoData>& frameInfo() const LIFETIME_BOUND { return m_data.frameInfo; }
+    const std::optional<WebCore::FrameIdentifier> targetFrame() const { return m_data.targetFrame; }
 
-    bool hasLocalDataForLinkURL() const { return m_data.hasLocalDataForLinkURL; }
+    bool allowsFollowingLink() const { return m_data.allowsFollowingLink; }
+
+    bool allowsFollowingImageURL() const { return m_data.allowsFollowingImageURL; }
+
+    const std::optional<WebCore::ResourceResponse>& linkLocalResourceResponse() const LIFETIME_BOUND { return m_data.linkLocalResourceResponse; }
 
 private:
     explicit HitTestResult(const WebKit::WebHitTestResultData& hitTestResultData, WebKit::WebPageProxy* page)
@@ -98,3 +98,5 @@ private:
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(HitTestResult);

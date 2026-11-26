@@ -44,13 +44,13 @@ WKTypeID WKWebsitePoliciesGetTypeID()
 
 WKWebsitePoliciesRef WKWebsitePoliciesCreate()
 {
-    return toAPI(&API::WebsitePolicies::create().leakRef());
+    return toAPILeakingRef(API::WebsitePolicies::create());
 }
 
 void WKWebsitePoliciesSetContentBlockersEnabled(WKWebsitePoliciesRef websitePolicies, bool enabled)
 {
     auto defaultEnablement = enabled ? WebCore::ContentExtensionDefaultEnablement::Enabled : WebCore::ContentExtensionDefaultEnablement::Disabled;
-    toImpl(websitePolicies)->setContentExtensionEnablement({ defaultEnablement, { } });
+    protect(toImpl(websitePolicies))->setContentExtensionEnablement({ defaultEnablement, { } });
 }
 
 bool WKWebsitePoliciesGetContentBlockersEnabled(WKWebsitePoliciesRef websitePolicies)
@@ -172,11 +172,20 @@ void WKWebsitePoliciesSetPopUpPolicy(WKWebsitePoliciesRef websitePolicies, WKWeb
 
 WKWebsiteDataStoreRef WKWebsitePoliciesGetDataStore(WKWebsitePoliciesRef websitePolicies)
 {
-    return toAPI(toImpl(websitePolicies)->websiteDataStore());
+    return toAPI(protect(toImpl(websitePolicies)->websiteDataStore()).get());
 }
 
 void WKWebsitePoliciesSetDataStore(WKWebsitePoliciesRef websitePolicies, WKWebsiteDataStoreRef websiteDataStore)
 {
-    toImpl(websitePolicies)->setWebsiteDataStore(toImpl(websiteDataStore));
+    protect(toImpl(websitePolicies))->setWebsiteDataStore(protect(toImpl(websiteDataStore)));
 }
 
+bool WKWebsitePoliciesGetAllowsJSHandleCreationInPageWorld(WKWebsitePoliciesRef websitePolicies)
+{
+    return toImpl(websitePolicies)->allowsJSHandleCreationInPageWorld();
+}
+
+void WKWebsitePoliciesSetAllowsJSHandleCreationInPageWorld(WKWebsitePoliciesRef websitePolicies, bool allows)
+{
+    toImpl(websitePolicies)->setAllowsJSHandleCreationInPageWorld(allows);
+}

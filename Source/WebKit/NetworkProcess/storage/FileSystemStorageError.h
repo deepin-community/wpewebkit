@@ -33,10 +33,14 @@ enum class FileSystemStorageError : uint8_t {
     AccessHandleActive,
     BackendNotSupported,
     FileNotFound,
+    InvalidDataType,
     InvalidModification,
     InvalidName,
     InvalidState,
+    MissingArgument,
+    NoModificationAllowed,
     TypeMismatch,
+    QuotaError,
     Unknown
 };
 
@@ -49,14 +53,22 @@ inline WebCore::Exception convertToException(FileSystemStorageError error)
         return WebCore::Exception { WebCore::ExceptionCode::NotSupportedError, "Backend does not support this operation"_s };
     case FileSystemStorageError::FileNotFound:
         return WebCore::Exception { WebCore::ExceptionCode::NotFoundError };
+    case FileSystemStorageError::InvalidDataType:
+        return WebCore::Exception { WebCore::ExceptionCode::TypeError, "Data type is invalid"_s };
     case FileSystemStorageError::InvalidModification:
         return WebCore::Exception { WebCore::ExceptionCode::InvalidModificationError };
     case FileSystemStorageError::InvalidName:
         return WebCore::Exception { WebCore::ExceptionCode::TypeError, "Name is invalid"_s };
     case FileSystemStorageError::InvalidState:
         return WebCore::Exception { WebCore::ExceptionCode::InvalidStateError };
+    case FileSystemStorageError::MissingArgument:
+        return WebCore::Exception { WebCore::ExceptionCode::TypeError, "Required argument is missing"_s };
+    case FileSystemStorageError::NoModificationAllowed:
+        return WebCore::Exception { WebCore::ExceptionCode::NoModificationAllowedError };
     case FileSystemStorageError::TypeMismatch:
         return WebCore::Exception { WebCore::ExceptionCode::TypeMismatchError, "File type is incompatible with handle type"_s };
+    case FileSystemStorageError::QuotaError:
+        return WebCore::Exception { WebCore::ExceptionCode::QuotaExceededError, "Requested space above quota"_s };
     case FileSystemStorageError::Unknown:
         break;
     }

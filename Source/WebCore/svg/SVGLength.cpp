@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,13 +26,38 @@
 #include "config.h"
 #include "SVGLength.h"
 
+#include "Document.h"
+#include "NodeDocument.h"
 #include "SVGElement.h"
 
 namespace WebCore {
 
 ExceptionOr<float> SVGLength::valueForBindings()
 {
-    return m_value.valueForBindings(SVGLengthContext { RefPtr { contextElement() }.get() });
+    RefPtr element = contextElement();
+    // Ensure style is up-to-date for font-relative units (e.g., ch).
+    // https://www.w3.org/TR/css-values-3/#absolute-lengths
+    auto requiresStyleUpdate = [](SVGLengthType type) {
+        switch (type) {
+        case SVGLengthType::Number:
+        case SVGLengthType::Pixels:
+        case SVGLengthType::Centimeters:
+        case SVGLengthType::Millimeters:
+        case SVGLengthType::Inches:
+        case SVGLengthType::Points:
+        case SVGLengthType::Picas:
+            return false; // Absolute units don't need style update.
+        default:
+            return true; // Font-relative units need style update.
+        }
+    };
+
+    if (requiresStyleUpdate(m_value.lengthType())) {
+        if (element)
+            protect(element->document())->updateStyleIfNeeded();
+    }
+
+    return m_value.valueForBindings(SVGLengthContext { element.get() });
 }
 
 ExceptionOr<void> SVGLength::setValueForBindings(float value)
@@ -56,7 +81,14 @@ ExceptionOr<void> SVGLength::convertToSpecifiedUnits(unsigned short unitType)
     if (unitType == SVG_LENGTHTYPE_UNKNOWN || unitType > SVG_LENGTHTYPE_PC)
         return Exception { ExceptionCode::NotSupportedError };
 
-    auto result = m_value.convertToSpecifiedUnits(SVGLengthContext { RefPtr { contextElement() }.get() }, static_cast<SVGLengthType>(unitType));
+    RefPtr element = contextElement();
+
+    // Ensure style is up-to-date for font-relative units (em, ex, etc.) and percentages,
+    // which depend on computed style or viewport size for resolution.
+    if (element)
+        protect(element->document())->updateStyleIfNeeded();
+
+    auto result = m_value.convertToSpecifiedUnits(SVGLengthContext { element.get() }, static_cast<SVGLengthType>(unitType));
     if (result.hasException())
         return result;
 

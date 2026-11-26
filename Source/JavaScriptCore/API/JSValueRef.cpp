@@ -30,6 +30,7 @@
 #include "APIUtils.h"
 #include "DateInstance.h"
 #include "JSAPIWrapperObject.h"
+#include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "JSCallbackObject.h"
 #include "JSONObject.h"
@@ -238,15 +239,15 @@ bool JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClassRef jsCla
     
     if (JSObject* o = jsValue.getObject()) {
         if (o->inherits<JSGlobalProxy>())
-            o = jsCast<JSGlobalProxy*>(o)->target();
+            o = uncheckedDowncast<JSGlobalProxy>(o)->target();
 
         if (o->inherits<JSCallbackObject<JSGlobalObject>>())
-            return jsCast<JSCallbackObject<JSGlobalObject>*>(o)->inherits(jsClass);
+            return uncheckedDowncast<JSCallbackObject<JSGlobalObject>>(o)->inherits(jsClass);
         if (o->inherits<JSCallbackObject<JSNonFinalObject>>())
-            return jsCast<JSCallbackObject<JSNonFinalObject>*>(o)->inherits(jsClass);
+            return uncheckedDowncast<JSCallbackObject<JSNonFinalObject>>(o)->inherits(jsClass);
 #if JSC_OBJC_API_ENABLED
         if (o->inherits<JSCallbackObject<JSAPIWrapperObject>>())
-            return jsCast<JSCallbackObject<JSAPIWrapperObject>*>(o)->inherits(jsClass);
+            return uncheckedDowncast<JSCallbackObject<JSAPIWrapperObject>>(o)->inherits(jsClass);
 #endif
     }
     return false;
@@ -261,7 +262,7 @@ bool JSValueIsEqual(JSContextRef ctx, JSValueRef a, JSValueRef b, JSValueRef* ex
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue jsA = toJS(globalObject, a);
     JSValue jsB = toJS(globalObject, b);
@@ -297,7 +298,7 @@ bool JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value, JSObject
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue jsValue = toJS(globalObject, value);
 
@@ -321,7 +322,7 @@ JSValueRef JSValueMakeUndefined(JSContextRef ctx)
     JSLockHolder locker(globalObject);
     return toRef(globalObject, jsUndefined());
 #else
-    return toRef(jsUndefined());
+    return toRefWithoutGlobalObject(jsUndefined());
 #endif
 }
 
@@ -336,7 +337,7 @@ JSValueRef JSValueMakeNull(JSContextRef ctx)
     JSLockHolder locker(globalObject);
     return toRef(globalObject, jsNull());
 #else
-    return toRef(jsNull());
+    return toRefWithoutGlobalObject(jsNull());
 #endif
 }
 
@@ -351,7 +352,7 @@ JSValueRef JSValueMakeBoolean(JSContextRef ctx, bool value)
     JSLockHolder locker(globalObject);
     return toRef(globalObject, jsBoolean(value));
 #else
-    return toRef(jsBoolean(value));
+    return toRefWithoutGlobalObject(jsBoolean(value));
 #endif
 }
 
@@ -366,7 +367,7 @@ JSValueRef JSValueMakeNumber(JSContextRef ctx, double value)
     JSLockHolder locker(globalObject);
     return toRef(globalObject, jsNumber(purifyNaN(value)));
 #else
-    return toRef(jsNumber(purifyNaN(value)));
+    return toRefWithoutGlobalObject(jsNumber(purifyNaN(value)));
 #endif
 }
 
@@ -395,7 +396,7 @@ JSValueRef JSBigIntCreateWithDouble(JSContextRef ctx, double value, JSValueRef* 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (!isInteger(value)) {
         setException(ctx, exception, createRangeError(globalObject, "Not an integer"_s));
@@ -419,7 +420,7 @@ JSValueRef JSBigIntCreateWithUInt64(JSContextRef ctx, uint64_t integer, JSValueR
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, integer);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
@@ -438,7 +439,7 @@ JSValueRef JSBigIntCreateWithInt64(JSContextRef ctx, int64_t integer, JSValueRef
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, integer);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
@@ -457,7 +458,7 @@ JSValueRef JSBigIntCreateWithString(JSContextRef ctx, JSStringRef string, JSValu
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue result = JSBigInt::parseInt(globalObject, string->string(), JSBigInt::ErrorParseMode::ThrowExceptions);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
@@ -475,7 +476,7 @@ uint64_t JSValueToUInt64(JSContextRef ctx, JSValueRef value, JSValueRef* excepti
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue numeric = toJS(globalObject, value).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return 0;
@@ -496,7 +497,7 @@ int64_t JSValueToInt64(JSContextRef ctx, JSValueRef value, JSValueRef* exception
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue numeric = toJS(globalObject, value).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return 0;
@@ -517,7 +518,7 @@ uint32_t JSValueToUInt32(JSContextRef ctx, JSValueRef value, JSValueRef* excepti
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue numeric = toJS(globalObject, value).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return 0;
@@ -538,7 +539,7 @@ int32_t JSValueToInt32(JSContextRef ctx, JSValueRef value, JSValueRef* exception
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue numeric = toJS(globalObject, value).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return 0;
@@ -577,7 +578,7 @@ JSRelationCondition JSValueCompareUInt64(JSContextRef ctx, JSValueRef left, uint
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue leftNumeric = toJS(globalObject, left).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return kJSRelationConditionUndefined;
@@ -597,7 +598,7 @@ JSRelationCondition JSValueCompareInt64(JSContextRef ctx, JSValueRef left, int64
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue leftNumeric = toJS(globalObject, left).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return kJSRelationConditionUndefined;
@@ -617,7 +618,7 @@ JSRelationCondition JSValueCompareDouble(JSContextRef ctx, JSValueRef left, doub
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue leftNumeric = toJS(globalObject, left).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return kJSRelationConditionUndefined;
@@ -645,7 +646,7 @@ JSRelationCondition JSValueCompare(JSContextRef ctx, JSValueRef left, JSValueRef
 
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue leftValue = toJS(globalObject, left);
     JSValue rightValue = toJS(globalObject, right);
 
@@ -697,10 +698,10 @@ JSValueRef JSValueMakeFromJSONString(JSContextRef ctx, JSStringRef string)
     JSLockHolder locker(globalObject);
     String str = string->string();
     if (str.is8Bit()) {
-        LiteralParser parser(globalObject, str.span8(), StrictJSON);
+        LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, str.span8(), StrictJSON);
         return toRef(globalObject, parser.tryLiteralParse());
     }
-    LiteralParser parser(globalObject, str.span16(), StrictJSON);
+    LiteralParser<char16_t, JSONReviverMode::Disabled> parser(globalObject, str.span16(), StrictJSON);
     return toRef(globalObject, parser.tryLiteralParse());
 }
 
@@ -713,7 +714,7 @@ JSStringRef JSValueCreateJSONString(JSContextRef ctx, JSValueRef apiValue, unsig
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue value = toJS(globalObject, apiValue);
     String result = JSONStringify(globalObject, value, indent);
@@ -746,7 +747,7 @@ double JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef* exception
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue numeric = toJS(globalObject, value).toNumeric(globalObject);
     if (handleExceptionIfNeeded(scope, ctx, exception) == ExceptionStatus::DidThrow)
         return PNaN;
@@ -767,7 +768,7 @@ JSStringRef JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JSValueRef* 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue jsValue = toJS(globalObject, value);
     
@@ -786,7 +787,7 @@ JSObjectRef JSValueToObject(JSContextRef ctx, JSValueRef value, JSValueRef* exce
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue jsValue = toJS(globalObject, value);
     

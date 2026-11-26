@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Adobe Systems Incorporated. All rights reserved.
- * Copyright (C) 2016-2024 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,7 +36,7 @@
 ] interface DOMPoint : DOMPointReadOnly {
     constructor(optional unrestricted double x = 0, optional unrestricted double y = 0, optional unrestricted double z = 0, optional unrestricted double w = 1);
 
-    [NewObject] static DOMPoint fromPoint(optional DOMPointInit other);
+    [NewObject] static DOMPoint fromPoint(optional DOMPointInit other = {});
 
     inherit attribute unrestricted double x;
     inherit attribute unrestricted double y;

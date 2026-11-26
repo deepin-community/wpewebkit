@@ -28,11 +28,12 @@
 
 #include "HTMLDocument.h"
 #include "HTMLNames.h"
+#include "NodeDocument.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLArticleElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLArticleElement);
 
 Ref<HTMLArticleElement> HTMLArticleElement::create(const QualifiedName& tagName, Document& document)
 {
@@ -42,27 +43,27 @@ Ref<HTMLArticleElement> HTMLArticleElement::create(const QualifiedName& tagName,
 HTMLArticleElement::HTMLArticleElement(const QualifiedName& tagName, Document& document)
     : HTMLElement(tagName, document)
 {
-    ASSERT(tagName == HTMLNames::articleTag);
+    ASSERT(hasTagName(HTMLNames::articleTag));
 }
 
-auto HTMLArticleElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> InsertedIntoAncestorResult
+auto HTMLArticleElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> NeedsPostConnectionSteps
 {
-    auto result = HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
     if (insertionType.connectedToDocument) {
-        if (auto* newDocument = dynamicDowncast<HTMLDocument>(parentOfInsertedTree.document()))
+        if (RefPtr newDocument = dynamicDowncast<HTMLDocument>(parentOfInsertedTree.document()))
             newDocument->registerArticleElement(*this);
     }
 
     return result;
 }
 
-void HTMLArticleElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLArticleElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     if (removalType.disconnectedFromDocument)
-        oldParentOfRemovedTree.document().unregisterArticleElement(*this);
+        protect(oldParentOfRemovedTree.document())->unregisterArticleElement(*this);
 
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 }
 
 } // namespace WebCore

@@ -30,6 +30,7 @@
 #include "WebInspectorUIProxy.h"
 #include "WebPageInspectorController.h"
 #include "WebPageProxy.h"
+#include "WebsiteDataStore.h"
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -45,8 +46,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBrowserAgent);
 
 InspectorBrowserAgent::InspectorBrowserAgent(WebPageAgentContext& context)
     : InspectorAgentBase("Browser"_s, context)
-    , m_frontendDispatcher(makeUnique<Inspector::BrowserFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(Inspector::BrowserBackendDispatcher::create(context.backendDispatcher, this))
+    , m_frontendDispatcher(makeUniqueRef<Inspector::BrowserFrontendDispatcher>(context.frontendRouter.get()))
+    , m_backendDispatcher(Inspector::BrowserBackendDispatcher::create(context.backendDispatcher.get(), this))
     , m_inspectedPage(context.inspectedPage)
 {
 }
@@ -58,13 +59,13 @@ bool InspectorBrowserAgent::enabled() const
     return m_inspectedPage->inspectorController().enabledBrowserAgent() == this;
 }
 
-void InspectorBrowserAgent::didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*)
+void InspectorBrowserAgent::didCreateFrontendAndBackend()
 {
 }
 
 void InspectorBrowserAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason)
 {
-    disable();
+    std::ignore = disable();
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorBrowserAgent::enable()
@@ -97,9 +98,9 @@ void InspectorBrowserAgent::extensionsEnabled(HashMap<String, String>&& extensio
             .setExtensionId(id)
             .setName(name)
             .release();
-        extensionsPayload->addItem(WTFMove(extensionPayload));
+        extensionsPayload->addItem(WTF::move(extensionPayload));
     }
-    m_frontendDispatcher->extensionsEnabled(WTFMove(extensionsPayload));
+    m_frontendDispatcher->extensionsEnabled(WTF::move(extensionsPayload));
 }
 
 void InspectorBrowserAgent::extensionsDisabled(HashSet<String>&& extensionIDs)
@@ -109,7 +110,7 @@ void InspectorBrowserAgent::extensionsDisabled(HashSet<String>&& extensionIDs)
     auto extensionIdsPayload = JSON::ArrayOf<String>::create();
     for (auto& extensionId : extensionIDs)
         extensionIdsPayload->addItem(extensionId);
-    m_frontendDispatcher->extensionsDisabled(WTFMove(extensionIdsPayload));
+    m_frontendDispatcher->extensionsDisabled(WTF::move(extensionIdsPayload));
 }
 
 

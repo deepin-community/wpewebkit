@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,22 @@
 
 #pragma once
 
-#include "AlphaPremultiplication.h"
-#include "ControlPart.h"
-#include "DashArray.h"
-#include "DisplayListItem.h"
-#include "Filter.h"
-#include "FloatRoundedRect.h"
-#include "Font.h"
-#include "GlyphBuffer.h"
-#include "Gradient.h"
-#include "GraphicsContext.h"
-#include "Image.h"
-#include "MediaPlayerIdentifier.h"
-#include "PositionedGlyphs.h"
-#include "RenderingResourceIdentifier.h"
-#include "SharedBuffer.h"
-#include "SystemImage.h"
+#include <WebCore/AlphaPremultiplication.h>
+#include <WebCore/ControlPart.h>
+#include <WebCore/DashArray.h>
+#include <WebCore/DisplayListItem.h>
+#include <WebCore/Filter.h>
+#include <WebCore/FloatRoundedRect.h>
+#include <WebCore/Font.h>
+#include <WebCore/GlyphBuffer.h>
+#include <WebCore/Gradient.h>
+#include <WebCore/GraphicsContext.h>
+#include <WebCore/Image.h>
+#include <WebCore/NativeImage.h>
+#include <WebCore/SharedBuffer.h>
+#include <WebCore/SystemImage.h>
+#include <WebCore/TextFlags.h>
+#include <wtf/Box.h>
 #include <wtf/TypeCasts.h>
 
 namespace WTF {
@@ -49,9 +49,11 @@ class TextStream;
 
 namespace WebCore {
 
+class ControlFactory;
 struct ImagePaintingOptions;
 
 namespace DisplayList {
+class DisplayList;
 
 class Save {
 public:
@@ -117,7 +119,7 @@ public:
     {
     }
 
-    const FloatSize& amount() const { return m_size; }
+    const FloatSize& amount() const LIFETIME_BOUND { return m_size; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -135,9 +137,9 @@ public:
     {
     }
 
-    const AffineTransform& transform() const { return m_transform; }
+    const AffineTransform& transform() const LIFETIME_BOUND { return m_transform; }
 
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    WEBCORE_EXPORT void apply(GraphicsContext&, const AffineTransform& baseTransform = AffineTransform()) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
@@ -153,7 +155,7 @@ public:
     {
     }
 
-    const AffineTransform& transform() const { return m_transform; }
+    const AffineTransform& transform() const LIFETIME_BOUND { return m_transform; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -177,7 +179,7 @@ public:
     }
 
     Color color() const { return { asSRGBA(colorData()) }; }
-    const PackedColor::RGBA& colorData() const { return m_colorData; }
+    const PackedColor::RGBA& colorData() const LIFETIME_BOUND { return m_colorData; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -225,8 +227,8 @@ public:
 
     WEBCORE_EXPORT SetState(const GraphicsContextState&);
 
-    GraphicsContextState& state() { return m_state; }
-    const GraphicsContextState& state() const { return m_state; }
+    GraphicsContextState& state() LIFETIME_BOUND { return m_state; }
+    const GraphicsContextState& state() const LIFETIME_BOUND { return m_state; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -263,7 +265,7 @@ public:
     {
     }
 
-    const DashArray& dashArray() const { return m_dashArray; }
+    const DashArray& dashArray() const LIFETIME_BOUND { return m_dashArray; }
     float dashOffset() const { return m_dashOffset; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
@@ -310,14 +312,6 @@ private:
     float m_miterLimit;
 };
 
-class ClearDropShadow {
-public:
-    static constexpr char name[] = "clear-drop-shadow";
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
-};
-
 class Clip {
 public:
     static constexpr char name[] = "clip";
@@ -327,7 +321,7 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -345,7 +339,7 @@ public:
     {
     }
 
-    const FloatRoundedRect& rect() const { return m_rect; }
+    const FloatRoundedRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -363,7 +357,7 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -381,7 +375,7 @@ public:
     {
     }
 
-    const FloatRoundedRect& rect() const { return m_rect; }
+    const FloatRoundedRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -394,22 +388,20 @@ class ClipToImageBuffer {
 public:
     static constexpr char name[] = "clip-to-image-buffer";
 
-    ClipToImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect)
-        : m_imageBufferIdentifier(imageBufferIdentifier)
+    ClipToImageBuffer(Ref<ImageBuffer>&& imageBuffer, const FloatRect& destinationRect)
+        : m_imageBuffer(WTF::move(imageBuffer))
         , m_destinationRect(destinationRect)
     {
     }
 
-    RenderingResourceIdentifier imageBufferIdentifier() const { return m_imageBufferIdentifier; }
+    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
     FloatRect destinationRect() const { return m_destinationRect; }
 
-    bool isValid() const { return m_imageBufferIdentifier.isValid(); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&, ImageBuffer&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    RenderingResourceIdentifier m_imageBufferIdentifier;
+    const Ref<ImageBuffer> m_imageBuffer;
     FloatRect m_destinationRect;
 };
 
@@ -418,7 +410,7 @@ public:
     static constexpr char name[] = "clip-out-to-path";
 
     ClipOutToPath(Path&& path)
-        : m_path(WTFMove(path))
+        : m_path(WTF::move(path))
     {
     }
 
@@ -427,7 +419,7 @@ public:
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -441,7 +433,7 @@ public:
     static constexpr char name[] = "clip-path";
 
     ClipPath(Path&& path, WindRule windRule)
-        : m_path(WTFMove(path))
+        : m_path(WTF::move(path))
         , m_windRule(windRule)
     {
     }
@@ -452,7 +444,7 @@ public:
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
     WindRule windRule() const { return m_windRule; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
@@ -479,109 +471,153 @@ class DrawFilteredImageBuffer {
 public:
     static constexpr char name[] = "draw-filtered-image-buffer";
 
-    WEBCORE_EXPORT DrawFilteredImageBuffer(std::optional<RenderingResourceIdentifier> sourceImageIdentifier, const FloatRect& sourceImageRect, Filter&);
+    DrawFilteredImageBuffer(RefPtr<ImageBuffer>&& sourceImage, const FloatRect& sourceImageRect, Filter& filter)
+        : m_sourceImage(WTF::move(sourceImage))
+        , m_sourceImageRect(sourceImageRect)
+        , m_filter(filter)
+    {
+    }
 
-    std::optional<RenderingResourceIdentifier> sourceImageIdentifier() const { return m_sourceImageIdentifier; }
+    ImageBuffer* sourceImage() const { return m_sourceImage.get(); }
     FloatRect sourceImageRect() const { return m_sourceImageRect; }
-    Ref<Filter> filter() const { return m_filter; }
+    Filter& filter() const { return m_filter; }
 
-    NO_RETURN_DUE_TO_ASSERT void apply(GraphicsContext&) const;
-    WEBCORE_EXPORT void apply(GraphicsContext&, ImageBuffer* sourceImage, FilterResults&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    std::optional<RenderingResourceIdentifier> m_sourceImageIdentifier;
+    const RefPtr<ImageBuffer> m_sourceImage;
     FloatRect m_sourceImageRect;
-    Ref<Filter> m_filter;
+    const Ref<Filter> m_filter;
 };
 
 class DrawGlyphs {
 public:
     static constexpr char name[] = "draw-glyphs";
 
-    RenderingResourceIdentifier fontIdentifier() const { return m_fontIdentifier; }
-    PositionedGlyphs positionedGlyphs() const { return m_positionedGlyphs; }
-    const FloatPoint& localAnchor() const { return m_positionedGlyphs.localAnchor; }
-    FloatPoint anchorPoint() const { return m_positionedGlyphs.localAnchor; }
-    FontSmoothingMode fontSmoothingMode() const { return m_positionedGlyphs.smoothingMode; }
-    const Vector<GlyphBufferGlyph>& glyphs() const { return m_positionedGlyphs.glyphs; }
-
-    WEBCORE_EXPORT DrawGlyphs(const Font&, const GlyphBufferGlyph*, const GlyphBufferAdvance*, unsigned count, const FloatPoint& localAnchor, FontSmoothingMode);
-    WEBCORE_EXPORT DrawGlyphs(RenderingResourceIdentifier, PositionedGlyphs&&);
-
-    WEBCORE_EXPORT void apply(GraphicsContext&, const Font&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    RenderingResourceIdentifier m_fontIdentifier;
-    PositionedGlyphs m_positionedGlyphs;
-};
-
-class DrawDecomposedGlyphs {
-public:
-    static constexpr char name[] = "draw-decomposed-glyphs";
-
-    DrawDecomposedGlyphs(RenderingResourceIdentifier fontIdentifier, RenderingResourceIdentifier decomposedGlyphsIdentifier)
-        : m_fontIdentifier(fontIdentifier)
-        , m_decomposedGlyphsIdentifier(decomposedGlyphsIdentifier)
+    DrawGlyphs(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_font(WTF::move(font))
+        , m_glyphs(WTF::move(glyphs))
+        , m_advances(WTF::move(advances))
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
     {
     }
 
-    RenderingResourceIdentifier fontIdentifier() const { return m_fontIdentifier; }
-    RenderingResourceIdentifier decomposedGlyphsIdentifier() const { return m_decomposedGlyphsIdentifier; }
+    Ref<const Font> font() const { return m_font; }
+    const Vector<GlyphBufferGlyph>& glyphs() const LIFETIME_BOUND { return m_glyphs; }
+    const Vector<GlyphBufferAdvance>& advances() const LIFETIME_BOUND { return m_advances; }
+    size_t length() const { return m_glyphs.size(); }
 
-    WEBCORE_EXPORT void apply(GraphicsContext&, const Font&, const DecomposedGlyphs&) const;
+    FloatPoint localAnchor() const { return m_localAnchor; }
+    FontSmoothingMode fontSmoothingMode() const { return m_fontSmoothingMode; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    RenderingResourceIdentifier m_fontIdentifier;
-    RenderingResourceIdentifier m_decomposedGlyphsIdentifier;
+    Ref<const Font> m_font;
+    Vector<GlyphBufferGlyph> m_glyphs;
+    Vector<GlyphBufferAdvance> m_advances;
+    FloatPoint m_localAnchor;
+    FontSmoothingMode m_fontSmoothingMode;
 };
 
-class DrawDisplayListItems {
+#if USE(SKIA)
+class DrawTextBlob {
 public:
-    static constexpr char name[] = "draw-display-list-items";
+    static constexpr char name[] = "draw-text-blob";
 
-    DrawDisplayListItems(const Vector<Item>&, const FloatPoint& destination);
-    WEBCORE_EXPORT DrawDisplayListItems(Vector<Item>&&, const FloatPoint& destination);
+    DrawTextBlob(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_textBlob(font->buildTextBlob(glyphs, advances, smoothingMode))
+        , m_enableAntialiasing(font->enableAntialiasing(smoothingMode))
+        , m_isVertical(font->platformData().orientation() == FontOrientation::Vertical)
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
+    {
+    }
 
-    const Vector<Item>& items() const { return m_items; }
-    FloatPoint destination() const { return m_destination; }
+    size_t length() const
+    {
+        if (!m_textBlob)
+            return 0;
 
-    WEBCORE_EXPORT void apply(GraphicsContext&, const ResourceHeap&) const;
-    NO_RETURN_DUE_TO_ASSERT void apply(GraphicsContext&) const;
+        size_t glyphsCount = 0;
+        auto iter = SkTextBlob::Iter(*m_textBlob);
+        SkTextBlob::Iter::Run run;
+        while (iter.next(&run))
+            glyphsCount += run.fGlyphCount;
+        return glyphsCount;
+    }
+
+    FloatPoint localAnchor() const { return m_localAnchor; }
+    FontSmoothingMode fontSmoothingMode() const { return m_fontSmoothingMode; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Vector<Item> m_items;
-    FloatPoint m_destination;
+    sk_sp<SkTextBlob> m_textBlob;
+    bool m_enableAntialiasing { false };
+    bool m_isVertical { false };
+    FloatPoint m_localAnchor;
+    FontSmoothingMode m_fontSmoothingMode;
+};
+#endif // USE(SKIA)
+
+class DrawDisplayList {
+public:
+    static constexpr char name[] = "draw-display-list";
+
+    DrawDisplayList(Ref<const DisplayList>&&);
+    ~DrawDisplayList();
+
+    Ref<const DisplayList> NODELETE displayList() const;
+
+    void apply(GraphicsContext&, ControlFactory&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    Ref<const DisplayList> m_displayList;
+};
+
+class DrawPlaceholder {
+public:
+    static constexpr char name[] = "draw-placeholder";
+
+    DrawPlaceholder(Function<void(GraphicsContext&)>&&);
+    ~DrawPlaceholder();
+
+    void apply(GraphicsContext&) const;
+    void NODELETE dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    using FunctionHolder = Box<Function<void(GraphicsContext&)>>;
+    FunctionHolder m_function;
 };
 
 class DrawImageBuffer {
 public:
     static constexpr char name[] = "draw-image-buffer";
 
-    DrawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
-        : m_imageBufferIdentifier(imageBufferIdentifier)
+    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+        : m_imageBuffer(imageBuffer)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
         , m_options(options)
     {
     }
 
-    RenderingResourceIdentifier imageBufferIdentifier() const { return m_imageBufferIdentifier; }
+    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
     FloatRect source() const { return m_srcRect; }
     FloatRect destinationRect() const { return m_destinationRect; }
     ImagePaintingOptions options() const { return m_options; }
 
-    // FIXME: We might want to validate ImagePaintingOptions.
-    bool isValid() const { return m_imageBufferIdentifier.isValid(); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&, ImageBuffer&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    RenderingResourceIdentifier m_imageBufferIdentifier;
+    const Ref<ImageBuffer> m_imageBuffer;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
     ImagePaintingOptions m_options;
@@ -591,27 +627,24 @@ class DrawNativeImage {
 public:
     static constexpr char name[] = "draw-native-image";
 
-    DrawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
-        : m_imageIdentifier(imageIdentifier)
+    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+        : m_image(image)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
         , m_options(options)
     {
     }
 
-    RenderingResourceIdentifier imageIdentifier() const { return m_imageIdentifier; }
-    const FloatRect& destinationRect() const { return m_destinationRect; }
-    const FloatRect& source() const { return m_srcRect; }
+    const NativeImage& nativeImage() const { return m_image; }
+    const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
+    const FloatRect& source() const LIFETIME_BOUND { return m_srcRect; }
     ImagePaintingOptions options() const { return m_options; }
 
-    // FIXME: We might want to validate ImagePaintingOptions.
-    bool isValid() const { return m_imageIdentifier.isValid(); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&, NativeImage&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    RenderingResourceIdentifier m_imageIdentifier;
+    const Ref<const NativeImage> m_image;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
     ImagePaintingOptions m_options;
@@ -627,39 +660,79 @@ public:
     {
     }
 
-    const Ref<SystemImage>& systemImage() const { return m_systemImage; }
-    const FloatRect& destinationRect() const { return m_destinationRect; }
+    const SystemImage& systemImage() const { return m_systemImage; }
+    const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
 
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<SystemImage> m_systemImage;
+    const Ref<SystemImage> m_systemImage;
     FloatRect m_destinationRect;
 };
 
-class DrawPattern {
+class DrawPatternNativeImage {
 public:
-    static constexpr char name[] = "draw-pattern";
+    static constexpr char name[] = "draw-pattern-nativeimage";
 
-    WEBCORE_EXPORT DrawPattern(RenderingResourceIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { });
-
-    RenderingResourceIdentifier imageIdentifier() const { return m_imageIdentifier; }
+    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+        : m_image(image)
+        , m_destination(destRect)
+        , m_tileRect(tileRect)
+        , m_patternTransform(patternTransform)
+        , m_phase(phase)
+        , m_spacing(spacing)
+        , m_options(options)
+    {
+    }
+    const NativeImage& nativeImage() const { return m_image; }
     FloatRect destRect() const { return m_destination; }
     FloatRect tileRect() const { return m_tileRect; }
-    const AffineTransform& patternTransform() const { return m_patternTransform; }
+    const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
     FloatPoint phase() const { return m_phase; }
     FloatSize spacing() const { return m_spacing; }
     ImagePaintingOptions options() const { return m_options; }
 
-    // FIXME: We might want to validate ImagePaintingOptions.
-    bool isValid() const { return m_imageIdentifier.isValid(); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&, SourceImage&) const;
+    void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    RenderingResourceIdentifier m_imageIdentifier;
+    const Ref<const NativeImage> m_image;
+    FloatRect m_destination;
+    FloatRect m_tileRect;
+    AffineTransform m_patternTransform;
+    FloatPoint m_phase;
+    FloatSize m_spacing;
+    ImagePaintingOptions m_options;
+};
+
+class DrawPatternImageBuffer {
+public:
+    static constexpr char name[] = "draw-pattern-imagebuffer";
+
+    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+        : m_imageBuffer(image)
+        , m_destination(destRect)
+        , m_tileRect(tileRect)
+        , m_patternTransform(patternTransform)
+        , m_phase(phase)
+        , m_spacing(spacing)
+        , m_options(options)
+    {
+    }
+    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
+    FloatRect destRect() const { return m_destination; }
+    FloatRect tileRect() const { return m_tileRect; }
+    const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
+    FloatPoint phase() const { return m_phase; }
+    FloatSize spacing() const { return m_spacing; }
+    ImagePaintingOptions options() const { return m_options; }
+
+    void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    const Ref<ImageBuffer> m_imageBuffer;
     FloatRect m_destination;
     FloatRect m_tileRect;
     AffineTransform m_patternTransform;
@@ -758,14 +831,11 @@ class DrawLinesForText {
 public:
     static constexpr char name[] = "draw-lines-for-text";
 
-    WEBCORE_EXPORT DrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, const DashArray& widths, float thickness, bool printing, bool doubleLines, StrokeStyle);
+    WEBCORE_EXPORT DrawLinesForText(const FloatPoint&, std::span<const FloatSegment> lineSegments, float thickness, bool printing, bool doubleLines, StrokeStyle);
 
-    void setBlockLocation(const FloatPoint& blockLocation) { m_blockLocation = blockLocation; }
-    const FloatPoint& blockLocation() const { return m_blockLocation; }
-    const FloatSize& localAnchor() const { return m_localAnchor; }
-    FloatPoint point() const { return m_blockLocation + m_localAnchor; }
+    FloatPoint point() const { return m_point; }
     float thickness() const { return m_thickness; }
-    const DashArray& widths() const { return m_widths; }
+    const Vector<FloatSegment>& lineSegments() const LIFETIME_BOUND { return m_lineSegments; }
     bool isPrinting() const { return m_printing; }
     bool doubleLines() const { return m_doubleLines; }
     StrokeStyle style() const { return m_style; }
@@ -774,9 +844,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    FloatPoint m_blockLocation;
-    FloatSize m_localAnchor;
-    DashArray m_widths;
+    FloatPoint m_point;
+    Vector<FloatSegment> m_lineSegments;
     float m_thickness;
     bool m_printing;
     bool m_doubleLines;
@@ -832,11 +901,11 @@ public:
     }
 
     DrawPath(Path&& path)
-        : m_path(WTFMove(path))
+        : m_path(WTF::move(path))
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -849,23 +918,26 @@ class DrawFocusRingPath {
 public:
     static constexpr char name[] = "draw-focus-ring-path";
 
-    DrawFocusRingPath(const Path& path, float outlineWidth, const Color& color)
+    DrawFocusRingPath(const Path& path, float outlineWidth, const Color& color, float zoomFactor)
         : m_path(path)
         , m_outlineWidth(outlineWidth)
         , m_color(color)
+        , m_zoomFactor(zoomFactor)
     {
     }
 
-    DrawFocusRingPath(Path&& path, float outlineWidth, const Color& color)
-        : m_path(WTFMove(path))
+    DrawFocusRingPath(Path&& path, float outlineWidth, const Color& color, float zoomFactor)
+        : m_path(WTF::move(path))
         , m_outlineWidth(outlineWidth)
         , m_color(color)
+        , m_zoomFactor(zoomFactor)
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
     float outlineWidth() const { return m_outlineWidth; }
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
+    float zoomFactor() const { return m_zoomFactor; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -874,41 +946,42 @@ private:
     Path m_path;
     float m_outlineWidth;
     Color m_color;
+    float m_zoomFactor;
 };
 
 class DrawFocusRingRects {
 public:
     static constexpr char name[] = "draw-focus-ring-rects";
 
-    DrawFocusRingRects(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color)
+    DrawFocusRingRects(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float zoomFactor)
         : m_rects(rects)
-        , m_outlineOffset(outlineOffset)
         , m_outlineWidth(outlineWidth)
         , m_color(color)
+        , m_zoomFactor(zoomFactor)
     {
     }
 
-    DrawFocusRingRects(Vector<FloatRect>&& rects, float outlineOffset, float outlineWidth, Color color)
-        : m_rects(WTFMove(rects))
-        , m_outlineOffset(outlineOffset)
+    DrawFocusRingRects(Vector<FloatRect>&& rects, float outlineWidth, Color color, float zoomFactor)
+        : m_rects(WTF::move(rects))
         , m_outlineWidth(outlineWidth)
         , m_color(color)
+        , m_zoomFactor(zoomFactor)
     {
     }
 
-    const Vector<FloatRect>& rects() const { return m_rects; }
-    float outlineOffset() const { return m_outlineOffset; }
+    const Vector<FloatRect>& rects() const LIFETIME_BOUND { return m_rects; }
     float outlineWidth() const { return m_outlineWidth; }
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
+    float zoomFactor() const { return m_zoomFactor; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
     Vector<FloatRect> m_rects;
-    float m_outlineOffset;
     float m_outlineWidth;
     Color m_color;
+    float m_zoomFactor;
 };
 
 class FillRect {
@@ -921,7 +994,7 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
     GraphicsContext::RequiresClipToRect requiresClipToRect() const { return m_requiresClipToRect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
@@ -943,7 +1016,7 @@ public:
     }
 
     FloatRect rect() const { return m_rect; }
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -960,15 +1033,15 @@ public:
     WEBCORE_EXPORT FillRectWithGradient(const FloatRect&, Gradient&);
     WEBCORE_EXPORT FillRectWithGradient(FloatRect&&, Ref<Gradient>&&);
 
-    const FloatRect& rect() const { return m_rect; }
-    const Ref<Gradient>& gradient() const { return m_gradient; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
+    const Gradient& gradient() const { return m_gradient; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
     FloatRect m_rect;
-    Ref<Gradient> m_gradient;
+    const Ref<Gradient> m_gradient;
 };
 
 class FillRectWithGradientAndSpaceTransform {
@@ -978,9 +1051,9 @@ public:
     WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(const FloatRect&, Gradient&, const AffineTransform&, GraphicsContext::RequiresClipToRect);
     WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(FloatRect&&, Ref<Gradient>&&, AffineTransform&&, GraphicsContext::RequiresClipToRect);
 
-    const FloatRect& rect() const { return m_rect; }
-    const Ref<Gradient>& gradient() const { return m_gradient; }
-    const AffineTransform& gradientSpaceTransform() const { return m_gradientSpaceTransform; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
+    const Gradient& gradient() const { return m_gradient; }
+    const AffineTransform& gradientSpaceTransform() const LIFETIME_BOUND { return m_gradientSpaceTransform; }
     GraphicsContext::RequiresClipToRect requiresClipToRect() const { return m_requiresClipToRect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
@@ -988,7 +1061,7 @@ public:
 
 private:
     FloatRect m_rect;
-    Ref<Gradient> m_gradient;
+    const Ref<Gradient> m_gradient;
     AffineTransform m_gradientSpaceTransform;
     GraphicsContext::RequiresClipToRect m_requiresClipToRect;
 };
@@ -1006,7 +1079,7 @@ public:
     }
 
     FloatRect rect() const { return m_rect; }
-    const Color& color() const { return m_color; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
     CompositeOperator compositeOperator() const { return m_op; }
     BlendMode blendMode() const { return m_blendMode; }
 
@@ -1031,8 +1104,8 @@ public:
     {
     }
 
-    const FloatRoundedRect& roundedRect() const { return m_rect; }
-    const Color& color() const { return m_color; }
+    const FloatRoundedRect& roundedRect() const LIFETIME_BOUND { return m_rect; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
     BlendMode blendMode() const { return m_blendMode; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
@@ -1055,9 +1128,9 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
-    const FloatRoundedRect& roundedHoleRect() const { return m_roundedHoleRect; }
-    const Color& color() const { return m_color; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
+    const FloatRoundedRect& roundedHoleRect() const LIFETIME_BOUND { return m_roundedHoleRect; }
+    const Color& color() const LIFETIME_BOUND { return m_color; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -1068,130 +1141,12 @@ private:
     Color m_color;
 };
 
-#if ENABLE(INLINE_PATH_DATA)
-
-class FillLine {
-public:
-    static constexpr char name[] = "fill-line";
-
-    FillLine(const PathDataLine& line)
-        : m_line(line)
-    {
-    }
-
-    const PathDataLine& line() const { return m_line; };
-    Path path() const { return Path({ PathSegment(m_line) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathDataLine m_line;
-};
-
-class FillArc {
-public:
-    static constexpr char name[] = "fill-arc";
-
-    FillArc(const PathArc& arc)
-        : m_arc(arc)
-    {
-    }
-
-    const PathArc& arc() const { return m_arc; };
-    Path path() const { return Path({ PathSegment(m_arc) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathArc m_arc;
-};
-
-class FillClosedArc {
-public:
-    static constexpr char name[] = "fill-closed-arc";
-
-    FillClosedArc(const PathClosedArc& closedArc)
-        : m_closedArc(closedArc)
-    {
-    }
-
-    const PathClosedArc& closedArc() const { return m_closedArc; };
-    Path path() const { return Path({ PathSegment(m_closedArc) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathClosedArc m_closedArc;
-};
-
-class FillQuadCurve {
-public:
-    static constexpr char name[] = "fill-quad-curve";
-
-    FillQuadCurve(const PathDataQuadCurve& quadCurve)
-        : m_quadCurve(quadCurve)
-    {
-    }
-
-    const PathDataQuadCurve& quadCurve() const { return m_quadCurve; };
-    Path path() const { return Path({ PathSegment(m_quadCurve) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathDataQuadCurve m_quadCurve;
-};
-
-class FillBezierCurve {
-public:
-    static constexpr char name[] = "fill-bezier-curve";
-
-    FillBezierCurve(const PathDataBezierCurve& bezierCurve)
-        : m_bezierCurve(bezierCurve)
-    {
-    }
-
-    const PathDataBezierCurve& bezierCurve() const { return m_bezierCurve; };
-    Path path() const { return Path({ PathSegment(m_bezierCurve) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathDataBezierCurve m_bezierCurve;
-};
-
-#endif // ENABLE(INLINE_PATH_DATA)
-
-class FillPathSegment {
-public:
-    static constexpr char name[] = "fill-path-segment";
-
-    FillPathSegment(const PathSegment& segment)
-        : m_segment(segment)
-    {
-    }
-
-    const PathSegment& segment() const { return m_segment; };
-    Path path() const { return Path({ m_segment }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathSegment m_segment;
-};
-
 class FillPath {
 public:
     static constexpr char name[] = "fill-path";
 
     FillPath(Path&& path)
-        : m_path(WTFMove(path))
+        : m_path(WTF::move(path))
     {
     }
 
@@ -1200,7 +1155,7 @@ public:
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -1227,27 +1182,6 @@ private:
     FloatRect m_rect;
 };
 
-#if ENABLE(VIDEO)
-class PaintFrameForMedia {
-public:
-    static constexpr char name[] = "paint-frame-for-media";
-
-    WEBCORE_EXPORT PaintFrameForMedia(MediaPlayerIdentifier, const FloatRect& destination);
-
-    MediaPlayerIdentifier identifier() const { return m_identifier; }
-    const FloatRect& destination() const { return m_destination; }
-
-    bool isValid() const { return m_identifier.isValid(); }
-
-    NO_RETURN_DUE_TO_ASSERT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    MediaPlayerIdentifier m_identifier;
-    FloatRect m_destination;
-};
-#endif
-
 class StrokeRect {
 public:
     static constexpr char name[] = "stroke-rect";
@@ -1269,139 +1203,12 @@ private:
     float m_lineWidth;
 };
 
-class StrokeLine {
-public:
-    static constexpr char name[] = "stroke-line";
-
-#if ENABLE(INLINE_PATH_DATA)
-    StrokeLine(const PathDataLine& line)
-        : m_start(line.start)
-        , m_end(line.end)
-    {
-    }
-#endif
-    StrokeLine(const FloatPoint& start, const FloatPoint& end)
-        : m_start(start)
-        , m_end(end)
-    {
-    }
-
-    FloatPoint start() const { return m_start; }
-    FloatPoint end() const { return m_end; }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    FloatPoint m_start;
-    FloatPoint m_end;
-};
-
-#if ENABLE(INLINE_PATH_DATA)
-
-class StrokeArc {
-public:
-    static constexpr char name[] = "stroke-arc";
-
-    StrokeArc(const PathArc& arc)
-        : m_arc(arc)
-    {
-    }
-
-    const PathArc& arc() const { return m_arc; }
-    Path path() const { return Path({ PathSegment(m_arc) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathArc m_arc;
-};
-
-class StrokeClosedArc {
-public:
-    static constexpr char name[] = "stroke-closed-arc";
-
-    StrokeClosedArc(const PathClosedArc& closedArc)
-        : m_closedArc(closedArc)
-    {
-    }
-
-    const PathClosedArc& closedArc() const { return m_closedArc; }
-    Path path() const { return Path({ PathSegment(m_closedArc) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathClosedArc m_closedArc;
-};
-
-class StrokeQuadCurve {
-public:
-    static constexpr char name[] = "stroke-quad-curve";
-
-    StrokeQuadCurve(const PathDataQuadCurve& quadCurve)
-        : m_quadCurve(quadCurve)
-    {
-    }
-
-    const PathDataQuadCurve& quadCurve() const { return m_quadCurve; }
-    Path path() const { return Path({ PathSegment(m_quadCurve) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathDataQuadCurve m_quadCurve;
-};
-
-class StrokeBezierCurve {
-public:
-    static constexpr char name[] = "stroke-bezier-curve";
-
-    StrokeBezierCurve(const PathDataBezierCurve& bezierCurve)
-        : m_bezierCurve(bezierCurve)
-    {
-    }
-
-    const PathDataBezierCurve& bezierCurve() const { return m_bezierCurve; }
-    Path path() const { return Path({ PathSegment(m_bezierCurve) }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathDataBezierCurve m_bezierCurve;
-};
-
-#endif // ENABLE(INLINE_PATH_DATA)
-
-class StrokePathSegment {
-public:
-    static constexpr char name[] = "stroke-path-segment";
-
-    StrokePathSegment(const PathSegment& segment)
-        : m_segment(segment)
-    {
-    }
-
-    const PathSegment& segment() const { return m_segment; }
-    Path path() const { return Path({ m_segment }); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const;
-
-private:
-    PathSegment m_segment;
-};
-
 class StrokePath {
 public:
     static constexpr char name[] = "stroke-path";
 
     StrokePath(Path&& path)
-        : m_path(WTFMove(path))
+        : m_path(WTF::move(path))
     {
     }
 
@@ -1410,7 +1217,7 @@ public:
     {
     }
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -1428,7 +1235,7 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -1446,7 +1253,7 @@ public:
     {
     }
 
-    const FloatRect& rect() const { return m_rect; }
+    const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -1461,17 +1268,17 @@ public:
 
     WEBCORE_EXPORT DrawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&);
 
-    Ref<ControlPart> part() const { return m_part; }
+    ControlPart& part() const { return m_part; }
     FloatRoundedRect borderRect() const { return m_borderRect; }
     float deviceScaleFactor() const { return m_deviceScaleFactor; }
-    const ControlStyle& style() const { return m_style; }
+    const ControlStyle& style() const LIFETIME_BOUND { return m_style; }
     StyleAppearance type() const { return m_part->type(); }
 
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    WEBCORE_EXPORT void apply(GraphicsContext&, ControlFactory&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<ControlPart> m_part;
+    const Ref<ControlPart> m_part;
     FloatRoundedRect m_borderRect;
     float m_deviceScaleFactor;
     ControlStyle m_style;
@@ -1513,6 +1320,53 @@ public:
 
 private:
     float m_scaleFactor { 1 };
+};
+
+class BeginPage {
+public:
+    static constexpr char name[] = "begin-page";
+
+    BeginPage(const FloatRect& pageRect)
+        : m_pageRect(pageRect)
+    {
+    }
+
+    const FloatRect& pageRect() const LIFETIME_BOUND { return m_pageRect; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    FloatRect m_pageRect;
+};
+
+class EndPage {
+public:
+    static constexpr char name[] = "end-page";
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
+};
+
+class SetURLForRect {
+public:
+    static constexpr char name[] = "set-URL-for-rect";
+
+    SetURLForRect(const URL& link, const FloatRect& destRect)
+        : m_link(link)
+        , m_destRect(destRect)
+    {
+    }
+
+    const URL& link() const LIFETIME_BOUND { return m_link; }
+    const FloatRect& destRect() const LIFETIME_BOUND { return m_destRect; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    URL m_link;
+    FloatRect m_destRect;
 };
 
 } // namespace DisplayList

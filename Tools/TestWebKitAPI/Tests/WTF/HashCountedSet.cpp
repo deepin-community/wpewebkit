@@ -26,9 +26,10 @@
 
 #include "config.h"
 
-#include "Counters.h"
+#include "Helpers/Counters.h"
 #include "MoveOnly.h"
 #include "RefLogger.h"
+#include <ranges>
 #include <string>
 #include <wtf/HashCountedSet.h>
 #include <wtf/text/StringHash.h>
@@ -71,7 +72,7 @@ TEST(WTF_HashCountedSet, DoubleHashCollisions)
     // The "clobber" key here is one that ends up stealing the bucket that the -0 key
     // originally wants to be in. This makes the 0 and -0 keys collide and the test then
     // fails unless the FloatHash::equals() implementation can distinguish them.
-    const double clobberKey = 6;
+    const double clobberKey = 7;
     const double zeroKey = 0;
     const double negativeZeroKey = -zeroKey;
 
@@ -113,7 +114,7 @@ TEST(WTF_HashCountedSet, DoubleHashCollisionsInitialCount)
     // The "clobber" key here is one that ends up stealing the bucket that the -0 key
     // originally wants to be in. This makes the 0 and -0 keys collide and the test then
     // fails unless the FloatHash::equals() implementation can distinguish them.
-    const double clobberKey = 6;
+    const double clobberKey = 7;
     const double zeroKey = 0;
     const double negativeZeroKey = -zeroKey;
 
@@ -149,7 +150,7 @@ TEST(WTF_HashCountedSet, MoveOnlyKeys)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i + 1);
-        moveOnlyKeys.add(WTFMove(moveOnly));
+        moveOnlyKeys.add(WTF::move(moveOnly));
     }
 
     for (size_t i = 0; i < 100; ++i) {
@@ -176,7 +177,7 @@ TEST(WTF_HashCountedSet, MoveOnlyKeysInitialCount)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i + 1);
-        moveOnlyKeys.add(WTFMove(moveOnly), i + 1);
+        moveOnlyKeys.add(WTF::move(moveOnly), i + 1);
     }
 
     for (size_t i = 0; i < 100; ++i) {
@@ -242,7 +243,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey)
     HashCountedSet<std::unique_ptr<ConstructorDestructorCounter>> hashCountedSet;
 
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -260,7 +261,7 @@ TEST(WTF_HashCountedSet, UniquePtrKeyInitialCount)
     HashCountedSet<std::unique_ptr<ConstructorDestructorCounter>> hashCountedSet;
 
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
-    hashCountedSet.add(WTFMove(uniquePtr), 12);
+    hashCountedSet.add(WTF::move(uniquePtr), 12);
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -279,7 +280,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey_CustomDeleter)
     HashCountedSet<std::unique_ptr<ConstructorDestructorCounter, DeleterCounter<ConstructorDestructorCounter>>> hashCountedSet;
 
     std::unique_ptr<ConstructorDestructorCounter, DeleterCounter<ConstructorDestructorCounter>> uniquePtr(new ConstructorDestructorCounter(), DeleterCounter<ConstructorDestructorCounter>());
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -300,7 +301,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey_FindUsingRawPointer)
 
     auto uniquePtr = makeUniqueWithoutFastMallocCheck<int>(5);
     int* ptr = uniquePtr.get();
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     auto it = hashCountedSet.find(ptr);
     ASSERT_TRUE(it != hashCountedSet.end());
@@ -314,7 +315,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey_ContainsUsingRawPointer)
 
     auto uniquePtr = makeUniqueWithoutFastMallocCheck<int>(5);
     int* ptr = uniquePtr.get();
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(true, hashCountedSet.contains(ptr));
 }
@@ -325,7 +326,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey_GetUsingRawPointer)
 
     auto uniquePtr = makeUniqueWithoutFastMallocCheck<int>(5);
     int* ptr = uniquePtr.get();
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     int value = hashCountedSet.count(ptr);
     EXPECT_EQ(1, value);
@@ -339,7 +340,7 @@ TEST(WTF_HashCountedSet, UniquePtrKey_RemoveUsingRawPointer)
 
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
     ConstructorDestructorCounter* ptr = uniquePtr.get();
-    hashCountedSet.add(WTFMove(uniquePtr));
+    hashCountedSet.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -377,7 +378,7 @@ TEST(WTF_HashCountedSet, RefPtrKey_AddUsingRelease)
         HashCountedSet<RefPtr<RefLogger>> hashCountedSet;
 
         RefPtr<RefLogger> ptr(&a);
-        hashCountedSet.add(WTFMove(ptr));
+        hashCountedSet.add(WTF::move(ptr));
     }
 
     EXPECT_STREQ("ref(a) deref(a) ", takeLogStr().c_str());
@@ -391,7 +392,7 @@ TEST(WTF_HashCountedSet, RefPtrKey_AddUsingMove)
         HashCountedSet<RefPtr<RefLogger>> hashCountedSet;
 
         RefPtr<RefLogger> ptr(&a);
-        hashCountedSet.add(WTFMove(ptr));
+        hashCountedSet.add(WTF::move(ptr));
     }
 
     EXPECT_STREQ("ref(a) deref(a) ", takeLogStr().c_str());
@@ -457,7 +458,7 @@ TEST(WTF_HashCountedSet, RefPtrKey_AddUsingReleaseKeyAlreadyPresent)
 
         {
             RefPtr<RefLogger> ptr2(&a);
-            auto addResult = hashCountedSet.add(WTFMove(ptr2));
+            auto addResult = hashCountedSet.add(WTF::move(ptr2));
             EXPECT_FALSE(addResult.isNewEntry);
         }
 
@@ -483,7 +484,7 @@ TEST(WTF_HashCountedSet, RefPtrKey_AddUsingMoveKeyAlreadyPresent)
 
         {
             RefPtr<RefLogger> ptr2(&a);
-            auto addResult = hashCountedSet.add(WTFMove(ptr2));
+            auto addResult = hashCountedSet.add(WTF::move(ptr2));
             EXPECT_FALSE(addResult.isNewEntry);
         }
 
@@ -500,7 +501,7 @@ TEST(WTF_HashCountedSet, Values)
     auto vector = copyToVector(set.values());
     EXPECT_EQ(3U, vector.size());
 
-    std::sort(vector.begin(), vector.end());
+    std::ranges::sort(vector);
     EXPECT_EQ(1, vector[0]);
     EXPECT_EQ(2, vector[1]);
     EXPECT_EQ(3, vector[2]);

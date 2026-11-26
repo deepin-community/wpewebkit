@@ -27,33 +27,38 @@
 
 #if USE(LIBWEBRTC)
 
-#include "LibWebRTCMacros.h"
-#include "ScriptExecutionContextIdentifier.h"
-#include "WebRTCProvider.h"
+#include <WebCore/LibWebRTCMacros.h>
+#include <WebCore/LibWebRTCRefWrappers.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/WebRTCProvider.h>
+#include <wtf/Compiler.h>
+#include <wtf/TZoneMalloc.h>
 
-ALLOW_UNUSED_PARAMETERS_BEGIN
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-ALLOW_COMMA_BEGIN
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 
+// FIXME: Modularize WebRTC
+IGNORE_CLANG_WARNINGS_BEGIN("non-modular-include-in-module")
+
+// See Bug 274508: Disable thread-safety-reference-return warnings in libwebrtc
+IGNORE_CLANG_WARNINGS_BEGIN("thread-safety-reference-return")
+IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 #include <webrtc/api/peer_connection_interface.h>
+IGNORE_CLANG_WARNINGS_END
+IGNORE_CLANG_WARNINGS_END
 #include <webrtc/api/scoped_refptr.h>
 #include <webrtc/api/video_codecs/video_decoder_factory.h>
 #include <webrtc/api/video_codecs/video_encoder_factory.h>
 
-ALLOW_DEPRECATED_DECLARATIONS_END
-ALLOW_UNUSED_PARAMETERS_END
-ALLOW_COMMA_END
+IGNORE_CLANG_WARNINGS_END
 
-namespace rtc {
-class NetworkManager;
-class PacketSocketFactory;
-class Thread;
-class RTCCertificateGenerator;
-}
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace webrtc {
 class AsyncDnsResolverFactory;
-class PeerConnectionFactoryInterface;
+class NetworkManager;
+class PacketSocketFactory;
+class RTCCertificateGenerator;
+class Thread;
 }
 
 namespace WebCore {
@@ -63,14 +68,13 @@ class RegistrableDomain;
 struct PeerConnectionFactoryAndThreads;
 
 class WEBCORE_EXPORT LibWebRTCProvider : public WebRTCProvider {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(LibWebRTCProvider, WEBCORE_EXPORT);
 public:
     static UniqueRef<LibWebRTCProvider> create();
 
     virtual ~LibWebRTCProvider();
 
     static void registerWebKitVP9Decoder();
-    static void registerWebKitVP8Decoder();
 
     static void setRTCLogging(WTFLogLevel);
 
@@ -81,49 +85,56 @@ public:
     std::optional<RTCRtpCapabilities> senderCapabilities(const String& kind) final;
     void clearFactory() final;
 
-    virtual rtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(ScriptExecutionContextIdentifier, webrtc::PeerConnectionObserver&, rtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&);
+    virtual webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(ScriptExecutionContextIdentifier, webrtc::PeerConnectionObserver&, webrtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&);
 
     webrtc::PeerConnectionFactoryInterface* factory();
     LibWebRTCAudioModule* audioModule();
+
+    void setUseL4S(bool);
 
     // FIXME: Make these methods not static.
     static void callOnWebRTCNetworkThread(Function<void()>&&);
     static void callOnWebRTCSignalingThread(Function<void()>&&);
     static bool hasWebRTCThreads();
-    static rtc::Thread& signalingThread();
+    static webrtc::Thread& signalingThread();
 
     // Used for mock testing
-    void setPeerConnectionFactory(rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>&&);
+    void setPeerConnectionFactory(webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>&&);
 
     // Callback is executed on a background thread.
-    void prepareCertificateGenerator(Function<void(rtc::RTCCertificateGenerator&)>&&);
+    void prepareCertificateGenerator(Function<void(webrtc::RTCCertificateGenerator&)>&&);
 
     virtual void setLoggingLevel(WTFLogLevel);
 
     WEBCORE_EXPORT virtual void setVP9HardwareSupportForTesting(std::optional<bool> value) { m_supportsVP9VTBForTesting = value; }
     virtual bool isSupportingVP9HardwareDecoder() const { return m_supportsVP9VTBForTesting.value_or(false); }
 
-    WEBCORE_EXPORT void disableEnumeratingAllNetworkInterfaces();
-    WEBCORE_EXPORT void enableEnumeratingAllNetworkInterfaces();
-    bool isEnumeratingAllNetworkInterfacesEnabled() const;
-    WEBCORE_EXPORT void enableEnumeratingVisibleNetworkInterfaces();
+    virtual bool isSupportingAV1HardwareDecoder() const { return false; }
+
+    WEBCORE_EXPORT void NODELETE disableEnumeratingAllNetworkInterfaces();
+    WEBCORE_EXPORT void NODELETE enableEnumeratingAllNetworkInterfaces();
+    bool NODELETE isEnumeratingAllNetworkInterfacesEnabled() const;
+    WEBCORE_EXPORT void NODELETE enableEnumeratingVisibleNetworkInterfaces();
     bool isEnumeratingVisibleNetworkInterfacesEnabled() const { return m_enableEnumeratingVisibleNetworkInterfaces; }
 
-    class SuspendableSocketFactory : public rtc::PacketSocketFactory {
+    class SuspendableSocketFactory : public webrtc::PacketSocketFactory {
     public:
         virtual ~SuspendableSocketFactory() = default;
         virtual void suspend() { };
         virtual void resume() { };
         virtual void disableRelay() { };
+        virtual bool shouldEnableServiceClass() { return true; }
     };
-    virtual std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, ScriptExecutionContextIdentifier, bool /* isFirstParty */, RegistrableDomain&&);
+    virtual std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, ScriptExecutionContextIdentifier, bool /* isFirstParty */, RegistrableDomain&&, bool /* enableServiceClass */);
+
+    virtual void clearCodecsConnectionForTesting() { }
 
 protected:
     LibWebRTCProvider();
 
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, rtc::NetworkManager&, rtc::PacketSocketFactory&, webrtc::PeerConnectionInterface::RTCConfiguration&&, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&&);
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, webrtc::NetworkManager&, webrtc::PacketSocketFactory&, webrtc::PeerConnectionInterface::RTCConfiguration&&, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&&);
 
-    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> createPeerConnectionFactory(rtc::Thread* networkThread, rtc::Thread* signalingThread);
+    Ref<webrtc::PeerConnectionFactoryInterface> createPeerConnectionFactory(webrtc::Thread* networkThread, webrtc::Thread* signalingThread);
     virtual std::unique_ptr<webrtc::VideoDecoderFactory> createDecoderFactory();
     virtual std::unique_ptr<webrtc::VideoEncoderFactory> createEncoderFactory();
 
@@ -132,11 +143,13 @@ protected:
     PeerConnectionFactoryAndThreads& getStaticFactoryAndThreads(bool useNetworkThreadWithSocketServer);
 
     RefPtr<LibWebRTCAudioModule> m_audioModule;
-    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> m_factory;
+    RefPtr<webrtc::PeerConnectionFactoryInterface> m_factory;
     // FIXME: Remove m_useNetworkThreadWithSocketServer member variable and make it a global.
     bool m_useNetworkThreadWithSocketServer { true };
 
 private:
+    bool isWebCoreLibWebRTCProvider() const final { return true; }
+
     void initializeAudioDecodingCapabilities() final;
     void initializeVideoDecodingCapabilities() final;
     void initializeAudioEncodingCapabilities() final;
@@ -144,9 +157,10 @@ private:
 
     virtual void willCreatePeerConnectionFactory();
 
-    std::optional<MediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const VideoConfiguration&) final;
-    std::optional<MediaCapabilitiesEncodingInfo> videoEncodingCapabilitiesOverride(const VideoConfiguration&) final;
+    std::optional<PlatformMediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const PlatformMediaCapabilitiesVideoConfiguration&) final;
+    std::optional<PlatformMediaCapabilitiesEncodingInfo> videoEncodingCapabilitiesOverride(const PlatformMediaCapabilitiesVideoConfiguration&) final;
 
+    bool m_useL4S { false };
     std::optional<bool> m_supportsVP9VTBForTesting { false };
     bool m_disableNonLocalhostConnections { false };
     bool m_enableEnumeratingAllNetworkInterfaces { false };
@@ -163,5 +177,9 @@ inline LibWebRTCAudioModule* LibWebRTCProvider::audioModule()
 }
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::LibWebRTCProvider) \
+static bool isType(const WebCore::WebRTCProvider& provider) { return provider.isWebCoreLibWebRTCProvider(); } \
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // USE(LIBWEBRTC)

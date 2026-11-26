@@ -37,9 +37,7 @@ namespace WebKit::WebGPU {
 
 std::optional<ImageCopyTexture> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::ImageCopyTexture& imageCopyTexture)
 {
-    auto texture = convertToBacking(imageCopyTexture.texture);
-    if (!texture)
-        return std::nullopt;
+    auto texture = convertToBacking(protect(imageCopyTexture.texture).get());
 
     std::optional<Origin3D> origin;
     if (imageCopyTexture.origin) {
@@ -48,12 +46,12 @@ std::optional<ImageCopyTexture> ConvertToBackingContext::convertToBacking(const 
             return std::nullopt;
     }
 
-    return { { texture, imageCopyTexture.mipLevel, WTFMove(origin), imageCopyTexture.aspect } };
+    return { { texture, imageCopyTexture.mipLevel, WTF::move(origin), imageCopyTexture.aspect } };
 }
 
 std::optional<WebCore::WebGPU::ImageCopyTexture> ConvertFromBackingContext::convertFromBacking(const ImageCopyTexture& imageCopyTexture)
 {
-    auto* texture = convertTextureFromBacking(imageCopyTexture.texture);
+    WeakPtr texture = convertTextureFromBacking(imageCopyTexture.texture);
     if (!texture)
         return std::nullopt;
 
@@ -64,7 +62,7 @@ std::optional<WebCore::WebGPU::ImageCopyTexture> ConvertFromBackingContext::conv
             return std::nullopt;
     }
 
-    return { { *texture, imageCopyTexture.mipLevel, WTFMove(origin), imageCopyTexture.aspect } };
+    return { { *texture, imageCopyTexture.mipLevel, WTF::move(origin), imageCopyTexture.aspect } };
 }
 
 } // namespace WebKit

@@ -50,9 +50,9 @@ private:
     void muteConsole() final { }
     void unmuteConsole() final { }
 
-    std::unique_ptr<RuntimeFrontendDispatcher> m_frontendDispatcher;
-    RefPtr<RuntimeBackendDispatcher> m_backendDispatcher;
-    JSC::JSGlobalObject& m_globalObject;
+    const UniqueRef<RuntimeFrontendDispatcher> m_frontendDispatcher;
+    const Ref<RuntimeBackendDispatcher> m_backendDispatcher;
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::JSGlobalObject& m_globalObject;
 };
 
 } // namespace Inspector

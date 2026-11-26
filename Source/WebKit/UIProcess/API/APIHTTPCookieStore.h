@@ -30,21 +30,14 @@
 #include <pal/SessionID.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/WorkQueue.h>
 
 #if USE(SOUP)
 #include "SoupCookiePersistentStorageType.h"
 #endif
-
-namespace API {
-class HTTPCookieStoreObserver;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<API::HTTPCookieStoreObserver> : std::true_type { };
-}
 
 namespace WebCore {
 struct Cookie;
@@ -60,7 +53,7 @@ namespace API {
 
 class HTTPCookieStore;
 
-class HTTPCookieStoreObserver : public CanMakeWeakPtr<HTTPCookieStoreObserver> {
+class HTTPCookieStoreObserver : public RefCountedAndCanMakeWeakPtr<HTTPCookieStoreObserver> {
 public:
     virtual ~HTTPCookieStoreObserver() { }
     virtual void cookiesDidChange(HTTPCookieStore&) = 0;
@@ -75,8 +68,8 @@ public:
 
     virtual ~HTTPCookieStore();
 
-    void cookies(CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&);
-    void cookiesForURL(WTF::URL&&, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&);
+    void cookies(CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&, RefPtr<WTF::WorkQueue> replyQueue = nullptr);
+    void cookiesForURL(WTF::URL&&, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&, RefPtr<WTF::WorkQueue> replyQueue = nullptr);
     void setCookies(Vector<WebCore::Cookie>&&, CompletionHandler<void()>&&);
     void deleteCookie(const WebCore::Cookie&, CompletionHandler<void()>&&);
     void deleteCookiesForHostnames(const Vector<WTF::String>&, CompletionHandler<void()>&&);
@@ -93,6 +86,8 @@ public:
 
     void filterAppBoundCookies(Vector<WebCore::Cookie>&&, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&);
 
+    bool isOptInCookiePartitioningEnabled() const;
+
 #if USE(SOUP)
     void replaceCookies(Vector<WebCore::Cookie>&&, CompletionHandler<void()>&&);
     void getAllCookies(CompletionHandler<void(const Vector<WebCore::Cookie>&)>&&);
@@ -105,9 +100,14 @@ private:
     WebKit::NetworkProcessProxy* networkProcessIfExists();
     WebKit::NetworkProcessProxy* networkProcessLaunchingIfNecessary();
 
+    template<typename Message>
+    void fetchCookies(Message&&, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&, RefPtr<WTF::WorkQueue> replyQueue);
+
     PAL::SessionID m_sessionID;
     WeakPtr<WebKit::WebsiteDataStore> m_owningDataStore;
     WeakHashSet<HTTPCookieStoreObserver> m_observers;
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(HTTPCookieStore);

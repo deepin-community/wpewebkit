@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +28,6 @@
 
 #include "MessageSenderInlines.h"
 #include "URLSchemeTaskParameters.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebErrors.h"
 #include "WebFrame.h"
 #include "WebLoaderStrategy.h"
@@ -56,17 +55,18 @@ WebURLSchemeHandlerProxy::~WebURLSchemeHandlerProxy()
 
 void WebURLSchemeHandlerProxy::startNewTask(ResourceLoader& loader, WebFrame& webFrame)
 {
-    auto result = m_tasks.add(loader.identifier(), WebURLSchemeTaskProxy::create(*this, loader, webFrame));
-    ASSERT(result.isNewEntry);
+    Ref task = WebURLSchemeTaskProxy::create(*this, loader, webFrame);
+    auto result = m_tasks.add(*loader.identifier(), task);
+    ASSERT_UNUSED(result, result.isNewEntry);
 
-    WebProcess::singleton().webLoaderStrategy().addURLSchemeTaskProxy(*result.iterator->value);
-    result.iterator->value->startLoading();
+    protect(WebProcess::singleton().webLoaderStrategy())->addURLSchemeTaskProxy(task);
+    task->startLoading();
 }
 
 void WebURLSchemeHandlerProxy::loadSynchronously(WebCore::ResourceLoaderIdentifier loadIdentifier, WebFrame& webFrame, const ResourceRequest& request, ResourceResponse& response, ResourceError& error, Vector<uint8_t>& data)
 {
     data.shrink(0);
-    auto sendResult = m_webPage.sendSync(Messages::WebPageProxy::LoadSynchronousURLSchemeTask(URLSchemeTaskParameters { m_identifier, loadIdentifier, request, webFrame.info() }));
+    auto sendResult = protect(page())->sendSync(Messages::WebPageProxy::LoadSynchronousURLSchemeTask(URLSchemeTaskParameters { m_identifier, loadIdentifier, request, webFrame.info() }));
     if (sendResult.succeeded())
         std::tie(response, error, data) = sendResult.takeReply();
     else
@@ -76,39 +76,30 @@ void WebURLSchemeHandlerProxy::loadSynchronously(WebCore::ResourceLoaderIdentifi
 void WebURLSchemeHandlerProxy::stopAllTasks()
 {
     while (!m_tasks.isEmpty())
-        m_tasks.begin()->value->stopLoading();
+        Ref { m_tasks.begin()->value }->stopLoading();
 }
 
 void WebURLSchemeHandlerProxy::taskDidPerformRedirection(WebCore::ResourceLoaderIdentifier taskIdentifier, WebCore::ResourceResponse&& redirectResponse, WebCore::ResourceRequest&& newRequest, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
 {
-    auto* task = m_tasks.get(taskIdentifier);
-    if (!task)
-        return;
-    
-    task->didPerformRedirection(WTFMove(redirectResponse), WTFMove(newRequest), WTFMove(completionHandler));
+    if (RefPtr task = m_tasks.get(taskIdentifier))
+        task->didPerformRedirection(WTF::move(redirectResponse), WTF::move(newRequest), WTF::move(completionHandler));
 }
 
-void WebURLSchemeHandlerProxy::taskDidReceiveResponse(WebCore::ResourceLoaderIdentifier taskIdentifier, const ResourceResponse& response)
+void WebURLSchemeHandlerProxy::taskDidReceiveResponse(WebCore::ResourceLoaderIdentifier taskIdentifier, ResourceResponse&& response)
 {
-    auto* task = m_tasks.get(taskIdentifier);
-    if (!task)
-        return;
-
-    task->didReceiveResponse(response);
+    if (RefPtr task = m_tasks.get(taskIdentifier))
+        task->didReceiveResponse(WTF::move(response));
 }
 
 void WebURLSchemeHandlerProxy::taskDidReceiveData(WebCore::ResourceLoaderIdentifier taskIdentifier, Ref<WebCore::SharedBuffer>&& data)
 {
-    auto* task = m_tasks.get(taskIdentifier);
-    if (!task)
-        return;
-
-    task->didReceiveData(WTFMove(data));
+    if (RefPtr task = m_tasks.get(taskIdentifier))
+        task->didReceiveData(WTF::move(data));
 }
 
 void WebURLSchemeHandlerProxy::taskDidComplete(WebCore::ResourceLoaderIdentifier taskIdentifier, const ResourceError& error)
 {
-    if (auto task = removeTask(taskIdentifier))
+    if (RefPtr task = removeTask(taskIdentifier))
         task->didComplete(error);
 }
 
@@ -120,11 +111,11 @@ void WebURLSchemeHandlerProxy::taskDidStopLoading(WebURLSchemeTaskProxy& task)
 
 RefPtr<WebURLSchemeTaskProxy> WebURLSchemeHandlerProxy::removeTask(WebCore::ResourceLoaderIdentifier identifier)
 {
-    auto task = m_tasks.take(identifier);
+    RefPtr task = m_tasks.take(identifier);
     if (!task)
         return nullptr;
 
-    WebProcess::singleton().webLoaderStrategy().removeURLSchemeTaskProxy(*task);
+    protect(WebProcess::singleton().webLoaderStrategy())->removeURLSchemeTaskProxy(*task);
 
     return task;
 }

@@ -25,32 +25,33 @@
 #include "GStreamerRtpSenderBackend.h"
 #include "GUniquePtrGStreamer.h"
 #include "RTCRtpTransceiverBackend.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class GStreamerRtpReceiverBackend;
 
 class GStreamerRtpTransceiverBackend final : public RTCRtpTransceiverBackend {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerRtpTransceiverBackend);
 public:
     GStreamerRtpTransceiverBackend(GRefPtr<GstWebRTCRTPTransceiver>&&);
 
-    std::unique_ptr<GStreamerRtpReceiverBackend> createReceiverBackend();
-    std::unique_ptr<GStreamerRtpSenderBackend> createSenderBackend(GStreamerPeerConnectionBackend&, GStreamerRtpSenderBackend::Source&&, GUniquePtr<GstStructure>&&);
+    UniqueRef<GStreamerRtpReceiverBackend> createReceiverBackend();
+    Ref<GStreamerRtpSenderBackend> createSenderBackend(WeakPtr<GStreamerPeerConnectionBackend>&&, GStreamerRtpSenderBackend::Source&&, GUniquePtr<GstStructure>&&);
 
     GstWebRTCRTPTransceiver* rtcTransceiver() { return m_rtcTransceiver.get(); }
 
     void tearDown();
 
-private:
     RTCRtpTransceiverDirection direction() const final;
     std::optional<RTCRtpTransceiverDirection> currentDirection() const final;
     void setDirection(RTCRtpTransceiverDirection) final;
     String mid() final;
     void stop() final;
     bool stopped() const final;
-    ExceptionOr<void> setCodecPreferences(const Vector<RTCRtpCodecCapability>&) final;
+    ExceptionOr<void> setCodecPreferences(const Vector<RTCRtpCodec>&) final;
 
+private:
     GRefPtr<GstWebRTCRTPTransceiver> m_rtcTransceiver;
     bool m_isStopped { false };
 };

@@ -26,9 +26,9 @@
 
 #pragma once
 
-#include "DictationAlternative.h"
-#include "TextEventInputType.h"
-#include "UIEvent.h"
+#include <WebCore/DictationAlternative.h>
+#include <WebCore/TextEventInputType.h>
+#include <WebCore/UIEvent.h>
 
 namespace WebCore {
 
@@ -37,7 +37,7 @@ namespace WebCore {
     enum class MailBlockquoteHandling : bool;
 
     class TextEvent final : public UIEvent {
-        WTF_MAKE_TZONE_OR_ISO_ALLOCATED(TextEvent);
+        WTF_MAKE_TZONE_ALLOCATED(TextEvent);
     public:
         static Ref<TextEvent> create(RefPtr<WindowProxy>&&, const String& data, TextEventInputType = TextEventInputKeyboard);
         static Ref<TextEvent> createForBindings();
@@ -66,7 +66,7 @@ namespace WebCore {
         bool shouldMatchStyle() const { return m_shouldMatchStyle; }
         MailBlockquoteHandling mailBlockquoteHandling() const { return m_mailBlockquoteHandling; }
         DocumentFragment* pastingFragment() const { return m_pastingFragment.get(); }
-        const Vector<DictationAlternative>& dictationAlternatives() const { return m_dictationAlternatives; }
+        const Vector<DictationAlternative>& dictationAlternatives() const LIFETIME_BOUND { return m_dictationAlternatives; }
 
     private:
         TextEvent();
@@ -74,8 +74,6 @@ namespace WebCore {
         TextEvent(RefPtr<WindowProxy>&&, const String& data, TextEventInputType = TextEventInputKeyboard);
         TextEvent(RefPtr<WindowProxy>&&, const String& data, RefPtr<DocumentFragment>&&, TextEventInputType, bool shouldSmartReplace, bool shouldMatchStyle, MailBlockquoteHandling);
         TextEvent(RefPtr<WindowProxy>&&, const String& data, const Vector<DictationAlternative>& dictationAlternatives);
-
-        bool isTextEvent() const override;
 
         TextEventInputType m_inputType;
         String m_data;

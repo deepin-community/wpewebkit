@@ -26,14 +26,16 @@
 #pragma once
 
 #include <WebCore/Timer.h>
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebKit {
 
 class Download;
 
-class DownloadMonitor {
+class DownloadMonitor : public CanMakeWeakPtr<DownloadMonitor> {
     WTF_MAKE_TZONE_ALLOCATED(DownloadMonitor);
     WTF_MAKE_NONCOPYABLE(DownloadMonitor);
 public:
@@ -44,11 +46,14 @@ public:
     void downloadReceivedBytes(uint64_t);
     void timerFired();
 
-private:
-    Download& m_download;
+    void NODELETE ref() const;
+    void deref() const;
 
-    double measuredThroughputRate() const;
-    uint32_t testSpeedMultiplier() const;
+private:
+    WeakRef<Download> m_download;
+
+    double NODELETE measuredThroughputRate() const;
+    uint32_t NODELETE testSpeedMultiplier() const;
     
     struct Timestamp {
         MonotonicTime time;

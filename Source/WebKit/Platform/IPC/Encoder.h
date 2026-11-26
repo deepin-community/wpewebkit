@@ -35,12 +35,18 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
+#if OS(DARWIN)
+#include <wtf/MmapSpan.h>
+#else
+#include <wtf/MallocSpan.h>
+#endif
+
 namespace IPC {
 
 enum class MessageFlags : uint8_t;
 enum class ShouldDispatchWhenWaitingForSyncReply : uint8_t;
 
-template<typename, typename> struct ArgumentCoder;
+template<typename> struct ArgumentCoder;
 
 class Encoder final {
     WTF_MAKE_TZONE_ALLOCATED(Encoder);
@@ -59,16 +65,13 @@ public:
 
     bool isSyncMessage() const { return messageIsSync(messageName()); }
 
-    void setShouldDispatchMessageWhenWaitingForSyncReply(ShouldDispatchWhenWaitingForSyncReply);
+    void NODELETE setShouldDispatchMessageWhenWaitingForSyncReply(ShouldDispatchWhenWaitingForSyncReply);
 
-    bool isFullySynchronousModeForTesting() const;
-    void setFullySynchronousModeForTesting();
-    void setShouldMaintainOrderingWithAsyncMessages();
+    bool NODELETE isFullySynchronousModeForTesting() const;
+    void NODELETE setFullySynchronousModeForTesting();
+    void NODELETE setShouldMaintainOrderingWithAsyncMessages();
     bool isAllowedWhenWaitingForSyncReply() const { return messageAllowedWhenWaitingForSyncReply(messageName()) || isFullySynchronousModeForTesting(); }
     bool isAllowedWhenWaitingForUnboundedSyncReply() const { return messageAllowedWhenWaitingForUnboundedSyncReply(messageName()); }
-#if ENABLE(IPC_TESTING_API)
-    void setSyncMessageDeserializationFailure();
-#endif
 
     void wrapForTesting(UniqueRef<Encoder>&&);
 
@@ -78,17 +81,18 @@ public:
     template<typename T>
     Encoder& operator<<(T&& t)
     {
-        ArgumentCoder<std::remove_cvref_t<T>, void>::encode(*this, std::forward<T>(t));
+        SUPPRESS_FORWARD_DECL_ARG ArgumentCoder<std::remove_cvref_t<T>>::encode(*this, std::forward<T>(t));
         return *this;
     }
 
     Encoder& operator<<(Attachment&& attachment)
     {
-        addAttachment(WTFMove(attachment));
+        addAttachment(WTF::move(attachment));
         return *this;
     }
 
-    std::span<const uint8_t> span() const { return { m_buffer, m_bufferSize }; }
+    std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return capacityBuffer().first(m_bufferSize); }
+    std::span<const uint8_t> span() const LIFETIME_BOUND { return capacityBuffer().first(m_bufferSize); }
 
     void addAttachment(Attachment&&);
     Vector<Attachment> releaseAttachments();
@@ -97,24 +101,31 @@ public:
     static constexpr bool isIPCEncoder = true;
 
 private:
-    uint8_t* grow(size_t alignment, size_t);
+    std::span<uint8_t> grow(size_t alignment, size_t);
 
-    bool hasAttachments() const;
+    std::span<uint8_t> NODELETE capacityBuffer();
+    std::span<const uint8_t> NODELETE capacityBuffer() const;
+
+    bool NODELETE hasAttachments() const;
 
     void encodeHeader();
-    const OptionSet<MessageFlags>& messageFlags() const;
-    OptionSet<MessageFlags>& messageFlags();
+    const OptionSet<MessageFlags>& NODELETE messageFlags() const;
+    OptionSet<MessageFlags>& NODELETE messageFlags();
+
+    void freeBufferIfNecessary();
 
     MessageName m_messageName;
     uint64_t m_destinationID;
 
-    uint8_t m_inlineBuffer[512];
+#if OS(DARWIN)
+    using OutOfLineBufferSpan = MmapSpan<uint8_t>;
+#else
+    using OutOfLineBufferSpan = MallocSpan<uint8_t>;
+#endif
+    OutOfLineBufferSpan m_outOfLineBuffer;
+    std::array<uint8_t, 512> m_inlineBuffer;
 
-    uint8_t* m_buffer { m_inlineBuffer };
-    uint8_t* m_bufferPointer { m_inlineBuffer };
-    
     size_t m_bufferSize { 0 };
-    size_t m_bufferCapacity { sizeof(m_inlineBuffer) };
 
     Vector<Attachment> m_attachments;
 };
@@ -126,15 +137,15 @@ inline void Encoder::encodeSpan(std::span<T, Extent> span)
     constexpr size_t alignment = alignof(T);
     ASSERT(!(reinterpret_cast<uintptr_t>(bytes.data()) % alignment));
 
-    uint8_t* buffer = grow(alignment, bytes.size());
-    memcpy(buffer, bytes.data(), bytes.size());
+    auto buffer = grow(alignment, bytes.size());
+    memcpySpan(buffer, bytes);
 }
 
 template<typename T>
 inline void Encoder::encodeObject(const T& object)
 {
     static_assert(std::is_trivially_copyable_v<T>);
-    encodeSpan(std::span(std::addressof(object), 1));
+    encodeSpan(singleElementSpan(object));
 }
 
 } // namespace IPC

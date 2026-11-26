@@ -6,6 +6,7 @@
 
 #include "compiler/translator/InfoSink.h"
 
+#include "common/angleutils.h"
 #include "compiler/translator/ImmutableString.h"
 #include "compiler/translator/Symbol.h"
 #include "compiler/translator/Types.h"
@@ -74,10 +75,9 @@ TInfoSinkBase &TInfoSinkBase::operator<<(const TType &type)
 
     if (type.isArray())
     {
-        for (auto arraySizeIter = type.getArraySizes().rbegin();
-             arraySizeIter != type.getArraySizes().rend(); ++arraySizeIter)
+        for (unsigned int arraySize : angle::Reversed(type.getArraySizes()))
         {
-            *this << "array[" << (*arraySizeIter) << "] of ";
+            *this << "array[" << arraySize << "] of ";
         }
     }
     if (type.isMatrix())
@@ -92,14 +92,7 @@ TInfoSinkBase &TInfoSinkBase::operator<<(const TType &type)
 
     if (type.getStruct() != nullptr)
     {
-        if (type.getStruct()->symbolType() == SymbolType::Empty)
-        {
-            *this << " <anonymous>";
-        }
-        else
-        {
-            *this << " '" << type.getStruct()->name() << "'";
-        }
+        *this << ' ' << static_cast<const TSymbol &>(*type.getStruct());
         if (type.isStructSpecifier())
         {
             *this << " (specifier)";
@@ -109,13 +102,54 @@ TInfoSinkBase &TInfoSinkBase::operator<<(const TType &type)
     return *this;
 }
 
+TInfoSinkBase &TInfoSinkBase::operator<<(const TSymbol &symbol)
+{
+    switch (symbol.symbolType())
+    {
+        case SymbolType::BuiltIn:
+            *this << symbol.name();
+            break;
+        case SymbolType::Empty:
+            *this << "''";
+            break;
+        case SymbolType::AngleInternal:
+            *this << '#' << symbol.name();
+            break;
+        case SymbolType::UserDefined:
+            *this << '\'' << symbol.name() << '\'';
+            break;
+    }
+    *this << " (symbol id " << symbol.uniqueId().get() << ")";
+    return *this;
+}
+
+TInfoSinkBase &TInfoSinkBase::operator<<(const TField &field)
+{
+    ASSERT(field.symbolType() != SymbolType::Empty);
+    switch (field.symbolType())
+    {
+        case SymbolType::BuiltIn:
+            *this << field.name();
+            break;
+        case SymbolType::AngleInternal:
+            *this << '#' << field.name();
+            break;
+        case SymbolType::UserDefined:
+            *this << '\'' << field.name() << '\'';
+            break;
+        default:
+            UNREACHABLE();
+    }
+    return *this;
+}
+
 void TInfoSinkBase::location(int file, int line)
 {
     TPersistStringStream stream = sh::InitializeStream<TPersistStringStream>();
     if (line)
         stream << file << ":" << line;
     else
-        stream << file << ":? ";
+        stream << file << ":?";
     stream << ": ";
 
     sink.append(stream.str());

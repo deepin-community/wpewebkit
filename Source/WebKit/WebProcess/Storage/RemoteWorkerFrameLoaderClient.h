@@ -27,23 +27,29 @@
 
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/EmptyFrameLoaderClient.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
+
+namespace WebCore {
+class FrameLoader;
+}
 
 namespace WebKit {
 
 class RemoteWorkerFrameLoaderClient final : public WebCore::EmptyFrameLoaderClient {
 public:
-    RemoteWorkerFrameLoaderClient(WebPageProxyIdentifier, WebCore::PageIdentifier, const String& userAgent);
+    RemoteWorkerFrameLoaderClient(WebCore::FrameLoader&, WebPageProxyIdentifier, WebCore::PageIdentifier, const String& userAgent);
 
     WebPageProxyIdentifier webPageProxyID() const { return m_webPageProxyID; }
 
-    void setUserAgent(String&& userAgent) { m_userAgent = WTFMove(userAgent); }
+    void setUserAgent(String&& userAgent) { m_userAgent = WTF::move(userAgent); }
 
     void setServiceWorkerPageIdentifier(WebCore::ScriptExecutionContextIdentifier serviceWorkerPageIdentifier) { m_serviceWorkerPageIdentifier = serviceWorkerPageIdentifier; }
     std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier() const { return m_serviceWorkerPageIdentifier; }
 
 private:
-    Ref<WebCore::DocumentLoader> createDocumentLoader(const WebCore::ResourceRequest&, const WebCore::SubstituteData&) final;
+    Ref<WebCore::DocumentLoader> createDocumentLoader(WebCore::ResourceRequest&&, WebCore::SubstituteData&&, WebCore::ResourceRequest&&) final;
+    Ref<WebCore::DocumentLoader> createDocumentLoader(WebCore::ResourceRequest&&, WebCore::SubstituteData&&) final;
 
     bool shouldUseCredentialStorage(WebCore::DocumentLoader*, WebCore::ResourceLoaderIdentifier) final { return true; }
     bool isRemoteWorkerFrameLoaderClient() const final { return true; }

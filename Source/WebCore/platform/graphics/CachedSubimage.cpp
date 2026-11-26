@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,12 @@
 
 #include "GeometryUtilities.h"
 #include "GraphicsContext.h"
+#include "ImageBuffer.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CachedSubimage);
 
 static FloatRect calculateCachedSubimageSourceRect(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, const FloatRect& imageRect)
 {
@@ -76,7 +80,7 @@ std::unique_ptr<CachedSubimage> CachedSubimage::createPixelated(GraphicsContext&
 }
 
 CachedSubimage::CachedSubimage(Ref<ImageBuffer>&& imageBuffer, const FloatSize& scaleFactor, const FloatRect& destinationRect, const FloatRect& sourceRect)
-    : m_imageBuffer(WTFMove(imageBuffer))
+    : m_imageBuffer(WTF::move(imageBuffer))
     , m_scaleFactor(scaleFactor)
     , m_destinationRect(destinationRect)
     , m_sourceRect(sourceRect)

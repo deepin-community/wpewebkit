@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2011, 2012 Apple Inc. All Rights Reserved.
- * Copyright (C) 2014 Raspberry Pi Foundation. All Rights Reserved.
+ * Copyright (C) 2011, 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2014 Raspberry Pi Foundation. All rights reserved.
  * Copyright (C) 2018 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,7 +37,10 @@
 
 #if OS(LINUX)
 #include <wtf/linux/CurrentProcessMemoryStatus.h>
+#elif OS(HAIKU)
+#include <wtf/haiku/CurrentProcessMemoryStatus.h>
 #elif OS(FREEBSD)
+#include <array>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/user.h>
@@ -111,7 +114,7 @@ void MemoryPressureHandler::holdOff(Seconds seconds)
 
 static size_t processMemoryUsage()
 {
-#if OS(LINUX)
+#if OS(LINUX) || OS(HAIKU)
     ProcessMemoryStatus memoryStatus;
     currentProcessMemoryStatus(memoryStatus);
     return (memoryStatus.resident - memoryStatus.shared);
@@ -120,13 +123,9 @@ static size_t processMemoryUsage()
     struct kinfo_proc info;
     size_t infolen = sizeof(info);
 
-    int mib[4];
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
-    mib[3] = getpid();
+    std::array<int, 4> mib { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
 
-    if (sysctl(mib, 4, &info, &infolen, nullptr, 0))
+    if (sysctl(mib.data(), mib.size(), &info, &infolen, nullptr, 0))
         return 0;
 
     return static_cast<size_t>(info.ki_rssize - info.ki_tsize) * pageSize;
@@ -171,7 +170,13 @@ void MemoryPressureHandler::platformReleaseMemory(Critical)
 
 std::optional<MemoryPressureHandler::ReliefLogger::MemoryUsage> MemoryPressureHandler::ReliefLogger::platformMemoryUsage()
 {
+#if OS(LINUX) || OS(HAIKU)
+    ProcessMemoryStatus memoryStatus;
+    currentProcessMemoryStatus(memoryStatus);
+    return MemoryUsage { memoryStatus.resident - memoryStatus.shared, memoryStatus.resident };
+#else
     return MemoryUsage {processMemoryUsage(), memoryFootprint()};
+#endif
 }
 
 } // namespace WTF

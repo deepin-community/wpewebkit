@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2004-2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2008-2009 Torch Mobile, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,8 +27,8 @@
 
 #pragma once
 
-#include "Image.h"
-#include "ImageSource.h"
+#include <WebCore/Image.h>
+#include <WebCore/ImageSource.h>
 #include <wtf/Function.h>
 
 namespace WebCore {
@@ -54,13 +54,13 @@ public:
     // Decoding
     bool isLargeForDecoding() const { return m_source->isLargeForDecoding(); }
     void stopDecodingWorkQueue() { m_source->stopDecodingWorkQueue(); }
-    void decode(Function<void(DecodingStatus)>&& decodeCallback) { m_source->decode(WTFMove(decodeCallback)); }
+    void decode(Function<void(DecodingStatus)>&& decodeCallback) { m_source->decode(WTF::move(decodeCallback)); }
 
     // Current ImageFrame
     unsigned currentFrameIndex() const { return m_source->currentFrameIndex(); }
     bool currentFrameHasAlpha() const { return m_source->currentImageFrame().hasAlpha(); }
     ImageOrientation currentFrameOrientation() const { return m_source->currentImageFrame().orientation(); }
-    DecodingOptions currentFrameDecodingOptions() const { return m_source->currentImageFrame().decodingOptions(); }
+    DecodingOptions currentFrameDecodingOptions() const { return m_source->currentImageFrame().decodingOptions(std::nullopt); }
 
     // Primary & current NativeImage
     RefPtr<NativeImage> primaryNativeImage() { return m_source->primaryNativeImage(); }
@@ -68,9 +68,12 @@ public:
     RefPtr<NativeImage> currentNativeImage() final { return m_source->currentNativeImage(); }
 
     // Image Metadata
+    String uti() const final { return m_source->uti(); }
     FloatSize size(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const final { return m_source->size(orientation); }
     FloatSize sourceSize(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const { return m_source->sourceSize(orientation); }
+    FloatSize density() const { return m_source->density(); }
     DestinationColorSpace colorSpace() final { return m_source->colorSpace(); }
+    bool hasHDRContent() const final { return m_source->hasHDRContent(); }
     ImageOrientation orientation() const final { return m_source->orientation(); }
     unsigned frameCount() const final { return m_source->frameCount(); }
 #if ASSERT_ENABLED
@@ -84,13 +87,21 @@ public:
     RefPtr<NativeImage> nativeImageAtIndex(unsigned index) final { return m_source->nativeImageAtIndex(index); }
 
     // Testing support.
-    const char* sourceUTF8() const { return sourceURL().string().utf8().data(); }
+    CString sourceUTF8() const { return sourceURL().string().utf8(); }
     void setAsyncDecodingEnabledForTesting(bool enabled) { m_source->setAsyncDecodingEnabledForTesting(enabled); }
     bool isAsyncDecodingEnabledForTesting() const { return m_source->isAsyncDecodingEnabledForTesting(); }
     void setMinimumDecodingDurationForTesting(Seconds duration) { m_source->setMinimumDecodingDurationForTesting(duration); }
     void setClearDecoderAfterAsyncFrameRequestForTesting(bool enabled) { m_source->setClearDecoderAfterAsyncFrameRequestForTesting(enabled); }
+    void setHasHDRContentForTesting() { m_source->setHasHDRContentForTesting(); }
     unsigned decodeCountForTesting() const { return m_source->decodeCountForTesting(); }
     unsigned blankDrawCountForTesting() const { return m_source->blankDrawCountForTesting(); }
+
+#if ENABLE(SPATIAL_IMAGE_DETECTION)
+    bool isSpatial() const final { return m_source->isSpatial(); }
+    std::optional<unsigned> spatialLeftEyeFrameIndex() const { return m_source->spatialLeftEyeFrameIndex(); }
+    std::optional<unsigned> spatialRightEyeFrameIndex() const { return m_source->spatialRightEyeFrameIndex(); }
+    std::optional<SpatialImageEyeProperties> spatialEyePropertiesAtIndex(unsigned index) const { return m_source->spatialEyePropertiesAtIndex(index); }
+#endif
 
 private:
     BitmapImage(ImageObserver*, AlphaOption, GammaAndColorProfileOption);
@@ -100,31 +111,36 @@ private:
     EncodedDataStatus dataChanged(bool allDataReceived) final;
     void destroyDecodedData(bool destroyAll = true) final;
 
+    bool canReplaceData() const final { return m_source->canReplaceData(); }
+    void dataReplaced() final;
+
     // Current ImageFrame
     bool currentFrameKnownToBeOpaque() const final { return !currentFrameHasAlpha(); }
+    bool currentFrameIsComplete() const final { return m_source->currentImageFrame().isComplete(); }
 
     // Current NativeImage
     RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation orientation) final { return m_source->currentPreTransformedNativeImage(orientation); }
 
     // Image Metadata
     bool hasDensityCorrectedSize() const final { return m_source->hasDensityCorrectedSize(); }
-    String uti() const final { return m_source->uti(); }
     String filenameExtension() const final { return m_source->filenameExtension(); }
     String accessibilityDescription() const final { return m_source->accessibilityDescription(); }
     std::optional<IntPoint> hotSpot() const final { return m_source->hotSpot(); }
     std::optional<Color> singlePixelSolidColor() const final { return m_source->singlePixelSolidColor(); }
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-    bool shouldUseQuickLookForFullscreen() const final { return m_source->shouldUseQuickLookForFullscreen(); }
+    bool isPanorama() const final { return m_source->isPanorama(); }
 #endif
 
-#if ENABLE(SPATIAL_IMAGE_DETECTION)
-    bool isSpatial() const final { return m_source->isSpatial(); }
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    bool isMaybePanoramic() const final { return m_source->isMaybePanoramic(); }
 #endif
 
     // Image methods
     bool isBitmapImage() const final { return true; }
     bool isAnimating() const final { return m_source->isAnimating(); }
+
+    bool hasHDRContentForTesting() const { return m_source->hasHDRContentForTesting(); }
 
     ImageDrawResult draw(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions = { }) final;
     void drawPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
@@ -132,7 +148,7 @@ private:
 
     void dump(WTF::TextStream&) const final;
 
-    Ref<ImageSource> m_source;
+    const Ref<ImageSource> m_source;
 };
 
 } // namespace WebCore

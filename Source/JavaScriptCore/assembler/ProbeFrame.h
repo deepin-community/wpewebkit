@@ -25,10 +25,13 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(ASSEMBLER)
 
 #include "CallFrame.h"
 #include "ProbeStack.h"
+#include "VirtualRegister.h"
 
 namespace JSC {
 namespace Probe {

@@ -41,7 +41,6 @@ extern "C" {
 WK_EXPORT WKStringRef WKBundleFrameCopyCounterValue(WKBundleFrameRef frame, JSObjectRef element);
 WK_EXPORT unsigned WKBundleFrameGetPendingUnloadCount(WKBundleFrameRef frame);
 WK_EXPORT WKStringRef WKBundleFrameCopyLayerTreeAsText(WKBundleFrameRef frame);
-WK_EXPORT void WKBundleFrameClearOpener(WKBundleFrameRef frame);
 WK_EXPORT void WKBundleFrameStopLoading(WKBundleFrameRef frame);
 
 WK_EXPORT bool WKBundleFrameContainsAnyFormElements(WKBundleFrameRef frame);
@@ -57,7 +56,9 @@ WK_EXPORT void WKBundleFrameFocus(WKBundleFrameRef frame);
 
 WK_EXPORT void _WKBundleFrameGenerateTestReport(WKBundleFrameRef, WKStringRef message, WKStringRef group);
 
-WK_EXPORT void* WKAccessibilityRootObject(WKBundleFrameRef frame);
+WK_EXPORT void* _WKAccessibilityRootObjectForTesting(WKBundleFrameRef frame);
+
+WK_EXPORT void _WKAccessibilityAllowAuthenticationForTesting(bool allow);
 
 #ifdef __cplusplus
 }

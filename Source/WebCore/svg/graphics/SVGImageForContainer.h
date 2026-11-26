@@ -25,11 +25,11 @@
 
 #pragma once
 
-#include "AffineTransform.h"
-#include "FloatRect.h"
-#include "FloatSize.h"
-#include "Image.h"
-#include "SVGImage.h"
+#include <WebCore/AffineTransform.h>
+#include <WebCore/FloatRect.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/Image.h>
+#include <WebCore/SVGImage.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -41,16 +41,16 @@ public:
         return adoptRef(*new SVGImageForContainer(image, containerSize, containerZoom, initialFragmentURL));
     }
 
-    bool isSVGImageForContainer() const final { return true; }
+    bool NODELETE isSVGImageForContainer() const final { return true; }
 
     FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const final;
 
     bool usesContainerSize() const final { return m_image->usesContainerSize(); }
     bool hasRelativeWidth() const final { return m_image->hasRelativeWidth(); }
     bool hasRelativeHeight() const final { return m_image->hasRelativeHeight(); }
-    void computeIntrinsicDimensions(Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio) final
+    void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final
     {
-        protectedImage()->computeIntrinsicDimensions(intrinsicWidth, intrinsicHeight, intrinsicRatio);
+        protect(m_image)->computeIntrinsicDimensions(intrinsicWidth, intrinsicHeight, intrinsicRatio);
     }
 
     ImageDrawResult draw(GraphicsContext&, const FloatRect&, const FloatRect&, ImagePaintingOptions = { }) final;
@@ -59,12 +59,12 @@ public:
 
     // FIXME: Implement this to be less conservative.
     bool currentFrameKnownToBeOpaque() const final { return false; }
+    bool currentFrameIsComplete() const final { return !!m_image; }
 
     RefPtr<NativeImage> currentNativeImage() final;
 
 private:
     WEBCORE_EXPORT SVGImageForContainer(SVGImage*, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL);
-    RefPtr<SVGImage> protectedImage() const;
 
     WeakPtr<SVGImage> m_image;
     const FloatSize m_containerSize;

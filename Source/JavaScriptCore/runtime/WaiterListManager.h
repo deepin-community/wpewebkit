@@ -24,8 +24,8 @@
  */
 #pragma once
 
-#include "DeferredWorkTimer.h"
-#include "JSPromise.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/Condition.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -54,14 +54,10 @@ public:
         return m_vm;
     }
 
-    void setVM(VM* vm)
+    JSGlobalObject* globalObject() const
     {
-        m_vm = vm;
-    }
-
-    void clearVM(const AbstractLocker&)
-    {
-        m_vm = nullptr;
+        ASSERT(m_isAsync);
+        return m_globalObject;
     }
 
     Condition& condition()
@@ -70,7 +66,7 @@ public:
         return m_condition;
     }
 
-    RefPtr<DeferredWorkTimer::TicketData> ticket(const AbstractLocker&) const
+    RefPtr<DeferredWorkTimer::Ticket> ticket(const AbstractLocker&) const
     {
         ASSERT(m_isAsync);
         return m_ticket.get();
@@ -85,7 +81,7 @@ public:
     void setTimer(const AbstractLocker&, Ref<RunLoop::DispatchTimer>&& timer)
     {
         ASSERT(m_isAsync);
-        m_timer = WTFMove(timer);
+        m_timer = WTF::move(timer);
     }
 
     bool hasTimer(const AbstractLocker&)
@@ -99,9 +95,11 @@ public:
         // If the timeout for AsyncWaiter is infinity, we won't dispatch any timer.
         if (!m_timer)
             return;
-        m_timer->stop();
-        // The AsyncWaiter's timer holds the waiter's reference. This
-        // releases the strong reference to the Waiter in the timer.
+        // Don't stop the timer here: clearTimer() can run on a different thread than the one whose run
+        // loop owns the timer (e.g. from Atomics.notify on another agent), and stopping a RunLoop timer
+        // off its run loop's thread is unsafe. The dispatchAfter() timer keeps itself alive, fires once
+        // on its own thread, and tears itself down there; the timeout handler is idempotent because the
+        // waiter's ticket has already been cleared, so a late fire is a no-op. Just drop our reference.
         m_timer = nullptr;
     }
 
@@ -111,7 +109,12 @@ public:
 
 private:
     VM* m_vm { nullptr };
-    ThreadSafeWeakPtr<DeferredWorkTimer::TicketData> m_ticket { nullptr };
+    // Cached at construction to avoid a cross-VM race: unregister(JSGlobalObject*) runs on
+    // one VM's sweep thread; reading ticket->target()->realm() would race with another VM's
+    // GC End phase freeing m_dependencies via cancelAndClear(). Written before the Waiter
+    // is added to any list, so readers acquiring list->lock always see the completed write.
+    JSGlobalObject* m_globalObject { nullptr };
+    ThreadSafeWeakPtr<DeferredWorkTimer::Ticket> m_ticket { nullptr };
     RefPtr<RunLoop::DispatchTimer> m_timer { nullptr };
     Condition m_condition;
     bool m_isAsync { false };
@@ -140,7 +143,7 @@ public:
         // `takeFisrt` is used to consume a waiter (either notify, timeout, or remove).
         // So, the waiter must not be removed and belong to this list.
         Waiter& waiter = *m_waiters.begin();
-        ASSERT((waiter.vm() || waiter.ticket(NoLockingNecessary)) && waiter.isOnList());
+        ASSERT((!waiter.isAsync() || waiter.ticket(NoLockingNecessary)) && waiter.vm() && waiter.isOnList());
         Ref<Waiter> protectedWaiter = Ref { waiter };
         removeWithUpdate(waiter);
         return protectedWaiter;
@@ -208,6 +211,7 @@ public:
         OK = 0,
         NotEqual = 1,
         TimedOut = 2,
+        Terminated = 3,
     };
 
     JS_EXPORT_PRIVATE WaitSyncResult waitSync(VM&, int32_t* ptr, int32_t expected, Seconds timeout);
@@ -232,6 +236,7 @@ private:
     template <typename ValueType>
     JSValue waitAsyncImpl(JSGlobalObject*, VM&, ValueType* ptr, ValueType expectedValue, Seconds timeout);
 
+    // Notify the waiter if its ticket is not canceled.
     void notifyWaiterImpl(const AbstractLocker&, Ref<Waiter>&&, const ResolveResult);
 
     void timeoutAsyncWaiter(void* ptr, Ref<Waiter>&&);
@@ -243,7 +248,7 @@ private:
     RefPtr<WaiterList> findList(void* ptr);
 
     Lock m_waiterListsLock;
-    HashMap<void*, Ref<WaiterList>> m_waiterLists;
+    UncheckedKeyHashMap<void*, Ref<WaiterList>> m_waiterLists;
 };
 
 } // namespace JSC

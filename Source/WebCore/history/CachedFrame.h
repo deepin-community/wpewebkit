@@ -25,10 +25,11 @@
  
 #pragma once
 
-#include "LocalDOMWindow.h"
-#include <wtf/URL.h>
-#include "ScriptCachedFrameData.h"
+#include <WebCore/LocalDOMWindow.h>
+#include <WebCore/ScriptCachedFrameData.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/URL.h>
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
@@ -37,6 +38,7 @@ class CachedFrame;
 class CachedFramePlatformData;
 class Document;
 class DocumentLoader;
+class FrameView;
 class LocalFrameView;
 class Node;
 enum class HasInsecureContent : bool;
@@ -49,8 +51,7 @@ public:
 
     Document* document() const { return m_document.get(); }
     FrameView* view() const { return m_view.get(); }
-    RefPtr<FrameView> protectedView() const;
-    const URL& url() const { return m_url; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
     bool isMainFrame() { return m_isMainFrame; }
 
 protected:
@@ -74,7 +75,7 @@ private:
 };
 
 class CachedFrame : private CachedFrameBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CachedFrame);
 public:
     explicit CachedFrame(Frame&);
 
@@ -83,18 +84,18 @@ public:
     void destroy();
 
     WEBCORE_EXPORT void setCachedFramePlatformData(std::unique_ptr<CachedFramePlatformData>);
-    WEBCORE_EXPORT CachedFramePlatformData* cachedFramePlatformData();
+    WEBCORE_EXPORT CachedFramePlatformData* NODELETE cachedFramePlatformData() LIFETIME_BOUND;
 
     HasInsecureContent hasInsecureContent() const;
-    UsedLegacyTLS usedLegacyTLS() const;
-    WasPrivateRelayed wasPrivateRelayed() const;
+    UsedLegacyTLS NODELETE usedLegacyTLS() const;
+    WasPrivateRelayed NODELETE wasPrivateRelayed() const;
 
     using CachedFrameBase::document;
     using CachedFrameBase::view;
     using CachedFrameBase::url;
     DocumentLoader* documentLoader() const { return m_documentLoader.get(); }
 
-    size_t descendantFrameCount() const;
+    size_t NODELETE descendantFrameCount() const;
 };
 
 } // namespace WebCore

@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <wtf/Algorithms.h>
 #include <wtf/HashSet.h>
 #include <wtf/Logger.h>
 #include <wtf/Ref.h>
@@ -90,7 +89,11 @@ public:
 
     inline bool willLog(const WTFLogChannel& channel, WTFLogLevel level) const
     {
-        return allOf(m_loggers, [channel, level] (auto& logger) { return logger->willLog(channel, level); });
+        for (auto& logger : m_loggers) {
+            if (!logger->willLog(channel, level, { }))
+                return false;
+        }
+        return true;
     }
 
 private:
@@ -109,7 +112,7 @@ private:
 
         for (const auto& logger : m_loggers) {
             for (Observer& observer : logger->observers())
-                observer.didLogMessage(channel, level, { ConsoleLogValue<Argument>::toValue(arguments)... });
+                observer.didLogMessage(channel, level, { }, { ConsoleLogValue<Argument>::toValue(arguments)... });
         }
     }
 

@@ -3,7 +3,7 @@
     Copyright (C) 2001 Dirk Mueller (mueller@kde.org)
     Copyright (C) 2002 Waldo Bastian (bastian@kde.org)
     Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
-    Copyright (C) 2004, 2005, 2006, 2007 Apple Inc. All rights reserved.
+    Copyright (C) 2004-2025 Apple Inc. All rights reserved.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -30,8 +30,10 @@
 #include "CachedResourceClientWalker.h"
 #include "CachedResourceLoader.h"
 #include "Font.h"
+#include "FontCascadeInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderTypes.h"
+#include "ImageAdapter.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalFrameView.h"
@@ -44,6 +46,7 @@
 #include "SecurityOrigin.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "SubresourceLoader.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -63,7 +66,7 @@
 namespace WebCore {
 
 CachedImage::CachedImage(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar)
-    : CachedResource(WTFMove(request), Type::ImageResource, sessionID, cookieJar)
+    : CachedResource(WTF::move(request), Type::ImageResource, sessionID, cookieJar)
     , m_updateImageDataCount(0)
     , m_isManuallyCached(false)
     , m_shouldPaintBrokenImage(true)
@@ -84,23 +87,6 @@ CachedImage::CachedImage(Image* image, PAL::SessionID sessionID, const CookieJar
 {
 }
 
-CachedImage::CachedImage(const URL& url, Image* image, PAL::SessionID sessionID, const CookieJar* cookieJar, const String& domainForCachePartition)
-    : CachedResource(url, Type::ImageResource, sessionID, cookieJar)
-    , m_image(image)
-    , m_updateImageDataCount(0)
-    , m_isManuallyCached(true)
-    , m_shouldPaintBrokenImage(true)
-    , m_forceUpdateImageDataEnabledForTesting(false)
-{
-    m_resourceRequest.setDomainForCachePartition(domainForCachePartition);
-
-    // Use the incoming URL in the response field. This ensures that code using the response directly,
-    // such as origin checks for security, actually see something.
-    mutableResponse().setURL(url);
-
-    setAllowsOrientationOverride(isCORSSameOrigin() || m_image->sourceURL().protocolIsData());
-}
-
 CachedImage::~CachedImage()
 {
     clearImage();
@@ -109,7 +95,7 @@ CachedImage::~CachedImage()
 void CachedImage::load(CachedResourceLoader& loader)
 {
     m_skippingRevalidationDocument = loader.document();
-    m_layerBasedSVGEngineEnabled = loader.document() ? loader.document()->settings().layerBasedSVGEngineEnabled() : false;
+    m_settings = loader.document() ? &loader.document()->settings() : nullptr;
 
     if (loader.shouldPerformImageLoad(url()))
         CachedResource::load(loader);
@@ -120,7 +106,7 @@ void CachedImage::load(CachedResourceLoader& loader)
 void CachedImage::setBodyDataFrom(const CachedResource& resource)
 {
     ASSERT(resource.type() == type());
-    const CachedImage& image = static_cast<const CachedImage&>(resource);
+    const auto& image = downcast<const CachedImage>(resource);
 
     CachedResource::setBodyDataFrom(resource);
 
@@ -137,11 +123,11 @@ void CachedImage::didAddClient(CachedResourceClient& client)
 {
     if (m_data && !m_image && !errorOccurred()) {
         createImage();
-        protectedImage()->setData(m_data.copyRef(), true);
+        protect(m_image)->setData(m_data.copyRef(), true);
     }
 
     ASSERT(client.resourceClientType() == CachedImageClient::expectedType());
-    if (m_image && !m_image->isNull())
+    if (m_image && !protect(m_image)->isNull())
         downcast<CachedImageClient>(client).imageChanged(this);
 
     if (RefPtr image = m_image)
@@ -183,7 +169,7 @@ void CachedImage::addClientWaitingForAsyncDecoding(CachedImageClient& client)
         // to cancel the repaint optimization we do in CachedImage::imageFrameAvailable() by adding
         // all the m_clients to m_clientsWaitingForAsyncDecoding.
         CachedResourceClientWalker<CachedImageClient> walker(*this);
-        while (auto* client = walker.next())
+        while (RefPtr client = walker.next())
             m_clientsWaitingForAsyncDecoding.add(*client);
     } else
         m_clientsWaitingForAsyncDecoding.add(client);
@@ -199,9 +185,19 @@ void CachedImage::removeAllClientsWaitingForAsyncDecoding()
         return;
     bitmapImage->stopDecodingWorkQueue();
 
-    for (auto& client : m_clientsWaitingForAsyncDecoding)
-        client.imageChanged(this);
+    for (Ref client : m_clientsWaitingForAsyncDecoding)
+        client->imageChanged(this);
     m_clientsWaitingForAsyncDecoding.clear();
+}
+
+bool CachedImage::hasRendererClients() const
+{
+    CachedResourceClientWalker<CachedImageClient> walker(*this);
+    while (RefPtr client = walker.next()) {
+        if (client->isRendererClient())
+            return true;
+    }
+    return false;
 }
 
 void CachedImage::switchClientsToRevalidatedResource()
@@ -214,7 +210,7 @@ void CachedImage::switchClientsToRevalidatedResource()
         for (auto& request : m_pendingContainerContextRequests)
             switchContainerContextRequests.set(request.key, request.value);
         CachedResource::switchClientsToRevalidatedResource();
-        CachedResourceHandle revalidatedCachedImage = downcast<CachedImage>(*resourceToRevalidate());
+        RefPtr revalidatedCachedImage = downcast<CachedImage>(*resourceToRevalidate());
         for (auto& request : switchContainerContextRequests)
             revalidatedCachedImage->setContainerContextForClient(request.key, request.value.containerSize, request.value.containerZoom, request.value.imageURL);
         return;
@@ -267,11 +263,6 @@ Image* CachedImage::image() const
     return &Image::nullImage();
 }
 
-RefPtr<Image> CachedImage::protectedImage() const
-{
-    return image();
-}
-
 Image* CachedImage::imageForRenderer(const RenderObject* renderer)
 {
     if (errorOccurred() && m_shouldPaintBrokenImage) {
@@ -285,8 +276,7 @@ Image* CachedImage::imageForRenderer(const RenderObject* renderer)
         return &Image::nullImage();
 
     if (m_image->drawsSVGImage()) {
-        Image* image = m_svgImageCache->imageForRenderer(renderer);
-        if (image != &Image::nullImage())
+        SUPPRESS_UNCOUNTED_LOCAL if (auto* image = m_svgImageCache->imageForRenderer(renderer); image != &Image::nullImage())
             return image;
     }
     return m_image.get();
@@ -311,41 +301,54 @@ void CachedImage::setContainerContextForClient(const CachedImageClient& client, 
     m_svgImageCache->setContainerContextForClient(client, containerSize, containerZoom, imageURL);
 }
 
-FloatSize CachedImage::imageSizeForRenderer(const RenderElement* renderer, SizeType sizeType) const
+FloatSize CachedImage::internalImageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType, float density) const
 {
     RefPtr image = m_image;
     if (!image)
         return { };
 
-#if ENABLE(MULTI_REPRESENTATION_HEIC)
-    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer); renderImage && renderImage->isMultiRepresentationHEIC()) {
-        auto metrics = renderImage->style().fontCascade().primaryFont().metricsForMultiRepresentationHEIC();
-        return metrics.size();
+    if (RefPtr svgImage = dynamicDowncast<SVGImage>(*image)) {
+        FloatSize size;
+        if (sizeType == UsedSize) {
+            // The SVG cache size is already in CSS pixels (set by the layout
+            // system via setContainerContextForClient), so density does not apply.
+            size = m_svgImageCache->imageSizeForRenderer(renderer);
+        } else
+            size = svgImage->resolvedIntrinsicSize(density);
+        if (multiplier != 1.0f)
+            size.scale(multiplier);
+        return size;
     }
+
+    FloatSize imageSize;
+#if ENABLE(MULTI_REPRESENTATION_HEIC)
+    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer); renderImage && renderImage->isMultiRepresentationHEIC())
+        imageSize = renderImage->style().fontCascade().primaryFont().metricsForMultiRepresentationHEIC().size();
+    else
 #endif
+        imageSize = image->size(renderer ? renderer->imageOrientation() : ImageOrientation(ImageOrientation::Orientation::FromImage));
 
-    if (image->drawsSVGImage() && sizeType == UsedSize)
-        return m_svgImageCache->imageSizeForRenderer(renderer);
-
-    return image->size(renderer ? renderer->imageOrientation() : ImageOrientation(ImageOrientation::Orientation::FromImage));
+    float scaleFactor = multiplier * density;
+    float widthScale = image->hasRelativeWidth() ? 1.0f : scaleFactor;
+    float heightScale = image->hasRelativeHeight() ? 1.0f : scaleFactor;
+    if (widthScale != 1.0f || heightScale != 1.0f)
+        imageSize.scale(widthScale, heightScale);
+    return imageSize;
 }
 
-
-LayoutSize CachedImage::unclampedImageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType) const
+FloatSize CachedImage::imageSizeForRenderer(const RenderElement* renderer) const
 {
-    LayoutSize imageSize = LayoutSize(imageSizeForRenderer(renderer, sizeType));
-    if (imageSize.isEmpty() || multiplier == 1.0f)
-        return imageSize;
-
-    float widthScale = m_image->hasRelativeWidth() ? 1.0f : multiplier;
-    float heightScale = m_image->hasRelativeHeight() ? 1.0f : multiplier;
-    imageSize.scale(widthScale, heightScale);
-    return imageSize;    
+    return internalImageSizeForRenderer(renderer, 1.0f, UsedSize, 1.0f);
 }
 
-LayoutSize CachedImage::imageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType) const
+LayoutSize CachedImage::unclampedImageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType, float density) const
 {
-    auto imageSize = unclampedImageSizeForRenderer(renderer, multiplier, sizeType);
+    return LayoutSize(internalImageSizeForRenderer(renderer, multiplier, sizeType, density));
+}
+
+LayoutSize CachedImage::imageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType, float density) const
+{
+    auto imageSize = unclampedImageSizeForRenderer(renderer, multiplier, sizeType, density);
     if (imageSize.isEmpty() || multiplier == 1.0f)
         return imageSize;
 
@@ -357,30 +360,30 @@ LayoutSize CachedImage::imageSizeForRenderer(const RenderElement* renderer, floa
     return imageSize;
 }
 
-void CachedImage::computeIntrinsicDimensions(Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio)
+void CachedImage::computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio)
 {
     if (RefPtr image = m_image)
         image->computeIntrinsicDimensions(intrinsicWidth, intrinsicHeight, intrinsicRatio);
 }
 
+bool CachedImage::hasHDRContent() const
+{
+    return m_image && m_image->hasHDRContent();
+}
+
 void CachedImage::notifyObservers(const IntRect* changeRect)
 {
     CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (CachedImageClient* c = walker.next())
-        c->imageChanged(this, changeRect);
+    while (RefPtr client = walker.next())
+        client->imageChanged(this, changeRect);
 }
 
 void CachedImage::checkShouldPaintBrokenImage()
 {
-    if (!m_loader || m_loader->reachedTerminalState())
+    if (!m_loader || m_loader->reachedTerminalState() || !m_loader->frameLoader())
         return;
 
     m_shouldPaintBrokenImage = m_loader->frameLoader()->client().shouldPaintBrokenImage(url());
-}
-
-bool CachedImage::isPDFResource() const
-{
-    return Image::isPDFResource(response().mimeType(), url());
 }
 
 void CachedImage::clear()
@@ -400,7 +403,7 @@ inline void CachedImage::createImage()
 
     m_imageObserver = CachedImageObserver::create(*this);
 
-    m_image = Image::create(*m_imageObserver);
+    m_image = Image::create(protect(*m_imageObserver).get());
 
     if (RefPtr image = m_image) {
         if (auto* svgImage = dynamicDowncast<SVGImage>(*image))
@@ -423,25 +426,25 @@ CachedImage::CachedImageObserver::CachedImageObserver(CachedImage& image)
 
 void CachedImage::CachedImageObserver::encodedDataStatusChanged(const Image& image, EncodedDataStatus status)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->encodedDataStatusChanged(image, status);
 }
 
 void CachedImage::CachedImageObserver::decodedSizeChanged(const Image& image, long long delta)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->decodedSizeChanged(image, delta);
 }
 
 void CachedImage::CachedImageObserver::didDraw(const Image& image)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->didDraw(image);
 }
 
 bool CachedImage::CachedImageObserver::canDestroyDecodedData(const Image& image) const
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages) {
+    for (RefPtr cachedImage : m_cachedImages) {
         if (&image != cachedImage->image())
             continue;
         if (!cachedImage->canDestroyDecodedData(image))
@@ -452,19 +455,25 @@ bool CachedImage::CachedImageObserver::canDestroyDecodedData(const Image& image)
 
 void CachedImage::CachedImageObserver::imageFrameAvailable(const Image& image, ImageAnimatingState animatingState, const IntRect* changeRect, DecodingStatus decodingStatus)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->imageFrameAvailable(image, animatingState, changeRect, decodingStatus);
 }
 
 void CachedImage::CachedImageObserver::changedInRect(const Image& image, const IntRect* rect)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->changedInRect(image, rect);
+}
+
+void CachedImage::CachedImageObserver::imageContentChanged(const Image& image)
+{
+    for (RefPtr cachedImage : m_cachedImages)
+        cachedImage->imageContentChanged(image);
 }
 
 void CachedImage::CachedImageObserver::scheduleRenderingUpdate(const Image& image)
 {
-    for (CachedResourceHandle cachedImage : m_cachedImages)
+    for (RefPtr cachedImage : m_cachedImages)
         cachedImage->scheduleRenderingUpdate(image);
 }
 
@@ -475,7 +484,7 @@ bool CachedImage::CachedImageObserver::allowsAnimation(const Image& image) const
     if (!Image::systemAllowsAnimationControls())
         return true;
 
-    for (CachedResourceHandle cachedImage : m_cachedImages) {
+    for (RefPtr cachedImage : m_cachedImages) {
         if (cachedImage->allowsAnimation(image))
             return true;
     }
@@ -492,7 +501,7 @@ inline void CachedImage::clearImage()
 
         if (imageObserver->cachedImages().isEmptyIgnoringNullReferences()) {
             ASSERT(imageObserver->hasOneRef());
-            protectedImage()->setImageObserver(nullptr);
+            m_image->setImageObserver(nullptr);
         }
     }
 
@@ -504,7 +513,7 @@ inline void CachedImage::clearImage()
 
 void CachedImage::updateBufferInternal(const FragmentedSharedBuffer& data)
 {
-    CachedResourceHandle protectedThis { *this };
+    RefPtr protectedThis { *this };
     m_data = const_cast<FragmentedSharedBuffer*>(&data);
     setEncodedSize(m_data->size());
     createImage();
@@ -524,7 +533,7 @@ void CachedImage::updateBufferInternal(const FragmentedSharedBuffer& data)
     if (encodedDataStatus > EncodedDataStatus::Error && encodedDataStatus < EncodedDataStatus::SizeAvailable)
         return;
 
-    if (encodedDataStatus == EncodedDataStatus::Error || m_image->isNull()) {
+    if (encodedDataStatus == EncodedDataStatus::Error || protect(m_image)->isNull()) {
         // Image decoding failed. Either we need more image data or the image data is malformed.
         error(errorOccurred() ? status() : DecodeError);
         if (inCache())
@@ -540,7 +549,7 @@ void CachedImage::updateBufferInternal(const FragmentedSharedBuffer& data)
 
 bool CachedImage::shouldDeferUpdateImageData() const
 {
-    static const double updateImageDataBackoffIntervals[] = { 0, 1, 3, 6, 15 };
+    static constexpr std::array<double, 5> updateImageDataBackoffIntervals { 0, 1, 3, 6, 15 };
     unsigned interval = m_updateImageDataCount;
 
     // The first time through, the chunk time will be 0 and the image will get an update.
@@ -594,7 +603,7 @@ void CachedImage::finishLoading(const FragmentedSharedBuffer* data, const Networ
 
     EncodedDataStatus encodedDataStatus = updateImageData(true);
 
-    if (encodedDataStatus == EncodedDataStatus::Error || m_image->isNull()) {
+    if (encodedDataStatus == EncodedDataStatus::Error || protect(m_image)->isNull()) {
         // Image decoding failed; the image data is malformed.
         error(errorOccurred() ? status() : DecodeError);
         if (inCache())
@@ -603,7 +612,7 @@ void CachedImage::finishLoading(const FragmentedSharedBuffer* data, const Networ
     }
 
     setLoading(false);
-    setAllowsOrientationOverride(isCORSSameOrigin() || m_image->sourceURL().protocolIsData());
+    setAllowsOrientationOverride(isCORSSameOrigin() || protect(m_image)->sourceURL().protocolIsData());
 
     notifyObservers();
     CachedResource::finishLoading(data, metrics);
@@ -614,7 +623,12 @@ void CachedImage::didReplaceSharedBufferContents()
     if (RefPtr image = m_image) {
         // Let the Image know that the FragmentedSharedBuffer has been rejigged, so it can let go of any references to the heap-allocated resource buffer.
         // FIXME(rdar://problem/24275617): It would be better if we could somehow tell the Image's decoder to swap in the new contents without destroying anything.
-        image->destroyDecodedData(true);
+        RefPtr data = m_data;
+        if (!image->tryReplaceData(data.releaseNonNull())) {
+            // If the image doesn't support replacing encoded data and re-decoding, then just
+            // destroy decoded data.
+            image->destroyDecodedData(true);
+        }
     }
     CachedResource::didReplaceSharedBufferContents();
 }
@@ -627,16 +641,16 @@ void CachedImage::error(CachedResource::Status status)
     notifyObservers();
 }
 
-void CachedImage::responseReceived(const ResourceResponse& newResponse)
+void CachedImage::responseReceived(ResourceResponse&& newResponse)
 {
     if (!response().isNull())
         clear();
-    CachedResource::responseReceived(newResponse);
+    CachedResource::responseReceived(WTF::move(newResponse));
 }
 
 void CachedImage::destroyDecodedData()
 {
-    bool canDeleteImage = !m_image || (m_image->hasOneRef() && m_image->isBitmapImage());
+    bool canDeleteImage = !m_image || (m_image->hasOneRef() && protect(m_image)->isBitmapImage());
     if (canDeleteImage && !isLoading() && !hasClients()) {
         m_image = nullptr;
         setDecodedSize(0);
@@ -679,7 +693,7 @@ bool CachedImage::canDestroyDecodedData(const Image& image) const
         return false;
 
     CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (CachedImageClient* client = walker.next()) {
+    while (RefPtr client = walker.next()) {
         if (!client->canDestroyDecodedData())
             return false;
     }
@@ -695,7 +709,7 @@ void CachedImage::imageFrameAvailable(const Image& image, ImageAnimatingState an
     CachedResourceClientWalker<CachedImageClient> walker(*this);
     VisibleInViewportState visibleState = VisibleInViewportState::No;
 
-    while (CachedImageClient* client = walker.next()) {
+    while (RefPtr client = walker.next()) {
         // All the clients of animated images have to be notified. The new frame has to be drawn in all of them.
         if (animatingState == ImageAnimatingState::No && !m_clientsWaitingForAsyncDecoding.contains(*client))
             continue;
@@ -704,7 +718,7 @@ void CachedImage::imageFrameAvailable(const Image& image, ImageAnimatingState an
     }
 
     if (visibleState == VisibleInViewportState::No && animatingState == ImageAnimatingState::Yes)
-        protectedImage()->stopAnimation();
+        protect(m_image)->stopAnimation();
 
     if (decodingStatus != DecodingStatus::Partial)
         m_clientsWaitingForAsyncDecoding.clear();
@@ -717,14 +731,35 @@ void CachedImage::changedInRect(const Image& image, const IntRect* rect)
     notifyObservers(rect);
 }
 
+void CachedImage::imageContentChanged(const Image& image)
+{
+    if (&image != m_image)
+        return;
+
+    CachedResourceClientWalker<CachedImageClient> walker(*this);
+    while (RefPtr client = walker.next())
+        client->imageContentChanged(*this);
+}
+
 void CachedImage::scheduleRenderingUpdate(const Image& image)
 {
     if (&image != m_image)
         return;
 
     CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (auto* client = walker.next())
+    while (RefPtr client = walker.next())
         client->scheduleRenderingUpdateForImage(*this);
+}
+
+bool CachedImage::useSystemDarkAppearance() const
+{
+    CachedResourceClientWalker<CachedImageClient> walker(*this);
+    while (RefPtr client = walker.next()) {
+        if (client->useSystemDarkAppearance())
+            return true;
+    }
+
+    return false;
 }
 
 bool CachedImage::allowsAnimation(const Image& image) const
@@ -736,7 +771,7 @@ bool CachedImage::allowsAnimation(const Image& image) const
         return true;
 
     CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (auto* client = walker.next()) {
+    while (RefPtr client = walker.next()) {
         if (!client->allowsAnimation())
             return false;
     }
@@ -749,6 +784,12 @@ bool CachedImage::currentFrameKnownToBeOpaque(const RenderElement* renderer)
     return image->currentFrameKnownToBeOpaque();
 }
 
+bool CachedImage::currentFrameIsComplete(const RenderElement* renderer)
+{
+    RefPtr image = imageForRenderer(renderer);
+    return image->currentFrameIsComplete();
+}
+
 bool CachedImage::isOriginClean(SecurityOrigin* origin)
 {
     ASSERT_UNUSED(origin, origin);
@@ -759,7 +800,7 @@ bool CachedImage::isOriginClean(SecurityOrigin* origin)
 
 CachedResource::RevalidationDecision CachedImage::makeRevalidationDecision(CachePolicy cachePolicy) const
 {
-    if (UNLIKELY(isManuallyCached())) {
+    if (isManuallyCached()) [[unlikely]] {
         // Do not revalidate manually cached images. This mechanism is used as a
         // way to efficiently share an image from the client to content and
         // the URL for that image may not represent a resource that can be
@@ -783,7 +824,7 @@ bool CachedImage::canSkipRevalidation(const CachedResourceLoader& loader, const 
 bool CachedImage::isVisibleInViewport(const Document& document) const
 {
     CachedResourceClientWalker<CachedImageClient> walker(*this);
-    while (auto* client = walker.next()) {
+    while (RefPtr client = walker.next()) {
         if (client->imageVisibleInViewport(document) == VisibleInViewportState::Yes)
             return true;
     }

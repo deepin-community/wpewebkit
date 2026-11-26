@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -9,26 +9,26 @@
 
 #include "include/core/SkClipOp.h"
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
-#include "include/gpu/GrRecordingContext.h"
-#include "include/gpu/GrTypes.h"
-#include "include/private/SkColorData.h"
-#include "include/private/base/SkAlignedStorage.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkOnce.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/private/SkAlignedStorage.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMacros.h"
+#include "include/private/SkOnce.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkUtils.h"
-#include "src/base/SkVx.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/core/SkUtils.h"
+#include "src/core/SkVx.h"
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ResourceKey.h"
@@ -54,8 +54,8 @@
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
 
-#if defined(GR_TEST_UTILS)
-#include "src/base/SkRandom.h"
+#if defined(GPU_TEST_UTILS)
+#include "src/core/SkRandom.h"
 #include "src/gpu/ganesh/GrDrawOpTest.h"
 #include "src/gpu/ganesh/GrTestUtils.h"
 #endif
@@ -145,7 +145,7 @@ public:
     GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*, GrClampType) override;
     CombineResult onCombineIfPossible(GrOp*, SkArenaAlloc*, const GrCaps&) override;
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     SkString onDumpInfo() const override;
 #endif
 
@@ -175,7 +175,7 @@ private:
     };
     constexpr static int kNumProcessorFlags = 5;
 
-    GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(ProcessorFlags);
+    SK_DECL_BITFIELD_CLASS_OPS_FRIENDS(ProcessorFlags);
 
     class Processor;
 
@@ -230,7 +230,7 @@ private:
     GrProgramInfo* fProgramInfo = nullptr;
 };
 
-GR_MAKE_BITFIELD_CLASS_OPS(FillRRectOpImpl::ProcessorFlags)
+SK_MAKE_BITFIELD_CLASS_OPS(FillRRectOpImpl::ProcessorFlags)
 
 // Hardware derivatives are not always accurate enough for highly elliptical corners. This method
 // checks to make sure the corners will still all look good if we use HW derivatives.
@@ -344,7 +344,9 @@ GrDrawOp::ClipResult FillRRectOpImpl::clipToShape(skgpu::ganesh::SurfaceDrawCont
             if (shape.isRect()) {
                 clipRRect.setRect(clipToView.mapRect(shape.rect()));
             } else {
-                if (!shape.rrect().transform(clipToView, &clipRRect)) {
+                if (auto rr = shape.rrect().transform(clipToView)) {
+                    clipRRect = *rr;
+                } else {
                     // Transforming the rrect failed. This shouldn't generally happen except in
                     // cases of fp32 overflow.
                     return ClipResult::kFail;
@@ -431,7 +433,7 @@ GrOp::CombineResult FillRRectOpImpl::onCombineIfPossible(GrOp* op,
     return CombineResult::kMerged;
 }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 SkString FillRRectOpImpl::onDumpInfo() const {
     SkString str = SkStringPrintf("# instances: %d\n", fInstanceCount);
     str += fHelper.dumpInfo();
@@ -643,7 +645,7 @@ void FillRRectOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
     size_t instanceStride = fProgramInfo->geomProc().instanceStride();
 
     if (VertexWriter instanceWriter = target->makeVertexWriter(instanceStride, fInstanceCount,
-                                                               &fInstanceBuffer, &fBaseInstance)) {
+                                                               &fInstanceBuffer, &fBaseInstance)) SK_LIKELY {
         SkDEBUGCODE(auto end = instanceWriter.mark(instanceStride * fInstanceCount));
         for (Instance* i = fHeadInstance; i; i = i->fNext) {
             auto [l, t, r, b] = i->fRRect.rect();
@@ -1018,7 +1020,7 @@ GrOp::Owner Make(GrRecordingContext* ctx,
 
 }  // namespace skgpu::ganesh::FillRRectOp
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 
 GR_DRAW_OP_TEST_DEFINE(FillRRectOp) {
     SkArenaAlloc arena(64 * sizeof(float));

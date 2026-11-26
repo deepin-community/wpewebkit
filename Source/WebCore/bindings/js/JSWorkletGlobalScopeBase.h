@@ -44,34 +44,26 @@ public:
 
     DECLARE_INFO;
 
-    WorkletGlobalScope& wrapped() const { return *m_wrapped; }
-    ScriptExecutionContext* scriptExecutionContext() const;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
-    }
-
-    static bool supportsRichSourceInfo(const JSC::JSGlobalObject*);
-    static bool shouldInterruptScript(const JSC::JSGlobalObject*);
-    static bool shouldInterruptScriptBeforeTimeout(const JSC::JSGlobalObject*);
-    static JSC::RuntimeFlags javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
-    static JSC::ScriptExecutionStatus scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
-    static void queueMicrotaskToEventLoop(JSC::JSGlobalObject&, Ref<JSC::Microtask>&&);
-    static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, JSC::JSString*);
-    static String codeForEval(JSC::JSGlobalObject*, JSC::JSValue);
-    static bool canCompileStrings(JSC::JSGlobalObject*, JSC::CompilationType, String, JSC::JSValue);
-
-protected:
-    JSWorkletGlobalScopeBase(JSC::VM&, JSC::Structure*, RefPtr<WorkletGlobalScope>&&);
-    void finishCreation(JSC::VM&, JSC::JSGlobalProxy*);
-
     DECLARE_VISIT_CHILDREN;
 
-private:
+    WorkletGlobalScope& wrapped() const { return m_wrapped; }
+
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
+    static bool NODELETE supportsRichSourceInfo(const JSC::JSGlobalObject*);
+    static bool NODELETE shouldInterruptScript(const JSC::JSGlobalObject*);
+    static bool NODELETE shouldInterruptScriptBeforeTimeout(const JSC::JSGlobalObject*);
+    static JSC::RuntimeFlags NODELETE javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
+    static JSC::ScriptExecutionStatus NODELETE scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
+    static void NODELETE reportViolationForUnsafeEval(JSC::JSGlobalObject*, const String&);
+
+protected:
+    JSWorkletGlobalScopeBase(JSC::VM&, JSC::Structure*, Ref<WorkletGlobalScope>&&);
+    void finishCreation(JSC::VM&, JSC::JSGlobalProxy*);
+
     static const JSC::GlobalObjectMethodTable* globalObjectMethodTable();
 
-    RefPtr<WorkletGlobalScope> m_wrapped;
+private:
+    const Ref<WorkletGlobalScope> m_wrapped;
 };
 
 // Returns a JSWorkletGlobalScope or jsNull()

@@ -32,6 +32,7 @@
 #include "Timer.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/HashCountedSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -39,30 +40,30 @@ class DeviceClient;
 class Page;
 
 class DeviceController : public Supplement<Page>, public CanMakeCheckedPtr<DeviceController> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(DeviceController);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DeviceController);
 public:
-    explicit DeviceController(DeviceClient&);
+    DeviceController();
     virtual ~DeviceController();
 
+    bool hasListeners() { return !m_listeners.isEmpty(); }
     void addDeviceEventListener(LocalDOMWindow&);
     void removeDeviceEventListener(LocalDOMWindow&);
     void removeAllDeviceEventListeners(LocalDOMWindow&);
-    bool hasDeviceEventListener(LocalDOMWindow&) const;
+    bool NODELETE hasDeviceEventListener(LocalDOMWindow&) const;
 
     void dispatchDeviceEvent(Event&);
     bool isActive() { return !m_listeners.isEmpty(); }
-    DeviceClient& client();
+    virtual DeviceClient& client() = 0;
 
     virtual bool hasLastData() { return false; }
     virtual RefPtr<Event> getLastEvent() { return nullptr; }
 
-protected:
+private:
     void fireDeviceEvent();
 
     HashCountedSet<RefPtr<LocalDOMWindow>> m_listeners;
     HashCountedSet<RefPtr<LocalDOMWindow>> m_lastEventListeners;
-    WeakRef<DeviceClient> m_client;
     Timer m_timer;
 };
 

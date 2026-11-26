@@ -83,6 +83,17 @@ std::string SanitizeVersionString(std::string versionString, bool isES, bool inc
     return result.str();
 }
 
+bool ThreadSafeDisplayGL::testDeviceLost()
+{
+    return false;
+}
+
+egl::Error ThreadSafeDisplayGL::restoreLostDevice(const egl::ThreadSafeDisplay *display)
+{
+    UNIMPLEMENTED();
+    return egl::Error(EGL_BAD_DISPLAY);
+}
+
 DisplayGL::DisplayGL(const egl::DisplayState &state) : DisplayImpl(state) {}
 
 DisplayGL::~DisplayGL() {}
@@ -158,16 +169,15 @@ gl::Version DisplayGL::getMaxConformantESVersion() const
     return std::min(getMaxSupportedESVersion(), gl::Version(3, 0));
 }
 
-Optional<gl::Version> DisplayGL::getMaxSupportedDesktopVersion() const
-{
-    return Optional<gl::Version>::Invalid();
-}
-
 void DisplayGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
 {
     // Advertise robust resource initialization on all OpenGL backends for testing even though it is
     // not fully implemented.
     outExtensions->robustResourceInitializationANGLE = true;
+
+    outExtensions->createContextPassthroughShadersANGLE =
+        !getRenderer()->getFeatures().disablePassthroughShaders.enabled &&
+        getRenderer()->getFunctions()->standard == STANDARD_GL_ES;
 }
 
 egl::Error DisplayGL::makeCurrentSurfaceless(gl::Context *context)

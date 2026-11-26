@@ -29,7 +29,7 @@
 
 namespace WebKit {
 
-enum class StorageNamespaceIdentifierType { };
-using StorageNamespaceIdentifier = LegacyNullableObjectIdentifier<StorageNamespaceIdentifierType>;
+struct StorageNamespaceIdentifierType;
+using StorageNamespaceIdentifier = ObjectIdentifier<StorageNamespaceIdentifierType>;
 
 }

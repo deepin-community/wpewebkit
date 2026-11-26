@@ -33,50 +33,48 @@
 #include "RemoteXRProjectionLayerMessages.h"
 #include "StreamServerConnection.h"
 #include "WebGPUObjectHeap.h"
+#include <WebCore/PlatformXR.h>
 #include <WebCore/WebGPUXRProjectionLayer.h>
+#include <wtf/MachSendRight.h>
+#include <wtf/TZoneMalloc.h>
 
-#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, connection())
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, m_streamConnection)
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteXRProjectionLayer);
 
 RemoteXRProjectionLayer::RemoteXRProjectionLayer(WebCore::WebGPU::XRProjectionLayer& xrProjectionLayer, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(xrProjectionLayer)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_identifier(identifier)
     , m_gpu(gpu)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteXRProjectionLayer::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteXRProjectionLayer::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteXRProjectionLayer::~RemoteXRProjectionLayer() = default;
 
-RefPtr<IPC::Connection> RemoteXRProjectionLayer::connection() const
-{
-    RefPtr connection = m_gpu->gpuConnectionToWebProcess();
-    if (!connection)
-        return nullptr;
-    return &connection->connection();
-}
-
 void RemoteXRProjectionLayer::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
-void RemoteXRProjectionLayer::startFrame()
+#if PLATFORM(COCOA)
+void RemoteXRProjectionLayer::startFrame(uint64_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, uint64_t reusableTextureIndex, PlatformXR::RateMapDescription&& rateMapDescription)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    protect(m_backing)->startFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, WTF::move(rateMapDescription));
 }
+#endif
 
 void RemoteXRProjectionLayer::endFrame()
 {
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void RemoteXRProjectionLayer::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteXRProjectionLayer::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteXRProjectionLayer::messageReceiverName(), m_identifier.toUInt64());
 }
 
 } // namespace WebKit

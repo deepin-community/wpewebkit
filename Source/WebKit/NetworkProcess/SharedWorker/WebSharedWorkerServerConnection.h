@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "SharedPreferencesForWebProcess.h"
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/SharedWorkerObjectIdentifier.h>
 #include <WebCore/TransferredMessagePort.h>
@@ -36,11 +37,6 @@
 
 namespace WebKit {
 class WebSharedWorkerServerConnection;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::WebSharedWorkerServerConnection> : std::true_type { };
 }
 
 namespace WebCore {
@@ -59,16 +55,19 @@ class WebSharedWorkerServer;
 class WebSharedWorkerServerToContextConnection;
 class NetworkSession;
 
-class WebSharedWorkerServerConnection : public IPC::MessageSender, public IPC::MessageReceiver {
+class WebSharedWorkerServerConnection : public IPC::MessageSender, public IPC::MessageReceiver, public RefCounted<WebSharedWorkerServerConnection> {
     WTF_MAKE_TZONE_ALLOCATED(WebSharedWorkerServerConnection);
 public:
-    WebSharedWorkerServerConnection(NetworkProcess&, WebSharedWorkerServer&, IPC::Connection&, WebCore::ProcessIdentifier);
+    static Ref<WebSharedWorkerServerConnection> create(NetworkProcess&, WebSharedWorkerServer&, IPC::Connection&, WebCore::ProcessIdentifier);
+
     ~WebSharedWorkerServerConnection();
 
-    WebSharedWorkerServer& server() { return m_server; }
-    const WebSharedWorkerServer& server() const { return m_server; }
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
-    PAL::SessionID sessionID();
+    WebSharedWorkerServer* NODELETE server();
+    const WebSharedWorkerServer* NODELETE server() const;
+
     NetworkSession* session();
     WebCore::ProcessIdentifier webProcessIdentifier() const { return m_webProcessIdentifier; }
 
@@ -78,7 +77,15 @@ public:
     void notifyWorkerObjectOfLoadCompletion(WebCore::SharedWorkerObjectIdentifier, const WebCore::ResourceError&);
     void postErrorToWorkerObject(WebCore::SharedWorkerObjectIdentifier, const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, bool isErrorEvent);
 
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const;
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    void reportNetworkUsageToWorkerObject(WebCore::SharedWorkerObjectIdentifier, size_t bytesTransferredOverNetworkDelta);
+#endif
+
 private:
+    WebSharedWorkerServerConnection(NetworkProcess&, WebSharedWorkerServer&, IPC::Connection&, WebCore::ProcessIdentifier);
+
     // IPC::MessageSender.
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final { return 0; }
@@ -89,9 +96,9 @@ private:
     void suspendForBackForwardCache(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier);
     void resumeForBackForwardCache(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier);
 
-    Ref<IPC::Connection> m_contentConnection;
-    Ref<NetworkProcess> m_networkProcess;
-    WebSharedWorkerServer& m_server;
+    const Ref<IPC::Connection> m_contentConnection;
+    const Ref<NetworkProcess> m_networkProcess;
+    WeakPtr<WebSharedWorkerServer> m_server;
     WebCore::ProcessIdentifier m_webProcessIdentifier;
 };
 

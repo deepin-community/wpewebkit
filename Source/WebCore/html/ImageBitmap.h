@@ -25,10 +25,8 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
-#include "IDLTypes.h"
-#include "ImageBuffer.h"
-#include "ScriptWrappable.h"
+#include <WebCore/IDLTypes.h>
+#include <WebCore/ScriptWrappable.h>
 #include <atomic>
 #include <wtf/RefCounted.h>
 #include <wtf/UniqueRef.h>
@@ -45,11 +43,14 @@ class Blob;
 class CachedImage;
 class CanvasBase;
 class CSSStyleImageValue;
+class DestinationColorSpace;
+class FloatSize;
 class HTMLCanvasElement;
 class HTMLImageElement;
 class HTMLVideoElement;
 class ImageBitmapImageObserver;
 class ImageData;
+class ImageBuffer;
 class IntRect;
 class IntSize;
 #if ENABLE(OFFSCREEN_CANVAS)
@@ -58,21 +59,25 @@ class OffscreenCanvas;
 class PendingImageBitmap;
 class RenderElement;
 class ScriptExecutionContext;
+class SerializedImageBuffer;
 class SVGImageElement;
 #if ENABLE(WEB_CODECS)
 class WebCodecsVideoFrame;
 #endif
+enum class RenderingMode : uint8_t;
 
 struct ImageBitmapOptions;
 
 template<typename IDLType> class DOMPromiseDeferred;
+template<typename> class ExceptionOr;
 
 class DetachedImageBitmap {
 public:
+    DetachedImageBitmap(const DetachedImageBitmap&);
     DetachedImageBitmap(DetachedImageBitmap&&);
     WEBCORE_EXPORT ~DetachedImageBitmap();
     DetachedImageBitmap& operator=(DetachedImageBitmap&&);
-    size_t memoryCost() const { return m_bitmap->memoryCost(); }
+    size_t memoryCost() const;
 private:
     DetachedImageBitmap(UniqueRef<SerializedImageBuffer>, bool originClean, bool premultiplyAlpha, bool forciblyPremultiplyAlpha);
     UniqueRef<SerializedImageBuffer> m_bitmap;
@@ -83,25 +88,25 @@ private:
 };
 
 class ImageBitmap final : public ScriptWrappable, public RefCounted<ImageBitmap> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ImageBitmap);
+    WTF_MAKE_TZONE_ALLOCATED(ImageBitmap);
 public:
-    using Source = std::variant<
-        RefPtr<HTMLImageElement>,
+    using Source = Variant<
+        Ref<HTMLImageElement>,
 #if ENABLE(VIDEO)
-        RefPtr<HTMLVideoElement>,
+        Ref<HTMLVideoElement>,
 #endif
-        RefPtr<HTMLCanvasElement>,
-        RefPtr<SVGImageElement>,
-        RefPtr<ImageBitmap>,
+        Ref<HTMLCanvasElement>,
+        Ref<SVGImageElement>,
+        Ref<ImageBitmap>,
 #if ENABLE(OFFSCREEN_CANVAS)
-        RefPtr<OffscreenCanvas>,
+        Ref<OffscreenCanvas>,
 #endif
-        RefPtr<CSSStyleImageValue>,
+        Ref<CSSStyleImageValue>,
 #if ENABLE(WEB_CODECS)
-        RefPtr<WebCodecsVideoFrame>,
+        Ref<WebCodecsVideoFrame>,
 #endif
-        RefPtr<Blob>,
-        RefPtr<ImageData>
+        Ref<Blob>,
+        Ref<ImageData>
     >;
 
     using Promise = DOMPromiseDeferred<IDLInterface<ImageBitmap>>;
@@ -121,7 +126,7 @@ public:
 
     ~ImageBitmap();
 
-    ImageBuffer* buffer() const { return m_bitmap.get(); }
+    ImageBuffer* NODELETE buffer() const;
 
     RefPtr<ImageBuffer> takeImageBuffer();
 
@@ -134,42 +139,37 @@ public:
 
     std::optional<DetachedImageBitmap> detach();
     bool isDetached() const { return !m_bitmap; }
-    void close() { takeImageBuffer(); }
+    void close();
 
-#if USE(SKIA)
-    void prepareForCrossThreadTransfer();
-#endif
-
-    size_t memoryCost() const;
+    size_t NODELETE memoryCost() const;
 private:
     friend class ImageBitmapImageObserver;
     friend class PendingImageBitmap;
     ImageBitmap(Ref<ImageBuffer>, bool originClean, bool premultiplyAlpha, bool forciblyPremultiplyAlpha);
     static Ref<ImageBitmap> createBlankImageBuffer(ScriptExecutionContext&, bool originClean);
 
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<HTMLImageElement>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<SVGImageElement>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<HTMLImageElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<SVGImageElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
     static void createCompletionHandler(ScriptExecutionContext&, CachedImage*, RenderElement*, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #if ENABLE(VIDEO)
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<HTMLVideoElement>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<HTMLVideoElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #endif
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<ImageBitmap>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<HTMLCanvasElement>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<ImageBitmap>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<HTMLCanvasElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #if ENABLE(OFFSCREEN_CANVAS)
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<OffscreenCanvas>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<OffscreenCanvas>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #endif
 #if ENABLE(WEB_CODECS)
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<WebCodecsVideoFrame>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #endif
     static void createCompletionHandler(ScriptExecutionContext&, CanvasBase&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<Blob>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<ImageData>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, RefPtr<CSSStyleImageValue>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<Blob>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<ImageData>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, Ref<CSSStyleImageValue>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
     static void createFromBuffer(ScriptExecutionContext&, Ref<ArrayBuffer>&&, String mimeType, long long expectedContentLength, const URL&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    void updateMemoryCost();
 
     RefPtr<ImageBuffer> m_bitmap;
-    std::atomic<size_t> m_memoryCost { 0 };
+    std::atomic<size_t> m_memoryCost { 0 }; // Atomic, accessed from arbitrary thread by GC.
     const bool m_originClean : 1 { false };
     const bool m_premultiplyAlpha : 1 { false };
     const bool m_forciblyPremultiplyAlpha : 1 { false };

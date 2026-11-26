@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2012, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +27,6 @@
 #include "WebNotificationManager.h"
 
 #include "Logging.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include "WebProcessCreationParameters.h"
@@ -57,7 +56,7 @@ namespace WebKit {
 using namespace WebCore;
 
 #if ENABLE(NOTIFICATIONS)
-static bool sendMessage(WebPage* page, const Function<bool(IPC::Connection&, uint64_t)>& sendMessage)
+static bool sendMessage(WebPage* page, NOESCAPE const Function<bool(IPC::Connection&, uint64_t)>& sendMessage)
 {
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
     if (DeprecatedGlobalSettings::builtInNotificationsEnabled()) {
@@ -69,7 +68,7 @@ static bool sendMessage(WebPage* page, const Function<bool(IPC::Connection&, uin
     std::optional<WebCore::PageIdentifier> pageIdentifier;
     if (page)
         pageIdentifier = page->identifier();
-    else if (auto* connection = SWContextManager::singleton().connection()) {
+    else if (RefPtr connection = SWContextManager::singleton().connection()) {
         // Pageless notification messages are, by default, on behalf of a service worker.
         // So use the service worker connection's page identifier.
         pageIdentifier = connection->pageIdentifier();
@@ -91,7 +90,7 @@ template<typename U, typename C>
 static bool sendNotificationMessageWithAsyncReply(U&& message, WebPage* page, C&& callback)
 {
     return sendMessage(page, [&] (auto& connection, auto destinationIdentifier) {
-        return !!connection.sendWithAsyncReply(std::forward<U>(message), WTFMove(callback), destinationIdentifier);
+        return !!connection.sendWithAsyncReply(std::forward<U>(message), WTF::move(callback), destinationIdentifier);
     });
 }
 #endif // ENABLE(NOTIFICATIONS)
@@ -104,14 +103,23 @@ ASCIILiteral WebNotificationManager::supplementName()
 }
 
 WebNotificationManager::WebNotificationManager(WebProcess& process)
+    : m_process(process)
 {
 #if ENABLE(NOTIFICATIONS)
     process.addMessageReceiver(Messages::WebNotificationManager::messageReceiverName(), *this);
 #endif
 }
 
-WebNotificationManager::~WebNotificationManager()
+WebNotificationManager::~WebNotificationManager() = default;
+
+void WebNotificationManager::ref() const
 {
+    m_process->ref();
+}
+
+void WebNotificationManager::deref() const
+{
+    m_process->deref();
 }
 
 void WebNotificationManager::initialize(const WebProcessCreationParameters& parameters)
@@ -148,11 +156,11 @@ void WebNotificationManager::didRemoveNotificationDecisions(const Vector<String>
 
 NotificationClient::Permission WebNotificationManager::policyForOrigin(const String& originString, WebPage* page) const
 {
-#if ENABLE(WEB_PUSH_NOTIFICATIONS)
+#if ENABLE(WEB_PUSH_NOTIFICATIONS) && ENABLE(NOTIFICATIONS)
     if (DeprecatedGlobalSettings::builtInNotificationsEnabled()) {
         Ref connection = WebProcess::singleton().ensureNetworkProcessConnection().connection();
         auto origin = SecurityOriginData::fromURL(URL { originString });
-        auto result = connection->sendSync(Messages::NotificationManagerMessageHandler::GetPermissionStateSync(WTFMove(origin)), WebProcess::singleton().sessionID().toUInt64());
+        auto result = connection->sendSync(Messages::NotificationManagerMessageHandler::GetPermissionStateSync(WTF::move(origin)), WebProcess::singleton().sessionID().toUInt64());
         if (!result.succeeded())
             RELEASE_LOG_ERROR(Notifications, "Could not look up notification permission for origin %" SENSITIVE_LOG_STRING": %u", originString.utf8().data(), static_cast<unsigned>(result.error()));
 
@@ -168,7 +176,7 @@ NotificationClient::Permission WebNotificationManager::policyForOrigin(const Str
             RELEASE_ASSERT_NOT_REACHED();
         }
     }
-#endif
+#endif // ENABLE(WEB_PUSH_NOTIFICATIONS) && ENABLE(NOTIFICATIONS)
 
 #if ENABLE(NOTIFICATIONS)
     if (originString.isEmpty())
@@ -206,12 +214,13 @@ bool WebNotificationManager::show(NotificationData&& notification, RefPtr<Notifi
         return false;
     }
 
-    if (!sendNotificationMessageWithAsyncReply(Messages::NotificationManagerMessageHandler::ShowNotification(notification, resources), page, WTFMove(callback)))
+    if (!sendNotificationMessageWithAsyncReply(Messages::NotificationManagerMessageHandler::ShowNotification(notification, resources), page, WTF::move(callback)))
         return false;
 
     if (!notification.isPersistent()) {
         ASSERT(!m_nonPersistentNotificationsContexts.contains(notificationID));
-        m_nonPersistentNotificationsContexts.add(notificationID, notification.contextIdentifier);
+        RELEASE_ASSERT(notification.contextIdentifier);
+        m_nonPersistentNotificationsContexts.add(notificationID, *notification.contextIdentifier);
     }
     return true;
 #else
@@ -230,7 +239,8 @@ void WebNotificationManager::cancel(NotificationData&& notification, WebPage* pa
     auto identifier = notification.notificationID;
     ASSERT(notification.isPersistent() || m_nonPersistentNotificationsContexts.contains(identifier));
 
-    if (!sendNotificationMessage(Messages::NotificationManagerMessageHandler::CancelNotification(identifier), page))
+    auto origin = WebCore::SecurityOriginData::fromURL(URL { notification.originString });
+    if (!sendNotificationMessage(Messages::NotificationManagerMessageHandler::CancelNotification(WTF::move(origin), identifier), page))
         return;
 #else
     UNUSED_PARAM(notification);
@@ -243,7 +253,7 @@ void WebNotificationManager::requestPermission(WebCore::SecurityOriginData&& ori
     ASSERT(isMainRunLoop());
 
 #if ENABLE(NOTIFICATIONS)
-    sendNotificationMessageWithAsyncReply(Messages::NotificationManagerMessageHandler::RequestPermission(WTFMove(origin)), page.get(), WTFMove(callback));
+    sendNotificationMessageWithAsyncReply(Messages::NotificationManagerMessageHandler::RequestPermission(WTF::move(origin)), page.get(), WTF::move(callback));
 #else
     UNUSED_PARAM(origin);
     callback(false);

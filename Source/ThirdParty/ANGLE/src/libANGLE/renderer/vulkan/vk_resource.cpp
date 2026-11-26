@@ -8,6 +8,7 @@
 //
 
 #include "libANGLE/renderer/vulkan/vk_resource.h"
+#include "common/unsafe_buffers.h"
 
 #include "libANGLE/renderer/vulkan/ContextVk.h"
 
@@ -18,12 +19,12 @@ namespace vk
 // Resource implementation.
 angle::Result Resource::waitForIdle(ContextVk *contextVk,
                                     const char *debugMessage,
-                                    RenderPassClosureReason reason)
+                                    QueueSubmitReason reason)
 {
     // If there are pending commands for the resource, flush them.
     if (contextVk->hasUnsubmittedUse(mUse))
     {
-        ANGLE_TRY(contextVk->flushImpl(nullptr, nullptr, reason));
+        ANGLE_TRY(contextVk->flushAndSubmitCommands(nullptr, nullptr, reason));
     }
 
     Renderer *renderer = contextVk->getRenderer();
@@ -32,7 +33,8 @@ angle::Result Resource::waitForIdle(ContextVk *contextVk,
     {
         if (debugMessage)
         {
-            ANGLE_VK_PERF_WARNING(contextVk, GL_DEBUG_SEVERITY_HIGH, "%s", debugMessage);
+            ANGLE_UNSAFE_TODO(
+                ANGLE_VK_PERF_WARNING(contextVk, GL_DEBUG_SEVERITY_HIGH, "%s", debugMessage));
         }
         ANGLE_TRY(renderer->finishResourceUse(contextVk, mUse));
     }

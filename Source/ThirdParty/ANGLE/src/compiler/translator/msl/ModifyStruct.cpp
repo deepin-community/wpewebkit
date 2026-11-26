@@ -12,9 +12,11 @@
 #include <unordered_set>
 
 #include "compiler/translator/Compiler.h"
+#include "compiler/translator/ImmutableStringBuilder.h"
 #include "compiler/translator/msl/AstHelpers.h"
 #include "compiler/translator/msl/ModifyStruct.h"
 #include "compiler/translator/msl/TranslatorMSL.h"
+#include "compiler/translator/tree_util/IntermNode_util.h"
 
 using namespace sh;
 
@@ -171,8 +173,6 @@ class ConvertStructState : angle::NonCopyable
 
     ~ConvertStructState()
     {
-        ASSERT(namePath.empty());
-        ASSERT(namePathSizes.empty());
     }
 
     void publish(const TStructure &originalStruct, const Name &modifiedStructName)
@@ -234,8 +234,9 @@ class ConvertStructState : angle::NonCopyable
             ModifiedAccess *modified = &AccessField(modifiedParam, info.modifiedFieldName);
             if (useAttributeAliasing)
             {
-                std::ostringstream aliasedName;
-                aliasedName << "ANGLE_ALIASED_" << info.modifiedFieldName;
+                TInfoSinkBase aliasedName;
+                aliasedName << "ANGLE_ALIASED_";
+                info.modifiedFieldName.emit(aliasedName, kUserVariableNamePrefix);
 
                 TType *placeholderType = new TType(modified->getType());
                 placeholderType->setQualifier(EvqSpecConst);
@@ -290,35 +291,30 @@ class ConvertStructState : angle::NonCopyable
         outMachineries.insert(originalStruct, machinery);
     }
 
-    void pushPath(PathItem const &item)
+    ImmutableString rootFieldName() const
     {
-        pathItems.push_back(item);
-
-        switch (item.type)
+        if (!pathItems.empty())
         {
-            case PathItem::Type::Field:
-                pushNamePath(item.field->name());
-                break;
-
-            case PathItem::Type::Index:
-                pushNamePath(item.index);
-                break;
-
-            case PathItem::Type::FlattenArray:
-                namePathSizes.push_back(namePath.size());
-                break;
+            if (pathItems[0].type == PathItem::Type::Field)
+            {
+                return pathItems[0].field->name();
+            }
         }
+        UNREACHABLE();
+        return kEmptyImmutableString;
     }
+
+    void pushPath(PathItem const &item) { pathItems.push_back(item); }
 
     void popPath()
     {
-        ASSERT(!namePath.empty());
-        ASSERT(!namePathSizes.empty());
-        namePath.resize(namePathSizes.back());
-        namePathSizes.pop_back();
-
         ASSERT(!pathItems.empty());
         pathItems.pop_back();
+        if (pathItems.empty())
+        {
+            // Next push will start a new root output variable to linearize.
+            mSubfieldIndex = 0;
+        }
     }
 
     void finalize(const bool allowPadding)
@@ -333,19 +329,6 @@ class ConvertStructState : angle::NonCopyable
             introducePadding();
     }
 
-    Name generateModifiedFieldName(const TField &field, const TType &newType)
-    {
-        SymbolType type = field.symbolType();
-        if (pathItems.size() > 1)
-        {
-            // This is an input field that generates multiple modified fields. We cannot generate a
-            // new field name into "user" namespace, as user could choose a clashing name. Trust
-            // that we generate new names only for 1:N expansions.
-            type = SymbolType::AngleInternal;
-        }
-        return Name(namePath, type);
-    }
-
     void addModifiedField(const TField &field,
                           TType &newType,
                           TLayoutBlockStorage storage,
@@ -356,10 +339,22 @@ class ConvertStructState : angle::NonCopyable
         layoutQualifier.blockStorage     = storage;
         layoutQualifier.matrixPacking    = packing;
         newType.setLayoutQualifier(layoutQualifier);
-
-        Name newName = generateModifiedFieldName(field, newType);
-        TField *modifiedField =
-            new TField(&newType, newName.rawName(), field.line(), newName.symbolType());
+        sh::ImmutableString newName  = field.name();
+        sh::SymbolType newSymbolType = field.symbolType();
+        if (pathItems.size() > 1)
+        {
+            // Current state is linearizing a root input field into multiple modified fields. The
+            // new fields need unique names. Generate the new names into AngleInternal namespace.
+            // The user could choose a clashing name in UserDefined namespace.
+            newSymbolType = SymbolType::AngleInternal;
+            // The user specified root field name is currently used as the basis for the MSL vs-fs
+            // interface matching. The field linearization itself is deterministic, so subfield
+            // index is sufficient to define all the entries in MSL interface in all the compatible
+            // VS and FS MSL programs.
+            newName = BuildConcatenatedImmutableString(rootFieldName(), '_', mSubfieldIndex);
+            ++mSubfieldIndex;
+        }
+        TField *modifiedField = new TField(&newType, newName, field.line(), newSymbolType);
         if (addressSpace)
         {
             symbolEnv.markAsPointer(*modifiedField, *addressSpace);
@@ -605,19 +600,6 @@ class ConvertStructState : angle::NonCopyable
         }
     }
 
-    template <typename T>
-    void pushNamePath(T &&fieldName)
-    {
-        namePathSizes.push_back(namePath.size());
-        std::ostringstream str;
-        if (!namePath.empty())
-        {
-            str << std::move(namePath) << '_';
-        }
-        str << fieldName;
-        namePath = str.str();
-    }
-
   public:
     TCompiler &mCompiler;
     const ModifyStructConfig &config;
@@ -632,8 +614,7 @@ class ConvertStructState : angle::NonCopyable
 
     std::vector<PathItem> pathItems;
 
-    std::vector<size_t> namePathSizes;
-    std::string namePath;
+    int mSubfieldIndex = 0;
 
     std::vector<ConversionInfo> conversionInfos;
     TSymbolTable &symbolTable;
@@ -899,6 +880,19 @@ bool SaturateScalarOrVectorCommon(ConvertStructState &state,
                 return Access{o_, m_};
             }
         });
+    }
+
+    // Zero-initialize components added by saturation for pipeline outputs (original-to-modified)
+    // to avoid indeterminate GPU register residue leaking into color attachments.
+    if (state.config.convertType == ConvertType::OriginalToModified)
+    {
+        for (uint8_t d = dim; d < saturation; ++d)
+        {
+            state.addConversion([=](Access::Env &, OriginalAccess &, ModifiedAccess &m) {
+                auto &m_ = AccessIndex(m, d);
+                return Access{*CreateZeroNode(m_.getType()), m_};
+            });
+        }
     }
 
     return true;

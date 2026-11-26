@@ -28,7 +28,9 @@
 #include "FloatSize.h"
 #include "ScrollTypes.h"
 #include "Timer.h"
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 #if ENABLE(WHEEL_EVENT_LATCHING)
@@ -41,17 +43,21 @@ namespace WebCore {
 
 class Element;
 class LocalFrame;
+class Page;
 class PlatformWheelEvent;
 class ScrollableArea;
 class WeakPtrImplWithEventTargetData;
 
-class ScrollLatchingController {
-    WTF_MAKE_FAST_ALLOCATED;
+class ScrollLatchingController : public CanMakeWeakPtr<ScrollLatchingController> {
+    WTF_MAKE_TZONE_ALLOCATED(ScrollLatchingController);
 public:
-    ScrollLatchingController();
+    explicit ScrollLatchingController(Page&);
     ~ScrollLatchingController();
 
     void clear();
+
+    void NODELETE ref() const;
+    void deref() const;
 
     void receivedWheelEvent(const PlatformWheelEvent&);
     FloatSize cumulativeEventDelta() const { return m_cumulativeEventDelta; }
@@ -60,7 +66,7 @@ public:
     LocalFrame* latchedFrame() const;
 
     // Returns true if no frame is latched, or latching is in the given frame (in which case latchedScroller will be non-null).
-    bool latchingAllowsScrollingInFrame(const LocalFrame&, WeakPtr<ScrollableArea>& latchedScroller) const;
+    bool NODELETE latchingAllowsScrollingInFrame(const LocalFrame&, WeakPtr<ScrollableArea>& latchedScroller) const;
 
     void updateAndFetchLatchingStateForFrame(LocalFrame&, const PlatformWheelEvent&, RefPtr<Element>& latchedElement, WeakPtr<ScrollableArea>&, bool& isOverWidget);
 
@@ -73,19 +79,20 @@ private:
     struct FrameState {
         WeakPtr<Element, WeakPtrImplWithEventTargetData> wheelEventElement;
         WeakPtr<ScrollableArea> scrollableArea;
-        LocalFrame* frame { nullptr };
+        WeakPtr<LocalFrame> frame;
         bool isOverWidget { false };
     };
 
     void clearOrScheduleClearIfNeeded(const PlatformWheelEvent&);
     void clearTimerFired();
 
-    bool hasStateForFrame(const LocalFrame&) const;
-    FrameState* stateForFrame(const LocalFrame&);
-    const FrameState* stateForFrame(const LocalFrame&) const;
+    bool NODELETE hasStateForFrame(const LocalFrame&) const;
+    FrameState* NODELETE stateForFrame(const LocalFrame&);
+    const FrameState* NODELETE stateForFrame(const LocalFrame&) const;
 
     bool shouldLatchToScrollableArea(const LocalFrame&, ScrollableArea*, FloatSize) const;
 
+    WeakRef<Page> m_page;
     FloatSize m_cumulativeEventDelta;
     Vector<FrameState> m_frameStateStack;
     Timer m_clearLatchingStateTimer;

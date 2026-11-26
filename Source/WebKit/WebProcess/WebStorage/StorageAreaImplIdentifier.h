@@ -29,7 +29,7 @@
 
 namespace WebKit {
 
-enum class StorageAreaImplIdentifierType { };
-using StorageAreaImplIdentifier = LegacyNullableObjectIdentifier<StorageAreaImplIdentifierType>;
+struct StorageAreaImplIdentifierType;
+using StorageAreaImplIdentifier = ObjectIdentifier<StorageAreaImplIdentifierType>;
 
 }

@@ -929,7 +929,7 @@ void WriteGroupNonUniformBroadcast(Blob *blob,
                                    IdResult idResult2,
                                    IdScope execution,
                                    IdRef value,
-                                   IdRef id);
+                                   IdRef invocationId);
 void WriteGroupNonUniformBroadcastFirst(Blob *blob,
                                         IdResultType idResultType1,
                                         IdResult idResult2,
@@ -972,7 +972,7 @@ void WriteGroupNonUniformShuffle(Blob *blob,
                                  IdResult idResult2,
                                  IdScope execution,
                                  IdRef value,
-                                 IdRef id);
+                                 IdRef invocationId);
 void WriteGroupNonUniformShuffleXor(Blob *blob,
                                     IdResultType idResultType1,
                                     IdResult idResult2,
@@ -1126,48 +1126,10 @@ void WritePtrNotEqual(Blob *blob,
                       IdResult idResult2,
                       IdRef operand1,
                       IdRef operand2);
-void WriteSDot(Blob *blob,
-               IdResultType idResultType1,
-               IdResult idResult2,
-               IdRef vector1,
-               IdRef vector2,
-               const spv::PackedVectorFormat *packedVectorFormat);
-void WriteUDot(Blob *blob,
-               IdResultType idResultType1,
-               IdResult idResult2,
-               IdRef vector1,
-               IdRef vector2,
-               const spv::PackedVectorFormat *packedVectorFormat);
-void WriteSUDot(Blob *blob,
-                IdResultType idResultType1,
-                IdResult idResult2,
-                IdRef vector1,
-                IdRef vector2,
-                const spv::PackedVectorFormat *packedVectorFormat);
-void WriteSDotAccSat(Blob *blob,
-                     IdResultType idResultType1,
-                     IdResult idResult2,
-                     IdRef vector1,
-                     IdRef vector2,
-                     IdRef accumulator,
-                     const spv::PackedVectorFormat *packedVectorFormat);
-void WriteUDotAccSat(Blob *blob,
-                     IdResultType idResultType1,
-                     IdResult idResult2,
-                     IdRef vector1,
-                     IdRef vector2,
-                     IdRef accumulator,
-                     const spv::PackedVectorFormat *packedVectorFormat);
-void WriteSUDotAccSat(Blob *blob,
-                      IdResultType idResultType1,
-                      IdResult idResult2,
-                      IdRef vector1,
-                      IdRef vector2,
-                      IdRef accumulator,
-                      const spv::PackedVectorFormat *packedVectorFormat);
 void WriteBeginInvocationInterlockEXT(Blob *blob);
 void WriteEndInvocationInterlockEXT(Blob *blob);
 void WriteDemoteToHelperInvocation(Blob *blob);
+void WriteIsHelperInvocationEXT(Blob *blob, IdResultType idResultType1, IdResult idResult2);
 
 }  // namespace spirv
 }  // namespace angle

@@ -25,9 +25,12 @@
 
 #pragma once
 
-#include "GenericArguments.h"
-#include "JSLexicalEnvironment.h"
-#include "Watchpoint.h"
+#include <JavaScriptCore/CommonIdentifiers.h>
+#include <JavaScriptCore/GenericArgumentsImpl.h>
+#include <JavaScriptCore/JSLexicalEnvironment.h>
+#include <JavaScriptCore/Watchpoint.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -37,16 +40,16 @@ namespace JSC {
 // object will store the overflow arguments, if there are any. This object will use the symbol
 // table's ScopedArgumentsTable and the activation, or its overflow storage, to handle all indexed
 // lookups.
-class ScopedArguments final : public GenericArguments<ScopedArguments> {
+class ScopedArguments final : public GenericArgumentsImpl<ScopedArguments> {
 private:
     ScopedArguments(VM&, Structure*, WriteBarrier<Unknown>* storage, unsigned totalLength, JSFunction* callee, ScopedArgumentsTable*, JSLexicalEnvironment*);
-    using Base = GenericArguments<ScopedArguments>;
+    using Base = GenericArgumentsImpl<ScopedArguments>;
 
 public:
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
-        static_assert(!CellType::needsDestruction);
+        static_assert(CellType::needsDestruction == DoesNotNeedDestruction);
         return &vm.scopedArgumentsSpace();
     }
 
@@ -71,17 +74,7 @@ public:
         return m_totalLength;
     }
     
-    uint32_t length(JSGlobalObject* globalObject) const
-    {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (UNLIKELY(m_overrodeThings)) {
-            auto value = get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, 0);
-            RELEASE_AND_RETURN(scope, value.toUInt32(globalObject));
-        }
-        return internalLength();
-    }
+    uint32_t length(JSGlobalObject*) const;
     
     bool isMappedArgument(uint32_t i) const
     {
@@ -137,22 +130,24 @@ public:
     
     void initModifiedArgumentsDescriptorIfNecessary(JSGlobalObject* globalObject)
     {
-        GenericArguments<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_table->length());
     }
 
     void setModifiedArgumentDescriptor(JSGlobalObject* globalObject, unsigned index)
     {
-        GenericArguments<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_table->length());
     }
 
     bool isModifiedArgumentDescriptor(unsigned index)
     {
-        return GenericArguments<ScopedArguments>::isModifiedArgumentDescriptor(index, m_table->length());
+        return GenericArgumentsImpl<ScopedArguments>::isModifiedArgumentDescriptor(index, m_table->length());
     }
 
     void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 
-    JS_EXPORT_PRIVATE bool isIteratorProtocolFastAndNonObservable();
+    static JSArray* fastSlice(JSGlobalObject*, ScopedArguments*, uint64_t startIndex, uint64_t count);
+
+    JS_EXPORT_PRIVATE bool NODELETE isIteratorProtocolFastAndNonObservable();
 
     DECLARE_INFO;
     
@@ -183,3 +178,5 @@ private:
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

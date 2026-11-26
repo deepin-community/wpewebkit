@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(IPC_TESTING_API)
+#if ENABLE(IPC_TESTING_API) && !ENABLE(IPC_TESTING_SWIFT)
 
 #include "MessageReceiver.h"
 
@@ -36,14 +36,18 @@ class Connection;
 namespace WebKit {
 
 // Proxy interface to test IPC activities related to receiving messages.
-class IPCTesterReceiver final : public IPC::MessageReceiver {
+class IPCTesterReceiver final : public IPC::MessageReceiver, public RefCounted<IPCTesterReceiver> {
 public:
-    IPCTesterReceiver() = default;
-    ~IPCTesterReceiver() = default;
+    static Ref<IPCTesterReceiver> create();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 private:
+    IPCTesterReceiver() = default;
+
     // Messages
     void asyncMessage(uint32_t, CompletionHandler<void(uint32_t)>&&);
 };

@@ -52,6 +52,11 @@ enum class UpdateFlags : uint8_t {
 /**
  * WPEViewDRM:
  *
+ * A [class@WPEPlatform.View] implementation for DRM/KMS.
+ *
+ * [class@ViewDRM] is the [class@WPEPlatform.View] implementation used by
+ * [class@DisplayDRM]. It displays the web view contents by scanning out
+ * buffers directly to the DRM device.
  */
 struct _WPEViewDRMPrivate {
     Seconds refreshDuration;
@@ -315,7 +320,7 @@ static bool wpeViewDRMCommitAtomic(WPEViewDRM* view, WPE::DRM::Buffer* buffer, s
 
     auto* display = WPE_DISPLAY_DRM(wpe_view_get_display(WPE_VIEW(view)));
     auto* screen = WPE_SCREEN_DRM(wpeDisplayDRMGetScreen(display));
-    const auto& crtc = wpeScreenDRMGetCrtc(screen);
+    auto& crtc = wpeScreenDRMGetCrtc(screen);
     auto* mode = wpeScreenDRMGetMode(screen);
     auto fd = gbm_device_get_fd(wpe_display_drm_get_device(display));
     if (!crtc.modeIsCurrent(mode)) {
@@ -355,6 +360,11 @@ static bool wpeViewDRMCommitAtomic(WPEViewDRM* view, WPE::DRM::Buffer* buffer, s
         return false;
     }
 
+    if (flags & DRM_MODE_ATOMIC_ALLOW_MODESET)
+        crtc.setCurrentMode(mode);
+
+    wpeScreenDRMDestroyDumbBufferIfNeeded(screen, fd);
+
     return true;
 }
 
@@ -362,7 +372,7 @@ static bool wpeViewDRMCommitLegacy(WPEViewDRM* view, const WPE::DRM::Buffer& buf
 {
     auto* display = WPE_DISPLAY_DRM(wpe_view_get_display(WPE_VIEW(view)));
     auto* screen = WPE_SCREEN_DRM(wpeDisplayDRMGetScreen(display));
-    const auto& crtc = wpeScreenDRMGetCrtc(screen);
+    auto& crtc = wpeScreenDRMGetCrtc(screen);
     auto* mode = wpeScreenDRMGetMode(screen);
     auto fd = gbm_device_get_fd(wpe_display_drm_get_device(display));
     if (!crtc.modeIsCurrent(mode)) {
@@ -372,6 +382,8 @@ static bool wpeViewDRMCommitLegacy(WPEViewDRM* view, const WPE::DRM::Buffer& buf
             g_set_error_literal(error, WPE_VIEW_ERROR, WPE_VIEW_ERROR_RENDER_FAILED, "Failed to render buffer: failed to set CRTC");
             return false;
         }
+
+        crtc.setCurrentMode(mode);
     }
 
     // FIXME: support cursors in legacy mode.
@@ -380,6 +392,8 @@ static bool wpeViewDRMCommitLegacy(WPEViewDRM* view, const WPE::DRM::Buffer& buf
         g_set_error_literal(error, WPE_VIEW_ERROR, WPE_VIEW_ERROR_RENDER_FAILED, "Failed to render buffer: failed to request page flip");
         return false;
     }
+
+    wpeScreenDRMDestroyDumbBufferIfNeeded(screen, fd);
 
     return true;
 }
@@ -401,7 +415,7 @@ static std::optional<uint32_t> buildDamageBlob(WPEDisplayDRM* display, const Vec
 
     uint32_t blobID;
     int fd = gbm_device_get_fd(wpe_display_drm_get_device(display));
-    auto result = drmModeCreatePropertyBlob(fd, damageRects.data(), damageRects.sizeInBytes(), &blobID);
+    auto result = drmModeCreatePropertyBlob(fd, damageRects.span().data(), damageRects.sizeInBytes(), &blobID);
     if (result < 0) {
         g_set_error(error, WPE_VIEW_ERROR, WPE_VIEW_ERROR_RENDER_FAILED, "Failed to render buffer: failed to crate damage blob: %s", safeStrerror(-result).data());
         return 0;
@@ -454,8 +468,7 @@ static gboolean wpeViewDRMRenderBuffer(WPEView* view, WPEBuffer* buffer, const W
             return FALSE;
     }
 
-    if (WPE_IS_BUFFER_DMA_BUF(buffer))
-        drmBuffer->setFenceFD(UnixFileDescriptor { wpe_buffer_dma_buf_take_rendering_fence(WPE_BUFFER_DMA_BUF(buffer)), UnixFileDescriptor::Adopt });
+    drmBuffer->setFenceFD(UnixFileDescriptor { wpe_buffer_take_rendering_fence(buffer), UnixFileDescriptor::Adopt });
 
     auto* priv = WPE_VIEW_DRM(view)->priv;
     priv->pendingBuffer = buffer;
@@ -498,7 +511,7 @@ static void wpeViewDRMScheduleCursorUpdate(WPEViewDRM* view)
         return;
 
     if (!priv->cursorUpdateTimer) {
-        priv->cursorUpdateTimer = makeUnique<RunLoop::Timer>(RunLoop::current(), [view] {
+        priv->cursorUpdateTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "_WPEViewDRMPrivate::cursorUpdateTimer"_s, [view] {
             if (wpeViewDRMRequestUpdate(view, nullptr))
                 view->priv->updateFlags.add(UpdateFlags::CursorUpdateRequested);
         });
@@ -532,7 +545,7 @@ static void wpeViewDRMDidPageFlip(WPEViewDRM* view)
     if (updateFlags.contains(UpdateFlags::BufferUpdateRequested)) {
         if (priv->committedBuffer)
             wpe_view_buffer_released(WPE_VIEW(view), priv->committedBuffer.get());
-        priv->committedBuffer = WTFMove(priv->pendingBuffer);
+        priv->committedBuffer = WTF::move(priv->pendingBuffer);
         wpe_view_buffer_rendered(WPE_VIEW(view), priv->committedBuffer.get());
     }
 
@@ -570,19 +583,4 @@ static void wpe_view_drm_class_init(WPEViewDRMClass* viewDRMClass)
     viewClass->render_buffer = wpeViewDRMRenderBuffer;
     viewClass->set_cursor_from_name = wpeViewDRMSetCursorFromName;
     viewClass->set_cursor_from_bytes = wpeViewDRMSetCursorFromBytes;
-}
-
-/**
- * wpe_view_drm_new:
- * @display: a #WPEDisplayDRM
- *
- * Create a new #WPEViewDRM
- *
- * Returns: (transfer full): a #WPEView
- */
-WPEView* wpe_view_drm_new(WPEDisplayDRM* display)
-{
-    g_return_val_if_fail(WPE_IS_DISPLAY_DRM(display), nullptr);
-
-    return WPE_VIEW(g_object_new(WPE_TYPE_VIEW_DRM, "display", display, nullptr));
 }

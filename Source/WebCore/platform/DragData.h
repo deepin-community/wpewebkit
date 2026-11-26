@@ -25,13 +25,14 @@
 
 #pragma once
 
-#include "Color.h"
-#include "DragActions.h"
-#include "IntPoint.h"
-#include "PageIdentifier.h"
+#include <WebCore/Color.h>
+#include <WebCore/DragActions.h>
+#include <WebCore/IntPoint.h>
+#include <WebCore/PageIdentifier.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Platform.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -47,7 +48,7 @@ typedef void* DragDataRef;
 
 #elif PLATFORM(WIN)
 typedef struct IDataObject* DragDataRef;
-#elif PLATFORM(GTK)
+#elif PLATFORM(GTK) || PLATFORM(WPE)
 namespace WebCore {
 class SelectionData;
 }
@@ -68,7 +69,7 @@ enum class DragApplicationFlags : uint8_t {
 class PasteboardContext;
 
 #if PLATFORM(WIN)
-typedef HashMap<unsigned, Vector<String>> DragDataMap;
+using DragDataMap = HashMap<unsigned, Vector<String>>;
 #endif
 
 class DragData {
@@ -86,7 +87,7 @@ public:
         const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
 
 #if PLATFORM(COCOA)
-    WEBCORE_EXPORT DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, const Vector<String>&, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
+    WEBCORE_EXPORT DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, const Vector<String>&, Vector<String>&& /* promisedFileMIMETypes */, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
 #endif
     // This constructor should used only by WebKit2 IPC because DragData
     // is initialized by the decoder and not in the constructor.
@@ -97,8 +98,8 @@ public:
     void getDragFileDescriptorData(int& size, String& pathname);
     void getDragFileContentData(int size, void* dataBlob);
 #endif
-    const IntPoint& clientPosition() const { return m_clientPosition; }
-    const IntPoint& globalPosition() const { return m_globalPosition; }
+    const IntPoint& clientPosition() const LIFETIME_BOUND { return m_clientPosition; }
+    const IntPoint& globalPosition() const LIFETIME_BOUND { return m_globalPosition; }
     void setClientPosition(const IntPoint& clientPosition) { m_clientPosition = clientPosition; }
     OptionSet<DragApplicationFlags> flags() const { return m_applicationFlags; }
     DragDataRef platformData() const { return m_platformDragData; }
@@ -115,16 +116,18 @@ public:
     bool containsFiles() const;
     unsigned numberOfFiles() const;
     OptionSet<DragDestinationAction> dragDestinationActionMask() const { return m_dragDestinationActionMask; }
-    void setFileNames(Vector<String>& fileNames) { m_fileNames = WTFMove(fileNames); }
-    const Vector<String>& fileNames() const { return m_fileNames; }
+    void setFileNames(Vector<String>& fileNames) { m_fileNames = WTF::move(fileNames); }
+    const Vector<String>& fileNames() const LIFETIME_BOUND { return m_fileNames; }
+    void setPromisedFileMIMETypes(Vector<String>&& types) { m_promisedFileMIMETypes = WTF::move(types); }
+    const Vector<String>& promisedFileMIMETypes() const LIFETIME_BOUND { return m_promisedFileMIMETypes; }
     void disallowFileAccess();
 #if PLATFORM(COCOA)
-    const String& pasteboardName() const { return m_pasteboardName; }
+    const String& pasteboardName() const LIFETIME_BOUND { return m_pasteboardName; }
     bool containsURLTypeIdentifier() const;
     bool containsPromise() const;
 #endif
 
-    bool shouldMatchStyleOnDrop() const;
+    bool NODELETE shouldMatchStyleOnDrop() const;
 
     std::optional<PageIdentifier> pageID() const { return m_pageID; }
 
@@ -137,6 +140,7 @@ private:
     OptionSet<DragOperation> m_draggingSourceOperationMask;
     OptionSet<DragApplicationFlags> m_applicationFlags;
     Vector<String> m_fileNames;
+    Vector<String> m_promisedFileMIMETypes;
     OptionSet<DragDestinationAction> m_dragDestinationActionMask;
     std::optional<PageIdentifier> m_pageID;
 #if PLATFORM(COCOA)

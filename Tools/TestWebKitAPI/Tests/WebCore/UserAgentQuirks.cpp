@@ -61,9 +61,24 @@ static void assertUserAgentForURLHasMacPlatformQuirk(const char* url)
     EXPECT_TRUE(uaString.contains("Macintosh"_s));
     EXPECT_TRUE(uaString.contains("Mac OS X"_s));
     EXPECT_FALSE(uaString.contains("Linux"_s));
+    EXPECT_FALSE(uaString.contains("Android"_s));
     EXPECT_FALSE(uaString.contains("Chrome"_s));
     EXPECT_FALSE(uaString.contains("FreeBSD"_s));
 }
+
+#if ENABLE(WEBXR) && PLATFORM(WPE)
+static void assertUserAgentForURLHasAndroidQuirk(const char* url)
+{
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
+
+    EXPECT_FALSE(uaString.contains("Macintosh"_s));
+    EXPECT_FALSE(uaString.contains("Mac OS X"_s));
+    EXPECT_TRUE(uaString.contains("Linux"_s));
+    EXPECT_TRUE(uaString.contains("Android"_s));
+    EXPECT_FALSE(uaString.contains("Chrome"_s));
+    EXPECT_FALSE(uaString.contains("FreeBSD"_s));
+}
+#endif
 
 // Some Google domains require an unbranded user agent, which is a little
 // awkward to test for. We want to check that standardUserAgentForURL is
@@ -76,24 +91,56 @@ static void assertUserAgentForURLHasEmptyQuirk(const char* url)
     EXPECT_FALSE(uaString.isNull());
 }
 
-TEST(UserAgentTest, Quirks)
+static void assertUserAgentForURLHasNoQuirk(const char* url)
 {
     // A site with no quirks should return a null String.
-    String uaString = standardUserAgentForURL(URL("http://www.webkit.org/"_s));
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
     EXPECT_TRUE(uaString.isNull());
+}
+
+TEST(UserAgentTest, Quirks)
+{
+    assertUserAgentForURLHasNoQuirk("http://www.webkit.org/");
+
+    // We used to have a Chrome quirk for YouTube, added in: https://bugs.webkit.org/show_bug.cgi?id=253877
+    // Removed in: https://bugs.webkit.org/show_bug.cgi?id=289194
+    assertUserAgentForURLHasNoQuirk("http://youtube.com/");
 
     assertUserAgentForURLHasChromeBrowserQuirk("http://typekit.com/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://typekit.net/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://auth.mayohr.com/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://bankofamerica.com/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://soundcloud.com/");
-    assertUserAgentForURLHasChromeBrowserQuirk("http://youtube.com/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://www.apple.com/");
 
+#if ENABLE(THUNDER)
+    assertUserAgentForURLHasChromeBrowserQuirk("http://www.primevideo.com/");
+#endif
+
+    assertUserAgentForURLHasChromeBrowserQuirk("http://play.xbox.com/");
+    assertUserAgentForURLHasChromeBrowserQuirk("http://chat.xboxlive.com/");
+
+    assertUserAgentForURLHasChromeBrowserQuirk("http://luna.amazon.com/");
+    assertUserAgentForURLHasChromeBrowserQuirk("http://luna.amazon.es/");
+    assertUserAgentForURLHasChromeBrowserQuirk("http://luna.amazon.fr/");
+
+    assertUserAgentForURLHasChromeBrowserQuirk("http://tv.orange.fr/");
+
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://bugzilla.redhat.com/");
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://www.bilibili.com/");
 
 #if ENABLE(THUNDER)
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://www.netflix.com/");
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://www.disneyplus.com/");
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://www.hbomax.com/");
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://auth.hbomax.com/");
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://play.hbomax.com/");
+#endif
+
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://play.geforcenow.com/");
+
+#if ENABLE(WEBXR) && PLATFORM(WPE)
+    assertUserAgentForURLHasAndroidQuirk("https://www.ikea.com/");
 #endif
 
     assertUserAgentForURLHasMacPlatformQuirk("http://www.yahoo.com/");
@@ -104,6 +151,7 @@ TEST(UserAgentTest, Quirks)
     assertUserAgentForURLHasMacPlatformQuirk("http://www.chase.com/");
     assertUserAgentForURLHasMacPlatformQuirk("http://paypal.com/");
     assertUserAgentForURLHasMacPlatformQuirk("http://outlook.office.com/");
+    assertUserAgentForURLHasMacPlatformQuirk("http://outlook.office365.com/");
     assertUserAgentForURLHasMacPlatformQuirk("http://mail.ntu.edu.tw/");
     assertUserAgentForURLHasMacPlatformQuirk("http://exchange.tu-berlin.de/");
     assertUserAgentForURLHasMacPlatformQuirk("http://www.sspa.juntadeandalucia.es/");

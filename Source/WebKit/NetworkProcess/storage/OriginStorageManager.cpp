@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,7 @@
 #include "WebsiteDataType.h"
 #include <WebCore/SQLiteFileSystem.h>
 #include <WebCore/StorageEstimate.h>
+#include <algorithm>
 #include <wtf/FileSystem.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -68,20 +69,20 @@ public:
     std::optional<StorageType> toStorageType(WebsiteDataType) const;
     String toStorageIdentifier(StorageType) const;
     StorageBucket(const String& rootPath, const String& identifier, const String& localStoragePath, const String& idbStoragePath, const String& cacheStoragePath, UnifiedOriginStorageLevel);
-    StorageBucketMode mode() const { return m_mode; }
-    void setMode(StorageBucketMode mode) { m_mode = mode; }
+    StorageBucketMode NODELETE mode() const { return m_mode; }
+    void NODELETE setMode(StorageBucketMode mode) { m_mode = mode; }
     void connectionClosed(IPC::Connection::UniqueID);
     String typeStoragePath(StorageType) const;
-    FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&, FileSystemStorageManager::QuotaCheckFunction&&);
-    FileSystemStorageManager* existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
+    FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&, const WebCore::ClientOrigin&, FileSystemStorageManager::QuotaCheckFunction&&);
+    FileSystemStorageManager* NODELETE existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
     LocalStorageManager& localStorageManager(StorageAreaRegistry&);
-    LocalStorageManager* existingLocalStorageManager() { return m_localStorageManager.get(); }
+    LocalStorageManager* NODELETE existingLocalStorageManager() { return m_localStorageManager.get(); }
     SessionStorageManager& sessionStorageManager(StorageAreaRegistry&);
-    SessionStorageManager* existingSessionStorageManager() { return m_sessionStorageManager.get(); }
-    IDBStorageManager& idbStorageManager(IDBStorageRegistry&, IDBStorageManager::QuotaCheckFunction&&);
-    IDBStorageManager* existingIDBStorageManager() { return m_idbStorageManager.get(); }
+    SessionStorageManager* NODELETE existingSessionStorageManager() { return m_sessionStorageManager.get(); }
+    IDBStorageManager& idbStorageManager(IDBStorageRegistry&, IDBStorageManager::QuotaCheckFunction&&, bool useSQLiteMemoryBackingStore);
+    IDBStorageManager* NODELETE existingIDBStorageManager() { return m_idbStorageManager.get(); }
     CacheStorageManager& cacheStorageManager(CacheStorageRegistry&, const WebCore::ClientOrigin&, CacheStorageManager::QuotaCheckFunction&&, Ref<WorkQueue>&&);
-    CacheStorageManager* existingCacheStorageManager() { return m_cacheStorageManager.get(); }
+    CacheStorageManager* NODELETE existingCacheStorageManager() { return m_cacheStorageManager.get(); }
     BackgroundFetchStoreManager& backgroundFetchManager(Ref<WorkQueue>&&, BackgroundFetchStoreManager::QuotaCheckFunction&&);
     ServiceWorkerStorageManager& serviceWorkerStorageManager();
     uint64_t cacheStorageSize();
@@ -111,7 +112,7 @@ private:
     String m_rootPath;
     String m_identifier;
     StorageBucketMode m_mode { StorageBucketMode::BestEffort };
-    std::unique_ptr<FileSystemStorageManager> m_fileSystemStorageManager;
+    RefPtr<FileSystemStorageManager> m_fileSystemStorageManager;
     std::unique_ptr<LocalStorageManager> m_localStorageManager;
     String m_customLocalStoragePath;
     String m_resolvedLocalStoragePath;
@@ -119,15 +120,16 @@ private:
     std::unique_ptr<IDBStorageManager> m_idbStorageManager;
     String m_customIDBStoragePath;
     String m_resolvedIDBStoragePath;
-    std::unique_ptr<CacheStorageManager> m_cacheStorageManager;
+    RefPtr<CacheStorageManager> m_cacheStorageManager;
     String m_customCacheStoragePath;
     String m_resolvedCacheStoragePath;
     UnifiedOriginStorageLevel m_level;
-    std::unique_ptr<BackgroundFetchStoreManager> m_backgroundFetchManager;
+    RefPtr<BackgroundFetchStoreManager> m_backgroundFetchManager;
+    String m_resolvedBackgroundFetchStoragePath;
     std::unique_ptr<ServiceWorkerStorageManager> m_serviceWorkerStorageManager;
 };
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(OriginStorageManagerStorageBucket, OriginStorageManager::StorageBucket);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(OriginStorageManager::StorageBucket);
 
 OriginStorageManager::StorageBucket::StorageBucket(const String& rootPath, const String& identifier, const String& localStoragePath, const String& idbStoragePath, const String& cacheStoragePath, UnifiedOriginStorageLevel level)
     : m_rootPath(rootPath)
@@ -141,8 +143,8 @@ OriginStorageManager::StorageBucket::StorageBucket(const String& rootPath, const
 
 void OriginStorageManager::StorageBucket::connectionClosed(IPC::Connection::UniqueID connection)
 {
-    if (m_fileSystemStorageManager)
-        m_fileSystemStorageManager->connectionClosed(connection);
+    if (RefPtr fileSystemStorageManager = m_fileSystemStorageManager)
+        fileSystemStorageManager->connectionClosed(connection);
 
     if (m_localStorageManager)
         m_localStorageManager->connectionClosed(connection);
@@ -150,11 +152,11 @@ void OriginStorageManager::StorageBucket::connectionClosed(IPC::Connection::Uniq
     if (m_sessionStorageManager)
         m_sessionStorageManager->connectionClosed(connection);
 
-    if (m_cacheStorageManager)
-        m_cacheStorageManager->connectionClosed(connection);
+    if (RefPtr manager = m_cacheStorageManager)
+        manager->connectionClosed(connection);
 }
 
-std::optional<OriginStorageManager::StorageBucket::StorageType> OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
+std::optional<OriginStorageManager::StorageBucket::StorageType> NODELETE OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
 {
     switch (websiteDataType) {
     case WebsiteDataType::FileSystem:
@@ -212,10 +214,10 @@ String OriginStorageManager::StorageBucket::typeStoragePath(StorageType type) co
     return FileSystem::pathByAppendingComponent(m_rootPath, storageIdentifier);
 }
 
-FileSystemStorageManager& OriginStorageManager::StorageBucket::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry, FileSystemStorageManager::QuotaCheckFunction&& quotaCheckFunction)
+FileSystemStorageManager& OriginStorageManager::StorageBucket::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin, FileSystemStorageManager::QuotaCheckFunction&& quotaCheckFunction)
 {
     if (!m_fileSystemStorageManager)
-        m_fileSystemStorageManager = makeUnique<FileSystemStorageManager>(typeStoragePath(StorageType::FileSystem), registry, WTFMove(quotaCheckFunction));
+        m_fileSystemStorageManager = FileSystemStorageManager::create(typeStoragePath(StorageType::FileSystem), registry, origin, WTF::move(quotaCheckFunction));
 
     return *m_fileSystemStorageManager;
 }
@@ -236,21 +238,18 @@ SessionStorageManager& OriginStorageManager::StorageBucket::sessionStorageManage
     return *m_sessionStorageManager;
 }
 
-IDBStorageManager& OriginStorageManager::StorageBucket::idbStorageManager(IDBStorageRegistry& registry, IDBStorageManager::QuotaCheckFunction&& quotaCheckFunction)
+IDBStorageManager& OriginStorageManager::StorageBucket::idbStorageManager(IDBStorageRegistry& registry, IDBStorageManager::QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
 {
     if (!m_idbStorageManager)
-        m_idbStorageManager = makeUnique<IDBStorageManager>(resolvedIDBStoragePath(), registry, WTFMove(quotaCheckFunction));
-
+        m_idbStorageManager = makeUnique<IDBStorageManager>(resolvedIDBStoragePath(), registry, WTF::move(quotaCheckFunction), useSQLiteMemoryBackingStore);
     return *m_idbStorageManager;
 }
 
 CacheStorageManager& OriginStorageManager::StorageBucket::cacheStorageManager(CacheStorageRegistry& registry, const WebCore::ClientOrigin& origin, CacheStorageManager::QuotaCheckFunction&& quotaCheckFunction, Ref<WorkQueue>&& queue)
 {
     if (!m_cacheStorageManager) {
-        std::optional<WebCore::ClientOrigin> optionalOrigin;
-        if (m_level < UnifiedOriginStorageLevel::Standard)
-            optionalOrigin = origin;
-        m_cacheStorageManager = makeUnique<CacheStorageManager>(resolvedCacheStoragePath(), registry, optionalOrigin, WTFMove(quotaCheckFunction), WTFMove(queue));
+        auto shouldWriteOriginFile = m_level < UnifiedOriginStorageLevel::Standard ? ShouldWriteOriginFile::Yes : ShouldWriteOriginFile::No;
+        m_cacheStorageManager = CacheStorageManager::create(resolvedCacheStoragePath(), registry, origin, shouldWriteOriginFile, WTF::move(quotaCheckFunction), WTF::move(queue));
     }
 
     return *m_cacheStorageManager;
@@ -259,7 +258,7 @@ CacheStorageManager& OriginStorageManager::StorageBucket::cacheStorageManager(Ca
 BackgroundFetchStoreManager& OriginStorageManager::StorageBucket::backgroundFetchManager(Ref<WorkQueue>&& queue, BackgroundFetchStoreManager::QuotaCheckFunction&& quotaCheckFunction)
 {
     if (!m_backgroundFetchManager)
-        m_backgroundFetchManager = makeUnique<BackgroundFetchStoreManager>(resolvedBackgroundFetchStoragePath(), WTFMove(queue), WTFMove(quotaCheckFunction));
+        m_backgroundFetchManager = BackgroundFetchStoreManager::create(resolvedBackgroundFetchStoragePath(), WTF::move(queue), WTF::move(quotaCheckFunction));
 
     return *m_backgroundFetchManager;
 }
@@ -278,18 +277,19 @@ bool OriginStorageManager::StorageBucket::isActive() const
 {
     // We cannot remove the bucket if it has in-memory data, otherwise session
     // data may be lost.
-    return (m_fileSystemStorageManager && m_fileSystemStorageManager->isActive())
+    RefPtr fileSystemStorageManager = m_fileSystemStorageManager;
+    return (fileSystemStorageManager && fileSystemStorageManager->isActive())
         || (m_localStorageManager && m_localStorageManager->isActive())
         || (m_sessionStorageManager && m_sessionStorageManager->isActive())
         || (m_idbStorageManager && m_idbStorageManager->isActive())
-        || (m_cacheStorageManager &&  m_cacheStorageManager->isActive());
+        || (m_cacheStorageManager && m_cacheStorageManager->isActive());
 }
 
 bool OriginStorageManager::StorageBucket::hasDataInMemory() const
 {
     return (m_localStorageManager && m_localStorageManager->hasDataInMemory())
         || (m_sessionStorageManager && m_sessionStorageManager->hasDataInMemory())
-        || (m_idbStorageManager && m_idbStorageManager->hasDataInMemory())
+        || (m_idbStorageManager && CheckedRef { *m_idbStorageManager }->hasDataInMemory())
         || (m_cacheStorageManager && m_cacheStorageManager->hasDataInMemory());
 }
 
@@ -298,7 +298,7 @@ bool OriginStorageManager::StorageBucket::isEmpty()
     ASSERT(!RunLoop::isMain());
 
     auto files = FileSystem::listDirectory(m_rootPath);
-    auto hasValidFile = WTF::anyOf(files, [&](auto file) {
+    auto hasValidFile = std::ranges::any_of(files, [&](auto file) {
         bool isInvalidFile = (file == originFileName);
 #if PLATFORM(COCOA)
         isInvalidFile |= (file == ".DS_Store"_s);
@@ -336,7 +336,7 @@ OptionSet<WebsiteDataType> OriginStorageManager::StorageBucket::fetchDataTypesIn
     }
 
     if (types.contains(WebsiteDataType::IndexedDBDatabases)) {
-        if (m_idbStorageManager && m_idbStorageManager->hasDataInMemory())
+        if (m_idbStorageManager && CheckedRef { *m_idbStorageManager }->hasDataInMemory())
             result.add(WebsiteDataType::IndexedDBDatabases);
     }
 
@@ -409,6 +409,9 @@ void OriginStorageManager::StorageBucket::deleteData(OptionSet<WebsiteDataType> 
 
     if (types.contains(WebsiteDataType::DOMCache))
         deleteCacheStorageData(modifiedSinceTime);
+
+    if (types.contains(WebsiteDataType::ServiceWorkerRegistrations) && m_level >= UnifiedOriginStorageLevel::Standard)
+        serviceWorkerStorageManager().clearAllRegistrations();
 }
 
 void OriginStorageManager::StorageBucket::deleteFileSystemStorageData(WallTime modifiedSinceTime)
@@ -448,16 +451,16 @@ void OriginStorageManager::StorageBucket::deleteSessionStorageData()
 
 void OriginStorageManager::StorageBucket::deleteIDBStorageData(WallTime time)
 {
-    if (m_idbStorageManager)
-        m_idbStorageManager->closeDatabasesForDeletion();
+    if (CheckedPtr manager = m_idbStorageManager.get())
+        manager->closeDatabasesForDeletion();
 
     FileSystem::deleteAllFilesModifiedSince(resolvedIDBStoragePath(), time);
 }
 
 void OriginStorageManager::StorageBucket::deleteCacheStorageData(WallTime time)
 {
-    if (m_cacheStorageManager)
-        m_cacheStorageManager->reset();
+    if (RefPtr manager = m_cacheStorageManager)
+        manager->reset();
 
     FileSystem::deleteAllFilesModifiedSince(resolvedCacheStoragePath(), time);
 }
@@ -477,8 +480,8 @@ void OriginStorageManager::StorageBucket::moveData(OptionSet<WebsiteDataType> ty
     }
 
     if (types.contains(WebsiteDataType::IndexedDBDatabases) && !idbStoragePath.isEmpty()) {
-        if (m_idbStorageManager)
-            m_idbStorageManager->closeDatabasesForDeletion();
+        if (CheckedPtr manager = m_idbStorageManager.get())
+            manager->closeDatabasesForDeletion();
 
         auto currentIDBStoragePath = resolvedIDBStoragePath();
         if (!currentIDBStoragePath.isEmpty()) {
@@ -550,8 +553,6 @@ String OriginStorageManager::StorageBucket::resolvedIDBStoragePath()
     } else {
         auto idbStoragePath = typeStoragePath(StorageType::IndexedDB);
         auto moved = IDBStorageManager::migrateOriginData(m_customIDBStoragePath, idbStoragePath);
-        if (moved)
-            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedIDBStoragePath New path '%" PUBLIC_LOG_STRING "'", this, idbStoragePath.utf8().data());
         if (!moved && FileSystem::fileExists(idbStoragePath)) {
             auto fileNames = FileSystem::listDirectory(m_customIDBStoragePath);
             auto newFileNames = FileSystem::listDirectory(idbStoragePath);
@@ -587,10 +588,10 @@ String OriginStorageManager::StorageBucket::resolvedCacheStoragePath()
 
 String OriginStorageManager::StorageBucket::resolvedBackgroundFetchStoragePath()
 {
-    if (m_resolvedCacheStoragePath.isNull())
-        m_resolvedCacheStoragePath = typeStoragePath(StorageType::BackgroundFetchStorage);
+    if (m_resolvedBackgroundFetchStoragePath.isNull())
+        m_resolvedBackgroundFetchStoragePath = typeStoragePath(StorageType::BackgroundFetchStorage);
 
-    return m_resolvedCacheStoragePath;
+    return m_resolvedBackgroundFetchStoragePath;
 }
 
 String OriginStorageManager::StorageBucket::resolvedPath(WebsiteDataType webisteDataType)
@@ -628,15 +629,16 @@ String OriginStorageManager::originFileIdentifier()
 
 Ref<OriginQuotaManager> OriginStorageManager::createQuotaManager(OriginQuotaManager::Parameters&& parameters)
 {
-    OriginQuotaManager::GetUsageFunction getUsageFunction = [this, weakThis = WeakPtr { *this }]() -> uint64_t {
-        if (!weakThis)
+    OriginQuotaManager::GetUsageFunction getUsageFunction = [weakThis = WeakPtr { *this }]() -> uint64_t {
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
             return 0;
 
-        auto idbStoragePath = resolvedPath(WebsiteDataType::IndexedDBDatabases);
-        auto cacheStoragePath = resolvedPath(WebsiteDataType::DOMCache);
-        auto fileSystemStoragePath = resolvedPath(WebsiteDataType::FileSystem);
+        auto idbStoragePath = checkedThis->resolvedPath(WebsiteDataType::IndexedDBDatabases);
+        auto cacheStoragePath = checkedThis->resolvedPath(WebsiteDataType::DOMCache);
+        auto fileSystemStoragePath = checkedThis->resolvedPath(WebsiteDataType::FileSystem);
         uint64_t fileSystemStorageSize = valueOrDefault(FileSystem::directorySize(fileSystemStoragePath));
-        if (auto* fileSystemStorageManager = existingFileSystemStorageManager()) {
+        if (RefPtr fileSystemStorageManager = checkedThis->existingFileSystemStorageManager()) {
             CheckedUint64 totalFileSystemStorageSize = fileSystemStorageSize;
             totalFileSystemStorageSize += fileSystemStorageManager->allocatedUnusedCapacity();
             if (!totalFileSystemStorageSize.hasOverflowed())
@@ -645,15 +647,15 @@ Ref<OriginQuotaManager> OriginStorageManager::createQuotaManager(OriginQuotaMana
         return IDBStorageManager::idbStorageSize(idbStoragePath) + CacheStorageManager::cacheStorageSize(cacheStoragePath) + fileSystemStorageSize;
     };
 
-    return OriginQuotaManager::create(WTFMove(parameters), WTFMove(getUsageFunction));
+    return OriginQuotaManager::create(WTF::move(parameters), WTF::move(getUsageFunction));
 }
 
 OriginStorageManager::OriginStorageManager(OriginQuotaManager::Parameters&& parameters, String&& path, String&& customLocalStoragePath, String&& customIDBStoragePath, String&& customCacheStoragePath, UnifiedOriginStorageLevel level)
-    : m_path(WTFMove(path))
-    , m_customLocalStoragePath(WTFMove(customLocalStoragePath))
-    , m_customIDBStoragePath(WTFMove(customIDBStoragePath))
-    , m_customCacheStoragePath(WTFMove(customCacheStoragePath))
-    , m_quotaManager(createQuotaManager(WTFMove(parameters)))
+    : m_path(WTF::move(path))
+    , m_customLocalStoragePath(WTF::move(customLocalStoragePath))
+    , m_customIDBStoragePath(WTF::move(customIDBStoragePath))
+    , m_customCacheStoragePath(WTF::move(customCacheStoragePath))
+    , m_quotaManager(createQuotaManager(WTF::move(parameters)))
     , m_level(level)
 {
     ASSERT(!RunLoop::isMain());
@@ -680,14 +682,14 @@ OriginQuotaManager& OriginStorageManager::quotaManager()
     return m_quotaManager.get();
 }
 
-FileSystemStorageManager& OriginStorageManager::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry)
+FileSystemStorageManager& OriginStorageManager::fileSystemStorageManager(FileSystemStorageHandleRegistry& registry, const WebCore::ClientOrigin& origin)
 {
-    return defaultBucket().fileSystemStorageManager(registry, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
+    return defaultBucket().fileSystemStorageManager(registry, origin, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
         auto strongReference = quotaManager.get();
         if (!strongReference)
             return completionHandler(false);
 
-        strongReference->requestSpace(spaceRequested, [completionHandler = WTFMove(completionHandler)](auto decision) mutable {
+        strongReference->requestSpace(spaceRequested, [completionHandler = WTF::move(completionHandler)](auto decision) mutable {
             completionHandler(decision == OriginQuotaManager::Decision::Grant);
         });
     });
@@ -718,17 +720,17 @@ SessionStorageManager* OriginStorageManager::existingSessionStorageManager()
     return defaultBucket().existingSessionStorageManager();
 }
 
-IDBStorageManager& OriginStorageManager::idbStorageManager(IDBStorageRegistry& registry)
+IDBStorageManager& OriginStorageManager::idbStorageManager(IDBStorageRegistry& registry, bool useSQLiteMemoryBackingStore)
 {
     return defaultBucket().idbStorageManager(registry, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
         auto strongReference = quotaManager.get();
         if (!strongReference)
             return completionHandler(false);
 
-        strongReference->requestSpace(spaceRequested, [completionHandler = WTFMove(completionHandler)](auto decision) mutable {
+        strongReference->requestSpace(spaceRequested, [completionHandler = WTF::move(completionHandler)](auto decision) mutable {
             completionHandler(decision == OriginQuotaManager::Decision::Grant);
         });
-    });
+    }, useSQLiteMemoryBackingStore);
 }
 
 IDBStorageManager* OriginStorageManager::existingIDBStorageManager()
@@ -743,23 +745,25 @@ CacheStorageManager* OriginStorageManager::existingCacheStorageManager()
 
 CacheStorageManager& OriginStorageManager::cacheStorageManager(CacheStorageRegistry& registry, const WebCore::ClientOrigin& origin, Ref<WorkQueue>&& queue)
 {
-    return defaultBucket().cacheStorageManager(registry, origin, [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
-        if (!quotaManager.get())
+    return defaultBucket().cacheStorageManager(registry, origin, [weakQuotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
+        RefPtr quotaManager = weakQuotaManager;
+        if (!quotaManager)
             return completionHandler(false);
 
-        quotaManager.get()->requestSpace(spaceRequested, [completionHandler = WTFMove(completionHandler)](auto decision) mutable {
+        quotaManager->requestSpace(spaceRequested, [completionHandler = WTF::move(completionHandler)](auto decision) mutable {
             completionHandler(decision == OriginQuotaManager::Decision::Grant);
         });
-    }, WTFMove(queue));
+    }, WTF::move(queue));
 }
 
 BackgroundFetchStoreManager& OriginStorageManager::backgroundFetchManager(Ref<WorkQueue>&& queue)
 {
-    return defaultBucket().backgroundFetchManager(WTFMove(queue), [quotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
-        if (!quotaManager.get())
+    return defaultBucket().backgroundFetchManager(WTF::move(queue), [weakQuotaManager = ThreadSafeWeakPtr { this->quotaManager() }](uint64_t spaceRequested, CompletionHandler<void(bool)>&& completionHandler) mutable {
+        RefPtr quotaManager = weakQuotaManager;
+        if (!quotaManager)
             return completionHandler(false);
 
-        quotaManager.get()->requestSpace(spaceRequested, [completionHandler = WTFMove(completionHandler)](auto decision) mutable {
+        quotaManager->requestSpace(spaceRequested, [completionHandler = WTF::move(completionHandler)](auto decision) mutable {
             completionHandler(decision == OriginQuotaManager::Decision::Grant);
         });
     });
@@ -794,7 +798,8 @@ WebCore::StorageEstimate OriginStorageManager::estimate()
 {
     ASSERT(!RunLoop::isMain());
 
-    return WebCore::StorageEstimate { quotaManager().usage(), quotaManager().reportedQuota() };
+    Ref quotaManager = this->quotaManager();
+    return WebCore::StorageEstimate { quotaManager->usage(), quotaManager->reportedQuota() };
 }
 
 OriginStorageManager::DataTypeSizeMap OriginStorageManager::fetchDataTypesInList(OptionSet<WebsiteDataType> types, bool shouldComputeSize)

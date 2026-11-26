@@ -25,24 +25,42 @@
 
 #pragma once
 
+#include "CloseWatcher.h"
 #include "HTMLElement.h"
+#include "ToggleEventTask.h"
 
 namespace WebCore {
 
+enum class ClosedByState : uint8_t {
+    Auto,
+    None,
+    CloseRequest,
+    Any,
+};
+
+class Event;
+class EventListener;
+class ScriptExecutionContext;
+
 class HTMLDialogElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLDialogElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLDialogElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLDialogElement);
 public:
     template<typename... Args> static Ref<HTMLDialogElement> create(Args&&... args) { return adoptRef(*new HTMLDialogElement(std::forward<Args>(args)...)); }
 
-    bool isOpen() const { return hasAttribute(HTMLNames::openAttr); }
+    bool isOpen() const { return m_isOpen; }
 
-    const String& returnValue() const { return m_returnValue; }
-    void setReturnValue(String&& value) { m_returnValue = WTFMove(value); }
+    const String& returnValue() const LIFETIME_BOUND { return m_returnValue; }
+    void setReturnValue(String&& value) { m_returnValue = WTF::move(value); }
+
+    ClosedByState closedByState() const;
+    ClosedByState computedClosedByState() const;
+    const AtomString& closedBy() const;
 
     ExceptionOr<void> show();
-    ExceptionOr<void> showModal();
-    void close(const String&);
+    ExceptionOr<void> showModal(Element* = nullptr);
+    void close(const String&, Element* = nullptr);
+    void requestClose(const String&, Element* = nullptr);
 
     bool isModal() const { return m_isModal; };
 
@@ -51,18 +69,48 @@ public:
     void runFocusingSteps();
 
     bool isValidCommandType(const CommandType) final;
-    bool handleCommandInternal(const HTMLFormControlElement& invoker, const CommandType&) final;
+    bool handleCommandInternal(HTMLButtonElement& invoker, const CommandType&) final;
+
+    void queueDialogToggleEventTask(ToggleState oldState, ToggleState newState, Element* source);
 
 private:
+    class DialogCloseWatcherEventListener final : public EventListener {
+    public:
+        static Ref<DialogCloseWatcherEventListener> create(HTMLDialogElement& dialog)
+        {
+            return adoptRef(*new DialogCloseWatcherEventListener(dialog));
+        }
+        void handleEvent(ScriptExecutionContext&, Event&) final;
+    private:
+        explicit DialogCloseWatcherEventListener(HTMLDialogElement&);
+
+        WeakPtr<HTMLDialogElement, WeakPtrImplWithEventTargetData> m_dialog;
+    };
+
     HTMLDialogElement(const QualifiedName&, Document&);
 
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
     void setIsModal(bool newValue);
     bool supportsFocus() const final;
 
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
+
+    void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
+
+    void setupSteps();
+    void cleanupSteps();
+    void setCloseWatcher();
+    void setCloseWatcherEnabledState();
+
     String m_returnValue;
     bool m_isModal { false };
+    bool m_isOpen { false };
+    bool m_isRequestingToClose { false };
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_previouslyFocusedElement;
+    RefPtr<CloseWatcher> m_closeWatcher;
+
+    RefPtr<ToggleEventTask> m_toggleEventTask;
 };
 
 } // namespace WebCore

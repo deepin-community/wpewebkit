@@ -26,6 +26,10 @@
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/KeyboardEvent.h>
 #include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <WebCore/Node.h>
+#include <WebCore/NodeDocument.h>
+#include <WebCore/NodeInlines.h>
 #include <WebCore/PlatformKeyboardEvent.h>
 #include <WebPage.h>
 
@@ -50,8 +54,14 @@ void WebEditorClient::didDispatchInputMethodKeydown(KeyboardEvent& event)
         auto rangeStart = platformEvent->preeditSelectionRangeStart().value_or(0);
         auto rangeLength = platformEvent->preeditSelectionRangeLength().value_or(0);
         frame->editor().setComposition(platformEvent->text(), underlines.value(), { }, { }, rangeStart, rangeStart + rangeLength);
-    } else
+    } else if (frame->editor().hasComposition())
         frame->editor().confirmComposition(platformEvent->text());
+    else if (!platformEvent->text().isEmpty() && frame->editor().canEdit()) {
+        // The input method committed text without a preedit, so there is no composition to end. Insert it as typing,
+        // otherwise the page would get a compositionend without a compositionstart. The keydown has already been
+        // dispatched and no keypress follows it, so the text is not inserted from a keydown default handler.
+        frame->editor().insertText(platformEvent->text(), nullptr);
+    }
 }
 
 } // namespace WebKit

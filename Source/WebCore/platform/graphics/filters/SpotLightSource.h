@@ -3,7 +3,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "LightSource.h"
+#include <WebCore/LightSource.h>
 #include <wtf/Ref.h>
 
 namespace WebCore {
@@ -34,8 +34,8 @@ public:
 
     bool operator==(const SpotLightSource&) const;
 
-    const FloatPoint3D& position() const { return m_position; }
-    const FloatPoint3D& direction() const { return m_pointsAt; }
+    const FloatPoint3D& position() const LIFETIME_BOUND { return m_position; }
+    const FloatPoint3D& direction() const LIFETIME_BOUND { return m_pointsAt; }
     float specularExponent() const { return m_specularExponent; }
     float limitingConeAngle() const { return m_limitingConeAngle; }
 

@@ -25,24 +25,18 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
 #if ENABLE(VIDEO)
 
-#include "MediaPlayer.h"
-#include "MediaProducer.h"
-#include "MediaUsageInfo.h"
-#include "PlatformMediaSession.h"
-#include "Timer.h"
+#include <WebCore/MediaPlayer.h>
+#include <WebCore/MediaProducer.h>
+#include <WebCore/MediaUsageInfo.h>
+#include <WebCore/PlatformMediaSession.h>
+#include <WebCore/Timer.h>
 #include <memory>
+#include <wtf/Markable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
-
-namespace WebCore {
-class MediaElementSession;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MediaElementSession> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -50,26 +44,39 @@ enum class MediaSessionMainContentPurpose { MediaControls, Autoplay };
 enum class MediaPlaybackState { Playing, Paused };
 
 enum class MediaPlaybackDenialReason {
+    Unknown,
     UserGestureRequired,
     FullscreenRequired,
     PageConsentRequired,
     InvalidState,
 };
 
+struct MediaPlaybackDenialExplanation {
+    MediaPlaybackDenialReason reason { MediaPlaybackDenialReason::Unknown };
+    String description;
+};
+
+class AudioTrack;
 class Document;
 class HTMLMediaElement;
 class MediaMetadata;
 class MediaSession;
 class MediaElementSessionObserver;
 class SourceBuffer;
+class VideoTrack;
 
 struct MediaPositionState;
 
 enum class MediaSessionPlaybackState : uint8_t;
 
 class MediaElementSession final : public PlatformMediaSession {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(MediaElementSession);
 public:
+    static Ref<MediaElementSession> create(HTMLMediaElement& element)
+    {
+        return adoptRef(*new MediaElementSession(element));
+    }
+
     explicit MediaElementSession(HTMLMediaElement&);
     virtual ~MediaElementSession();
 
@@ -77,7 +84,7 @@ public:
     void unregisterWithDocument(Document&);
 
     void clientWillBeginAutoplaying() final;
-    bool clientWillBeginPlayback() final;
+    void clientWillBeginPlayback(CompletionHandler<void(bool)>&&) final;
     bool clientWillPausePlayback() final;
     void clientCharacteristicsChanged(bool) final;
 
@@ -85,7 +92,7 @@ public:
     void isVisibleInViewportChanged();
     void inActiveDocumentChanged();
 
-    Expected<void, MediaPlaybackDenialReason> playbackStateChangePermitted(MediaPlaybackState) const;
+    Expected<void, MediaPlaybackDenialExplanation> playbackStateChangePermitted(MediaPlaybackState) const;
     bool autoplayPermitted() const;
     bool dataLoadingPermitted() const;
     MediaPlayer::BufferingPolicy preferredBufferingPolicy() const;
@@ -105,12 +112,14 @@ public:
     bool isPlayingToWirelessPlaybackTarget() const override;
 
     void mediaStateDidChange(MediaProducerMediaStateFlags);
+
+    MediaPlaybackTargetType playbackTargetType() const;
 #endif
 
     bool requiresFullscreenForVideoPlayback() const;
-    WEBCORE_EXPORT bool allowsPictureInPicture() const;
+    WEBCORE_EXPORT bool NODELETE allowsPictureInPicture() const;
     MediaPlayer::Preload effectivePreloadForElement() const;
-    bool allowsAutomaticMediaDataLoading() const;
+    bool NODELETE allowsAutomaticMediaDataLoading() const;
 
     void mediaEngineUpdated();
 
@@ -118,7 +127,7 @@ public:
 
     void suspendBuffering() override;
     void resumeBuffering() override;
-    bool bufferingSuspended() const;
+    bool NODELETE bufferingSuspended() const;
     void updateBufferingPolicy() { scheduleClientDataBufferingCheck(); }
 
     // Restrictions to modify default behaviors.
@@ -140,6 +149,10 @@ public:
         RequirePlaybackToControlControlsManager = 1 << 14,
         RequireUserGestureForVideoDueToLowPowerMode = 1 << 15,
         RequirePageVisibilityToPlayAudio = 1 << 16,
+        RequireUserGestureForVideoDueToAggressiveThermalMitigation = 1 << 17,
+#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+        RequirePageVisibilityForVideoToBeNowPlaying = 1 << 18,
+#endif
         AllRestrictions = ~NoRestrictions,
     };
     typedef unsigned BehaviorRestrictions;
@@ -149,7 +162,7 @@ public:
     WEBCORE_EXPORT void removeBehaviorRestriction(BehaviorRestrictions);
     bool hasBehaviorRestriction(BehaviorRestrictions restriction) const { return restriction & m_restrictions; }
 
-    HTMLMediaElement& element() const { return m_element; }
+    inline HTMLMediaElement* element() const; // Defined in HTMLMediaElement.h.
 
     bool wantsToObserveViewportVisibilityForMediaControls() const;
     bool wantsToObserveViewportVisibilityForAutoplay() const;
@@ -158,9 +171,9 @@ public:
     bool isLargeEnoughForMainContent(MediaSessionMainContentPurpose) const;
     bool isLongEnoughForMainContent() const final;
     bool isMainContentForPurposesOfAutoplayEvents() const;
-    MonotonicTime mostRecentUserInteractionTime() const;
+    Markable<MonotonicTime> NODELETE mostRecentUserInteractionTime() const;
 
-    bool allowsPlaybackControlsForAutoplayingAudio() const;
+    bool NODELETE allowsPlaybackControlsForAutoplayingAudio() const;
 
     static bool isMediaElementSessionMediaType(MediaType type)
     {
@@ -175,6 +188,8 @@ public:
     std::optional<MediaUsageInfo> mediaUsageInfo() const { return m_mediaUsageInfo; }
 
 #if !RELEASE_LOG_DISABLED
+    static String descriptionForTrack(const VideoTrack&);
+    static String descriptionForTrack(const AudioTrack&);
     String description() const final;
     ASCIILiteral logClassName() const final { return "MediaElementSession"_s; }
 #endif
@@ -184,7 +199,7 @@ public:
 #endif
     void metadataChanged(const RefPtr<MediaMetadata>&);
     void positionStateChanged(const std::optional<MediaPositionState>&);
-    void playbackStateChanged(MediaSessionPlaybackState);
+    void NODELETE playbackStateChanged(MediaSessionPlaybackState);
     void actionHandlersChanged();
 
     MediaSession* mediaSession() const;
@@ -201,6 +216,7 @@ private:
     void externalOutputDeviceAvailableDidChange(bool) override;
     void setShouldPlayToPlaybackTarget(bool) override;
     void playbackTargetPickerWasDismissed() override;
+    void audioSessionCategoryChanged(AudioSessionCategory, AudioSessionMode, RouteSharingPolicy) override;
 #endif
 #if PLATFORM(IOS_FAMILY)
     bool requiresPlaybackTargetRouteMonitoring() const override;
@@ -216,7 +232,7 @@ private:
 
     void addMediaUsageManagerSessionIfNecessary();
 
-    HTMLMediaElement& m_element;
+    WeakPtr<HTMLMediaElement> m_element;
     BehaviorRestrictions m_restrictions;
 
     std::optional<MediaUsageInfo> m_mediaUsageInfo;
@@ -234,15 +250,11 @@ private:
     bool m_hasPlaybackTargetAvailabilityListeners { false };
 #endif
 
-    MonotonicTime m_mostRecentUserInteractionTime;
+    Markable<MonotonicTime> m_mostRecentUserInteractionTime;
 
     mutable bool m_isMainContent { false };
     Timer m_mainContentCheckTimer;
     Timer m_clientDataBufferingTimer;
-
-#if !RELEASE_LOG_DISABLED
-    const void* m_logIdentifier;
-#endif
 
 #if ENABLE(MEDIA_USAGE)
     bool m_haveAddedMediaUsageManagerSession { false };
@@ -250,7 +262,7 @@ private:
     
 #if ENABLE(MEDIA_SESSION)
     bool m_isScrubbing { false };
-    std::unique_ptr<MediaElementSessionObserver> m_observer;
+    RefPtr<MediaElementSessionObserver> m_observer;
 #endif
 };
 
@@ -270,12 +282,20 @@ struct LogArgument<WebCore::MediaPlaybackDenialReason> {
         return convertEnumerationToString(reason);
     }
 };
-    
+
+template <>
+struct LogArgument<WebCore::MediaPlaybackDenialExplanation> {
+    static String toString(const WebCore::MediaPlaybackDenialExplanation explanation)
+    {
+        return makeString(convertEnumerationToString(explanation.reason), ": "_s, explanation.description);
+    }
+};
+
 }; // namespace WTF
 
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MediaElementSession)
-static bool isType(const WebCore::PlatformMediaSession& session) { return WebCore::MediaElementSession::isMediaElementSessionMediaType(session.mediaType()); }
+static bool isType(const WebCore::PlatformMediaSessionInterface& session) { return WebCore::MediaElementSession::isMediaElementSessionMediaType(session.mediaType()); }
 SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(VIDEO)

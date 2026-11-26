@@ -26,27 +26,15 @@
 #pragma once
 
 #include <wtf/CompletionHandler.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/CString.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/OSObjectPtr.h>
-#include <wtf/spi/darwin/XPCSPI.h>
+#include <wtf/darwin/XPCExtras.h>
 #endif
-
-namespace WebKit {
-namespace Daemon {
-class Connection;
-template<typename Traits> class ConnectionToMachService;
-}
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::Daemon::Connection> : std::true_type { };
-template<typename Traits> struct IsDeprecatedWeakRefSmartPointerException<WebKit::Daemon::ConnectionToMachService<Traits>> : std::true_type { };
-}
 
 namespace WebKit {
 
@@ -54,43 +42,62 @@ namespace Daemon {
 
 using EncodedMessage = Vector<uint8_t>;
 
-class Connection : public CanMakeWeakPtr<Connection> {
+class Connection : public RefCountedAndCanMakeWeakPtr<Connection> {
 public:
-    Connection() = default;
+#if PLATFORM(COCOA)
+    static Ref<Connection> create(OSObjectPtr<xpc_connection_t>&& connection)
+    {
+        return adoptRef(*new Connection(WTF::move(connection)));
+    }
+#endif
+
     virtual ~Connection() = default;
 
 #if PLATFORM(COCOA)
-    explicit Connection(OSObjectPtr<xpc_connection_t>&& connection)
-        : m_connection(WTFMove(connection)) { }
     xpc_connection_t get() const { return m_connection.get(); }
     void send(xpc_object_t) const;
     void sendWithReply(xpc_object_t, CompletionHandler<void(xpc_object_t)>&&) const;
+#endif
+
 protected:
+    Connection() = default;
+
+#if PLATFORM(COCOA)
+    explicit Connection(OSObjectPtr<xpc_connection_t>&& connection)
+        : m_connection(WTF::move(connection)) { }
+#endif
+
+    virtual void initializeConnectionIfNeeded() const { }
+
+#if PLATFORM(COCOA)
     mutable OSObjectPtr<xpc_connection_t> m_connection;
 #endif
-    virtual void initializeConnectionIfNeeded() const { }
 };
 
 template<typename Traits>
 class ConnectionToMachService : public Connection {
 public:
-    ConnectionToMachService(CString&& machServiceName)
-        : m_machServiceName(WTFMove(machServiceName)) { }
     virtual ~ConnectionToMachService() = default;
 
     void send(typename Traits::MessageType, EncodedMessage&&) const;
     void sendWithReply(typename Traits::MessageType, EncodedMessage&&, CompletionHandler<void(EncodedMessage&&)>&&) const;
 
     virtual void newConnectionWasInitialized() const = 0;
+
 #if PLATFORM(COCOA)
     virtual OSObjectPtr<xpc_object_t> dictionaryFromMessage(typename Traits::MessageType, EncodedMessage&&) const = 0;
     virtual void connectionReceivedEvent(xpc_object_t) = 0;
 #endif
 
-    const CString& machServiceName() const { return m_machServiceName; }
+    const CString& machServiceName() const LIFETIME_BOUND { return m_machServiceName; }
+
+protected:
+    explicit ConnectionToMachService(CString&& machServiceName)
+        : m_machServiceName(WTF::move(machServiceName))
+    { }
 
 private:
-    void initializeConnectionIfNeeded() const override;
+    void initializeConnectionIfNeeded() const final;
 
     const CString m_machServiceName;
 };

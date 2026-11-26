@@ -26,11 +26,30 @@
 #include "config.h"
 #include "WPEScreen.h"
 
+#include <array>
 #include <wtf/glib/WTFGType.h>
+
+#if USE(LIBDRM)
+#include "WPEScreenSyncObserverDRM.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <optional>
+#include <wtf/glib/GRefPtr.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#endif
 
 /**
  * WPEScreen:
  *
+ * A monitor connected to a [class@Display].
+ *
+ * [class@Screen] is an abstract class that platform implementations derive to
+ * represent a monitor. Enumerate the screens of a display with
+ * [method@Display.get_n_screens] and [method@Display.get_screen].
+ *
+ * A screen exposes its position, size, physical size, scale and refresh rate,
+ * and provides a [class@ScreenSyncObserver] to be notified on vertical sync.
  */
 struct _WPEScreenPrivate {
     guint32 id;
@@ -42,6 +61,9 @@ struct _WPEScreenPrivate {
     int physicalHeight { -1 };
     gdouble scale { 1 };
     int refreshRate { -1 };
+#if USE(LIBDRM)
+    GRefPtr<WPEScreenSyncObserver> syncObserver;
+#endif
 };
 
 WEBKIT_DEFINE_ABSTRACT_TYPE(WPEScreen, wpe_screen, G_TYPE_OBJECT)
@@ -62,7 +84,7 @@ enum {
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 static void wpeScreenSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -137,6 +159,95 @@ static void wpeScreenGetProperty(GObject* object, guint propId, GValue* value, G
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
     }
 }
+
+static void wpeScreenInvalidate(WPEScreen* screen)
+{
+#if USE(LIBDRM)
+    screen->priv->syncObserver = nullptr;
+#else
+    UNUSED_PARAM(screen);
+#endif
+}
+
+#if USE(LIBDRM)
+static std::optional<uint32_t> findCrtc(WPEScreen* screen, int fd)
+{
+    drmModeRes* resources = drmModeGetResources(fd);
+    if (!resources)
+        return std::nullopt;
+
+    std::optional<uint32_t> crtcIndex;
+    uint32_t widthMM = wpe_screen_get_physical_width(screen);
+    uint32_t heightMM = wpe_screen_get_physical_height(screen);
+    for (int i = 0; i < resources->count_connectors && !crtcIndex; ++i) {
+        auto* connector = drmModeGetConnector(fd, resources->connectors[i]);
+        if (!connector)
+            continue;
+
+        if (connector->connection != DRM_MODE_CONNECTED || !connector->encoder_id || !connector->count_modes) {
+            drmModeFreeConnector(connector);
+            continue;
+        }
+
+        if (widthMM != connector->mmWidth || heightMM != connector->mmHeight) {
+            drmModeFreeConnector(connector);
+            continue;
+        }
+
+        // FIXME: if there are multiple connectors matching the size, check other properties.
+        if (drmModeEncoder* encoder = drmModeGetEncoder(fd, connector->encoder_id)) {
+            for (int i = 0; i < resources->count_crtcs; ++i) {
+                if (resources->crtcs[i] == encoder->crtc_id) {
+                    crtcIndex = i;
+                    break;
+                }
+            }
+            drmModeFreeEncoder(encoder);
+        }
+        drmModeFreeConnector(connector);
+    }
+    drmModeFreeResources(resources);
+
+    return crtcIndex;
+}
+
+static void wpeScreenTryEnsureSyncObserver(WPEScreen* screen)
+{
+    std::array<drmDevicePtr, 64> devices;
+    const int devicesNum = drmGetDevices2(0, devices.data(), devices.size());
+    if (devicesNum <= 0)
+        return;
+
+    for (int i = 0; i < devicesNum; i++) {
+        if (!(devices[i]->available_nodes & (1 << DRM_NODE_PRIMARY)))
+            continue;
+        auto fd = UnixFileDescriptor { open(devices[i]->nodes[DRM_NODE_PRIMARY], O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
+        if (!fd)
+            continue;
+
+        if (auto crtcIndex = findCrtc(WPE_SCREEN(screen), fd.value())) {
+            screen->priv->syncObserver = adoptGRef(wpeScreenSyncObserverDRMCreate(WTF::move(fd), *crtcIndex));
+            if (screen->priv->syncObserver) {
+                g_debug("WPEScreen %u: Created WPEScreenSyncObserverDRM for device %s with CRTC index %u", screen->priv->id, devices[i]->nodes[DRM_NODE_PRIMARY], *crtcIndex);
+                break;
+            }
+        } else
+            g_debug("WPEScreen %u: Failed to find a CRTC for device %s", screen->priv->id, devices[i]->nodes[DRM_NODE_PRIMARY]);
+    }
+    drmFreeDevices(devices.data(), devicesNum);
+
+    if (!screen->priv->syncObserver)
+        g_debug("WPEScreen %u: Could not create a WPEScreenSyncObserverDRM", screen->priv->id);
+}
+
+static WPEScreenSyncObserver* wpeScreenGetSyncObserver(WPEScreen* screen)
+{
+    auto* priv = screen->priv;
+    if (!priv->syncObserver)
+        wpeScreenTryEnsureSyncObserver(screen);
+    return priv->syncObserver.get();
+}
+#endif
 
 static void wpe_screen_class_init(WPEScreenClass* screenClass)
 {
@@ -232,12 +343,18 @@ static void wpe_screen_class_init(WPEScreenClass* screenClass)
      * WPEScreen:scale:
      *
      * The scale factor for the screen.
+     *
+     * Scaling factor applied to views displayed on this screen. Those views
+     * will have the value forwarded to their [property@View:scale] property.
+     *
+     * The accepted values are in the `0.05` to `20.0` range, meaning that
+     * rendering would be done up to 20 times smaller or bigger.
      */
     sObjProperties[PROP_SCALE] =
         g_param_spec_double(
             "scale",
             nullptr, nullptr,
-            0., G_MAXDOUBLE, 1.,
+            0.05, 20., 1.,
             WEBKIT_PARAM_READWRITE);
 
     /**
@@ -252,7 +369,12 @@ static void wpe_screen_class_init(WPEScreenClass* screenClass)
             -1, G_MAXINT, -1,
             WEBKIT_PARAM_READWRITE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
+
+    screenClass->invalidate = wpeScreenInvalidate;
+#if USE(LIBDRM)
+    screenClass->get_sync_observer = wpeScreenGetSyncObserver;
+#endif
 }
 
 /**
@@ -260,7 +382,7 @@ static void wpe_screen_class_init(WPEScreenClass* screenClass)
  * @screen: a #WPEScreen
  *
  * Get the @screen identifier.
- * The idenifier is a non-zero value to uniquely identify a #WPEScreen.
+ * The identifier is a non-zero value to uniquely identify a #WPEScreen.
  *
  * Returns: the screen identifier
  */
@@ -283,9 +405,7 @@ void wpe_screen_invalidate(WPEScreen* screen)
 {
     g_return_if_fail(WPE_IS_SCREEN(screen));
 
-    auto* screenClass = WPE_SCREEN_GET_CLASS(screen);
-    if (screenClass->invalidate)
-        screenClass->invalidate(screen);
+    WPE_SCREEN_GET_CLASS(screen)->invalidate(screen);
 }
 
 /**
@@ -480,7 +600,8 @@ gdouble wpe_screen_get_scale(WPEScreen* screen)
 void wpe_screen_set_scale(WPEScreen* screen, double scale)
 {
     g_return_if_fail(WPE_IS_SCREEN(screen));
-    g_return_if_fail(scale > 0);
+    g_return_if_fail(scale >= 0.05);
+    g_return_if_fail(scale <= 20.0);
 
     if (screen->priv->scale == scale)
         return;
@@ -522,4 +643,23 @@ void wpe_screen_set_refresh_rate(WPEScreen* screen, int refreshRate)
 
     screen->priv->refreshRate = refreshRate;
     g_object_notify_by_pspec(G_OBJECT(screen), sObjProperties[PROP_REFRESH_RATE]);
+}
+
+/**
+ * wpe_screen_get_sync_observer:
+ * @screen: a #WPEScreen
+ *
+ * Get the #WPEScreenSyncObserver of @screen. If screen sync is not supported, %NULL is returned.
+ *
+ * Returns: (transfer none) (nullable): a #WPEScreenSyncObserver or %NULL
+ */
+WPEScreenSyncObserver* wpe_screen_get_sync_observer(WPEScreen* screen)
+{
+    g_return_val_if_fail(WPE_IS_SCREEN(screen), nullptr);
+
+    auto* screenClass = WPE_SCREEN_GET_CLASS(screen);
+    if (screenClass->get_sync_observer)
+        return screenClass->get_sync_observer(screen);
+
+    return nullptr;
 }

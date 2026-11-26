@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Nokia Corporation and/or its subsidiary(-ies).
  * Copyright (C) 2016-2019 Igalia S.L.
  * Copyright (C) 2021 Sony Interactive Entertainment Inc.
@@ -34,14 +34,20 @@
 #include "DrawingAreaMessages.h"
 #include "MessageSenderInlines.h"
 #include "UpdateInfo.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPageProxy.h"
 #include <WebCore/Region.h>
 
 namespace WebKit {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DrawingAreaProxyWC);
+
+Ref<DrawingAreaProxyWC> DrawingAreaProxyWC::create(WebPageProxy& page, WebProcessProxy& webProcessProxy)
+{
+    return adoptRef(*new DrawingAreaProxyWC(page, webProcessProxy));
+}
+
 DrawingAreaProxyWC::DrawingAreaProxyWC(WebPageProxy& webPageProxy, WebProcessProxy& webProcessProxy)
-    : DrawingAreaProxy(DrawingAreaType::WC, webPageProxy, webProcessProxy)
+    : DrawingAreaProxy(webPageProxy, webProcessProxy)
 {
 }
 
@@ -55,23 +61,25 @@ void DrawingAreaProxyWC::paint(PlatformPaintContextPtr context, const WebCore::I
     unpaintedRegion.subtract(WebCore::IntRect({ }, m_backingStore->size()));
 }
 
-void DrawingAreaProxyWC::deviceScaleFactorDidChange()
+void DrawingAreaProxyWC::deviceScaleFactorDidChange(CompletionHandler<void()>&& completionHandler)
 {
     sizeDidChange();
+    completionHandler();
 }
 
 void DrawingAreaProxyWC::sizeDidChange()
 {
     discardBackingStore();
     m_currentBackingStoreStateID++;
-    send(Messages::DrawingArea::UpdateGeometryWC(m_currentBackingStoreStateID, m_size, m_webPageProxy->deviceScaleFactor()));
+    if (page())
+        send(Messages::DrawingArea::UpdateGeometryWC(m_currentBackingStoreStateID, size(), page()->deviceScaleFactor(), page()->intrinsicDeviceScaleFactor()));
 }
 
 void DrawingAreaProxyWC::update(uint64_t backingStoreStateID, UpdateInfo&& updateInfo)
 {
     if (backingStoreStateID == m_currentBackingStoreStateID)
-        incorporateUpdate(WTFMove(updateInfo));
-    send(Messages::DrawingArea::DisplayDidRefresh());
+        incorporateUpdate(WTF::move(updateInfo));
+    send(Messages::DrawingArea::DisplayDidRefresh(MonotonicTime::now()));
 }
 
 void DrawingAreaProxyWC::enterAcceleratedCompositingMode(uint64_t backingStoreStateID, const LayerTreeContext&)
@@ -87,16 +95,20 @@ void DrawingAreaProxyWC::incorporateUpdate(UpdateInfo&& updateInfo)
     if (!m_backingStore)
         m_backingStore.emplace(updateInfo.viewSize, updateInfo.deviceScaleFactor);
 
+    RefPtr page = this->page();
+    if (!page)
+        return;
+
     WebCore::Region damageRegion;
     if (updateInfo.scrollRect.isEmpty()) {
         for (const auto& rect : updateInfo.updateRects)
             damageRegion.unite(rect);
     } else
-        damageRegion = WebCore::IntRect({ }, m_webPageProxy->viewSize());
+        damageRegion = WebCore::IntRect({ }, page->viewSize());
 
-    m_backingStore->incorporateUpdate(WTFMove(updateInfo));
+    m_backingStore->incorporateUpdate(WTF::move(updateInfo));
 
-    protectedWebPageProxy()->setViewNeedsDisplay(damageRegion);
+    page->setViewNeedsDisplay(damageRegion);
 }
 
 void DrawingAreaProxyWC::discardBackingStore()

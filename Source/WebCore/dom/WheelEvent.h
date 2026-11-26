@@ -24,13 +24,14 @@
 
 #pragma once
 
-#include "MouseEvent.h"
-#include "PlatformWheelEvent.h"
+#include <WebCore/MouseEvent.h>
+#include <WebCore/PlatformWheelEvent.h>
+#include <wtf/Platform.h>
 
 namespace WebCore {
 
 class WheelEvent final : public MouseEvent {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WheelEvent);
+    WTF_MAKE_TZONE_ALLOCATED(WheelEvent);
 public:
     static constexpr int TickMultiplier = 120;
 
@@ -54,7 +55,7 @@ public:
 
     static Ref<WheelEvent> create(const AtomString& type, const Init&);
 
-    const std::optional<PlatformWheelEvent>& underlyingPlatformEvent() const { return m_underlyingPlatformEvent; }
+    const std::optional<PlatformWheelEvent>& underlyingPlatformEvent() const LIFETIME_BOUND { return m_underlyingPlatformEvent; }
 
     double deltaX() const { return m_deltaX; } // Positive when scrolling right.
     double deltaY() const { return m_deltaY; } // Positive when scrolling down.
@@ -75,8 +76,6 @@ private:
     WheelEvent();
     WheelEvent(const AtomString&, const Init&);
     WheelEvent(const PlatformWheelEvent&, RefPtr<WindowProxy>&&, IsCancelable);
-
-    bool isWheelEvent() const final;
 
     IntPoint m_wheelDelta;
     double m_deltaX { 0 };

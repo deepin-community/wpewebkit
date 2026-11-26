@@ -211,7 +211,7 @@ struct KeyedCodingTestObject {
         return true;
     }
 
-    KeyedCodingTestObject() { };
+    KeyedCodingTestObject() = default;
     KeyedCodingTestObject(String name, int age)
         : m_name(name)
         , m_age(age)
@@ -262,7 +262,7 @@ TEST(KeyedCoding, SetAndGetObjects)
         users.append(KeyedCodingTestObject("username"_s, i));
 
     auto encoder = WebCore::KeyedEncoder::encoder();
-    encoder->encodeObjects("users"_s, users.begin(), users.end(), KeyedCodingTestObject::encode);
+    encoder->encodeObjects("users"_s, users, KeyedCodingTestObject::encode);
     auto encodedBuffer = encoder->finishEncoding();
 
     auto decoder = WebCore::KeyedDecoder::decoder(encodedBuffer->span());

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies).
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,23 +23,25 @@
 #include "HTMLProgressElement.h"
 
 #include "AXObjectCache.h"
+#include "ContainerNodeInlines.h"
+#include "ElementInlines.h"
+#include "HTMLDivElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
-#include "ProgressShadowElement.h"
+#include "NodeDocument.h"
 #include "PseudoClassChangeInvalidation.h"
 #include "RenderProgress.h"
+#include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
-#include "TypedElementDescendantIteratorInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "UserAgentParts.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLProgressElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLProgressElement);
 
 using namespace HTMLNames;
-
-const double HTMLProgressElement::IndeterminatePosition = -1;
-const double HTMLProgressElement::InvalidPosition = -2;
 
 HTMLProgressElement::HTMLProgressElement(const QualifiedName& tagName, Document& document)
     : HTMLElement(tagName, document, TypeFlag::HasCustomStyleResolveCallbacks)
@@ -46,49 +49,51 @@ HTMLProgressElement::HTMLProgressElement(const QualifiedName& tagName, Document&
     ASSERT(hasTagName(progressTag));
 }
 
-HTMLProgressElement::~HTMLProgressElement() = default;
-
 Ref<HTMLProgressElement> HTMLProgressElement::create(const QualifiedName& tagName, Document& document)
 {
-    Ref<HTMLProgressElement> progress = adoptRef(*new HTMLProgressElement(tagName, document));
+    Ref progress = adoptRef(*new HTMLProgressElement(tagName, document));
     progress->ensureUserAgentShadowRoot();
     return progress;
 }
 
-RenderPtr<RenderElement> HTMLProgressElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLProgressElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (!style.hasUsedAppearance())
-        return RenderElement::createFor(*this, WTFMove(style));
+        return RenderElement::createFor(*this, WTF::move(style));
 
-    return createRenderer<RenderProgress>(*this, WTFMove(style));
-}
-
-bool HTMLProgressElement::childShouldCreateRenderer(const Node& child) const
-{
-    return hasShadowRootParent(child) && HTMLElement::childShouldCreateRenderer(child);
+    return createRenderer<RenderProgress>(*this, WTF::move(style));
 }
 
 RenderProgress* HTMLProgressElement::renderProgress() const
 {
-    if (auto* renderProgress = dynamicDowncast<RenderProgress>(renderer()))
-        return renderProgress;
-    return downcast<RenderProgress>(descendantsOfType<Element>(*protectedUserAgentShadowRoot()).first()->renderer());
+    return dynamicDowncast<RenderProgress>(renderer());
+}
+
+bool HTMLProgressElement::childShouldCreateRenderer(const Node& child) const
+{
+    return !is<RenderProgress>(renderer()) && HTMLElement::childShouldCreateRenderer(child);
 }
 
 void HTMLProgressElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
-    if (name == valueAttr) {
+    switch (name.nodeName()) {
+    case AttributeNames::valueAttr:
         updateDeterminateState();
-        didElementStateChange();
-    } else if (name == maxAttr)
-        didElementStateChange();
-    else
+        didChangeElementValue();
+        return;
+
+    case AttributeNames::maxAttr:
+        didChangeElementValue();
+        return;
+
+    default:
         HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
+    }
 }
 
 void HTMLProgressElement::didAttachRenderers()
 {
-    if (RenderProgress* renderer = renderProgress())
+    if (CheckedPtr renderer = renderProgress())
         renderer->updateFromElement();
 }
 
@@ -96,11 +101,6 @@ double HTMLProgressElement::value() const
 {
     double value = parseHTMLFloatingPointNumberValue(attributeWithoutSynchronization(valueAttr));
     return !std::isfinite(value) || value < 0 ? 0 : std::min(value, max());
-}
-
-void HTMLProgressElement::setValue(double value)
-{
-    setAttributeWithoutSynchronization(valueAttr, AtomString::number(value));
 }
 
 double HTMLProgressElement::max() const
@@ -131,35 +131,78 @@ void HTMLProgressElement::updateDeterminateState()
     m_isDeterminate = newIsDeterminate;
 }
 
-void HTMLProgressElement::didElementStateChange()
+void HTMLProgressElement::didChangeElementValue()
 {
-    m_value->setInlineSizePercentage(position() * 100);
-    if (RenderProgress* renderer = renderProgress())
+    double percentageValue = std::max(0.0, position() * 100);
+
+    if (RefPtr valueElement = m_valueElement)
+        valueElement->setInlineStyleProperty(CSSPropertyInlineSize, percentageValue, CSSUnitType::CSS_PERCENTAGE);
+
+    if (RefPtr fillElement = m_fillElement) {
+        fillElement->setInlineStyleProperty(CSSPropertyTransform, makeString("translate(-"_s, 100 - percentageValue, "%, 0)"_s));
+        fillElement->invalidateStyle();
+    }
+
+    if (CheckedPtr renderer = renderProgress())
         renderer->updateFromElement();
 
-    if (CheckedPtr cache = document().existingAXObjectCache())
+    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
         cache->valueChanged(*this);
+}
+
+void HTMLProgressElement::appendShadowTreeForAutoAppearance(ShadowRoot& root)
+{
+    ASSERT(!m_valueElement);
+
+    Ref document = this->document();
+
+    Ref innerElement = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope innerScope { innerElement };
+    innerElement->setUserAgentPart(UserAgentParts::webkitProgressInnerElement());
+    innerElement->setInlineStyleProperty(CSSPropertyAppearance, "inherit"_s);
+    innerElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(inline-block, none)"_s, IsImportant::Yes);
+    ScriptDisallowedScope::EventAllowedScope rootScope { root };
+    root.appendChild(innerElement);
+
+    Ref barElement = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope barScope { barElement };
+    barElement->setUserAgentPart(UserAgentParts::webkitProgressBar());
+    innerElement->appendChild(barElement);
+
+    Ref valueElement = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope valueElementScope { valueElement };
+    valueElement->setUserAgentPart(UserAgentParts::webkitProgressValue());
+    barElement->appendChild(valueElement);
+    m_valueElement = WTF::move(valueElement);
+}
+
+void HTMLProgressElement::appendShadowTreeForBaseAppearance(ShadowRoot& root)
+{
+    ASSERT(!m_fillElement);
+
+    Ref document = this->document();
+
+    Ref trackElement = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope trackScope { trackElement };
+    trackElement->setUserAgentPart(UserAgentParts::sliderTrack());
+    trackElement->setInlineStyleProperty(CSSPropertyAppearance, "inherit"_s);
+    trackElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(none, inline-block)"_s, IsImportant::Yes);
+    ScriptDisallowedScope::EventAllowedScope rootScope { root };
+    root.appendChild(trackElement);
+
+    Ref fillElement = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope fillScope { fillElement };
+    fillElement->setUserAgentPart(UserAgentParts::sliderFill());
+    trackElement->appendChild(fillElement);
+    m_fillElement = WTF::move(fillElement);
 }
 
 void HTMLProgressElement::didAddUserAgentShadowRoot(ShadowRoot& root)
 {
-    ASSERT(!m_value);
-
-    auto inner = ProgressInnerElement::create(document());
-    root.appendChild(inner);
-
-    auto bar = ProgressBarElement::create(document());
-    auto value = ProgressValueElement::create(document());
-    m_value = value.ptr();
-    m_value->setInlineSizePercentage(HTMLProgressElement::IndeterminatePosition * 100);
-    bar->appendChild(value);
-
-    inner->appendChild(bar);
-}
-
-bool HTMLProgressElement::matchesIndeterminatePseudoClass() const
-{
-    return !isDeterminate();
+    appendShadowTreeForAutoAppearance(root);
+    if (document().settings().cssAppearanceBaseEnabled())
+        appendShadowTreeForBaseAppearance(root);
+    didChangeElementValue();
 }
 
 } // namespace

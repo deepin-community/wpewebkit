@@ -126,7 +126,7 @@ enum {
     kWKContextMenuItemTagOpenLinkInThisWindow,
     kWKContextMenuItemTagToggleVideoFullscreen,
     kWKContextMenuItemTagShareMenu,
-    kWKContextMenuItemTagToggleVideoEnhancedFullscreen,
+    kWKContextMenuItemTagTogglePictureInPicture,
     kWKContextMenuItemTagToggleVideoViewer,
     kWKContextMenuItemTagAddHighlightToCurrentQuickNote,
     kWKContextMenuItemTagAddHighlightToNewQuickNote,
@@ -134,7 +134,13 @@ enum {
     kWKContextMenuItemTagTranslate,
     kWKContextMenuItemTagCopyCroppedImage,
     kWKContextMenuItemTagWritingTools,
-    kWKContextMenuItemTagCopyLinkToHighlight,
+    kWKContextMenuItemTagCopyLinkWithHighlight,
+    kWKContextMenuItemTagProofread,
+    kWKContextMenuItemTagRewrite,
+    kWKContextMenuItemTagSummarize,
+    kWKContextMenuItemCaptionDisplayStyleSubmenu,
+    kWKContextMenuItemTagConvertToTraditionalChinese,
+    kWKContextMenuItemTagConvertToSimplifiedChinese,
     kWKContextMenuItemBaseApplicationTag = 10000
 };
 typedef uint32_t WKContextMenuItemTag;

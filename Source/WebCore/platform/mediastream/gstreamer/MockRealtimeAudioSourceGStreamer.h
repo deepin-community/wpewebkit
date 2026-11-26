@@ -39,17 +39,25 @@ public:
 
     ~MockRealtimeAudioSourceGStreamer();
 
+    using MockRealtimeAudioSource::ref;
+    using MockRealtimeAudioSource::deref;
+    void virtualRef() const final { MockRealtimeAudioSource::ref(); }
+    void virtualDeref() const final { MockRealtimeAudioSource::deref(); }
+
     // GStreamerCapturerObserver
     void captureEnded() final;
+    void captureDeviceUpdated(const GStreamerCaptureDevice&) final;
+
+    std::pair<GstClockTime, GstClockTime> queryCaptureLatency() const final;
 
 protected:
     void render(Seconds) final;
+    void settingsDidChange(OptionSet<RealtimeMediaSourceSettings::Flag>) final;
 
 private:
     friend class MockRealtimeAudioSource;
     MockRealtimeAudioSourceGStreamer(String&& deviceID, AtomString&& name, MediaDeviceHashSalts&&);
     void reconfigure();
-    void addHum(float amplitude, float frequency, float sampleRate, uint64_t start, float *p, uint64_t count);
 
     void startProducingData() final;
     void stopProducingData() final;
@@ -59,6 +67,7 @@ private:
 
     std::optional<GStreamerAudioStreamDescription> m_streamFormat;
     GRefPtr<GstCaps> m_caps;
+    GstAudioInfo m_info;
     Vector<float> m_bipBopBuffer;
     uint32_t m_maximiumFrameCount;
     uint64_t m_samplesEmitted { 0 };

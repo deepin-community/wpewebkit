@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,8 +30,11 @@
 #include "HTMLNames.h"
 #include <pal/text/TextCodec.h>
 #include <pal/text/TextEncodingRegistry.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLMetaCharsetParser);
 
 using namespace HTMLNames;
 
@@ -55,6 +58,10 @@ static StringView extractCharset(StringView value)
         while (pos < length && value[pos] <= ' ')
             ++pos;
 
+        // Ensure we're in bounds before checking for '='.
+        if (pos >= length)
+            break;
+
         if (value[pos] != '=')
             continue;
 
@@ -63,7 +70,7 @@ static StringView extractCharset(StringView value)
         while (pos < length && value[pos] <= ' ')
             ++pos;
 
-        UChar quoteMark = 0;
+        char16_t quoteMark = 0;
         if (pos < length && (value[pos] == '"' || value[pos] == '\''))
             quoteMark = value[pos++];
 
@@ -117,7 +124,7 @@ PAL::TextEncoding HTMLMetaCharsetParser::encodingFromMetaAttributes(std::span<co
     }
 
     if (mode == Charset || (mode == Pragma && gotPragma))
-        return charset.trim(isASCIIWhitespace<UChar>);
+        return charset.trim(isASCIIWhitespace<char16_t>);
 
     return PAL::TextEncoding();
 }
@@ -158,18 +165,18 @@ bool HTMLMetaCharsetParser::checkForMetaCharset(std::span<const uint8_t> data)
             auto knownTagName = AtomString::lookUp(token->name().span());
             if (!isEnd) {
                 m_tokenizer.updateStateFor(knownTagName);
-                if (knownTagName == metaTag && processMeta(*token)) {
+                if (metaTag->hasLocalName(knownTagName) && processMeta(*token)) {
                     m_doneChecking = true;
                     return true;
                 }
             }
 
-            if (knownTagName != scriptTag && knownTagName != noscriptTag
-                && knownTagName != styleTag && knownTagName != linkTag
-                && knownTagName != metaTag && knownTagName != objectTag
-                && knownTagName != titleTag && knownTagName != baseTag
-                && (isEnd || knownTagName != htmlTag)
-                && (isEnd || knownTagName != headTag)) {
+            if (!scriptTag->hasLocalName(knownTagName) && !noscriptTag->hasLocalName(knownTagName)
+                && !styleTag->hasLocalName(knownTagName) && !linkTag->hasLocalName(knownTagName)
+                && !metaTag->hasLocalName(knownTagName) && !objectTag->hasLocalName(knownTagName)
+                && !titleTag->hasLocalName(knownTagName) && !baseTag->hasLocalName(knownTagName)
+                && (isEnd || !htmlTag->hasLocalName(knownTagName))
+                && (isEnd || !headTag->hasLocalName(knownTagName))) {
                 m_inHeadSection = false;
             }
         }

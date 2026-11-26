@@ -2,7 +2,7 @@
  * Copyright (C) 2007, 2009 Holger Hans Peter Freyther
  * Copyright (C) 2008 Collabora, Ltd.
  * Copyright (C) 2008 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,6 +25,7 @@
 
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
 #if !OS(WINDOWS)
@@ -62,25 +63,43 @@ String filenameForDisplay(const String& string)
 #if OS(LINUX)
 CString currentExecutablePath()
 {
-    static char readLinkBuffer[PATH_MAX];
-    ssize_t result = readlink("/proc/self/exe", readLinkBuffer, PATH_MAX);
-    if (result == -1)
+    static std::array<char, PATH_MAX> readLinkBuffer;
+    ssize_t result = readlink("/proc/self/exe", readLinkBuffer.data(), readLinkBuffer.size());
+    if (result <= 0)
         return { };
-    return CString({ readLinkBuffer, static_cast<size_t>(result) });
+    return CString(unsafeMakeSpan(readLinkBuffer.data(), static_cast<size_t>(result)));
 }
 #elif OS(HURD)
 CString currentExecutablePath()
 {
     return { };
 }
+#elif OS(QNX)
+#include <fcntl.h>
+
+CString currentExecutablePath()
+{
+    static char readBuffer[PATH_MAX];
+    int selfFd = open("/proc/self/exefile", O_RDONLY);
+    ssize_t result = read(selfFd, readBuffer, sizeof(readBuffer));
+    close(selfFd);
+    if (result <= 0)
+        return { };
+    return CString(unsafeMakeSpan(readBuffer, static_cast<size_t>(result)));
+}
 #elif OS(UNIX)
+#if OS(NETBSD)
+#define _PROC_CURPROC_PATH "/proc/curproc/exe"
+#else
+#define _PROC_CURPROC_PATH "/proc/curproc/file"
+#endif
 CString currentExecutablePath()
 {
     static char readLinkBuffer[PATH_MAX];
-    ssize_t result = readlink("/proc/curproc/file", readLinkBuffer, PATH_MAX);
-    if (result == -1)
+    ssize_t result = readlink(_PROC_CURPROC_PATH, readLinkBuffer, PATH_MAX);
+    if (result <= 0)
         return { };
-    return CString(readLinkBuffer, result);
+    return CString(unsafeMakeSpan(readLinkBuffer, static_cast<size_t>(result)));
 }
 #elif OS(WINDOWS)
 CString currentExecutablePath()
@@ -115,6 +134,35 @@ String userDataDirectory()
 {
     return stringFromFileSystemRepresentation(g_get_user_data_dir());
 }
+
+String createTemporaryDirectory(const String& directoryPrefix)
+{
+    String newTempDir = makeString(directoryPrefix, "XXXXXX"_s);
+    GUniqueOutPtr<GError> error;
+    GUniquePtr<char> tempDir(g_dir_make_tmp(newTempDir.utf8().data(), &error.outPtr()));
+    if (!tempDir) {
+        g_warning("Creating temporary directory at %s failed: %s", directoryPrefix.utf8().data(), error->message);
+        return { };
+    }
+
+    return stringFromFileSystemRepresentation(tempDir.get());
+}
+
+#if ENABLE(DEVELOPER_MODE)
+CString webkitTopLevelDirectory()
+{
+    if (const char* topLevelDirectory = g_getenv("WEBKIT_TOP_LEVEL")) {
+        if (g_file_test(topLevelDirectory, G_FILE_TEST_IS_DIR))
+            return topLevelDirectory;
+    }
+    // The tooling to run tests should provide the above environment variable with
+    // the right value, but if that was not the case, then do an attempt to guess
+    // it assuming that we were built in the standard WebKitBuild subdirectory.
+    GUniquePtr<char*> parentPath(g_strsplit(currentExecutablePath().data(), "/WebKitBuild", -1));
+    GUniquePtr<char> absoluteTopLevelPath(realpath(parentPath.get()[0], nullptr));
+    return absoluteTopLevelPath.get();
+}
+#endif
 
 } // namespace FileSystemImpl
 } // namespace WTF

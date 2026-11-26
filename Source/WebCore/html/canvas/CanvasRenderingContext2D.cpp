@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2008, 2010 Nokia Corporation and/or its subsidiary(-ies)
  * Copyright (C) 2007 Alp Toker <alp@atoker.com>
  * Copyright (C) 2008 Eric Seidel <eric@webkit.org>
@@ -33,12 +33,16 @@
 #include "config.h"
 #include "CanvasRenderingContext2D.h"
 
-#include "CSSFilter.h"
+#include "AXObjectCache.h"
+#include "CSSFilterRenderer.h"
 #include "CSSFontSelector.h"
 #include "CSSPropertyNames.h"
-#include "CSSPropertyParserHelpers.h"
-#include "CSSPropertyParserWorkerSafe.h"
+#include "CSSPropertyParserConsumer+Filter.h"
+#include "CSSPropertyParserConsumer+Font.h"
+#include "ContainerNodeInlines.h"
 #include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "ElementInlinesLight.h"
 #include "Gradient.h"
 #include "ImageBuffer.h"
 #include "ImageData.h"
@@ -46,15 +50,18 @@
 #include "NodeRenderStyle.h"
 #include "Path2D.h"
 #include "PixelFormat.h"
+#include "PlatformRenderTheme.h"
+#include "RenderReplaced.h"
 #include "RenderTheme.h"
 #include "RenderWidget.h"
 #include "ResourceLoadObserver.h"
 #include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "StyleBuilder.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleProperties.h"
-#include "StyleResolveForFontRaw.h"
+#include "StyleResolveForFont.h"
 #include "StyleTreeResolver.h"
 #include "TextMetrics.h"
 #include "TextRun.h"
@@ -68,11 +75,11 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CanvasRenderingContext2D);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CanvasRenderingContext2D);
 
 std::unique_ptr<CanvasRenderingContext2D> CanvasRenderingContext2D::create(CanvasBase& canvas, CanvasRenderingContext2DSettings&& settings, bool usesCSSCompatibilityParseMode)
 {
-    auto renderingContext = std::unique_ptr<CanvasRenderingContext2D>(new CanvasRenderingContext2D(canvas, WTFMove(settings), usesCSSCompatibilityParseMode));
+    auto renderingContext = std::unique_ptr<CanvasRenderingContext2D>(new CanvasRenderingContext2D(canvas, WTF::move(settings), usesCSSCompatibilityParseMode));
 
     InspectorInstrumentation::didCreateCanvasRenderingContext(*renderingContext);
 
@@ -80,26 +87,27 @@ std::unique_ptr<CanvasRenderingContext2D> CanvasRenderingContext2D::create(Canva
 }
 
 CanvasRenderingContext2D::CanvasRenderingContext2D(CanvasBase& canvas, CanvasRenderingContext2DSettings&& settings, bool usesCSSCompatibilityParseMode)
-    : CanvasRenderingContext2DBase(canvas, WTFMove(settings), usesCSSCompatibilityParseMode)
+    : CanvasRenderingContext2DBase(canvas, Type::CanvasElement2D, WTF::move(settings), usesCSSCompatibilityParseMode)
 {
 }
 
 CanvasRenderingContext2D::~CanvasRenderingContext2D() = default;
 
-std::optional<FilterOperations> CanvasRenderingContext2D::setFilterStringWithoutUpdatingStyle(const String& filterString)
+std::optional<Style::Filter> CanvasRenderingContext2D::setFilterStringWithoutUpdatingStyle(const String& filterString)
 {
-    Ref document = canvas().document();
+    Ref canvas = this->canvas();
+    Ref document = canvas->document();
     if (!document->settings().canvasFiltersEnabled())
         return std::nullopt;
 
     document->updateStyleIfNeeded();
 
-    const auto* style = canvas().computedStyle();
+    CheckedPtr style = canvas->computedStyle();
     if (!style)
         return std::nullopt;
 
-    auto parserMode = strictToCSSParserMode(!usesCSSCompatibilityParseMode());
-    return CSSPropertyParserWorkerSafe::parseFilterString(document, const_cast<RenderStyle&>(*style), filterString, parserMode);
+    auto parserContext = CSSParserContext(strictToCSSParserMode(!usesCSSCompatibilityParseMode()));
+    return CSSPropertyParserHelpers::parseFilterValueListOrNoneRaw(filterString, parserContext, document, const_cast<Style::ComputedStyle&>(*style));
 }
 
 RefPtr<Filter> CanvasRenderingContext2D::createFilter(const FloatRect& bounds) const
@@ -119,27 +127,31 @@ RefPtr<Filter> CanvasRenderingContext2D::createFilter(const FloatRect& bounds) c
     if (!page)
         return nullptr;
 
-    auto preferredFilterRenderingModes = page->preferredFilterRenderingModes();
-    auto filter = CSSFilter::create(*renderer, state().filterOperations, preferredFilterRenderingModes, { 1, 1 }, bounds, *context);
+    auto outsets = calculateFilterOutsets(bounds);
+    auto filterRegion = bounds + toFloatBoxExtent(outsets);
+
+    auto preferredFilterRenderingModes = page->preferredFilterRenderingModes(*context);
+    auto filter = CSSFilterRenderer::create(*renderer, state().filter, {
+            .referenceBox = bounds,
+            .filterRegion = filterRegion,
+            .scale = { 1, 1 },
+        }, preferredFilterRenderingModes, { }, *context);
     if (!filter)
         return nullptr;
 
-    auto outsets = calculateFilterOutsets(bounds);
-
-    filter->setFilterRegion(bounds + outsets);
     return filter;
 }
 
 IntOutsets CanvasRenderingContext2D::calculateFilterOutsets(const FloatRect& bounds) const
 {
-    if (state().filterOperations.isEmpty())
+    if (state().filter.isNone())
         return { };
 
     CheckedPtr renderer = canvas().renderer();
     if (!renderer)
         return { };
 
-    return CSSFilter::calculateOutsets(*renderer, state().filterOperations, bounds);
+    return CSSFilterRenderer::calculateOutsets(*renderer, state().filter, bounds);
 }
 
 void CanvasRenderingContext2D::drawFocusIfNeeded(Element& element)
@@ -155,10 +167,38 @@ void CanvasRenderingContext2D::drawFocusIfNeeded(Path2D& path, Element& element)
 void CanvasRenderingContext2D::drawFocusIfNeededInternal(const Path& path, Element& element)
 {
     auto* context = effectiveDrawingContext();
-    if (!element.focused() || !state().hasInvertibleTransform || path.isEmpty() || !element.isDescendantOf(canvas()) || !context)
+    Ref canvas = this->canvas();
+    if (!element.focused() || !hasInvertibleTransform() || path.isEmpty() || !element.isDescendantOf(canvas.get()) || !context)
         return;
-    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(element.document().styleColorOptions(canvas().computedStyle())));
+    CheckedPtr canvasStyle = canvas->computedStyle();
+    auto zoomFactor = canvasStyle ? canvasStyle->usedZoom() : 1.f;
+    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(protect(element.document())->styleColorOptions(canvasStyle)), zoomFactor);
     didDrawEntireCanvas();
+
+    if (CheckedPtr cache = element.document().existingAXObjectCache()) {
+        auto pathBounds = path.boundingRect();
+        auto canvasBounds = state().transform.mapRect(pathBounds);
+
+        // Map from canvas backing-store coordinates into the canvas
+        // renderer's local coordinate space. replacedContentRect() gives
+        // the area where canvas content is actually rendered, accounting
+        // for object-fit and object-position.
+        float backingWidth = static_cast<float>(canvas->width());
+        float backingHeight = static_cast<float>(canvas->height());
+        if (backingWidth && backingHeight) {
+            if (CheckedPtr replaced = dynamicDowncast<RenderReplaced>(canvas->renderer())) {
+                auto contentRect = replaced->replacedContentRect();
+                canvasBounds = FloatRect(
+                    contentRect.x() + canvasBounds.x() * contentRect.width() / backingWidth,
+                    contentRect.y() + canvasBounds.y() * contentRect.height() / backingHeight,
+                    canvasBounds.width() * contentRect.width() / backingWidth,
+                    canvasBounds.height() * contentRect.height() / backingHeight
+                );
+            }
+        }
+
+        cache->deferCanvasFocusPathBoundsUpdate(element, canvas.get(), canvasBounds);
+    }
 }
 
 void CanvasRenderingContext2D::setFont(const String& newFont)
@@ -181,17 +221,20 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     if (newFont.isEmpty())
         return;
 
-    if (newFont == state().unparsedFont && state().font.realized())
+    if (newFont == state().unparsedFont && protect(state().font)->realized())
         return;
 
+    Ref canvas = this->canvas();
+    Ref document = canvas->document();
+
     // According to http://lists.w3.org/Archives/Public/public-html/2009Jul/0947.html,
-    // the "inherit" and "initial" values must be ignored. CSSPropertyParserWorkerSafe::parseFont() ignores these.
-    auto fontRaw = CSSPropertyParserWorkerSafe::parseFont(newFont, strictToCSSParserMode(!usesCSSCompatibilityParseMode()));
-    if (!fontRaw)
+    // the "inherit" and "initial" values must be ignored. CSSPropertyParserHelpers::parseUnresolvedFont() ignores these.
+    auto unresolvedFont = CSSPropertyParserHelpers::parseUnresolvedFont(newFont, document.get(), strictToCSSParserMode(!usesCSSCompatibilityParseMode()));
+    if (!unresolvedFont)
         return;
 
     FontCascadeDescription fontDescription;
-    if (auto* computedStyle = canvas().computedStyle())
+    if (CheckedPtr computedStyle = canvas->computedStyle())
         fontDescription = FontCascadeDescription { computedStyle->fontDescription() };
     else {
         static NeverDestroyed<AtomString> family = DefaultFontFamily;
@@ -202,8 +245,7 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
 
     // Map the <canvas> font into the text style. If the font uses keywords like larger/smaller, these will work
     // relative to the canvas.
-    Document& document = canvas().document();
-    auto fontCascade = Style::resolveForFontRaw(*fontRaw, WTFMove(fontDescription), document);
+    auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, WTF::move(fontDescription), document.get());
     if (!fontCascade)
         return;
 
@@ -211,19 +253,25 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     realizeSaves();
     modifiableState().unparsedFont = newFontSafeCopy;
 
-    modifiableState().font.initialize(document.fontSelector(), *fontCascade);
-    ASSERT(state().font.realized());
-    ASSERT(state().font.isPopulated());
+    protect(modifiableState().font)->initialize(protect(document->fontSelector()), *fontCascade);
+    ASSERT(protect(state().font)->realized());
+    ASSERT(protect(state().font)->isPopulated());
+
+    // Recompute the word and the letter spacing for the new font.
+    String letterSpacing;
+    setLetterSpacing(std::exchange(modifiableState().letterSpacing, letterSpacing));
+    String wordSpacing;
+    setWordSpacing(std::exchange(modifiableState().wordSpacing, wordSpacing));
 }
 
-inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction direction, const RenderStyle** computedStyle) const
+inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction direction, const Style::ComputedStyle** computedStyle) const
 {
-    auto* style = computedStyle || direction == Direction::Inherit ? canvas().existingComputedStyle() : nullptr;
+    CheckedPtr style = computedStyle || direction == Direction::Inherit ? protect(canvas())->existingComputedStyle() : nullptr;
     if (computedStyle)
         *computedStyle = style;
     switch (direction) {
     case Direction::Inherit:
-        return style ? style->direction() : TextDirection::LTR;
+        return style ? style->writingMode().computedTextDirection() : TextDirection::LTR;
     case Direction::Rtl:
         return TextDirection::RTL;
     case Direction::Ltr:
@@ -236,13 +284,13 @@ inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction directi
 CanvasDirection CanvasRenderingContext2D::direction() const
 {
     if (state().direction == Direction::Inherit)
-        canvas().document().updateStyleIfNeeded();
+        protect(canvas().document())->updateStyleIfNeeded();
     return toTextDirection(state().direction) == TextDirection::RTL ? CanvasDirection::Rtl : CanvasDirection::Ltr;
 }
 
 void CanvasRenderingContext2D::fillText(const String& text, double x, double y, std::optional<double> maxWidth)
 {
-    canvasBase().recordLastFillText(text);
+    protect(canvasBase())->recordLastFillText(text);
     drawTextInternal(text, x, y, true, maxWidth);
 }
 
@@ -259,12 +307,12 @@ Ref<TextMetrics> CanvasRenderingContext2D::measureText(const String& text)
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     if (document->settings().webAPIStatisticsEnabled()) {
-        ResourceLoadObserver::shared().logCanvasWriteOrMeasure(document, text);
-        ResourceLoadObserver::shared().logCanvasRead(document);
+        ResourceLoadObserver::singleton().logCanvasWriteOrMeasure(document, text);
+        ResourceLoadObserver::singleton().logCanvasRead(document);
     }
 
     String normalizedText = normalizeSpaces(text);
-    const RenderStyle* computedStyle;
+    const Style::ComputedStyle* computedStyle;
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle && isOverride(computedStyle->unicodeBidi());
     TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, override, true);
@@ -279,9 +327,9 @@ auto CanvasRenderingContext2D::fontProxy() -> const FontProxy*
     // This means that the style may end up being stale here, but that's at least better than running arbitrary JS in the middle of processing.
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    if (!state().font.realized())
+    if (!protect(state().font)->realized())
         setFontWithoutUpdatingStyle(state().unparsedFont);
-    return &state().font;
+    return state().font.ptr();
 }
 
 void CanvasRenderingContext2D::drawTextInternal(const String& text, double x, double y, bool fill, std::optional<double> maxWidth)
@@ -292,13 +340,13 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, double x, do
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     if (document->settings().webAPIStatisticsEnabled())
-        ResourceLoadObserver::shared().logCanvasWriteOrMeasure(document, text);
+        ResourceLoadObserver::singleton().logCanvasWriteOrMeasure(document, text);
 
     if (!canDrawText(x, y, fill, maxWidth))
         return;
 
     String normalizedText = normalizeSpaces(text);
-    const RenderStyle* computedStyle;
+    const Style::ComputedStyle* computedStyle;
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle && isOverride(computedStyle->unicodeBidi());
     TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, override, true);

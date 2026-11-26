@@ -82,11 +82,11 @@
     <script src="Protocol/DirectBackendTarget.js"></script>
     <script src="Protocol/MultiplexingBackendTarget.js"></script>
     <script src="Protocol/PageTarget.js"></script>
+    <script src="Protocol/FrameTarget.js"></script>
     <script src="Protocol/WorkerTarget.js"></script>
 
     <script src="Protocol/InspectorObserver.js"></script>
     <script src="Protocol/AnimationObserver.js"></script>
-    <script src="Protocol/ApplicationCacheObserver.js"></script>
     <script src="Protocol/BrowserObserver.js"></script>
     <script src="Protocol/CPUProfilerObserver.js"></script>
     <script src="Protocol/CSSObserver.js"></script>
@@ -94,7 +94,6 @@
     <script src="Protocol/ConsoleObserver.js"></script>
     <script src="Protocol/DOMObserver.js"></script>
     <script src="Protocol/DOMStorageObserver.js"></script>
-    <script src="Protocol/DatabaseObserver.js"></script>
     <script src="Protocol/DebuggerObserver.js"></script>
     <script src="Protocol/HeapObserver.js"></script>
     <script src="Protocol/InspectorObserver.js"></script>
@@ -121,6 +120,7 @@
     <script src="Models/TimelineRange.js"></script>
     <script src="Models/TimelineRecord.js"></script>
 
+    <script src="Models/ResourceUtilities.js"></script>
     <script src="Models/Resource.js"></script>
     <script src="Models/Script.js"></script>
     <script src="Models/LocalScript.js"></script>
@@ -174,6 +174,7 @@
     <script src="Models/Gradient.js"></script>
     <script src="Models/HeapAllocationsInstrument.js"></script>
     <script src="Models/HeapAllocationsTimelineRecord.js"></script>
+    <script src="Models/ImportedTarget.js"></script>
     <script src="Models/IndexedDatabase.js"></script>
     <script src="Models/IndexedDatabaseObjectStore.js"></script>
     <script src="Models/IndexedDatabaseObjectStoreIndex.js"></script>
@@ -225,6 +226,7 @@
     <script src="Models/ScreenshotsTimelineRecord.js"></script>
     <script src="Models/ScriptInstrument.js"></script>
     <script src="Models/ScriptSyntaxTree.js"></script>
+    <script src="Models/ScriptTimeline.js"></script>
     <script src="Models/ScriptTimelineRecord.js"></script>
     <script src="Models/ServerTimingEntry.js"></script>
     <script src="Models/ShaderProgram.js"></script>
@@ -241,7 +243,6 @@
     <script src="Models/URLBreakpoint.js"></script>
     <script src="Models/WebInspectorExtension.js"></script>
     <script src="Models/WebSocketResource.js"></script>
-    <script src="Models/WrappedPromise.js"></script>
 
     <script src="Models/LocalResource.js"></script>
     <script src="Models/SourceMapResource.js"></script>
@@ -267,7 +268,6 @@
 
     <script src="Controllers/AnimationManager.js"></script>
     <script src="Controllers/AuditManager.js"></script>
-    <script src="Controllers/ApplicationCacheManager.js"></script>
     <script src="Controllers/BreakpointLogMessageLexer.js"></script>
     <script src="Controllers/BrowserManager.js"></script>
     <script src="Controllers/CSSManager.js"></script>
@@ -277,7 +277,7 @@
     <script src="Controllers/DOMDebuggerManager.js"></script>
     <script src="Controllers/DOMManager.js"></script>
     <script src="Controllers/DOMStorageManager.js"></script>
-    <script src="Controllers/DatabaseManager.js"></script>
+    <script src="Controllers/DOMUndoCoordinator.js"></script>
     <script src="Controllers/DebuggerManager.js"></script>
     <script src="Controllers/DeviceSettingsManager.js"></script>
     <script src="Controllers/FormatterSourceMap.js"></script>
@@ -288,6 +288,7 @@
     <script src="Controllers/MemoryManager.js"></script>
     <script src="Controllers/NetworkManager.js"></script>
     <script src="Controllers/RuntimeManager.js"></script>
+    <script src="Controllers/StorageManager.js"></script>
     <script src="Controllers/TargetManager.js"></script>
     <script src="Controllers/TimelineManager.js"></script>
     <script src="Controllers/WebInspectorExtensionController.js"></script>

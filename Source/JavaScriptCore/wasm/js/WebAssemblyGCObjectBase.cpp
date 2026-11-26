@@ -36,16 +36,15 @@ namespace JSC {
 
 const ClassInfo WebAssemblyGCObjectBase::s_info = { "WebAssemblyGCObjectBase"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyGCObjectBase) };
 
-WebAssemblyGCObjectBase::WebAssemblyGCObjectBase(VM& vm, Structure* structure, RefPtr<const Wasm::RTT> rtt)
+WebAssemblyGCObjectBase::WebAssemblyGCObjectBase(VM& vm, WebAssemblyGCStructure* structure)
     : Base(vm, structure)
-    , m_rtt(rtt)
 {
 }
 
 template<typename Visitor>
 void WebAssemblyGCObjectBase::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    WebAssemblyGCObjectBase* thisObject = jsCast<WebAssemblyGCObjectBase*>(cell);
+    WebAssemblyGCObjectBase* thisObject = uncheckedDowncast<WebAssemblyGCObjectBase>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -88,14 +87,8 @@ bool WebAssemblyGCObjectBase::deletePropertyByIndex(JSCell*, JSGlobalObject* glo
     return typeError(globalObject, scope, true, "Cannot delete property for WebAssembly GC object"_s);
 }
 
-void WebAssemblyGCObjectBase::getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray& propertyNameArray, DontEnumPropertiesMode)
+void WebAssemblyGCObjectBase::getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode)
 {
-#if ASSERT_ENABLED
-    ASSERT(!propertyNameArray.size());
-#else
-    UNUSED_PARAM(propertyNameArray);
-#endif
-    return;
 }
 
 bool WebAssemblyGCObjectBase::defineOwnProperty(JSObject*, JSGlobalObject* globalObject, PropertyName, const PropertyDescriptor&, bool shouldThrow)

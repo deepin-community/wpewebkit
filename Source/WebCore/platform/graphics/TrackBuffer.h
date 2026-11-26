@@ -34,6 +34,7 @@
 #include <wtf/Logger.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MediaTime.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
@@ -43,53 +44,72 @@ class TrackBuffer final
     : public LoggerHelper
 #endif
 {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(TrackBuffer);
 public:
-    static UniqueRef<TrackBuffer> create(RefPtr<MediaDescription>&&);
-    static UniqueRef<TrackBuffer> create(RefPtr<MediaDescription>&&, const MediaTime&);
-    
-    MediaTime maximumBufferedTime() const;
+    // Returns true if the timestamp gap between `fromTime` and `toTime`
+    // is acceptable per the gap-skipping policy. Used both with DTS gaps
+    // (between adjacent samples in nextSample) and with PTS gaps
+    // (between a seek target and the next available sample in
+    // reenqueueMediaForTime). Only consulted when the gap exceeds
+    // PlatformTimeRanges::timeFudgeFactor() — gaps below that threshold
+    // are treated as contiguous (matching how the buffered range itself
+    // is reported to clients) and never reach the lambda.
+    using IsAcceptableEnqueueGapFn = Function<bool(const MediaTime& fromTime, const MediaTime& toTime)>;
+
+    static UniqueRef<TrackBuffer> create(RefPtr<MediaDescription>&&, IsAcceptableEnqueueGapFn&& = nullptr);
+
+    MediaTime NODELETE maximumBufferedTime() const;
     void addBufferedRange(const MediaTime& start, const MediaTime& end, AddTimeRangeOption = AddTimeRangeOption::None);
     void addSample(MediaSample&);
-    
-    bool updateMinimumUpcomingPresentationTime();
-    
-    bool reenqueueMediaForTime(const MediaTime&, const MediaTime& timeFudgeFactor);
+    // Replace an already-buffered sample with a copy whose presentation and
+    // decode timestamps are shifted forward by `offset` (duration shrinks
+    // accordingly; presentationEndTime is preserved). Updates both the
+    // SampleMap and m_decodeQueue, and adjusts m_buffered to match.
+    void adjustSampleStartTime(MediaSample& original, const MediaTime& offset);
+
+    bool reenqueueMediaForTime(const MediaTime&, bool isEnded = false);
     MediaTime findSeekTimeForTargetTime(const MediaTime& targetTime, const MediaTime& negativeThreshold, const MediaTime& positiveThreshold);
     int64_t removeCodedFrames(const MediaTime& start, const MediaTime& end, const MediaTime& currentTime);
     PlatformTimeRanges removeSamples(const DecodeOrderSampleMap::MapType&, ASCIILiteral);
     int64_t codedFramesIntervalSize(const MediaTime& start, const MediaTime& end);
 
-    void resetTimestampOffset();
-    void reset();
+    RefPtr<MediaSample> nextSample();
+    size_t remainingSamples() const { return decodeQueue().size(); }
+
+    void NODELETE resetTimestampOffset();
+    void NODELETE reset();
     void clearSamples();
-    
-    const MediaTime& lastDecodeTimestamp() const { return m_lastDecodeTimestamp; }
-    void setLastDecodeTimestamp(MediaTime timestamp) { m_lastDecodeTimestamp = WTFMove(timestamp); }
-    
-    const MediaTime& greatestFrameDuration() const { return m_greatestFrameDuration; }
-    void setGreatestFrameDuration(MediaTime duration) { m_greatestFrameDuration = WTFMove(duration); }
-    const MediaTime& lastFrameDuration() const { return m_lastFrameDuration; }
-    void setLastFrameDuration(MediaTime duration) { m_lastFrameDuration = WTFMove(duration); }
-    
-    const MediaTime& highestPresentationTimestamp() const { return m_highestPresentationTimestamp; }
-    void setHighestPresentationTimestamp(MediaTime timestamp) { m_highestPresentationTimestamp = WTFMove(timestamp); }
-    
-    const MediaTime& highestEnqueuedPresentationTime() const { return m_highestEnqueuedPresentationTime; }
-    void setHighestEnqueuedPresentationTime(MediaTime timestamp) { m_highestEnqueuedPresentationTime = WTFMove(timestamp); }
-    const MediaTime& minimumEnqueuedPresentationTime() const { return m_minimumEnqueuedPresentationTime; }
-    void setMinimumEnqueuedPresentationTime(MediaTime timestamp) { m_minimumEnqueuedPresentationTime = WTFMove(timestamp); }
-    
-    const DecodeOrderSampleMap::KeyType& lastEnqueuedDecodeKey() const { return m_lastEnqueuedDecodeKey; }
-    void setLastEnqueuedDecodeKey(DecodeOrderSampleMap::KeyType key) { m_lastEnqueuedDecodeKey = WTFMove(key); }
-    
-    const MediaTime& enqueueDiscontinuityBoundary() const { return m_enqueueDiscontinuityBoundary; }
-    void setEnqueueDiscontinuityBoundary(MediaTime boundary) { m_enqueueDiscontinuityBoundary = WTFMove(boundary); }
-    
-    const MediaTime& roundedTimestampOffset() const { return m_roundedTimestampOffset; }
-    void setRoundedTimestampOffset(MediaTime offset) { m_roundedTimestampOffset = WTFMove(offset); }
+
+    const MediaTime& lastDecodeTimestamp() const LIFETIME_BOUND { return m_lastDecodeTimestamp; }
+    void setLastDecodeTimestamp(MediaTime timestamp) { m_lastDecodeTimestamp = WTF::move(timestamp); }
+
+    const MediaTime& greatestFrameDuration() const LIFETIME_BOUND { return m_greatestFrameDuration; }
+    void setGreatestFrameDuration(MediaTime duration) { m_greatestFrameDuration = WTF::move(duration); }
+    const MediaTime& lastFrameDuration() const LIFETIME_BOUND { return m_lastFrameDuration; }
+    void setLastFrameDuration(MediaTime duration) { m_lastFrameDuration = WTF::move(duration); }
+
+    const MediaTime& highestPresentationTimestamp() const LIFETIME_BOUND { return m_highestPresentationTimestamp; }
+    void setHighestPresentationTimestamp(MediaTime timestamp) { m_highestPresentationTimestamp = WTF::move(timestamp); }
+
+    const MediaTime& highestEnqueuedPresentationTime() const LIFETIME_BOUND { return m_highestEnqueuedPresentationTime; }
+    void setHighestEnqueuedPresentationTime(MediaTime timestamp) { m_highestEnqueuedPresentationTime = WTF::move(timestamp); }
+    const MediaTime& minimumEnqueuedPresentationTime() const LIFETIME_BOUND { return m_minimumEnqueuedPresentationTime; }
+
+    // Raises the tracked reorder depth. Call once per init segment with the
+    // codec-declared max_num_reorder_frames / sps_max_num_reorder_pics when
+    // available. The running observation in addSample() can only grow it further.
+    void setInitialReorderDepth(size_t depth) { m_maxObservedReorderDepth = std::max(m_maxObservedReorderDepth, depth); }
+
+    const DecodeOrderSampleMap::KeyType& lastEnqueuedDecodeKey() const LIFETIME_BOUND { return m_lastEnqueuedDecodeKey; }
+    void setLastEnqueuedDecodeKey(DecodeOrderSampleMap::KeyType key) { m_lastEnqueuedDecodeKey = WTF::move(key); }
+
+    const MediaTime& enqueueDiscontinuityBoundary() const LIFETIME_BOUND { return m_enqueueDiscontinuityBoundary; }
+    void setEnqueueDiscontinuityBoundary(MediaTime boundary) { m_enqueueDiscontinuityBoundary = WTF::move(boundary); }
+
+    const MediaTime& roundedTimestampOffset() const LIFETIME_BOUND { return m_roundedTimestampOffset; }
+    void setRoundedTimestampOffset(MediaTime offset) { m_roundedTimestampOffset = WTF::move(offset); }
     void setRoundedTimestampOffset(const MediaTime&, uint32_t, const MediaTime&);
-    
+
     uint32_t lastFrameTimescale() const { return m_lastFrameTimescale; }
     void setLastFrameTimescale(uint32_t timescale) { m_lastFrameTimescale = timescale; }
     bool needRandomAccessFlag() const { return m_needRandomAccessFlag; }
@@ -98,61 +118,93 @@ public:
     void setEnabled(bool enabled) { m_enabled = enabled; }
     bool needsReenqueueing() const { return m_needsReenqueueing; }
     void setNeedsReenqueueing(bool flag) { m_needsReenqueueing = flag; }
-    bool needsMinimumUpcomingPresentationTimeUpdating() const { return m_needsMinimumUpcomingPresentationTimeUpdating; }
-    void setNeedsMinimumUpcomingPresentationTimeUpdating(bool flag) { m_needsMinimumUpcomingPresentationTimeUpdating = flag; }
-    
-    const SampleMap& samples() const { return m_samples; }
-    SampleMap& samples() { return m_samples; }
-    const DecodeOrderSampleMap::MapType& decodeQueue() const { return m_decodeQueue; }
-    DecodeOrderSampleMap::MapType& decodeQueue() { return m_decodeQueue; }
+
+    const SampleMap& samples() const LIFETIME_BOUND { return m_samples; }
+    SampleMap& samples() LIFETIME_BOUND { return m_samples; }
     const RefPtr<MediaDescription>& description() const { return m_description; }
-    const PlatformTimeRanges& buffered() const { return m_buffered; }
-    PlatformTimeRanges& buffered() { return m_buffered; }
-    
+    const PlatformTimeRanges& buffered() const LIFETIME_BOUND { return m_buffered; }
+    PlatformTimeRanges& buffered() LIFETIME_BOUND { return m_buffered; }
+
 #if !RELEASE_LOG_DISABLED
-    void setLogger(const Logger&, const void*);
+    void setLogger(const Logger&, uint64_t);
     const Logger& logger() const final { ASSERT(m_logger); return *m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "TrackBuffer"_s; }
     WTFLogChannel& logChannel() const final;
 #endif
-    
+
 private:
-    friend UniqueRef<TrackBuffer> WTF::makeUniqueRefWithoutFastMallocCheck<TrackBuffer>(RefPtr<WebCore::MediaDescription>&&, const WTF::MediaTime&);
-    TrackBuffer(RefPtr<MediaDescription>&&, const MediaTime&);
-    
+    friend UniqueRef<TrackBuffer> WTF::makeUniqueRefWithoutFastMallocCheck<TrackBuffer>(RefPtr<WebCore::MediaDescription>&&, IsAcceptableEnqueueGapFn&&);
+    TrackBuffer(RefPtr<MediaDescription>&&, IsAcceptableEnqueueGapFn&&);
+
+    // Returns true if the DTS gap from `fromTime` to `toTime` is small
+    // enough to enqueue across. Gaps within
+    // PlatformTimeRanges::timeFudgeFactor() are always accepted (the
+    // buffered range itself would be reported as contiguous); larger
+    // gaps consult the constructor-supplied callback (when set —
+    // currently MSE only).
+    bool isAcceptableEnqueueGap(const MediaTime& fromTime, const MediaTime& toTime) const;
+
+    const DecodeOrderSampleMap::MapType& decodeQueue() const LIFETIME_BOUND { return m_decodeQueue; }
+    DecodeOrderSampleMap::MapType& decodeQueue() LIFETIME_BOUND { return m_decodeQueue; }
+    void updateMinimumUpcomingPresentationTime();
+    void clearDecodeQueue();
+
+    // Result of attempting to split the sample whose presentation range contains a given time.
+    struct DivideResult {
+        // Presentation timestamp of the "after" piece (the piece whose range starts at the split
+        // point). Invalid if no split happened (no containing sample, not divisible, or
+        // MediaSample::divide returned null halves).
+        MediaTime afterSplitPresentationTime { MediaTime::invalidTime() };
+        // Byte sizes of the pieces produced by the split, valid only when
+        // afterSplitPresentationTime is valid.
+        int64_t beforeSplitSize { 0 };
+        int64_t afterSplitSize { 0 };
+    };
+    enum class ApplyDivide : bool { No, Yes };
+    DivideResult tryDivideSampleAtTime(const MediaTime&, ApplyDivide);
+
     SampleMap m_samples;
     DecodeOrderSampleMap::MapType m_decodeQueue;
     RefPtr<MediaDescription> m_description;
     PlatformTimeRanges m_buffered;
-    
+
     MediaTime m_lastDecodeTimestamp { MediaTime::invalidTime() };
-    
+
     MediaTime m_greatestFrameDuration { MediaTime::invalidTime() };
     MediaTime m_lastFrameDuration { MediaTime::invalidTime() };
-    
+
     MediaTime m_highestPresentationTimestamp { MediaTime::invalidTime() };
-    
+
     MediaTime m_highestEnqueuedPresentationTime { MediaTime::invalidTime() };
     MediaTime m_minimumEnqueuedPresentationTime { MediaTime::invalidTime() };
-    
+
+    // Running observation of decode-order reorder depth. Seeded by
+    // setInitialReorderDepth; grown when a deeper reorder is seen. Gates
+    // publication of m_minimumEnqueuedPresentationTime so a yet-to-arrive
+    // B-frame can't invalidate the value handed to the renderer.
+    MediaTime m_maxPresentationTimeSeenInDecodeOrder { MediaTime::invalidTime() };
+    size_t m_samplesSinceMaxPresentationTime { 0 };
+    size_t m_maxObservedReorderDepth { 3 };
+
     DecodeOrderSampleMap::KeyType m_lastEnqueuedDecodeKey { MediaTime::invalidTime(), MediaTime::invalidTime() };
-    
+
     MediaTime m_enqueueDiscontinuityBoundary;
-    MediaTime m_discontinuityTolerance;
-    
+    MediaTime m_lastEnqueueDecodeEnd;
+    IsAcceptableEnqueueGapFn m_isAcceptableEnqueueGap;
+
     MediaTime m_roundedTimestampOffset { MediaTime::invalidTime() };
-    
+
 #if !RELEASE_LOG_DISABLED
     RefPtr<const Logger> m_logger;
-    const void* m_logIdentifier;
+    uint64_t m_logIdentifier { 0 };
 #endif
-    
+
     uint32_t m_lastFrameTimescale { 0 };
     bool m_needRandomAccessFlag { true };
     bool m_enabled { false };
     bool m_needsReenqueueing { false };
-    bool m_needsMinimumUpcomingPresentationTimeUpdating { false };
+    bool m_hasOutOfOrderFrames { false };
 };
 
 } // namespace WebCore

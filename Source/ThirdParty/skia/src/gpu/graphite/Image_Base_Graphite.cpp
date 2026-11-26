@@ -11,19 +11,22 @@
 #include "include/gpu/graphite/Image.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Surface.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkPixelStorage.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawContext.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Image_YUVA_Graphite.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Surface_Graphite.h"
+#include "src/gpu/graphite/Texture.h"
 #include "src/gpu/graphite/TextureUtils.h"
+#include "src/gpu/graphite/task/Task.h"
 
 namespace skgpu::graphite {
 
-Image_Base::Image_Base(const SkImageInfo& info, uint32_t uniqueID)
-    : SkImage_Base(info, uniqueID) {}
+Image_Base::Image_Base(const SkImageInfo& info, uint32_t uniqueID, sk_sp<SkPixelStorage> storage)
+    : SkImage_Base(info, uniqueID, std::move(storage)) {}
 
 Image_Base::~Image_Base() = default;
 
@@ -44,8 +47,11 @@ void Image_Base::linkDevice(sk_sp<Device> device) {
     fLinkedDevices.push_back(std::move(device));
 }
 
-void Image_Base::notifyInUse(Recorder* recorder, DrawContext* drawContext) const {
+void Image_Base::notifyInUse(Recorder* recorder,
+                             DrawContext* drawContext,
+                             bool unlinkDevices) const {
     SkASSERT(recorder);
+    SkASSERT(!drawContext || !unlinkDevices); // unlinkDevices can't be used with a DrawContext
 
     // The ref counts stored on each linked device are thread safe, but the Image's sk_sp's that
     // track the refs its responsible for are *not* thread safe. Use a spin lock since the majority
@@ -57,60 +63,14 @@ void Image_Base::notifyInUse(Recorder* recorder, DrawContext* drawContext) const
     if (!fLinkedDevices.empty()) {
         int emptyCount = 0;
         for (sk_sp<Device>& device : fLinkedDevices) {
-            if (!device) {
-                emptyCount++; // Already unlinked but array isn't empty yet
-            } else {
-                if (device->isScratchDevice()) {
-                    sk_sp<Task> deviceDrawTask = device->lastDrawTask();
-                    if (deviceDrawTask) {
-                        // Increment the pending read count for the device's target
-                        recorder->priv().addPendingRead(device->target());
-                        if (drawContext) {
-                            // Add a reference to the device's drawTask to `drawContext` if that's
-                            // provided.
-                            drawContext->recordDependency(std::move(deviceDrawTask));
-                        } else {
-                            // If there's no `drawContext` this notify represents a copy, so for
-                            // now append the task to the root task list since that is where the
-                            // subsequent copy task will go as well.
-                            recorder->priv().add(std::move(deviceDrawTask));
-                        }
-                    } else {
-                        // If there's no draw task yet, the device is being drawn into a child
-                        // scratch device (backdrop filter or init-from-prev layer), and the child
-                        // will later on be drawn back into the device's `drawContext`. In this case
-                        // `device` should already have performed an internal flush and have no
-                        // pending work, and not yet be marked immutable. The correct action at this
-                        // point in time is to do nothing: the final task order in the device's
-                        // DrawTask will be pre-notified tasks into the device's target, then the
-                        // child's DrawTask when it's drawn back into `device`, and then any post
-                        // tasks that further modify the `device`'s target.
-                        SkASSERT(device->recorder() && device->recorder() == recorder);
-                    }
-
-                    // Scratch devices are often already marked immutable, but they are also the
-                    // way in which Image finds the last snapped DrawTask so we don't unlink
-                    // scratch devices. The scratch image view will be short-lived as well, or the
-                    // device will transition to a non-scratch device in a future Recording and then
-                    // it will be unlinked then.
-                } else {
-                    // Automatic flushing of image views only happens when mixing reads and writes
-                    // on the originating Recorder. Draws of the view on another Recorder will
-                    // always see the texture content dependent on how Recordings are inserted.
-                    if (device->recorder() == recorder) {
-                        // Non-scratch devices push their tasks to the root task list to maintain
-                        // an order consistent with the client-triggering actions. Because of this,
-                        // there's no need to add references to the `drawContext` that the device
-                        // is being drawn into.
-                        device->flushPendingWorkToRecorder();
-                    }
-                    if (!device->recorder() || device->unique()) {
-                        // The device will not record any more commands that modify the texture, so
-                        // the image doesn't need to be linked
-                        device.reset();
-                        emptyCount++;
-                    }
-                }
+            if (!device || device->notifyInUse(recorder, drawContext) || unlinkDevices) {
+                // Already unlinked or notifyInUse() signals the device doesn't need to be linked
+                // anymore. reset() is a no-op if device is already holding null. If we are force
+                // unlinking a device, it should already be immutable (which do not return true from
+                // notifyInUse for scratch devices, hence the forcing).
+                SkASSERT(!device || !unlinkDevices || !device->recorder());
+                device.reset();
+                emptyCount++;
             }
         }
 
@@ -139,35 +99,97 @@ bool Image_Base::isDynamic() const {
     return emptyCount > 0;
 }
 
+namespace {
+
+// Uses the label of the first proxy, since cases where we chain to make a new image will flatten
+// any YUVA image.
+std::string get_chained_label(const Image_Base* baseImage,
+                              const char* forEmpty,
+                              const char* forConcat) {
+    SkASSERT(baseImage && !baseImage->textureProxyViews().empty());
+    TextureProxy* proxy = baseImage->textureProxyViews()[0].proxy();
+    SkASSERT(proxy);
+    std::string label = proxy->label();
+    if (label.empty()) {
+        label = forEmpty;
+    } else {
+        label += forConcat;
+    }
+    return label;
+}
+
+} // anonymous namespace
+
+sk_sp<Image_Base> Image_Base::makeNonBudgeted(Recorder* recorder) {
+    // First iterate the proxies held by the image and see if they are instantiated or need to be
+    // updated to Budgeted::kNo.
+    bool needsInstantiation = false;
+    for (TextureProxyView& view : this->textureProxyViews()) {
+        if (view.proxy()->isInstantiated()) {
+            // At this point, the properties of the TextureProxy are locked in.
+            const Texture* texture = view.proxy()->texture();
+            if (texture->budgeted() != Budgeted::kNo || texture->shareable() != Shareable::kNo) {
+                // Not compatible but instantiated, so make a copy that is non-budgeted.
+                return this->copyImage(recorder,
+                                       this->bounds(),
+                                       Budgeted::kNo,
+                                       this->hasMipmaps() ? Mipmapped::kYes : Mipmapped::kNo,
+                                       SkBackingFit::kExact,
+                                       get_chained_label(this, "NonBudgeted", "_NonBudgeted"));
+            }
+            // else this proxy is already consistent with the contract, so continue to any other
+            // planes that might need to be updated.
+        } else {
+            needsInstantiation = true;
+        }
+    }
+
+    if (needsInstantiation) {
+        // There are presumably tasks (either in the root task list already or on a linked Device)
+        // that will initialize this image's proxy. Since the tasks reference the existing
+        // TextureProxy, we can't create a new proxy that is non-budgeted. Instead we modify it
+        // directly and then unlink this Image from its devices.
+        for (TextureProxyView& view : this->textureProxyViews()) {
+            if (!view.proxy()->isInstantiated()) {
+                view.proxy()->setBudgeted(Budgeted::kNo);
+                if (!view.proxy()->instantiate(recorder->priv().resourceProvider())) {
+                    return nullptr;
+                }
+            } else {
+                SkASSERT(view.proxy()->texture()->budgeted() == Budgeted::kNo &&
+                         view.proxy()->texture()->shareable() == Shareable::kNo);
+            }
+        }
+
+        this->unlinkDevices(recorder);
+    }
+
+    // At this point we already were not dynamic, or we unlinked all our devices, or we should not
+    // have reached here and returned a copy instead.
+    SkASSERT(!this->isDynamic());
+    return sk_ref_sp(this);
+}
+
+// For now, CopyAsDraw is called with a nullptr for the drawContext, which causes the draw task
+// to be pushed onto the root task list. However, this could be given a drawContext in the future.
 sk_sp<Image> Image_Base::copyImage(Recorder* recorder,
                                    const SkIRect& subset,
                                    Budgeted budgeted,
                                    Mipmapped mipmapped,
                                    SkBackingFit backingFit,
                                    std::string_view label) const {
-    return CopyAsDraw(recorder, this, subset, this->imageInfo().colorInfo(),
-                      budgeted, mipmapped, backingFit, std::move(label));
+    return CopyAsDraw(recorder,
+                      /*drawContext=*/nullptr, this, subset, this->imageInfo().colorInfo(),
+                      budgeted, mipmapped, backingFit, label);
 }
 
-namespace {
-
-TextureProxy* get_base_proxy_for_label(const Image_Base* baseImage) {
-    if (baseImage->type() == SkImage_Base::Type::kGraphite) {
-        const Image* img = static_cast<const Image*>(baseImage);
-        return img->textureProxyView().proxy();
-    }
-    SkASSERT(baseImage->type() == SkImage_Base::Type::kGraphiteYUVA);
-    // We will end up flattening to RGBA for a YUVA image when we get a subset. We just grab
-    // the label off of the first channel's proxy and use that to be the stand in label.
-    const Image_YUVA* img = static_cast<const Image_YUVA*>(baseImage);
-    return img->proxyView(0).proxy();
-}
-
-} // anonymous namespace
-
-sk_sp<SkImage> Image_Base::onMakeSubset(Recorder* recorder,
+sk_sp<SkImage> Image_Base::onMakeSubset(SkRecorder* recorder,
                                         const SkIRect& subset,
                                         RequiredProperties requiredProps) const {
+    auto gRecorder = AsGraphiteRecorder(recorder);
+    if (!gRecorder) {
+        return nullptr;
+    }
     // optimization : return self if the subset == our bounds and requirements met and the image's
     // texture is immutable
     if (this->bounds() == subset &&
@@ -176,36 +198,33 @@ sk_sp<SkImage> Image_Base::onMakeSubset(Recorder* recorder,
         return sk_ref_sp(this);
     }
 
-    TextureProxy* proxy = get_base_proxy_for_label(this);
-    SkASSERT(proxy);
-    std::string label = proxy->label();
-    if (label.empty()) {
-        label = "ImageSubsetTexture";
-    } else {
-        label += "_Subset";
-    }
-
     // The copied image is not considered budgeted because this is a client-invoked API and they
     // will own the image.
-    return this->copyImage(recorder,
+    return this->copyImage(gRecorder,
                            subset,
                            Budgeted::kNo,
                            requiredProps.fMipmapped ? Mipmapped::kYes : Mipmapped::kNo,
                            SkBackingFit::kExact,
-                           label);
+                           get_chained_label(this, "ImageSubsetTexture", "_Subset"));
 }
 
-sk_sp<SkSurface> Image_Base::onMakeSurface(Recorder* recorder, const SkImageInfo& info) const {
-    if (!recorder) {
+sk_sp<SkSurface> Image_Base::onMakeSurface(SkRecorder* recorder, const SkImageInfo& info) const {
+    auto gRecorder = AsGraphiteRecorder(recorder);
+    if (!gRecorder) {
         return nullptr;
     }
-    return SkSurfaces::RenderTarget(recorder, info);
+    return SkSurfaces::RenderTarget(gRecorder, info);
 }
 
-sk_sp<SkImage> Image_Base::makeColorTypeAndColorSpace(Recorder* recorder,
+sk_sp<SkImage> Image_Base::makeColorTypeAndColorSpace(SkRecorder* recorder,
                                                       SkColorType targetCT,
                                                       sk_sp<SkColorSpace> targetCS,
                                                       RequiredProperties requiredProps) const {
+    auto gRecorder = AsGraphiteRecorder(recorder);
+    if (!gRecorder) {
+        return nullptr;
+    }
+
     SkColorInfo dstColorInfo{targetCT, this->alphaType(), std::move(targetCS)};
     // optimization : return self if there's no color type/space change and the image's texture
     // is immutable
@@ -213,48 +232,27 @@ sk_sp<SkImage> Image_Base::makeColorTypeAndColorSpace(Recorder* recorder,
         return sk_ref_sp(this);
     }
 
-    TextureProxy* proxy = get_base_proxy_for_label(this);
-    SkASSERT(proxy);
-    std::string label = proxy->label();
-    if (label.empty()) {
-        label = "ImageMakeCTandCSTexture";
-    } else {
-        label += "_CTandCSConversion";
-    }
-
     // Use CopyAsDraw directly to perform the color space changes. The copied image is not
     // considered budgeted because this is a client-invoked API and they will own the image.
-    return CopyAsDraw(recorder,
+    return CopyAsDraw(gRecorder,
+                      /*drawContext=*/nullptr,
                       this,
                       this->bounds(),
                       dstColorInfo,
                       Budgeted::kNo,
                       requiredProps.fMipmapped ? Mipmapped::kYes : Mipmapped::kNo,
                       SkBackingFit::kExact,
-                      label);
+                      get_chained_label(this, "ImageMakeCTandCSTexture", "_CTandCSConversion"));
 }
 
 // Ganesh APIs are no-ops
-
-sk_sp<SkImage> Image_Base::onMakeSubset(GrDirectContext*, const SkIRect&) const {
-    SKGPU_LOG_W("Cannot convert Graphite-backed image to Ganesh");
-    return nullptr;
-}
-
-sk_sp<SkImage> Image_Base::onMakeColorTypeAndColorSpace(SkColorType,
-                                                        sk_sp<SkColorSpace>,
-                                                        GrDirectContext*) const {
-    SKGPU_LOG_W("Cannot convert Graphite-backed image to Ganesh");
-    return nullptr;
-}
-
 void Image_Base::onAsyncRescaleAndReadPixels(const SkImageInfo& info,
                                              SkIRect srcRect,
                                              RescaleGamma rescaleGamma,
                                              RescaleMode rescaleMode,
                                              ReadPixelsCallback callback,
                                              ReadPixelsContext context) const {
-    SKGPU_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
+    SKIA_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
     callback(context, nullptr);
 }
 
@@ -267,7 +265,7 @@ void Image_Base::onAsyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace
                                                    RescaleMode rescaleMode,
                                                    ReadPixelsCallback callback,
                                                    ReadPixelsContext context) const {
-    SKGPU_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
+    SKIA_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
     callback(context, nullptr);
 }
 

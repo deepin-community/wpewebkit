@@ -27,15 +27,17 @@
 
 #if ENABLE(WPE_PLATFORM)
 
-#include "GRefPtrWPE.h"
-#include "RendererBufferFormat.h"
+#include "RendererBufferDescription.h"
 #include "WPEWebView.h"
+#include <wpe/GRefPtrWPE.h>
 #include <wpe/wpe-platform.h>
 #include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebKit {
-class AcceleratedBackingStoreDMABuf;
+class AcceleratedBackingStore;
+class ViewSnapshot;
 class WebPlatformTouchPoint;
 }
 
@@ -57,8 +59,16 @@ public:
     void requestExitFullScreen();
 #endif
 
+#if ENABLE(GAMEPAD)
+    static WebKit::WebPageProxy* platformWebPageProxyForGamepadInput();
+#endif
+
+    Expected<Ref<WebKit::ViewSnapshot>, String> takeViewSnapshot(std::optional<WebCore::IntRect>&&);
+
     void updateAcceleratedSurface(uint64_t);
-    WebKit::RendererBufferFormat renderBufferFormat() const;
+    WebKit::RendererBufferDescription renderBufferDescription() const;
+
+    void handleGesture(WPEEvent*);
 
 private:
     ViewPlatform(WPEDisplay*, const API::PageConfiguration&);
@@ -72,18 +82,24 @@ private:
     bool activityStateChanged(WebCore::ActivityState, bool);
     void toplevelStateChanged(WPEToplevelState previousState, WPEToplevelState);
 
+#if ENABLE(POINTER_LOCK)
+    void requestPointerLock() override;
+    void didLosePointerLock() override;
+#endif
+
 #if ENABLE(TOUCH_EVENTS)
     Vector<WebKit::WebPlatformTouchPoint> touchPointsForEvent(WPEEvent*);
 #endif
 
+    void dispatchPendingNextPresentationUpdateCallbacks();
+
     gboolean handleEvent(WPEEvent*);
-    void handleGesture(WPEEvent*);
 
     GRefPtr<WPEView> m_wpeView;
-    std::unique_ptr<WebKit::AcceleratedBackingStoreDMABuf> m_backingStore;
+    RefPtr<WebKit::AcceleratedBackingStore> m_backingStore;
     uint32_t m_displayID { 0 };
     unsigned long m_bufferRenderedID { 0 };
-    CompletionHandler<void()> m_nextPresentationUpdateCallback;
+    Vector<CompletionHandler<void()>> m_nextPresentationUpdateCallbacks;
     HashMap<uint32_t, GRefPtr<WPEEvent>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_touchEvents;
 #if ENABLE(FULLSCREEN_API)
     bool m_viewWasAlreadyInFullScreen { false };

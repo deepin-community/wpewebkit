@@ -30,6 +30,7 @@
 #include "JSWebExtensionAPIAction.h"
 #include "WebExtensionAPIEvent.h"
 #include "WebExtensionAPIObject.h"
+#include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSString;
@@ -41,8 +42,8 @@ class WebExtensionAPIAction : public WebExtensionAPIObject, public JSWebExtensio
 
 public:
 #if PLATFORM(COCOA)
-    void getTitle(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void setTitle(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void getTitle(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, String& outExceptionString);
+    void setTitle(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, String& outExceptionString);
 
     void getBadgeText(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     void setBadgeText(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
@@ -58,7 +59,7 @@ public:
 
     void getPopup(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     void setPopup(NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
-    void openPopup(WebPage&, NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void openPopup(WebPageProxyIdentifier, NSDictionary *details, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     WebExtensionAPIEvent& onClicked();
 
@@ -66,12 +67,22 @@ private:
     friend class WebExtensionAPIMenus;
 
     static bool isValidDimensionKey(NSString *);
-    static bool parseActionDetails(NSDictionary *, std::optional<WebExtensionWindowIdentifier>&, std::optional<WebExtensionTabIdentifier>&, NSString **outExceptionString);
+    static NSString *parseIconPath(NSString *path, const URL& baseURL);
+    static NSMutableDictionary *parseIconPathsDictionary(NSDictionary *, const URL& baseURL, bool forVariants, NSString *inputKey, NSString **outExceptionString);
+    static NSMutableDictionary *parseIconImageDataDictionary(NSDictionary *, bool forVariants, NSString *inputKey, NSString **outExceptionString);
+
+#if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
+    static NSArray *parseIconVariants(NSArray *, const URL& baseURL, NSString *inputKey, NSString **outExceptionString);
+#endif
+
+    static Expected<void, String> parseActionDetails(NSDictionary *, std::optional<WebExtensionWindowIdentifier>&, std::optional<WebExtensionTabIdentifier>&);
 
     RefPtr<WebExtensionAPIEvent> m_onClicked;
 #endif
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIAction, action);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

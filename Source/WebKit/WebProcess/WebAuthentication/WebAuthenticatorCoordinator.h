@@ -29,12 +29,15 @@
 
 #include <WebCore/AuthenticatorCoordinatorClient.h>
 #include <WebCore/FrameIdentifier.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebKit {
 
 class WebPage;
 
 class WebAuthenticatorCoordinator final : public WebCore::AuthenticatorCoordinatorClient {
+    WTF_MAKE_TZONE_ALLOCATED(WebAuthenticatorCoordinator);
 public:
     explicit WebAuthenticatorCoordinator(WebPage&);
 
@@ -45,9 +48,12 @@ private:
     void isConditionalMediationAvailable(const WebCore::SecurityOrigin&, WebCore::QueryCompletionHandler&&) final;
     void isUserVerifyingPlatformAuthenticatorAvailable(const WebCore::SecurityOrigin&, WebCore::QueryCompletionHandler&&) final;
     void getClientCapabilities(const WebCore::SecurityOrigin&, WebCore::CapabilitiesCompletionHandler&&) final;
+    void signalUnknownCredential(const WebCore::SecurityOrigin&, WebCore::UnknownCredentialOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&) final;
+    void signalAllAcceptedCredentials(const WebCore::SecurityOrigin&, WebCore::AllAcceptedCredentialsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&) final;
+    void signalCurrentUserDetails(const WebCore::SecurityOrigin&, WebCore::CurrentUserDetailsOptions&&, CompletionHandler<void(std::optional<WebCore::ExceptionData>)>&&) final;
     void cancel(CompletionHandler<void()>&&) final;
 
-    WebPage& m_webPage;
+    WeakRef<WebPage> m_webPage;
 };
 
 } // namespace WebKit

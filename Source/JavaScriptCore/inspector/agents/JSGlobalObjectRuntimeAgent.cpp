@@ -28,6 +28,7 @@
 
 #include "InjectedScript.h"
 #include "InjectedScriptManager.h"
+#include "JSGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
@@ -38,7 +39,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(JSGlobalObjectRuntimeAgent);
 
 JSGlobalObjectRuntimeAgent::JSGlobalObjectRuntimeAgent(JSAgentContext& context)
     : InspectorRuntimeAgent(context)
-    , m_frontendDispatcher(makeUnique<RuntimeFrontendDispatcher>(context.frontendRouter))
+    , m_frontendDispatcher(makeUniqueRef<RuntimeFrontendDispatcher>(context.frontendRouter))
     , m_backendDispatcher(RuntimeBackendDispatcher::create(context.backendDispatcher, this))
     , m_globalObject(context.inspectedGlobalObject)
 {
@@ -53,7 +54,7 @@ InjectedScript JSGlobalObjectRuntimeAgent::injectedScriptForEval(Protocol::Error
         return InjectedScript();
     }
 
-    InjectedScript injectedScript = injectedScriptManager().injectedScriptFor(&m_globalObject);
+    auto injectedScript = injectedScriptManager().injectedScriptFor(&m_globalObject);
     if (injectedScript.hasNoValue())
         errorString = "Missing execution context for given executionContextId."_s;
 

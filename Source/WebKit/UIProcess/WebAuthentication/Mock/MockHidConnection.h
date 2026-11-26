@@ -33,15 +33,6 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebKit {
-class MockHidConnection;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::MockHidConnection> : std::true_type { };
-}
-
-namespace WebKit {
 
 // The following basically simulates an external HID token that:
 //    1. Supports only one protocol, either CTAP2 or U2F.
@@ -52,11 +43,16 @@ namespace WebKit {
 // There are indefinite stages for each U2F request:
 // FSM: Info::Init => Info::Msg => [Request::Init => Request::Msg]+
 // According to different combinations of error and stages, error will manifest differently.
-class MockHidConnection final : public CanMakeWeakPtr<MockHidConnection>, public HidConnection {
+class MockHidConnection final : public HidConnection {
 public:
-    MockHidConnection(IOHIDDeviceRef, const WebCore::MockWebAuthenticationConfiguration&);
+    static Ref<MockHidConnection> create(IOHIDDeviceRef, const WebCore::MockWebAuthenticationConfiguration&);
+    virtual ~MockHidConnection() = default;
+
+    void validateExpectedCommandsCompleted();
 
 private:
+    MockHidConnection(IOHIDDeviceRef, const WebCore::MockWebAuthenticationConfiguration&);
+
     // HidConnection
     void initialize() final;
     void terminate() final;
@@ -67,9 +63,11 @@ private:
     void assembleRequest(Vector<uint8_t>&&);
     void parseRequest();
     void feedReports();
-    bool stagesMatch() const;
+    bool NODELETE stagesMatch() const;
     void shouldContinueFeedReports();
     void continueFeedReports();
+    void validateExpectedCommand(const Vector<uint8_t>& actualCommand);
+    void initializeExpectedCommands();
 
     WebCore::MockWebAuthenticationConfiguration m_configuration;
     std::optional<fido::FidoHidMessage> m_requestMessage;
@@ -79,6 +77,8 @@ private:
     bool m_requireResidentKey { false };
     bool m_requireUserVerification  { false };
     Vector<uint8_t> m_nonce;
+    Vector<Vector<uint8_t>> m_expectedCommands;
+    size_t m_currentExpectedCommandIndex { 0 };
 };
 
 } // namespace WebKit

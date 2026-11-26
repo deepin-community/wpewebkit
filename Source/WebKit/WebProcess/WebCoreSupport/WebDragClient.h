@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WebDragClient_h
-#define WebDragClient_h
+#pragma once
 
 #if ENABLE(DRAG_SUPPORT)
 
@@ -48,7 +47,7 @@ private:
     void willPerformDragSourceAction(WebCore::DragSourceAction, const WebCore::IntPoint&, WebCore::DataTransfer&) override;
     OptionSet<WebCore::DragSourceAction> dragSourceActionMaskForPoint(const WebCore::IntPoint& windowPoint) override;
 
-    void startDrag(WebCore::DragItem, WebCore::DataTransfer&, WebCore::Frame&) override;
+    void startDrag(WebCore::DragItem, WebCore::DataTransfer&, WebCore::Frame&, const std::optional<WebCore::NodeIdentifier>&) override;
     void didConcludeEditDrag() override;
 
 #if PLATFORM(COCOA)
@@ -61,5 +60,3 @@ private:
 } // namespace WebKit
 
 #endif // ENABLE(DRAG_SUPPORT)
-
-#endif // WebDragClient_h

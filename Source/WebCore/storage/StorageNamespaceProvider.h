@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "SecurityOriginHash.h"
+#include <WebCore/SecurityOriginHash.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 
@@ -53,6 +53,7 @@ public:
     virtual RefPtr<StorageNamespace> sessionStorageNamespace(const SecurityOrigin&, Page&, ShouldCreateNamespace = ShouldCreateNamespace::Yes) = 0;
 
     WEBCORE_EXPORT void setSessionIDForTesting(PAL::SessionID);
+    WEBCORE_EXPORT uint64_t localStorageAreaMapCountForTesting() const;
 
     void setSessionStorageQuota(unsigned quota) { m_sessionStorageQuota = quota; }
     virtual void cloneSessionStorageNamespaceForPage(Page&, Page&) { RELEASE_ASSERT_NOT_REACHED(); }
@@ -69,8 +70,8 @@ private:
     virtual Ref<StorageNamespace> createLocalStorageNamespace(unsigned quota, PAL::SessionID) = 0;
     virtual Ref<StorageNamespace> createTransientLocalStorageNamespace(SecurityOrigin&, unsigned quota, PAL::SessionID) = 0;
 
-    RefPtr<StorageNamespace> m_localStorageNamespace;
-    HashMap<SecurityOriginData, RefPtr<StorageNamespace>> m_transientLocalStorageNamespaces;
+    const RefPtr<StorageNamespace> m_localStorageNamespace;
+    HashMap<SecurityOriginData, Ref<StorageNamespace>> m_transientLocalStorageNamespaces;
 
     unsigned m_sessionStorageQuota { 0 };
 };

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,22 +29,11 @@
 #include "FormattingContext.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutUnits.h"
+#include "StylePrimitiveNumericTypes.h"
 #include <wtf/HashMap.h>
 #include <wtf/ListHashSet.h>
-#include <wtf/TZoneMalloc.h>
-#include <wtf/TZoneMallocInlines.h>
+#include <wtf/Variant.h>
 #include <wtf/WeakPtr.h>
-
-namespace WebCore {
-namespace Layout {
-class TableGridCell;
-}
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::Layout::TableGridCell> : std::true_type { };
-}
 
 namespace WebCore {
 namespace Layout {
@@ -51,8 +41,9 @@ class Box;
 class ElementBox;
 
 // Cell represents a <td> or <th>. It can span multiple slots in the grid.
-class TableGridCell : public CanMakeWeakPtr<TableGridCell> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_INLINE(TableGridCell);
+class TableGridCell final : public CanMakeWeakPtr<TableGridCell>, public CanMakeCheckedPtr<TableGridCell> {
+    WTF_MAKE_TZONE_ALLOCATED(TableGridCell);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TableGridCell);
 public:
     TableGridCell(const ElementBox&, SlotPosition, CellSpan);
 
@@ -81,13 +72,13 @@ private:
 };
 
 class TableGrid {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(TableGrid);
+    WTF_MAKE_TZONE_ALLOCATED(TableGrid);
 public:
     TableGrid();
 
     void appendCell(const ElementBox&);
-    void insertCell(const ElementBox&, const ElementBox& before);
-    void removeCell(const ElementBox&);
+    void NODELETE insertCell(const ElementBox&, const ElementBox& before);
+    void NODELETE removeCell(const ElementBox&);
 
     void setHorizontalSpacing(LayoutUnit horizontalSpacing) { m_horizontalSpacing = horizontalSpacing; }
     LayoutUnit horizontalSpacing() const { return m_horizontalSpacing; }
@@ -105,6 +96,8 @@ public:
     // Column represents a vertical set of slots in the grid. A column has horizontal position and width.
     class Column {
     public:
+        using ComputedLogicalWidth = Variant<CSS::Keyword::Auto, Style::Length<CSS::Nonnegative, float>, Style::Percentage<CSS::Nonnegative, float>>;
+
         Column(const ElementBox*);
 
         void setUsedLogicalLeft(LayoutUnit);
@@ -113,15 +106,15 @@ public:
         void setUsedLogicalWidth(LayoutUnit);
         LayoutUnit usedLogicalWidth() const;
 
-        void setComputedLogicalWidth(Length&&);
-        const Length& computedLogicalWidth() const { return m_computedLogicalWidth; }
+        void setComputedLogicalWidth(ComputedLogicalWidth&&);
+        const ComputedLogicalWidth& computedLogicalWidth() const LIFETIME_BOUND { return m_computedLogicalWidth; }
 
         const ElementBox* box() const { return m_layoutBox.get(); }
 
     private:
         LayoutUnit m_usedLogicalWidth;
         LayoutUnit m_usedLogicalLeft;
-        Length m_computedLogicalWidth;
+        ComputedLogicalWidth m_computedLogicalWidth;
         CheckedPtr<const ElementBox> m_layoutBox;
 
 #if ASSERT_ENABLED
@@ -133,8 +126,8 @@ public:
     class Columns {
     public:
         using ColumnList = Vector<Column>;
-        ColumnList& list() { return m_columnList; }
-        const ColumnList& list() const { return m_columnList; }
+        ColumnList& list() LIFETIME_BOUND { return m_columnList; }
+        const ColumnList& list() const LIFETIME_BOUND { return m_columnList; }
         size_t size() const { return m_columnList.size(); }
 
         void addColumn(const ElementBox&);
@@ -172,8 +165,8 @@ public:
     class Rows {
     public:
         using RowList = Vector<Row>;
-        RowList& list() { return m_rowList; }
-        const RowList& list() const { return m_rowList; }
+        RowList& list() LIFETIME_BOUND { return m_rowList; }
+        const RowList& list() const LIFETIME_BOUND { return m_rowList; }
 
         void addRow(const ElementBox&);
 
@@ -185,14 +178,14 @@ public:
 
     class Slot {
     public:
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Slot);
         Slot() = default;
         Slot(TableGridCell&, bool isColumnSpanned, bool isRowSpanned);
 
-        const TableGridCell& cell() const { return *m_cell; }
-        TableGridCell& cell() { return *m_cell; }
+        const TableGridCell& cell() const LIFETIME_BOUND { return *m_cell; }
+        TableGridCell& cell() LIFETIME_BOUND { return *m_cell; }
 
-        const IntrinsicWidthConstraints& widthConstraints() const { return m_widthConstraints; }
+        const IntrinsicWidthConstraints& widthConstraints() const LIFETIME_BOUND { return m_widthConstraints; }
         void setWidthConstraints(const IntrinsicWidthConstraints& widthConstraints) { m_widthConstraints = widthConstraints; }
 
         // Initial slot position for a spanning cell.
@@ -213,17 +206,17 @@ public:
         IntrinsicWidthConstraints m_widthConstraints;
     };
 
-    const Columns& columns() const { return m_columns; }
-    Columns& columns() { return m_columns; }
+    const Columns& columns() const LIFETIME_BOUND { return m_columns; }
+    Columns& columns() LIFETIME_BOUND { return m_columns; }
 
-    const Rows& rows() const { return m_rows; }
-    Rows& rows() { return m_rows; }
+    const Rows& rows() const LIFETIME_BOUND { return m_rows; }
+    Rows& rows() LIFETIME_BOUND { return m_rows; }
 
     using Cells = ListHashSet<std::unique_ptr<TableGridCell>>;
-    Cells& cells() { return m_cells; }
+    Cells& cells() LIFETIME_BOUND { return m_cells; }
 
-    Slot* slot(SlotPosition);
-    const Slot* slot(SlotPosition position) const { return m_slotMap.get(position); }
+    Slot* NODELETE slot(SlotPosition) LIFETIME_BOUND;
+    const Slot* slot(SlotPosition position) const LIFETIME_BOUND { return m_slotMap.get(position); }
     bool isSpanned(SlotPosition);
 
 private:
@@ -240,10 +233,9 @@ private:
     std::optional<BoxGeometry::Edges> m_collapsedBorder;
 };
 
-inline void TableGrid::Column::setComputedLogicalWidth(Length&& computedLogicalWidth)
+inline void TableGrid::Column::setComputedLogicalWidth(TableGrid::Column::ComputedLogicalWidth&& computedLogicalWidth)
 {
-    ASSERT(computedLogicalWidth.type() == LengthType::Fixed || computedLogicalWidth.type() == LengthType::Percent || computedLogicalWidth.type() == LengthType::Relative);
-    m_computedLogicalWidth = WTFMove(computedLogicalWidth);
+    m_computedLogicalWidth = WTF::move(computedLogicalWidth);
 }
 
 inline void TableGrid::Column::setUsedLogicalWidth(LayoutUnit usedLogicalWidth)

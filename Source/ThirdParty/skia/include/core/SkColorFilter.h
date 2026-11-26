@@ -11,7 +11,7 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkFlattenable.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkAPI.h"
+#include "include/private/SkAPI.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -48,14 +48,6 @@ public:
 
     // Returns true if the filter is guaranteed to never change the alpha of a color it filters.
     bool isAlphaUnchanged() const;
-
-    /**
-     * Applies this filter to the input color. This function does no color management.
-     *
-     * DEPRECATED: Please use filterColor4f instead. That function supports higher precision,
-     *             wide-gamut color, and is explicit about the color space of the input and output.
-     */
-    SkColor filterColor(SkColor) const;
 
     /**
      * Converts the src color (in src colorspace), into the dst colorspace,

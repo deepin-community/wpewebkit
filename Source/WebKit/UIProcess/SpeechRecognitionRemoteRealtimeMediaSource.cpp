@@ -40,35 +40,36 @@
 
 namespace WebKit {
 
-Ref<WebCore::RealtimeMediaSource> SpeechRecognitionRemoteRealtimeMediaSource::create(SpeechRecognitionRemoteRealtimeMediaSourceManager& manager, const WebCore::CaptureDevice& captureDevice, WebCore::PageIdentifier pageIdentifier)
+Ref<WebCore::RealtimeMediaSource> SpeechRecognitionRemoteRealtimeMediaSource::create(SpeechRecognitionRemoteRealtimeMediaSourceManager& manager, const WebCore::CaptureDevice& captureDevice, WebCore::PageIdentifier pageIdentifier, WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier)
 {
-    return adoptRef(*new SpeechRecognitionRemoteRealtimeMediaSource(WebCore::RealtimeMediaSourceIdentifier::generate(), manager, captureDevice, pageIdentifier));
+    return adoptRef(*new SpeechRecognitionRemoteRealtimeMediaSource(WebCore::RealtimeMediaSourceIdentifier::generate(), manager, captureDevice, pageIdentifier, clientIdentifier));
 }
 
-SpeechRecognitionRemoteRealtimeMediaSource::SpeechRecognitionRemoteRealtimeMediaSource(WebCore::RealtimeMediaSourceIdentifier identifier, SpeechRecognitionRemoteRealtimeMediaSourceManager& manager, const WebCore::CaptureDevice& captureDevice, WebCore::PageIdentifier pageIdentifier)
+SpeechRecognitionRemoteRealtimeMediaSource::SpeechRecognitionRemoteRealtimeMediaSource(WebCore::RealtimeMediaSourceIdentifier identifier, SpeechRecognitionRemoteRealtimeMediaSourceManager& manager, const WebCore::CaptureDevice& captureDevice, WebCore::PageIdentifier pageIdentifier, WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier)
     : WebCore::RealtimeMediaSource(captureDevice, { }, pageIdentifier)
     , m_identifier(identifier)
+    , m_clientIdentifier(clientIdentifier)
     , m_manager(manager)
 {
-    m_manager->addSource(*this, captureDevice);
+    manager.addSource(*this, captureDevice);
 }
 
 SpeechRecognitionRemoteRealtimeMediaSource::~SpeechRecognitionRemoteRealtimeMediaSource()
 {
-    if (m_manager)
-        m_manager->removeSource(*this);
+    if (RefPtr manager = m_manager.get())
+        manager->removeSource(*this);
 }
 
 void SpeechRecognitionRemoteRealtimeMediaSource::startProducingData()
 {
-    if (m_manager)
-        m_manager->send(Messages::SpeechRecognitionRealtimeMediaSourceManager::Start { m_identifier });
+    if (RefPtr manager = m_manager.get())
+        manager->send(Messages::SpeechRecognitionRealtimeMediaSourceManager::Start { m_identifier });
 }
 
 void SpeechRecognitionRemoteRealtimeMediaSource::stopProducingData()
 {
-    if (m_manager)
-        m_manager->send(Messages::SpeechRecognitionRealtimeMediaSourceManager::Stop { m_identifier });
+    if (RefPtr manager = m_manager.get())
+        manager->send(Messages::SpeechRecognitionRealtimeMediaSourceManager::Stop { m_identifier });
 }
 
 #if PLATFORM(COCOA)
@@ -76,7 +77,7 @@ void SpeechRecognitionRemoteRealtimeMediaSource::stopProducingData()
 void SpeechRecognitionRemoteRealtimeMediaSource::setStorage(ConsumerSharedCARingBuffer::Handle&& handle, const WebCore::CAAudioStreamDescription& description)
 {
     m_buffer = nullptr;
-    m_ringBuffer = ConsumerSharedCARingBuffer::map(description, WTFMove(handle));
+    m_ringBuffer = ConsumerSharedCARingBuffer::map(description, WTF::move(handle));
     if (!m_ringBuffer)
         return;
     m_description = description;
@@ -84,6 +85,15 @@ void SpeechRecognitionRemoteRealtimeMediaSource::setStorage(ConsumerSharedCARing
 }
 
 #endif
+
+std::optional<uint32_t> SpeechRecognitionRemoteRealtimeMediaSource::audioBufferFrameCount() const
+{
+#if PLATFORM(COCOA)
+    if (m_ringBuffer)
+        return m_ringBuffer->frameCount();
+#endif
+    return std::nullopt;
+}
 
 void SpeechRecognitionRemoteRealtimeMediaSource::remoteAudioSamplesAvailable(MediaTime time, uint64_t numberOfFrames)
 {

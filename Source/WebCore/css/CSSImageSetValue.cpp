@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,8 +29,11 @@
 #include "CSSImageSetOptionValue.h"
 #include "CSSImageValue.h"
 #include "CSSPrimitiveValue.h"
+#include "DeprecatedCSSOMValueList.h"
 #include "StyleBuilderState.h"
 #include "StyleImageSet.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StyleString.h"
 #include <numeric>
 #include <wtf/text/StringBuilder.h>
 
@@ -38,15 +41,15 @@ namespace WebCore {
 
 Ref<CSSImageSetValue> CSSImageSetValue::create(CSSValueListBuilder builder)
 {
-    return adoptRef(*new CSSImageSetValue(WTFMove(builder)));
+    return adoptRef(*new CSSImageSetValue(WTF::move(builder)));
 }
 
 CSSImageSetValue::CSSImageSetValue(CSSValueListBuilder builder)
-    : CSSValueContainingVector(ImageSetClass, CommaSeparator, WTFMove(builder))
+    : CSSValueContainingVector(ClassType::ImageSet, CommaSeparator, WTF::move(builder))
 {
 }
 
-String CSSImageSetValue::customCSSText() const
+String CSSImageSetValue::customCSSText(const CSS::SerializationContext& context) const
 {
     StringBuilder result;
     result.append("image-set("_s);
@@ -54,19 +57,28 @@ String CSSImageSetValue::customCSSText() const
         if (i > 0)
             result.append(", "_s);
         ASSERT(is<CSSImageSetOptionValue>(item(i)));
-        result.append(item(i)->cssText());
+        result.append(protect(item(i))->cssText(context));
     }
     result.append(')');
     return result.toString();
 }
 
-RefPtr<StyleImage> CSSImageSetValue::createStyleImage(Style::BuilderState& state) const
+Ref<DeprecatedCSSOMValue> CSSImageSetValue::customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration& owner) const
+{
+    return DeprecatedCSSOMValueList::create(*this, owner);
+}
+
+RefPtr<Style::Image> CSSImageSetValue::createStyleImage(const Style::BuilderState& state) const
 {
     size_t length = this->length();
 
-    Vector<ImageWithScale> images(length, [&](size_t i) {
-        auto option = downcast<CSSImageSetOptionValue>(item(i));
-        return ImageWithScale { state.createStyleImage(option->image()), option->resolution()->floatValue(CSSUnitType::CSS_DPPX), option->type() };
+    Vector<Style::ImageWithScale> images(length, [&](size_t i) {
+        RefPtr<const CSSImageSetOptionValue> option = downcast<CSSImageSetOptionValue>(item(i));
+        return Style::ImageWithScale {
+            .image = state.createStyleImage(option->image()),
+            .scaleFactor = Style::toStyle(option->resolution(), state),
+            .mimeType = Style::toStyle(option->type(), state),
+        };
     });
 
     // Sort the images so that they are stored in order from lowest resolution to highest.
@@ -75,10 +87,10 @@ RefPtr<StyleImage> CSSImageSetValue::createStyleImage(Style::BuilderState& state
     std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
 
     std::stable_sort(sortedIndices.begin(), sortedIndices.end(), [&images](size_t lhs, size_t rhs) {
-        return images[lhs].scaleFactor < images[rhs].scaleFactor;
+        return images[lhs].scaleFactor.value < images[rhs].scaleFactor.value;
     });
 
-    return StyleImageSet::create(WTFMove(images), WTFMove(sortedIndices));
+    return Style::ImageSet::create(WTF::move(images), WTF::move(sortedIndices));
 }
 
 } // namespace WebCore

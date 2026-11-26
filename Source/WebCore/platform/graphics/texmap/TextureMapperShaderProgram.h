@@ -45,6 +45,7 @@ namespace WebCore {
     macro(yuvToRgb) \
     macro(filterAmount) \
     macro(texelSize) \
+    macro(uvMax) \
     macro(gaussianKernel) \
     macro(gaussianKernelOffset) \
     macro(gaussianKernelHalfSize) \
@@ -61,7 +62,8 @@ namespace WebCore {
     macro(samplerA)                               \
     macro(mask)                                   \
     macro(contentTexture)                         \
-    macro(externalOESTexture)
+    macro(externalOESTexture)                     \
+    macro(externalOESYUVTexture)
 
 #define TEXMAP_VARIABLES(macro) \
     TEXMAP_ATTRIBUTE_VARIABLES(macro) \
@@ -108,6 +110,9 @@ public:
         TextureYUVA      = 1L << 25,
         TextureCopy      = 1L << 26,
         AlphaToShadow    = 1L << 27,
+        ToneMapPQ        = 1L << 28,
+        ClampUVBounds    = 1L << 29,
+        TextureExternalOESYUV = 1L << 30,
     };
 
     enum class VariableID {

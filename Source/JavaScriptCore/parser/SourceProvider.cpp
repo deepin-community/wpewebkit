@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,11 @@
 #include "config.h"
 #include "SourceProvider.h"
 
+#include <wtf/FileHandle.h>
+#include <wtf/FileSystem.h>
+#include <wtf/ProcessID.h>
+#include <wtf/text/MakeString.h>
+
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
@@ -33,14 +38,36 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
 SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType)
     : m_sourceType(sourceType)
     , m_sourceOrigin(sourceOrigin)
-    , m_sourceURL(WTFMove(sourceURL))
-    , m_preRedirectURL(WTFMove(preRedirectURL))
+    , m_sourceURL(WTF::move(sourceURL))
+    , m_preRedirectURL(WTF::move(preRedirectURL))
     , m_startPosition(startPosition)
     , m_taintedness(taintedness)
 {
 }
 
 SourceProvider::~SourceProvider() = default;
+
+void SourceProvider::lockUnderlyingBuffer()
+{
+    if (!m_lockingCount++)
+        lockUnderlyingBufferImpl();
+}
+
+void SourceProvider::unlockUnderlyingBuffer()
+{
+    if (!--m_lockingCount)
+        unlockUnderlyingBufferImpl();
+}
+
+CodeBlockHash SourceProvider::codeBlockHashConcurrently(int startOffset, int endOffset, CodeSpecializationKind kind)
+{
+    auto entireSourceCode = source();
+    return CodeBlockHash { entireSourceCode.substring(startOffset, endOffset - startOffset), entireSourceCode, kind };
+}
+
+void SourceProvider::lockUnderlyingBufferImpl() { }
+
+void SourceProvider::unlockUnderlyingBufferImpl() { }
 
 void SourceProvider::getID()
 {
@@ -53,17 +80,66 @@ void SourceProvider::getID()
 
 const String& SourceProvider::sourceURLStripped()
 {
-    if (UNLIKELY(m_sourceURL.isNull()))
+    if (m_sourceURL.isNull()) [[unlikely]]
         return m_sourceURLStripped;
-    if (LIKELY(!m_sourceURLStripped.isNull()))
+    if (!m_sourceURLStripped.isNull()) [[likely]]
         return m_sourceURLStripped;
     m_sourceURLStripped = URL(m_sourceURL).strippedForUseAsReport();
     return m_sourceURLStripped;
 }
 
+CString SourceProvider::sourceCodeDumpFilePath(const CString& dumpDirectory)
+{
+    if (m_sourceCodeDumped.load(std::memory_order_acquire)) {
+        Locker locker { m_sourceCodeDumpLock };
+        return m_sourceCodeDumpFilePath;
+    }
+
+    Locker locker { m_sourceCodeDumpLock };
+    if (m_sourceCodeDumped.load(std::memory_order_relaxed))
+        return m_sourceCodeDumpFilePath;
+
+    auto tryExtractLocalPath = [](const String& urlString) -> String {
+        if (urlString.isNull())
+            return { };
+        if (urlString.startsWith('/'))
+            return urlString;
+        if (urlString.startsWith("file://"_s))
+            return URL(urlString).fileSystemPath();
+        return { };
+    };
+
+    String localPath = tryExtractLocalPath(sourceURL());
+
+    if (!localPath.isNull())
+        m_sourceCodeDumpFilePath = FileSystem::fileSystemRepresentation(localPath);
+    else {
+        auto baseName = makeString("source-"_s, asID(), '-', WTF::getCurrentProcessID());
+        String filePath;
+        FileSystem::FileHandle handle;
+        if (dumpDirectory.isNull()) {
+            auto result = FileSystem::openTemporaryFile(baseName, ".js"_s);
+            filePath = result.first;
+            handle = WTF::move(result.second);
+        } else {
+            filePath = makeString(String::fromUTF8(dumpDirectory.span()), FileSystem::pathSeparator, baseName, ".js"_s);
+            handle = FileSystem::openFile(filePath, FileSystem::FileOpenMode::Truncate);
+        }
+        if (handle) {
+            auto sourceText = source().utf8();
+            handle.write(WTF::asByteSpan(sourceText.span()));
+            handle.flush();
+            m_sourceCodeDumpFilePath = FileSystem::fileSystemRepresentation(filePath);
+        }
+    }
+
+    m_sourceCodeDumped.store(true, std::memory_order_release);
+    return m_sourceCodeDumpFilePath;
+}
+
 #if ENABLE(WEBASSEMBLY)
 BaseWebAssemblySourceProvider::BaseWebAssemblySourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL)
-    : SourceProvider(sourceOrigin, WTFMove(sourceURL), String(), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::WebAssembly)
+    : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::WebAssembly)
 {
 }
 #endif

@@ -47,13 +47,12 @@ public:
     virtual ~SpinButtonOwner() = default;
     virtual void focusAndSelectSpinButtonOwner() = 0;
     virtual bool shouldSpinButtonRespondToMouseEvents() const = 0;
-    virtual bool shouldSpinButtonRespondToWheelEvents() const = 0;
     virtual void spinButtonStepDown() = 0;
     virtual void spinButtonStepUp() = 0;
 };
 
 class SpinButtonElement final : public HTMLDivElement, public PopupOpeningObserver {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SpinButtonElement);
+    WTF_MAKE_TZONE_ALLOCATED(SpinButtonElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SpinButtonElement);
 public:
     enum UpDownState {
@@ -70,33 +69,33 @@ public:
     void releaseCapture();
     void removeSpinButtonOwner() { m_spinButtonOwner = nullptr; }
 
-    using HTMLDivElement::weakPtrFactory;
-    using HTMLDivElement::WeakValueType;
-    using HTMLDivElement::WeakPtrImplType;
+    USING_CAN_MAKE_WEAKPTR(HTMLDivElement);
 
     void step(int amount);
-    
-    bool willRespondToMouseMoveEvents() const override;
-    bool willRespondToMouseClickEventsWithEditability(Editability) const override;
 
-    void forwardEvent(Event&);
+    bool willRespondToMouseMoveEvents() const final;
+    bool willRespondToMouseClickEventsWithEditability(Editability) const final;
+
+    // PopupOpeningObserver.
+    void ref() const final { HTMLDivElement::ref(); }
+    void deref() const final { HTMLDivElement::deref(); }
 
 private:
     SpinButtonElement(Document&, SpinButtonOwner&);
 
-    void willDetachRenderers() override;
-    bool isSpinButtonElement() const override { return true; }
-    bool isDisabledFormControl() const override { return shadowHost() && shadowHost()->isDisabledFormControl(); }
-    bool matchesReadWritePseudoClass() const override;
-    void defaultEventHandler(Event&) override;
-    void willOpenPopup() override;
+    void willDetachRenderers() final;
+    bool NODELETE isSpinButtonElement() const final { return true; }
+    bool isDisabledFormControl() const final;
+    bool matchesReadWritePseudoClass() const final;
+    void defaultEventHandler(Event&) final;
+    void willOpenPopup() final;
     void doStepAction(int);
     void startRepeatingTimer();
     void stopRepeatingTimer();
     void repeatingTimerFired();
-    void setHovered(bool, Style::InvalidationScope, HitTestRequest) override;
+    void setHovered(bool, Style::InvalidationScope, HitTestRequest) final;
     bool shouldRespondToMouseEvents() const;
-    bool isMouseFocusable() const override { return false; }
+    bool isMouseFocusable() const final { return false; }
 
     WeakPtr<SpinButtonOwner> m_spinButtonOwner;
     bool m_capturing;

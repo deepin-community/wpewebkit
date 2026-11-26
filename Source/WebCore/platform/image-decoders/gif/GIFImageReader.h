@@ -41,6 +41,7 @@
 // so we will too.
 #include "GIFImageDecoder.h"
 #include "SharedBuffer.h"
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 #define MAX_LZW_BITS          12
@@ -78,7 +79,7 @@ struct GIFFrameContext;
 
 // LZW decoder state machine.
 class GIFLZWContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GIFLZWContext);
 public:
     GIFLZWContext(WebCore::GIFImageDecoder* client, const GIFFrameContext* frameContext)
         : stackp(0)
@@ -131,7 +132,7 @@ private:
 
 // Data structure for one LZW block.
 struct GIFLZWBlock {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GIFLZWBlock);
 public:
     GIFLZWBlock(size_t position, size_t size)
         : blockPosition(position)
@@ -145,7 +146,7 @@ public:
 
 // Frame output state machine.
 struct GIFFrameContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GIFFrameContext);
 public:
     // FIXME: Move these members to private section.
     int frameId;
@@ -217,7 +218,7 @@ private:
 };
 
 class GIFImageReader {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GIFImageReader);
 public:
     GIFImageReader(WebCore::GIFImageDecoder* client = nullptr)
         : m_client(client)
@@ -237,7 +238,7 @@ public:
     {
     }
 
-    void setData(Ref<const WebCore::SharedBuffer>&& data) { m_data = WTFMove(data); }
+    void setData(Ref<const WebCore::SharedBuffer>&& data) { m_data = WTF::move(data); }
     // FIXME: haltAtFrame should be size_t.
     bool decode(WebCore::GIFImageDecoder::GIFQuery, unsigned haltAtFrame);
 
@@ -263,12 +264,12 @@ public:
         return frame->isLocalColormapDefined ? data(frame->localColormapPosition, frame->localColormapSize * 3) : std::span<const uint8_t> { };
     }
 
-    const GIFFrameContext* frameContext() const
+    const GIFFrameContext* frameContext() const LIFETIME_BOUND
     {
         return m_currentDecodingFrame < m_frames.size() ? m_frames[m_currentDecodingFrame].get() : 0;
     }
 
-    const GIFFrameContext* frameContext(size_t frame) const
+    const GIFFrameContext* frameContext(size_t frame) const LIFETIME_BOUND
     {
         return frame < m_frames.size() ? m_frames[frame].get() : nullptr;
     }

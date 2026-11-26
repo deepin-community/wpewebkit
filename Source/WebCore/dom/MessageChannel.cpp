@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,7 +52,8 @@ MessageChannel::MessageChannel(ScriptExecutionContext& context)
     if (!context.activeDOMObjectsAreStopped()) {
         ASSERT(!port1().isDetached());
         ASSERT(!port2().isDetached());
-        MessagePortChannelProvider::fromContext(context).createNewMessagePortChannel(port1().identifier(), port2().identifier());
+        MessagePort::entangleLocally(port1(), port2());
+        protect(MessagePortChannelProvider::fromContext(context))->createNewMessagePortChannel(port1().identifier(), port2().identifier());
     } else {
         ASSERT(port1().isDetached());
         ASSERT(port2().isDetached());

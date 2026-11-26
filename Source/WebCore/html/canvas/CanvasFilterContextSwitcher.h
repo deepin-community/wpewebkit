@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,9 @@
 
 #pragma once
 
-#include <wtf/FastMalloc.h>
+#include "Filter.h"
+#include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 
@@ -34,17 +36,19 @@ class CanvasRenderingContext2DBase;
 class FloatRect;
 
 class CanvasFilterContextSwitcher {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CanvasFilterContextSwitcher);
 public:
     static std::unique_ptr<CanvasFilterContextSwitcher> create(CanvasRenderingContext2DBase&, const FloatRect& bounds);
 
-    CanvasFilterContextSwitcher(CanvasRenderingContext2DBase&);
+    CanvasFilterContextSwitcher(CanvasRenderingContext2DBase&, const FloatRect&, RefPtr<Filter>&&);
     ~CanvasFilterContextSwitcher();
 
     FloatRect expandedBounds() const;
 
 private:
-    CanvasRenderingContext2DBase& m_context;
+    Ref<CanvasRenderingContext2DBase> context() const { return m_context.get(); }
+    const WeakRef<CanvasRenderingContext2DBase> m_context;
+    RefPtr<CanvasLayerContextSwitcher> m_contextOldTargetSwitcher;
 };
 
 } // namespace WebCore

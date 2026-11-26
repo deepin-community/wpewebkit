@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "RegisterID.h"
 #include "StaticPropertyAnalysis.h"
 #include <wtf/HashMap.h>
 
@@ -46,24 +47,24 @@ public:
 private:
     void kill(StaticPropertyAnalysis*);
 
-    typedef HashMap<int, RefPtr<StaticPropertyAnalysis>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> AnalysisMap;
+    typedef UncheckedKeyHashMap<int, RefPtr<StaticPropertyAnalysis>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> AnalysisMap;
     AnalysisMap m_analyses;
 };
 
 inline void StaticPropertyAnalyzer::createThis(RegisterID* dst, JSInstructionStream::MutableRef instructionRef)
 {
     AnalysisMap::AddResult addResult = m_analyses.add(
-        dst->index(), StaticPropertyAnalysis::create(WTFMove(instructionRef)));
+        dst->index(), StaticPropertyAnalysis::create(WTF::move(instructionRef)));
     ASSERT_UNUSED(addResult, addResult.isNewEntry); // Can't have two 'this' in the same constructor.
 }
 
 inline void StaticPropertyAnalyzer::newObject(RegisterID* dst, JSInstructionStream::MutableRef instructionRef)
 {
-    auto analysis = StaticPropertyAnalysis::create(WTFMove(instructionRef));
+    auto analysis = StaticPropertyAnalysis::create(WTF::move(instructionRef));
     AnalysisMap::AddResult addResult = m_analyses.add(dst->index(), analysis.copyRef());
     if (!addResult.isNewEntry) {
         kill(addResult.iterator->value.get());
-        addResult.iterator->value = WTFMove(analysis);
+        addResult.iterator->value = WTF::move(analysis);
     }
 }
 
@@ -86,7 +87,7 @@ inline void StaticPropertyAnalyzer::mov(RegisterID* dst, RegisterID* src)
     AnalysisMap::AddResult addResult = m_analyses.add(dst->index(), analysis);
     if (!addResult.isNewEntry) {
         kill(addResult.iterator->value.get());
-        addResult.iterator->value = WTFMove(analysis);
+        addResult.iterator->value = WTF::move(analysis);
     }
 }
 

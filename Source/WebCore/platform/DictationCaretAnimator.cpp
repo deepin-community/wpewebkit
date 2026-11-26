@@ -28,13 +28,22 @@
 
 #if HAVE(REDESIGNED_TEXT_CURSOR)
 
+#include "Document.h"
 #include "Editing.h"
 #include "FloatRoundedRect.h"
+#include "Gradient.h"
+#include "GraphicsContext.h"
+#include "GraphicsStyle.h"
 #include "Path.h"
 #include "RenderBlock.h"
 #include "VisibleSelection.h"
+#include <numbers>
+#include <wtf/MathExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DictationCaretAnimator);
 
 static constexpr size_t dictationCaretAnimatorUpdateRate = 60;
 
@@ -43,25 +52,25 @@ static constexpr KeyFrame keyframe(size_t i)
     constexpr auto updateRate = 40;
     i %= updateRate;
     constexpr float inverseFrameRate = 1.f / static_cast<float>(updateRate);
-    return KeyFrame { Seconds(i * inverseFrameRate), fabs(sinf(static_cast<float>(M_PI * i * inverseFrameRate))) };
+    return KeyFrame { Seconds(i * inverseFrameRate), fabs(sinf(std::numbers::pi_v<float> * i * inverseFrameRate)) };
 }
 
-constexpr auto tailBlurRadius(float cursorHeight)
+constexpr float NODELETE tailBlurRadius(float cursorHeight)
 {
     return (10.f * cursorHeight) / 12.f;
 }
 
-constexpr auto caretBlurRadius(float cursorHeight)
+constexpr float NODELETE caretBlurRadius(float cursorHeight)
 {
     return (8.f * cursorHeight) / 12.f;
 }
 
-constexpr auto coneStart(float cursorHeight)
+constexpr float NODELETE coneStart(float cursorHeight)
 {
     return (4.f * cursorHeight) / 38.f;
 }
 
-constexpr auto coneEnd(float cursorHeight)
+constexpr float NODELETE coneEnd(float cursorHeight)
 {
     return (152.f * cursorHeight) / 38.f;
 }
@@ -105,12 +114,12 @@ FloatRect DictationCaretAnimator::computeTailRect() const
 
 int DictationCaretAnimator::computeScrollLeft() const
 {
-    auto document = m_client.document();
+    RefPtr document = m_client.document();
     if (!document)
         return 0;
 
-    if (auto* caretNode = m_client.caretNode()) {
-        if (auto* rendererForCaret = rendererForCaretPainting(caretNode))
+    if (RefPtr caretNode = m_client.caretNode()) {
+        if (CheckedPtr rendererForCaret = rendererForCaretPainting(caretNode.get()))
             return rendererForCaret->scrollLeft();
     }
 
@@ -119,7 +128,7 @@ int DictationCaretAnimator::computeScrollLeft() const
 
 void DictationCaretAnimator::updateGlowTail(Seconds elapsedTime)
 {
-    auto document = m_client.document();
+    RefPtr document = m_client.document();
     if (!document)
         return;
 
@@ -172,7 +181,7 @@ void DictationCaretAnimator::start()
     // delta is the difference between `m_currentKeyframeIndex` and `m_currentKeyframeIndex - 1`
     m_currentKeyframeIndex = 1;
     m_lastUpdateTime = MonotonicTime::now();
-    m_initialScale = M_PI_2;
+    m_initialScale = piOverTwoDouble;
     didStart(m_lastUpdateTime, keyframeTimeDelta());
 
     resetGlowTail(m_client.localCaretRect());
@@ -269,14 +278,14 @@ void DictationCaretAnimator::fillCaretTail(const FloatRect& rect, GraphicsContex
     };
     context.setDropShadow(dropShadow);
     context.translate(-dropShadow.offset);
-    context.setFillGradient(WTFMove(gradient));
+    context.setFillGradient(WTF::move(gradient));
     context.fillPath(makeDictationTailConePath(rect));
 }
 
 FloatRoundedRect DictationCaretAnimator::expandedCaretRect(const FloatRect& rect, bool fillTail) const
 {
     if (m_initialScale <= 0.f && fillTail)
-        return FloatRoundedRect { rect, FloatRoundedRect::Radii { 1.f } };
+        return FloatRoundedRect { rect, CornerRadii { 1.f } };
 
     auto extraScaleFactor = 1.f;
     auto pulseExpansion = 1.f;
@@ -293,7 +302,7 @@ FloatRoundedRect DictationCaretAnimator::expandedCaretRect(const FloatRect& rect
     float verticalPulseExpansion = pulseExpansion * (1.f + 3.f * (extraScaleFactor - 1.f)) - 1.f;
     FloatRect expandedRect = rect;
     expandedRect.expand(FloatBoxExtent { verticalPulseExpansion, horizontalPulseExpansion, verticalPulseExpansion, horizontalPulseExpansion });
-    return FloatRoundedRect { expandedRect, FloatRoundedRect::Radii(1.f + std::max(0.f, .5f * horizontalPulseExpansion), 1.f + std::max(0.f, .5f * horizontalPulseExpansion)) };
+    return FloatRoundedRect { expandedRect, CornerRadii(1.f + std::max(0.f, .5f * horizontalPulseExpansion), 1.f + std::max(0.f, .5f * horizontalPulseExpansion)) };
 }
 
 void DictationCaretAnimator::paint(GraphicsContext& context, const FloatRect& rect, const Color& caretColor, const LayoutPoint& paintOffset) const

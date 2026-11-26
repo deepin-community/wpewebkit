@@ -42,17 +42,17 @@ public:
     static Ref<XSLTProcessor> create() { return adoptRef(*new XSLTProcessor); }
     ~XSLTProcessor();
 
-    void setXSLStyleSheet(RefPtr<XSLStyleSheet>&& styleSheet) { m_stylesheet = WTFMove(styleSheet); }
+    void setXSLStyleSheet(RefPtr<XSLStyleSheet>&& styleSheet) { m_stylesheet = WTF::move(styleSheet); }
     bool transformToString(Node& source, String& resultMIMEType, String& resultString, String& resultEncoding);
     Ref<Document> createDocumentFromSource(const String& source, const String& sourceEncoding, const String& sourceMIMEType, Node* sourceNode, LocalFrame*);
     
     // DOM methods
     void importStylesheet(Ref<Node>&& style)
     {
-        m_stylesheetRootNode = WTFMove(style);
+        m_stylesheetRootNode = WTF::move(style);
     }
-    RefPtr<DocumentFragment> transformToFragment(Node& source, Document& ouputDocument);
-    RefPtr<Document> transformToDocument(Node& source);
+    RefPtr<DocumentFragment> transformToFragment(Document& callerDocument, Node& source, Document& ouputDocument);
+    RefPtr<Document> transformToDocument(Document& callerDocument, Node& source);
     
     void setParameter(const String& namespaceURI, const String& localName, const String& value);
     String getParameter(const String& namespaceURI, const String& localName) const;
@@ -66,7 +66,7 @@ public:
 #else
     static void parseErrorFunc(void* userData, xmlError*);
 #endif
-    static void genericErrorFunc(void* userData, const char* msg, ...);
+    static void NODELETE genericErrorFunc(void* userData, const char* msg, ...);
     
     // Only for libXSLT callbacks
     XSLStyleSheet* xslStylesheet() const { return m_stylesheet.get(); }

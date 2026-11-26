@@ -29,8 +29,9 @@
 #include "SVGElementInlines.h"
 #include "SVGNames.h"
 #include "ScopedEventQueue.h"
+#include "SerializedNode.h"
 #include "ShadowRoot.h"
-#include "StyleInheritedData.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleResolver.h"
 #include "StyleUpdate.h"
 #include "TextManipulationController.h"
@@ -42,16 +43,11 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Text);
-
-Ref<Text> Text::create(Document& document, String&& data)
-{
-    return adoptRef(*new Text(document, WTFMove(data), TEXT_NODE, { }));
-}
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Text);
 
 Ref<Text> Text::createEditingText(Document& document, String&& data)
 {
-    auto node = adoptRef(*new Text(document, WTFMove(data), TEXT_NODE, { TypeFlag::IsSpecialInternalNode }));
+    auto node = adoptRef(*new Text(document, WTF::move(data), NodeType::Text, { TypeFlag::IsPseudoElementOrSpecialInternalNode }));
     ASSERT(node->isEditingText());
     return node;
 }
@@ -71,19 +67,19 @@ ExceptionOr<Ref<Text>> Text::splitText(unsigned offset)
     dispatchModifiedEvent(oldData);
 
     if (RefPtr parent = parentNode()) {
-        auto insertResult = parent->insertBefore(newText, protectedNextSibling());
+        auto insertResult = parent->insertBefore(newText, protect(nextSibling()));
         if (insertResult.hasException())
             return insertResult.releaseException();
     }
 
-    protectedDocument()->textNodeSplit(*this);
+    protect(document())->textNodeSplit(*this);
 
     updateRendererAfterContentChange(0, oldData.length());
 
     return newText;
 }
 
-static const Text* earliestLogicallyAdjacentTextNode(const Text* text)
+static const Text* NODELETE earliestLogicallyAdjacentTextNode(const Text* text)
 {
     const Node* node = text;
     while ((node = node->previousSibling())) {
@@ -95,7 +91,7 @@ static const Text* earliestLogicallyAdjacentTextNode(const Text* text)
     return text;
 }
 
-static const Text* latestLogicallyAdjacentTextNode(const Text* text)
+static const Text* NODELETE latestLogicallyAdjacentTextNode(const Text* text)
 {
     const Node* node = text;
     while ((node = node->nextSibling())) {
@@ -109,13 +105,13 @@ static const Text* latestLogicallyAdjacentTextNode(const Text* text)
 
 String Text::wholeText() const
 {
-    const Text* startText = earliestLogicallyAdjacentTextNode(this);
-    const Text* endText = latestLogicallyAdjacentTextNode(this);
+    RefPtr startText = earliestLogicallyAdjacentTextNode(this);
+    RefPtr endText = latestLogicallyAdjacentTextNode(this);
     ASSERT(endText);
-    const Node* onePastEndText = TextNodeTraversal::nextSibling(*endText);
+    RefPtr<const Node> onePastEndText = TextNodeTraversal::nextSibling(*endText);
 
     StringBuilder result;
-    for (const Text* text = startText; text != onePastEndText; text = TextNodeTraversal::nextSibling(*text))
+    for (RefPtr text = startText; text != onePastEndText; text = TextNodeTraversal::nextSibling(*text))
         result.append(text->data());
     return result.toString();
 }
@@ -127,7 +123,7 @@ void Text::replaceWholeText(const String& newText)
     RefPtr endText = const_cast<Text*>(latestLogicallyAdjacentTextNode(this));
 
     RefPtr parent = parentNode(); // Protect against mutation handlers moving this node during traversal
-    for (RefPtr<Node> node = WTFMove(startText); is<Text>(node) && node != this && node->parentNode() == parent;) {
+    for (RefPtr<Node> node = WTF::move(startText); is<Text>(node) && node != this && node->parentNode() == parent;) {
         Ref nodeToRemove = node.releaseNonNull();
         node = nodeToRemove->nextSibling();
         parent->removeChild(nodeToRemove);
@@ -156,31 +152,36 @@ String Text::nodeName() const
     return "#text"_s;
 }
 
-Ref<Node> Text::cloneNodeInternal(Document& targetDocument, CloningOperation)
+Ref<Node> Text::cloneNodeInternal(Document& document, CloningOperation, CustomElementRegistry*) const
 {
-    return create(targetDocument, String { data() });
+    return create(document, String { data() });
 }
 
-static bool isSVGShadowText(const Text& text)
+SerializedNode Text::serializeNode(CloningOperation) const
+{
+    return { SerializedNode::Text { data() } };
+}
+
+static bool NODELETE isSVGShadowText(const Text& text)
 {
     ASSERT(text.parentNode());
     auto* parentShadowRoot = dynamicDowncast<ShadowRoot>(*text.parentNode());
     return parentShadowRoot && parentShadowRoot->host()->hasTagName(SVGNames::trefTag);
 }
 
-static bool isSVGText(const Text& text)
+static bool NODELETE isSVGText(const Text& text)
 {
     ASSERT(text.parentNode());
     auto* parentElement = dynamicDowncast<SVGElement>(*text.parentNode());
     return parentElement && !parentElement->hasTagName(SVGNames::foreignObjectTag);
 }
 
-RenderPtr<RenderText> Text::createTextRenderer(const RenderStyle& style)
+RenderPtr<RenderText> Text::createTextRenderer(const Style::ComputedStyle& style)
 {
     if (isSVGText(*this) || isSVGShadowText(*this))
         return createRenderer<RenderSVGInlineText>(*this, data());
 
-    if (style.hasTextCombine())
+    if (style.textCombine() != TextCombine::None)
         return createRenderer<RenderCombineText>(*this, data());
 
     return createRenderer<RenderText>(RenderObject::Type::Text, *this, data());
@@ -188,7 +189,7 @@ RenderPtr<RenderText> Text::createTextRenderer(const RenderStyle& style)
 
 Ref<Text> Text::virtualCreate(String&& data)
 {
-    return create(protectedDocument(), WTFMove(data));
+    return create(protect(document()), WTF::move(data));
 }
 
 void Text::updateRendererAfterContentChange(unsigned offsetOfReplacedData, unsigned lengthOfReplacedData)
@@ -199,7 +200,7 @@ void Text::updateRendererAfterContentChange(unsigned offsetOfReplacedData, unsig
     if (hasInvalidRenderer())
         return;
 
-    protectedDocument()->updateTextRenderer(*this, offsetOfReplacedData, lengthOfReplacedData);
+    protect(document())->updateTextRenderer(*this, offsetOfReplacedData, lengthOfReplacedData);
 }
 
 static void appendTextRepresentation(StringBuilder& builder, const Text& text)
@@ -246,7 +247,7 @@ void Text::setDataAndUpdate(const String& newData, unsigned offsetOfReplacedData
     if (!offsetOfReplacedData) {
         Ref document = this->document();
         CheckedPtr textManipulationController = document->textManipulationControllerIfExists();
-        if (UNLIKELY(textManipulationController && oldData != newData))
+        if (textManipulationController && oldData != newData) [[unlikely]]
             textManipulationController->didUpdateContentForNode(*this);
     }
 }

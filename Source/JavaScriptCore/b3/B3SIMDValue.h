@@ -30,6 +30,8 @@
 #include "B3Value.h"
 #include "SIMDInfo.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC { namespace B3 {
 
 class JS_EXPORT_PRIVATE SIMDValue final : public Value {
@@ -55,6 +57,8 @@ public:
         case VectorAddSat:
         case VectorSubSat:
         case VectorMul:
+        case VectorMulHigh:
+        case VectorMulLow:
         case VectorDiv:
         case VectorMin:
         case VectorMax:
@@ -93,12 +97,25 @@ public:
         case VectorExtaddPairwise:
         case VectorMulSat:
         case VectorSwizzle:
+        case VectorUnzipEven:
+        case VectorUnzipOdd:
+        case VectorZipLower:
+        case VectorZipHigher:
+        case VectorTransposeEven:
+        case VectorTransposeOdd:
+        case VectorReverse:
+        case VectorExtractPair:
         case VectorMulByElement:
-        case VectorShiftByVector:
         case VectorDotProduct:
         case VectorRelaxedSwizzle:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
+        case VectorRelaxedLaneSelect:
+        case VectorRelaxedMin:
+        case VectorRelaxedMax:
+        case VectorRelaxedQ15Mulr:
+        case VectorRelaxedDotI8x16I7x16:
+        case VectorRelaxedDotI8x16I7x16Add:
             return true;
         default:
             return false;
@@ -162,5 +179,7 @@ private:
 };
 
 } } // namespace JSC::B3
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

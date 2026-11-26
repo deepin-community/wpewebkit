@@ -25,12 +25,13 @@
 
 #pragma once
 
+#include <WebCore/BoxExtents.h>
 #include <WebCore/Color.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/SecurityOriginData.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 #if HAVE(IOSURFACE)
@@ -45,6 +46,13 @@
 #endif
 #endif
 
+#if PLATFORM(WPE)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkImage.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#include <wtf/Expected.h>
+#endif
+
 namespace WebKit {
 
 class WebBackForwardListItem;
@@ -52,7 +60,7 @@ class WebPageProxy;
 
 enum class ForceSoftwareCapturingViewportSnapshot : bool { No, Yes };
 
-class ViewSnapshot : public RefCounted<ViewSnapshot>, public CanMakeWeakPtr<ViewSnapshot> {
+class ViewSnapshot : public RefCountedAndCanMakeWeakPtr<ViewSnapshot> {
 public:
 #if HAVE(IOSURFACE)
     static Ref<ViewSnapshot> create(std::unique_ptr<WebCore::IOSurface>);
@@ -64,11 +72,14 @@ public:
     static Ref<ViewSnapshot> create(RefPtr<cairo_surface_t>&&);
 #endif
 #endif
+#if PLATFORM(WPE)
+    static Ref<ViewSnapshot> create(sk_sp<SkImage>&&);
+#endif
 
     ~ViewSnapshot();
 
     void clearImage();
-    bool hasImage() const;
+    bool NODELETE hasImage() const;
 
 #if HAVE(IOSURFACE)
     id asLayerContents();
@@ -84,14 +95,17 @@ public:
     void setViewScrollPosition(WebCore::IntPoint scrollPosition) { m_viewScrollPosition = scrollPosition; }
     WebCore::IntPoint viewScrollPosition() const { return m_viewScrollPosition; }
 
+    void setComputedObscuredInset(WebCore::FloatBoxExtent&& inset) { m_computedObscuredInset = WTF::move(inset); }
+    const WebCore::FloatBoxExtent computedObscuredInset() const { return m_computedObscuredInset; }
+
     void setDeviceScaleFactor(float deviceScaleFactor) { m_deviceScaleFactor = deviceScaleFactor; }
     float deviceScaleFactor() const { return m_deviceScaleFactor; }
 
-    void setOrigin(WebCore::SecurityOriginData&& origin) { m_origin = WTFMove(origin); }
-    const WebCore::SecurityOriginData& origin() const { return m_origin; }
+    void setOrigin(WebCore::SecurityOriginData&& origin) { m_origin = WTF::move(origin); }
+    const WebCore::SecurityOriginData& origin() const LIFETIME_BOUND { return m_origin; }
 
 #if HAVE(IOSURFACE)
-    WebCore::IOSurface* surface() const { return m_surface.get(); }
+    WebCore::IOSurface* surface() const LIFETIME_BOUND { return m_surface.get(); }
 
     size_t estimatedImageSizeInBytes() const { return m_surface ? m_surface->totalBytes() : 0; }
     WebCore::IntSize size() const { return m_surface ? m_surface->size() : WebCore::IntSize(); }
@@ -105,8 +119,15 @@ public:
 #if USE(GTK4)
     GdkTexture* texture() const { return m_texture.get(); }
 #else
-    cairo_surface_t* surface() const { return m_surface.get(); }
+    cairo_surface_t* surface() const LIFETIME_BOUND { return m_surface.get(); }
 #endif
+
+    size_t estimatedImageSizeInBytes() const;
+    WebCore::IntSize size() const;
+#endif
+
+#if PLATFORM(WPE)
+    SkImage* image() const LIFETIME_BOUND { return m_image.get(); }
 
     size_t estimatedImageSizeInBytes() const;
     WebCore::IntSize size() const;
@@ -131,12 +152,21 @@ private:
 #endif
 #endif
 
+#if PLATFORM(WPE)
+    explicit ViewSnapshot(sk_sp<SkImage>&&);
+
+    sk_sp<SkImage> m_image;
+#endif
+
     uint64_t m_renderTreeSize;
     float m_deviceScaleFactor;
     WebCore::Color m_backgroundColor;
     WebCore::IntPoint m_viewScrollPosition; // Scroll position at snapshot time. Integral to make comparison reliable.
+    WebCore::FloatBoxExtent m_computedObscuredInset;
     WebCore::SecurityOriginData m_origin;
 };
+
+using RefPtrViewSnapshot = RefPtr<ViewSnapshot>;
 
 class ViewSnapshotStore {
     WTF_MAKE_NONCOPYABLE(ViewSnapshotStore);
@@ -145,7 +175,7 @@ public:
     ViewSnapshotStore();
     ~ViewSnapshotStore();
 
-    static ViewSnapshotStore& singleton();
+    static ViewSnapshotStore& NODELETE singleton();
 
     void recordSnapshot(WebPageProxy&, WebBackForwardListItem&);
 

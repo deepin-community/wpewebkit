@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,23 @@
 
 #include "config.h"
 #include "NativeImageSource.h"
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
 Ref<NativeImageSource> NativeImageSource::create(Ref<NativeImage>&& nativeImage)
 {
-    return adoptRef(*new NativeImageSource(WTFMove(nativeImage)));
+    return adoptRef(*new NativeImageSource(WTF::move(nativeImage)));
 }
 
 NativeImageSource::NativeImageSource(Ref<NativeImage>&& nativeImage)
-    : m_frame(WTFMove(nativeImage))
+    : m_frame(WTF::move(nativeImage))
 {
 }
 
 void NativeImageSource::dump(TextStream& ts) const
 {
-    ts.dumpProperty("size", size());
+    ts.dumpProperty("size"_s, size());
 }
 
 } // namespace WebCore

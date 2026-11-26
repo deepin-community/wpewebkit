@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,10 +27,14 @@
 #include "CSSCounterStyleDescriptors.h"
 
 #include "CSSCounterStyleRule.h"
+#include "CSSCustomIdentValue.h"
+#include "CSSKeywordValue.h"
 #include "CSSMarkup.h"
 #include "CSSPrimitiveValue.h"
+#include "CSSStringValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
+#include "StylePrimitiveNumericTypes+DeprecatedCSSValueConversion.h"
 #include <utility>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -45,50 +49,48 @@ static CSSCounterStyleDescriptors::Ranges rangeFromStyleProperties(const StylePr
     return rangeFromCSSValue(ranges.releaseNonNull());
 }
 
-CSSCounterStyleDescriptors::Ranges rangeFromCSSValue(Ref<CSSValue> value)
+CSSCounterStyleDescriptors::Ranges rangeFromCSSValue(const CSSValue& value)
 {
-    auto* list = dynamicDowncast<CSSValueList>(value.get());
+    auto* list = dynamicDowncast<CSSValueList>(value);
     if (!list)
         return { };
     CSSCounterStyleDescriptors::Ranges result;
-    for (auto& rangeValue : *list) {
-        if (!rangeValue.isPair())
+    for (Ref rangeValue : *list) {
+        if (!rangeValue->isPair())
             return { };
-        auto& low = downcast<CSSPrimitiveValue>(rangeValue.first());
-        auto& high = downcast<CSSPrimitiveValue>(rangeValue.second());
+
         int convertedLow { std::numeric_limits<int>::min() };
         int convertedHigh { std::numeric_limits<int>::max() };
-        if (low.isInteger())
-            convertedLow = low.intValue();
-        if (high.isInteger())
-            convertedHigh = high.intValue();
+
+        if (RefPtr lowPrimitiveValue = dynamicDowncast<CSSPrimitiveValue>(rangeValue->first())) {
+            if (auto resolvedLow = Style::deprecatedToStyleFromCSSValue<Style::Integer<>>(*lowPrimitiveValue))
+                convertedLow = resolvedLow->value;
+        }
+        if (RefPtr highPrimitiveValue = dynamicDowncast<CSSPrimitiveValue>(rangeValue->second())) {
+            if (auto resolvedHigh = Style::deprecatedToStyleFromCSSValue<Style::Integer<>>(*highPrimitiveValue))
+                convertedHigh = resolvedHigh->value;
+        }
+
         result.append({ convertedLow, convertedHigh });
     }
     return result;
 }
 
 
-static CSSCounterStyleDescriptors::Symbol symbolFromCSSValue(const CSSValue* value)
+CSSCounterStyleDescriptors::Symbol symbolFromCSSValue(const CSSValue* value)
 {
-    auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value);
-    if (!primitiveValue)
+    if (RefPtr customIdentValue = dynamicDowncast<CSSCustomIdentValue>(value)) {
+        // ident() is invalid in descriptors (https://github.com/w3c/csswg-drafts/issues/12219),
+        // so only plain identifiers apply.
+        if (auto* resolved = std::get_if<AtomString>(&customIdentValue->customIdent().value))
+            return { .isCustomIdent = true, .text = *resolved };
         return { };
+    }
 
-    return { primitiveValue->isCustomIdent(), primitiveValue->stringValue() };
-}
+    if (RefPtr stringValue = dynamicDowncast<CSSStringValue>(value))
+        return { .isCustomIdent = false, .text = stringValue->string().value };
 
-CSSCounterStyleDescriptors::Symbol symbolFromCSSValue(RefPtr<CSSValue> value)
-{
-    return symbolFromCSSValue(value.get());
-}
-
-static CSSCounterStyleDescriptors::Name nameFromCSSValue(Ref<CSSValue> value)
-{
-    RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(WTFMove(value));
-    if (!primitiveValue)
-        return { };
-
-    return makeAtomString(primitiveValue->stringValue());
+    return { };
 }
 
 static CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromStyleProperties(const StyleProperties& properties)
@@ -99,13 +101,13 @@ static CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromStylePrope
     return additiveSymbolsFromCSSValue(value.releaseNonNull());
 }
 
-CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromCSSValue(Ref<CSSValue> value)
+CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbolsFromCSSValue(const CSSValue& value)
 {
     CSSCounterStyleDescriptors::AdditiveSymbols result;
-    for (auto& additiveSymbol : downcast<CSSValueList>(value.get())) {
-        auto& pair = downcast<CSSValuePair>(additiveSymbol);
-        auto weight = downcast<CSSPrimitiveValue>(pair.first()).value<unsigned>();
-        auto symbol = symbolFromCSSValue(&pair.second());
+    for (Ref additiveSymbol : downcast<CSSValueList>(value)) {
+        Ref pair = downcast<CSSValuePair>(additiveSymbol);
+        auto weight = Style::deprecatedToStyleFromCSSValue<Style::Integer<CSS::Nonnegative, unsigned>>(downcast<CSSPrimitiveValue>(pair->first()))->value;
+        auto symbol = symbolFromCSSValue(&pair->second());
         result.constructAndAppend(symbol, weight);
     }
     return result;
@@ -119,13 +121,14 @@ static CSSCounterStyleDescriptors::Pad padFromStyleProperties(const StylePropert
     return padFromCSSValue(value.releaseNonNull());
 }
 
-CSSCounterStyleDescriptors::Pad padFromCSSValue(Ref<CSSValue> value)
+CSSCounterStyleDescriptors::Pad padFromCSSValue(const CSSValue& value)
 {
-    auto list = downcast<CSSValueList>(WTFMove(value));
-    ASSERT(list->size() == 2);
-    auto length = downcast<CSSPrimitiveValue>(list.get()[0]).intValue();
+    auto& list = downcast<CSSValueList>(value);
+    ASSERT(list.size() == 2);
+    auto length = Style::deprecatedToStyleFromCSSValue<Style::Integer<CSS::Nonnegative>>(protect(downcast<CSSPrimitiveValue>(list[0])))->value;
     ASSERT(length >= 0);
-    return { static_cast<unsigned>(std::max(0, length)), symbolFromCSSValue(&list.get()[1]) };
+    Ref suffix = list[1];
+    return { static_cast<unsigned>(std::max(0, length)), symbolFromCSSValue(suffix.ptr()) };
 }
 
 static CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromStyleProperties(const StyleProperties& properties)
@@ -136,15 +139,17 @@ static CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromStylePrope
     return negativeSymbolsFromCSSValue(negative.releaseNonNull());
 }
 
-CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromCSSValue(Ref<CSSValue> value)
+CSSCounterStyleDescriptors::NegativeSymbols negativeSymbolsFromCSSValue(const CSSValue& value)
 {
     CSSCounterStyleDescriptors::NegativeSymbols result;
-    if (auto list = dynamicDowncast<CSSValueList>(value.get())) {
+    if (auto* list = dynamicDowncast<CSSValueList>(value)) {
         ASSERT(list->size() == 2);
-        result.m_prefix = symbolFromCSSValue(list->item(0));
-        result.m_suffix = symbolFromCSSValue(list->item(1));
+        Ref prefix = *list->item(0);
+        Ref suffix = *list->item(1);
+        result.m_prefix = symbolFromCSSValue(prefix.ptr());
+        result.m_suffix = symbolFromCSSValue(suffix.ptr());
     } else
-        result.m_prefix = symbolFromCSSValue(value.ptr());
+        result.m_prefix = symbolFromCSSValue(&value);
     return result;
 }
 
@@ -156,11 +161,11 @@ static Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromStyleProperties(con
     return symbolsFromCSSValue(symbolsValues.releaseNonNull());
 }
 
-Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromCSSValue(Ref<CSSValue> value)
+Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromCSSValue(const CSSValue& value)
 {
     Vector<CSSCounterStyleDescriptors::Symbol> result;
-    for (auto& symbolValue : downcast<CSSValueList>(value.get())) {
-        auto symbol = symbolFromCSSValue(&symbolValue);
+    for (Ref symbolValue : downcast<CSSValueList>(value)) {
+        auto symbol = symbolFromCSSValue(symbolValue.ptr());
         if (!symbol.text.isNull())
             result.append(symbol);
     }
@@ -169,33 +174,40 @@ Vector<CSSCounterStyleDescriptors::Symbol> symbolsFromCSSValue(Ref<CSSValue> val
 
 static CSSCounterStyleDescriptors::Name fallbackNameFromStyleProperties(const StyleProperties& properties)
 {
-    auto fallback = properties.getPropertyCSSValue(CSSPropertyFallback);
+    RefPtr fallback = properties.getPropertyCSSValue(CSSPropertyFallback);
     if (!fallback)
         return "decimal"_s;
-    return fallbackNameFromCSSValue(fallback.releaseNonNull());
+    return fallbackNameFromCSSValue(*fallback);
 }
 
-CSSCounterStyleDescriptors::Name fallbackNameFromCSSValue(Ref<CSSValue> value)
+CSSCounterStyleDescriptors::Name fallbackNameFromCSSValue(const CSSValue& value)
 {
-    return makeAtomString(nameFromCSSValue(WTFMove(value)));
+    if (RefPtr customIdentValue = dynamicDowncast<CSSCustomIdentValue>(value)) {
+        if (auto* resolved = std::get_if<AtomString>(&customIdentValue->customIdent().value))
+            return *resolved;
+        return nullAtom();
+    }
+    if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value))
+        return nameStringForSerialization(keywordValue->valueID());
+    return { };
 }
 
 static CSSCounterStyleDescriptors::Symbol prefixFromStyleProperties(const StyleProperties& properties)
 {
-    auto prefix = properties.getPropertyCSSValue(CSSPropertyPrefix);
+    RefPtr prefix = properties.getPropertyCSSValue(CSSPropertyPrefix);
     if (!prefix)
         return { };
-    return symbolFromCSSValue(WTFMove(prefix));
+    return symbolFromCSSValue(prefix);
 }
 
 static CSSCounterStyleDescriptors::Symbol suffixFromStyleProperties(const StyleProperties& properties)
 {
-    auto suffix = properties.getPropertyCSSValue(CSSPropertySuffix);
+    RefPtr suffix = properties.getPropertyCSSValue(CSSPropertySuffix);
     // https://www.w3.org/TR/css-counter-styles-3/#counter-style-suffix
     // ("." full stop followed by a space)
     if (!suffix)
         return { false, ". "_s };
-    return symbolFromCSSValue(WTFMove(suffix));
+    return symbolFromCSSValue(suffix);
 }
 
 static CSSCounterStyleDescriptors::SystemData extractSystemDataFromStyleProperties(const StyleProperties& properties, CSSCounterStyleDescriptors::System system)
@@ -205,24 +217,31 @@ static CSSCounterStyleDescriptors::SystemData extractSystemDataFromStyleProperti
     if (!systemValue)
         return { "decimal"_s, 1 };
 
-    return extractSystemDataFromCSSValue(WTFMove(systemValue), system);
+    return extractSystemDataFromCSSValue(WTF::move(systemValue), system);
 }
 
-CSSCounterStyleDescriptors::SystemData extractSystemDataFromCSSValue(RefPtr<CSSValue> systemValue, CSSCounterStyleDescriptors::System system)
+CSSCounterStyleDescriptors::SystemData extractSystemDataFromCSSValue(const CSSValue* systemValue, CSSCounterStyleDescriptors::System system)
 {
     std::pair<CSSCounterStyleDescriptors::Name, int> result { "decimal"_s, 1 };
     if (!systemValue)
         return result;
-    ASSERT(systemValue->isValueID() || systemValue->isPair());
+    ASSERT(systemValue->isKeywordValue() || systemValue->isPair());
     if (systemValue->isPair()) {
         // This value must be `fixed` or `extends`, both of which can or must have an additional component.
-        auto& secondValue = systemValue->second();
+        Ref secondValue = systemValue->second();
         if (system == CSSCounterStyleDescriptors::System::Extends) {
-            ASSERT(secondValue.isCustomIdent());
-            result.first = AtomString { secondValue.isCustomIdent() ? secondValue.customIdent() : "decimal"_s };
+            ASSERT(secondValue->isKeywordValue() || secondValue->isCustomIdentValue());
+            if (RefPtr secondValueIdent = dynamicDowncast<CSSKeywordValue>(secondValue))
+                result.first = nameStringForSerialization(secondValueIdent->valueID());
+            else if (auto* resolved = std::get_if<AtomString>(&downcast<CSSCustomIdentValue>(secondValue)->customIdent().value))
+                result.first = *resolved;
+            else
+                result.first = nullAtom();
         } else if (system == CSSCounterStyleDescriptors::System::Fixed) {
-            ASSERT(secondValue.isInteger());
-            result.second = secondValue.isInteger() ? secondValue.integer() : 1;
+            if (auto secondValueInteger = Style::deprecatedToStyleFromCSSValue<Style::Integer<>>(secondValue))
+                result.second = secondValueInteger->value;
+            else
+                result.second = 1;
         }
     }
     return result;
@@ -318,7 +337,7 @@ void CSSCounterStyleDescriptors::setName(CSSCounterStyleDescriptors::Name name)
 {
     if (name.isNull() || m_name == name)
         return;
-    m_name = WTFMove(name);
+    m_name = WTF::move(name);
 }
 
 void CSSCounterStyleDescriptors::setSystemData(CSSCounterStyleDescriptors::SystemData systemData)
@@ -333,7 +352,7 @@ void CSSCounterStyleDescriptors::setNegative(CSSCounterStyleDescriptors::Negativ
 {
     if (m_negativeSymbols == negative)
         return;
-    m_negativeSymbols = WTFMove(negative);
+    m_negativeSymbols = WTF::move(negative);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Negative, true);
 }
 
@@ -341,7 +360,7 @@ void CSSCounterStyleDescriptors::setPrefix(CSSCounterStyleDescriptors::Symbol pr
 {
     if (m_prefix == prefix)
         return;
-    m_prefix = WTFMove(prefix);
+    m_prefix = WTF::move(prefix);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Prefix, true);
 }
 
@@ -349,7 +368,7 @@ void CSSCounterStyleDescriptors::setSuffix(CSSCounterStyleDescriptors::Symbol su
 {
     if (m_suffix == suffix)
         return;
-    m_suffix = WTFMove(suffix);
+    m_suffix = WTF::move(suffix);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Suffix, true);
 }
 
@@ -357,7 +376,7 @@ void CSSCounterStyleDescriptors::setRanges(CSSCounterStyleDescriptors::Ranges ra
 {
     if (m_ranges == ranges)
         return;
-    m_ranges = WTFMove(ranges);
+    m_ranges = WTF::move(ranges);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Range, true);
 }
 
@@ -365,7 +384,7 @@ void CSSCounterStyleDescriptors::setPad(CSSCounterStyleDescriptors::Pad pad)
 {
     if (m_pad == pad)
         return;
-    m_pad = WTFMove(pad);
+    m_pad = WTF::move(pad);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Pad, true);
 }
 
@@ -373,7 +392,7 @@ void CSSCounterStyleDescriptors::setFallbackName(CSSCounterStyleDescriptors::Nam
 {
     if (m_fallbackName == name)
         return;
-    m_fallbackName = WTFMove(name);
+    m_fallbackName = WTF::move(name);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Fallback, true);
 }
 
@@ -381,7 +400,7 @@ void CSSCounterStyleDescriptors::setSymbols(Vector<CSSCounterStyleDescriptors::S
 {
     if (m_symbols == symbols || !areSymbolsValidForSystem(m_system, symbols, m_additiveSymbols))
         return;
-    m_symbols = WTFMove(symbols);
+    m_symbols = WTF::move(symbols);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Symbols, true);
 }
 
@@ -389,7 +408,7 @@ void CSSCounterStyleDescriptors::setAdditiveSymbols(CSSCounterStyleDescriptors::
 {
     if (m_additiveSymbols == additiveSymbols || !areSymbolsValidForSystem(m_system, m_symbols, additiveSymbols))
         return;
-    m_additiveSymbols = WTFMove(additiveSymbols);
+    m_additiveSymbols = WTF::move(additiveSymbols);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::AdditiveSymbols, true);
 }
 
@@ -397,9 +416,9 @@ String CSSCounterStyleDescriptors::Symbol::cssText() const
 {
     StringBuilder builder;
     if (isCustomIdent)
-        serializeIdentifier(text, builder);
+        serializeIdentifier(builder, text);
     else
-        serializeString(text, builder);
+        serializeString(builder, text);
     return builder.toString();
 }
 
@@ -412,8 +431,16 @@ String CSSCounterStyleDescriptors::systemCSSText() const
 {
     if (!m_explicitlySetDescriptors.contains(ExplicitlySetDescriptors::System))
         return emptyString();
+
+    auto serializeExtendsName = [](const auto& extendsName) {
+        StringBuilder builder;
+        builder.append("extends "_s);
+        serializeIdentifier(builder, extendsName);
+        return builder.toString();
+    };
+
     if (m_isExtendedResolved)
-        return makeString("extends "_s, m_extendsName);
+        return serializeExtendsName(m_extendsName);
 
     switch (m_system) {
     case System::Cyclic:
@@ -429,7 +456,7 @@ String CSSCounterStyleDescriptors::systemCSSText() const
     case System::Fixed:
         return makeString("fixed "_s, m_fixedSystemFirstSymbolValue);
     case System::Extends:
-        return makeString("extends "_s, m_extendsName);
+        return serializeExtendsName(m_extendsName);
     // Internal values should not be exposed.
     case System::SimplifiedChineseInformal:
     case System::SimplifiedChineseFormal:
@@ -505,7 +532,10 @@ String CSSCounterStyleDescriptors::fallbackCSSText() const
 {
     if (!m_explicitlySetDescriptors.contains(ExplicitlySetDescriptors::Fallback))
         return emptyString();
-    return makeString(m_fallbackName);
+
+    StringBuilder builder;
+    serializeIdentifier(builder, m_fallbackName);
+    return builder.toString();
 }
 
 String CSSCounterStyleDescriptors::symbolsCSSText() const

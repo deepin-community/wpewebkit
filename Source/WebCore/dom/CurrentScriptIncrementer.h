@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Samsung Electronics. All Rights Reserved.
+ * Copyright (C) 2013 Samsung Electronics. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,17 +41,15 @@ public:
         : m_document(document)
     {
         bool shouldPushNullForCurrentScript = scriptElement.element().isInShadowTree() || scriptElement.scriptType() != ScriptType::Classic;
-        protectedDocument()->pushCurrentScript(shouldPushNullForCurrentScript ? nullptr : &scriptElement.element());
+        protect(m_document)->pushCurrentScript(shouldPushNullForCurrentScript ? nullptr : &scriptElement.element());
     }
 
     ~CurrentScriptIncrementer()
     {
-        protectedDocument()->popCurrentScript();
+        protect(m_document)->popCurrentScript();
     }
 
 private:
-    Ref<Document> protectedDocument() const { return m_document.get(); }
-
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
 };
 

@@ -27,7 +27,10 @@
 
 #include <wtf/ApproximateTime.h>
 #include <wtf/ClockType.h>
+#include <wtf/ContinuousApproximateTime.h>
+#include <wtf/ContinuousTime.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/UnbarrieredMonotonicTime.h>
 #include <wtf/WallTime.h>
 
 namespace WTF {
@@ -35,7 +38,7 @@ namespace WTF {
 class PrintStream;
 
 class TimeWithDynamicClockType final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TimeWithDynamicClockType);
 public:
     TimeWithDynamicClockType() { }
     
@@ -54,6 +57,24 @@ public:
     TimeWithDynamicClockType(ApproximateTime time)
         : m_value(time.secondsSinceEpoch().value())
         , m_type(ClockType::Approximate)
+    {
+    }
+
+    TimeWithDynamicClockType(ContinuousTime time)
+        : m_value(time.secondsSinceEpoch().value())
+        , m_type(ClockType::Continuous)
+    {
+    }
+
+    TimeWithDynamicClockType(ContinuousApproximateTime time)
+        : m_value(time.secondsSinceEpoch().value())
+        , m_type(ClockType::ContinuousApproximate)
+    {
+    }
+
+    TimeWithDynamicClockType(UnbarrieredMonotonicTime time)
+        : m_value(time.secondsSinceEpoch().value())
+        , m_type(ClockType::UnbarrieredMonotonic)
     {
     }
 
@@ -78,10 +99,13 @@ public:
     }
     
     // Asserts that the time is of the type you want.
-    WTF_EXPORT_PRIVATE WallTime wallTime() const;
-    WTF_EXPORT_PRIVATE MonotonicTime monotonicTime() const;
-    WTF_EXPORT_PRIVATE ApproximateTime approximateTime() const;
-    
+    WTF_EXPORT_PRIVATE WallTime NODELETE wallTime() const;
+    WTF_EXPORT_PRIVATE MonotonicTime NODELETE monotonicTime() const;
+    WTF_EXPORT_PRIVATE ApproximateTime NODELETE approximateTime() const;
+    WTF_EXPORT_PRIVATE ContinuousTime NODELETE continuousTime() const;
+    WTF_EXPORT_PRIVATE ContinuousApproximateTime NODELETE continuousApproximateTime() const;
+    WTF_EXPORT_PRIVATE UnbarrieredMonotonicTime NODELETE unbarrieredMonotonicTime() const;
+
     WTF_EXPORT_PRIVATE WallTime approximateWallTime() const;
     WTF_EXPORT_PRIVATE MonotonicTime approximateMonotonicTime() const;
     
@@ -89,14 +113,14 @@ public:
     bool isInfinity() const { return std::isinf(m_value); }
     bool isFinite() const { return std::isfinite(m_value); }
 
-    explicit operator bool() const { return !!m_value; }
+    explicit NODELETE operator bool() const { return !!m_value; }
     
     TimeWithDynamicClockType operator+(Seconds other) const
     {
         return withSameClockAndRawSeconds(m_value + other.value());
     }
     
-    TimeWithDynamicClockType operator-(Seconds other) const
+    TimeWithDynamicClockType NODELETE operator-(Seconds other) const
     {
         return withSameClockAndRawSeconds(m_value - other.value());
     }
@@ -123,10 +147,7 @@ public:
     friend bool operator==(const TimeWithDynamicClockType&, const TimeWithDynamicClockType&) = default;
     
     // To do relative comparisons, you must be using times with the same clock type.
-    WTF_EXPORT_PRIVATE bool operator<(const TimeWithDynamicClockType&) const;
-    WTF_EXPORT_PRIVATE bool operator>(const TimeWithDynamicClockType&) const;
-    WTF_EXPORT_PRIVATE bool operator<=(const TimeWithDynamicClockType&) const;
-    WTF_EXPORT_PRIVATE bool operator>=(const TimeWithDynamicClockType&) const;
+    WTF_EXPORT_PRIVATE friend std::partial_ordering operator<=>(const TimeWithDynamicClockType&, const TimeWithDynamicClockType&);
     
     WTF_EXPORT_PRIVATE void dump(PrintStream&) const;
     

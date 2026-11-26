@@ -31,11 +31,25 @@
 
 namespace WebCore {
 
+SVGPointList::SVGPointList() = default;
+
+SVGPointList::SVGPointList(SVGPropertyOwner* owner, SVGPropertyAccess access)
+    : Base(owner, access)
+{
+}
+
+SVGPointList::SVGPointList(const SVGPointList& other, SVGPropertyAccess access)
+    : Base(other, access)
+{
+}
+
+SVGPointList::~SVGPointList() = default;
+
 bool SVGPointList::parse(StringView value)
 {
     clearItems();
 
-    return readCharactersForParsing(value, [&](auto buffer) {
+    bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
 
         bool delimParsed = false;
@@ -47,8 +61,12 @@ bool SVGPointList::parse(StringView value)
                 return false;
 
             auto yPos = parseNumber(buffer, SuffixSkippingPolicy::DontSkip);
-            if (!yPos)
-                return false;
+            if (!yPos) {
+                skipOptionalSVGSpaces(buffer);
+                if (buffer.hasCharactersRemaining())
+                    return false;
+                break;
+            }
 
             skipOptionalSVGSpaces(buffer);
 
@@ -60,10 +78,11 @@ bool SVGPointList::parse(StringView value)
             append(SVGPoint::create({ *xPos, *yPos }));
         }
 
-        // FIXME: Should this clearItems() on failure like SVGTransformList does?
-
         return !delimParsed;
     });
+    if (!parsingSucceeded)
+        clearItems();
+    return parsingSucceeded;
 }
 
 String SVGPointList::valueAsString() const

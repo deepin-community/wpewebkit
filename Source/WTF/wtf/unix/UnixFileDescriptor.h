@@ -35,11 +35,21 @@ namespace WTF {
 
 class UnixFileDescriptor {
 public:
+    // This class is noncopyable because otherwise it's very hard to avoid accidental file
+    // descriptor duplication. If you intentionally want a dup, call the duplicate method.
+    WTF_MAKE_NONCOPYABLE(UnixFileDescriptor);
+
     UnixFileDescriptor() = default;
 
     enum AdoptionTag { Adopt };
     UnixFileDescriptor(int fd, AdoptionTag)
         : m_value(fd)
+    { }
+
+    enum BorrowTag { Borrow };
+    UnixFileDescriptor(int fd, BorrowTag)
+        : m_value(fd)
+        , m_shouldClose(false)
     { }
 
     enum DuplicationTag { Duplicate };
@@ -52,12 +62,7 @@ public:
     UnixFileDescriptor(UnixFileDescriptor&& o)
     {
         m_value = o.release();
-    }
-
-    explicit UnixFileDescriptor(const UnixFileDescriptor& o)
-    {
-        if (o.m_value >= 0)
-            m_value = dupCloseOnExec(o.m_value);
+        m_shouldClose = o.m_shouldClose;
     }
 
     UnixFileDescriptor& operator=(UnixFileDescriptor&& o)
@@ -66,13 +71,13 @@ public:
             return *this;
 
         this->~UnixFileDescriptor();
-        new (this) UnixFileDescriptor(WTFMove(o));
+        new (this) UnixFileDescriptor(WTF::move(o));
         return *this;
     }
 
     ~UnixFileDescriptor()
     {
-        if (m_value >= 0)
+        if (m_value >= 0 && m_shouldClose)
             closeWithRetry(std::exchange(m_value, -1));
     }
 
@@ -85,10 +90,16 @@ public:
         return UnixFileDescriptor { m_value, Duplicate };
     }
 
-    int release() WARN_UNUSED_RETURN { return std::exchange(m_value, -1); }
+    UnixFileDescriptor borrow() const
+    {
+        return UnixFileDescriptor { m_value, Borrow };
+    }
+
+    [[nodiscard]] int release() { return std::exchange(m_value, -1); }
 
 private:
     int m_value { -1 };
+    bool m_shouldClose : 1 { true };
 };
 
 } // namespace WTF

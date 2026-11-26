@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Google LLC.
+ * Copyright 2019 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -10,9 +10,9 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkStrokeRec.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAssert.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkMathPriv.h"
+#include "src/core/SkMathPriv.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrClip.h"
 #include "src/gpu/ganesh/GrPaint.h"
@@ -194,8 +194,7 @@ PathRenderer::CanDrawPath TessellationPathRenderer::onCanDrawPath(
 bool TessellationPathRenderer::onDrawPath(const DrawPathArgs& args) {
     auto sdc = args.fSurfaceDrawContext;
 
-    SkPath path;
-    args.fShape->asPath(&path);
+    SkPath path = args.fShape->asPath();
 
     // onDrawPath() should only be called if ChopPathIfNecessary() succeeded.
     SkAssertResult(ChopPathIfNecessary(*args.fViewMatrix, *args.fShape,
@@ -266,8 +265,7 @@ void TessellationPathRenderer::onStencilPath(const StencilPathArgs& args) {
     SkRect pathDevBounds;
     args.fViewMatrix->mapRect(&pathDevBounds, args.fShape->bounds());
 
-    SkPath path;
-    args.fShape->asPath(&path);
+    SkPath path = args.fShape->asPath();
 
     float n4 = wangs_formula::worst_case_cubic_p4(tess::kPrecision,
                                                   pathDevBounds.width(),

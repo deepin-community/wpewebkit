@@ -15,7 +15,7 @@
 #include "libANGLE/renderer/wgpu/RenderTargetWgpu.h"
 #include "libANGLE/renderer/wgpu/wgpu_helpers.h"
 
-#include <dawn/webgpu_cpp.h>
+#include <webgpu/webgpu.h>
 
 namespace rx
 {
@@ -32,36 +32,38 @@ class SurfaceWgpu : public SurfaceImpl
         webgpu::ImageHelper texture;
         RenderTargetWgpu renderTarget;
     };
+    angle::Result createDepthStencilAttachment(const egl::Display *display,
+                                               uint32_t width,
+                                               uint32_t height,
+                                               const webgpu::Format &webgpuFormat,
+                                               webgpu::DeviceHandle device,
+                                               AttachmentImage *outDepthStencilAttachment);
 };
 
 class OffscreenSurfaceWgpu : public SurfaceWgpu
 {
   public:
-    OffscreenSurfaceWgpu(const egl::SurfaceState &surfaceState);
+    OffscreenSurfaceWgpu(const egl::SurfaceState &surfaceState,
+                         EGLenum clientBufferType,
+                         EGLClientBuffer clientBuffer);
     ~OffscreenSurfaceWgpu() override;
 
     egl::Error initialize(const egl::Display *display) override;
-    egl::Error swap(const gl::Context *context) override;
+    egl::Error swap(const gl::Context *context, SurfaceSwapFeedback *feedback) override;
     egl::Error bindTexImage(const gl::Context *context,
                             gl::Texture *texture,
                             EGLint buffer) override;
     egl::Error releaseTexImage(const gl::Context *context, EGLint buffer) override;
-    void setSwapInterval(EGLint interval) override;
+    void setSwapInterval(const egl::Display *display, EGLint interval) override;
 
-    // width and height can change with client window resizing
-    EGLint getWidth() const override;
-    EGLint getHeight() const override;
+    // size can change with client window resizing
+    gl::Extents getSize() const override;
 
     EGLint getSwapBehavior() const override;
 
     angle::Result initializeContents(const gl::Context *context,
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
-
-    egl::Error attachToFramebuffer(const gl::Context *context,
-                                   gl::Framebuffer *framebuffer) override;
-    egl::Error detachFromFramebuffer(const gl::Context *context,
-                                     gl::Framebuffer *framebuffer) override;
 
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
@@ -75,6 +77,9 @@ class OffscreenSurfaceWgpu : public SurfaceWgpu
     EGLint mWidth;
     EGLint mHeight;
 
+    EGLenum mClientBufferType     = EGL_NONE;
+    EGLClientBuffer mClientBuffer = nullptr;
+
     AttachmentImage mColorAttachment;
     AttachmentImage mDepthStencilAttachment;
 };
@@ -87,16 +92,15 @@ class WindowSurfaceWgpu : public SurfaceWgpu
 
     egl::Error initialize(const egl::Display *display) override;
     void destroy(const egl::Display *display) override;
-    egl::Error swap(const gl::Context *context) override;
+    egl::Error swap(const gl::Context *context, SurfaceSwapFeedback *feedback) override;
     egl::Error bindTexImage(const gl::Context *context,
                             gl::Texture *texture,
                             EGLint buffer) override;
     egl::Error releaseTexImage(const gl::Context *context, EGLint buffer) override;
-    void setSwapInterval(EGLint interval) override;
+    void setSwapInterval(const egl::Display *display, EGLint interval) override;
 
-    // width and height can change with client window resizing
-    EGLint getWidth() const override;
-    EGLint getHeight() const override;
+    // size can change with client window resizing
+    gl::Extents getSize() const override;
 
     EGLint getSwapBehavior() const override;
 
@@ -104,10 +108,8 @@ class WindowSurfaceWgpu : public SurfaceWgpu
                                      GLenum binding,
                                      const gl::ImageIndex &imageIndex) override;
 
-    egl::Error attachToFramebuffer(const gl::Context *context,
-                                   gl::Framebuffer *framebuffer) override;
-    egl::Error detachFromFramebuffer(const gl::Context *context,
-                                     gl::Framebuffer *framebuffer) override;
+    void attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer) override;
+    void detachFromFramebuffer(gl::Framebuffer *framebuffer) override;
 
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
@@ -123,25 +125,43 @@ class WindowSurfaceWgpu : public SurfaceWgpu
 
     angle::Result swapImpl(const gl::Context *context);
 
+    angle::Result configureSurface(const egl::Display *display, const gl::Extents &size);
     angle::Result updateCurrentTexture(const egl::Display *display);
 
     virtual angle::Result createWgpuSurface(const egl::Display *display,
-                                            wgpu::Surface *outSurface) = 0;
+                                            webgpu::SurfaceHandle *outSurface) = 0;
     virtual angle::Result getCurrentWindowSize(const egl::Display *display,
                                                gl::Extents *outSize)   = 0;
 
     EGLNativeWindowType mNativeWindow;
-    wgpu::Surface mSurface;
-    wgpu::SwapChain mSwapChain;
+    webgpu::SurfaceHandle mSurface;
 
-    gl::Extents mCurrentSwapChainSize;
+    const webgpu::Format *mSurfaceTextureFormat = nullptr;
+    WGPUTextureUsage mSurfaceTextureUsage;
+    WGPUPresentMode mPresentMode;
+
+    const webgpu::Format *mDepthStencilFormat = nullptr;
+
+    gl::Extents mCurrentSurfaceSize;
 
     AttachmentImage mColorAttachment;
     AttachmentImage mDepthStencilAttachment;
 };
 
+// Linux provides per-platform variants so both X11 and Wayland can be compiled simultaneously
+// and dispatched at runtime via DisplayWgpu::mWindowSystem.
+#if defined(ANGLE_USE_X11)
+WindowSurfaceWgpu *CreateWgpuX11WindowSurface(const egl::SurfaceState &surfaceState,
+                                              EGLNativeWindowType window);
+#endif
+#if defined(ANGLE_USE_WAYLAND)
+WindowSurfaceWgpu *CreateWgpuWaylandWindowSurface(const egl::SurfaceState &surfaceState,
+                                                  EGLNativeWindowType window);
+#endif
+#if !defined(ANGLE_USE_X11) && !defined(ANGLE_USE_WAYLAND)
 WindowSurfaceWgpu *CreateWgpuWindowSurface(const egl::SurfaceState &surfaceState,
                                            EGLNativeWindowType window);
+#endif
 
 }  // namespace rx
 

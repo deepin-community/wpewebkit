@@ -34,7 +34,7 @@ DisplayVkAndroid *GetDisplayVkAndroid(Renderer *renderer)
 #endif
 }  // anonymous namespace
 
-angle::Result GetClientBufferMemoryRequirements(Context *context,
+angle::Result GetClientBufferMemoryRequirements(ErrorContext *context,
                                                 const AHardwareBuffer *hardwareBuffer,
                                                 VkMemoryRequirements &memRequirements)
 {
@@ -57,8 +57,8 @@ angle::Result GetClientBufferMemoryRequirements(Context *context,
     bufferProperties.pNext = nullptr;
 
     VkDevice device = context->getRenderer()->getDevice();
-    ANGLE_VK_TRY(context, vkGetAndroidHardwareBufferPropertiesANDROID(device, hardwareBuffer,
-                                                                      &bufferProperties));
+    ANGLE_VK_TRY(context, VK_CALL(vkGetAndroidHardwareBufferPropertiesANDROID, device,
+                                  hardwareBuffer, &bufferProperties));
 
     memRequirements.size           = bufferProperties.allocationSize;
     memRequirements.alignment      = 0;
@@ -72,7 +72,7 @@ angle::Result GetClientBufferMemoryRequirements(Context *context,
 #endif
 }
 
-angle::Result InitAndroidExternalMemory(Context *context,
+angle::Result InitAndroidExternalMemory(ErrorContext *context,
                                         EGLClientBuffer clientBuffer,
                                         VkMemoryPropertyFlags memoryProperties,
                                         Buffer *buffer,
@@ -96,6 +96,12 @@ angle::Result InitAndroidExternalMemory(Context *context,
     VkImportAndroidHardwareBufferInfoANDROID importHardwareBufferInfo = {};
     importHardwareBufferInfo.sType  = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
     importHardwareBufferInfo.buffer = hardwareBuffer;
+
+    // Configure dedicated memory allocation for the external buffer and append it to the AHB info.
+    VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = {};
+    dedicatedAllocateInfo.sType    = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    dedicatedAllocateInfo.buffer   = buffer->getHandle();
+    importHardwareBufferInfo.pNext = &dedicatedAllocateInfo;
 
     ANGLE_VK_TRY(context, AllocateBufferMemoryWithRequirements(
                               context, MemoryAllocationType::BufferExternal, memoryProperties,

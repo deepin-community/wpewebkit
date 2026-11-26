@@ -65,29 +65,53 @@
 #include <WebCore/InheritsFrom.h>
 #include <WebCore/MoveOnlyBaseClass.h>
 #include <WebCore/MoveOnlyDerivedClass.h>
+#include <WebCore/OpaqueTypeObject.h>
 #if USE(APPKIT)
 #include <WebCore/ScrollbarTrackCornerSystemImageMac.h>
 #endif
 #include <WebCore/ScrollingStateFrameHostingNode.h>
 #include <WebCore/ScrollingStateFrameHostingNodeWithStuffAfterTuple.h>
 #include <WebCore/TimingFunction.h>
+#include <wtf/CreateUsingClass.h>
+#include <wtf/Seconds.h>
 #if USE(AVFOUNDATION)
 #include <pal/cocoa/AVFoundationSoftLink.h>
 #endif
 #if ENABLE(DATA_DETECTION)
 #include <pal/cocoa/DataDetectorsCoreSoftLink.h>
 #endif
-#include <wtf/CreateUsingClass.h>
-#include <wtf/Seconds.h>
 
-static_assert(std::is_same_v<WebCore::SharedStringHash, uint32_t>);
-static_assert(std::is_same_v<WebCore::UsingWithSemicolon, uint32_t>);
+static_assert(std::is_same_v<WebCore::SharedStringHash,
+    uint32_t
+>);
+static_assert(std::is_same_v<WebCore::UsingWithSemicolon,
+    uint32_t
+>);
 #if OS(WINDOWS)
-static_assert(std::is_same_v<WTF::ProcessID, int>);
+static_assert(std::is_same_v<WTF::ProcessID,
+    int
+>);
 #endif
 #if !(OS(WINDOWS))
-static_assert(std::is_same_v<WTF::ProcessID, pid_t>);
+static_assert(std::is_same_v<WTF::ProcessID,
+    pid_t
+>);
 #endif
+static_assert(std::is_same_v<WebCore::AliasOpaqueTypeWrapper,
+    Variant<int, Vector<uint8_t>>
+>);
+static_assert(std::is_same_v<WebCore::ConditionalVariant,
+    Variant<
+        int,
+#if USE(CHAR)
+        char,
+#endif
+        double
+    >
+>);
+static_assert(std::is_same_v<WebCore::NonConditionalVariant,
+    Variant<int, double>
+>);
 
 #if ENABLE(IPC_TESTING_API)
 
@@ -254,7 +278,7 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             },
         } },
         { "WebCore::TimingFunction"_s, {
-            { "std::variant<"
+            { "Variant<"
                 "WebCore::LinearTimingFunction"
                 ", WebCore::CubicBezierTimingFunction"
 #if CONDITION
@@ -276,6 +300,10 @@ Vector<SerializedTypeInfo> allSerializedTypes()
                 "int"_s,
                 "value"_s
             },
+            {
+                "WebCore::TimingFunction"_s,
+                "nonRefMemberWithSubclasses"_s
+            },
         } },
         { "Namespace::AnotherCommonClass"_s, {
             {
@@ -284,7 +312,7 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             },
         } },
         { "WebCore::MoveOnlyBaseClass"_s, {
-            { "std::variant<"
+            { "Variant<"
                 "WebCore::MoveOnlyDerivedClass"
             ">"_s, "subclasses"_s }
         } },
@@ -319,7 +347,13 @@ Vector<SerializedTypeInfo> allSerializedTypes()
 #endif
                     ", bool"
                 ">"_s,
-                "optionalTuple"_s
+                "OptionalTuple<"
+                    "name"
+#if ENABLE(FEATURE)
+                    ", featureEnabledMember"
+#endif
+                    ", bitFieldMember"
+                ">"_s
             },
         } },
         { "WebKit::TemplateTest"_s, {
@@ -341,7 +375,9 @@ Vector<SerializedTypeInfo> allSerializedTypes()
                 "OptionalTuple<"
                     "std::optional<WebCore::PlatformLayerIdentifier>"
                 ">"_s,
-                "optionalTuple"_s
+                "OptionalTuple<"
+                    "layer().layerIDForEncoding()"
+                ">"_s
             },
         } },
         { "WebCore::ScrollingStateFrameHostingNodeWithStuffAfterTuple"_s, {
@@ -358,7 +394,10 @@ Vector<SerializedTypeInfo> allSerializedTypes()
                     "std::optional<WebCore::PlatformLayerIdentifier>"
                     ", bool"
                 ">"_s,
-                "optionalTuple"_s
+                "OptionalTuple<"
+                    "layer().layerIDForEncoding()"
+                    ", otherMember"
+                ">"_s
             },
             {
                 "int"_s,
@@ -406,6 +445,12 @@ Vector<SerializedTypeInfo> allSerializedTypes()
         { "NSSomeFoundationType"_s, {
             { "WebKit::CoreIPCNSSomeFoundationType"_s, "wrapper"_s }
         } },
+        { "WebKit::CoreIPCclass NSSomeOtherFoundationType"_s, {
+            { "RetainPtr<NSDictionary>"_s , "DictionaryKey"_s },
+        } },
+        { "class NSSomeOtherFoundationType"_s, {
+            { "WebKit::CoreIPCclass NSSomeOtherFoundationType"_s, "wrapper"_s }
+        } },
 #if ENABLE(DATA_DETECTION)
         { "WebKit::CoreIPCDDScannerResult"_s, {
             { "RetainPtr<NSString>"_s , "StringKey"_s },
@@ -435,6 +480,18 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             { "String"_s, "wrapper"_s }
         } },
 #endif // USE(CFSTRING)
+#if USE(SKIA)
+        { "SkFooBar"_s, {
+            {
+                "int"_s,
+                "foo()"_s
+            },
+            {
+                "double"_s,
+                "bar()"_s
+            },
+        } },
+#endif // USE(SKIA)
         { "WebKit::RValueWithFunctionCalls"_s, {
             {
                 "SandboxExtensionHandle"_s,
@@ -489,6 +546,30 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             },
         } },
 #endif // USE(APPKIT)
+        { "WebCore::RectEdges<bool>"_s, {
+            {
+                "bool"_s,
+                "top()"_s
+            },
+            {
+                "bool"_s,
+                "right()"_s
+            },
+            {
+                "bool"_s,
+                "bottom()"_s
+            },
+            {
+                "bool"_s,
+                "left()"_s
+            },
+        } },
+        { "WebCore::OpaqueTypeObject"_s, {
+            {
+                "NotDispatchableFromWebContent"_s,
+                "member"_s
+            },
+        } },
 #if USE(PASSKIT)
         { "PKPaymentMethod"_s, {
             { "WebKit::CoreIPCPKPaymentMethod"_s, "wrapper"_s }
@@ -498,21 +579,50 @@ Vector<SerializedTypeInfo> allSerializedTypes()
             { "WebKit::CoreIPCNull"_s, "wrapper"_s }
         } },
         { "WebCore::SharedStringHash"_s, {
-            { "uint32_t"_s, "alias"_s }
+        {
+            "uint32_t"_s
+            , "alias"_s }
         } },
         { "WebCore::UsingWithSemicolon"_s, {
-            { "uint32_t"_s, "alias"_s }
+        {
+            "uint32_t"_s
+            , "alias"_s }
         } },
 #if OS(WINDOWS)
         { "WTF::ProcessID"_s, {
-            { "int"_s, "alias"_s }
+        {
+            "int"_s
+            , "alias"_s }
         } },
 #endif
 #if !(OS(WINDOWS))
         { "WTF::ProcessID"_s, {
-            { "pid_t"_s, "alias"_s }
+        {
+            "pid_t"_s
+            , "alias"_s }
         } },
 #endif
+        { "WebCore::AliasOpaqueTypeWrapper"_s, {
+        {
+            "Variant<int, Vector<uint8_t>>"_s
+            , "alias"_s }
+        } },
+        { "WebCore::ConditionalVariant"_s, {
+        {
+            "Variant<"
+            "int, "
+#if USE(CHAR)
+            "char, "
+#endif
+            "double"
+            ">"_s
+            , "alias"_s }
+        } },
+        { "WebCore::NonConditionalVariant"_s, {
+        {
+            "Variant<int, double>"_s
+            , "alias"_s }
+        } },
     };
 }
 
@@ -521,71 +631,73 @@ Vector<SerializedEnumInfo> allSerializedEnums()
     return {
 #if ENABLE(BOOL_ENUM)
         { "EnumNamespace::BoolEnumType"_s, sizeof(EnumNamespace::BoolEnumType), false, {
-            0, 1
+            { 0, "false"_s },
+            { 1, "true"_s }
         } },
 #endif
         { "EnumWithoutNamespace"_s, sizeof(EnumWithoutNamespace), false, {
-            enumValueForIPCTestAPI(EnumWithoutNamespace::Value1),
-            enumValueForIPCTestAPI(EnumWithoutNamespace::Value2),
-            enumValueForIPCTestAPI(EnumWithoutNamespace::Value3),
+            { enumValueForIPCTestAPI(EnumWithoutNamespace::Value1), "Value1"_s },
+            { enumValueForIPCTestAPI(EnumWithoutNamespace::Value2), "Value2"_s },
+            { enumValueForIPCTestAPI(EnumWithoutNamespace::Value3), "Value3"_s },
         } },
 #if ENABLE(UINT16_ENUM)
         { "EnumNamespace::EnumType"_s, sizeof(EnumNamespace::EnumType), false, {
-            enumValueForIPCTestAPI(EnumNamespace::EnumType::FirstValue),
+            { enumValueForIPCTestAPI(EnumNamespace::EnumType::FirstValue), "FirstValue"_s },
 #if ENABLE(ENUM_VALUE_CONDITION)
-            enumValueForIPCTestAPI(EnumNamespace::EnumType::SecondValue),
+            { enumValueForIPCTestAPI(EnumNamespace::EnumType::SecondValue), "SecondValue"_s },
 #endif
         } },
 #endif
         { "EnumNamespace2::OptionSetEnumType"_s, sizeof(EnumNamespace2::OptionSetEnumType), true, {
-            enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetFirstValue),
+            { enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetFirstValue), "OptionSetFirstValue"_s },
 #if ENABLE(OPTION_SET_SECOND_VALUE)
-            enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetSecondValue),
+            { enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetSecondValue), "OptionSetSecondValue"_s },
 #endif
 #if !(ENABLE(OPTION_SET_SECOND_VALUE))
-            enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetSecondValueElse),
+            { enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetSecondValueElse), "OptionSetSecondValueElse"_s },
 #endif
-            enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetThirdValue),
+            { enumValueForIPCTestAPI(EnumNamespace2::OptionSetEnumType::OptionSetThirdValue), "OptionSetThirdValue"_s },
         } },
         { "OptionSetEnumFirstCondition"_s, sizeof(OptionSetEnumFirstCondition), true, {
 #if ENABLE(OPTION_SET_FIRST_VALUE)
-            enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetFirstValue),
+            { enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetFirstValue), "OptionSetFirstValue"_s },
 #endif
-            enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetSecondValue),
-            enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetThirdValue),
+            { enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetSecondValue), "OptionSetSecondValue"_s },
+            { enumValueForIPCTestAPI(OptionSetEnumFirstCondition::OptionSetThirdValue), "OptionSetThirdValue"_s },
         } },
         { "OptionSetEnumLastCondition"_s, sizeof(OptionSetEnumLastCondition), true, {
-            enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetFirstValue),
-            enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetSecondValue),
+            { enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetFirstValue), "OptionSetFirstValue"_s },
+            { enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetSecondValue), "OptionSetSecondValue"_s },
 #if ENABLE(OPTION_SET_THIRD_VALUE)
-            enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetThirdValue),
+            { enumValueForIPCTestAPI(OptionSetEnumLastCondition::OptionSetThirdValue), "OptionSetThirdValue"_s },
 #endif
         } },
         { "OptionSetEnumAllCondition"_s, sizeof(OptionSetEnumAllCondition), true, {
 #if ENABLE(OPTION_SET_FIRST_VALUE)
-            enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetFirstValue),
+            { enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetFirstValue), "OptionSetFirstValue"_s },
 #endif
 #if ENABLE(OPTION_SET_SECOND_VALUE)
-            enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetSecondValue),
+            { enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetSecondValue), "OptionSetSecondValue"_s },
 #endif
 #if ENABLE(OPTION_SET_THIRD_VALUE)
-            enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetThirdValue),
+            { enumValueForIPCTestAPI(OptionSetEnumAllCondition::OptionSetThirdValue), "OptionSetThirdValue"_s },
 #endif
         } },
 #if (ENABLE(OUTER_CONDITION)) && (ENABLE(INNER_CONDITION))
         { "EnumNamespace::InnerEnumType"_s, sizeof(EnumNamespace::InnerEnumType), false, {
-            enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::InnerValue),
+            { enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::InnerValue), "InnerValue"_s },
 #if ENABLE(INNER_INNER_CONDITION)
-            enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::InnerInnerValue),
+            { enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::InnerInnerValue), "InnerInnerValue"_s },
 #endif
 #if !(ENABLE(INNER_INNER_CONDITION))
-            enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::OtherInnerInnerValue),
+            { enumValueForIPCTestAPI(EnumNamespace::InnerEnumType::OtherInnerInnerValue), "OtherInnerInnerValue"_s },
 #endif
         } },
 #endif
 #if (ENABLE(OUTER_CONDITION)) && (!(ENABLE(INNER_CONDITION)))
         { "EnumNamespace::InnerBoolType"_s, sizeof(EnumNamespace::InnerBoolType), false, {
-            0, 1
+            { 0, "false"_s },
+            { 1, "true"_s }
         } },
 #endif
     };

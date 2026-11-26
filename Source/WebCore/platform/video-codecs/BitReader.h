@@ -37,11 +37,23 @@ public:
         : m_data(data)
     {
     }
-    
-    std::optional<uint64_t> read(size_t);
-    std::optional<bool> readBit();
-    
+
+    std::optional<uint64_t> NODELETE read(size_t);
+    std::optional<bool> NODELETE readBit();
+    template <typename T> std::optional<T> read()
+    {
+        static_assert(std::is_unsigned<T>::value);
+        auto value = readBytes(sizeof(T));
+        if (!value)
+            return { };
+        return static_cast<T>(*value);
+    }
+    size_t NODELETE bitOffset() const;
+    bool NODELETE skipBytes(size_t);
+    size_t byteOffset() const { return m_index; }
+
 private:
+    std::optional<uint64_t> readBytes(size_t bytes) { return read(bytes * 8); }
     std::span<const uint8_t> m_data;
     size_t m_index { 0 };
     uint8_t m_currentByte { 0 };

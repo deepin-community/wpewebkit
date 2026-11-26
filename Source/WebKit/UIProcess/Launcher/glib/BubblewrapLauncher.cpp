@@ -32,8 +32,10 @@
 #include <wtf/UniStdExtras.h>
 #include <wtf/glib/Application.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/Sandbox.h>
+#include <wtf/text/CStringView.h>
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(GTK)
@@ -75,6 +77,18 @@ static int memfd_create(const char* name, unsigned flags)
 
 namespace WebKit {
 using namespace WebCore;
+
+static bool remoteInspectorEnabled()
+{
+    static int enabled = -1;
+
+    if (enabled == -1) {
+        const char* env = g_getenv("WEBKIT_INSPECTOR_SERVER");
+        enabled = env && *env;
+    }
+
+    return enabled;
+}
 
 static int createSealedMemFdWithData(const char* name, gconstpointer data, size_t size)
 {
@@ -163,6 +177,10 @@ static int createFlatpakInfo(const char* instanceID)
         GUniquePtr<GKeyFile> keyFile(g_key_file_new());
         g_key_file_set_string(keyFile.get(), "Application", "name", WTF::applicationID().data());
         g_key_file_set_string(keyFile.get(), "Instance", "instance-id", instanceID);
+
+        if (remoteInspectorEnabled())
+            g_key_file_set_string(keyFile.get(), "Context", "shared", "network;");
+
         data->reset(g_key_file_to_data(keyFile.get(), &size, nullptr));
     }
 
@@ -175,12 +193,38 @@ enum class BindFlags {
     Device,
 };
 
-static void bindSymlinksRealPath(Vector<CString>& args, const String& path, const char* bindOption = "--ro-bind")
+static void bindSymlinksRealPath(Vector<CString>& args, const String& path, const ASCIILiteral bindOption = "--ro-bind"_s)
 {
     auto realPath = FileSystem::realPath(path);
     if (path != realPath) {
-        CString rpath = realPath.utf8();
-        args.appendVector(Vector<CString>({ bindOption, rpath.data(), rpath.data() }));
+        auto rpath = realPath.utf8();
+        args.appendList<CString>({ bindOption, rpath, rpath });
+    }
+}
+
+static void bindIfExists(Vector<CString>& args, const CStringView& path, BindFlags bindFlags = BindFlags::ReadOnly)
+{
+    const ASCIILiteral bindType = [&] () {
+        switch (bindFlags) {
+        case BindFlags::Device:
+            return "--dev-bind-try"_s;
+        case BindFlags::ReadOnly:
+            return "--ro-bind-try"_s;
+        default:
+            return "--bind-try"_s;
+        }
+    }();
+
+    // Canonicalize the source path, otherwise a symbolic link could
+    // point to a location outside of the namespace.
+    bindSymlinksRealPath(args, path.span(), bindType);
+
+    // As /etc is exposed wholesale, do not layer extraneous bind
+    // directives on top, which could fail in the presence of symbolic
+    // links.
+    if (!startsWith(path.span(), "/etc/"_s)) {
+        auto pathString = CString(path.span());
+        args.appendList<CString>({ bindType, pathString, pathString });
     }
 }
 
@@ -189,23 +233,7 @@ static void bindIfExists(Vector<CString>& args, const char* path, BindFlags bind
     if (!path || path[0] == '\0')
         return;
 
-    const char* bindType;
-    if (bindFlags == BindFlags::Device)
-        bindType = "--dev-bind-try";
-    else if (bindFlags == BindFlags::ReadOnly)
-        bindType = "--ro-bind-try";
-    else
-        bindType = "--bind-try";
-
-    // Canonicalize the source path, otherwise a symbolic link could
-    // point to a location outside of the namespace.
-    bindSymlinksRealPath(args, String::fromUTF8(path), bindType);
-
-    // As /etc is exposed wholesale, do not layer extraneous bind
-    // directives on top, which could fail in the presence of symbolic
-    // links.
-    if (!g_str_has_prefix(path, "/etc/"))
-        args.appendVector(Vector<CString>({ bindType, path, path }));
+    bindIfExists(args, CStringView::unsafeFromUTF8(path), bindFlags);
 }
 
 static void bindDBusSession(Vector<CString>& args, XDGDBusProxy& dbusProxy, bool allowPortals)
@@ -216,7 +244,7 @@ static void bindDBusSession(Vector<CString>& args, XDGDBusProxy& dbusProxy, bool
 
     GUniquePtr<char> sandboxedSessionBusPath(g_build_filename(sandboxedUserRuntimeDirectory().data(), "bus", nullptr));
     GUniquePtr<char> proxyAddress(g_strdup_printf("unix:path=%s", sandboxedSessionBusPath.get()));
-    args.appendVector(Vector<CString> {
+    args.appendList<CString>({
         "--ro-bind", *dbusSessionProxyPath, sandboxedSessionBusPath.get(),
         "--setenv", "DBUS_SESSION_BUS_ADDRESS", proxyAddress.get()
     });
@@ -225,16 +253,14 @@ static void bindDBusSession(Vector<CString>& args, XDGDBusProxy& dbusProxy, bool
 #if PLATFORM(X11)
 static void bindX11(Vector<CString>& args)
 {
-    const char* display = g_getenv("DISPLAY");
-    if (display && display[0] == ':' && g_ascii_isdigit(const_cast<char*>(display)[1])) {
-        const char* displayNumber = &display[1];
-        const char* displayNumberEnd = displayNumber;
-        while (g_ascii_isdigit(*displayNumberEnd))
-            displayNumberEnd++;
-
-        GUniquePtr<char> displayString(g_strndup(displayNumber, displayNumberEnd - displayNumber));
-        GUniquePtr<char> x11File(g_strdup_printf("/tmp/.X11-unix/X%s", displayString.get()));
-        bindIfExists(args, x11File.get(), BindFlags::ReadWrite);
+    auto display = String::fromUTF8(g_getenv("DISPLAY"));
+    if (!display.isNull() && display[0] == ':' && isASCIIDigit(display[1])) {
+        auto displayNumberEnd = display.find([](char16_t c) {
+            return !isASCIIDigit(c);
+        }, 1);
+        auto displayString = display.substring(1, displayNumberEnd - 1);
+        auto x11File = makeString("/tmp/.X11-unix/X"_s, displayString);
+        bindIfExists(args, x11File.utf8().data(), BindFlags::ReadWrite);
     }
 
     const char* xauth = g_getenv("XAUTHORITY");
@@ -266,8 +292,9 @@ static void bindPulse(Vector<CString>& args)
     // They can also be set as X11 props but that is getting a bit ridiculous.
     const char* pulseServer = g_getenv("PULSE_SERVER");
     if (pulseServer) {
-        if (g_str_has_prefix(pulseServer, "unix:"))
-            bindIfExists(args, pulseServer + 5, BindFlags::ReadWrite);
+        auto pulseServerString = CStringView::unsafeFromUTF8(pulseServer);
+        if (startsWith(pulseServerString.span(), "unix:"_s))
+            bindIfExists(args, CStringView::fromUTF8(pulseServerString.spanIncludingNullTerminator().subspan(5)), BindFlags::ReadWrite);
         // else it uses tcp
     } else {
         const char* runtimeDir = g_get_user_runtime_dir();
@@ -288,6 +315,9 @@ static void bindPulse(Vector<CString>& args)
     GUniquePtr<char> asoundHomeConfigDir(g_build_filename(homeDir, ".asoundrc", nullptr));
     bindIfExists(args, pulseHomeConfigDir.get());
     bindIfExists(args, asoundHomeConfigDir.get());
+
+    // Pulseaudio service ran as system daemon, allows multi-user setups
+    bindIfExists(args, "/run/pulse", BindFlags::ReadWrite);
 
     // This is the ultimate fallback to raw ALSA
     bindIfExists(args, "/dev/snd", BindFlags::Device);
@@ -328,8 +358,8 @@ static void bindFonts(Vector<CString>& args)
     bindIfExists(args, fontHomeConfigDir.get());
     bindIfExists(args, fontData.get());
     bindIfExists(args, fontHomeData.get());
-    for (auto* dataDir = dataDirs; dataDir && *dataDir; dataDir++) {
-        GUniquePtr<char> fontDataDir(g_build_filename(*dataDir, "fonts", nullptr));
+    for (const auto* dataDir : span(dataDirs)) {
+        GUniquePtr<char> fontDataDir(g_build_filename(dataDir, "fonts", nullptr));
         bindIfExists(args, fontDataDir.get());
     }
     bindIfExists(args, "/var/cache/fontconfig"); // Used by Debian.
@@ -361,9 +391,9 @@ static void bindA11y(Vector<CString>& args, XDGDBusProxy& dbusProxy, const Strin
         return;
 
     ASSERT(sandboxedAccessibilityBusAddress.startsWith("unix:path="_s));
-    auto sandboxedAccessibilityBusPath = sandboxedAccessibilityBusAddress.substring(strlen("unix:path="));
-    args.appendVector(Vector<CString> {
-        "--ro-bind", *accessibilityProxyPath, sandboxedAccessibilityBusPath.utf8(),
+    auto sandboxedAccessibilityBusPath = sandboxedAccessibilityBusAddress.substring(strlen("unix:path=")).utf8();
+    args.appendList<CString>({
+        "--ro-bind", *accessibilityProxyPath, sandboxedAccessibilityBusPath,
         "--setenv", "AT_SPI_BUS_ADDRESS", sandboxedAccessibilityBusAddress.utf8(),
     });
 }
@@ -376,8 +406,8 @@ static bool bindPathVar(Vector<CString>& args, const char* varname)
         return false;
 
     GUniquePtr<char*> splitPaths(g_strsplit(pathValue, ":", -1));
-    for (size_t i = 0; splitPaths.get()[i]; ++i)
-        bindIfExists(args, splitPaths.get()[i]);
+    for (const auto* path : span(splitPaths))
+        bindIfExists(args, path);
 
     return true;
 }
@@ -418,19 +448,29 @@ static void bindGStreamerData(Vector<CString>& args)
         bindIfExists(args, parentDir.utf8().data(), BindFlags::ReadWrite);
     }
 
-    // /usr/lib is already added so this is only requried for other dirs
+    // /usr/lib is already added so this is only required for other dirs.
     const char* scannerPath = environmentVariableValue("GST_PLUGIN_SCANNER", "/usr/libexec/gstreamer-1.0/gst-plugin-scanner");
     const char* installPluginsHelperPath = environmentVariableValue("GST_INSTALL_PLUGINS_HELPER", "/usr/libexec/gstreamer-1.0/gst-install-plugins-helper");
     const char* ptpHelperPath = environmentVariableValue("GST_PTP_HELPER", "/usr/libexec/gstreamer-1.0/gst-ptp-helper");
 
+    // Workaround for UsrMerge systems, where /lib64 on host is a symlink and bwrap doesn't handle this.
+    // See also https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/2877#note_2042004
+    bindIfExists(args, "/lib64/../libexec/gstreamer-1.0/gst-plugin-scanner");
+    bindIfExists(args, "/lib64/../libexec/gstreamer-1.0/gst-ptp-helper");
+
     bindIfExists(args, scannerPath);
     bindIfExists(args, installPluginsHelperPath);
     bindIfExists(args, ptpHelperPath);
+
+    // Since GStreamer 1.28.0 software video decoders are likely to use a udmabuf allocator, so
+    // allow access to the corresponding device in the sandbox. Note: We are in the UIProcess so a
+    // runtime GStreamer version check is not wanted here.
+    args.appendList({ "--dev-bind-try", "/dev/udmabuf", "/dev/udmabuf" });
 }
 
 static void bindOpenGL(Vector<CString>& args)
 {
-    args.appendVector(Vector<CString>({
+    args.appendList({
         "--dev-bind-try", "/dev/dri", "/dev/dri",
         // Mali
         "--dev-bind-try", "/dev/mali", "/dev/mali",
@@ -443,23 +483,39 @@ static void bindOpenGL(Vector<CString>& args)
         // Adreno
         "--dev-bind-try", "/dev/kgsl-3d0", "/dev/kgsl-3d0",
         "--dev-bind-try", "/dev/ion", "/dev/ion",
+        // WSL2 (Mesa d3d12)
+        "--dev-bind-try", "/dev/dxg", "/dev/dxg",
 #if PLATFORM(WPE)
         "--dev-bind-try", "/dev/fb0", "/dev/fb0",
         "--dev-bind-try", "/dev/fb1", "/dev/fb1",
 #endif
-    }));
+    });
 }
 
 static void bindV4l(Vector<CString>& args)
 {
-    args.appendVector(Vector<CString>({
+    args.appendList({
         "--dev-bind-try", "/dev/v4l", "/dev/v4l",
-        // Not pretty but a stop-gap for pipewire anyway.
-        "--dev-bind-try", "/dev/video0", "/dev/video0",
-        "--dev-bind-try", "/dev/video1", "/dev/video1",
-        "--dev-bind-try", "/dev/video2", "/dev/video2",
-        "--dev-bind-try", "/dev/media0", "/dev/media0",
-    }));
+    });
+
+    for (StringView fileName : FileSystem::listDirectory("/dev"_s)) {
+        bool isV4LNode = [&] () {
+            static constexpr std::array<ASCIILiteral, 3> nodeNames = { "video"_s, "media"_s, "v4l-subdev"_s };
+            for (const auto& nodeName : nodeNames) {
+                if (fileName.startsWith(nodeName) && fileName.substring(nodeName.length()).containsOnly<isASCIIDigit>())
+                    return true;
+            }
+            return false;
+        }();
+
+        if (!isV4LNode)
+            continue;
+
+        CString path = FileSystem::pathByAppendingComponent("/dev"_s, fileName).utf8();
+        args.appendList<CString>({
+            "--dev-bind-try", path, path,
+        });
+    }
 }
 
 static bool enableDebugPermissions()
@@ -666,10 +722,13 @@ static int setupSeccomp()
     return tmpfd;
 }
 
-static bool shouldUnshareNetwork(ProcessLauncher::ProcessType processType, char** argv)
+static bool shouldUnshareNetwork(ProcessLauncher::ProcessType processType, Vector<char*>& argv)
 {
     // gdbserver requires network access for remote debugging.
-    if (enableDebugPermissions() && g_str_has_suffix(argv[0], "gdbserver"))
+    if (enableDebugPermissions() && endsWith(CStringView::unsafeFromUTF8(argv[0]).span(), "gdbserver"_s))
+        return false;
+
+    if (remoteInspectorEnabled())
         return false;
 
     // xdg-dbus-proxy needs access to host abstract sockets to connect to the a11y bus. Secure
@@ -695,18 +754,20 @@ static bool shouldUnshareNetwork(ProcessLauncher::ProcessType processType, char*
 
 static std::optional<CString> directoryContainingDBusSocket(const char* dbusAddress)
 {
-    if (!dbusAddress || !g_str_has_prefix(dbusAddress, "unix:"))
+    if (!dbusAddress)
         return std::nullopt;
 
-    if (const char* pathStart = strstr(dbusAddress, "path=")) {
+    auto dbusAddressString = StringView::fromLatin1(dbusAddress);
+
+    if (!dbusAddressString.startsWith("unix:"_s))
+        return std::nullopt;
+
+    if (auto pathStart = dbusAddressString.find("path="_s); pathStart != notFound) {
         pathStart += strlen("path=");
 
-        const char* pathEnd = pathStart;
-        while (*pathEnd && *pathEnd != ',')
-            pathEnd++;
-
-        CString path({ pathStart, pathEnd });
-        GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.data()));
+        auto pathEnd = dbusAddressString.find(',', pathStart);
+        auto path = pathEnd == notFound ? dbusAddressString.substring(pathStart) : dbusAddressString.substring(pathStart, pathEnd - pathStart);
+        GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.utf8().data()));
         GRefPtr<GFile> parent = adoptGRef(g_file_get_parent(file.get()));
         if (!parent)
             return std::nullopt;
@@ -720,14 +781,14 @@ static std::optional<CString> directoryContainingDBusSocket(const char* dbusAddr
 static void addExtraPaths(const HashMap<CString, SandboxPermission>& paths, Vector<CString>& args)
 {
     for (const auto& pathAndPermission : paths) {
-        args.appendVector(Vector<CString>({
+        args.appendList<CString>({
             pathAndPermission.value == SandboxPermission::ReadOnly ? "--ro-bind-try": "--bind-try",
             pathAndPermission.key, pathAndPermission.key
-        }));
+        });
     }
 }
 
-GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const ProcessLauncher::LaunchOptions& launchOptions, XDGDBusProxy& dbusProxy, char** argv, GError **error)
+GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const ProcessLauncher::LaunchOptions& launchOptions, XDGDBusProxy& dbusProxy, Vector<char*>& argv, GError **error)
 {
     ASSERT(launcher);
 
@@ -735,7 +796,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
     // requires a lot of access but doesn't execute arbitrary code like
     // the WebProcess where our focus lies.
     if (launchOptions.processType == ProcessLauncher::ProcessType::Network)
-        return adoptGRef(g_subprocess_launcher_spawnv(launcher, argv, error));
+        return adoptGRef(g_subprocess_launcher_spawnv(launcher, argv.span().data(), error));
 
     const char* runDir = g_get_user_runtime_dir();
     Vector<CString> sandboxArgs = {
@@ -768,6 +829,9 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         "--ro-bind-try", "/usr/lib", "/usr/lib",
         "--ro-bind-try", "/usr/local/lib", "/usr/local/lib",
         "--ro-bind-try", LIBDIR, LIBDIR,
+#if defined(WEBKIT_SWIFT_STDLIB_LIBRARY_PATH)
+        "--ro-bind-try", WEBKIT_SWIFT_STDLIB_LIBRARY_PATH, WEBKIT_SWIFT_STDLIB_LIBRARY_PATH,
+#endif
 #if CPU(ADDRESS64)
         "--ro-bind-try", "/lib64", "/lib64",
         "--ro-bind-try", "/usr/lib64", "/usr/lib64",
@@ -785,43 +849,41 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         const char* dataDir = g_get_user_data_dir();
         GUniquePtr<char> rrOutputDir(g_build_filename(dataDir, "rr", nullptr));
 
-        sandboxArgs.appendVector(Vector<CString>({
+        sandboxArgs.appendList<CString>({
             // Other binaries are helpful for debugging such as gdbserver.
             "--ro-bind-try", "/bin", "/bin",
             "--ro-bind-try", "/usr/bin", "/usr/bin",
             // rr writes to this directory.
             "--bind-try", rrOutputDir.get(), rrOutputDir.get(),
-        }));
+        });
     } else {
-        sandboxArgs.appendVector(Vector<CString>({
-            // In some configurations cross pid namespace debugging has issues.
-            "--unshare-pid",
-        }));
+        // In some configurations cross pid namespace debugging has issues.
+        sandboxArgs.append("--unshare-pid");
     }
 
     addExtraPaths(launchOptions.extraSandboxPaths, sandboxArgs);
 
     if (launchOptions.processType == ProcessLauncher::ProcessType::DBusProxy) {
-        sandboxArgs.appendVector(Vector<CString>({
+        sandboxArgs.appendList<CString>({
             "--ro-bind", DBUS_PROXY_EXECUTABLE, DBUS_PROXY_EXECUTABLE,
-            "--bind", sandboxedUserRuntimeDirectory().data(), sandboxedUserRuntimeDirectory().data(),
-        }));
+            "--bind", sandboxedUserRuntimeDirectory(), sandboxedUserRuntimeDirectory(),
+        });
 
         // xdg-dbus-proxy is trusted, so it's OK to mount the directories that contain the session
         // bus and a11y bus sockets wherever they may be. xdg-dbus-proxy is sandboxed only because
         // we have to mount .flatpak-info in its mount namespace so that portals may use it as a
         // trusted way to get the app ID of the process that is using it.
         if (auto sessionBusDirectory = directoryContainingDBusSocket(g_getenv("DBUS_SESSION_BUS_ADDRESS"))) {
-            sandboxArgs.appendVector(Vector<CString>({
+            sandboxArgs.appendList<CString>({
                 "--bind", *sessionBusDirectory, *sessionBusDirectory,
-            }));
+            });
         }
 
 #if USE(ATSPI)
         if (auto a11yBusDirectory = directoryContainingDBusSocket(launchOptions.extraInitializationData.get("accessibilityBusAddress"_s).utf8().data())) {
-            sandboxArgs.appendVector(Vector<CString>({
+            sandboxArgs.appendList<CString>({
                 "--bind", *a11yBusDirectory, *a11yBusDirectory,
-            }));
+            });
         }
 #endif
     }
@@ -836,9 +898,9 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
     if (libraryPath && libraryPath[0]) {
         // On distros using a suid bwrap it drops this env var
         // so we have to pass it through to the children.
-        sandboxArgs.appendVector(Vector<CString>({
+        sandboxArgs.appendList<CString>({
             "--setenv", "LD_LIBRARY_PATH", libraryPath,
-        }));
+        });
     }
 
     bindSymlinksRealPath(sandboxArgs, "/etc/resolv.conf"_s);
@@ -854,9 +916,9 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         g_subprocess_launcher_take_fd(launcher, flatpakInfoFd, flatpakInfoFd);
         GUniquePtr<char> flatpakInfoFdStr(g_strdup_printf("%d", flatpakInfoFd));
 
-        sandboxArgs.appendVector(Vector<CString>({
+        sandboxArgs.appendList<CString>({
             "--ro-bind-data", flatpakInfoFdStr.get(), "/.flatpak-info"
-        }));
+        });
     }
 
     bindIfExists(sandboxArgs, "/run/systemd/journal/socket");
@@ -880,9 +942,9 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 
         Vector<String> extraPaths = { "mediaKeysDirectory"_s, "waylandSocket"_s };
         for (const auto& path : extraPaths) {
-            String extraPath = launchOptions.extraInitializationData.get(path);
+            auto extraPath = launchOptions.extraInitializationData.get(path).utf8();
             if (!extraPath.isEmpty())
-                sandboxArgs.appendVector(Vector<CString>({ "--bind-try", extraPath.utf8(), extraPath.utf8() }));
+                sandboxArgs.appendList<CString>({ "--bind-try", extraPath, extraPath });
         }
 
         bindDBusSession(sandboxArgs, dbusProxy, flatpakInfoFd != -1);
@@ -892,8 +954,10 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         bindFonts(sandboxArgs);
         bindGStreamerData(sandboxArgs);
         bindOpenGL(sandboxArgs);
-        // FIXME: This is also fixed by Pipewire once in use.
+
+        // Although cameras can be managed via the DesktopPortal, we still need v4l2 for video decoding.
         bindV4l(sandboxArgs);
+
 #if USE(ATSPI)
         auto accessibilityBusAddress = launchOptions.extraInitializationData.get("accessibilityBusAddress"_s);
         auto sandboxedAccessibilityBusAddress = launchOptions.extraInitializationData.get("sandboxedAccessibilityBusAddress"_s);
@@ -914,14 +978,14 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 #if ENABLE(DEVELOPER_MODE)
     const char* execDirectory = g_getenv("WEBKIT_EXEC_PATH");
     if (execDirectory) {
-        String parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(execDirectory));
+        auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(execDirectory));
         bindIfExists(sandboxArgs, parentDir.utf8().data());
     }
 
     CString executablePath = FileSystem::currentExecutablePath();
     if (!executablePath.isNull()) {
         // Our executable is `/foo/bar/bin/Process`, we want `/foo/bar` as a usable prefix
-        String parentDir = FileSystem::parentPath(FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(executablePath.data())));
+        auto parentDir = FileSystem::parentPath(FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(executablePath.data())));
         bindIfExists(sandboxArgs, parentDir.utf8().data());
     }
 #endif
@@ -929,7 +993,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
     int seccompFd = setupSeccomp();
     GUniquePtr<char> fdStr(g_strdup_printf("%d", seccompFd));
     g_subprocess_launcher_take_fd(launcher, seccompFd, seccompFd);
-    sandboxArgs.appendVector(Vector<CString>({ "--seccomp", fdStr.get() }));
+    sandboxArgs.appendList<CString>({ "--seccomp", fdStr.get() });
 
     int bwrapFd = argumentsToFileDescriptor(sandboxArgs, "bwrap");
     GUniquePtr<char> bwrapFdStr(g_strdup_printf("%d", bwrapFd));
@@ -942,16 +1006,15 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         "--",
     };
 
-    char** newArgv = g_newa(char*, g_strv_length(argv) + bwrapArgs.size() + 1);
+    Vector<char*> newArgv(bwrapArgs.size() + argv.size());
     size_t i = 0;
 
     for (auto& arg : bwrapArgs)
         newArgv[i++] = const_cast<char*>(arg.data());
-    for (size_t x = 0; argv[x]; x++)
-        newArgv[i++] = argv[x];
-    newArgv[i++] = nullptr;
+    for (auto& arg : argv)
+        newArgv[i++] = arg;
 
-    return adoptGRef(g_subprocess_launcher_spawnv(launcher, newArgv, error));
+    return adoptGRef(g_subprocess_launcher_spawnv(launcher, newArgv.span().data(), error));
 }
 
 };

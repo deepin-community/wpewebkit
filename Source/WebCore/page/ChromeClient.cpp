@@ -26,7 +26,20 @@
 #include "config.h"
 #include "ChromeClient.h"
 
+#include "AXObjectCache.h"
+#include "AXSearchManager.h"
+#include "BarcodeDetectorInterface.h"
+#include "BarcodeDetectorOptionsInterface.h"
+#include "BarcodeFormatInterface.h"
+#include "FaceDetectorInterface.h"
+#include "FaceDetectorOptionsInterface.h"
+#include "ImageUtilities.h"
+#include "PointerLockController.h"
+#include "ScrollableArea.h"
 #include "ScrollbarsController.h"
+#include "ScrollingCoordinator.h"
+#include "TextDetectorInterface.h"
+#include "WorkerClient.h"
 
 #if ENABLE(WEBGL)
 #include "GraphicsContextGL.h"
@@ -38,6 +51,23 @@ ChromeClient::ChromeClient() = default;
 
 ChromeClient::~ChromeClient() = default;
 
+void ChromeClient::transcodeChosenFiles(Vector<String>&& transcodingPaths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&& completion)
+{
+#if PLATFORM(MAC)
+    transcodeImagesInBackgroundQueue(WTF::move(transcodingPaths), WTF::move(destinationUTI), WTF::move(destinationExtension), WTF::move(completion));
+#else
+    UNUSED_PARAM(transcodingPaths);
+    UNUSED_PARAM(destinationUTI);
+    UNUSED_PARAM(destinationExtension);
+    completion({ });
+#endif
+}
+
+std::unique_ptr<WorkerClient> ChromeClient::createWorkerClient(SerialFunctionDispatcher&)
+{
+    return nullptr;
+}
+
 #if ENABLE(WEBGL)
 RefPtr<GraphicsContextGL> ChromeClient::createGraphicsContextGL(const GraphicsContextGLAttributes& attributes) const
 {
@@ -47,15 +77,89 @@ RefPtr<GraphicsContextGL> ChromeClient::createGraphicsContextGL(const GraphicsCo
 
 RefPtr<ImageBuffer> ChromeClient::sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer> imageBuffer)
 {
-    return SerializedImageBuffer::sinkIntoImageBuffer(WTFMove(imageBuffer));
+    return SerializedImageBuffer::sinkIntoImageBuffer(WTF::move(imageBuffer));
 }
-
 
 void ChromeClient::ensureScrollbarsController(Page&, ScrollableArea& area, bool update) const
 {
     if (update)
         return;
+
     area.ScrollableArea::createScrollbarsController();
 }
 
+RefPtr<ScrollingCoordinator> ChromeClient::createScrollingCoordinator(Page&) const
+{
+    return nullptr;
 }
+
+RefPtr<ShapeDetection::BarcodeDetector> ChromeClient::createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const
+{
+    return nullptr;
+}
+
+void ChromeClient::getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&& completionHandler) const
+{
+    completionHandler({ });
+}
+
+RefPtr<ShapeDetection::FaceDetector> ChromeClient::createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const
+{
+    return nullptr;
+}
+
+RefPtr<ShapeDetection::TextDetector> ChromeClient::createTextDetector() const
+{
+    return nullptr;
+}
+
+#if ENABLE(WEB_AUTHN)
+ExceptionOr<Vector<ValidatedDigitalCredentialRequest>> ChromeClient::validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&)
+{
+    return Exception { ExceptionCode::NotSupportedError, "Digital credentials are not supported."_s };
+};
+#endif
+
+#if ENABLE(FULLSCREEN_API)
+void ChromeClient::enterFullScreenForElement(Element&, HTMLMediaElementEnums::VideoFullscreenMode, CompletionHandler<void(ExceptionOr<void>)>&& willEnterFullscreen, CompletionHandler<bool(bool)>&& didEnterFullscreen)
+{
+    willEnterFullscreen({ });
+    didEnterFullscreen(false);
+}
+#endif
+
+#if ENABLE(POINTER_LOCK)
+void ChromeClient::requestPointerLock(CompletionHandler<void(PointerLockRequestResult)>&& completionHandler)
+{
+    completionHandler(PointerLockRequestResult::Unsupported);
+}
+#endif
+
+#if ENABLE(IMAGE_ANALYSIS)
+void ChromeClient::requestTextRecognition(Element&, TextRecognitionOptions&&, CompletionHandler<void(RefPtr<Element>&&)>&& completion)
+{
+    if (completion)
+        completion({ });
+}
+#endif
+
+#if ENABLE(VIDEO)
+void ChromeClient::showCaptionDisplaySettings(HTMLMediaElement&, const ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(ExceptionOr<void>)>&& completionHandler)
+{
+    completionHandler(Exception { ExceptionCode::NotSupportedError, "Caption Display Settings are not supported."_s });
+}
+#endif
+
+#if PLATFORM(MAC)
+void ChromeClient::performAccessibilitySearchInRemoteFrame(FrameIdentifier, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&& completionHandler)
+{
+    completionHandler({ });
+}
+
+void ChromeClient::continueAccessibilitySearchFromChildFrame(FrameIdentifier, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&& completionHandler)
+{
+    completionHandler({ });
+}
+#endif // PLATFORM(MAC)
+
+} // namespace WebCore

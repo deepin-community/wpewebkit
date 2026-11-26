@@ -4,11 +4,16 @@
 // found in the LICENSE file.
 //
 // CLEvent.cpp: Implements the cl::Event class.
+//
 
-#include "libANGLE/CLEvent.h"
+#include "common/unsafe_buffers.h"
+
+#include <angle_cl.h>
 
 #include "libANGLE/CLCommandQueue.h"
 #include "libANGLE/CLContext.h"
+#include "libANGLE/CLEvent.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/cl_utils.h"
 
 #include <cstring>
@@ -18,6 +23,10 @@ namespace cl
 
 angle::Result Event::setUserEventStatus(cl_int executionStatus)
 {
+    // we need to retain in the case of situations where any waiting thread(s) on clWaitForEvents
+    // get signaled here from backend/mImpl call before we completely finish this routine.
+    cl::EventPtr implicitRetain(this);
+
     ANGLE_TRY(mImpl->setUserEventStatus(executionStatus));
     mStatusWasChanged = true;
     return angle::Result::Continue;
@@ -76,7 +85,7 @@ angle::Result Event::getInfo(EventInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -119,6 +128,25 @@ angle::Result Event::getProfilingInfo(ProfilingInfo name,
     return mImpl->getProfilingInfo(name, valueSize, value, valueSizeRet);
 }
 
+angle::Result Event::initBackend(const rx::CLEventImpl::CreateFunc &createFunc)
+{
+    if (isUserEvent())
+    {
+        return mContext->getImpl().createUserEvent(*this, &mImpl);
+    }
+    else
+    {
+        // execute the create func lambda that was passed into this method
+        mImpl = createFunc(*this);
+        if (mImpl == nullptr)
+        {
+            ANGLE_CL_RETURN_ERROR(CL_OUT_OF_HOST_MEMORY);
+        }
+    }
+
+    return angle::Result::Continue;
+}
+
 Event::~Event() = default;
 
 void Event::callback(cl_int commandStatus)
@@ -142,23 +170,19 @@ EventPtrs Event::Cast(cl_uint numEvents, const cl_event *eventList)
     events.reserve(numEvents);
     while (numEvents-- != 0u)
     {
-        events.emplace_back(&(*eventList++)->cast<Event>());
+        events.emplace_back(&(*ANGLE_UNSAFE_TODO(eventList++))->cast<Event>());
     }
     return events;
 }
 
 Event::Event(Context &context) : mContext(&context), mCommandType(CL_COMMAND_USER), mImpl(nullptr)
-{
-    ANGLE_CL_IMPL_TRY(context.getImpl().createUserEvent(*this, &mImpl));
-}
+{}
 
-Event::Event(CommandQueue &queue,
-             cl_command_type commandType,
-             const rx::CLEventImpl::CreateFunc &createFunc)
+Event::Event(CommandQueue &queue, cl_command_type commandType)
     : mContext(&queue.getContext()),
       mCommandQueue(&queue),
       mCommandType(commandType),
-      mImpl(createFunc(*this))
+      mImpl(nullptr)
 {}
 
 }  // namespace cl

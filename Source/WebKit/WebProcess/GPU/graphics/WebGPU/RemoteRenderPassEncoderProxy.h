@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,8 +46,7 @@ public:
 
     virtual ~RemoteRenderPassEncoderProxy();
 
-    RemoteCommandEncoderProxy& parent() { return m_parent; }
-    RemoteGPUProxy& root() { return m_parent->root(); }
+    RemoteGPUProxy& root() const { return m_root; }
 
 private:
     friend class DowncastConvertToBackingContext;
@@ -59,35 +58,36 @@ private:
     RemoteRenderPassEncoderProxy& operator=(const RemoteRenderPassEncoderProxy&) = delete;
     RemoteRenderPassEncoderProxy& operator=(RemoteRenderPassEncoderProxy&&) = delete;
 
+    bool isRemoteRenderPassEncoderProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
     
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
 
     void setPipeline(const WebCore::WebGPU::RenderPipeline&) final;
 
-    void setIndexBuffer(const WebCore::WebGPU::Buffer&, WebCore::WebGPU::IndexFormat, std::optional<WebCore::WebGPU::Size64> offset, std::optional<WebCore::WebGPU::Size64>) final;
-    void setVertexBuffer(WebCore::WebGPU::Index32 slot, const WebCore::WebGPU::Buffer*, std::optional<WebCore::WebGPU::Size64> offset, std::optional<WebCore::WebGPU::Size64>) final;
+    void setIndexBuffer(const WebCore::WebGPU::Buffer&, WebCore::WebGPU::IndexFormat, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64>) final;
+    void setVertexBuffer(WebCore::WebGPU::Index32 slot, const WebCore::WebGPU::Buffer*, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64>) final;
 
-    void draw(WebCore::WebGPU::Size32 vertexCount, std::optional<WebCore::WebGPU::Size32> instanceCount,
-        std::optional<WebCore::WebGPU::Size32> firstVertex, std::optional<WebCore::WebGPU::Size32> firstInstance) final;
-    void drawIndexed(WebCore::WebGPU::Size32 indexCount, std::optional<WebCore::WebGPU::Size32> instanceCount,
-        std::optional<WebCore::WebGPU::Size32> firstIndex,
-        std::optional<WebCore::WebGPU::SignedOffset32> baseVertex,
-        std::optional<WebCore::WebGPU::Size32> firstInstance) final;
+    void draw(WebCore::WebGPU::Size32 vertexCount, WebCore::WebGPU::Size32 instanceCount,
+        WebCore::WebGPU::Size32 firstVertex, WebCore::WebGPU::Size32 firstInstance) final;
+    void drawIndexed(WebCore::WebGPU::Size32 indexCount, WebCore::WebGPU::Size32 instanceCount,
+        WebCore::WebGPU::Size32 firstIndex,
+        WebCore::WebGPU::SignedOffset32 baseVertex,
+        WebCore::WebGPU::Size32 firstInstance) final;
 
     void drawIndirect(const WebCore::WebGPU::Buffer& indirectBuffer, WebCore::WebGPU::Size64 indirectOffset) final;
     void drawIndexedIndirect(const WebCore::WebGPU::Buffer& indirectBuffer, WebCore::WebGPU::Size64 indirectOffset) final;
 
-    void setBindGroup(WebCore::WebGPU::Index32, const WebCore::WebGPU::BindGroup&,
+    void setBindGroup(WebCore::WebGPU::Index32, const WebCore::WebGPU::BindGroup*,
         std::optional<Vector<WebCore::WebGPU::BufferDynamicOffset>>&& dynamicOffsets) final;
 
-    void setBindGroup(WebCore::WebGPU::Index32, const WebCore::WebGPU::BindGroup&,
-        const uint32_t* dynamicOffsetsArrayBuffer,
-        size_t dynamicOffsetsArrayBufferLength,
+    void setBindGroup(WebCore::WebGPU::Index32, const WebCore::WebGPU::BindGroup*,
+        std::span<const uint32_t> dynamicOffsetsArrayBuffer,
         WebCore::WebGPU::Size64 dynamicOffsetsDataStart,
         WebCore::WebGPU::Size32 dynamicOffsetsDataLength) final;
 
@@ -108,16 +108,20 @@ private:
     void beginOcclusionQuery(WebCore::WebGPU::Size32 queryIndex) final;
     void endOcclusionQuery() final;
 
-    void executeBundles(Vector<std::reference_wrapper<WebCore::WebGPU::RenderBundle>>&&) final;
+    void executeBundles(Vector<Ref<WebCore::WebGPU::RenderBundle>>&&) final;
     void end() final;
 
     void setLabelInternal(const String&) final;
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteCommandEncoderProxy> m_parent;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteGPUProxy> m_root;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteRenderPassEncoderProxy)
+    static bool isType(const WebCore::WebGPU::RenderPassEncoder& encoder) { return encoder.isRemoteRenderPassEncoderProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

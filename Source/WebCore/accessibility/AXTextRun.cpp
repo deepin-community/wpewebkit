@@ -26,32 +26,54 @@
 #include "config.h"
 #include "AXTextRun.h"
 
-#if ENABLE(AX_THREAD_TEXT_APIS)
+#include "Logging.h"
 
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+
+#include <algorithm>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AXTextRuns);
+
 String AXTextRuns::debugDescription() const
 {
-    return makeString('[', interleave(runs, [&](auto& run) { return run.debugDescription(containingBlock); }, ", "_s), ']');
+    StringBuilder builder;
+    builder.append('[');
+    for (size_t i = 0; i < runs.size(); i++) {
+        AXTextRunLineID lineID = { containingBlock, runs[i].lineIndex };
+        builder.append(makeString(
+            lineID.debugDescription(),
+            ": |"_s, makeStringByReplacingAll(runString(i), '\n', "{newline}"_s),
+            "|(len "_s, runs[i].length(), ")"_s
+        ));
+        if (i != runs.size() - 1)
+            builder.append(", "_s);
+    }
+    builder.append(']');
+
+    return builder.toString();
 }
 
-size_t AXTextRuns::indexForOffset(unsigned textOffset) const
+size_t AXTextRuns::indexForOffset(unsigned textOffset, Affinity affinity) const
 {
     size_t cumulativeLength = 0;
     for (size_t i = 0; i < runs.size(); i++) {
         cumulativeLength += runLength(i);
-        if (cumulativeLength >= textOffset)
+        if (cumulativeLength > textOffset) {
+            // The offset points into the middle of a run, which is never amibiguous.
             return i;
+        }
+        if (cumulativeLength == textOffset) {
+            // The offset points to the end of a run, which could make this an ambiguous position
+            // when considering soft linebreaks.
+            if (affinity == Affinity::Downstream && i < lastRunIndex())
+                return i + 1;
+            return i;
+        }
     }
     return notFound;
-}
-
-AXTextRunLineID AXTextRuns::lineIDForOffset(unsigned textOffset) const
-{
-    size_t runIndex = indexForOffset(textOffset);
-    return runIndex == notFound ? AXTextRunLineID() : lineID(runIndex);
 }
 
 unsigned AXTextRuns::runLengthSumTo(size_t index) const
@@ -62,33 +84,175 @@ unsigned AXTextRuns::runLengthSumTo(size_t index) const
     return length;
 }
 
-String AXTextRuns::substring(unsigned start, unsigned length) const
+unsigned AXTextRuns::domOffset(unsigned renderedTextOffset) const
 {
-    if (!length)
-        return emptyString();
+    unsigned cumulativeDomOffset = 0;
+    unsigned previousEndDomOffset = 0;
+    for (size_t i = 0; i < size(); i++) {
+        const auto& domOffsets = at(i).domOffsets();
+        for (const auto& domOffsetPair : domOffsets) {
+            AX_ASSERT(domOffsetPair[0] >= previousEndDomOffset);
+            if (domOffsetPair[0] < previousEndDomOffset)
+                return renderedTextOffset;
+            // domOffsetPair[0] represents the start DOM offset of this run. Subtracting it
+            // from the previous run's end DOM offset, we know how much whitespace was collapsed,
+            // and thus know the offset between the DOM text and what was actually rendered.
+            // For example, given domOffsets: [2, 10], [13, 18]
+            // The first offset to rendered text is 2 (2 - 0), e.g. because of two leading
+            // whitespaces that were trimmed: "  foo"
+            // The second offset to rendered text is 3 (13 - 10), e.g. because of three
+            // collapsed whitespaces in between the first and second runs.
+            cumulativeDomOffset += domOffsetPair[0] - previousEndDomOffset;
 
-    StringBuilder result;
-    size_t charactersSeen = 0;
-    auto remaining = [&] () {
-        return result.length() >= length ? 0 : length - result.length();
-    };
-    for (unsigned i = 0; i < runs.size() && result.length() < length; i++) {
-        size_t runLength = this->runLength(i);
-        if (charactersSeen >= start) {
-            // The start points entirely within bounds of this run.
-            result.append(runs[i].text.left(remaining()));
-        } else if (charactersSeen + runLength > start) {
-            // start points somewhere in the middle of the current run, collect part of the text.
-            unsigned startInRun = start - charactersSeen;
-            RELEASE_ASSERT(startInRun < runLength);
-            result.append(runs[i].text.substring(startInRun, remaining()));
+            // Using the example above, these values would be 0 and 8 for the first run,
+            // and 8 and 13 for the second run. Text that would fits this example would be:
+            // "  Charlie    Delta", rendered as: "Charlie Delta".
+            unsigned startRenderedTextOffset = domOffsetPair[0] - cumulativeDomOffset;
+            unsigned endRenderedTextOffset = domOffsetPair[1] - cumulativeDomOffset;
+            if (renderedTextOffset >= startRenderedTextOffset && renderedTextOffset <= endRenderedTextOffset) {
+                // The rendered text offset is in range of this run. We can get the DOM offset
+                // by adding the accumulated difference between the rendered text and DOM text.
+                return renderedTextOffset + cumulativeDomOffset;
+            }
+            previousEndDomOffset = domOffsetPair[1];
         }
-        // If charactersSeen + runLength == start, the start points to the end of the run, and there is no text to gather.
-
-        charactersSeen += runLength;
     }
-    return result.toString();
+    // We were provided with a rendered-text offset that didn't actually fit into our
+    // runs. This should never happen.
+    AX_ASSERT_NOT_REACHED();
+    return renderedTextOffset;
+}
+
+FloatRect AXTextRuns::localRect(unsigned start, unsigned end, FontOrientation orientation) const
+{
+    auto perLineRects = localRectsPerLine(start, end, orientation);
+    if (!perLineRects.isEmpty()) {
+        auto result = perLineRects[0];
+        for (size_t i = 1; i < perLineRects.size(); ++i)
+            result.unite(perLineRects[i]);
+        return result;
+    }
+
+    // localRectsPerLine returns empty for collapsed ranges (start == end). For these,
+    // return a caret-width rect at the offset position, matching
+    // CaretRectComputation::caretWidth.
+    if (start == end) {
+        unsigned offset = start;
+        size_t runIndex = indexForOffset(offset, Affinity::Downstream);
+        if (runIndex == notFound)
+            return { };
+
+        const auto& run = at(runIndex);
+        float heightBeforeRun = 0;
+        for (size_t i = 0; i < runIndex; ++i)
+            heightBeforeRun += at(i).lineHeight;
+
+        unsigned offsetOfFirstCharacterInRun = !runIndex ? 0 : runLengthSumTo(runIndex - 1);
+        float xPosition = run.distanceFromBoundsInDirection;
+        const auto& advances = run.advances();
+        unsigned startInRun = offset - offsetOfFirstCharacterInRun;
+        for (unsigned i = 0; i < startInRun && i < advances.size(); ++i)
+            xPosition += static_cast<float>(advances[i]);
+
+        static constexpr float caretWidth = 2;
+        if (orientation == FontOrientation::Horizontal)
+            return { xPosition, heightBeforeRun, caretWidth, run.lineHeight };
+        return { heightBeforeRun, xPosition, run.lineHeight, caretWidth };
+    }
+
+    return { };
+}
+
+Vector<FloatRect> AXTextRuns::localRectsPerLine(unsigned start, unsigned end, FontOrientation orientation) const
+{
+    unsigned smallerOffset = start;
+    unsigned largerOffset = end;
+    if (smallerOffset > largerOffset)
+        std::swap(smallerOffset, largerOffset);
+
+    // Hardcode Affinity::Downstream to avoid unnecessarily accounting for the end of the line above.
+    unsigned runIndexOfSmallerOffset = indexForOffset(smallerOffset, Affinity::Downstream);
+    unsigned runIndexOfLargerOffset = indexForOffset(largerOffset, Affinity::Downstream);
+
+    auto computeAdvance = [&] (const AXTextRun& run, unsigned offsetOfFirstCharacterInRun, unsigned startIndex, unsigned endIndex) {
+        const auto& characterAdvances = run.advances();
+        float totalAdvance = 0;
+        unsigned startIndexInRun = startIndex - offsetOfFirstCharacterInRun;
+        unsigned endIndexInRun = endIndex - offsetOfFirstCharacterInRun;
+        AX_ASSERT(startIndexInRun <= endIndexInRun);
+        AX_ASSERT(endIndexInRun <= characterAdvances.size());
+        endIndexInRun = std::min(endIndexInRun, static_cast<unsigned>(characterAdvances.size()));
+        for (size_t i = startIndexInRun; i < endIndexInRun; i++)
+            totalAdvance += (float)characterAdvances[i];
+        return totalAdvance;
+    };
+
+    // Compared to the main-thread implementation, we regularly produce rects that are 1-3px smaller due to the various
+    // levels of float rounding that happen to get here. It's better to be a bit wider to ensure AT cursors capture the
+    // entire range of text than it is to be too small. Concretely, too-wide is better than too-small for low-vision
+    // VoiceOver users who magnify the VoiceOver cursor's contents. Subjectively, the main-thread implementation feels
+    // a bit too large, even favoring too-wide sizes, so only bump by 1px. This is especially impactful when navigating
+    // character-by-character in small text.
+    static constexpr unsigned sizeBump = 1;
+    // FIXME: Probably want a special case for hard linebreaks (<br>s). Investigate how the main-thread does this.
+    // FIXME: We'll need to flip the result rect based on writing mode.
+    Vector<FloatRect> result;
+    float heightBeforeRuns = 0;
+
+    for (unsigned i = 0; i <= runIndexOfLargerOffset; i++) {
+        const auto& run = at(i);
+        if (i < runIndexOfSmallerOffset) {
+            heightBeforeRuns += run.lineHeight;
+            continue;
+        }
+
+        float measuredWidth = 0;
+        float xOffset = 0;
+
+        if (i == runIndexOfSmallerOffset) {
+            unsigned offsetOfFirstCharacterInRun = !i ? 0 : runLengthSumTo(i - 1);
+            AX_ASSERT(smallerOffset >= offsetOfFirstCharacterInRun);
+            if (smallerOffset < offsetOfFirstCharacterInRun)
+                smallerOffset = offsetOfFirstCharacterInRun;
+
+            float widthPriorToStart = 0;
+            if (smallerOffset - offsetOfFirstCharacterInRun > 0)
+                widthPriorToStart = computeAdvance(run, offsetOfFirstCharacterInRun, offsetOfFirstCharacterInRun, smallerOffset);
+
+            unsigned endOffsetInLine = runIndexOfSmallerOffset == runIndexOfLargerOffset
+                ? largerOffset
+                : !i ? run.length() : runLengthSumTo(i - 1) + run.length();
+
+            if (endOffsetInLine - smallerOffset > 0)
+                measuredWidth = computeAdvance(run, offsetOfFirstCharacterInRun, smallerOffset, endOffsetInLine);
+
+            if (measuredWidth)
+                xOffset = widthPriorToStart + run.distanceFromBoundsInDirection;
+        } else if (i == runIndexOfLargerOffset) {
+            unsigned offsetOfFirstCharacterInRun = !i ? 0 : runLengthSumTo(i - 1);
+            AX_ASSERT(largerOffset >= offsetOfFirstCharacterInRun);
+            if (largerOffset < offsetOfFirstCharacterInRun)
+                largerOffset = offsetOfFirstCharacterInRun;
+
+            measuredWidth = computeAdvance(run, offsetOfFirstCharacterInRun, offsetOfFirstCharacterInRun, largerOffset);
+            xOffset = run.distanceFromBoundsInDirection;
+        } else {
+            unsigned offsetOfFirstCharacterInRun = !i ? 0 : runLengthSumTo(i - 1);
+            measuredWidth = computeAdvance(run, offsetOfFirstCharacterInRun, offsetOfFirstCharacterInRun, offsetOfFirstCharacterInRun + run.length());
+            xOffset = run.distanceFromBoundsInDirection;
+        }
+
+        if (measuredWidth) {
+            if (orientation == FontOrientation::Horizontal)
+                result.append({ xOffset, heightBeforeRuns, measuredWidth + sizeBump, run.lineHeight });
+            else
+                result.append({ heightBeforeRuns, xOffset, run.lineHeight + sizeBump, measuredWidth });
+        }
+        heightBeforeRuns += run.lineHeight;
+    }
+
+    return result;
 }
 
 } // namespace WebCore
-#endif // ENABLE(AX_THREAD_TEXT_APIS)
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)

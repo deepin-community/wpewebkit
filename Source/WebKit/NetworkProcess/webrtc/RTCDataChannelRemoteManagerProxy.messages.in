@@ -22,7 +22,13 @@
 
 #if ENABLE(WEB_RTC)
 
-messages -> RTCDataChannelRemoteManagerProxy NotRefCounted {
+[
+    EnabledBy=PeerConnectionEnabled,
+    DispatchedFrom=WebContent,
+    DispatchedTo=Networking,
+    SharedPreferencesNeedsConnection
+]
+messages -> RTCDataChannelRemoteManagerProxy {
     // To source
     SendData(struct WebCore::RTCDataChannelIdentifier source, bool isRaw, std::span<const uint8_t> text);
     Close(struct WebCore::RTCDataChannelIdentifier source);
@@ -31,7 +37,7 @@ messages -> RTCDataChannelRemoteManagerProxy NotRefCounted {
     ChangeReadyState(struct WebCore::RTCDataChannelIdentifier handler, enum:uint8_t WebCore::RTCDataChannelState state);
     ReceiveData(struct WebCore::RTCDataChannelIdentifier handler, bool isRaw, std::span<const uint8_t> data);
     DetectError(struct WebCore::RTCDataChannelIdentifier handler, enum:uint8_t WebCore::RTCErrorDetailType type, String message);
-    BufferedAmountIsDecreasing(struct WebCore::RTCDataChannelIdentifier handler, size_t amount);
+    BufferedAmountIsDecreasing(struct WebCore::RTCDataChannelIdentifier handler, uint64_t amount);
 }
 
 #endif // ENABLE(WEB_RTC)

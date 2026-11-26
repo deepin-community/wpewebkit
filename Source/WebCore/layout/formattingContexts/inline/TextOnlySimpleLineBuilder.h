@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "AbstractLineBuilder.h"
 #include "InlineContentCache.h"
+#include <WebCore/AbstractLineBuilder.h>
 
 namespace WebCore {
 namespace Layout {
@@ -36,27 +36,28 @@ struct CandidateTextContent;
 struct TextOnlyLineBreakResult;
 
 class TextOnlySimpleLineBuilder final : public AbstractLineBuilder {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TextOnlySimpleLineBuilder);
 public:
     TextOnlySimpleLineBuilder(InlineFormattingContext&, const ElementBox& rootBox, HorizontalConstraints rootHorizontalConstraints, const InlineItemList&);
-    LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&) final;
+    LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&, bool isFirstFormattedLine) final;
 
-    static bool isEligibleForSimplifiedTextOnlyInlineLayoutByContent(const InlineContentCache::InlineItems&, const PlacedFloats&);
-    static bool isEligibleForSimplifiedInlineLayoutByStyle(const RenderStyle&);
-
-private:
-    InlineItemPosition placeInlineTextContent(const RenderStyle&, const InlineItemRange&);
-    InlineItemPosition placeNonWrappingInlineTextContent(const RenderStyle&, const InlineItemRange&);
-    TextOnlyLineBreakResult handleOverflowingTextContent(const RenderStyle&, const InlineContentBreaker::ContinuousContent&, const InlineItemRange&);
-    TextOnlyLineBreakResult commitCandidateContent(const RenderStyle&, const CandidateTextContent&, const InlineItemRange&);
-    void initialize(const InlineItemRange&, const InlineRect& initialLogicalRect, const std::optional<PreviousLine>&);
-    void handleLineEnding(const RenderStyle&, InlineItemPosition, size_t layoutRangeEndIndex);
-    size_t revertToTrailingItem(const RenderStyle&, const InlineItemRange&, const InlineTextItem&);
-    size_t revertToLastNonOverflowingItem(const RenderStyle&, const InlineItemRange&);
-    InlineLayoutUnit availableWidth() const;
-    bool isWrappingAllowed() const { return m_isWrappingAllowed; }
+    static bool NODELETE isEligibleForSimplifiedTextOnlyInlineLayoutByContent(const InlineContentCache::InlineItems&, const PlacedFloats&);
+    static bool isEligibleForSimplifiedInlineLayoutByStyle(const Box&);
+    static bool isEligibleForSimplifiedDisplayBuild(const ElementBox& rootBlockContainer);
 
 private:
-    bool m_isWrappingAllowed { false };
+    InlineItemPosition placeInlineTextContent(const Style::ComputedStyle&, const InlineItemRange&);
+    InlineItemPosition placeNonWrappingInlineTextContent(const Style::ComputedStyle&, const InlineItemRange&);
+    std::optional<LineLayoutResult> placeSingleCharacterContentIfApplicable(const LineInput&, bool isFirstFormattedLineCandidate);
+    TextOnlyLineBreakResult handleOverflowingTextContent(const Style::ComputedStyle&, const InlineContentBreaker::ContinuousContent&, const InlineItemRange&);
+    TextOnlyLineBreakResult commitCandidateContent(const Style::ComputedStyle&, const CandidateTextContent&, const InlineItemRange&);
+    void initialize(const InlineItemRange&, const InlineRect& initialLogicalRect, const std::optional<PreviousLine>&, bool isFirstFormattedLine);
+    void handleLineEnding(const Style::ComputedStyle&, InlineItemPosition, size_t layoutRangeEndIndex);
+    size_t revertToTrailingItem(const Style::ComputedStyle&, const InlineItemRange&, const InlineTextItem&);
+    size_t revertToLastNonOverflowingItem(const Style::ComputedStyle&, const InlineItemRange&);
+    InlineLayoutUnit NODELETE availableWidth() const;
+
+private:
     InlineLayoutUnit m_trimmedTrailingWhitespaceWidth { 0.f };
     std::optional<InlineLayoutUnit> m_overflowContentLogicalWidth { };
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2022 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "UnlinkedGlobalCodeBlock.h"
+#include <JavaScriptCore/UnlinkedGlobalCodeBlock.h>
 
 namespace JSC {
 
@@ -52,10 +52,10 @@ public:
     static void destroy(JSCell*);
 
     void setVariableDeclarations(const VariableEnvironment& environment) { m_varDeclarations = environment; }
-    const VariableEnvironment& variableDeclarations() const { return m_varDeclarations; }
+    const VariableEnvironment& variableDeclarations() const LIFETIME_BOUND { return m_varDeclarations; }
 
     void setLexicalDeclarations(const VariableEnvironment& environment) { m_lexicalDeclarations = environment; }
-    const VariableEnvironment& lexicalDeclarations() const { return m_lexicalDeclarations; }
+    const VariableEnvironment& lexicalDeclarations() const LIFETIME_BOUND { return m_lexicalDeclarations; }
 
 private:
     friend CachedProgramCodeBlock;

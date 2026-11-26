@@ -28,11 +28,11 @@
 #include "CustomStateSet.h"
 
 #include "AXObjectCache.h"
-#include "DocumentInlines.h"
 #include "ElementInlines.h"
 #include "ElementRareData.h"
 #include "HTMLFormElement.h"
 #include "HTMLMaybeFormAssociatedCustomElement.h"
+#include "ScriptWrappableInlines.h"
 #include "ShadowRoot.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -40,14 +40,14 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ElementInternals);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ElementInternals);
 
 RefPtr<ShadowRoot> ElementInternals::shadowRoot() const
 {
-    RefPtr element = m_element.get();
+    auto* element = m_element.get();
     if (!element)
         return nullptr;
-    RefPtr shadowRoot = element->shadowRoot();
+    auto* shadowRoot = element->shadowRoot();
     if (!shadowRoot)
         return nullptr;
     if (!shadowRoot->isAvailableToElementInternals())
@@ -65,7 +65,7 @@ ExceptionOr<RefPtr<HTMLFormElement>> ElementInternals::form() const
 ExceptionOr<void> ElementInternals::setFormValue(CustomElementFormValue&& value, std::optional<CustomElementFormValue>&& state)
 {
     if (RefPtr element = elementAsFormAssociatedCustom()) {
-        element->setFormValue(WTFMove(value), WTFMove(state));
+        element->setFormValue(WTF::move(value), WTF::move(state));
         return { };
     }
 
@@ -75,7 +75,7 @@ ExceptionOr<void> ElementInternals::setFormValue(CustomElementFormValue&& value,
 ExceptionOr<void> ElementInternals::setValidity(ValidityStateFlags validityStateFlags, String&& message, HTMLElement* validationAnchor)
 {
     if (RefPtr element = elementAsFormAssociatedCustom())
-        return element->setValidity(validityStateFlags, WTFMove(message), validationAnchor);
+        return element->setValidity(validityStateFlags, WTF::move(message), validationAnchor);
     return Exception { ExceptionCode::NotSupportedError };
 }
 
@@ -86,7 +86,7 @@ ExceptionOr<bool> ElementInternals::willValidate() const
     return Exception { ExceptionCode::NotSupportedError };
 }
 
-ExceptionOr<RefPtr<ValidityState>> ElementInternals::validity()
+ExceptionOr<ValidityState&> ElementInternals::validity()
 {
     if (RefPtr element = elementAsFormAssociatedCustom())
         return element->validity();
@@ -117,13 +117,13 @@ ExceptionOr<bool> ElementInternals::checkValidity()
 ExceptionOr<RefPtr<NodeList>> ElementInternals::labels()
 {
     if (RefPtr element = elementAsFormAssociatedCustom())
-        return element->asHTMLElement().labels();
+        return protect(element->asHTMLElement())->labels();
     return Exception { ExceptionCode::NotSupportedError };
 }
 
 FormAssociatedCustomElement* ElementInternals::elementAsFormAssociatedCustom() const
 {
-    if (RefPtr element = dynamicDowncast<HTMLMaybeFormAssociatedCustomElement>(m_element.get()))
+    if (auto* element = dynamicDowncast<HTMLMaybeFormAssociatedCustomElement>(m_element.get()))
         return element->formAssociatedCustomElementForElementInternals();
     return nullptr;
 }
@@ -141,9 +141,9 @@ void ElementInternals::setAttributeWithoutSynchronization(const QualifiedName& n
     RefPtr element = m_element.get();
     auto oldValue = computeValueForAttribute(*element, name);
 
-    element->checkedCustomElementDefaultARIA()->setValueForAttribute(name, value);
+    protect(element->customElementDefaultARIA())->setValueForAttribute(name, value);
 
-    if (CheckedPtr cache = element->document().existingAXObjectCache())
+    if (CheckedPtr cache = protect(element->document())->existingAXObjectCache())
         cache->deferAttributeChangeIfNeeded(*element, name, oldValue, computeValueForAttribute(*element, name));
 }
 
@@ -154,7 +154,7 @@ const AtomString& ElementInternals::attributeWithoutSynchronization(const Qualif
     return defaultARIA ? defaultARIA->valueForAttribute(*element, name) : nullAtom();
 }
 
-RefPtr<Element> ElementInternals::getElementAttribute(const QualifiedName& name) const
+RefPtr<Element> ElementInternals::getElementAttributeForBindings(const QualifiedName& name) const
 {
     RefPtr element = m_element.get();
     CheckedPtr defaultARIA = m_element->customElementDefaultARIAIfExists();
@@ -166,13 +166,13 @@ void ElementInternals::setElementAttribute(const QualifiedName& name, Element* v
     RefPtr element = m_element.get();
     auto oldValue = computeValueForAttribute(*element, name);
 
-    element->checkedCustomElementDefaultARIA()->setElementForAttribute(name, value);
+    protect(element->customElementDefaultARIA())->setElementForAttribute(name, value);
 
-    if (CheckedPtr cache = element->document().existingAXObjectCache())
+    if (CheckedPtr cache = protect(element->document())->existingAXObjectCache())
         cache->deferAttributeChangeIfNeeded(*element, name, oldValue, computeValueForAttribute(*element, name));
 }
 
-std::optional<Vector<Ref<Element>>> ElementInternals::getElementsArrayAttribute(const QualifiedName& name) const
+std::optional<Vector<Ref<Element>>> ElementInternals::getElementsArrayAttributeForBindings(const QualifiedName& name) const
 {
     RefPtr element = m_element.get();
     CheckedPtr defaultARIA = m_element->customElementDefaultARIAIfExists();
@@ -186,7 +186,7 @@ void ElementInternals::setElementsArrayAttribute(const QualifiedName& name, std:
     RefPtr element = m_element.get();
     auto oldValue = computeValueForAttribute(*element, name);
 
-    element->checkedCustomElementDefaultARIA()->setElementsForAttribute(name, WTFMove(value));
+    protect(element->customElementDefaultARIA())->setElementsForAttribute(name, WTF::move(value));
 
     if (CheckedPtr cache = element->document().existingAXObjectCache())
         cache->deferAttributeChangeIfNeeded(*element, name, oldValue, computeValueForAttribute(*element, name));
@@ -194,7 +194,7 @@ void ElementInternals::setElementsArrayAttribute(const QualifiedName& name, std:
 
 CustomStateSet& ElementInternals::states()
 {
-    return m_element->ensureCustomStateSet();
+    return protect(m_element)->ensureCustomStateSet();
 }
 
 } // namespace WebCore

@@ -50,7 +50,7 @@ CommandLineAPIModule::CommandLineAPIModule()
 
 JSFunction* CommandLineAPIModule::injectModuleFunction(JSC::JSGlobalObject* lexicalGlobalObject) const
 {
-    if (auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject))
+    if (auto* globalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject))
         return globalObject->builtinInternalFunctions().commandLineAPIModuleSource().m_injectModuleFunction.get();
 
     WTFLogAlways("Attempted to get `injectModule` function from `CommandLineAPIModule` for non-`JSDOMGlobalObject`.");
@@ -61,11 +61,12 @@ JSFunction* CommandLineAPIModule::injectModuleFunction(JSC::JSGlobalObject* lexi
 JSValue CommandLineAPIModule::host(InjectedScriptManager* injectedScriptManager, JSGlobalObject* lexicalGlobalObject) const
 {
     // CommandLineAPIModule should only ever be used by a WebInjectedScriptManager.
-    WebInjectedScriptManager* pageInjectedScriptManager = static_cast<WebInjectedScriptManager*>(injectedScriptManager);
-    ASSERT(pageInjectedScriptManager->commandLineAPIHost());
+    auto* pageInjectedScriptManager = downcast<WebInjectedScriptManager>(injectedScriptManager);
+    RefPtr commandLineAPIHost = pageInjectedScriptManager->commandLineAPIHost();
+    ASSERT(commandLineAPIHost);
 
-    JSDOMGlobalObject* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
-    return pageInjectedScriptManager->commandLineAPIHost()->wrapper(lexicalGlobalObject, globalObject);
+    JSDOMGlobalObject* globalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject);
+    return commandLineAPIHost->wrapper(lexicalGlobalObject, globalObject);
 }
 
 } // namespace WebCore

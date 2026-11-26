@@ -66,12 +66,24 @@ static bool urlRequiresChromeBrowser(const String& domain, const String& baseDom
     if (baseDomain == "soundcloud.com"_s)
         return true;
 
-    // Seeking in fullscreen Youtube is broken.
-    if (baseDomain == "youtube.com"_s)
-        return true;
-
     // https://webcompat.com/issues/123672
     if (domain == "www.apple.com"_s)
+        return true;
+
+#if ENABLE(THUNDER)
+    if (baseDomain == "primevideo.com"_s)
+        return true;
+#endif
+
+    if (domain == "play.xbox.com"_s || baseDomain == "xboxlive.com"_s)
+        return true;
+
+    // Use Chrome UA for luna.amazon.* otherwise the user gets an error popup when starting a game.
+    if (domain.startsWith("luna."_s) && PublicSuffixStore::singleton().domainWithoutPublicSuffix(baseDomain) == "amazon"_s)
+        return true;
+
+    // DRM playback fails on tv.orange.fr with WebKitGTK's standard user agent.
+    if (domain == "tv.orange.fr"_s)
         return true;
 
     return false;
@@ -81,17 +93,33 @@ static bool urlRequiresChromeBrowser(const String& domain, const String& baseDom
 // quirk is good for websites that do macOS-specific things we don't want on
 // other platforms, and when the risk of the website doing Firefox-specific
 // things is relatively low.
-static bool urlRequiresFirefoxBrowser(const String& domain)
+static bool urlRequiresFirefoxBrowser(const String& domain, [[maybe_unused]] const String& baseDomain)
 {
     // Red Hat Bugzilla displays a warning page when performing searches with WebKitGTK's standard
     // user agent.
     if (domain == "bugzilla.redhat.com"_s)
         return true;
 
+    // www.bilibili.com uses "NativePlayer" which only supports 720P with
+    // WebKitGTK's standard user agent.
+    if (domain == "www.bilibili.com"_s)
+        return true;
+
 #if ENABLE(THUNDER)
     if (domain == "www.netflix.com"_s)
         return true;
+
+    if (domain == "www.disneyplus.com"_s)
+        return true;
+
+    if (baseDomain == "hbomax.com"_s)
+        return true;
 #endif
+
+    // GeForceNow currently requires a Firefox UA because its keyboard-lock implementation matches
+    // with ours.
+    if (domain == "play.geforcenow.com"_s)
+        return true;
 
     return false;
 }
@@ -123,6 +151,7 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     // agent to use the light version. Earlier versions even block users from
     // accessing the calendar.
     if (domain == "outlook.office.com"_s
+        || domain == "outlook.office365.com"_s
         || domain == "mail.ntu.edu.tw"_s
         || domain == "exchange.tu-berlin.de"_s)
         return true;
@@ -148,6 +177,17 @@ static bool urlRequiresMacintoshPlatform(const String& domain, const String& bas
     // returning an HTTP 400 Bad Request error when loading every search result.
     if (domain == "duckduckgo.com"_s)
         return true;
+
+    return false;
+}
+
+static bool urlRequiresAndroidPlatform([[maybe_unused]] const String& baseDomain)
+{
+#if ENABLE(WEBXR) && PLATFORM(WPE)
+    // When WebXR is available the model viewer support provides a better UX.
+    if (baseDomain == "ikea.com"_s)
+        return true;
+#endif
 
     return false;
 }
@@ -182,11 +222,13 @@ UserAgentQuirks UserAgentQuirks::quirksForURL(const URL& url)
 
     if (urlRequiresChromeBrowser(domain, baseDomain))
         quirks.add(UserAgentQuirks::NeedsChromeBrowser);
-    else if (urlRequiresFirefoxBrowser(domain))
+    else if (urlRequiresFirefoxBrowser(domain, baseDomain))
         quirks.add(UserAgentQuirks::NeedsFirefoxBrowser);
 
     if (urlRequiresMacintoshPlatform(domain, baseDomain))
         quirks.add(UserAgentQuirks::NeedsMacintoshPlatform);
+    else if (urlRequiresAndroidPlatform(baseDomain))
+        quirks.add(UserAgentQuirks::NeedsAndroidPlatform);
 
     if (urlRequiresUnbrandedUserAgent(domain))
         quirks.add(UserAgentQuirks::NeedsUnbrandedUserAgent);
@@ -203,6 +245,8 @@ String UserAgentQuirks::stringForQuirk(UserAgentQuirk quirk)
         return "; rv:300.0) Gecko/20100101 Firefox/300.0"_s;
     case NeedsMacintoshPlatform:
         return "Macintosh; Intel Mac OS X 10_15"_s;
+    case NeedsAndroidPlatform:
+        return "Linux; Android 12.0.0"_s;
     case NeedsUnbrandedUserAgent:
     case NumUserAgentQuirks:
         ASSERT_NOT_REACHED();

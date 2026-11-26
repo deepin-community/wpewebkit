@@ -30,25 +30,22 @@
 namespace WebCore {
 
 class NavigationDisabler {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(NavigationDisabler, Loader);
 public:
     NavigationDisabler(LocalFrame* frame)
         : m_frame(frame)
     {
-        if (frame) {
-            if (auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame()))
-                ++localFrame->m_navigationDisableCount;
-        } else // Disable all navigations when destructing a frame-less document.
+        if (frame)
+            ++frame->m_navigationDisableCount;
+        else // Disable all navigations when destructing a frame-less document.
             ++s_globalNavigationDisableCount;
     }
 
     ~NavigationDisabler()
     {
-        if (m_frame) {
-            if (auto* mainFrame = dynamicDowncast<LocalFrame>(m_frame->mainFrame())) {
-                ASSERT(mainFrame->m_navigationDisableCount);
-                --mainFrame->m_navigationDisableCount;
-            }
+        if (auto* frame = m_frame.get()) {
+            ASSERT(frame->m_navigationDisableCount);
+            --frame->m_navigationDisableCount;
         } else {
             ASSERT(s_globalNavigationDisableCount);
             --s_globalNavigationDisableCount;
@@ -57,9 +54,10 @@ public:
 
     static bool isNavigationAllowed(Frame& frame)
     {
-        if (auto* localFrame = dynamicDowncast<LocalFrame>(frame.mainFrame()))
-            return !localFrame->m_navigationDisableCount && !s_globalNavigationDisableCount;
-        return true;
+        if (s_globalNavigationDisableCount)
+            return false;
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        return !localFrame || !localFrame->m_navigationDisableCount;
     }
 
 private:

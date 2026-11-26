@@ -35,10 +35,14 @@
 #include "InjectedScript.h"
 #include "InjectedScriptManager.h"
 #include "InspectorFrontendDispatchers.h"
+#include "JSCellInlines.h"
+#include "JSGlobalObject.h"
+#include "JSString.h"
 #include "ScriptArguments.h"
 #include "ScriptCallFrame.h"
 #include "ScriptCallStack.h"
 #include "ScriptCallStackFactory.h"
+#include "StrongInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
@@ -75,7 +79,7 @@ ConsoleMessage::ConsoleMessage(MessageSource source, MessageType type, MessageLe
     , m_type(type)
     , m_level(level)
     , m_message(message)
-    , m_callStack(WTFMove(callStack))
+    , m_callStack(WTF::move(callStack))
     , m_url()
     , m_requestId(IdentifiersFactory::requestId(requestIdentifier))
 {
@@ -93,8 +97,8 @@ ConsoleMessage::ConsoleMessage(MessageSource source, MessageType type, MessageLe
     , m_type(type)
     , m_level(level)
     , m_message(message)
-    , m_arguments(WTFMove(arguments))
-    , m_callStack(WTFMove(callStack))
+    , m_arguments(WTF::move(arguments))
+    , m_callStack(WTF::move(callStack))
     , m_url()
     , m_requestId(IdentifiersFactory::requestId(requestIdentifier))
 {
@@ -112,7 +116,7 @@ ConsoleMessage::ConsoleMessage(MessageSource source, MessageType type, MessageLe
     , m_type(type)
     , m_level(level)
     , m_message(message)
-    , m_arguments(WTFMove(arguments))
+    , m_arguments(WTF::move(arguments))
     , m_url()
     , m_requestId(IdentifiersFactory::requestId(requestIdentifier))
 {
@@ -181,7 +185,7 @@ void ConsoleMessage::autogenerateMetadata(JSC::JSGlobalObject* globalObject)
     }
 }
 
-static Protocol::Console::ChannelSource messageSourceValue(MessageSource source)
+static Protocol::Console::ChannelSource NODELETE messageSourceValue(MessageSource source)
 {
     switch (source) {
     case MessageSource::XML: return Protocol::Console::ChannelSource::XML;
@@ -189,9 +193,9 @@ static Protocol::Console::ChannelSource messageSourceValue(MessageSource source)
     case MessageSource::Network: return Protocol::Console::ChannelSource::Network;
     case MessageSource::ConsoleAPI: return Protocol::Console::ChannelSource::ConsoleAPI;
     case MessageSource::Storage: return Protocol::Console::ChannelSource::Storage;
-    case MessageSource::AppCache: return Protocol::Console::ChannelSource::Appcache;
     case MessageSource::Rendering: return Protocol::Console::ChannelSource::Rendering;
     case MessageSource::CSS: return Protocol::Console::ChannelSource::CSS;
+    case MessageSource::Accessibility: return Protocol::Console::ChannelSource::Accessibility;
     case MessageSource::Security: return Protocol::Console::ChannelSource::Security;
     case MessageSource::ContentBlocker: return Protocol::Console::ChannelSource::ContentBlocker;
     case MessageSource::Media: return Protocol::Console::ChannelSource::Media;
@@ -205,7 +209,7 @@ static Protocol::Console::ChannelSource messageSourceValue(MessageSource source)
     return Protocol::Console::ChannelSource::Other;
 }
 
-static Protocol::Console::ConsoleMessage::Type messageTypeValue(MessageType type)
+static Protocol::Console::ConsoleMessage::Type NODELETE messageTypeValue(MessageType type)
 {
     switch (type) {
     case MessageType::Log: return Protocol::Console::ConsoleMessage::Type::Log;
@@ -226,7 +230,7 @@ static Protocol::Console::ConsoleMessage::Type messageTypeValue(MessageType type
     return Protocol::Console::ConsoleMessage::Type::Log;
 }
 
-static Protocol::Console::ConsoleMessage::Level messageLevelValue(MessageLevel level)
+static Protocol::Console::ConsoleMessage::Level NODELETE messageLevelValue(MessageLevel level)
 {
     switch (level) {
     case MessageLevel::Log: return Protocol::Console::ConsoleMessage::Level::Log;
@@ -311,14 +315,14 @@ void ConsoleMessage::addToFrontend(ConsoleFrontendDispatcher& consoleFrontendDis
             }
 
             if (argumentsObject->length())
-                messageObject->setParameters(WTFMove(argumentsObject));
+                messageObject->setParameters(WTF::move(argumentsObject));
         }
     }
 
     if (m_callStack)
         messageObject->setStackTrace(m_callStack->buildInspectorObject());
 
-    consoleFrontendDispatcher.messageAdded(WTFMove(messageObject));
+    consoleFrontendDispatcher.messageAdded(WTF::move(messageObject));
 }
 
 String ConsoleMessage::toString() const
@@ -338,7 +342,7 @@ void ConsoleMessage::updateRepeatCountInConsole(ConsoleFrontendDispatcher& conso
     consoleFrontendDispatcher.messageRepeatCountUpdated(m_repeatCount, timestamp.secondsSinceEpoch().value());
 }
 
-static bool isGroupMessage(MessageType type)
+static bool NODELETE isGroupMessage(MessageType type)
 {
     return type == MessageType::StartGroup
         || type == MessageType::StartGroupCollapsed

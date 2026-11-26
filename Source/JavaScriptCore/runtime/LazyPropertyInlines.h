@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "DeferTermination.h"
-#include "Heap.h"
-#include "VMTraps.h"
+#include <JavaScriptCore/DeferTermination.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/VMTraps.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC {
@@ -49,13 +50,13 @@ void LazyProperty<OwnerType, ElementType>::initLater(const Func&)
     // variable. The "theFunc" variable is guaranteed to be native-aligned, i.e. at least a
     // multiple of 4.
     static constexpr FuncType theFunc = &callFunc<Func>;
-    m_pointer = lazyTag | bitwise_cast<uintptr_t>(&theFunc);
+    m_pointer = lazyTag | std::bit_cast<uintptr_t>(&theFunc);
 }
 
 template<typename OwnerType, typename ElementType>
 void LazyProperty<OwnerType, ElementType>::setMayBeNull(VM& vm, const OwnerType* owner, ElementType* value)
 {
-    m_pointer = bitwise_cast<uintptr_t>(value);
+    m_pointer = std::bit_cast<uintptr_t>(value);
     RELEASE_ASSERT(!(m_pointer & lazyTag));
     vm.writeBarrier(owner, value);
 }
@@ -72,7 +73,7 @@ template<typename Visitor>
 void LazyProperty<OwnerType, ElementType>::visit(Visitor& visitor)
 {
     if (m_pointer && !(m_pointer & lazyTag))
-        visitor.appendUnbarriered(bitwise_cast<ElementType*>(m_pointer));
+        visitor.appendUnbarriered(std::bit_cast<ElementType*>(m_pointer));
 }
 
 template<typename OwnerType, typename ElementType>
@@ -103,7 +104,7 @@ ElementType* LazyProperty<OwnerType, ElementType>::callFunc(const Initializer& i
     callStatelessLambda<void, Func>(initializer);
     RELEASE_ASSERT(!(initializer.property.m_pointer & lazyTag));
     RELEASE_ASSERT(!(initializer.property.m_pointer & initializingTag));
-    return bitwise_cast<ElementType*>(initializer.property.m_pointer);
+    return std::bit_cast<ElementType*>(initializer.property.m_pointer);
 }
 
 } // namespace JSC

@@ -35,30 +35,40 @@
 #include "LayoutInitialContainingBlock.h"
 #include "LayoutUnit.h"
 #include "PlacedFloats.h"
-#include "RenderStyleInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Layout {
 
-static bool hasBorder(const BorderValue& borderValue)
+static bool NODELETE hasBorder(const BorderValue& borderValue)
 {
-    if (borderValue.style() == BorderStyle::None || borderValue.style() == BorderStyle::Hidden)
+    if (!borderValue.hasVisibleStyle())
         return false;
-    return !!borderValue.width();
+    return !!borderValue.width;
 }
 
-static bool hasPadding(const Length& paddingValue)
+static bool hasPadding(const Style::PaddingEdge& paddingValue)
 {
-    // FIXME: Check if percent value needs to be resolved.
-    return !paddingValue.isZero();
+    // FIXME: Check if percent/calc value needs to be resolved.
+    return WTF::switchOn(paddingValue,
+        [](const Style::PaddingEdge::Fixed& fixed) {
+            return !fixed.isZero();
+        },
+        [](const Style::PaddingEdge::Percentage& percentage) {
+            return !percentage.isZero();
+        },
+        [](const Style::PaddingEdge::Calc&) {
+            return true;
+        }
+    );
 }
 
-static bool hasBorderBefore(const ElementBox& layoutBox)
+static bool NODELETE hasBorderBefore(const ElementBox& layoutBox)
 {
     return hasBorder(layoutBox.style().borderBefore());
 }
 
-static bool hasBorderAfter(const ElementBox& layoutBox)
+static bool NODELETE hasBorderAfter(const ElementBox& layoutBox)
 {
     return hasBorder(layoutBox.style().borderAfter());
 }
@@ -103,8 +113,8 @@ bool BlockMarginCollapse::marginBeforeCollapsesWithParentMarginAfter(const Eleme
     // 1. This is the last in-flow child and its margins collapse through and the margin after collapses with parent's margin after or
     // 2. This box's margin after collapses with the next sibling's margin before and that sibling collapses through and
     // we can get to the last in-flow child like that.
-    auto* lastInFlowChild = FormattingContext::containingBlock(layoutBox).lastInFlowChild();
-    for (auto* currentBox = &layoutBox; currentBox; currentBox = downcast<ElementBox>(currentBox->nextInFlowSibling())) {
+    CheckedPtr lastInFlowChild = FormattingContext::containingBlock(layoutBox).lastInFlowChild();
+    for (CheckedPtr currentBox = &layoutBox; currentBox; currentBox = downcast<ElementBox>(currentBox->nextInFlowSibling())) {
         if (!marginsCollapseThrough(*currentBox))
             return false;
         if (currentBox == lastInFlowChild)
@@ -141,7 +151,7 @@ bool BlockMarginCollapse::marginBeforeCollapsesWithParentMarginBefore(const Elem
     if (layoutBox.previousInFlowSibling())
         return false;
 
-    auto& containingBlock = FormattingContext::containingBlock(layoutBox);
+    CheckedRef containingBlock = FormattingContext::containingBlock(layoutBox);
     // Margins of elements that establish new block formatting contexts do not collapse with their in-flow children
     if (establishesBlockFormattingContext(containingBlock))
         return false;
@@ -204,7 +214,7 @@ bool BlockMarginCollapse::marginBeforeCollapsesWithFirstInFlowChildMarginBefore(
     if (hasPaddingBefore(layoutBox))
         return false;
 
-    auto* firstInFlowChild = dynamicDowncast<ElementBox>(layoutBox.firstInFlowChild());
+    CheckedPtr firstInFlowChild = dynamicDowncast<ElementBox>(layoutBox.firstInFlowChild());
     if (!firstInFlowChild)
         return false;
 
@@ -229,7 +239,7 @@ bool BlockMarginCollapse::marginAfterCollapsesWithSiblingMarginBeforeWithClearan
     if (!marginsCollapseThrough(layoutBox))
         return false;
 
-    for (auto* previousSibling = downcast<ElementBox>(layoutBox.previousInFlowSibling()); previousSibling; previousSibling = downcast<ElementBox>(previousSibling->previousInFlowSibling())) {
+    for (CheckedPtr previousSibling = downcast<ElementBox>(layoutBox.previousInFlowSibling()); previousSibling; previousSibling = downcast<ElementBox>(previousSibling->previousInFlowSibling())) {
         if (!marginsCollapseThrough(*previousSibling))
             return false;
         if (hasClearance(*previousSibling))
@@ -243,8 +253,8 @@ bool BlockMarginCollapse::marginAfterCollapsesWithParentMarginBefore(const Eleme
     // 1. This is the first in-flow child and its margins collapse through and the margin before collapses with parent's margin before or
     // 2. This box's margin before collapses with the previous sibling's margin after and that sibling collapses through and
     // we can get to the first in-flow child like that.
-    auto* firstInFlowChild = FormattingContext::containingBlock(layoutBox).firstInFlowChild();
-    for (auto* currentBox = &layoutBox; currentBox; currentBox = downcast<ElementBox>(currentBox->previousInFlowSibling())) {
+    CheckedPtr firstInFlowChild = FormattingContext::containingBlock(layoutBox).firstInFlowChild();
+    for (CheckedPtr currentBox = &layoutBox; currentBox; currentBox = downcast<ElementBox>(currentBox->previousInFlowSibling())) {
         if (!marginsCollapseThrough(*currentBox))
             return false;
         if (currentBox == firstInFlowChild)
@@ -275,17 +285,17 @@ bool BlockMarginCollapse::marginAfterCollapsesWithParentMarginAfter(const Elemen
     if (layoutBox.isInlineBlockBox())
         return false;
 
-    // Only the last inlflow child collapses with parent.
+    // Only the last inflow child collapses with parent.
     if (layoutBox.nextInFlowSibling())
         return false;
 
-    auto& containingBlock = FormattingContext::containingBlock(layoutBox);
+    CheckedRef containingBlock = FormattingContext::containingBlock(layoutBox);
     // Margins of elements that establish new block formatting contexts do not collapse with their in-flow children.
     if (establishesBlockFormattingContext(containingBlock))
         return false;
 
     // The bottom margin of an in-flow block box with a 'height' of 'auto' collapses with its last in-flow block-level child's bottom margin, if:
-    if (!containingBlock.style().height().isAuto())
+    if (!containingBlock->style().height().isAuto())
         return false;
 
     // the box has no bottom padding, and
@@ -301,8 +311,7 @@ bool BlockMarginCollapse::marginAfterCollapsesWithParentMarginAfter(const Elemen
         return false;
 
     // nor (if the box's min-height is non-zero) with the box's top margin.
-    auto computedMinHeight = containingBlock.style().logicalMinHeight();
-    if (!computedMinHeight.isAuto() && computedMinHeight.value() && marginAfterCollapsesWithParentMarginBefore(layoutBox))
+    if (!containingBlock->style().logicalMinHeight().isKnownZero() && marginAfterCollapsesWithParentMarginBefore(layoutBox))
         return false;
 
     return true;
@@ -316,7 +325,7 @@ bool BlockMarginCollapse::marginAfterCollapsesWithLastInFlowChildMarginAfter(con
     if (establishesBlockFormattingContext(layoutBox))
         return false;
 
-    auto* lastInFlowChild = dynamicDowncast<ElementBox>(layoutBox.lastInFlowChild());
+    CheckedPtr lastInFlowChild = dynamicDowncast<ElementBox>(layoutBox.lastInFlowChild());
     if (!lastInFlowChild)
         return false;
 
@@ -340,9 +349,8 @@ bool BlockMarginCollapse::marginAfterCollapsesWithLastInFlowChildMarginAfter(con
         return false;
 
     // nor (if the box's min-height is non-zero) with the box's top margin.
-    auto computedMinHeight = layoutBox.style().logicalMinHeight();
-    if (!computedMinHeight.isAuto() && computedMinHeight.value()
-        && (marginAfterCollapsesWithParentMarginBefore(*lastInFlowChild) || hasClearance(*lastInFlowChild)))
+    auto& logicalMinHeight = layoutBox.style().logicalMinHeight();
+    if (!logicalMinHeight.isAuto() && !logicalMinHeight.isKnownZero() && (marginAfterCollapsesWithParentMarginBefore(*lastInFlowChild) || hasClearance(*lastInFlowChild)))
         return false;
 
     // Margins of inline-block boxes do not collapse.
@@ -384,13 +392,13 @@ bool BlockMarginCollapse::marginsCollapseThrough(const ElementBox& layoutBox) co
     if (hasClearance(layoutBox))
         return false;
 
-    auto& style = layoutBox.style();
-    auto computedHeightValueIsZero = style.height().isFixed() && !style.height().value();
-    if (!(style.height().isAuto() || computedHeightValueIsZero))
+    CheckedRef style = layoutBox.style();
+    auto& height = style->height();
+    if (auto fixedHeight = height.tryFixed(); !(height.isAuto() || (fixedHeight && fixedHeight->isZero())))
         return false;
 
     // FIXME: Check for computed 0 height.
-    if (!style.minHeight().isAuto())
+    if (!style->minHeight().isAuto())
         return false;
 
     // FIXME: Block replaced boxes clearly don't collapse through their margins, but I couldn't find it in the spec yet (and no, it's not a quirk).
@@ -416,7 +424,7 @@ bool BlockMarginCollapse::marginsCollapseThrough(const ElementBox& layoutBox) co
         return false;
     }
 
-    for (auto* inflowChild = downcast<ElementBox>(layoutBox.firstInFlowOrFloatingChild()); inflowChild; inflowChild = downcast<ElementBox>(inflowChild->nextInFlowOrFloatingSibling())) {
+    for (CheckedPtr inflowChild = downcast<ElementBox>(layoutBox.firstInFlowOrFloatingChild()); inflowChild; inflowChild = downcast<ElementBox>(inflowChild->nextInFlowOrFloatingSibling())) {
         if (establishesBlockFormattingContext(*inflowChild))
             return false;
         if (!marginsCollapseThrough(*inflowChild))

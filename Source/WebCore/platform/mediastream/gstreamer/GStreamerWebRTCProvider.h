@@ -21,25 +21,32 @@
 #pragma once
 
 #include "WebRTCProvider.h"
+#include <wtf/TZoneMalloc.h>
 
 #if USE(GSTREAMER_WEBRTC)
 
 namespace WebCore {
 
 class WEBCORE_EXPORT GStreamerWebRTCProvider : public WebRTCProvider {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerWebRTCProvider);
 public:
     std::optional<RTCRtpCapabilities> receiverCapabilities(const String& kind) final;
     std::optional<RTCRtpCapabilities> senderCapabilities(const String& kind) final;
+
+    bool isWebCoreGStreamerWebRTCProvider() const final;
 
 private:
     void initializeAudioDecodingCapabilities() final;
     void initializeVideoDecodingCapabilities() final;
     void initializeAudioEncodingCapabilities() final;
     void initializeVideoEncodingCapabilities() final;
-    std::optional<MediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const VideoConfiguration&) final;
+    std::optional<PlatformMediaCapabilitiesDecodingInfo> videoDecodingCapabilitiesOverride(const PlatformMediaCapabilitiesVideoConfiguration&) final;
 };
 
 } // namespace WebCore
 
-#endif
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::GStreamerWebRTCProvider)
+static bool isType(const WebCore::WebRTCProvider& provider) { return provider.isWebCoreGStreamerWebRTCProvider(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+#endif // USE(GSTREAMER_WEBRTC)

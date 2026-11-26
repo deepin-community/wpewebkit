@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2022 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2015-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2016 Yusuke Suzuki <utatane.tea@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,12 +27,13 @@
 #pragma once
 
 #include "JSModuleLoader.h"
+#include "StructureCreateInlines.h"
 
 namespace JSC {
 
 Structure* JSModuleLoader::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(JSModuleLoaderType, StructureFlags), info());
 }
 
 } // namespace JSC

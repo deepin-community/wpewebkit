@@ -38,7 +38,7 @@
 namespace JSC { namespace DFG {
 
 class InPlaceAbstractState {
-    WTF_MAKE_TZONE_ALLOCATED(InPlaceAbstractState);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(InPlaceAbstractState);
 public:
     InPlaceAbstractState(Graph&);
     
@@ -55,13 +55,13 @@ public:
 
     ALWAYS_INLINE AbstractValue& fastForward(AbstractValue& value)
     {
-        value.fastForwardTo(m_effectEpoch);
+        value.fastForwardTo(m_graph, m_effectEpoch);
         return value;
     }
     
-    ALWAYS_INLINE void fastForwardAndFilterUnproven(AbstractValue& value, SpeculatedType type)
+    ALWAYS_INLINE FiltrationResult fastForwardAndFilterUnproven(AbstractValue& value, SpeculatedType type)
     {
-        value.fastForwardToAndFilterUnproven(m_effectEpoch, type);
+        return value.fastForwardToAndFilterUnproven(m_graph, m_effectEpoch, type);
     }
     
     ALWAYS_INLINE AbstractValue& forNodeWithoutFastForward(NodeFlowProjection node)
@@ -327,7 +327,7 @@ public:
     
     // Reset the AbstractState. This throws away any results, and at this point
     // you can safely call beginBasicBlock() on any basic block.
-    void reset();
+    void NODELETE reset();
     
     AbstractInterpreterClobberState clobberState() const { return m_clobberState; }
     
@@ -367,8 +367,6 @@ public:
     void setStructureClobberState(StructureClobberState value) { m_structureClobberState = value; }
     void setIsValid(bool isValid) { m_isValid = isValid; }
     void setBranchDirection(BranchDirection branchDirection) { m_branchDirection = branchDirection; }
-
-    void setShouldTryConstantFolding(bool) { }
 
     void setProofStatus(Edge& edge, ProofStatus status)
     {

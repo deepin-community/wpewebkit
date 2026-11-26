@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WPEWebViewLegacy.h"
 
+#if USE(LIBWPE)
 #include "APIPageConfiguration.h"
 #include "APIViewClient.h"
 #include "DrawingAreaProxyCoordinatedGraphics.h"
@@ -64,6 +65,10 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
     m_viewStateFlags = { WebCore::ActivityState::WindowIsActive, WebCore::ActivityState::IsFocused, WebCore::ActivityState::IsVisible, WebCore::ActivityState::IsInWindow };
 
     createWebPage(configuration);
+
+    // Allow the DRM vblank timer creation code path to run - switch to a non-zero display ID.
+    static constexpr WebCore::PlatformDisplayID legacyDisplayID = 1;
+    m_pageProxy->windowScreenDidChange(legacyDisplayID);
 
     static struct wpe_view_backend_client s_backendClient = {
         // set_size
@@ -150,7 +155,12 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
             if (event->type == wpe_input_pointer_event_type_button && event->state == 1)
                 view.m_inputMethodFilter.cancelComposition();
             auto& page = view.page();
-            page.handleMouseEvent(WebKit::NativeWebMouseEvent(event, page.deviceScaleFactor()));
+            WebKit::NativeWebMouseEvent mouseEvent(event, page.deviceScaleFactor());
+#if ENABLE(DRAG_SUPPORT)
+            if (view.updateDrag(mouseEvent))
+                return;
+#endif
+            page.handleMouseEvent(mouseEvent);
         },
         // handle_axis_event
         [](void* data, struct wpe_input_axis_event* event)
@@ -167,8 +177,8 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
             // to a 'stop' event. Motion events with zero motion don't exist naturally,
             // so this allows a backend to express 'stop' events without changing API.
             // The wheel event phase is adjusted accordingly.
-            WebWheelEvent::Phase phase = WebWheelEvent::Phase::PhaseChanged;
-            WebWheelEvent::Phase momentumPhase = WebWheelEvent::Phase::PhaseNone;
+            WebWheelEvent::Phase phase = WebWheelEvent::Phase::Changed;
+            WebWheelEvent::Phase momentumPhase = WebWheelEvent::Phase::None;
 
 #if WPE_CHECK_VERSION(1, 5, 0)
             if (event->type & wpe_input_axis_event_type_mask_2d) {
@@ -176,7 +186,7 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
                 view.m_horizontalScrollActive = !!event2D->x_axis;
                 view.m_verticalScrollActive = !!event2D->y_axis;
                 if (!view.m_horizontalScrollActive && !view.m_verticalScrollActive)
-                    phase = WebWheelEvent::Phase::PhaseEnded;
+                    phase = WebWheelEvent::Phase::Ended;
 
                 auto& page = view.page();
                 page.handleNativeWheelEvent(WebKit::NativeWebWheelEvent(event, page.deviceScaleFactor(), phase, momentumPhase));
@@ -196,7 +206,7 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
             bool shouldDispatch = !!event->value;
             if (!view.m_horizontalScrollActive && !view.m_verticalScrollActive) {
                 shouldDispatch = true;
-                phase = WebWheelEvent::Phase::PhaseEnded;
+                phase = WebWheelEvent::Phase::Ended;
             }
 
             if (shouldDispatch) {
@@ -233,13 +243,13 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
 #endif
                         if (event->type != wpe_input_axis_event_type_null) {
                             page.handleNativeWheelEvent(WebKit::NativeWebWheelEvent(event, page.deviceScaleFactor(),
-                                axisEvent.phase, WebWheelEvent::Phase::PhaseNone));
+                                axisEvent.phase, WebWheelEvent::Phase::None));
                             handledThroughGestureController = true;
                         }
                     });
             }
 
-            page.handleTouchEvent(touchEvent);
+            page.handleTouchEvent(nullptr, touchEvent);
 #endif
         },
         // padding
@@ -253,16 +263,12 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
 #if ENABLE(FULLSCREEN_API) && WPE_CHECK_VERSION(1, 11, 1)
     static struct wpe_view_backend_fullscreen_client s_fullscreenClient = {
         // did_enter_fullscreen
-        [](void* data)
+        [](void*)
         {
-            auto& view = *reinterpret_cast<ViewLegacy*>(data);
-            view.page().fullScreenManager()->didEnterFullScreen();
         },
         // did_exit_fullscreen
-        [](void* data)
+        [](void*)
         {
-            auto& view = *reinterpret_cast<ViewLegacy*>(data);
-            view.page().fullScreenManager()->didExitFullScreen();
         },
         // request_enter_fullscreen
         [](void* data)
@@ -286,8 +292,8 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
 
     wpe_view_backend_initialize(m_backend);
 
-    auto& openerInfo = m_pageProxy->configuration().openerInfo();
-    m_pageProxy->initializeWebPage(openerInfo ? openerInfo->site : Site(aboutBlankURL()));
+    auto& pageConfiguration = m_pageProxy->configuration();
+    m_pageProxy->initializeWebPage(pageConfiguration.openedSite(), pageConfiguration.initialSandboxFlags(), pageConfiguration.initialReferrerPolicy());
 
     viewsVector().append(this);
 }
@@ -300,6 +306,11 @@ ViewLegacy::~ViewLegacy()
     // unregister it prior to 1.14.2 (see https://github.com/WebPlatformForEmbedded/libwpe/pull/129).
 #if ENABLE(FULLSCREEN_API) && WPE_CHECK_VERSION(1, 14, 2)
     wpe_view_backend_set_fullscreen_client(m_backend, nullptr, nullptr);
+#endif
+
+#if USE(ATK)
+    if (m_accessible)
+        webkitWebViewAccessibleSetWebView(m_accessible.get(), nullptr);
 #endif
 
     viewsVector().removeAll(this);
@@ -350,7 +361,7 @@ void ViewLegacy::synthesizeCompositionKeyPress(const String& text, std::optional
     // composition results. WPE doesn't have an equivalent, so we send VoidSymbol
     // here to WebCore. PlatformKeyEvent converts this code into VK_PROCESSKEY.
     static struct wpe_input_keyboard_event event = { 0, WPE_KEY_VoidSymbol, 0, true, 0 };
-    page().handleKeyboardEvent(WebKit::NativeWebKeyboardEvent(&event, text, false, NativeWebKeyboardEvent::HandledByInputMethod::Yes, WTFMove(underlines), WTFMove(selectionRange)));
+    page().handleKeyboardEvent(WebKit::NativeWebKeyboardEvent(&event, text, false, NativeWebKeyboardEvent::HandledByInputMethod::Yes, WTF::move(underlines), WTF::move(selectionRange)));
 }
 
 #if ENABLE(FULLSCREEN_API)
@@ -404,8 +415,21 @@ WebKit::WebPageProxy* ViewLegacy::platformWebPageProxyForGamepadInput()
 
 void ViewLegacy::callAfterNextPresentationUpdate(CompletionHandler<void()>&& callback)
 {
-    RELEASE_ASSERT(m_pageProxy->drawingArea());
-    downcast<DrawingAreaProxyCoordinatedGraphics>(*m_pageProxy->drawingArea()).dispatchAfterEnsuringDrawing(WTFMove(callback));
+    if (!m_pageProxy->drawingArea())
+        return callback();
+
+    downcast<DrawingAreaProxyCoordinatedGraphics>(*m_pageProxy->drawingArea()).dispatchAfterEnsuringDrawing(WTF::move(callback));
 }
 
+#if USE(ATK)
+WebKitWebViewAccessible* ViewLegacy::accessible() const
+{
+    if (!m_accessible)
+        m_accessible = webkitWebViewAccessibleNew(const_cast<ViewLegacy*>(this));
+    return m_accessible.get();
+}
+#endif
+
 } // namespace WKWPE
+
+#endif // USE(LIBWPE)

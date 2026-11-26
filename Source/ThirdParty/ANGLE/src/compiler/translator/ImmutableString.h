@@ -11,6 +11,7 @@
 #define COMPILER_TRANSLATOR_IMMUTABLESTRING_H_
 
 #include <string>
+#include "common/unsafe_buffers.h"
 
 #include "common/string_utils.h"
 #include "common/utilities.h"
@@ -44,7 +45,7 @@ class ImmutableString
     constexpr const char *data() const { return mData ? mData : ""; }
     constexpr size_t length() const { return mLength; }
 
-    char operator[](size_t index) const { return data()[index]; }
+    char operator[](size_t index) const { return ANGLE_UNSAFE_TODO(data()[index]); }
 
     constexpr bool empty() const { return mLength == 0; }
     constexpr bool beginsWith(const char *prefix) const
@@ -53,9 +54,13 @@ class ImmutableString
     }
     constexpr bool beginsWith(const ImmutableString &prefix) const
     {
-        return mLength >= prefix.length() && memcmp(data(), prefix.data(), prefix.length()) == 0;
+        return mLength >= prefix.length() &&
+               ANGLE_UNSAFE_TODO(memcmp(data(), prefix.data(), prefix.length())) == 0;
     }
-    bool contains(const char *substr) const { return strstr(data(), substr) != nullptr; }
+    bool contains(const char *substr) const
+    {
+        return ANGLE_UNSAFE_TODO(strstr(data(), substr)) != nullptr;
+    }
 
     constexpr bool operator==(const ImmutableString &b) const
     {
@@ -63,7 +68,7 @@ class ImmutableString
         {
             return false;
         }
-        return memcmp(data(), b.data(), mLength) == 0;
+        return ANGLE_UNSAFE_TODO(memcmp(data(), b.data(), mLength)) == 0;
     }
     constexpr bool operator!=(const ImmutableString &b) const { return !(*this == b); }
     constexpr bool operator==(const char *b) const
@@ -72,12 +77,12 @@ class ImmutableString
         {
             return empty();
         }
-        return strcmp(data(), b) == 0;
+        return ANGLE_UNSAFE_TODO(strcmp(data(), b)) == 0;
     }
     constexpr bool operator!=(const char *b) const { return !(*this == b); }
     bool operator==(const std::string &b) const
     {
-        return mLength == b.length() && memcmp(data(), b.c_str(), mLength) == 0;
+        return mLength == b.length() && ANGLE_UNSAFE_TODO(memcmp(data(), b.c_str(), mLength)) == 0;
     }
     bool operator!=(const std::string &b) const { return !(*this == b); }
 
@@ -91,7 +96,7 @@ class ImmutableString
         {
             return false;
         }
-        return (memcmp(data(), b.data(), mLength) < 0);
+        return (ANGLE_UNSAFE_TODO(memcmp(data(), b.data(), mLength)) < 0);
     }
 
     template <size_t hashBytes>
@@ -108,7 +113,7 @@ class ImmutableString
             {
                 hash = hash ^ (*data);
                 hash = hash * kFnvPrime;
-                ++data;
+                ANGLE_UNSAFE_TODO(++data);
             }
             return hash;
         }
@@ -124,8 +129,9 @@ class ImmutableString
 };
 
 constexpr ImmutableString kEmptyImmutableString("");
-}  // namespace sh
 
-std::ostream &operator<<(std::ostream &os, const sh::ImmutableString &str);
+std::ostream &operator<<(std::ostream &os, const ImmutableString &str);
+
+}  // namespace sh
 
 #endif  // COMPILER_TRANSLATOR_IMMUTABLESTRING_H_

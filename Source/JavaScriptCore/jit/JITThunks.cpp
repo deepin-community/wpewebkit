@@ -39,6 +39,8 @@
 #include "YarrJIT.h"
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JITThunks);
@@ -53,11 +55,10 @@ void JITThunks::initialize(VM& vm)
 #define JSC_DEFINE_COMMON_JIT_THUNK(name, func) \
     m_commonThunks[static_cast<unsigned>(CommonJITThunkID::name)] = func(vm);
 JSC_FOR_EACH_COMMON_THUNK(JSC_DEFINE_COMMON_JIT_THUNK)
-JSC_FOR_EACH_YARR_JIT_BACKREFERENCES_THUNK(JSC_DEFINE_COMMON_JIT_THUNK)
 #undef JSC_DEFINE_COMMON_JIT_THUNK
 }
 
-static inline NativeExecutable& getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
+static inline NativeExecutable& NODELETE getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
 {
     // This never gets Deleted / Empty slots.
     WeakImpl* impl = weak.unsafeImpl();
@@ -73,7 +74,7 @@ static inline NativeExecutable& getMayBeDyingNativeExecutable(const Weak<NativeE
 
 inline unsigned JITThunks::WeakNativeExecutableHash::hash(const NativeExecutable* executable)
 {
-    return hash(executable->function(), executable->constructor(), executable->implementationVisibility(), executable->name());
+    return hash(executable->function(), executable->constructor(), executable->implementationVisibility(), executable->length(), executable->name());
 }
 
 inline unsigned JITThunks::WeakNativeExecutableHash::hash(const Weak<NativeExecutable>& key)
@@ -85,7 +86,7 @@ inline bool JITThunks::WeakNativeExecutableHash::equal(const NativeExecutable& a
 {
     if (&a == &b)
         return true;
-    return a.function() == b.function() && a.constructor() == b.constructor() && a.implementationVisibility() == b.implementationVisibility() && a.name() == b.name();
+    return a.function() == b.function() && a.constructor() == b.constructor() && a.implementationVisibility() == b.implementationVisibility() && a.length() == b.length() && a.name() == b.name();
 }
 
 inline bool JITThunks::WeakNativeExecutableHash::equal(const Weak<NativeExecutable>& a, const Weak<NativeExecutable>& b)
@@ -101,7 +102,7 @@ inline bool JITThunks::WeakNativeExecutableHash::equal(const Weak<NativeExecutab
 inline bool JITThunks::WeakNativeExecutableHash::equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b)
 {
     auto& aExecutable = getMayBeDyingNativeExecutable(a);
-    return aExecutable.function() == std::get<0>(b) && aExecutable.constructor() == std::get<1>(b) && aExecutable.implementationVisibility() == std::get<2>(b) && aExecutable.name() == std::get<3>(b);
+    return aExecutable.function() == std::get<0>(b) && aExecutable.constructor() == std::get<1>(b) && aExecutable.implementationVisibility() == std::get<2>(b) && aExecutable.length() == std::get<3>(b) && aExecutable.name() == std::get<4>(b);
 }
 
 CodePtr<JITThunkPtrTag> JITThunks::ctiNativeCall(VM&)
@@ -203,20 +204,20 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(CommonJITThunkID thunkI
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiSlowPathFunctionStub(VM& vm, SlowPathFunction slowPathFunction)
 {
-    auto key = bitwise_cast<ThunkGenerator>(slowPathFunction);
+    auto key = std::bit_cast<ThunkGenerator>(slowPathFunction);
     return ctiStubImpl(key, [&] {
         return JITSlowPathCall::generateThunk(vm, slowPathFunction);
     });
 }
 
 struct JITThunks::HostKeySearcher {
-    static unsigned hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
-    static bool equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
+    static unsigned NODELETE hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
+    static bool NODELETE equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
 };
 
 struct JITThunks::NativeExecutableTranslator {
-    static unsigned hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
-    static bool equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
+    static unsigned NODELETE hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
+    static bool NODELETE equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
     static void translate(Weak<NativeExecutable>& location, NativeExecutable* executable, unsigned)
     {
         location = Weak<NativeExecutable>(executable, executable->vm().jitStubs.get());
@@ -226,9 +227,9 @@ struct JITThunks::NativeExecutableTranslator {
 void JITThunks::finalize(Handle<Unknown> handle, void*)
 {
     auto* nativeExecutable = static_cast<NativeExecutable*>(handle.get().asCell());
-    auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->name());
+    auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->length(), nativeExecutable->name());
     {
-        DisallowGC disallowGC;
+        AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
         // Because this finalizer is called, this means that we still have dead Weak<> in m_nativeExecutableSet.
         ASSERT(iterator != m_nativeExecutableSet.end());
@@ -237,19 +238,19 @@ void JITThunks::finalize(Handle<Unknown> handle, void*)
     }
 }
 
-NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, const String& name)
+NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, unsigned length, const String& name)
 {
-    return hostFunctionStub(vm, function, constructor, nullptr, implementationVisibility, NoIntrinsic, nullptr, name);
+    return hostFunctionStub(vm, function, constructor, nullptr, implementationVisibility, NoIntrinsic, nullptr, length, name);
 }
 
-NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, TaggedNativeFunction constructor, ThunkGenerator generator, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, const DOMJIT::Signature* signature, const String& name)
+NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, TaggedNativeFunction constructor, ThunkGenerator generator, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
-    ASSERT(!isCompilationThread());    
+    ASSERT(!isCompilationThread());
     ASSERT(Options::useJIT());
 
-    auto hostFunctionKey = std::make_tuple(function, constructor, implementationVisibility, name);
+    auto hostFunctionKey = std::make_tuple(function, constructor, implementationVisibility, length, name);
     {
-        DisallowGC disallowGC;
+        AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
         if (iterator != m_nativeExecutableSet.end()) {
             // It is possible that this returns Weak<> which is Dead, but not finalized.
@@ -267,12 +268,12 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
         forCall = adoptRef(new NativeDOMJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(ctiNativeCall(vm).retagged<JSEntryPtrTag>()), JITType::HostCallThunk, intrinsic, signature));
     else
         forCall = adoptRef(new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(ctiNativeCall(vm).retagged<JSEntryPtrTag>()), JITType::HostCallThunk, intrinsic));
-    
+
     Ref<JSC::JITCode> forConstruct = adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(ctiNativeConstruct(vm).retagged<JSEntryPtrTag>()), JITType::HostCallThunk, NoIntrinsic));
-    
-    NativeExecutable* nativeExecutable = NativeExecutable::create(vm, forCall.releaseNonNull(), function, WTFMove(forConstruct), constructor, implementationVisibility, name);
+
+    NativeExecutable* nativeExecutable = NativeExecutable::create(vm, forCall.releaseNonNull(), function, WTF::move(forConstruct), constructor, implementationVisibility, length, name);
     {
-        DisallowGC disallowGC;
+        AssertNoGC assertNoGC;
         auto addResult = m_nativeExecutableSet.add<NativeExecutableTranslator>(nativeExecutable);
         if (!addResult.isNewEntry) {
             // Override the existing Weak<NativeExecutable> with the new one since it is dead.
@@ -290,11 +291,13 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
     return nativeExecutable;
 }
 
-NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, ThunkGenerator generator, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, const String& name)
+NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, ThunkGenerator generator, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, unsigned length, const String& name)
 {
-    return hostFunctionStub(vm, function, callHostFunctionAsConstructor, generator, implementationVisibility, intrinsic, nullptr, name);
+    return hostFunctionStub(vm, function, callHostFunctionAsConstructor, generator, implementationVisibility, intrinsic, nullptr, length, name);
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(JIT)

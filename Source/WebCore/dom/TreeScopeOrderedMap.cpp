@@ -32,6 +32,7 @@
 #include "TreeScopeOrderedMap.h"
 
 #include "ContainerNodeAlgorithms.h"
+#include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "HTMLImageElement.h"
 #include "HTMLLabelElement.h"
@@ -39,8 +40,11 @@
 #include "HTMLNameCollection.h"
 #include "TreeScopeInlines.h"
 #include "TypedElementDescendantIteratorInlines.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TreeScopeOrderedMap);
 
 using namespace HTMLNames;
 
@@ -53,7 +57,7 @@ void TreeScopeOrderedMap::add(const AtomString& key, Element& element, const Tre
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!key.isNull());
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&element.treeScope() == &treeScope);
-    ASSERT_WITH_SECURITY_IMPLICATION(treeScope.rootNode().containsIncludingShadowDOM(&element));
+    ASSERT_WITH_SECURITY_IMPLICATION(treeScope.rootNode().isShadowIncludingInclusiveAncestorOf(&element));
 
     if (!element.isInTreeScope())
         return;
@@ -162,9 +166,9 @@ inline Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* TreeScopeOrdere
 
     if (entry.orderedList.isEmpty()) {
         entry.orderedList.reserveCapacity(entry.count);
-        auto elementDescendants = descendantsOfType<Element>(scope.protectedRootNode().get());
+        auto elementDescendants = descendantsOfType<Element>(scope.rootNode());
         for (auto it = entry.element ? elementDescendants.beginAt(*entry.element) : elementDescendants.begin(); it; ++it) {
-            if (keyMatches(key, *it))
+            if (keyMatches(key, protect(*it)))
                 entry.orderedList.append(*it);
         }
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(entry.orderedList.size() == entry.count);
@@ -191,7 +195,7 @@ RefPtr<HTMLMapElement> TreeScopeOrderedMap::getElementByMapName(const AtomString
 {
     return downcast<HTMLMapElement>(get(key, scope, [] (const AtomString& key, const Element& element) {
         auto* mapElement = dynamicDowncast<HTMLMapElement>(element);
-        return mapElement && mapElement->getName() == key;
+        return mapElement && (mapElement->getName() == key || mapElement->getIdAttribute() == key);
     }));
 }
 

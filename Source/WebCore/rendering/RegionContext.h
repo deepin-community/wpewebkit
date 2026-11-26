@@ -25,27 +25,28 @@
 
 #pragma once
 
-#include "AffineTransform.h"
-#include "IntRect.h"
+#include <WebCore/AffineTransform.h>
+#include <WebCore/IntRect.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
 
 class Path;
 
-class RegionContext : public CanMakeCheckedPtr<RegionContext> {
-    WTF_MAKE_FAST_ALLOCATED;
+class RegionContext : public CanMakeCheckedPtr<RegionContext, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+    WTF_MAKE_TZONE_ALLOCATED(RegionContext);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RegionContext);
 public:
     virtual ~RegionContext() = default;
 
     void pushTransform(const AffineTransform&);
-    void popTransform();
+    void NODELETE popTransform();
 
     void pushClip(const IntRect&);
     void pushClip(const Path&);
-    void popClip();
+    void NODELETE popClip();
 
     virtual bool isEventRegionContext() const { return false; }
     virtual bool isAccessibilityRegionContext() const { return false; }

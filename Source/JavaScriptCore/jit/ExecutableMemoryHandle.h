@@ -25,7 +25,10 @@
 
 #pragma once
 
-#include "JSExportMacros.h"
+#include <JavaScriptCore/JSExportMacros.h>
+#include <bmalloc/BPlatform.h>
+#include <wtf/CodePtr.h>
+#include <wtf/RawPointer.h>
 
 #if ENABLE(LIBPAS_JIT_HEAP) && ENABLE(JIT)
 #include <wtf/CodePtr.h>
@@ -34,11 +37,8 @@
 #include <wtf/MetaAllocatorHandle.h>
 #endif
 
-#if !USE(SYSTEM_MALLOC)
-#include <bmalloc/BPlatform.h>
-#if BENABLE(LIBPAS) && (OS(DARWIN) || OS(LINUX))
+#if BENABLE(LIBPAS) && (OS(DARWIN) || OS(LINUX) || OS(WINDOWS))
 #define ENABLE_LIBPAS_JIT_HEAP 1
-#endif
 #endif
 
 namespace JSC {
@@ -46,7 +46,7 @@ namespace JSC {
 #if ENABLE(LIBPAS_JIT_HEAP) && ENABLE(JIT)
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ExecutableMemoryHandle);
 class ExecutableMemoryHandle : public ThreadSafeRefCounted<ExecutableMemoryHandle> {
-    WTF_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(ExecutableMemoryHandle);
+    WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(ExecutableMemoryHandle, ExecutableMemoryHandle);
 
 public:
     using MemoryPtr = CodePtr<WTF::HandleMemoryPtrTag>;

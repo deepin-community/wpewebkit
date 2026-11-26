@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2007-2008 Torch Mobile, Inc.
  *
  * This library is free software; you can redistribute it and/or
@@ -21,35 +21,29 @@
 
 #pragma once
 
-#include "FloatRect.h"
-#include "FontMetrics.h"
-#include "FontPlatformData.h"
-#include "GlyphBuffer.h"
-#include "GlyphMetricsMap.h"
-#include "GlyphPage.h"
-#include "RenderingResourceIdentifier.h"
-#include <variant>
+#include <WebCore/FloatRect.h>
+#include <WebCore/FontMetrics.h>
+#include <WebCore/FontPlatformData.h>
+#include <WebCore/GlyphBuffer.h>
+#include <WebCore/GlyphMetricsMap.h>
+#include <WebCore/RenderingResourceIdentifier.h>
+#include <WebCore/TrustedFonts.h>
 #include <wtf/BitVector.h>
-#include <wtf/Hasher.h>
+#include <wtf/Platform.h>
 #include <wtf/WeakPtr.h>
-#include <wtf/text/StringHash.h>
 
 #if PLATFORM(COCOA)
-#include <CoreFoundation/CoreFoundation.h>
 #include <pal/cf/OTSVGTable.h>
-#include <wtf/RetainPtr.h>
-#endif
-
-#if ENABLE(MATHML)
-#include "OpenTypeMathData.h"
-#endif
-
-#if ENABLE(OPENTYPE_VERTICAL)
-#include "OpenTypeVerticalData.h"
 #endif
 
 #if PLATFORM(WIN)
 #include <usp10.h>
+#endif
+
+#if USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkTextBlob.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WTF {
@@ -61,14 +55,20 @@ namespace WebCore {
 class FontCache;
 class FontDescription;
 class GlyphPage;
+#if ENABLE(MATHML)
+class OpenTypeMathData;
+#endif
+#if ENABLE(OPENTYPE_VERTICAL)
+class OpenTypeVerticalData;
+#endif
 
 struct GlyphData;
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
 struct MultiRepresentationHEICMetrics;
 #endif
 
-enum FontVariant : uint8_t { AutoVariant, NormalVariant, SmallCapsVariant, EmphasisMarkVariant, BrokenIdeographVariant };
-enum Pitch : uint8_t { UnknownPitch, FixedPitch, VariablePitch };
+enum class FontVariant : uint8_t { Auto, Normal, SmallCaps, EmphasisMark, BrokenIdeograph };
+enum class PitchType : uint8_t { Unknown, Fixed, Variable };
 enum class IsForPlatformFont : bool { No, Yes };
 
 // Used to create platform fonts.
@@ -78,7 +78,10 @@ enum class FontVisibility : bool { Visible, Invisible };
 enum class FontIsOrientationFallback : bool { No, Yes };
 
 #if USE(CORE_TEXT)
+using IPCFontData = Variant<WebCore::InstalledFont, WebCore::CustomFontCreationData>;
+
 bool fontHasEitherTable(CTFontRef, unsigned tableTag1, unsigned tableTag2);
+bool supportsOpenTypeFeature(CTFontRef, CFStringRef featureTag);
 #endif
 
 struct FontInternalAttributes {
@@ -93,7 +96,7 @@ struct FontInternalAttributes {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Font);
 class Font : public RefCounted<Font>, public CanMakeSingleThreadWeakPtr<Font> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Font);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Font, Font);
 public:
     using Origin = FontOrigin;
     using IsInterstitial = FontIsInterstitial;
@@ -101,19 +104,19 @@ public:
     using IsOrientationFallback = FontIsOrientationFallback;
 
     WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
-    WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic);
+    WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic, DownloadableBinaryFontTrustedTypes);
     WEBCORE_EXPORT static Ref<Font> create(WebCore::FontInternalAttributes&&, WebCore::FontPlatformData&&);
 
     WEBCORE_EXPORT ~Font();
 
-    static const Font* systemFallback() { return reinterpret_cast<const Font*>(-1); }
-
-    const FontPlatformData& platformData() const { return m_platformData; }
+    static Ref<Font> createSystemFallbackFontPlaceholder() { return adoptRef(*new Font(IsSystemFallbackFontPlaceholder::Yes)); }
+    bool isSystemFontFallbackPlaceholder() const { return m_isSystemFontFallbackPlaceholder; }
+    const FontPlatformData& platformData() const LIFETIME_BOUND { return m_platformData; }
 #if ENABLE(MATHML)
     const OpenTypeMathData* mathData() const;
 #endif
 #if ENABLE(OPENTYPE_VERTICAL)
-    const OpenTypeVerticalData* verticalData() const { return m_verticalData.get(); }
+    inline const OpenTypeVerticalData* verticalData() const;
 #endif
 
     WEBCORE_EXPORT RenderingResourceIdentifier renderingResourceIdentifier() const;
@@ -122,20 +125,21 @@ public:
     const Font& noSynthesizableFeaturesFont() const;
     const Font* emphasisMarkFont(const FontDescription&) const;
     const Font& brokenIdeographFont() const;
+    const RefPtr<Font> halfWidthFont() const;
 
     bool isProbablyOnlyUsedToRenderIcons() const;
 
     const Font* variantFont(const FontDescription& description, FontVariant variant) const
     {
         switch (variant) {
-        case SmallCapsVariant:
+        case FontVariant::SmallCaps:
             return smallCapsFont(description);
-        case EmphasisMarkVariant:
+        case FontVariant::EmphasisMark:
             return emphasisMarkFont(description);
-        case BrokenIdeographVariant:
+        case FontVariant::BrokenIdeograph:
             return &brokenIdeographFont();
-        case AutoVariant:
-        case NormalVariant:
+        case FontVariant::Auto:
+        case FontVariant::Normal:
             break;
         }
         ASSERT_NOT_REACHED();
@@ -151,7 +155,7 @@ public:
     bool hasVerticalGlyphs() const { return m_hasVerticalGlyphs; }
     bool isTextOrientationFallback() const { return m_attributes.isTextOrientationFallback == IsOrientationFallback::Yes; }
 
-    const FontMetrics& fontMetrics() const { return m_fontMetrics; }
+    const FontMetrics& fontMetrics() const LIFETIME_BOUND { return m_fontMetrics; }
     float sizePerUnit() const { return platformData().size() / (fontMetrics().unitsPerEm() ? fontMetrics().unitsPerEm() : 1); }
 
     float maxCharWidth() const { return m_maxCharWidth; }
@@ -161,17 +165,27 @@ public:
     void setAvgCharWidth(float avgCharWidth) { m_avgCharWidth = avgCharWidth; }
 
     FloatRect boundsForGlyph(Glyph) const;
+#if USE(CORE_TEXT) || USE(SKIA)
+    static constexpr size_t inlineGlyphRunCapacity = 256;
+    Vector<FloatRect, inlineGlyphRunCapacity> boundsForGlyphs(std::span<const Glyph>) const;
+#endif
 
     // Should the result of this function include the results of synthetic bold?
     enum class SyntheticBoldInclusion {
         Incorporate,
         Exclude
     };
+
+    enum class IsSystemFallbackFontPlaceholder : bool {
+        No,
+        Yes
+    };
+
     float widthForGlyph(Glyph, SyntheticBoldInclusion = SyntheticBoldInclusion::Incorporate) const;
 
     Path pathForGlyph(Glyph) const;
 
-    float spaceWidth(SyntheticBoldInclusion SyntheticBoldInclusion = SyntheticBoldInclusion::Incorporate) const
+    float NODELETE spaceWidth(SyntheticBoldInclusion SyntheticBoldInclusion = SyntheticBoldInclusion::Incorporate) const
     {
         return m_spaceWidth + (SyntheticBoldInclusion == SyntheticBoldInclusion::Incorporate ? syntheticBoldOffset() : 0);
     }
@@ -192,7 +206,7 @@ public:
     const GlyphPage* glyphPage(unsigned pageNumber) const;
 
     void determinePitch();
-    Pitch pitch() const { return m_treatAsFixedPitch ? FixedPitch : VariablePitch; }
+    PitchType pitch() const { return m_treatAsFixedPitch ? PitchType::Fixed : PitchType::Variable; }
     bool canTakeFixedPitchFastContentMeasuring() const { return m_canTakeFixedPitchFastContentMeasuring; }
 
     Origin origin() const { return m_attributes.origin; }
@@ -208,55 +222,70 @@ public:
     bool shouldNotBeUsedForArabic() const { return m_shouldNotBeUsedForArabic; };
 #endif
 #if USE(CORE_TEXT)
-    CTFontRef getCTFont() const { return m_platformData.ctFont(); }
-    RetainPtr<CFDictionaryRef> getCFStringAttributes(bool enableKerning, FontOrientation, const AtomString& locale) const;
+    CTFontRef ctFont() const { return m_platformData.ctFont(); }
     bool supportsSmallCaps() const;
     bool supportsAllSmallCaps() const;
     bool supportsPetiteCaps() const;
     bool supportsAllPetiteCaps() const;
+    bool supportsOpenTypeAlternateHalfWidths() const;
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     MultiRepresentationHEICMetrics metricsForMultiRepresentationHEIC() const;
 #endif
+#endif
+
+#if USE(SKIA)
+    sk_sp<SkTextBlob> buildTextBlob(std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, FontSmoothingMode) const;
+    bool enableAntialiasing(FontSmoothingMode) const;
 #endif
 
     bool canRenderCombiningCharacterSequence(StringView) const;
     GlyphBufferAdvance applyTransforms(GlyphBuffer&, unsigned beginningGlyphIndex, unsigned beginningStringIndex, bool enableKerning, bool requiresShaping, const AtomString& locale, StringView text, TextDirection) const;
 
     // Returns nullopt if none of the glyphs are OT-SVG glyphs.
-    std::optional<BitVector> findOTSVGGlyphs(const GlyphBufferGlyph*, unsigned count) const;
+    std::optional<BitVector> findOTSVGGlyphs(std::span<const GlyphBufferGlyph>) const;
 
-    bool hasAnyComplexColorFormatGlyphs(const GlyphBufferGlyph*, unsigned count) const;
-
+    bool hasAnyComplexColorFormatGlyphs(std::span<const GlyphBufferGlyph>) const;
+#if USE(CORE_TEXT)
+    WEBCORE_EXPORT static std::optional<Ref<Font>> fromIPCData(IPCFontData&&);
+    WEBCORE_EXPORT IPCFontData toSerializableFont() const;
+    WEBCORE_EXPORT std::optional<InstalledFont> toSerializableInstalledFont() const;
+#endif
 #if PLATFORM(WIN)
-    SCRIPT_CACHE* scriptCache() const { return &m_scriptCache; }
+    SCRIPT_CACHE* scriptCache() const LIFETIME_BOUND { return &m_scriptCache; }
 #endif
 
     void setIsUsedInSystemFallbackFontCache() { m_isUsedInSystemFallbackFontCache = true; }
     bool isUsedInSystemFallbackFontCache() const { return m_isUsedInSystemFallbackFontCache; }
 
     using Attributes = FontInternalAttributes;
-    const Attributes& attributes() const { return m_attributes; }
+    const Attributes& attributes() const LIFETIME_BOUND { return m_attributes; }
 
     ColorGlyphType colorGlyphType(Glyph) const;
 
 private:
     WEBCORE_EXPORT Font(const FontPlatformData&, Origin, IsInterstitial, Visibility, IsOrientationFallback, std::optional<RenderingResourceIdentifier>);
+    Font(IsSystemFallbackFontPlaceholder);
 
     void platformInit();
     void platformGlyphInit();
     void platformCharWidthInit();
-    void platformDestroy();
+    void NODELETE platformDestroy();
 
     void initCharWidths();
 
     RefPtr<Font> createFontWithoutSynthesizableFeatures() const;
     RefPtr<Font> createScaledFont(const FontDescription&, float scaleFactor) const;
     RefPtr<Font> platformCreateScaledFont(const FontDescription&, float scaleFactor) const;
+    RefPtr<Font> createHalfWidthFont() const;
+    RefPtr<Font> platformCreateHalfWidthFont() const;
 
     struct DerivedFonts;
     DerivedFonts& ensureDerivedFontData() const;
 
     FloatRect platformBoundsForGlyph(Glyph) const;
+#if USE(CORE_TEXT) || USE(SKIA)
+    Vector<FloatRect, inlineGlyphRunCapacity> platformBoundsForGlyphs(const Vector<Glyph, inlineGlyphRunCapacity>&) const;
+#endif
     float platformWidthForGlyph(Glyph) const;
     Path platformPathForGlyph(Glyph) const;
 
@@ -315,7 +344,7 @@ private:
     Attributes m_attributes;
 
     struct DerivedFonts {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DerivedFonts);
     public:
 
         RefPtr<Font> smallCapsFont;
@@ -325,16 +354,23 @@ private:
         RefPtr<Font> verticalRightOrientationFont;
         RefPtr<Font> uprightOrientationFont;
         RefPtr<Font> invisibleFont;
+        RefPtr<Font> halfWidthFont;
     };
 
     mutable std::unique_ptr<DerivedFonts> m_derivedFontData;
 
     struct NoEmojiGlyphs { };
+#if USE(SKIA)
     struct AllEmojiGlyphs { };
+#endif
     struct SomeEmojiGlyphs {
         BitVector colorGlyphs;
     };
-    using EmojiType = std::variant<NoEmojiGlyphs, AllEmojiGlyphs, SomeEmojiGlyphs>;
+#if USE(SKIA)
+    using EmojiType = Variant<NoEmojiGlyphs, AllEmojiGlyphs, SomeEmojiGlyphs>;
+#else
+    using EmojiType = Variant<NoEmojiGlyphs, SomeEmojiGlyphs>;
+#endif
     EmojiType m_emojiType { NoEmojiGlyphs { } };
 
 #if PLATFORM(COCOA)
@@ -350,6 +386,7 @@ private:
     mutable SupportsFeature m_supportsAllSmallCaps { SupportsFeature::Unknown };
     mutable SupportsFeature m_supportsPetiteCaps { SupportsFeature::Unknown };
     mutable SupportsFeature m_supportsAllPetiteCaps { SupportsFeature::Unknown };
+    mutable SupportsFeature m_supportsOpenTypeAlternateHalfWidths { SupportsFeature::Unknown };
 #endif
 
 #if PLATFORM(WIN)
@@ -371,6 +408,8 @@ private:
     
     unsigned m_allowsAntialiasing : 1;
 
+    unsigned m_isSystemFontFallbackPlaceholder : 1 { false };
+
 #if PLATFORM(IOS_FAMILY)
     unsigned m_shouldNotBeUsedForArabic : 1;
 #endif
@@ -382,51 +421,9 @@ private:
 bool fontFamilyShouldNotBeUsedForArabic(CFStringRef);
 #endif
 
-ALWAYS_INLINE FloatRect Font::boundsForGlyph(Glyph glyph) const
-{
-    if (isZeroWidthSpaceGlyph(glyph))
-        return FloatRect();
-
-    FloatRect bounds;
-    if (m_glyphToBoundsMap) {
-        bounds = m_glyphToBoundsMap->metricsForGlyph(glyph);
-        if (bounds.width() != cGlyphSizeUnknown)
-            return bounds;
-    }
-
-    bounds = platformBoundsForGlyph(glyph);
-    if (!m_glyphToBoundsMap)
-        m_glyphToBoundsMap = makeUnique<GlyphMetricsMap<FloatRect>>();
-    m_glyphToBoundsMap->setMetricsForGlyph(glyph, bounds);
-    return bounds;
-}
-
-ALWAYS_INLINE float Font::widthForGlyph(Glyph glyph, SyntheticBoldInclusion SyntheticBoldInclusion) const
-{
-    // The optimization of returning 0 for the zero-width-space glyph is incorrect for the LastResort font,
-    // used in place of the actual font when isLoading() is true on both macOS and iOS.
-    // The zero-width-space glyph in that font does not have a width of zero and, further, that glyph is used
-    // for many other characters and must not be zero width when used for them.
-    if (isZeroWidthSpaceGlyph(glyph) && !isInterstitial())
-        return 0;
-
-    float width = m_glyphToWidthMap.metricsForGlyph(glyph);
-    if (width != cGlyphSizeUnknown)
-        return width + (SyntheticBoldInclusion == SyntheticBoldInclusion::Incorporate ? syntheticBoldOffset() : 0);
-
-#if ENABLE(OPENTYPE_VERTICAL)
-    if (m_verticalData)
-        width = m_verticalData->advanceHeight(this, glyph);
-    else
-#endif
-        width = platformWidthForGlyph(glyph);
-
-    m_glyphToWidthMap.setMetricsForGlyph(glyph, width);
-    return width + (SyntheticBoldInclusion == SyntheticBoldInclusion::Incorporate ? syntheticBoldOffset() : 0);
-}
-
 #if !LOG_DISABLED
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, const Font&);
+TextStream& operator<<(TextStream&, const GlyphBuffer&);
 #endif
 
 } // namespace WebCore

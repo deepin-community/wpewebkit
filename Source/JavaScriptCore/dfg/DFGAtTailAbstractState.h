@@ -30,7 +30,7 @@
 #include "DFGAbstractInterpreterClobberState.h"
 #include "DFGAbstractValue.h"
 #include "DFGBasicBlock.h"
-#include "DFGBlockMap.h"
+#include <wtf/IndexMap.h>
 #include "DFGGraph.h"
 #include "DFGNodeFlowProjection.h"
 
@@ -53,7 +53,12 @@ public:
     
     AbstractValue& fastForward(AbstractValue& value) { return value; }
     
-    AbstractValue& forNode(NodeFlowProjection);
+    AbstractValue& forNode(NodeFlowProjection node)
+    {
+        ASSERT(!node->isTuple());
+        return forNodeImpl(node);
+    }
+
     AbstractValue& forNode(Edge edge)
     {
         ASSERT(!edge.node()->isTuple());
@@ -71,17 +76,17 @@ public:
         return forNode(edge);
     }
     
-    ALWAYS_INLINE void fastForwardAndFilterUnproven(AbstractValue& value, SpeculatedType type)
+    ALWAYS_INLINE FiltrationResult fastForwardAndFilterUnproven(AbstractValue& value, SpeculatedType type)
     {
-        value.filter(type);
+        return value.filter(type);
     }
-    
+
     ALWAYS_INLINE void clearForNode(NodeFlowProjection node)
     {
-        ASSERT(!node->isTuple());
-        forNode(node).clear();
+        // Intentionally handle tuples too.
+        forNodeImpl(node).clear();
     }
-    
+
     ALWAYS_INLINE void clearForNode(Edge edge)
     {
         clearForNode(edge.node());
@@ -257,7 +262,6 @@ public:
     void setStructureClobberState(StructureClobberState state) { RELEASE_ASSERT(state == m_block->cfaStructureClobberStateAtTail); }
     void setIsValid(bool isValid) { m_block->cfaDidFinish = isValid; }
     void setBranchDirection(BranchDirection) { }
-    void setShouldTryConstantFolding(bool) { }
 
     void trustEdgeProofs() { m_trustEdgeProofs = true; }
     void dontTrustEdgeProofs() { m_trustEdgeProofs = false; }
@@ -268,9 +272,11 @@ public:
     }
 
 private:
+    AbstractValue& forNodeImpl(NodeFlowProjection);
+
     Graph& m_graph;
-    BlockMap<HashMap<NodeFlowProjection, AbstractValue>> m_valuesAtTailMap;
-    BlockMap<Vector<AbstractValue>> m_tupleAbstractValues;
+    IndexMap<BasicBlock*, UncheckedKeyHashMap<NodeFlowProjection, AbstractValue>> m_valuesAtTailMap;
+    IndexMap<BasicBlock*, Vector<AbstractValue>> m_tupleAbstractValues;
     BasicBlock* m_block { nullptr };
     bool m_trustEdgeProofs { false };
 };

@@ -127,7 +127,7 @@ TEST(WTF, Hasher_floatingPoint)
 {
     EXPECT_EQ(zero64BitHash, computeHash(0.0));
     EXPECT_EQ(1264532604U, computeHash(-0.0)); // Note, not same as hash of 0.0.
-    if (std::numeric_limits<double>::has_denorm == std::denorm_present)
+    if (std::numeric_limits<double>::is_iec559)
         EXPECT_EQ(one64BitHash, computeHash(std::numeric_limits<double>::denorm_min()));
 
     EXPECT_EQ(2278399980U, computeHash(1.0));
@@ -145,7 +145,7 @@ TEST(WTF, Hasher_floatingPoint)
 
     EXPECT_EQ(zero32BitHash, computeHash(0.0f));
     EXPECT_EQ(2425683428U, computeHash(-0.0f)); // Note, not same as hash of 0.0f.
-    if (std::numeric_limits<float>::has_denorm == std::denorm_present)
+    if (std::numeric_limits<float>::is_iec559)
         EXPECT_EQ(one32BitHash, computeHash(std::numeric_limits<float>::denorm_min()));
 
     EXPECT_EQ(1081575966U, computeHash(1.0f));
@@ -234,7 +234,7 @@ TEST(WTF, Hasher_RefPtr)
 namespace {
 
 struct CheckedObject final : public CanMakeCheckedPtr<CheckedObject> {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CheckedObject);
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(CheckedObject);
     CheckedObject() = default;
 };
@@ -243,11 +243,11 @@ struct CheckedObject final : public CanMakeCheckedPtr<CheckedObject> {
 
 TEST(WTF, Hasher_CheckedPtr)
 {
-    CheckedObject test;
-    CheckedObject test2;
+    auto test = makeUniqueRef<CheckedObject>();
+    auto test2 = makeUniqueRef<CheckedObject>();
 
     CheckedPtr<CheckedObject> nullCheckedPtr;
-    CheckedPtr<CheckedObject> nonNullCheckedPtr = &test;
+    CheckedPtr<CheckedObject> nonNullCheckedPtr = test.ptr();
 
     EXPECT_EQ(computeHash(nullCheckedPtr), computeHash(nullCheckedPtr.get()));
     EXPECT_EQ(computeHash(nonNullCheckedPtr), computeHash(nonNullCheckedPtr.get()));
@@ -260,7 +260,7 @@ TEST(WTF, Hasher_CheckedPtr)
     ptrVector.append(nonNullCheckedPtr.get());
     EXPECT_EQ(computeHash(checkedPtrVector), computeHash(ptrVector));
 
-    CheckedPtr<CheckedObject> nonNullCheckedPtr2 = &test2;
+    CheckedPtr<CheckedObject> nonNullCheckedPtr2 = test2.ptr();
 
     checkedPtrVector.append(nonNullCheckedPtr2);
     ptrVector.append(nonNullCheckedPtr2.get());

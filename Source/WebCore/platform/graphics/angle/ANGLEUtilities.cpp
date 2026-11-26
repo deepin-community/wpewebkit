@@ -84,6 +84,25 @@ ScopedRestoreReadFramebufferBinding::~ScopedRestoreReadFramebufferBinding()
         GL_BindFramebuffer(m_framebufferTarget, m_bindingValue);
 }
 
+ScopedReadBuffer::ScopedReadBuffer(GCGLenum mode, bool condition)
+{
+    if (!condition)
+        return;
+    GCGLint current = 0;
+    GL_GetIntegerv(GL_READ_BUFFER, &current);
+    if (static_cast<GCGLenum>(current) == mode)
+        return;
+    m_mode = static_cast<GCGLenum>(current);
+    m_changed = true;
+    GL_ReadBuffer(mode);
+}
+
+ScopedReadBuffer::~ScopedReadBuffer()
+{
+    if (m_changed)
+        GL_ReadBuffer(m_mode);
+}
+
 ScopedPixelStorageMode::ScopedPixelStorageMode(GCGLenum name, bool condition)
     : m_name(condition ? name : 0)
 {
@@ -134,21 +153,6 @@ ScopedFramebuffer::~ScopedFramebuffer()
 {
     GL_DeleteFramebuffers(1, &m_object);
 }
-
-void ScopedGLFence::reset()
-{
-    if (m_object) {
-        GL_DeleteSync(static_cast<GLsync>(m_object));
-        m_object = { };
-    }
-}
-
-void ScopedGLFence::fenceSync()
-{
-    reset();
-    m_object = GL_FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-}
-
 
 ScopedGLCapability::ScopedGLCapability(GCGLenum capability, bool enable)
     : m_capability(capability)

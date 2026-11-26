@@ -41,28 +41,28 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteBindGroupLayout);
 RemoteBindGroupLayout::RemoteBindGroupLayout(WebCore::WebGPU::BindGroupLayout& bindGroupLayout, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(bindGroupLayout)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteBindGroupLayout::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteBindGroupLayout::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteBindGroupLayout::~RemoteBindGroupLayout() = default;
 
 void RemoteBindGroupLayout::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteBindGroupLayout::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteBindGroupLayout::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteBindGroupLayout::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteBindGroupLayout::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

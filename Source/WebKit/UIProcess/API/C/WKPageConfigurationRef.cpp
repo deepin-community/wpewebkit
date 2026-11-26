@@ -27,6 +27,7 @@
 #include "WKPageConfigurationRef.h"
 
 #include "APIPageConfiguration.h"
+#include "APIWebsitePolicies.h"
 #include "BrowsingContextGroup.h"
 #include "WKAPICast.h"
 #include "WebPageGroup.h"
@@ -43,17 +44,17 @@ WKTypeID WKPageConfigurationGetTypeID()
 
 WKPageConfigurationRef WKPageConfigurationCreate()
 {
-    return toAPI(&API::PageConfiguration::create().leakRef());
+    return toAPILeakingRef(API::PageConfiguration::create());
 }
 
 WKContextRef WKPageConfigurationGetContext(WKPageConfigurationRef configuration)
 {
-    return toAPI(toImpl(configuration)->processPool());
+    return toAPI(protect(protect(toImpl(configuration))->processPool()).get());
 }
 
 void WKPageConfigurationSetContext(WKPageConfigurationRef configuration, WKContextRef context)
 {
-    toImpl(configuration)->setProcessPool(toImpl(context));
+    protect(toImpl(configuration))->setProcessPool(protect(toImpl(context)));
 }
 
 WKPageGroupRef WKPageConfigurationGetPageGroup(WKPageConfigurationRef)
@@ -67,42 +68,42 @@ void WKPageConfigurationSetPageGroup(WKPageConfigurationRef, WKPageGroupRef)
 
 WKUserContentControllerRef WKPageConfigurationGetUserContentController(WKPageConfigurationRef configuration)
 {
-    return toAPI(toImpl(configuration)->userContentController());
+    return toAPI(protect(protect(toImpl(configuration))->userContentController()).get());
 }
 
 void WKPageConfigurationSetUserContentController(WKPageConfigurationRef configuration, WKUserContentControllerRef userContentController)
 {
-    toImpl(configuration)->setUserContentController(toImpl(userContentController));
+    protect(toImpl(configuration))->setUserContentController(protect(toImpl(userContentController)));
 }
 
 WKPreferencesRef WKPageConfigurationGetPreferences(WKPageConfigurationRef configuration)
 {
-    return toAPI(toImpl(configuration)->preferences());
+    return toAPI(protect(protect(toImpl(configuration))->preferences()).get());
 }
 
 void WKPageConfigurationSetPreferences(WKPageConfigurationRef configuration, WKPreferencesRef preferences)
 {
-    toImpl(configuration)->setPreferences(toImpl(preferences));
+    protect(toImpl(configuration))->setPreferences(protect(toImpl(preferences)));
 }
 
 WKPageRef WKPageConfigurationGetRelatedPage(WKPageConfigurationRef configuration)
 {
-    return toAPI(toImpl(configuration)->relatedPage());
+    return toAPI(protect(toImpl(configuration)->relatedPage()).get());
 }
 
 void WKPageConfigurationSetRelatedPage(WKPageConfigurationRef configuration, WKPageRef relatedPage)
 {
-    toImpl(configuration)->setRelatedPage(toImpl(relatedPage));
+    toImpl(configuration)->setRelatedPage(protect(toImpl(relatedPage)));
 }
 
 WKWebsiteDataStoreRef WKPageConfigurationGetWebsiteDataStore(WKPageConfigurationRef configuration)
 {
-    return toAPI(toImpl(configuration)->websiteDataStore());
+    return toAPI(protect(protect(toImpl(configuration))->websiteDataStore()).get());
 }
 
 void WKPageConfigurationSetWebsiteDataStore(WKPageConfigurationRef configuration, WKWebsiteDataStoreRef websiteDataStore)
 {
-    toImpl(configuration)->setWebsiteDataStore(toImpl(websiteDataStore));
+    protect(toImpl(configuration))->setWebsiteDataStore(protect(toImpl(websiteDataStore)));
 }
 
 void WKPageConfigurationSetInitialCapitalizationEnabled(WKPageConfigurationRef configuration, bool enabled)
@@ -120,7 +121,22 @@ void WKPageConfigurationSetAllowTestOnlyIPC(WKPageConfigurationRef configuration
     toImpl(configuration)->setAllowTestOnlyIPC(allowTestOnlyIPC);
 }
 
+void WKPageConfigurationSetShouldSendConsoleLogsToUIProcessForTesting(WKPageConfigurationRef configuration, bool should)
+{
+    toImpl(configuration)->setShouldSendConsoleLogsToUIProcessForTesting(should);
+}
+
 void WKPageConfigurationSetPortsForUpgradingInsecureSchemeForTesting(WKPageConfigurationRef configuration, uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort)
 {
     toImpl(configuration)->setPortsForUpgradingInsecureSchemeForTesting(upgradeFromInsecurePort, upgradeToSecurePort);
+}
+
+WKWebsitePoliciesRef WKPageConfigurationGetDefaultWebsitePolicies(WKPageConfigurationRef configuration)
+{
+    return toAPI(protect(protect(toImpl(configuration))->defaultWebsitePolicies()).get());
+}
+
+void WKPageConfigurationSetDefaultWebsitePolicies(WKPageConfigurationRef configuration, WKWebsitePoliciesRef policies)
+{
+    protect(toImpl(configuration))->setDefaultWebsitePolicies(protect(toImpl(policies)));
 }

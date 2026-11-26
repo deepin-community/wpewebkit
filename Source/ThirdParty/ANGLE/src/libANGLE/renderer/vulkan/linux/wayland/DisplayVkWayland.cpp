@@ -8,6 +8,7 @@
 //
 
 #include "libANGLE/renderer/vulkan/linux/wayland/DisplayVkWayland.h"
+#include "common/unsafe_buffers.h"
 
 #include <wayland-client.h>
 
@@ -42,7 +43,7 @@ egl::Error DisplayVkWayland::initialize(egl::Display *display)
     if (!mWaylandDisplay)
     {
         ERR() << "Failed to retrieve wayland display";
-        return egl::EglNotInitialized();
+        return egl::Error(EGL_NOT_INITIALIZED);
     }
 
     egl::Error ret = DisplayVk::initialize(display);
@@ -89,7 +90,8 @@ egl::ConfigSet DisplayVkWayland::generateConfigs()
 
     std::vector<GLenum> depthStencilFormats(
         egl_vk::kConfigDepthStencilFormats,
-        egl_vk::kConfigDepthStencilFormats + ArraySize(egl_vk::kConfigDepthStencilFormats));
+        ANGLE_UNSAFE_TODO(egl_vk::kConfigDepthStencilFormats +
+                          ArraySize(egl_vk::kConfigDepthStencilFormats)));
 
     if (getCaps().stencil8)
     {

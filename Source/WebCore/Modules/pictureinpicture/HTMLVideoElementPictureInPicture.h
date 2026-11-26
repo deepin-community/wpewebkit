@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2019 Carlos Eduardo Ramalho <cadubentzen@gmail.com>.
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 
 #include "PictureInPictureObserver.h"
 #include "Supplementable.h"
+#include <wtf/CancellableTask.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
@@ -47,10 +48,10 @@ class HTMLVideoElementPictureInPicture
     , private LoggerHelper
 #endif
 {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLVideoElementPictureInPicture);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLVideoElementPictureInPicture);
 public:
     HTMLVideoElementPictureInPicture(HTMLVideoElement&);
-    static HTMLVideoElementPictureInPicture* from(HTMLVideoElement&);
+    static HTMLVideoElementPictureInPicture& from(HTMLVideoElement&);
     static void providePictureInPictureTo(HTMLVideoElement&);
     virtual ~HTMLVideoElementPictureInPicture();
 
@@ -68,28 +69,39 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "HTMLVideoElementPictureInPicture"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
 #endif
+
+    // PictureInPictureObserver.
+    void NODELETE ref() const final;
+    void deref() const final;
 
 private:
     static ASCIILiteral supplementName() { return "HTMLVideoElementPictureInPicture"_s; }
+    bool isHTMLVideoElementPictureInPicture() const final { return true; }
 
     bool m_autoPictureInPicture { false };
     bool m_disablePictureInPicture { false };
 
     WeakRef<HTMLVideoElement> m_videoElement;
-    RefPtr<PictureInPictureWindow> m_pictureInPictureWindow;
+    const Ref<PictureInPictureWindow> m_pictureInPictureWindow;
     RefPtr<DeferredPromise> m_enterPictureInPicturePromise;
     RefPtr<DeferredPromise> m_exitPictureInPicturePromise;
 
+    TaskCancellationGroup m_eventTaskGroup;
+
 #if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::HTMLVideoElementPictureInPicture)
+    static bool isType(const WebCore::SupplementBase& supplement) { return supplement.isHTMLVideoElementPictureInPicture(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(PICTURE_IN_PICTURE_API)

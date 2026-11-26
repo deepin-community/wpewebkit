@@ -28,25 +28,42 @@
 
 #if ENABLE(WHEEL_EVENT_LATCHING)
 
+#include "DocumentView.h"
 #include "Element.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
+#include "Page.h"
 #include "PlatformWheelEvent.h"
 #include "ScrollableArea.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollLatchingController);
+
 // See also ScrollTreeLatchingController.cpp
 static const Seconds resetLatchedStateTimeout { 100_ms };
 
-ScrollLatchingController::ScrollLatchingController()
-    : m_clearLatchingStateTimer(*this, &ScrollLatchingController::clearTimerFired)
+ScrollLatchingController::ScrollLatchingController(Page& page)
+    : m_page(page)
+    , m_clearLatchingStateTimer(*this, &ScrollLatchingController::clearTimerFired)
 {
 }
 
 ScrollLatchingController::~ScrollLatchingController() = default;
+
+void ScrollLatchingController::ref() const
+{
+    m_page->ref();
+}
+
+void ScrollLatchingController::deref() const
+{
+    m_page->deref();
+}
 
 void ScrollLatchingController::clear()
 {
@@ -119,12 +136,12 @@ void ScrollLatchingController::updateAndFetchLatchingStateForFrame(LocalFrame& f
             FrameState state;
             state.frame = &frame;
             state.wheelEventElement = latchedElement;
-            if (shouldLatchToScrollableArea(frame, scrollableArea.get(), m_cumulativeEventDelta))
+            if (shouldLatchToScrollableArea(frame, scrollableArea, m_cumulativeEventDelta))
                 state.scrollableArea = scrollableArea;
             state.isOverWidget = isOverWidget;
 
             LOG_WITH_STREAM(ScrollLatching, stream << "ScrollLatchingController::updateAndFetchLatchingStateForFrame() - pushing state for Frame " << &frame << " element " << state.wheelEventElement.get() << " scrollableArea " << state.scrollableArea);
-            m_frameStateStack.append(WTFMove(state));
+            m_frameStateStack.append(WTF::move(state));
             return;
         }
     }
@@ -135,7 +152,7 @@ void ScrollLatchingController::updateAndFetchLatchingStateForFrame(LocalFrame& f
             return;
 
         // We may not have latched at gesture start because of small deltas. Re-evaluate latching based on accumulated delta.
-        if (!state->scrollableArea && shouldLatchToScrollableArea(frame, scrollableArea.get(), m_cumulativeEventDelta))
+        if (!state->scrollableArea && shouldLatchToScrollableArea(frame, scrollableArea, m_cumulativeEventDelta))
             state->scrollableArea = scrollableArea;
     }
 
@@ -175,11 +192,11 @@ void ScrollLatchingController::removeLatchingStateForFrame(const LocalFrame& fra
         return;
 
     // If the frame was in the latching stack, just clear state.
-    if (auto* frameState = stateForFrame(frame))
+    if (stateForFrame(frame))
         clear();
 }
 
-static bool deltaIsPredominantlyVertical(FloatSize delta)
+static bool NODELETE scrollDeltaIsPredominantlyVertical(FloatSize delta)
 {
     return std::abs(delta.height()) > std::abs(delta.width());
 }
@@ -199,7 +216,7 @@ bool ScrollLatchingController::shouldLatchToScrollableArea(const LocalFrame& fra
     if (scrollDelta.isZero())
         return false;
 
-    if (!deltaIsPredominantlyVertical(scrollDelta) && scrollDelta.width()) {
+    if (!scrollDeltaIsPredominantlyVertical(scrollDelta) && scrollDelta.width()) {
         if (!scrollableArea->horizontalScrollbar())
             return false;
 
@@ -252,13 +269,13 @@ void ScrollLatchingController::dump(WTF::TextStream& ts) const
 
     for (const auto& state : m_frameStateStack) {
         TextStream::GroupScope groupScope(multilineStream);
-        multilineStream.dumpProperty("frame", ValueOrNull(state.frame));
-        multilineStream.dumpProperty("element", ValueOrNull(state.wheelEventElement.get()));
-        multilineStream.dumpProperty("scrollable area", ValueOrNull(state.scrollableArea.get()));
-        multilineStream.dumpProperty("is over widget", state.isOverWidget);
+        multilineStream.dumpProperty("frame"_s, ValueOrNull(state.frame.get()));
+        multilineStream.dumpProperty("element"_s, ValueOrNull(state.wheelEventElement.get()));
+        multilineStream.dumpProperty("scrollable area"_s, ValueOrNull(state.scrollableArea.get()));
+        multilineStream.dumpProperty("is over widget"_s, state.isOverWidget);
     }
 
-    ts << "ScrollLatchingController state " << multilineStream.release();
+    ts << "ScrollLatchingController state "_s << multilineStream.release();
 }
 
 TextStream& operator<<(TextStream& ts, const ScrollLatchingController& controller)

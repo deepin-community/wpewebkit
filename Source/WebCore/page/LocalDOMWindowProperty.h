@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2011 Google, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "LocalDOMWindow.h"
+#include <WebCore/LocalDOMWindow.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -34,8 +34,8 @@ class LocalFrame;
 
 class LocalDOMWindowProperty {
 public:
-    WEBCORE_EXPORT LocalFrame* frame() const;
-    LocalDOMWindow* window() const;
+    WEBCORE_EXPORT LocalFrame* NODELETE frame() const;
+    LocalDOMWindow* NODELETE window() const;
 
 protected:
     explicit LocalDOMWindowProperty(LocalDOMWindow*);

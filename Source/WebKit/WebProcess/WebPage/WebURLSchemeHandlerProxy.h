@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 #include "WebURLSchemeTaskProxy.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 class ResourceError;
@@ -43,7 +43,7 @@ namespace WebKit {
 
 class WebPage;
 
-class WebURLSchemeHandlerProxy : public RefCounted<WebURLSchemeHandlerProxy>, public CanMakeWeakPtr<WebURLSchemeHandlerProxy> {
+class WebURLSchemeHandlerProxy : public RefCountedAndCanMakeWeakPtr<WebURLSchemeHandlerProxy> {
 public:
     static Ref<WebURLSchemeHandlerProxy> create(WebPage& page, WebURLSchemeHandlerIdentifier identifier)
     {
@@ -57,10 +57,10 @@ public:
     void loadSynchronously(WebCore::ResourceLoaderIdentifier, WebFrame&, const WebCore::ResourceRequest&, WebCore::ResourceResponse&, WebCore::ResourceError&, Vector<uint8_t>&);
 
     WebURLSchemeHandlerIdentifier identifier() const { return m_identifier; }
-    WebPage& page() { return m_webPage; }
+    WebPage& page() { return m_webPage.get(); }
 
     void taskDidPerformRedirection(WebCore::ResourceLoaderIdentifier, WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
-    void taskDidReceiveResponse(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceResponse&);
+    void taskDidReceiveResponse(WebCore::ResourceLoaderIdentifier, WebCore::ResourceResponse&&);
     void taskDidReceiveData(WebCore::ResourceLoaderIdentifier, Ref<WebCore::SharedBuffer>&&);
     void taskDidComplete(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceError&);
     void taskDidStopLoading(WebURLSchemeTaskProxy&);
@@ -70,10 +70,10 @@ private:
 
     RefPtr<WebURLSchemeTaskProxy> removeTask(WebCore::ResourceLoaderIdentifier);
 
-    WebPage& m_webPage;
+    WeakRef<WebPage> m_webPage;
     WebURLSchemeHandlerIdentifier m_identifier;
 
-    HashMap<WebCore::ResourceLoaderIdentifier, RefPtr<WebURLSchemeTaskProxy>> m_tasks;
+    HashMap<WebCore::ResourceLoaderIdentifier, Ref<WebURLSchemeTaskProxy>> m_tasks;
 }; // class WebURLSchemeHandlerProxy
 
 } // namespace WebKit

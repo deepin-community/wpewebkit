@@ -28,6 +28,13 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
 #include <wtf/RetainPtr.h>
+#if USE(CF)
+#ifdef __swift__
+#include <Security/SecTrust.h>
+#else
+typedef struct CF_BRIDGED_TYPE(id) __SecTrust *SecTrustRef;
+#endif
+#endif
 
 namespace EnumNamespace {
 #if ENABLE(BOOL_ENUM)
@@ -91,6 +98,8 @@ class ScrollingStateFrameHostingNodeWithStuffAfterTuple;
 #if USE(APPKIT)
 class AppKitControlSystemImage;
 #endif
+template<typename> class RectEdges;
+class OpaqueTypeObject;
 struct Amazing;
 }
 
@@ -102,6 +111,7 @@ class LayerProperties;
 class CoreIPCAVOutputContext;
 #endif
 class CoreIPCNSSomeFoundationType;
+class CoreIPCclass NSSomeOtherFoundationType;
 #if ENABLE(DATA_DETECTION)
 class CoreIPCDDScannerResult;
 #endif
@@ -118,6 +128,9 @@ class WithoutNamespaceWithAttributes;
 struct SoftLinkedMember;
 struct RequestEncodedWithBody;
 struct RequestEncodedWithBodyRValue;
+#if USE(SKIA)
+class SkFooBar;
+#endif
 
 #if USE(CFBAR)
 typedef struct __CFBar * CFBarRef;
@@ -305,6 +318,11 @@ template<> struct ArgumentCoder<WebKit::CoreIPCNSSomeFoundationType> {
     static std::optional<WebKit::CoreIPCNSSomeFoundationType> decode(Decoder&);
 };
 
+template<> struct ArgumentCoder<WebKit::CoreIPCclass NSSomeOtherFoundationType> {
+    static void encode(Encoder&, const WebKit::CoreIPCclass NSSomeOtherFoundationType&);
+    static std::optional<WebKit::CoreIPCclass NSSomeOtherFoundationType> decode(Decoder&);
+};
+
 #if ENABLE(DATA_DETECTION)
 template<> struct ArgumentCoder<WebKit::CoreIPCDDScannerResult> {
     static void encode(Encoder&, const WebKit::CoreIPCDDScannerResult&);
@@ -316,10 +334,7 @@ template<> struct ArgumentCoder<CFFooRef> {
     static void encode(Encoder&, CFFooRef);
 };
 template<> struct ArgumentCoder<RetainPtr<CFFooRef>> {
-    static void encode(Encoder& encoder, const RetainPtr<CFFooRef>& retainPtr)
-    {
-        ArgumentCoder<CFFooRef>::encode(encoder, retainPtr.get());
-    }
+    static void encode(Encoder&, const RetainPtr<CFFooRef>&);
     static std::optional<RetainPtr<CFFooRef>> decode(Decoder&);
 };
 
@@ -329,14 +344,8 @@ template<> struct ArgumentCoder<CFBarRef> {
     static void encode(StreamConnectionEncoder&, CFBarRef);
 };
 template<> struct ArgumentCoder<RetainPtr<CFBarRef>> {
-    static void encode(Encoder& encoder, const RetainPtr<CFBarRef>& retainPtr)
-    {
-        ArgumentCoder<CFBarRef>::encode(encoder, retainPtr.get());
-    }
-    static void encode(StreamConnectionEncoder& encoder, const RetainPtr<CFBarRef>& retainPtr)
-    {
-        ArgumentCoder<CFBarRef>::encode(encoder, retainPtr.get());
-    }
+    static void encode(Encoder&, const RetainPtr<CFBarRef>&);
+    static void encode(StreamConnectionEncoder&, const RetainPtr<CFBarRef>&);
     static std::optional<RetainPtr<CFBarRef>> decode(Decoder&);
 };
 #endif
@@ -347,15 +356,17 @@ template<> struct ArgumentCoder<CFStringRef> {
     static void encode(StreamConnectionEncoder&, CFStringRef);
 };
 template<> struct ArgumentCoder<RetainPtr<CFStringRef>> {
-    static void encode(Encoder& encoder, const RetainPtr<CFStringRef>& retainPtr)
-    {
-        ArgumentCoder<CFStringRef>::encode(encoder, retainPtr.get());
-    }
-    static void encode(StreamConnectionEncoder& encoder, const RetainPtr<CFStringRef>& retainPtr)
-    {
-        ArgumentCoder<CFStringRef>::encode(encoder, retainPtr.get());
-    }
+    static void encode(Encoder&, const RetainPtr<CFStringRef>&);
+    static void encode(StreamConnectionEncoder&, const RetainPtr<CFStringRef>&);
     static std::optional<RetainPtr<CFStringRef>> decode(Decoder&);
+};
+#endif
+
+#if USE(SKIA)
+template<> struct ArgumentCoder<SkFooBar> {
+    static void encode(Encoder&, const SkFooBar&);
+    static void encode(OtherEncoder&, const SkFooBar&);
+    static std::optional<SkFooBar> decode(Decoder&);
 };
 #endif
 
@@ -398,20 +409,30 @@ template<> struct ArgumentCoder<WebCore::AppKitControlSystemImage> {
 };
 #endif
 
+template<> struct ArgumentCoder<WebCore::RectEdges<bool>> {
+    static void encode(Encoder&, const WebCore::RectEdges<bool>&);
+    static std::optional<WebCore::RectEdges<bool>> decode(Decoder&);
+};
+
+template<> struct ArgumentCoder<WebCore::OpaqueTypeObject> {
+    static void encode(Encoder&, const WebCore::OpaqueTypeObject&);
+    static std::optional<WebCore::OpaqueTypeObject> decode(Decoder&);
+};
+
 } // namespace IPC
 
 
 namespace WTF {
 
-template<> bool isValidEnum<EnumWithoutNamespace, void>(uint8_t);
+template<> bool isValidEnum<EnumWithoutNamespace>(uint8_t);
 #if ENABLE(UINT16_ENUM)
-template<> bool isValidEnum<EnumNamespace::EnumType, void>(uint16_t);
+template<> bool isValidEnum<EnumNamespace::EnumType>(uint16_t);
 #endif
 template<> bool isValidOptionSet<OptionSetEnumFirstCondition>(OptionSet<OptionSetEnumFirstCondition>);
 template<> bool isValidOptionSet<OptionSetEnumLastCondition>(OptionSet<OptionSetEnumLastCondition>);
 template<> bool isValidOptionSet<OptionSetEnumAllCondition>(OptionSet<OptionSetEnumAllCondition>);
 #if (ENABLE(OUTER_CONDITION)) && (ENABLE(INNER_CONDITION))
-template<> bool isValidEnum<EnumNamespace::InnerEnumType, void>(uint8_t);
+template<> bool isValidEnum<EnumNamespace::InnerEnumType>(uint8_t);
 #endif
 
 } // namespace WTF

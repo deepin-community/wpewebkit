@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,11 +29,12 @@
 
 #include "HTMLFormElement.h"
 #include "TouchList.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class EventContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventContext);
 public:
     using EventInvokePhase = EventTarget::EventInvokePhase;
 
@@ -46,12 +47,9 @@ public:
 
     EventContext(Type, Node*, EventTarget* currentTarget, EventTarget* origin, int closedShadowDepth);
     EventContext(Type, Node&, Node* currentTarget, EventTarget* origin, int closedShadowDepth);
-    ~EventContext() = default;
 
     Node* node() const { return m_node.get(); }
-    RefPtr<Node> protectedNode() const { return m_node; }
     EventTarget* currentTarget() const { return m_currentTarget.get(); }
-    RefPtr<EventTarget> protectedCurrentTarget() const { return m_currentTarget; }
     bool isCurrentTargetInShadowTree() const { return m_currentTargetIsInShadowTree; }
     EventTarget* target() const { return m_target.get(); }
     int closedShadowDepth() const { return m_closedShadowDepth; }
@@ -100,7 +98,7 @@ private:
 
 inline EventContext::EventContext(Type type, Node* node, RefPtr<EventTarget>&& currentTarget, EventTarget* origin, int closedShadowDepth, bool currentTargetIsInShadowTree)
     : m_node { node }
-    , m_currentTarget { WTFMove(currentTarget) }
+    , m_currentTarget { WTF::move(currentTarget) }
     , m_target { origin }
     , m_closedShadowDepth { closedShadowDepth }
     , m_currentTargetIsInShadowTree { currentTargetIsInShadowTree }
@@ -130,7 +128,7 @@ inline EventContext::EventContext(Type type, Node& node, Node* currentTarget, Ev
 inline void EventContext::setRelatedTarget(RefPtr<Node>&& relatedTarget)
 {
     ASSERT(!isUnreachableNode(relatedTarget.get()));
-    m_relatedTarget = WTFMove(relatedTarget);
+    m_relatedTarget = WTF::move(relatedTarget);
     m_relatedTargetIsSet = true;
 }
 

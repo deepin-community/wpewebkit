@@ -28,7 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
-#include "DFGBlockMapInlines.h"
+#include <wtf/IndexMap.h>
 #include "DFGGraph.h"
 #include "DFGPhase.h"
 #include "JSCJSValueInlines.h"
@@ -46,7 +46,7 @@ class BackwardsPropagationPhase : public Phase {
 public:
     BackwardsPropagationPhase(Graph& graph)
         : Phase(graph, "backwards propagation"_s, !graph.afterFixup())
-        , m_flagsAtHead(graph)
+        , m_flagsAtHead(graph.numBlocks())
     {
     }
 
@@ -120,12 +120,13 @@ private:
         case ValueBitXor:
         case ValueBitLShift:
         case ValueBitRShift:
+        case ValueBitURShift:
         case ArithBitAnd:
         case ArithBitOr:
         case ArithBitXor:
         case ArithBitLShift:
         case ArithBitRShift:
-        case BitURShift: {
+        case ArithBitURShift: {
             return true;
         }
 
@@ -135,6 +136,10 @@ private:
                 return true;
             return false;
         }
+
+        case Int52Rep:
+            // Do not decrease timeToLive since it is just propagating to the caller (not increasing the leaves of the tree).
+            return isNotNegZero(node->child1().node(), timeToLive);
 
         default:
             return false;
@@ -161,14 +166,6 @@ private:
     }
     
     template<int power>
-    bool isWithinPowerOfTwoNonRecursive(Node* node)
-    {
-        if (!node->isNumberConstant())
-            return false;
-        return isWithinPowerOfTwoForConstant<power>(node);
-    }
-    
-    template<int power>
     bool isWithinPowerOfTwo(Node* node)
     {
         switch (node->op()) {
@@ -182,9 +179,17 @@ private:
         case ArithBitAnd: {
             if (power > 31)
                 return true;
-            
-            return isWithinPowerOfTwoNonRecursive<power>(node->child1().node())
-                || isWithinPowerOfTwoNonRecursive<power>(node->child2().node());
+
+            // (x & mask) is only bounded by |mask| when mask is non-negative; a negative
+            // mask preserves the sign bit and the result can span the full int32 range.
+            auto isNonNegativeMaskWithinPower = [](Node* operand) {
+                if (!operand->isNumberConstant())
+                    return false;
+                double immediate = operand->asNumber();
+                return immediate >= 0 && immediate < (static_cast<int64_t>(1) << power);
+            };
+            return isNonNegativeMaskWithinPower(node->child1().node())
+                || isNonNegativeMaskWithinPower(node->child2().node());
         }
             
         case ArithBitOr:
@@ -198,7 +203,8 @@ private:
             
         case ArithBitRShift:
         case ValueBitRShift:
-        case BitURShift: {
+        case ArithBitURShift:
+        case ValueBitURShift: {
             if (power > 31)
                 return true;
             
@@ -222,12 +228,12 @@ private:
         return isWithinPowerOfTwo<power>(edge.node());
     }
 
-    static bool mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
+    static bool NODELETE mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
     {
         return checkAndSet(flagsRef, flagsRef | newFlags);
     }
 
-    bool mergeDefaultFlags(Node* node)
+    bool NODELETE mergeDefaultFlags(Node* node)
     {
         bool changed = false;
         if (node->flags() & NodeHasVarArgs) {
@@ -251,7 +257,7 @@ private:
         return changed;
     }
     
-    static constexpr NodeFlags VariableIsUsed = 1 << (1 + WTF::getMSBSetConstexpr(NodeBytecodeBackPropMask));
+    static constexpr NodeFlags VariableIsUsed = 1 << (1 + WTF::getMSBSet(NodeBytecodeBackPropMask));
     static_assert(!(VariableIsUsed & NodeBytecodeBackPropMask));
     static_assert(VariableIsUsed > NodeBytecodeBackPropMask, "Verify the above doesn't overflow");
     
@@ -324,7 +330,8 @@ private:
         case ArithBitLShift:
         case ArithBitRShift:
         case ValueBitRShift:
-        case BitURShift:
+        case ArithBitURShift:
+        case ValueBitURShift:
         case ArithIMul: {
             flags |= NodeBytecodeUsesAsInt;
             flags &= ~(NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNegZero | NodeBytecodeNeedsNaNOrInfinity | NodeBytecodeUsesAsOther);
@@ -334,6 +341,7 @@ private:
             break;
         }
             
+        case StringAt:
         case StringCharAt:
         case StringCharCodeAt:
         case StringCodePointAt: {
@@ -342,7 +350,8 @@ private:
             break;
         }
 
-        case StringIndexOf: {
+        case StringIndexOf:
+        case StringLastIndexOf: {
             node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
             node->child2()->mergeFlags(NodeBytecodeUsesAsValue);
             if (node->child3())
@@ -350,8 +359,32 @@ private:
             break;
         }
 
+        case StringStartsWith:
+        case StringEndsWith: {
+            node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
+            node->child2()->mergeFlags(NodeBytecodeUsesAsValue);
+            if (node->child3())
+                node->child3()->mergeFlags(NodeBytecodeUsesAsValue | NodeBytecodeUsesAsInt | NodeBytecodePrefersArrayIndex);
+            break;
+        }
+
+        case StringSplit: {
+            node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
+            node->child2()->mergeFlags(NodeBytecodeUsesAsValue);
+            node->child3()->mergeFlags(NodeBytecodeUsesAsValue);
+            break;
+        }
+
+        case StringMatch:
+        case StringSearch: {
+            node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
+            node->child2()->mergeFlags(NodeBytecodeUsesAsValue);
+            break;
+        }
+
         case StringSlice:
-        case StringSubstring: {
+        case StringSubstring:
+        case StringSubstr: {
             node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
             node->child2()->mergeFlags(NodeBytecodeUsesAsArrayIndex);
             if (node->child3())
@@ -375,7 +408,19 @@ private:
             break;
         }
 
-            
+        case ArrayConcatArray:
+        case ArrayConcatAppendOne: {
+            node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
+            node->child2()->mergeFlags(NodeBytecodeUsesAsValue);
+            break;
+        }
+
+        case ArrayJoin: {
+            m_graph.varArgChild(node, 0)->mergeFlags(NodeBytecodeUsesAsValue);
+            m_graph.varArgChild(node, 1)->mergeFlags(NodeBytecodeUsesAsValue);
+            break;
+        }
+
         case UInt32ToNumber: {
             node->child1()->mergeFlags(flags);
             break;
@@ -505,6 +550,22 @@ private:
             break;
         }
 
+        case LogicalNot: {
+            switch (node->child1()->op()) {
+            case ValueMod:
+            case ArithMod:
+                // We can clear this flag since Mod and Div never produces Infinity. It is only NaN.
+                flags &= ~NodeBytecodeNeedsNaNOrInfinity;
+                break;
+            default:
+                break;
+            }
+            flags &= ~NodeBytecodeNeedsNegZero;
+            node->child1()->mergeFlags(flags);
+            break;
+        }
+
+        case MultiGetByVal:
         case EnumeratorGetByVal:
         case GetByVal:
         case GetByValMegamorphic: {
@@ -514,9 +575,10 @@ private:
         }
             
         case NewTypedArray:
+        case NewTypedArrayBuffer:
         case NewArrayWithSize:
-        case NewArrayWithConstantSize:
-        case NewArrayWithSpecies: {
+        case NewArrayWithSpecies:
+        case NewArrayWithSizeAndStructure: {
             // Negative zero is not observable. NaN versus undefined are only observable
             // in that you would get a different exception message. So, like, whatever: we
             // claim here that NaN v. undefined is observable.
@@ -526,7 +588,9 @@ private:
             
         case ToString:
         case CallStringConstructor: {
-            node->child1()->mergeFlags(NodeBytecodeUsesAsNumber | NodeBytecodeUsesAsOther | NodeBytecodeNeedsNaNOrInfinity);
+            if (typeFilterFor(node->child1().useKind()) & SpecOther)
+                node->child1()->mergeFlags(NodeBytecodeUsesAsOther);
+            node->child1()->mergeFlags(NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNaNOrInfinity);
             break;
         }
             
@@ -598,21 +662,38 @@ private:
             node->child1()->mergeFlags(flags);
             break;
 
-        case ValueRep:
+        case Int52Rep: {
             ASSERT(m_graph.afterFixup());
-            // ValueRep is used to box a double or int52 to a JSValue. So, we shouldn't propagate any node flags to its child.
+            auto& edge = node->child1();
+            if (edge->hasDoubleResult()) {
+                if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
+                    edge.setUseKind(DoubleRepRealUse);
+                else
+                    edge.setUseKind(DoubleRepAnyIntUse);
+            } else if (!edge->shouldSpeculateInt32ForArithmetic()) {
+                if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
+                    edge.setUseKind(RealNumberUse);
+                else
+                    edge.setUseKind(AnyIntUse);
+            }
+            // The results of these nodes are pure unboxed integers. Then, we
+            // should definitely tell their children that you will be used as an integer.
+            flags |= NodeBytecodeUsesAsInt;
+            node->child1()->mergeFlags(flags);
             break;
+        }
 
-        case Int52Rep:
         case ValueToInt32:
         case DoubleAsInt32:
             ASSERT(m_graph.afterFixup());
             // The results of these nodes are pure unboxed integers. Then, we
             // should definitely tell their children that you will be used as an integer.
-            node->child1()->mergeFlags(NodeBytecodeUsesAsInt);
+            flags |= NodeBytecodeUsesAsInt;
+            node->child1()->mergeFlags(flags);
             break;
 
         case DoubleRep:
+        case PurifyNaN:
             ASSERT(m_graph.afterFixup());
             // The result of the node is pure unboxed floating point values.
             node->child1()->mergeFlags(NodeBytecodeUsesAsNumber);
@@ -625,26 +706,12 @@ private:
                 node->child1()->mergeFlags(NodeBytecodeUsesAsInt);
             break;
 
-        case CheckStructureOrEmpty:
-        case CheckArrayOrEmpty:
-        case Arrayify:
-        case ArrayifyToStructure:
-        case GetIndexedPropertyStorage:
-        case ResolveRope:
-        case MakeRope:
-        case GetRegExpObjectLastIndex:
-        case HasIndexedProperty:
-        case CallDOM:
-            // Not interested so far.
-            ASSERT(m_graph.afterFixup());
-            break;
-
         // Note: ArithSqrt, ArithUnary and other math intrinsics don't have special
         // rules in here because they are always followed by Phantoms to signify that if the
         // method call speculation fails, the bytecode may use the arguments in arbitrary ways.
         // This corresponds to that possibility of someone doing something like:
         // Math.sin = function(x) { doArbitraryThingsTo(x); }
-            
+
         default:
             mergeDefaultFlags(node);
             break;
@@ -653,7 +720,7 @@ private:
     
     bool m_allowNestedOverflowingAdditions;
 
-    BlockMap<Operands<NodeFlags>> m_flagsAtHead;
+    IndexMap<BasicBlock*, Operands<NodeFlags>> m_flagsAtHead;
     Operands<NodeFlags> m_currentFlags;
 };
 

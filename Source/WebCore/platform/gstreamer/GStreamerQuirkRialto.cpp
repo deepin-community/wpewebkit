@@ -29,6 +29,7 @@
 #if USE(GSTREAMER)
 
 #include "GStreamerCommon.h"
+#include "WebKitAudioSinkGStreamer.h"
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
@@ -40,11 +41,11 @@ GStreamerQuirkRialto::GStreamerQuirkRialto()
 {
     GST_DEBUG_CATEGORY_INIT(webkit_rialto_quirks_debug, "webkitquirksrialto", 0, "WebKit Rialto Quirks");
 
-    std::array<const char *, 2> rialtoSinks = { "rialtomsevideosink", "rialtomseaudiosink" };
+    std::array<ASCIILiteral, 2> rialtoSinks = { "rialtomsevideosink"_s, "rialtomseaudiosink"_s };
 
-    for (const auto* sink : rialtoSinks) {
-        auto sinkFactory = adoptGRef(gst_element_factory_find(sink));
-        if (UNLIKELY(!sinkFactory))
+    for (auto sink : rialtoSinks) {
+        GRefPtr sinkFactory = adoptGRef(gst_element_factory_find(sink.characters()));
+        if (!sinkFactory) [[unlikely]]
             continue;
 
         gst_object_unref(gst_plugin_feature_load(GST_PLUGIN_FEATURE(sinkFactory.get())));
@@ -62,14 +63,23 @@ GStreamerQuirkRialto::GStreamerQuirkRialto()
             if (m_sinkCaps)
                 m_sinkCaps = adoptGRef(gst_caps_merge(m_sinkCaps.leakRef(), templateCaps.leakRef()));
             else
-                m_sinkCaps = WTFMove(templateCaps);
+                m_sinkCaps = WTF::move(templateCaps);
         }
     }
+    m_disallowedWebAudioDecoders = { "rialtomseaudiosink"_s };
+}
+
+bool GStreamerQuirkRialto::isPlatformSupported() const
+{
+    GRefPtr sinkFactory = adoptGRef(gst_element_factory_find("rialtomsevideosink"));
+    if (!sinkFactory)
+        return false;
+    return gst_plugin_feature_get_rank(GST_PLUGIN_FEATURE(sinkFactory.get())) > GST_RANK_MARGINAL;
 }
 
 void GStreamerQuirkRialto::configureElement(GstElement* element, const OptionSet<ElementRuntimeCharacteristics>&)
 {
-    if (!g_strcmp0(G_OBJECT_TYPE_NAME(G_OBJECT(element)), "GstURIDecodeBin3")) {
+    if (equal(unsafeSpan(G_OBJECT_TYPE_NAME(G_OBJECT(element))), "GstURIDecodeBin3"_s)) {
         GRefPtr<GstCaps> defaultCaps;
         g_object_get(element, "caps", &defaultCaps.outPtr(), nullptr);
         defaultCaps = adoptGRef(gst_caps_merge(gst_caps_ref(m_sinkCaps.get()), defaultCaps.leakRef()));
@@ -80,21 +90,40 @@ void GStreamerQuirkRialto::configureElement(GstElement* element, const OptionSet
 
 GstElement* GStreamerQuirkRialto::createAudioSink()
 {
-    auto sink = makeGStreamerElement("rialtomseaudiosink", nullptr);
+    auto sink = makeGStreamerElement("rialtomseaudiosink"_s);
     RELEASE_ASSERT_WITH_MESSAGE(sink, "rialtomseaudiosink should be available in the system but it is not");
     return sink;
 }
 
-GstElement* GStreamerQuirkRialto::createWebAudioSink()
+GstElement* /* transfer floating */ GStreamerQuirkRialto::createWebAudioSink()
 {
-    auto sink = makeGStreamerElement("rialtowebaudiosink", nullptr);
+    if (GstElement* sink = webkitAudioSinkNew("webaudio"_s))
+        return sink;
+
+    auto sink = makeGStreamerElement("rialtowebaudiosink"_s);
     RELEASE_ASSERT_WITH_MESSAGE(sink, "rialtowebaudiosink should be available in the system but it is not");
-    return sink;
+
+    // Force audio conversion to 'interleaved' format. The rialtowebaudiosink doesn't support
+    // non-interleaved audio without special caps, which seems like a bug in that sink's caps
+    // template and/or caps negotiation implementation.
+    auto bin = gst_bin_new(nullptr);
+    auto capsFilter = gst_element_factory_make("capsfilter", nullptr);
+    GRefPtr caps = adoptGRef(gst_caps_new_simple("audio/x-raw", "layout", G_TYPE_STRING, "interleaved", nullptr));
+    g_object_set(capsFilter, "caps", caps.get(), nullptr);
+
+    gst_bin_add_many(GST_BIN_CAST(bin), capsFilter, sink, nullptr);
+    gst_element_link(capsFilter, sink);
+
+    GRefPtr pad = adoptGRef(gst_element_get_static_pad(capsFilter, "sink"));
+    gst_element_add_pad(bin, gst_ghost_pad_new("sink", pad.get()));
+
+    return bin;
 }
 
 std::optional<bool> GStreamerQuirkRialto::isHardwareAccelerated(GstElementFactory* factory)
 {
-    if (g_str_has_prefix(GST_OBJECT_NAME(factory), "rialto"))
+    auto view = StringView::fromLatin1(GST_OBJECT_NAME(factory));
+    if (view.startsWith("rialto"_s))
         return true;
 
     return std::nullopt;

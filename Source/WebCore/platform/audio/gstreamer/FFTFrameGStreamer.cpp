@@ -45,7 +45,7 @@ namespace WebCore {
 FFTFrame::FFTFrame(unsigned fftSize)
     : m_FFTSize(fftSize)
     , m_log2FFTSize(static_cast<unsigned>(log2(fftSize)))
-    , m_complexData(makeUniqueArray<GstFFTF32Complex>(unpackedFFTDataSize(m_FFTSize)))
+    , m_complexData(unpackedFFTDataSize(m_FFTSize))
     , m_realData(unpackedFFTDataSize(m_FFTSize))
     , m_imagData(unpackedFFTDataSize(m_FFTSize))
 {
@@ -68,7 +68,7 @@ FFTFrame::FFTFrame()
 FFTFrame::FFTFrame(const FFTFrame& frame)
     : m_FFTSize(frame.m_FFTSize)
     , m_log2FFTSize(frame.m_log2FFTSize)
-    , m_complexData(makeUniqueArray<GstFFTF32Complex>(unpackedFFTDataSize(m_FFTSize)))
+    , m_complexData(unpackedFFTDataSize(m_FFTSize))
     , m_realData(unpackedFFTDataSize(frame.m_FFTSize))
     , m_imagData(unpackedFFTDataSize(frame.m_FFTSize))
 {
@@ -77,8 +77,8 @@ FFTFrame::FFTFrame(const FFTFrame& frame)
     m_inverseFft.reset(gst_fft_f32_new(fftLength, TRUE));
 
     // Copy/setup frame data.
-    memcpy(realData().data(), frame.realData().data(), sizeof(float) * realData().size());
-    memcpy(imagData().data(), frame.imagData().data(), sizeof(float) * imagData().size());
+    memcpySpan(m_realData.span(), frame.realData().span());
+    memcpySpan(m_imagData.span(), frame.imagData().span());
 }
 
 void FFTFrame::initialize()
@@ -87,33 +87,32 @@ void FFTFrame::initialize()
 
 FFTFrame::~FFTFrame() = default;
 
-void FFTFrame::doFFT(const float* data)
+void FFTFrame::doFFT(std::span<const float> data)
 {
-    gst_fft_f32_fft(m_fft.get(), data, m_complexData.get());
+    gst_fft_f32_fft(m_fft.get(), data.data(), m_complexData.mutableSpan().data());
 
-    float* imagData = m_imagData.data();
-    float* realData = m_realData.data();
+    auto imagData = m_imagData.span();
+    auto realData = m_realData.span();
     for (unsigned i = 0; i < unpackedFFTDataSize(m_FFTSize); ++i) {
         imagData[i] = m_complexData[i].i;
         realData[i] = m_complexData[i].r;
     }
 }
 
-void FFTFrame::doInverseFFT(float* data)
+void FFTFrame::doInverseFFT(std::span<float> data)
 {
     //  Merge the real and imaginary vectors to complex vector.
-    float* realData = m_realData.data();
-    float* imagData = m_imagData.data();
-
+    auto imagData = m_imagData.span();
+    auto realData = m_realData.span();
     for (size_t i = 0; i < unpackedFFTDataSize(m_FFTSize); ++i) {
         m_complexData[i].i = imagData[i];
         m_complexData[i].r = realData[i];
     }
 
-    gst_fft_f32_inverse_fft(m_inverseFft.get(), m_complexData.get(), data);
+    gst_fft_f32_inverse_fft(m_inverseFft.get(), m_complexData.mutableSpan().data(), data.data());
 
     // Scale so that a forward then inverse FFT yields exactly the original data.
-    VectorMath::multiplyByScalar(data, 1.0 / m_FFTSize, data, m_FFTSize);
+    VectorMath::multiplyByScalar(data.first(m_FFTSize), 1.0 / m_FFTSize, data);
 }
 
 int FFTFrame::minFFTSize()

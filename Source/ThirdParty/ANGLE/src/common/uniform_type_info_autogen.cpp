@@ -16,9 +16,7 @@ using namespace angle;
 namespace gl
 {
 
-namespace
-{
-constexpr std::array<UniformTypeInfo, 77> kInfoTable = {
+extern const std::array<UniformTypeInfo, 76> kUniformInfoTable = {
     {{GL_NONE, GL_NONE, GL_NONE, GL_NONE, GL_NONE, SamplerFormat::InvalidEnum, 0, 0, 0, 0, 0 * 0,
       0 * 0, false, false, false},
      {GL_BOOL, GL_BOOL, GL_NONE, GL_NONE, GL_NONE, SamplerFormat::InvalidEnum, 1, 1, 1,
@@ -198,12 +196,11 @@ constexpr std::array<UniformTypeInfo, 77> kInfoTable = {
      {GL_UNSIGNED_INT_VEC4, GL_UNSIGNED_INT, GL_NONE, GL_NONE, GL_BOOL_VEC4,
       SamplerFormat::InvalidEnum, 1, 4, 4, sizeof(GLuint), sizeof(GLuint) * 4, sizeof(GLuint) * 4,
       false, false, false},
-     {GL_SAMPLER_VIDEO_IMAGE_WEBGL, GL_INT, GL_TEXTURE_VIDEO_IMAGE_WEBGL, GL_NONE, GL_NONE,
-      SamplerFormat::Float, 1, 1, 1, sizeof(GLint), sizeof(GLint) * 4, sizeof(GLint) * 1, true,
-      false, false},
      {GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT, GL_INT, GL_NONE, GL_NONE, GL_NONE, SamplerFormat::Float, 1, 1,
       1, sizeof(GLint), sizeof(GLint) * 4, sizeof(GLint) * 1, true, false, false}}};
 
+namespace
+{
 uint16_t GetIndex(GLenum uniformType)
 {
     switch (uniformType)
@@ -358,10 +355,8 @@ uint16_t GetIndex(GLenum uniformType)
             return 73;
         case GL_UNSIGNED_INT_VEC4:
             return 74;
-        case GL_SAMPLER_VIDEO_IMAGE_WEBGL:
-            return 75;
         case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT:
-            return 76;
+            return 75;
         default:
             UNREACHABLE();
             return 0;
@@ -376,14 +371,8 @@ UniformTypeIndex GetUniformTypeIndex(GLenum uniformType)
 
 const UniformTypeInfo &GetUniformTypeInfo(GLenum uniformType)
 {
-    ASSERT(kInfoTable[GetIndex(uniformType)].type == uniformType);
-    return kInfoTable[GetIndex(uniformType)];
-}
-
-const UniformTypeInfo &GetUniformTypeInfoFromIndex(UniformTypeIndex index)
-{
-    ASSERT(index.value >= 0 && index.value < 77);
-    return kInfoTable[index.value];
+    ASSERT(kUniformInfoTable[GetIndex(uniformType)].type == uniformType);
+    return kUniformInfoTable[GetIndex(uniformType)];
 }
 
 }  // namespace gl

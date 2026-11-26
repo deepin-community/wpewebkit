@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MessageReceiver.h"
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/ScreenOrientationLockType.h>
 #include <WebCore/ScreenOrientationType.h>
 #include <wtf/CompletionHandler.h>
@@ -38,31 +39,42 @@ class Exception;
 namespace WebKit {
 
 class WebPageProxy;
+class WebProcessProxy;
+struct SharedPreferencesForWebProcess;
 
-class WebScreenOrientationManagerProxy final : public IPC::MessageReceiver {
+class WebScreenOrientationManagerProxy final : public IPC::MessageReceiver, public RefCounted<WebScreenOrientationManagerProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WebScreenOrientationManagerProxy);
 public:
-    WebScreenOrientationManagerProxy(WebPageProxy&, WebCore::ScreenOrientationType);
+    static Ref<WebScreenOrientationManagerProxy> create(WebPageProxy&, WebCore::ScreenOrientationType);
     ~WebScreenOrientationManagerProxy();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
     void unlockIfNecessary();
 
     void setCurrentOrientation(WebCore::ScreenOrientationType);
-
-private:
-    std::optional<WebCore::Exception> platformShouldRejectLockRequest() const;
+    WebCore::ScreenOrientationType currentOrientationType() const { return m_currentOrientation; }
 
     // IPC message handlers.
     void currentOrientation(CompletionHandler<void(WebCore::ScreenOrientationType)>&&);
     void lock(WebCore::ScreenOrientationLockType, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&&);
     void unlock();
-    void setShouldSendChangeNotification(bool);
+    void NODELETE setShouldSendChangeNotification(bool);
 
-    WebPageProxy& m_page;
+private:
+    WebScreenOrientationManagerProxy(WebPageProxy&, WebCore::ScreenOrientationType);
+
+    std::optional<WebCore::Exception> platformShouldRejectLockRequest() const;
+
+
+    WeakRef<WebPageProxy> m_page;
     WebCore::ScreenOrientationType m_currentOrientation;
     std::optional<WebCore::ScreenOrientationType> m_currentlyLockedOrientation;
     CompletionHandler<void(std::optional<WebCore::Exception>&&)> m_currentLockRequest;

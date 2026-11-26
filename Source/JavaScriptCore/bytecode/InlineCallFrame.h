@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "CodeBlock.h"
-#include "CodeBlockHash.h"
-#include "CodeOrigin.h"
-#include "ValueRecovery.h"
-#include "WriteBarrier.h"
+#include <JavaScriptCore/CallMode.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CodeBlockHash.h>
+#include <JavaScriptCore/CodeOrigin.h>
+#include <JavaScriptCore/ValueRecovery.h>
+#include <JavaScriptCore/WriteBarrier.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
@@ -43,7 +44,7 @@ class JSFunction;
 DECLARE_COMPACT_ALLOCATOR_WITH_HEAP_IDENTIFIER(InlineCallFrame);
 
 struct InlineCallFrame {
-    WTF_MAKE_STRUCT_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(InlineCallFrame);
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(InlineCallFrame, InlineCallFrame);
 
     enum Kind {
         Call,
@@ -52,7 +53,7 @@ struct InlineCallFrame {
         CallVarargs,
         ConstructVarargs,
         TailCallVarargs,
-        
+
         // For these, the stackOffset incorporates the argument count plus the true return PC
         // slot.
         GetterCall,
@@ -62,6 +63,7 @@ struct InlineCallFrame {
         ProxyObjectInCall,
         BoundFunctionCall,
         BoundFunctionTailCall,
+        ArraySortComparatorCall,
     };
     static constexpr unsigned bitWidthOfKind = 4;
 
@@ -76,6 +78,7 @@ struct InlineCallFrame {
         case ProxyObjectStoreCall:
         case ProxyObjectInCall:
         case BoundFunctionCall:
+        case ArraySortComparatorCall:
             return CallMode::Regular;
         case TailCall:
         case TailCallVarargs:
@@ -128,10 +131,11 @@ struct InlineCallFrame {
         case ProxyObjectInCall:
         case BoundFunctionCall:
         case BoundFunctionTailCall:
-            return CodeForCall;
+        case ArraySortComparatorCall:
+            return CodeSpecializationKind::CodeForCall;
         case Construct:
         case ConstructVarargs:
-            return CodeForConstruct;
+            return CodeSpecializationKind::CodeForConstruct;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -227,8 +231,8 @@ struct InlineCallFrame {
     JSFunction* calleeForCallFrame(CallFrame*) const;
     
     CString inferredName() const;
+    String inferredNameWithHash() const;
     CodeBlockHash hash() const;
-    CString hashAsStringIfPossible() const;
     
     void setStackOffset(signed offset)
     {
@@ -272,7 +276,7 @@ inline CodeBlock* baselineCodeBlockForOriginAndBaselineCodeBlock(const CodeOrigi
 
 // These function is defined here and not in CodeOrigin because it needs access to the directCaller field in InlineCallFrame
 template <typename Function>
-inline void CodeOrigin::walkUpInlineStack(const Function& function) const
+inline void CodeOrigin::walkUpInlineStack(NOESCAPE const Function& function) const
 {
     CodeOrigin codeOrigin = *this;
     while (true) {
@@ -289,6 +293,16 @@ inline bool CodeOrigin::inlineStackContainsActiveCheckpoint() const
     bool result = false;
     walkUpInlineStack([&] (CodeOrigin origin) {
         if (origin.bytecodeIndex().checkpoint())
+            result = true;
+    });
+    return result;
+}
+
+inline bool CodeOrigin::inlineStackContains(InlineCallFrame& frame) const
+{
+    bool result = false;
+    walkUpInlineStack([&] (CodeOrigin origin) {
+        if (origin.inlineCallFrame() == &frame)
             result = true;
     });
     return result;

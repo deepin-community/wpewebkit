@@ -7,6 +7,7 @@
 // ImageIndex.cpp: Implementation for ImageIndex methods.
 
 #include "libANGLE/ImageIndex.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/utilities.h"
 #include "libANGLE/Constants.h"
@@ -37,7 +38,6 @@ GLint TextureTargetToLayer(TextureTarget target)
         case TextureTarget::External:
         case TextureTarget::Rectangle:
         case TextureTarget::_2D:
-        case TextureTarget::VideoImage:
         case TextureTarget::_2DArray:
         case TextureTarget::_2DMultisample:
         case TextureTarget::_2DMultisampleArray:
@@ -343,7 +343,7 @@ GLint ImageIndexIterator::maxLayer() const
     {
         ASSERT(mCurrentIndex.hasLayer());
         return (mCurrentIndex.getLevelIndex() < mMipRange.high())
-                   ? mLayerCounts[mCurrentIndex.getLevelIndex()]
+                   ? ANGLE_UNSAFE_TODO(mLayerCounts[mCurrentIndex.getLevelIndex()])
                    : 0;
     }
     return mLayerRange.high();

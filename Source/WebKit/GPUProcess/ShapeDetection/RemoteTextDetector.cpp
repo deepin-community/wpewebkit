@@ -29,54 +29,43 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "ArgumentCoders.h"
+#include "Logging.h"
 #include "RemoteRenderingBackend.h"
-#include "ShapeDetectionObjectHeap.h"
+#include "SharedPreferencesForWebProcess.h"
 #include <WebCore/DetectedTextInterface.h>
-#include <WebCore/ImageBuffer.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/TextDetectorInterface.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_renderingBackend.get().streamConnection());
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteTextDetector);
 
-RemoteTextDetector::RemoteTextDetector(Ref<WebCore::ShapeDetection::TextDetector>&& textDetector, ShapeDetection::ObjectHeap& objectHeap, RemoteRenderingBackend& backend, ShapeDetectionIdentifier identifier, WebCore::ProcessIdentifier webProcessIdentifier)
-    : m_backing(WTFMove(textDetector))
-    , m_objectHeap(objectHeap)
-    , m_backend(backend)
+RemoteTextDetector::RemoteTextDetector(Ref<WebCore::ShapeDetection::TextDetector>&& textDetector, RemoteRenderingBackend& renderingBackend, ShapeDetectionIdentifier identifier)
+    : m_backing(WTF::move(textDetector))
+    , m_renderingBackend(renderingBackend)
     , m_identifier(identifier)
-    , m_webProcessIdentifier(webProcessIdentifier)
 {
 }
 
 RemoteTextDetector::~RemoteTextDetector() = default;
 
-const SharedPreferencesForWebProcess& RemoteTextDetector::sharedPreferencesForWebProcess() const
+std::optional<SharedPreferencesForWebProcess> RemoteTextDetector::sharedPreferencesForWebProcess() const
 {
-    return m_backend->sharedPreferencesForWebProcess();
-}
-
-Ref<WebCore::ShapeDetection::TextDetector> RemoteTextDetector::protectedBacking()
-{
-    return backing();
-}
-
-Ref<RemoteRenderingBackend> RemoteTextDetector::protectedBackend()
-{
-    return m_backend.get();
+    return m_renderingBackend.get().sharedPreferencesForWebProcess();
 }
 
 void RemoteTextDetector::detect(WebCore::RenderingResourceIdentifier renderingResourceIdentifier, CompletionHandler<void(Vector<WebCore::ShapeDetection::DetectedText>&&)>&& completionHandler)
 {
-    auto imageBuffer = protectedBackend()->imageBuffer(renderingResourceIdentifier);
-    if (!imageBuffer) {
-        completionHandler({ });
-        return;
-    }
-
-    protectedBacking()->detect(*imageBuffer, WTFMove(completionHandler));
+    RefPtr sourceImage = m_renderingBackend.get().remoteResourceCache().cachedNativeImage(renderingResourceIdentifier);
+    MESSAGE_CHECK(sourceImage);
+    m_backing->detect(*sourceImage, WTF::move(completionHandler));
 }
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK
 
 #endif // ENABLE(GPU_PROCESS)

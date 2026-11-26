@@ -23,6 +23,7 @@
 #if !ENABLE(2022_GLIB_API)
 
 #include "APISerializedScriptValue.h"
+#include "JavaScriptEvaluationResult.h"
 #include "WebKitJavascriptResultPrivate.h"
 #include <jsc/JSCContextPrivate.h>
 #include <jsc/JSCValuePrivate.h>
@@ -34,9 +35,9 @@
  */
 
 struct _WebKitJavascriptResult {
-    explicit _WebKitJavascriptResult(WebCore::SerializedScriptValue& serializedScriptValue)
+    explicit _WebKitJavascriptResult(WebKit::JavaScriptEvaluationResult&& result)
     {
-        jsValue = API::SerializedScriptValue::deserialize(serializedScriptValue);
+        jsValue = result.toJSC();
     }
 
     GRefPtr<JSCValue> jsValue;
@@ -46,10 +47,10 @@ struct _WebKitJavascriptResult {
 
 G_DEFINE_BOXED_TYPE(WebKitJavascriptResult, webkit_javascript_result, webkit_javascript_result_ref, webkit_javascript_result_unref)
 
-WebKitJavascriptResult* webkitJavascriptResultCreate(WebCore::SerializedScriptValue& serializedScriptValue)
+WebKitJavascriptResult* webkitJavascriptResultCreate(WebKit::JavaScriptEvaluationResult&& scriptResult)
 {
     WebKitJavascriptResult* result = static_cast<WebKitJavascriptResult*>(fastMalloc(sizeof(WebKitJavascriptResult)));
-    new (result) WebKitJavascriptResult(serializedScriptValue);
+    new (result) WebKitJavascriptResult(WTF::move(scriptResult));
     return result;
 }
 
@@ -96,9 +97,9 @@ void webkit_javascript_result_unref(WebKitJavascriptResult* javascriptResult)
  * Get the global Javascript context.
  *
  * Get the global Javascript context that should be used with the
- * <function>JSValueRef</function> returned by webkit_javascript_result_get_value().
+ * `JSValueRef` returned by webkit_javascript_result_get_value().
  *
- * Returns: the <function>JSGlobalContextRef</function> for the #WebKitJavascriptResult
+ * Returns: the `JSGlobalContextRef` for the #WebKitJavascriptResult
  *
  * Deprecated: 2.22: Use jsc_value_get_context() instead.
  */
@@ -114,10 +115,10 @@ JSGlobalContextRef webkit_javascript_result_get_global_context(WebKitJavascriptR
  *
  * Get the value of @js_result.
  *
- * You should use the <function>JSGlobalContextRef</function>
- * returned by webkit_javascript_result_get_global_context() to use the <function>JSValueRef</function>.
+ * You should use the `JSGlobalContextRef`
+ * returned by webkit_javascript_result_get_global_context() to use the `JSValueRef`.
  *
- * Returns: the <function>JSValueRef</function> of the #WebKitJavascriptResult
+ * Returns: the `JSValueRef` of the #WebKitJavascriptResult
  *
  * Deprecated: 2.22: Use webkit_javascript_result_get_js_value() instead.
  */

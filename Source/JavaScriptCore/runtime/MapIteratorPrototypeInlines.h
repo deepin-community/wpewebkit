@@ -25,9 +25,33 @@
 
 #pragma once
 
-#include "MapIteratorPrototype.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/MapIteratorPrototype.h>
 
 namespace JSC {
+
+ALWAYS_INLINE bool mapIteratorProtocolIsFastAndNonObservable(VM& vm, JSMapIterator* mapIterator)
+{
+    JSGlobalObject* globalObject = mapIterator->realm();
+
+    if (!globalObject->isMapPrototypeIteratorProtocolFastAndNonObservable())
+        return false;
+
+    if (mapIterator->getPrototypeDirect() != globalObject->mapIteratorPrototype())
+        return false;
+
+    if (mapIterator->hasCustomProperties()) {
+        if (mapIterator->getDirectOffset(vm, vm.propertyNames->next) != invalidOffset)
+            return false;
+        if (mapIterator->getDirectOffset(vm, vm.propertyNames->returnKeyword) != invalidOffset)
+            return false;
+        if (mapIterator->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+            return false;
+    }
+
+    return true;
+}
 
 inline Structure* MapIteratorPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010. Adam Barth. All rights reserved.
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,15 +34,19 @@
 #include "DOMImplementation.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "FrameLoader.h"
 #include "FrameLoaderStateMachine.h"
 #include "HistoryController.h"
 #include "HistoryItem.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalFrameView.h"
 #include "MIMETypeRegistry.h"
+#include "Navigation.h"
 #include "Page.h"
 #include "PluginDocument.h"
 #include "RawDataDocumentParser.h"
@@ -61,9 +65,10 @@ namespace WebCore {
 
 static inline bool canReferToParentFrameEncoding(const LocalFrame* frame, const LocalFrame* parentFrame) 
 {
-    if (is<XMLDocument>(frame->document()))
+    RefPtr document = frame->document();
+    if (is<XMLDocument>(document))
         return false;
-    return parentFrame && parentFrame->document()->protectedSecurityOrigin()->isSameOriginDomain(frame->document()->securityOrigin());
+    return parentFrame && protect(protect(parentFrame->document())->securityOrigin())->isSameOriginDomain(protect(document->securityOrigin()));
 }
     
 // This is only called by ScriptController::executeIfJavaScriptURL
@@ -72,14 +77,14 @@ static inline bool canReferToParentFrameEncoding(const LocalFrame* frame, const 
 void DocumentWriter::replaceDocumentWithResultOfExecutingJavascriptURL(const String& source, Document* ownerDocument)
 {
     Ref frame = *m_frame;
-    frame->checkedLoader()->stopAllLoaders();
+    frame->loader().stopAllLoaders();
 
     // If we are in the midst of changing the frame's document, don't execute script
     // that modifies the document further:
     if (frame->documentIsBeingReplaced())
         return;
 
-    begin(frame->document()->url(), true, ownerDocument);
+    begin(protect(frame->document())->url(), true, ownerDocument);
 
     setEncoding("UTF-8"_s, IsEncodingUserChosen::No);
 
@@ -91,11 +96,11 @@ void DocumentWriter::replaceDocumentWithResultOfExecutingJavascriptURL(const Str
     if (!source.isNull()) {
         if (!m_hasReceivedSomeData) {
             m_hasReceivedSomeData = true;
-            frame->protectedDocument()->setCompatibilityMode(DocumentCompatibilityMode::NoQuirksMode);
+            protect(frame->document())->setCompatibilityMode(DocumentCompatibilityMode::NoQuirksMode);
         }
 
         if (RefPtr parser = frame->document()->parser())
-            parser->appendBytes(*this, source.utf8().span());
+            parser->appendBytes(*this, byteCast<uint8_t>(source.utf8().span()));
     }
 
     end();
@@ -114,10 +119,10 @@ bool DocumentWriter::begin()
     return begin(URL());
 }
 
-Ref<Document> DocumentWriter::createDocument(const URL& url, ScriptExecutionContextIdentifier documentIdentifier)
+Ref<Document> DocumentWriter::createDocument(const URL& url, std::optional<ScriptExecutionContextIdentifier> documentIdentifier)
 {
     Ref frame = *m_frame;
-    CheckedRef frameLoader = frame->loader();
+    Ref frameLoader = frame->loader();
 
     auto useSinkDocument = [&]() {
 #if ENABLE(PDF_PLUGIN)
@@ -143,7 +148,7 @@ Ref<Document> DocumentWriter::createDocument(const URL& url, ScriptExecutionCont
     return DOMImplementation::createDocument(m_mimeType, frame.ptr(), frame->settings(), url, documentIdentifier);
 }
 
-bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* ownerDocument, ScriptExecutionContextIdentifier documentIdentifier, const NavigationAction* triggeringAction)
+bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* ownerDocument, std::optional<ScriptExecutionContextIdentifier> documentIdentifier, const NavigationAction* triggeringAction)
 {
     // We grab a local copy of the URL because it's easy for callers to supply
     // a URL that will be deallocated during the execution of this function.
@@ -155,11 +160,11 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     Ref document = createDocument(url, documentIdentifier);
     
     Ref frame = *m_frame;
-    CheckedRef frameLoader = frame->loader();
+    Ref frameLoader = frame->loader();
 
     // If the new document is for a Plugin but we're supposed to be sandboxed from Plugins,
     // then replace the document with one whose parser will ignore the incoming data (bug 39323)
-    if (document->isPluginDocument() && document->isSandboxed(SandboxPlugins))
+    if (document->isPluginDocument() && document->isSandboxed(SandboxFlag::Plugins))
         document = SinkDocument::create(frame, url);
 
     // FIXME: Do we need to consult the content security policy here about blocked plug-ins?
@@ -168,10 +173,13 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         && frame->document()->isSecureTransitionTo(url)
         && (frame->window() && !frame->window()->wasWrappedWithoutInitializedSecurityOrigin() && frame->window()->mayReuseForNavigation());
 
+    RefPtr<LocalDOMWindow> previousWindow;
     if (shouldReuseDefaultView) {
         ASSERT(frameLoader->documentLoader());
-        if (CheckedPtr contentSecurityPolicy = frameLoader->documentLoader()->contentSecurityPolicy())
-            shouldReuseDefaultView = !(contentSecurityPolicy->sandboxFlags() & SandboxOrigin);
+        if (auto* contentSecurityPolicy = frameLoader->documentLoader()->contentSecurityPolicy())
+            shouldReuseDefaultView = !contentSecurityPolicy->sandboxFlags().contains(SandboxFlag::Origin);
+    } else {
+        previousWindow = frame->window();
     }
 
     // Temporarily extend the lifetime of the existing document so that FrameLoader::clear() doesn't destroy it as
@@ -181,12 +189,12 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
 
     Function<void()> handleDOMWindowCreation = [document, frame, shouldReuseDefaultView] {
         if (shouldReuseDefaultView)
-            document->takeDOMWindowFrom(*frame->protectedDocument());
+            document->takeDOMWindowFrom(*protect(frame->document()));
         else
             document->createDOMWindow();
     };
 
-    frameLoader->clear(document.ptr(), !shouldReuseDefaultView, !shouldReuseDefaultView, true, WTFMove(handleDOMWindowCreation));
+    frameLoader->clear(document.ptr(), !shouldReuseDefaultView, !shouldReuseDefaultView, true, WTF::move(handleDOMWindowCreation));
     clear();
 
     // frameLoader->clear() might fire unload event which could remove the view of the document.
@@ -195,18 +203,17 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         return false;
 
     if (!shouldReuseDefaultView)
-        frame->checkedScript()->updatePlatformScriptObjects();
+        protect(frame->script())->updatePlatformScriptObjects();
 
     frameLoader->setOutgoingReferrer(url);
     frame->setDocument(document.copyRef());
 
-    if (RefPtr decoder = m_decoder)
-        document->setDecoder(decoder.get());
+    if (m_decoder)
+        document->setDecoder(m_decoder.copyRef());
     if (ownerDocument) {
         // |document| is the result of evaluating a JavaScript URL.
         document->setCookieURL(ownerDocument->cookieURL());
         document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
-        document->setStrictMixedContentMode(ownerDocument->isStrictMixedContentMode());
         document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
 
         document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));
@@ -216,9 +223,13 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         contentSecurityPolicy->setInsecureNavigationRequestsToUpgrade(ownerContentSecurityPolicy->takeNavigationRequestsToUpgrade());
     } else if (url.protocolIsAbout() || url.protocolIsData()) {
         // https://html.spec.whatwg.org/multipage/origin.html#determining-navigation-params-policy-container
-        RefPtr currentHistoryItem = frame->history().currentItem();
+        RefPtr currentHistoryItem = frame->loader().history().currentItem();
 
-        if (currentHistoryItem && currentHistoryItem->policyContainer()) {
+        auto isLoadingBrowserControlledHTML = [document] {
+            return document->loader() && document->loader()->substituteData().isValid();
+        };
+
+        if (triggeringAction && triggeringAction->type() == NavigationType::BackForward && currentHistoryItem && currentHistoryItem->policyContainer()) {
             const auto& policyContainerFromHistory = currentHistoryItem->policyContainer();
             ASSERT(policyContainerFromHistory);
             document->inheritPolicyContainerFrom(*policyContainerFromHistory);
@@ -226,11 +237,11 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
             RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
             if (parentFrame && parentFrame->document()) {
                 document->inheritPolicyContainerFrom(parentFrame->document()->policyContainer());
-                document->checkedContentSecurityPolicy()->updateSourceSelf(parentFrame->document()->securityOrigin());
+                protect(document->contentSecurityPolicy())->updateSourceSelf(protect(protect(parentFrame->document())->securityOrigin()));
             }
-        } else if (triggeringAction && triggeringAction->requester()) {
+        } else if (triggeringAction && triggeringAction->requester() && !isLoadingBrowserControlledHTML()) {
             document->inheritPolicyContainerFrom(triggeringAction->requester()->policyContainer);
-            document->checkedContentSecurityPolicy()->updateSourceSelf(triggeringAction->requester()->securityOrigin);
+            protect(document->contentSecurityPolicy())->updateSourceSelf(triggeringAction->requester()->securityOrigin);
         }
 
         // https://html.spec.whatwg.org/multipage/origin.html#requires-storing-the-policy-container-in-history
@@ -239,9 +250,9 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     }
 
     if (existingDocument && existingDocument->contentSecurityPolicy() && document->contentSecurityPolicy())
-        document->checkedContentSecurityPolicy()->setInsecureNavigationRequestsToUpgrade(existingDocument->checkedContentSecurityPolicy()->takeNavigationRequestsToUpgrade());
+        document->contentSecurityPolicy()->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
 
-    frameLoader->didBeginDocument(dispatch);
+    frameLoader->didBeginDocument(dispatch, previousWindow);
 
     document->implicitOpen();
 
@@ -251,7 +262,7 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     m_parser = document->parser();
 
     if (frame->view() && frameLoader->client().hasHTMLView())
-        frame->protectedView()->setContentsSize(IntSize());
+        protect(frame->view())->setContentsSize(IntSize());
 
     m_state = State::Started;
     return true;
@@ -273,16 +284,16 @@ TextResourceDecoder& DocumentWriter::decoder()
         // an attack vector.
         // FIXME: This might be too cautious for non-7bit-encodings and
         // we may consider relaxing this later after testing.
-        if (canReferToParentFrameEncoding(frame.ptr(), parentFrame.get()))
-            decoder->setHintEncoding(parentFrame->document()->protectedDecoder().get());
+        if (canReferToParentFrameEncoding(frame.ptr(), parentFrame))
+            decoder->setHintEncoding(parentFrame->document()->decoder());
         if (m_encoding.isEmpty()) {
-            if (canReferToParentFrameEncoding(frame.ptr(), parentFrame.get()))
-                decoder->setEncoding(parentFrame->document()->textEncoding(), TextResourceDecoder::EncodingFromParentFrame);
+            if (canReferToParentFrameEncoding(frame.ptr(), parentFrame))
+                decoder->setEncoding(protect(parentFrame->document())->textEncoding(), TextResourceDecoder::EncodingFromParentFrame);
         } else {
             decoder->setEncoding(m_encoding,
                 m_encodingWasChosenByUser ? TextResourceDecoder::UserChosenEncoding : TextResourceDecoder::EncodingFromHTTPHeader);
         }
-        frame->protectedDocument()->setDecoder(WTFMove(decoder));
+        protect(frame->document())->setDecoder(WTF::move(decoder));
     }
     return *m_decoder;
 }
@@ -299,11 +310,6 @@ void DocumentWriter::reportDataReceived()
     document->resolveStyle(Document::ResolveStyleType::Rebuild);
 }
 
-RefPtr<DocumentParser> DocumentWriter::protectedParser() const
-{
-    return m_parser;
-}
-
 void DocumentWriter::addData(const SharedBuffer& data)
 {
     // FIXME: Change these to ASSERT once https://bugs.webkit.org/show_bug.cgi?id=80427 has been resolved.
@@ -313,7 +319,7 @@ void DocumentWriter::addData(const SharedBuffer& data)
         return;
     }
     ASSERT(m_parser);
-    protectedParser()->appendBytes(*this, data.span());
+    protect(m_parser)->appendBytes(*this, data.span());
 }
 
 void DocumentWriter::insertDataSynchronously(const String& markup)
@@ -321,7 +327,7 @@ void DocumentWriter::insertDataSynchronously(const String& markup)
     ASSERT(m_state != State::NotStarted);
     ASSERT(m_state != State::Finished);
     ASSERT(m_parser);
-    protectedParser()->insert(markup);
+    protect(m_parser)->insert(markup);
 }
 
 void DocumentWriter::end()
@@ -341,10 +347,10 @@ void DocumentWriter::end()
     if (!m_parser)
         return;
     // FIXME: m_parser->finish() should imply m_parser->flush().
-    protectedParser()->flush(*this);
+    protect(m_parser)->flush(*this);
     if (!m_parser)
         return;
-    protectedParser()->finish();
+    protect(m_parser)->finish();
     m_parser = nullptr;
 }
 
@@ -362,7 +368,7 @@ void DocumentWriter::setFrame(LocalFrame& frame)
 void DocumentWriter::setDocumentWasLoadedAsPartOfNavigation()
 {
     ASSERT(m_parser && !m_parser->isStopped());
-    protectedParser()->setDocumentWasLoadedAsPartOfNavigation();
+    m_parser->setDocumentWasLoadedAsPartOfNavigation();
 }
 
 } // namespace WebCore

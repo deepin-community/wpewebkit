@@ -43,7 +43,7 @@ WebURLSchemeHandler::~WebURLSchemeHandler()
 void WebURLSchemeHandler::startTask(WebPageProxy& page, WebProcessProxy& process, PageIdentifier webPageID, URLSchemeTaskParameters&& parameters, SyncLoadCompletionHandler&& completionHandler)
 {
     auto taskIdentifier = parameters.taskIdentifier;
-    auto result = m_tasks.add({ taskIdentifier, page.identifier() }, WebURLSchemeTask::create(*this, page, process, webPageID, WTFMove(parameters), WTFMove(completionHandler)));
+    auto result = m_tasks.add({ taskIdentifier, page.identifier() }, WebURLSchemeTask::create(*this, page, process, webPageID, WTF::move(parameters), WTF::move(completionHandler)));
     ASSERT(result.isNewEntry);
 
     auto pageEntry = m_tasksByPageIdentifier.add(page.identifier(), HashSet<WebCore::ResourceLoaderIdentifier>());
@@ -61,7 +61,7 @@ WebProcessProxy* WebURLSchemeHandler::processForTaskIdentifier(WebPageProxy& pag
     auto iterator = m_tasks.find(key);
     if (iterator == m_tasks.end())
         return nullptr;
-    return iterator->value->process();
+    return &iterator->value->process();
 }
 
 void WebURLSchemeHandler::stopAllTasksForPage(WebPageProxy& page, WebProcessProxy* process)
@@ -91,8 +91,9 @@ void WebURLSchemeHandler::stopTask(WebPageProxy& page, WebCore::ResourceLoaderId
     if (iterator == m_tasks.end())
         return;
 
-    iterator->value->stop();
-    platformStopTask(page, iterator->value);
+    Ref task = iterator->value;
+    task->stop();
+    platformStopTask(page, task);
 
     removeTaskFromPageMap(page.identifier(), taskIdentifier);
     m_tasks.remove(iterator);
@@ -102,7 +103,7 @@ void WebURLSchemeHandler::taskCompleted(WebPageProxyIdentifier pageID, WebURLSch
 {
     auto takenTask = m_tasks.take({ task.resourceLoaderID(), pageID });
     ASSERT_UNUSED(takenTask, takenTask == &task);
-    removeTaskFromPageMap(task.pageProxyID(), task.resourceLoaderID());
+    removeTaskFromPageMap(*task.pageProxyID(), task.resourceLoaderID());
 
     platformTaskCompleted(task);
 }

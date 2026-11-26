@@ -25,9 +25,14 @@
 
 #if ENABLE(WEBXR)
 
-messages -> PlatformXRSystemProxy NotRefCounted {
-    [EnabledIf='webXREnabled()'] SessionDidEnd(WebKit::XRDeviceIdentifier deviceIdentifier)
-    [EnabledIf='webXREnabled()'] SessionDidUpdateVisibilityState(WebKit::XRDeviceIdentifier deviceIdentifier, PlatformXR::VisibilityState visibilityState)
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
+messages -> PlatformXRSystemProxy {
+    SessionDidEnd(WebKit::XRDeviceIdentifier deviceIdentifier)
+    SessionDidUpdateVisibilityState(WebKit::XRDeviceIdentifier deviceIdentifier, PlatformXR::VisibilityState visibilityState)
+    SessionDidInitializeRendering(WebKit::XRDeviceIdentifier deviceIdentifier, uint32_t width, uint32_t height, uint32_t arrayLength)
 }
 
 #endif

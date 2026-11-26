@@ -32,7 +32,7 @@
 
 namespace WebCore {
 
-static DoubleRange capabilityDoubleRange(const DoubleCapabilityRange& value)
+static DoubleRange NODELETE capabilityDoubleRange(const DoubleCapabilityRange& value)
 {
     auto min = value.min();
     auto max = value.max();
@@ -48,7 +48,7 @@ static DoubleRange capabilityDoubleRange(const DoubleCapabilityRange& value)
     return range;
 }
 
-static LongRange capabilityLongRange(const LongCapabilityRange& value)
+static LongRange NODELETE capabilityLongRange(const LongCapabilityRange& value)
 {
     return { value.max(), value.min() };
 }
@@ -71,9 +71,18 @@ static Vector<bool> capabilityBooleanVector(RealtimeMediaSourceCapabilities::Ech
 {
     Vector<bool> result;
     result.reserveInitialCapacity(2);
-    result.append(true);
-    if (cancellation == RealtimeMediaSourceCapabilities::EchoCancellation::ReadWrite)
+    switch (cancellation) {
+    case RealtimeMediaSourceCapabilities::EchoCancellation::On:
+        result.append(true);
+        break;
+    case RealtimeMediaSourceCapabilities::EchoCancellation::Off:
         result.append(false);
+        break;
+    case RealtimeMediaSourceCapabilities::EchoCancellation::OnOrOff:
+        result.append(true);
+        result.append(false);
+        break;
+    }
     return result;
 }
 
@@ -107,7 +116,7 @@ static Vector<bool> powerEfficientCapabilityVector(bool powerEfficient)
     return result;
 }
 
-MediaTrackCapabilities toMediaTrackCapabilities(const RealtimeMediaSourceCapabilities& capabilities, const String& groupId)
+MediaTrackCapabilities toMediaTrackCapabilities(const RealtimeMediaSourceCapabilities& capabilities)
 {
     MediaTrackCapabilities result;
     if (capabilities.supportsWidth())
@@ -131,7 +140,7 @@ MediaTrackCapabilities toMediaTrackCapabilities(const RealtimeMediaSourceCapabil
     if (capabilities.supportsDeviceId())
         result.deviceId = capabilities.deviceId();
     if (capabilities.supportsGroupId())
-        result.groupId = groupId;
+        result.groupId = capabilities.groupId();
     if (capabilities.supportsFocusDistance())
         result.focusDistance = capabilityDoubleRange(capabilities.focusDistance());
     if (capabilities.supportsWhiteBalanceMode())

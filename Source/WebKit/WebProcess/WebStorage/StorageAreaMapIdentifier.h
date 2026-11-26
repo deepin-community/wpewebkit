@@ -29,8 +29,8 @@
 
 namespace WebKit {
 
-enum class StorageAreaMapIdentifierType { };
-using StorageAreaMapIdentifier = LegacyNullableObjectIdentifier<StorageAreaMapIdentifierType>;
+struct StorageAreaMapIdentifierType;
+using StorageAreaMapIdentifier = ObjectIdentifier<StorageAreaMapIdentifierType>;
 
 } // namespace WebKit
 

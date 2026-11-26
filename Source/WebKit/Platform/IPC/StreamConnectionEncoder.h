@@ -31,7 +31,7 @@
 
 namespace IPC {
 
-template<typename, typename> struct ArgumentCoder;
+template<typename> struct ArgumentCoder;
 
 // IPC encoder which:
 //  - Encodes to a caller buffer with fixed size, does not resize, stops when size runs out
@@ -45,29 +45,29 @@ public:
     static constexpr size_t messageAlignment = alignof(MessageName);
     static constexpr bool isIPCEncoder = true;
 
-    StreamConnectionEncoder(MessageName messageName, uint8_t* stream, size_t streamCapacity)
-        : m_buffer(stream)
-        , m_bufferCapacity(streamCapacity)
+    StreamConnectionEncoder(MessageName messageName, std::span<uint8_t> stream)
+        : m_originalSize(stream.size())
     {
-        *this << messageName;
+        // Instead of using *this << messageName, manually encode the messageName since we
+        // know the stream buffer is bigger than needed as per API contract.
+        auto bytes = asBytes(singleElementSpan(messageName));
+        ASSERT(stream.size() > bytes.size()); // By API contract.
+        memcpySpan(stream, bytes);
+        m_buffer = stream.subspan(bytes.size());
     }
-
-    ~StreamConnectionEncoder() = default;
 
     template<typename T, size_t Extent>
     bool encodeSpan(std::span<T, Extent> span)
     {
         auto bytes = asBytes(span);
-        size_t bufferPointer = static_cast<size_t>(reinterpret_cast<intptr_t>(m_buffer + m_encodedSize));
-        size_t newBufferPointer = roundUpToMultipleOf<alignof(T)>(bufferPointer);
-        if (newBufferPointer < bufferPointer)
+        size_t alignAdvance = distanceToMultipleOf<alignof(T)>(reinterpret_cast<uintptr_t>(m_buffer.data()));
+        auto requiredSize = alignAdvance + bytes.size();
+        if (m_buffer.size() < requiredSize) {
+            m_buffer = { };
             return false;
-        intptr_t alignedSize = m_encodedSize + (newBufferPointer - bufferPointer);
-        if (!reserve(alignedSize, bytes.size()))
-            return false;
-        uint8_t* buffer = m_buffer + alignedSize;
-        memcpy(buffer, bytes.data(), bytes.size());
-        m_encodedSize = alignedSize + bytes.size();
+        }
+        memcpySpan(m_buffer.subspan(alignAdvance), bytes);
+        m_buffer = m_buffer.subspan(requiredSize);
         return true;
     }
 
@@ -75,32 +75,22 @@ public:
     bool encodeObject(const T& object)
     {
         static_assert(std::is_trivially_copyable_v<T>);
-        return encodeSpan(std::span(std::addressof(object), 1));
+        return encodeSpan(singleElementSpan(object));
     }
 
     template<typename T>
     StreamConnectionEncoder& operator<<(T&& t)
     {
-        ArgumentCoder<std::remove_cvref_t<T>, void>::encode(*this, std::forward<T>(t));
+        ArgumentCoder<std::remove_cvref_t<T>>::encode(*this, std::forward<T>(t));
         return *this;
     }
 
-    size_t size() const { ASSERT(isValid()); return m_encodedSize; }
-    bool isValid() const { return m_bufferCapacity; }
+    size_t size() const { ASSERT(isValid()); return m_originalSize - m_buffer.size(); }
+    bool isValid() const { return !!m_buffer.data(); }
     operator bool() const { return isValid(); }
 private:
-    bool reserve(size_t alignedSize, size_t additionalSize)
-    {
-        size_t size = alignedSize + additionalSize;
-        if (size < alignedSize || size > m_bufferCapacity) {
-            m_bufferCapacity = 0;
-            return false;
-        }
-        return true;
-    }
-    uint8_t* m_buffer;
-    size_t m_bufferCapacity;
-    size_t m_encodedSize { 0 };
+    std::span<uint8_t> m_buffer;
+    const size_t m_originalSize;
 };
 
 } // namespace IPC

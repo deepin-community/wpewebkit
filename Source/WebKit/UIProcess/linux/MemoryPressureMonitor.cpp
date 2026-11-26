@@ -26,7 +26,7 @@
 #include "config.h"
 #include "MemoryPressureMonitor.h"
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
 
 #include "WebProcessPool.h"
 #include <mutex>
@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <wtf/MemoryPressureHandler.h>
 #include <wtf/PageBlock.h>
 #include <wtf/Threading.h>
 #include <wtf/UniStdExtras.h>
@@ -41,6 +42,8 @@
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebKit {
+
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 
 static const size_t notSet = static_cast<size_t>(-1);
 
@@ -205,33 +208,33 @@ static CString getCgroupControllerPath(FILE* cgroupControllerFile, const char* c
     CString cgroupMemoryControllerPath;
     while (!feof(cgroupControllerFile)) {
         unsigned hierarchyId;
-        char name[CGROUP_NAME_BUFFER_SIZE + 1];
-        char path[maxCgroupPath + 1];
+        std::array<char, CGROUP_NAME_BUFFER_SIZE + 1> name;
+        std::array<char, maxCgroupPath + 1>  path;
         name[0] = path[0] = '\0';
         int scanResult = fscanf(cgroupControllerFile, "%u:", &hierarchyId);
         if (scanResult != 1)
             return CString();
         if (hierarchyId == CGROUP_V2_HIERARCHY) {
-            scanResult = fscanf(cgroupControllerFile, ":%" STRINGIFY(PATH_MAX) "[^\n]", path);
+            scanResult = fscanf(cgroupControllerFile, ":%" STRINGIFY(PATH_MAX) "[^\n]", path.data());
             if (scanResult != 1)
                 return CString();
         } else {
-            scanResult = fscanf(cgroupControllerFile, "%" STRINGIFY(CGROUP_NAME_BUFFER_SIZE) "[^:]:%" STRINGIFY(PATH_MAX) "[^\n]", name, path);
+            scanResult = fscanf(cgroupControllerFile, "%" STRINGIFY(CGROUP_NAME_BUFFER_SIZE) "[^:]:%" STRINGIFY(PATH_MAX) "[^\n]", name.data(), path.data());
             if (scanResult != 2)
                 return CString();
         }
-        if (!strcmp(name, controllerName)) {
-            cgroupMemoryControllerPath = CString(path);
+        if (!strcmp(name.data(), controllerName)) {
+            cgroupMemoryControllerPath = CString(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - %s namespace (hierarchy: %d): %s", controllerName, hierarchyId, cgroupMemoryControllerPath.data());
             return cgroupMemoryControllerPath;
         }
-        if (!strcmp(name, "name=systemd")) {
-            cgroupMemoryControllerPath = CString(path);
+        if (!strcmp(name.data(), "name=systemd")) {
+            cgroupMemoryControllerPath = CString(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - systemd namespace (hierarchy: %d): %s", hierarchyId, cgroupMemoryControllerPath.data());
             return cgroupMemoryControllerPath;
         }
-        if (!strcmp(name, "")) {
-            cgroupMemoryControllerPath = CString(path);
+        if (!strcmp(name.data(), "")) {
+            cgroupMemoryControllerPath = CString(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - empty namespace (hierarchy: %d): %s", hierarchyId, cgroupMemoryControllerPath.data());
             return cgroupMemoryControllerPath;
         }
@@ -283,18 +286,18 @@ static int systemMemoryUsedAsPercentage(FILE* memInfoFile, FILE* zoneInfoFile, C
         return -1;
 
     int memoryUsagePercentage = ((memoryTotal - memoryAvailable) * 100) / memoryTotal;
-    LOG_VERBOSE(MemoryPressure, "MemoryPressureMonitor::memory: real (memory total=%zu MB) (memory available=%zu MB) (memory usage percentage=%d MB)", memoryTotal, memoryAvailable, memoryUsagePercentage);
+    LOG(MemoryPressure, "MemoryPressureMonitor::memory: real (total: %zu kB) (available: %zu kB) (usage: %d%%)", memoryTotal, memoryAvailable, memoryUsagePercentage);
     if (memoryController->isActive()) {
         memoryTotal = memoryController->getMemoryTotalWithCgroup();
         size_t memoryUsage = memoryController->getMemoryUsageWithCgroup();
         if (memoryTotal != notSet && memoryUsage != notSet) {
             int memoryUsagePercentageWithCgroup = 100 * ((float) memoryUsage / (float) memoryTotal);
-            LOG_VERBOSE(MemoryPressure, "MemoryPressureMonitor::memory: cgroup (memory total=%zu bytes) (memory usage=%zu bytes) (memory usage percentage=%d bytes)", memoryTotal, memoryUsage, memoryUsagePercentageWithCgroup);
+            LOG(MemoryPressure, "MemoryPressureMonitor::memory: cgroup (total: %zu bytes) (in use: %zu bytes) (usage: %d%%)", memoryTotal, memoryUsage, memoryUsagePercentageWithCgroup);
             if (memoryUsagePercentageWithCgroup > memoryUsagePercentage)
                 memoryUsagePercentage = memoryUsagePercentageWithCgroup;
         }
     }
-    LOG_VERBOSE(MemoryPressure, "MemoryPressureMonitor::memory: memoryUsagePercentage (%d)", memoryUsagePercentage);
+    LOG(MemoryPressure, "MemoryPressureMonitor::memory: (memoryUsagePercentage: %d%%)", memoryUsagePercentage);
     return memoryUsagePercentage;
 }
 
@@ -374,7 +377,8 @@ void MemoryPressureMonitor::start()
 
             if (usedPercentage >= s_memoryPresurePercentageThreshold) {
                 bool isCritical = (usedPercentage >= s_memoryPresurePercentageThresholdCritical);
-                RunLoop::main().dispatch([isCritical] {
+                RunLoop::mainSingleton().dispatch([isCritical] {
+                    MemoryPressureHandler::singleton().triggerMemoryPressureEvent(isCritical);
                     for (auto& processPool : WebProcessPool::allProcessPools())
                         processPool->sendMemoryPressureEvent(isCritical);
                 });
@@ -508,6 +512,8 @@ size_t CGroupMemoryController::getMemoryUsageWithCgroup()
 
     return notSet;
 }
+
+IGNORE_CLANG_WARNINGS_END
 
 } // namespace WebKit
 

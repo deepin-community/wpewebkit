@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <WebCore/PrivateClickMeasurement.h>
 #include <wtf/URL.h>
 #include <wtf/WallTime.h>
@@ -320,7 +320,7 @@ TEST(PrivateClickMeasurement, InvalidBlindedSecret)
 
     auto ephemeralNonce = PCM::EphemeralNonce { "ABCDEFabcdef0123456789"_s };
     EXPECT_TRUE(ephemeralNonce.isValid());
-    pcm.setEphemeralSourceNonce(WTFMove(ephemeralNonce));
+    pcm.setEphemeralSourceNonce(WTF::move(ephemeralNonce));
 
     auto errorMessage = pcm.calculateAndUpdateSourceUnlinkableToken(serverPublicKeyBase64URL);
     EXPECT_FALSE(errorMessage);

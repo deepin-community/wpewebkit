@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "ObjectPropertyCondition.h"
-#include "PackedCellPtr.h"
-#include "Watchpoint.h"
+#include <JavaScriptCore/ObjectPropertyCondition.h>
+#include <JavaScriptCore/PackedCellPtr.h>
+#include <JavaScriptCore/Watchpoint.h>
 
 namespace JSC {
 
@@ -45,7 +45,7 @@ public:
         RELEASE_ASSERT(watchpointSet.state() == IsWatched);
     }
 
-    const ObjectPropertyCondition& key() const { return m_key; }
+    const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
     void install(VM&);
 
@@ -66,7 +66,7 @@ inline void ObjectAdaptiveStructureWatchpoint::install(VM&)
 
 inline void ObjectAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
-    if (!m_owner->isLive())
+    if (m_owner->isPendingDestruction())
         return;
 
     if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {

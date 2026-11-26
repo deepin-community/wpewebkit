@@ -34,6 +34,8 @@
 #include "WebProcessProxy.h"
 #include <wtf/TZoneMallocInlines.h>
 
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, *messageSenderConnection())
+
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeechRecognitionRemoteRealtimeMediaSourceManager);
@@ -43,13 +45,23 @@ SpeechRecognitionRemoteRealtimeMediaSourceManager::SpeechRecognitionRemoteRealti
 {
 }
 
+void SpeechRecognitionRemoteRealtimeMediaSourceManager::ref() const
+{
+    m_process->ref();
+}
+
+void SpeechRecognitionRemoteRealtimeMediaSourceManager::deref() const
+{
+    m_process->deref();
+}
+
 void SpeechRecognitionRemoteRealtimeMediaSourceManager::addSource(SpeechRecognitionRemoteRealtimeMediaSource& source, const WebCore::CaptureDevice& captureDevice)
 {
     auto identifier = source.identifier();
     ASSERT(!m_sources.contains(identifier));
     m_sources.add(identifier, source);
 
-    send(Messages::SpeechRecognitionRealtimeMediaSourceManager::CreateSource(identifier, captureDevice, source.pageIdentifier()));
+    send(Messages::SpeechRecognitionRealtimeMediaSourceManager::CreateSource(identifier, captureDevice, *source.pageIdentifier(), source.clientIdentifier()));
 }
 
 void SpeechRecognitionRemoteRealtimeMediaSourceManager::removeSource(SpeechRecognitionRemoteRealtimeMediaSource& source)
@@ -63,8 +75,15 @@ void SpeechRecognitionRemoteRealtimeMediaSourceManager::removeSource(SpeechRecog
 
 void SpeechRecognitionRemoteRealtimeMediaSourceManager::remoteAudioSamplesAvailable(WebCore::RealtimeMediaSourceIdentifier identifier, const WTF::MediaTime& time, uint64_t numberOfFrames)
 {
-    if (auto source = m_sources.get(identifier).get())
-        source->remoteAudioSamplesAvailable(time, numberOfFrames);
+    RefPtr source = m_sources.get(identifier).get();
+    if (!source)
+        return;
+
+    auto frameCount = source->audioBufferFrameCount();
+    MESSAGE_CHECK(frameCount);
+    MESSAGE_CHECK(numberOfFrames && numberOfFrames <= *frameCount);
+
+    source->remoteAudioSamplesAvailable(time, numberOfFrames);
 }
 
 void SpeechRecognitionRemoteRealtimeMediaSourceManager::remoteCaptureFailed(WebCore::RealtimeMediaSourceIdentifier identifier)
@@ -94,16 +113,18 @@ uint64_t SpeechRecognitionRemoteRealtimeMediaSourceManager::messageSenderDestina
 void SpeechRecognitionRemoteRealtimeMediaSourceManager::setStorage(WebCore::RealtimeMediaSourceIdentifier identifier, ConsumerSharedCARingBuffer::Handle&& handle, const WebCore::CAAudioStreamDescription& description)
 {
     if (auto source = m_sources.get(identifier).get())
-        source->setStorage(WTFMove(handle), description);
+        source->setStorage(WTF::move(handle), description);
 }
 
 #endif
 
-const SharedPreferencesForWebProcess& SpeechRecognitionRemoteRealtimeMediaSourceManager::sharedPreferencesForWebProcess() const
+std::optional<SharedPreferencesForWebProcess> SpeechRecognitionRemoteRealtimeMediaSourceManager::sharedPreferencesForWebProcess() const
 {
     return m_process->sharedPreferencesForWebProcess();
 }
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK
 
 #endif

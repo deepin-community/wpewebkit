@@ -44,7 +44,7 @@ class PrivateClickMeasurementManager;
 
 namespace PCM {
 
-class ManagerInterface {
+class ManagerInterface : public RefCounted<ManagerInterface> {
 public:
     virtual ~ManagerInterface() { };
 
@@ -57,6 +57,7 @@ public:
 
     virtual void storeUnattributed(PrivateClickMeasurement&&, CompletionHandler<void()>&&) = 0;
     virtual void handleAttribution(AttributionTriggerData&&, const URL& requestURL, WebCore::RegistrableDomain&& redirectDomain, const URL& firstPartyURL, const ApplicationBundleIdentifier&) = 0;
+    virtual void checkAttributionTimer() { };
     virtual void clear(CompletionHandler<void()>&&) = 0;
     virtual void clearForRegistrableDomain(RegistrableDomain&&, CompletionHandler<void()>&&) = 0;
     virtual void migratePrivateClickMeasurementFromLegacyStorage(PrivateClickMeasurement&&, PrivateClickMeasurementAttributionType) = 0;
@@ -74,6 +75,7 @@ public:
     virtual void setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBundleIdentifier&&) = 0;
     virtual void destroyStoreForTesting(CompletionHandler<void()>&&) = 0;
     virtual void allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo&) = 0;
+    virtual void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&) = 0;
 };
 
 constexpr auto protocolVersionKey { "version"_s };
@@ -101,7 +103,8 @@ enum class MessageType : uint8_t {
     StartTimerImmediatelyForTesting,
     SetPrivateClickMeasurementAppBundleIDForTesting,
     DestroyStoreForTesting,
-    AllowTLSCertificateChainForLocalPCMTesting
+    AllowTLSCertificateChainForLocalPCMTesting,
+    FetchRegistrableDomains
 };
 
 constexpr auto protocolEncodedMessageKey { "encoded message"_s };
@@ -109,9 +112,9 @@ using EncodedMessage = Vector<uint8_t>;
 
 void decodeMessageAndSendToManager(const Daemon::Connection&, MessageType, std::span<const uint8_t> encodedMessage, CompletionHandler<void(Vector<uint8_t>&&)>&&);
 void doDailyActivityInManager();
-bool messageTypeSendsReply(MessageType);
+bool NODELETE messageTypeSendsReply(MessageType);
 
-void initializePCMStorageInDirectory(const String&);
+void initializePCMStorageInDirectory(const String& storageDirectory, const String& applicationBundleIdentifier, const String& secondaryApplicationBundleIdentifier);
 
 } // namespace PCM
 

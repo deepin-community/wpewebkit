@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-#include "JSValueInWrappedObject.h"
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMConvertBase.h>
+#include <WebCore/JSValueInWrappedObject.h>
 
 namespace WebCore {
 
@@ -59,19 +59,13 @@ template<> struct JSConverter<IDLAny> {
         return value.get();
     }
 
-    static JSC::JSValue convert(const JSValueInWrappedObject& value)
-    {
-        return value.getValue();
-    }
+    static JSC::JSValue convert(const JSValueInWrappedObject&);
 };
 
 template<> struct VariadicConverter<IDLAny> {
     using Item = JSC::Strong<JSC::Unknown>;
 
-    static std::optional<Item> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return Item { JSC::getVM(&lexicalGlobalObject), value };
-    }
+    static std::optional<Item> convert(JSC::JSGlobalObject&, JSC::JSValue);
 };
 
 } // namespace WebCore

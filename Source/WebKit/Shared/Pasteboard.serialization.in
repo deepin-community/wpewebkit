@@ -32,7 +32,7 @@ header: <WebCore/Pasteboard.h>
 #if !PLATFORM(WIN)
     WebCore::PasteboardURL url;
 #endif
-#if !(PLATFORM(GTK) || PLATFORM(WIN))
+#if !(PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN))
     RefPtr<WebCore::SharedBuffer> resourceData;
     String resourceMIMEType;
     Vector<std::pair<String, RefPtr<WebCore::SharedBuffer>>> clientTypesAndData;
@@ -47,20 +47,25 @@ header: <WebCore/Pasteboard.h>
     String contentOrigin;
     bool canSmartCopyOrDelete;
     RefPtr<WebCore::SharedBuffer> dataInWebArchiveFormat;
+    RefPtr<WebCore::LegacyWebArchive> webArchive;
     RefPtr<WebCore::SharedBuffer> dataInRTFDFormat;
     RefPtr<WebCore::SharedBuffer> dataInRTFFormat;
-    RefPtr<WebCore::SharedBuffer> dataInAttributedStringFormat;
+    std::optional<WebCore::AttributedString> dataInAttributedStringFormat;
     String dataInHTMLFormat;
     String dataInStringFormat;
     Vector<std::pair<String, RefPtr<WebCore::SharedBuffer>>> clientTypesAndData;
 #endif
-#if PLATFORM(GTK)
+#if PLATFORM(IOS_FAMILY)
+    HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>> localFrameArchives;
+    Vector<WebCore::FrameIdentifier> remoteFrameIdentifiers;
+#endif
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(HAIKU)
     String contentOrigin;
     bool canSmartCopyOrDelete;
     String text;
     String markup;
 #endif
-#if USE(LIBWPE)
+#if USE(LIBWPE) && !PLATFORM(WPE)
     String text;
     String markup;
 #endif
@@ -73,7 +78,7 @@ header: <WebCore/Pasteboard.h>
 #if PLATFORM(MAC)
     String userVisibleForm
 #endif
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(HAIKU)
     String markup
 #endif
 };

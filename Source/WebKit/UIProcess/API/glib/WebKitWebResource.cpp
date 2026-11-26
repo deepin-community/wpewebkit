@@ -68,7 +68,7 @@ enum {
     N_PROPERTIES,
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 struct _WebKitWebResourcePrivate {
     RefPtr<WebFrameProxy> frame;
@@ -79,7 +79,7 @@ struct _WebKitWebResourcePrivate {
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebResource, webkit_web_resource, G_TYPE_OBJECT, GObject)
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 static void webkitWebResourceGetProperty(GObject* object, guint propId, GValue* value, GParamSpec* paramSpec)
 {
@@ -127,7 +127,7 @@ static void webkit_web_resource_class_init(WebKitWebResourceClass* resourceClass
             WEBKIT_TYPE_URI_RESPONSE,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WebKitWebResource::sent-request:
@@ -162,7 +162,7 @@ static void webkit_web_resource_class_init(WebKitWebResourceClass* resourceClass
      * every time new data has been received. It's
      * useful to know the progress of the resource load operation.
      *
-     * This is signal is deprecated since version 2.40 and it's never emitted.
+     * This signal is deprecated since version 2.40 and it's never emitted.
      *
      * Deprecated: 2.40
      */
@@ -295,25 +295,15 @@ bool webkitWebResourceIsMainResource(WebKitWebResource* resource)
  * The active URI might change during
  * a load operation:
  *
- * <orderedlist>
- * <listitem><para>
- *   When the resource load starts, the active URI is the requested URI
- * </para></listitem>
- * <listitem><para>
- *   When the initial request is sent to the server, #WebKitWebResource::sent-request
- *   signal is emitted without a redirected response, the active URI is the URI of
- *   the request sent to the server.
- * </para></listitem>
- * <listitem><para>
- *   In case of a server redirection, #WebKitWebResource::sent-request signal
- *   is emitted again with a redirected response, the active URI is the URI the request
- *   was redirected to.
- * </para></listitem>
- * <listitem><para>
- *   When the response is received from the server, the active URI is the final
- *   one and it will not change again.
- * </para></listitem>
- * </orderedlist>
+ * 1. When the resource load starts, the active URI is the requested URI
+ * 2. When the initial request is sent to the server, #WebKitWebResource::sent-request
+ *    signal is emitted without a redirected response, the active URI is the URI of
+ *    the request sent to the server.
+ * 3. In case of a server redirection, #WebKitWebResource::sent-request signal
+ *    is emitted again with a redirected response, the active URI is the URI the request
+ *    was redirected to.
+ * 4. When the response is received from the server, the active URI is the final
+ *    one and it will not change again.
  *
  * You can monitor the active URI by connecting to the notify::uri
  * signal of @resource.
@@ -362,7 +352,7 @@ static void resourceDataCallback(API::Data* wkData, GTask* task)
     ResourceGetDataAsyncData* data = static_cast<ResourceGetDataAsyncData*>(g_task_get_task_data(task));
     data->webData = wkData;
     if (!wkData->span().data())
-        data->webData = API::Data::create({ reinterpret_cast<const uint8_t*>(""), 1 });
+        data->webData = API::Data::create(unsafeMakeSpan(reinterpret_cast<const uint8_t*>(""), 1));
     g_task_return_boolean(task, TRUE);
 }
 
@@ -385,12 +375,12 @@ void webkit_web_resource_get_data(WebKitWebResource* resource, GCancellable* can
     GRefPtr<GTask> task = adoptGRef(g_task_new(resource, cancellable, callback, userData));
     g_task_set_task_data(task.get(), createResourceGetDataAsyncData(), reinterpret_cast<GDestroyNotify>(destroyResourceGetDataAsyncData));
     if (resource->priv->isMainResource)
-        resource->priv->frame->getMainResourceData([task = WTFMove(task)](API::Data* data) {
+        resource->priv->frame->getMainResourceData([task = WTF::move(task)](API::Data* data) {
             resourceDataCallback(data, task.get());
         });
     else {
         String url = String::fromUTF8(resource->priv->uri.data());
-        resource->priv->frame->getResourceData(API::URL::create(url).ptr(), [task = WTFMove(task)](API::Data* data) {
+        resource->priv->frame->getResourceData(API::URL::create(url).ptr(), [task = WTF::move(task)](API::Data* data) {
             resourceDataCallback(data, task.get());
         });
     }
@@ -406,7 +396,7 @@ void webkit_web_resource_get_data(WebKitWebResource* resource, GCancellable* can
  * Finish an asynchronous operation started with webkit_web_resource_get_data().
  *
  * Returns: (transfer full) (array length=length) (element-type guint8): a
- *    string with the data of @resource, or %NULL in case of error. if @length
+ *    string with the data of @resource, or %NULL in case of error. If @length
  *    is not %NULL, the size of the data will be assigned to it.
  */
 guchar* webkit_web_resource_get_data_finish(WebKitWebResource* resource, GAsyncResult* result, gsize* length, GError** error)
@@ -427,6 +417,8 @@ guchar* webkit_web_resource_get_data_finish(WebKitWebResource* resource, GAsyncR
         return nullptr;
 
     auto* returnValue = g_malloc(data->webData->size());
+    IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
     memcpy(returnValue, bytes.data(), bytes.size());
+    IGNORE_CLANG_WARNINGS_END
     return static_cast<guchar*>(returnValue);
 }

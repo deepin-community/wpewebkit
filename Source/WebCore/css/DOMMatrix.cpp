@@ -26,7 +26,7 @@
 #include "config.h"
 #include "DOMMatrix.h"
 
-#include "ScriptExecutionContext.h"
+#include "Document.h"
 #include <JavaScriptCore/Float32Array.h>
 #include <cmath>
 #include <limits>
@@ -34,17 +34,18 @@
 namespace WebCore {
 
 // https://drafts.fxtf.org/geometry/#dom-dommatrixreadonly-dommatrixreadonly
-ExceptionOr<Ref<DOMMatrix>> DOMMatrix::create(ScriptExecutionContext& scriptExecutionContext, std::optional<std::variant<String, Vector<double>>>&& init)
+ExceptionOr<Ref<DOMMatrix>> DOMMatrix::create(ScriptExecutionContext& scriptExecutionContext, std::optional<Variant<String, Vector<double>>>&& init)
 {
     if (!init)
         return adoptRef(*new DOMMatrix);
 
     return WTF::switchOn(init.value(),
         [&scriptExecutionContext](const String& init) -> ExceptionOr<Ref<DOMMatrix>> {
-            if (!scriptExecutionContext.isDocument())
+            RefPtr document = dynamicDowncast<Document>(scriptExecutionContext);
+            if (!document)
                 return Exception { ExceptionCode::TypeError };
 
-            auto parseResult = parseStringIntoAbstractMatrix(init);
+            auto parseResult = parseStringIntoAbstractMatrix(*document, init);
             if (parseResult.hasException())
                 return parseResult.releaseException();
             
@@ -75,14 +76,14 @@ DOMMatrix::DOMMatrix(const TransformationMatrix& matrix, Is2D is2D)
 }
 
 DOMMatrix::DOMMatrix(TransformationMatrix&& matrix, Is2D is2D)
-    : DOMMatrixReadOnly(WTFMove(matrix), is2D)
+    : DOMMatrixReadOnly(WTF::move(matrix), is2D)
 {
 }
 
 // https://drafts.fxtf.org/geometry/#create-a-dommatrix-from-the-dictionary
 ExceptionOr<Ref<DOMMatrix>> DOMMatrix::fromMatrix(DOMMatrixInit&& init)
 {
-    return fromMatrixHelper<DOMMatrix>(WTFMove(init));
+    return fromMatrixHelper<DOMMatrix>(WTF::move(init));
 }
 
 ExceptionOr<Ref<DOMMatrix>> DOMMatrix::fromFloat32Array(Ref<Float32Array>&& array32)
@@ -122,7 +123,7 @@ ExceptionOr<Ref<DOMMatrix>> DOMMatrix::fromFloat64Array(Ref<Float64Array>&& arra
 // https://drafts.fxtf.org/geometry/#dom-dommatrix-multiplyself
 ExceptionOr<Ref<DOMMatrix>> DOMMatrix::multiplySelf(DOMMatrixInit&& other)
 {
-    auto fromMatrixResult = DOMMatrix::fromMatrix(WTFMove(other));
+    auto fromMatrixResult = DOMMatrix::fromMatrix(WTF::move(other));
     if (fromMatrixResult.hasException())
         return fromMatrixResult.releaseException();
     auto otherObject = fromMatrixResult.releaseReturnValue();
@@ -135,7 +136,7 @@ ExceptionOr<Ref<DOMMatrix>> DOMMatrix::multiplySelf(DOMMatrixInit&& other)
 // https://drafts.fxtf.org/geometry/#dom-dommatrix-premultiplyself
 ExceptionOr<Ref<DOMMatrix>> DOMMatrix::preMultiplySelf(DOMMatrixInit&& other)
 {
-    auto fromMatrixResult = DOMMatrix::fromMatrix(WTFMove(other));
+    auto fromMatrixResult = DOMMatrix::fromMatrix(WTF::move(other));
     if (fromMatrixResult.hasException())
         return fromMatrixResult.releaseException();
     auto otherObject = fromMatrixResult.releaseReturnValue();
@@ -244,9 +245,9 @@ Ref<DOMMatrix> DOMMatrix::invertSelf()
     return Ref<DOMMatrix> { *this };
 }
 
-ExceptionOr<Ref<DOMMatrix>> DOMMatrix::setMatrixValueForBindings(const String& string)
+ExceptionOr<Ref<DOMMatrix>> DOMMatrix::setMatrixValueForBindings(Document& document, const String& string)
 {
-    auto result = setMatrixValue(string);
+    auto result = setMatrixValue(document, string);
     if (result.hasException())
         return result.releaseException();
     return Ref<DOMMatrix> { *this };

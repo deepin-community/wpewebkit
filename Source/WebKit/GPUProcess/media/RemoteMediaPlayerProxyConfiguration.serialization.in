@@ -26,6 +26,7 @@ struct WebKit::RemoteMediaPlayerProxyConfiguration {
     String userAgent;
     String sourceApplicationIdentifier;
     String networkInterfaceName;
+    String audioOutputDeviceId;
     Vector<WebCore::ContentType> mediaContentTypesRequiringHardwareSupport;
     std::optional<Vector<String>> allowedMediaContainerTypes;
     std::optional<Vector<String>> allowedMediaCodecTypes;
@@ -44,10 +45,12 @@ struct WebKit::RemoteMediaPlayerProxyConfiguration {
     bool shouldUsePersistentCache;
     bool isVideo;
     bool renderingCanBeAccelerated;
-    bool prefersSandboxedParsing;
     bool shouldDisableHDR;
 #if PLATFORM(IOS_FAMILY)
     bool canShowWhileLocked;
+#endif
+#if HAVE(SPATIAL_AUDIO_EXPERIENCE)
+    bool prefersSpatialAudioExperience;
 #endif
 };
 #endif

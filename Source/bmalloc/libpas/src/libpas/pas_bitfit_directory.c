@@ -37,6 +37,7 @@
 #include "pas_free_granules.h"
 #include "pas_heap_lock.h"
 #include "pas_page_sharing_pool.h"
+#include "pas_race_test_hooks.h"
 #include "pas_segregated_heap.h"
 #include "pas_stream.h"
 
@@ -44,7 +45,7 @@ void pas_bitfit_directory_construct(pas_bitfit_directory* directory,
                                     const pas_bitfit_page_config* config,
                                     pas_segregated_heap* heap)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_BITFIT_HEAPS);
 
     /* NOTE - this works even if the config is disabled, and produces a directory that is empty and
        does nothing. This makes sense because it makes it easy to iterate over the directories in a heap
@@ -105,7 +106,7 @@ pas_bitfit_directory_get_first_free_view(pas_bitfit_directory* directory,
                                          unsigned size,
                                          const pas_bitfit_page_config* page_config)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_BITFIT_HEAPS);
 
     PAS_ASSERT(page_config->base.is_enabled);
     
@@ -133,6 +134,14 @@ pas_bitfit_directory_get_first_free_view(pas_bitfit_directory* directory,
             found_empty_index = pas_bitfit_directory_find_first_empty(directory,
                                                                       (unsigned)first_empty.value);
             if (found_empty_index.did_succeed) {
+                /* find_first_empty iterates max_frees via _iterate, which reads
+                   max_frees.size independently and may observe a newer size than
+                   max_frees_size loaded at the top of the loop. The returned index
+                   is derived from data loaded by _iterate. Re-establish the dependency
+                   through directory using the returned index so that subsequent views
+                   accesses (which go through directory) are ordered relative to what
+                   _iterate observed, not relative to the stale max_frees_size. */
+                directory += pas_depend(found_empty_index.index);
                 pas_versioned_field_maximize_watched(
                     &directory->first_empty, first_empty, found_empty_index.index);
 
@@ -376,14 +385,14 @@ pas_page_sharing_pool_take_result pas_bitfit_directory_take_last_empty(
     pas_deferred_decommit_log* decommit_log,
     pas_lock_hold_mode heap_lock_hold_mode)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_BITFIT_HEAPS);
     
     pas_versioned_field last_empty_plus_one_value;
     size_t index;
     const pas_bitfit_page_config* page_config;
     size_t num_granules;
 
-    last_empty_plus_one_value = pas_versioned_field_read(&directory->last_empty_plus_one);
+    last_empty_plus_one_value = pas_versioned_field_read_to_watch(&directory->last_empty_plus_one);
 
     page_config = pas_bitfit_page_config_kind_get_config(directory->config_kind);
     num_granules = page_config->base.page_size / page_config->base.granule_size;
@@ -518,7 +527,7 @@ pas_page_sharing_pool_take_result pas_bitfit_directory_take_last_empty(
             pas_deferred_decommit_log_add_already_locked(
                 decommit_log,
                 pas_virtual_range_create(base, base + page_config->base.page_size, commit_lock,
-                                         page_config->base.heap_config_ptr->mmap_capability),
+                                         page_config->base.heap_config_ptr->page_flags),
                 heap_lock_hold_mode);
         }
         
@@ -539,10 +548,12 @@ pas_page_sharing_pool_take_result pas_bitfit_directory_take_last_empty(
         return pas_page_sharing_pool_take_success;
     }
 
+    pas_race_test_hook(pas_race_test_hook_bitfit_directory_take_last_empty_after_loop);
+
     pas_versioned_field_try_write(&directory->last_empty_plus_one,
                                   last_empty_plus_one_value,
                                   0);
-    
+
     return pas_page_sharing_pool_take_none_available;
 }
 

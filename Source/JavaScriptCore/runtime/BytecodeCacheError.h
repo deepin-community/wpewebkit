@@ -25,8 +25,7 @@
 
 #pragma once
 
-#include "ParserError.h"
-#include <variant>
+#include <JavaScriptCore/ParserError.h>
 
 namespace JSC {
 
@@ -39,7 +38,7 @@ public:
         {
         }
 
-        bool isValid() const;
+        bool NODELETE isValid() const;
         String message() const;
 
     private:
@@ -70,7 +69,7 @@ public:
     JS_EXPORT_PRIVATE String message() const;
 
 private:
-    std::variant<ParserError, StandardError, WriteError> m_error;
+    Variant<ParserError, StandardError, WriteError> m_error;
 };
 
 } // namespace JSC

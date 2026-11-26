@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "AbstractModuleRecord.h"
-#include "SourceCode.h"
-#include "VariableEnvironment.h"
+#include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/SourceCode.h>
+#include <JavaScriptCore/VariableEnvironment.h>
 
 namespace JSC {
 
@@ -35,14 +36,16 @@ class ModuleProgramExecutable;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
-class JSModuleRecord final : public AbstractModuleRecord {
+class JSModuleRecord final : public CyclicModuleRecord {
     friend class LLIntOffsetsExtractor;
 public:
-    using Base = AbstractModuleRecord;
+    using Base = CyclicModuleRecord;
 
     DECLARE_EXPORT_INFO;
 
-    static constexpr bool needsDestruction = true;
+    DECLARE_VISIT_CHILDREN;
+
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
     template<typename CellType, SubspaceAccess mode>
@@ -51,24 +54,27 @@ public:
         return vm.jsModuleRecordSpace<mode>();
     }
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+    inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
     static JSModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier&, const SourceCode&, const VariableEnvironment&, const VariableEnvironment&, CodeFeatures);
 
-    Synchronousness link(JSGlobalObject*, JSValue scriptFetcher);
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
 
-    const SourceCode& sourceCode() const { return m_sourceCode; }
-    const VariableEnvironment& declaredVariables() const { return m_declaredVariables; }
-    const VariableEnvironment& lexicalVariables() const { return m_lexicalVariables; }
+    bool isTopLevelExecutionFinished() const;
+
+    void execute(JSGlobalObject*, JSPromise* = nullptr);
+    void executeAsync(JSGlobalObject*);
+
+    const SourceCode& sourceCode() const LIFETIME_BOUND { return m_sourceCode; }
+    const VariableEnvironment& declaredVariables() const LIFETIME_BOUND { return m_declaredVariables; }
+    const VariableEnvironment& lexicalVariables() const LIFETIME_BOUND { return m_lexicalVariables; }
+    CodeFeatures features() const { return m_features; }
+
+    ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
 
 private:
     JSModuleRecord(VM&, Structure*, const Identifier&, const SourceCode&, const VariableEnvironment&, const VariableEnvironment&, CodeFeatures);
 
     void finishCreation(JSGlobalObject*, VM&);
-
-    DECLARE_VISIT_CHILDREN;
-
-    void instantiateDeclarations(JSGlobalObject*, ModuleProgramExecutable*, JSValue scriptFetcher);
 
     SourceCode m_sourceCode;
     VariableEnvironment m_declaredVariables;

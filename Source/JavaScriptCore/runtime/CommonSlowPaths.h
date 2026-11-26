@@ -30,7 +30,8 @@
 #include "DirectArguments.h"
 #include "ExceptionHelpers.h"
 #include "FunctionCodeBlock.h"
-#include "JSImmutableButterfly.h"
+#include "JSCellButterfly.h"
+#include "JSGlobalProxy.h"
 #include "JSPropertyNameEnumerator.h"
 #include "ScopedArguments.h"
 #include "SlowPathFunction.h"
@@ -66,20 +67,23 @@ inline JSValue opEnumeratorGetByVal(JSGlobalObject* globalObject, JSValue baseVa
 
     switch (mode) {
     case JSPropertyNameEnumerator::IndexedMode: {
-        if (arrayProfile && LIKELY(baseValue.isCell()))
-            arrayProfile->observeStructureID(baseValue.asCell()->structureID());
+        if (arrayProfile) {
+            if (baseValue.isCell()) [[likely]]
+                arrayProfile->observeStructureID(baseValue.asCell()->structureID());
+        }
         RELEASE_AND_RETURN(scope, baseValue.get(globalObject, static_cast<unsigned>(index)));
     }
     case JSPropertyNameEnumerator::OwnStructureMode: {
-        if (LIKELY(baseValue.isCell()) && baseValue.asCell()->structureID() == enumerator->cachedStructureID()) {
-            // We'll only match the structure ID if the base is an object.
-            ASSERT(index < enumerator->endStructurePropertyIndex());
-            RELEASE_AND_RETURN(scope, baseValue.getObject()->getDirect(index < enumerator->cachedInlineCapacity() ? index : index - enumerator->cachedInlineCapacity() + firstOutOfLineOffset));
-        } else {
-            if (enumeratorMetadata)
-                *enumeratorMetadata |= static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch);
+        if (baseValue.isCell()) [[likely]] {
+            if (baseValue.asCell()->structureID() == enumerator->cachedStructureID()) {
+                // We'll only match the structure ID if the base is an object.
+                ASSERT(index < enumerator->endStructurePropertyIndex());
+                RELEASE_AND_RETURN(scope, baseValue.getObject()->getDirect(index < enumerator->cachedInlineCapacity() ? index : index - enumerator->cachedInlineCapacity() + firstOutOfLineOffset));
+            }
         }
-        FALLTHROUGH;
+        if (enumeratorMetadata)
+            *enumeratorMetadata |= static_cast<uint8_t>(JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch);
+        [[fallthrough]];
     }
 
     case JSPropertyNameEnumerator::GenericMode: {
@@ -124,14 +128,14 @@ inline bool canAccessArgumentIndexQuickly(JSObject& object, uint32_t index)
 {
     switch (object.type()) {
     case DirectArgumentsType: {
-        DirectArguments* directArguments = jsCast<DirectArguments*>(&object);
-        if (directArguments->isMappedArgumentInDFG(index))
+        auto& directArguments = uncheckedDowncast<DirectArguments>(object);
+        if (directArguments.isMappedArgumentInDFG(index))
             return true;
         break;
     }
     case ScopedArgumentsType: {
-        ScopedArguments* scopedArguments = jsCast<ScopedArguments*>(&object);
-        if (scopedArguments->isMappedArgumentInDFG(index))
+        auto& scopedArguments = uncheckedDowncast<ScopedArguments>(object);
+        if (scopedArguments.isMappedArgumentInDFG(index))
             return true;
         break;
     }
@@ -144,7 +148,7 @@ inline bool canAccessArgumentIndexQuickly(JSObject& object, uint32_t index)
 ALWAYS_INLINE Structure* originalStructureBeforePut(JSCell* cell)
 {
     if (cell->type() == GlobalProxyType)
-        return jsCast<JSGlobalProxy*>(cell)->target()->structure();
+        return uncheckedDowncast<JSGlobalProxy>(cell)->target()->structure();
     return cell->structure();
 }
 
@@ -180,7 +184,7 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isJSFunction = baseObject->inherits<JSFunction>();
     if (isJSFunction) {
-        JSFunction* jsFunction = jsCast<JSFunction*>(baseObject);
+        JSFunction* jsFunction = uncheckedDowncast<JSFunction>(baseObject);
 
         if (propertyName == vm.propertyNames->prototype) {
             slot.disableCaching();
@@ -196,7 +200,7 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
     if (result)
         *result = structure;
 
-    if (LIKELY(canPutDirectFast(vm, structure, propertyName, isJSFunction))) {
+    if (canPutDirectFast(vm, structure, propertyName, isJSFunction)) [[likely]] {
         bool success = baseObject->putDirect(vm, propertyName, value, 0, slot);
         ASSERT_UNUSED(success, success);
     } else {
@@ -217,7 +221,7 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
     bool isJSFunction = baseObject->inherits<JSFunction>();
     if (isJSFunction) {
         ASSERT(propertyName != vm.propertyNames->prototype);
-        jsCast<JSFunction*>(baseObject)->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
+        uncheckedDowncast<JSFunction>(baseObject)->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, void());
     }
 
@@ -226,9 +230,9 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
     baseObject->putDirectAccessor(globalObject, propertyName, accessor, attribute);
 }
 
-inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSImmutableButterfly* immutableButterfly)
+inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)
 {
-    JSGlobalObject* globalObject = structure->globalObject();
+    JSGlobalObject* globalObject = structure->realm();
     Structure* originalStructure = globalObject->originalArrayStructureForIndexingType(immutableButterfly->indexingMode());
     ASSERT(originalStructure->indexingMode() == immutableButterfly->indexingMode());
     ASSERT(isCopyOnWrite(immutableButterfly->indexingMode()));
@@ -236,10 +240,15 @@ inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSImmutable
 
     JSArray* result = JSArray::createWithButterfly(vm, nullptr, originalStructure, immutableButterfly->toButterfly());
     // FIXME: This works but it's slow. If we cared enough about the perf when having a bad time then we could fix it.
-    if (UNLIKELY(originalStructure != structure)) {
+    if (originalStructure != structure) [[unlikely]] {
         ASSERT(hasSlowPutArrayStorage(structure->indexingMode()));
         ASSERT(globalObject->isHavingABadTime());
 
+        // DFG StoreBarrierInsertionPhase requires that a node does not run any GC safepoints
+        // after the node result is allocated (so that GC cannot yet see the result). So
+        // skip GC across switchToSlowPutArrayStorage allocations. The ForAWhile means the
+        // scope exit will not run the GC even if it was deferred during the scope.
+        DeferGCForAWhile deferGC(vm);
         result->switchToSlowPutArrayStorage(vm);
         ASSERT(result->butterfly() != immutableButterfly->toButterfly());
         ASSERT(!result->butterfly()->arrayStorage()->m_sparseMap.get());
@@ -290,7 +299,6 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_bitxor);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof_is_object);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof_is_function);
-JSC_DECLARE_COMMON_SLOW_PATH(slow_path_instanceof_custom);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_is_callable);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_is_constructor);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_strcat);
@@ -319,8 +327,11 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_put_by_val_with_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_define_data_property);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_define_accessor_property);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_throw_static_error);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_instanceof_custom_from_instanceof);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_throw_static_error_from_instanceof);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_promise);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_generator);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_async_function_generator);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_array_with_spread);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_array_with_species);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_new_array_buffer);
@@ -331,5 +342,8 @@ JSC_DECLARE_COMMON_SLOW_PATH(iterator_open_try_fast_wide32);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_narrow);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_wide16);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_wide32);
+JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_narrow);
+JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_wide16);
+JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_wide32);
 
 } // namespace JSC

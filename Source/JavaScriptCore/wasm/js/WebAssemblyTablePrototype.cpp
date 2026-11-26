@@ -29,13 +29,15 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "AuxiliaryBarrierInlines.h"
+#include "ExceptionScope.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyTable.h"
-#include "StructureInlines.h"
+#include "StructureCreateInlines.h"
 #include "WasmTypeDefinition.h"
+#include <limits>
 
 namespace JSC {
 static JSC_DECLARE_CUSTOM_GETTER(webAssemblyTableProtoGetterLength);
@@ -57,14 +59,13 @@ const ClassInfo WebAssemblyTablePrototype::s_info = { "WebAssembly.Table"_s, &Ba
  grow   webAssemblyTableProtoFuncGrow   Function 1
  get    webAssemblyTableProtoFuncGet    Function 1
  set    webAssemblyTableProtoFuncSet    Function 1
- type   webAssemblyTableProtoFuncType   Function 0
  @end
  */
 
 static ALWAYS_INLINE JSWebAssemblyTable* getTable(JSGlobalObject* globalObject, VM& vm, JSValue v)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSWebAssemblyTable* result = jsDynamicCast<JSWebAssemblyTable*>(v);
+    JSWebAssemblyTable* result = dynamicDowncast<JSWebAssemblyTable>(v);
     if (!result) {
         throwException(globalObject, throwScope, 
             createTypeError(globalObject, "expected |this| value to be an instance of WebAssembly.Table"_s));
@@ -91,7 +92,12 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncGrow, (JSGlobalObject* globalO
     JSWebAssemblyTable* table = getTable(globalObject, vm, callFrame->thisValue());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    uint32_t delta = toNonWrappingUint32(globalObject, callFrame->argument(0));
+    uint64_t delta64 = addressValueToUint64(globalObject, callFrame->argument(0), table->table()->addressType());
+    if (delta64 > std::numeric_limits<uint32_t>::max())
+        return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.grow requires first argument to be greater than 0 and less than 2^32"_s);
+
+    uint32_t delta = delta64;
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     JSValue defaultValue = jsNull();
@@ -102,18 +108,15 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncGrow, (JSGlobalObject* globalO
     } else
         defaultValue = callFrame->uncheckedArgument(1);
 
-    if (table->table()->isFuncrefTable() && !defaultValue.isNull() && !isWebAssemblyHostFunction(defaultValue))
-        return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.grow expects the second argument to be null or an instance of WebAssembly.Function"_s);
-    else if (table->table()->isExternrefTable() && !isExternref(table->table()->wasmType())) {
-        RELEASE_ASSERT(Options::useWasmGC());
-        JSValue internalValue = Wasm::internalizeExternref(defaultValue);
-        if (!Wasm::TypeInformation::castReference(internalValue, true, table->table()->wasmType().index))
-            return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.grow failed to cast the second argument to the table's element type"_s);
-    }
     uint32_t oldLength = table->length();
+    bool didGrow = !!table->grow(globalObject, delta, defaultValue);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    if (!table->grow(delta, defaultValue))
+    if (!didGrow)
         return throwVMRangeError(globalObject, throwScope, "WebAssembly.Table.prototype.grow could not grow the table"_s);
+
+    if (table->table()->addressType().is64Bit())
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSBigInt::createFrom(globalObject, oldLength)));
 
     return JSValue::encode(jsNumber(oldLength));
 }
@@ -126,12 +129,12 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncGet, (JSGlobalObject* globalOb
     JSWebAssemblyTable* table = getTable(globalObject, vm, callFrame->thisValue());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    uint32_t index = toNonWrappingUint32(globalObject, callFrame->argument(0));
+    uint64_t index = addressValueToUint64(globalObject, callFrame->argument(0), table->table()->addressType());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     if (index >= table->length())
         return throwVMRangeError(globalObject, throwScope, "WebAssembly.Table.prototype.get expects an integer less than the length of the table"_s);
 
-    return JSValue::encode(table->get(index));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(table->get(globalObject, index)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncSet, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -142,7 +145,7 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncSet, (JSGlobalObject* globalOb
     JSWebAssemblyTable* table = getTable(globalObject, vm, callFrame->thisValue());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    uint32_t index = toNonWrappingUint32(globalObject, callFrame->argument(0));
+    uint64_t index = addressValueToUint64(globalObject, callFrame->argument(0), table->table()->addressType());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     if (index >= table->length())
@@ -155,35 +158,9 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncSet, (JSGlobalObject* globalOb
             return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.set requires the second argument for non-defaultable table type"_s);
     }
 
-    if (table->table()->asFuncrefTable()) {
-        WebAssemblyFunction* wasmFunction = nullptr;
-        WebAssemblyWrapperFunction* wasmWrapperFunction = nullptr;
-        if (!value.isNull() && !isWebAssemblyHostFunction(value, wasmFunction, wasmWrapperFunction))
-            return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.set expects the second argument to be null or an instance of WebAssembly.Function"_s);
-
-        if (value.isNull())
-            table->clear(index);
-        else {
-            ASSERT(value.isObject() && isWebAssemblyHostFunction(jsCast<JSObject*>(value), wasmFunction, wasmWrapperFunction));
-            ASSERT(!!wasmFunction || !!wasmWrapperFunction);
-            if (wasmFunction)
-                table->set(index, wasmFunction);
-            else
-                table->set(index, wasmWrapperFunction);
-        }
-    } else {
-        if (isExternref(table->table()->wasmType()))
-            table->set(index, value);
-        else {
-            RELEASE_ASSERT(Options::useWasmGC());
-            JSValue internalValue = Wasm::internalizeExternref(value);
-            if (!Wasm::TypeInformation::castReference(internalValue, true, table->table()->wasmType().index))
-                return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.set failed to cast the second argument to the table's element type"_s);
-            table->set(index, internalValue);
-        }
-    }
-
-    return JSValue::encode(jsUndefined());
+    throwScope.release();
+    table->set(globalObject, index, value);
+    return encodedJSUndefined();
 }
 
 JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncType, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -194,15 +171,16 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyTableProtoFuncType, (JSGlobalObject* globalO
     JSWebAssemblyTable* table = getTable(globalObject, vm, callFrame->thisValue());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     JSObject* typeDescriptor = table->type(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     if (!typeDescriptor)
         return throwVMTypeError(globalObject, throwScope, "WebAssembly.Table.prototype.type unable to produce type descriptor for the given table"_s);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(typeDescriptor));
 }
 
-WebAssemblyTablePrototype* WebAssemblyTablePrototype::create(VM& vm, JSGlobalObject*, Structure* structure)
+WebAssemblyTablePrototype* WebAssemblyTablePrototype::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
     auto* object = new (NotNull, allocateCell<WebAssemblyTablePrototype>(vm)) WebAssemblyTablePrototype(vm, structure);
-    object->finishCreation(vm);
+    object->finishCreation(vm, globalObject);
     return object;
 }
 
@@ -211,11 +189,14 @@ Structure* WebAssemblyTablePrototype::createStructure(VM& vm, JSGlobalObject* gl
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-void WebAssemblyTablePrototype::finishCreation(VM& vm)
+void WebAssemblyTablePrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    if (Options::useWasmJSTypes())
+        JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("type"_s, webAssemblyTableProtoFuncType, static_cast<unsigned>(PropertyAttribute::None), 0, ImplementationVisibility::Public);
 }
 
 WebAssemblyTablePrototype::WebAssemblyTablePrototype(VM& vm, Structure* structure)

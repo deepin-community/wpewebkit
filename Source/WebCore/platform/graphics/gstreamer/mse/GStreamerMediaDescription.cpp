@@ -23,6 +23,8 @@
 #include "GStreamerCommon.h"
 
 #include <gst/pbutils/pbutils.h>
+#include <wtf/glib/GMallocString.h>
+#include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
 
 #if ENABLE(VIDEO) && USE(GSTREAMER) && ENABLE(MEDIA_SOURCE)
@@ -58,20 +60,18 @@ String GStreamerMediaDescription::extractCodecName(const GRefPtr<GstCaps>& caps)
 
         auto originalMediaType = WebCore::gstStructureGetString(structure, "original-media-type"_s);
         RELEASE_ASSERT(originalMediaType);
-        gst_structure_set_name(structure, originalMediaType.toStringWithoutCopying().ascii().data());
+        gst_structure_set_name(structure, originalMediaType.utf8());
 
         // Remove the DRM related fields from the caps.
-        for (int j = 0; j < gst_structure_n_fields(structure); ++j) {
-            const char* fieldName = gst_structure_nth_field_name(structure, j);
-
-            if (g_str_has_prefix(fieldName, "protection-system")
-                || g_str_has_prefix(fieldName, "original-media-type"))
-                gst_structure_remove_field(structure, fieldName);
-        }
+        gstStructureFilterAndMapInPlace(structure, [](GstId id, GValue*) -> bool {
+            auto idView = gstIdToString(id);
+            if (idView.startsWith("protection-system"_s) || idView.startsWith("original-media-type"_s))
+                return false;
+            return true;
+        });
     }
 
-    GUniquePtr<gchar> description(gst_pb_utils_get_codec_description(originalCaps.get()));
-    auto codecName = String::fromLatin1(description.get());
+    auto codecName = String(GMallocString::unsafeAdoptFromUTF8(gst_pb_utils_get_codec_description(originalCaps.get())).span());
 
     // Report "H.264 (Main Profile)" and "H.264 (High Profile)" just as "H.264" to allow changes between both variants
     // go unnoticed to the SourceBuffer layer.

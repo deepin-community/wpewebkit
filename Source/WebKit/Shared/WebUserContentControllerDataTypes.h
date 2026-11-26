@@ -25,35 +25,69 @@
 
 #pragma once
 
+#include "ContentWorldData.h"
 #include "ContentWorldShared.h"
 #include "ScriptMessageHandlerIdentifier.h"
+#include "TransferString.h"
 #include "UserScriptIdentifier.h"
 #include "UserStyleSheetIdentifier.h"
 #include <WebCore/UserScript.h>
 #include <WebCore/UserStyleSheet.h>
 
-namespace IPC {
-class Decoder;
-class Encoder;
+namespace WebCore {
+class SharedMemory;
+class SharedMemoryHandle;
 }
 
 namespace WebKit {
 
+struct WebCoreUserScriptData {
+    IPC::TransferString source;
+    URL url;
+    Vector<String> allowlist;
+    Vector<String> blocklist;
+    WebCore::UserScriptInjectionTime injectionTime;
+    WebCore::UserContentInjectedFrames injectedFrames;
+    WebCore::UserContentMatchParentFrame matchParentFrame;
+};
+
 struct WebUserScriptData {
     UserScriptIdentifier identifier;
-    ContentWorldIdentifier worldIdentifier;
-    WebCore::UserScript userScript;
+    ContentWorldData worldData;
+    WebCoreUserScriptData userScript;
+};
+
+struct WebCoreUserStyleSheetData {
+    IPC::TransferString source;
+    URL url;
+    Vector<String> allowlist;
+    Vector<String> blocklist;
+    WebCore::UserContentInjectedFrames injectedFrames;
+    WebCore::UserContentMatchParentFrame matchParentFrame;
+    WebCore::UserStyleLevel level;
+    std::optional<WebCore::PageIdentifier> pageID;
 };
 
 struct WebUserStyleSheetData {
     UserStyleSheetIdentifier identifier;
-    ContentWorldIdentifier worldIdentifier;
-    WebCore::UserStyleSheet userStyleSheet;
+    ContentWorldData worldData;
+    WebCoreUserStyleSheetData userStyleSheet;
 };
 
 struct WebScriptMessageHandlerData {
     ScriptMessageHandlerIdentifier identifier;
-    ContentWorldIdentifier worldIdentifier;
+    ContentWorldData worldData;
+    String name;
+};
+
+struct WebJSBufferData {
+    WebJSBufferData(const Ref<WebCore::SharedMemory>&, ContentWorldData&&, const String&);
+    WebJSBufferData(std::optional<WebCore::SharedMemoryHandle>&&, ContentWorldData&&, String&&);
+    ~WebJSBufferData();
+    std::optional<WebCore::SharedMemoryHandle> sharedMemoryHandle() const;
+
+    RefPtr<WebCore::SharedMemory> data;
+    ContentWorldData worldData;
     String name;
 };
 

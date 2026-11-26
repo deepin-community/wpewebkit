@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,11 +28,11 @@
 
 #pragma once
 
-#include "CachedResourceLoader.h"
-#include "FrameLoaderTypes.h"
-#include "ResourceLoader.h"
+#include <WebCore/CachedResourceLoader.h>
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/ResourceLoader.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/Platform.h>
 #include <wtf/text/WTFString.h>
  
 namespace WebCore {
@@ -50,20 +50,18 @@ public:
     virtual ~SubresourceLoader();
 
     void cancelIfNotFinishing();
-    bool isSubresourceLoader() const final;
+    bool NODELETE isSubresourceLoader() const final;
     CachedResource* cachedResource() const final { return m_resource.get(); };
-    CachedResourceHandle<CachedResource> protectedCachedResource() const { return cachedResource(); }
 
     WEBCORE_EXPORT const HTTPHeaderMap* originalHeaders() const;
 
     const SecurityOrigin* origin() const { return m_origin.get(); }
     SecurityOrigin* origin() { return m_origin.get(); }
-    RefPtr<SecurityOrigin> protectedOrigin() const;
 #if PLATFORM(IOS_FAMILY)
     void startLoading() final;
 
     // FIXME: What is an "iOS" original request? Why is it necessary?
-    const ResourceRequest& iOSOriginalRequest() const final { return m_iOSOriginalRequest; }
+    const ResourceRequest& iOSOriginalRequest() const LIFETIME_BOUND final { return m_iOSOriginalRequest; }
 #endif
 
     unsigned redirectCount() const { return m_redirectCount; }
@@ -74,19 +72,19 @@ public:
     void clearRequestCountTracker() { m_requestCountTracker = std::nullopt; }
     void resetRequestCountTracker(CachedResourceLoader& loader, const CachedResource& resource) { m_requestCountTracker = RequestCountTracker { loader, resource }; }
 
-private:
-    SubresourceLoader(LocalFrame&, CachedResource&, const ResourceLoaderOptions&);
-
-    void init(ResourceRequest&&, CompletionHandler<void(bool)>&&) final;
-
     void willSendRequestInternal(ResourceRequest&&, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&&) final;
     void didSendData(unsigned long long bytesSent, unsigned long long totalBytesToBeSent) final;
-    void didReceiveResponse(const ResourceResponse&, CompletionHandler<void()>&& policyCompletionHandler) final;
+    void didReceiveResponse(ResourceResponse&&, CompletionHandler<void()>&& policyCompletionHandler) final;
     void didReceiveBuffer(const FragmentedSharedBuffer&, long long encodedDataLength, DataPayloadType) final;
     void didFinishLoading(const NetworkLoadMetrics&) final;
     void didFail(const ResourceError&) final;
     void willCancel(const ResourceError&) final;
     void didCancel(LoadWillContinueInAnotherProcess) final;
+
+private:
+    SubresourceLoader(LocalFrame&, CachedResource&, const ResourceLoaderOptions&);
+
+    void init(ResourceRequest&&, CompletionHandler<void(bool)>&&) final;
     
     void updateReferrerPolicy(const String&);
 
@@ -108,7 +106,7 @@ private:
 
 #if USE(QUICK_LOOK)
     bool shouldCreatePreviewLoaderForResponse(const ResourceResponse&) const;
-    void didReceivePreviewResponse(const ResourceResponse&) final;
+    void didReceivePreviewResponse(ResourceResponse&&) final;
 #endif
 
     enum SubresourceLoaderState {
@@ -121,11 +119,11 @@ private:
     };
 
     class RequestCountTracker {
-        WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RequestCountTracker, Loader);
     public:
         RequestCountTracker(CachedResourceLoader&, const CachedResource&);
         RequestCountTracker(RequestCountTracker&&);
-        RequestCountTracker& operator=(RequestCountTracker&&);
+        RequestCountTracker& NODELETE operator=(RequestCountTracker&&);
         ~RequestCountTracker();
     private:
         WeakPtr<CachedResourceLoader> m_cachedResourceLoader;
@@ -135,7 +133,9 @@ private:
 #if PLATFORM(IOS_FAMILY)
     ResourceRequest m_iOSOriginalRequest;
 #endif
-    WeakPtr<CachedResource> m_resource;
+    // CachedResource has a RefPtr back to this SubresourceLoader via m_loader,
+    // forming a ref-cycle that is broken in releaseResources().
+    RefPtr<CachedResource> m_resource;
     SubresourceLoaderState m_state;
     std::optional<RequestCountTracker> m_requestCountTracker;
     RefPtr<SecurityOrigin> m_origin;

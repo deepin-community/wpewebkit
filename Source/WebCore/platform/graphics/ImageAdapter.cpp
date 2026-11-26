@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,10 +27,13 @@
 #include "ImageAdapter.h"
 
 #include "BitmapImage.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageAdapter);
+
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !PLATFORM(WPE)
 Ref<Image> ImageAdapter::loadPlatformResource(const char* resource)
 {
     WTFLogAlways("WARNING: trying to load platform resource '%s'", resource);
@@ -44,25 +47,25 @@ void ImageAdapter::invalidate()
 
 RefPtr<NativeImage> ImageAdapter::nativeImageOfSize(const IntSize& size)
 {
-    unsigned count = image().frameCount();
+    unsigned count = protect(image())->frameCount();
 
     for (unsigned i = 0; i < count; ++i) {
-        RefPtr nativeImage = image().nativeImageAtIndex(i);
+        RefPtr nativeImage = protect(image())->nativeImageAtIndex(i);
         if (nativeImage && nativeImage->size() == size)
             return nativeImage;
     }
 
     // Fallback to the first frame image if we can't find the right size
-    return image().nativeImageAtIndex(0);
+    return protect(image())->nativeImageAtIndex(0);
 }
 
 Vector<Ref<NativeImage>> ImageAdapter::allNativeImages()
 {
     Vector<Ref<NativeImage>> nativeImages;
-    unsigned count = image().frameCount();
+    unsigned count = protect(image())->frameCount();
 
     for (unsigned i = 0; i < count; ++i) {
-        if (RefPtr nativeImage = image().nativeImageAtIndex(i))
+        if (RefPtr nativeImage = protect(image())->nativeImageAtIndex(i))
             nativeImages.append(nativeImage.releaseNonNull());
     }
 

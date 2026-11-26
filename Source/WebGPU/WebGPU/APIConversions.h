@@ -53,6 +53,7 @@
 #import "XRSubImage.h"
 #import "XRView.h"
 #import <wtf/BlockPtr.h>
+#import <wtf/SwiftBridging.h>
 #import <wtf/text/WTFString.h>
 
 namespace WebGPU {
@@ -207,7 +208,7 @@ inline String fromAPI(const char* string)
 template<typename R, typename... Args>
 inline BlockPtr<R (Args...)> fromAPI(R (^ __strong &&block)(Args...))
 {
-    return makeBlockPtr(WTFMove(block));
+    return makeBlockPtr(WTF::move(block));
 }
 
 template <typename T>

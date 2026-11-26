@@ -72,8 +72,8 @@ std::optional<CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirectory,
     if (m_dbusSessionProxyPath.isNull())
         return std::nullopt;
 
-    m_args.appendVector(Vector<CString> {
-        CString(dbusAddress), m_dbusSessionProxyPath,
+    m_args.appendList<CString>({
+        dbusAddress, m_dbusSessionProxyPath,
         "--filter"
     });
 
@@ -103,7 +103,7 @@ std::optional<CString> XDGDBusProxy::accessibilityProxy(const char* baseDirector
 
     auto webProcessA11yOwnArg = makeString("--own="_s, accessibilityBusName);
 
-    m_args.appendVector(Vector<CString> {
+    m_args.appendList<CString>({
         accessibilityBusAddress.utf8(), m_accessibilityProxyPath,
         "--filter",
         "--sloppy-names",
@@ -180,14 +180,14 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
     if (m_args.isEmpty())
         return;
 
-    int syncFds[2];
-    if (pipe(syncFds) == -1)
+    std::array<int, 2> syncFds;
+    if (pipe(syncFds.data()) == -1)
         g_error("Failed to make syncfds for dbus-proxy: %s", g_strerror(errno));
     setCloseOnExec(syncFds[0]);
 
     GUniquePtr<char> syncFdStr(g_strdup_printf("--fd=%d", syncFds[1]));
     Vector<CString> proxyArgs = { syncFdStr.get() };
-    proxyArgs.appendVector(WTFMove(m_args));
+    proxyArgs.appendVector(WTF::move(m_args));
 
     // We have to run xdg-dbus-proxy under bubblewrap because we need /.flatpak-info to exist in
     // xdg-dbus-proxy's mount namespace. Portals may use this as a trusted way to get the
@@ -198,12 +198,10 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
         DBUS_PROXY_EXECUTABLE,
         proxyArgsStr.get(),
     };
-    int nargs = args.size() + 1;
-    int i = 0;
-    char** argv = g_newa(char*, nargs);
-    for (const auto& arg : args)
-        argv[i++] = const_cast<char*>(arg.data());
-    argv[i] = nullptr;
+    auto argv = args.map([](auto& arg) {
+        return const_cast<char*>(arg.data());
+    });
+    argv.append(nullptr);
 
     // Warning: we want GIO to be able to spawn with posix_spawn() rather than fork()/exec(), in
     // order to better accommodate applications that use a huge amount of memory or address space
@@ -222,7 +220,7 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
     // We are purposefully leaving syncFds[0] open here.
     // xdg-dbus-proxy will exit() itself once that is closed on our exit.
 
-    ProcessLauncher::LaunchOptions launchOptions;
+    ProcessLauncher::LaunchOptions launchOptions { WebCore::ProcessIdentifier::generate() };
     launchOptions.processType = ProcessLauncher::ProcessType::DBusProxy;
 
 #if USE(ATSPI)

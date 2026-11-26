@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2021 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012-2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "GetPutInfo.h"
-#include "JSObject.h"
-#include "VariableEnvironment.h"
+#include <JavaScriptCore/GetPutInfo.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/VariableEnvironment.h>
 
 namespace JSC {
 
@@ -35,7 +35,7 @@ class ScopeChainIterator;
 class SymbolTable;
 class WatchpointSet;
 
-using TDZEnvironment = HashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
 
 class JSScope : public JSNonFinalObject {
 public:
@@ -53,27 +53,27 @@ public:
     friend class LLIntOffsetsExtractor;
     static size_t offsetOfNext();
 
-    static JSObject* objectAtScope(JSScope*);
+    static JSObject* NODELETE objectAtScope(JSScope*);
 
     static JSObject* resolve(JSGlobalObject*, JSScope*, const Identifier&);
     static JSValue resolveScopeForHoistingFuncDeclInEval(JSGlobalObject*, JSScope*, const Identifier&);
     static ResolveOp abstractResolve(JSGlobalObject*, size_t depthOffset, JSScope*, const Identifier&, GetOrPut, ResolveType, InitializationMode);
 
     static bool hasConstantScope(ResolveType);
-    static JSScope* constantScopeForCodeBlock(ResolveType, CodeBlock*);
+    static JSScope* NODELETE constantScopeForCodeBlock(ResolveType, CodeBlock*);
 
     static void collectClosureVariablesUnderTDZ(JSScope*, TDZEnvironment& result, PrivateNameEnvironment&);
 
     DECLARE_VISIT_CHILDREN;
 
-    bool isVarScope();
-    bool isLexicalScope();
-    bool isModuleScope();
-    bool isCatchScope();
-    bool isCatchScopeWithSimpleParameter();
-    bool isFunctionNameScopeObject();
+    bool NODELETE isVarScope();
+    bool NODELETE isLexicalScope();
+    bool NODELETE isModuleScope();
+    bool NODELETE isCatchScope();
+    bool NODELETE isCatchScopeWithSimpleParameter();
+    bool NODELETE isFunctionNameScopeObject();
 
-    bool isNestedLexicalScope();
+    bool NODELETE isNestedLexicalScope();
 
     ScopeChainIterator begin();
     ScopeChainIterator end();
@@ -81,7 +81,7 @@ public:
 
     JSObject* globalThis();
 
-    SymbolTable* symbolTable();
+    SymbolTable* NODELETE symbolTable();
 
 protected:
     JSScope(VM&, Structure*, JSScope* next);
@@ -106,8 +106,8 @@ public:
     {
     }
 
-    JSObject* get() const { return JSScope::objectAtScope(m_node); }
-    JSObject* operator->() const { return JSScope::objectAtScope(m_node); }
+    JSObject* get() const;
+    JSObject* operator->() const;
     JSScope* scope() const { return m_node; }
 
     ScopeChainIterator& operator++() { m_node = m_node->next(); return *this; }

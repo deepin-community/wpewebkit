@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 #
-# Copyright (C) 2011 Google Inc.  All rights reserved.
-# Copyright (C) 2020-2022 Apple Inc.  All rights reserved.
+# Copyright (C) 2011 Google Inc. All rights reserved.
+# Copyright (C) 2020-2022 Apple Inc. All rights reserved.
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Library General Public
@@ -30,13 +30,12 @@ use Getopt::Long;
 use Cwd;
 use Config;
 use Class::Struct;
-use JSON::PP;
+BEGIN { eval { require JSON::XS; JSON::XS->import(); 1 } or do { require JSON::PP; JSON::PP->import() } }
 use Data::Dumper;
 
 use IDLParser;
 
 my $defines;
-my $preprocessor;
 my $idlFileNamesList;
 my $testGlobalContextName;
 my $supplementalDependencyFile;
@@ -78,7 +77,6 @@ my @supportedGlobalContexts = (
 my $validateAgainstParser = 0;
 
 GetOptions('defines=s' => \$defines,
-           'preprocessor=s' => \$preprocessor,
            'idlFileNamesList=s' => \$idlFileNamesList,
            'testGlobalContextName=s' => \$testGlobalContextName,
            'supplementalDependencyFile=s' => \$supplementalDependencyFile,
@@ -144,7 +142,7 @@ if ($validateAgainstParser) {
         close(JSON);
     }
 
-    my $jsonDecoder = JSON::PP->new->utf8;
+    my $jsonDecoder = (eval { JSON::XS->new->utf8 } or JSON::PP->new->utf8);
     my $jsonHashRef = $jsonDecoder->decode($input);
     $idlAttributes = $jsonHashRef->{attributes};
 }
@@ -183,7 +181,7 @@ using namespace JSC;
 
 class DOMIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
 public:
     DOMIsoSubspaces() = default;
 END
@@ -199,7 +197,7 @@ using namespace JSC;
 
 class DOMClientIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMClientIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
 public:
     DOMClientIsoSubspaces() = default;
 END
@@ -208,7 +206,7 @@ my @constructors = ();
 my $constructorsHeaderCode = <<END;
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
-#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/WriteBarrier.h>
 
 #pragma once
 
@@ -293,9 +291,21 @@ foreach my $idlFileName (sort keys %idlFileNameHash) {
         }
         $exposedAttribute = substr($exposedAttribute, 1, -1) if substr($exposedAttribute, 0, 1) eq "(";
 
+        my %exposedEnabledBySetting;
+        if (my $exposedSetting = $extendedAttributes->{"ExposedEnabledBySetting"}) {
+            if ($exposedSetting =~ /^(\w+)\|(\w+)$/) {
+                $exposedEnabledBySetting{$1} = $2;
+            }
+        }
+
         my @globalContexts = split(",", $exposedAttribute);
         foreach my $globalContext (@globalContexts) {
-            my ($attributeCode, $windowAliases) = GenerateConstructorAttributes($interfaceName, $extendedAttributes, $globalContext);
+            my %contextExtendedAttributes = %{$extendedAttributes};
+            if (my $setting = $exposedEnabledBySetting{$globalContext}) {
+                my $existing = $contextExtendedAttributes{"EnabledBySetting"};
+                $contextExtendedAttributes{"EnabledBySetting"} = $existing ? "$setting&$existing" : $setting;
+            }
+            my ($attributeCode, $windowAliases) = GenerateConstructorAttributes($interfaceName, \%contextExtendedAttributes, $globalContext);
             if ($globalContext eq "Window") {
                 $windowConstructorsCode .= $attributeCode;
                 $windowConstructorsCode .= $windowAliases if $windowAliases;
@@ -363,7 +373,7 @@ if ($constructorsHeaderFile) {
     $constructorsHeaderCode .= "\n";
     $constructorsHeaderCode .= "class DOMConstructors {\n";
     $constructorsHeaderCode .= "    WTF_MAKE_NONCOPYABLE(DOMConstructors);\n";
-    $constructorsHeaderCode .= "    WTF_MAKE_FAST_ALLOCATED(DOMConstructors);\n";
+    $constructorsHeaderCode .= "    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMConstructors);\n";
     $constructorsHeaderCode .= "public:\n";
     $constructorsHeaderCode .= "    using ConstructorArray = std::array<JSC::WriteBarrier<JSC::JSObject>, numberOfDOMConstructors>;\n";
     $constructorsHeaderCode .= "    DOMConstructors() = default;\n";
@@ -513,7 +523,7 @@ sub GenerateConstructorAttributes
     my $code = "    ";
     my @extendedAttributesList;
     foreach my $attributeName (sort keys %{$extendedAttributes}) {
-      next unless ($attributeName eq "Conditional" || $attributeName eq "EnabledByDeprecatedGlobalSetting" || $attributeName eq "EnabledForWorld"
+      next unless ($attributeName eq "Conditional" || $attributeName eq "EnabledByDeprecatedGlobalSetting" || $attributeName eq "EnabledForWorld" || $attributeName eq "EnabledForGlobalObject"
         || $attributeName eq "EnabledBySetting" || $attributeName eq "SecureContext" || $attributeName eq "PrivateIdentifier"
         || $attributeName eq "PublicIdentifier" || $attributeName eq "DisabledByQuirk" || $attributeName eq "EnabledByQuirk"
         || $attributeName eq "EnabledForContext") || $attributeName eq "LegacyFactoryFunctionEnabledBySetting";
@@ -605,7 +615,7 @@ sub processIDL
 
     if ($validateAgainstParser) {
         my $parser = IDLParser->new(1);
-        $idlFile->parsedDocument($parser->Parse($filePath, $defines, $preprocessor, $idlAttributes));
+        $idlFile->parsedDocument($parser->Parse($filePath, $defines, $idlAttributes));
     }
 
     return $idlFile;

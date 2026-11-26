@@ -70,7 +70,7 @@ HRESULT CompositorNativeWindow11::createSwapChain(ID3D11Device *device,
                                                   UINT width,
                                                   UINT height,
                                                   UINT samples,
-                                                  IDXGISwapChain **swapChain)
+                                                  angle::ComPtr<IDXGISwapChain> *swapChain)
 {
     if (device == nullptr || factory == nullptr || swapChain == nullptr || width == 0 ||
         height == 0)
@@ -102,8 +102,7 @@ HRESULT CompositorNativeWindow11::createSwapChain(ID3D11Device *device,
         return hr;
     }
 
-    ComPtr<IDXGIFactory2> factory2;
-    factory2.Attach(d3d11::DynamicCastComObject<IDXGIFactory2>(factory));
+    ComPtr<IDXGIFactory2> factory2 = angle::DynamicCastComObject<IDXGIFactory2>(factory);
 
     DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
     swapChainDesc.Width                 = width;
@@ -118,14 +117,12 @@ HRESULT CompositorNativeWindow11::createSwapChain(ID3D11Device *device,
     swapChainDesc.Scaling     = DXGI_SCALING_STRETCH;
     swapChainDesc.SwapEffect  = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     swapChainDesc.AlphaMode   = mHasAlpha ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
-#ifndef ANGLE_ENABLE_WINDOWS_UWP
-    swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG::DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-#endif
+    swapChainDesc.Flags       = 0;
     Microsoft::WRL::ComPtr<IDXGISwapChain1> swapChain1;
     hr = factory2->CreateSwapChainForComposition(device, &swapChainDesc, nullptr, &swapChain1);
-    if (SUCCEEDED(hr))
+    if (FAILED(hr))
     {
-        swapChain1.CopyTo(swapChain);
+        return hr;
     }
 
     hr = interop->CreateCompositionSurfaceForSwapChain(swapChain1.Get(), &mSurface);
@@ -152,6 +149,7 @@ HRESULT CompositorNativeWindow11::createSwapChain(ID3D11Device *device,
         return hr;
     }
 
+    *swapChain = std::move(swapChain1);
     return hr;
 }
 

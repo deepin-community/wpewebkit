@@ -20,23 +20,28 @@
 #include "config.h"
 #include "LegacyRenderSVGResourceContainer.h"
 
+#include "ContainerNodeInlines.h"
+#include "DocumentView.h"
+#include "LegacyRenderSVGModelObjectInlines.h"
 #include "LegacyRenderSVGRoot.h"
 #include "RenderLayer.h"
+#include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGGraphicsElement.h"
 #include "SVGRenderingContext.h"
 #include "SVGResourcesCache.h"
+#include <wtf/InlineWeakPtr.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(LegacyRenderSVGResourceContainer);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceContainer);
 
-LegacyRenderSVGResourceContainer::LegacyRenderSVGResourceContainer(Type type, SVGElement& element, RenderStyle&& style)
-    : LegacyRenderSVGHiddenContainer(type, element, WTFMove(style), SVGModelObjectFlag::IsResourceContainer)
+LegacyRenderSVGResourceContainer::LegacyRenderSVGResourceContainer(Type type, SVGElement& element, Style::ComputedStyle&& style)
+    : LegacyRenderSVGHiddenContainer(type, element, WTF::move(style), SVGModelObjectFlag::IsResourceContainer)
     , m_id(element.getIdAttribute())
 {
 }
@@ -58,14 +63,14 @@ void LegacyRenderSVGResourceContainer::willBeDestroyed()
     SVGResourcesCache::resourceDestroyed(*this);
 
     if (m_registered) {
-        treeScopeForSVGReferences().removeSVGResource(m_id);
+        protect(treeScopeForSVGReferences())->removeSVGResource(m_id, *this);
         m_registered = false;
     }
 
     LegacyRenderSVGHiddenContainer::willBeDestroyed();
 }
 
-void LegacyRenderSVGResourceContainer::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
+void LegacyRenderSVGResourceContainer::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     LegacyRenderSVGHiddenContainer::styleDidChange(diff, oldStyle);
 
@@ -78,13 +83,25 @@ void LegacyRenderSVGResourceContainer::styleDidChange(StyleDifference diff, cons
 void LegacyRenderSVGResourceContainer::idChanged()
 {
     // Invalidate all our current clients.
-    removeAllClientsFromCache();
+    removeAllClientsFromCacheAndMarkForInvalidation();
 
     // Remove old id, that is guaranteed to be present in cache.
-    treeScopeForSVGReferences().removeSVGResource(m_id);
+    protect(treeScopeForSVGReferences())->removeSVGResource(m_id, *this);
     m_id = element().getIdAttribute();
 
     registerResource();
+}
+
+void LegacyRenderSVGResourceContainer::removeClientFromCacheAndMarkForInvalidation(RenderElement& client, bool markForInvalidation)
+{
+    removeClientFromCache(client);
+    markClientForInvalidation(client, markForInvalidation ? BoundariesInvalidation : ParentOnlyInvalidation);
+}
+
+void LegacyRenderSVGResourceContainer::removeAllClientsFromCacheAndMarkForInvalidationIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers)
+{
+    removeAllClientsFromCache();
+    markAllClientsForInvalidationIfNeeded(markForInvalidation ? LayoutAndBoundariesInvalidation : ParentOnlyInvalidation, visitedRenderers);
 }
 
 void LegacyRenderSVGResourceContainer::markAllClientsForRepaint()
@@ -111,13 +128,13 @@ void LegacyRenderSVGResourceContainer::markAllClientsForInvalidationIfNeeded(Inv
     bool markForInvalidation = mode != ParentOnlyInvalidation;
     auto* root = SVGRenderSupport::findTreeRootObject(*this);
 
-    for (auto& client : m_clients) {
+    for (auto& client : m_clients | dereferenceView) {
         // We should not mark any client outside the current root for invalidation
         if (root != SVGRenderSupport::findTreeRootObject(client))
             continue;
 
         if (CheckedPtr container = dynamicDowncast<LegacyRenderSVGResourceContainer>(client)) {
-            container->removeAllClientsFromCacheIfNeeded(markForInvalidation, visitedRenderers);
+            container->removeAllClientsFromCacheAndMarkForInvalidationIfNeeded(markForInvalidation, visitedRenderers);
             continue;
         }
 
@@ -135,27 +152,27 @@ void LegacyRenderSVGResourceContainer::markAllClientLayersForInvalidation()
     if (m_clientLayers.isEmptyIgnoringNullReferences())
         return;
 
-    Ref document = (*m_clientLayers.begin()).renderer().document();
+    Ref document = (*m_clientLayers.begin())->renderer().document();
     if (!document->view() || document->renderTreeBeingDestroyed())
         return;
 
     auto inLayout = document->view()->layoutContext().isInLayout();
-    for (auto& clientLayer : m_clientLayers) {
+    for (CheckedRef clientLayer : m_clientLayers | dereferenceView) {
         // FIXME: We should not get here while in layout. See webkit.org/b/208903.
         // Repaint should also be triggered through some other means.
         if (inLayout) {
-            clientLayer.renderer().repaint();
+            clientLayer->renderer().repaint();
             continue;
         }
-        if (auto* enclosingElement = clientLayer.enclosingElement())
+        if (RefPtr enclosingElement = clientLayer->enclosingElement())
             enclosingElement->invalidateStyleAndLayerComposition();
-        clientLayer.renderer().repaint();
+        clientLayer->renderer().repaint();
     }
 }
 
 void LegacyRenderSVGResourceContainer::markClientForInvalidation(RenderObject& client, InvalidationMode mode)
 {
-    ASSERT(!m_clients.isEmptyIgnoringNullReferences());
+    ASSERT(!m_clients.isEmptyIgnoringNullReferences() || !client.style().clipPath().isNone());
 
     switch (mode) {
     case LayoutAndBoundariesInvalidation:
@@ -178,7 +195,7 @@ void LegacyRenderSVGResourceContainer::addClient(RenderElement& client)
 
 void LegacyRenderSVGResourceContainer::removeClient(RenderElement& client)
 {
-    removeClientFromCache(client, false);
+    removeClientFromCacheAndMarkForInvalidation(client, false);
     m_clients.remove(client);
 }
 
@@ -211,7 +228,7 @@ void LegacyRenderSVGResourceContainer::registerResource()
         auto* renderer = client->renderer();
         if (!renderer)
             continue;
-        SVGResourcesCache::clientStyleChanged(*renderer, StyleDifference::Layout, nullptr, renderer->style());
+        SVGResourcesCache::clientStyleChanged(*renderer, Style::DifferenceResult::Layout, nullptr, renderer->style());
         renderer->setNeedsLayout();
     }
 }
@@ -239,7 +256,7 @@ AffineTransform LegacyRenderSVGResourceContainer::transformOnNonScalingStroke(Re
         return resourceTransform;
 
     RefPtr element = downcast<SVGGraphicsElement>(object->node());
-    AffineTransform transform = element->getScreenCTM(SVGLocatable::DisallowStyleUpdate);
+    AffineTransform transform = element->getScreenCTM(StyleUpdateStrategy::Disallow);
     transform *= resourceTransform;
     return transform;
 }

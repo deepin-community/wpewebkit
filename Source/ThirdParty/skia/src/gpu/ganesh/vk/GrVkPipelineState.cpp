@@ -8,9 +8,9 @@
 #include "src/gpu/ganesh/vk/GrVkPipelineState.h"
 
 #include "include/core/SkSamplingOptions.h"
-#include "include/gpu/GrTypes.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTemplates.h"
 #include "include/private/gpu/vk/SkiaVulkan.h"
 #include "src/gpu/ganesh/GrBuffer.h"
 #include "src/gpu/ganesh/GrCaps.h"

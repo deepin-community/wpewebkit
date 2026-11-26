@@ -28,7 +28,9 @@
 ] interface HTMLDialogElement : HTMLElement {
     [CEReactions=Needed, Reflect] attribute boolean open;
     attribute DOMString returnValue;
+    [CEReactions=Needed, ReflectSetter, EnabledBySetting=CloseWatcherEnabled] attribute [AtomString] DOMString closedBy;
     [CEReactions=Needed] undefined show();
     [CEReactions=Needed] undefined showModal();
     [CEReactions=Needed] undefined close(optional DOMString returnValue);
+    [CEReactions=Needed] undefined requestClose(optional DOMString returnValue);
 };

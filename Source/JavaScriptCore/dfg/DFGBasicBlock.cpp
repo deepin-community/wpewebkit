@@ -35,13 +35,13 @@ namespace JSC { namespace DFG {
 
 using BasicBlockSSAData = BasicBlock::SSAData;
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(BasicBlockSSAData);
+WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(BasicBlockSSAData);
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BasicBlock);
 
 BasicBlock::BasicBlock(BytecodeIndex bytecodeBegin, unsigned numArguments, unsigned numLocals, unsigned numTmps, float executionCount)
     : bytecodeBegin(bytecodeBegin)
-    , index(NoBlock)
+    , m_index(NoBlock)
     , cfaStructureClobberStateAtHead(StructuresAreWatched)
     , cfaStructureClobberStateAtTail(StructuresAreWatched)
     , cfaBranchDirection(InvalidBranchDirection)
@@ -140,7 +140,7 @@ void BasicBlock::replacePredecessor(BasicBlock* from, BasicBlock* to)
 
 void BasicBlock::dump(PrintStream& out) const
 {
-    out.print("#", index);
+    out.print("#", m_index);
 }
 
 BasicBlock::SSAData::SSAData(BasicBlock* block)

@@ -72,6 +72,9 @@ MACRO_INSTRUCTIONS =
      "storei",
      "storeh",
      "storeb",
+     "transferi",
+     "transferq",
+     "transferp",
      "loadf",
      "loadd",
      "loadv",
@@ -150,6 +153,7 @@ MACRO_INSTRUCTIONS =
      "sxb2i",
      "sxh2i",
      "sxb2q",
+     "sxb2p",
      "sxh2q",
      "nop",
      "bieq",
@@ -379,6 +383,10 @@ X86_INSTRUCTIONS =
      "atomicloadi",
      "atomicloadq",
      "fence",
+     "adcq",
+     "sbcq",
+     "umulhq",
+     "smulhq",
     ]
 
 X86_SIMD_INSTRUCTIONS =
@@ -411,6 +419,7 @@ ARM64_INSTRUCTIONS =
      "pcrtoaddr",   # Address from PC relative offset - adr instruction
      "globaladdr",
      "notq",
+     "loadqinc",
      "loadlinkacqb",
      "loadlinkacqh",
      "loadlinkacqi",
@@ -450,11 +459,22 @@ ARM64_INSTRUCTIONS =
      "atomicloadi",
      "atomicloadq",
      "loadpairq",
+     "loadpairp",
      "loadpairi",
      "storepairq",
+     "storepairp",
      "storepairi",
      "loadpaird",
      "storepaird",
+     "loadpairv",
+     "storepairv",
+     "addlshiftp",
+     "addqs",
+     "subqs",
+     "adcq",
+     "sbcq",
+     "smulhq",
+     "umulhq"
     ]
 
 ARM64_SIMD_INSTRUCTIONS =

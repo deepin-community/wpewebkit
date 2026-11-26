@@ -53,7 +53,7 @@ enum {
     N_PROPERTIES,
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 enum {
     START,
@@ -73,7 +73,7 @@ struct _WebKitGeolocationPosition {
     }
 
     explicit _WebKitGeolocationPosition(GeolocationPositionData&& corePosition)
-        : position(WTFMove(corePosition))
+        : position(WTF::move(corePosition))
     {
     }
 
@@ -243,7 +243,7 @@ struct _WebKitGeolocationManagerPrivate {
     std::unique_ptr<GeoclueGeolocationProvider> geoclueProvider;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitGeolocationManager, webkit_geolocation_manager, G_TYPE_OBJECT, GObject)
 
@@ -266,7 +266,7 @@ static void webkitGeolocationManagerStart(WebKitGeolocationManager* manager)
             return;
         }
 
-        WebKitGeolocationPosition position(WTFMove(corePosition));
+        WebKitGeolocationPosition position(WTF::move(corePosition));
         webkit_geolocation_manager_update_position(manager, &position);
     });
 }
@@ -366,7 +366,7 @@ static void webkit_geolocation_manager_class_init(WebKitGeolocationManagerClass*
             FALSE,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WebKitGeolocationManager::start:
@@ -429,7 +429,7 @@ void webkit_geolocation_manager_update_position(WebKitGeolocationManager* manage
     g_return_if_fail(position);
 
     auto corePosition = position->position;
-    auto wkPosition = WebGeolocationPosition::create(WTFMove(corePosition));
+    auto wkPosition = WebGeolocationPosition::create(WTF::move(corePosition));
     manager->priv->manager->providerDidChangePosition(wkPosition.ptr());
 }
 

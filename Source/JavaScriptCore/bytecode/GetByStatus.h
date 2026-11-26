@@ -33,8 +33,8 @@
 #include "GetByVariant.h"
 #include "ICStatusMap.h"
 #include "InlineCacheCompiler.h"
+#include "PropertyInlineCacheSummary.h"
 #include "ScopeOffset.h"
-#include "StubInfoSummary.h"
 
 namespace JSC {
 
@@ -43,14 +43,14 @@ class CodeBlock;
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
 class ModuleNamespaceAccessCase;
-class StructureStubInfo;
+class PropertyInlineCache;
 
 enum class CacheType : int8_t;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(GetByStatus);
 
 class GetByStatus final {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(GetByStatus);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(GetByStatus, GetByStatus);
 public:
     enum State : uint8_t {
         // It's uncached so we have no information.
@@ -68,12 +68,19 @@ public:
         ProxyObject,
         // It will likely take the slow path.
         LikelyTakesSlowPath,
-        // It's known to take slow path. We also observed that the slow path was taken on StructureStubInfo.
+        // It's known to take slow path. We also observed that the slow path was taken on PropertyInlineCache.
         ObservedTakesSlowPath,
         // It will likely take the slow path and will make calls.
         MakesCalls,
-        // It known to take paths that make calls. We also observed that the slow path was taken on StructureStubInfo.
+        // It known to take paths that make calls. We also observed that the slow path was taken on PropertyInlineCache.
         ObservedSlowPathAndMakesCalls,
+    };
+
+    enum class LookupMode : bool {
+        // Normal property lookups can traverse the prototype chain
+        Normal,
+        // Direct property lookups only work for own properties (see getByIdDirect)
+        Direct
     };
 
     GetByStatus()
@@ -87,7 +94,7 @@ public:
         ASSERT(state == NoInformation || state == LikelyTakesSlowPath || state == ObservedTakesSlowPath || state == MakesCalls || state == ObservedSlowPathAndMakesCalls);
     }
     
-    explicit GetByStatus(StubInfoSummary, StructureStubInfo*);
+    explicit GetByStatus(PropertyInlineCacheSummary, PropertyInlineCache*);
     
     GetByStatus(
         State state, bool wasSeenInJIT)
@@ -97,7 +104,7 @@ public:
     }
 
     static GetByStatus computeFor(CodeBlock* baselineBlock, ICStatusMap& baselineMap, ICStatusContextStack& dfgContextStack, CodeOrigin);
-    static GetByStatus computeFor(const StructureSet&, UniquedStringImpl*);
+    static GetByStatus computeFor(JSGlobalObject*, const StructureSet&, CacheableIdentifier, LookupMode);
 
     State state() const { return m_state; }
     
@@ -110,7 +117,7 @@ public:
     bool isProxyObject() const { return m_state == ProxyObject; }
 
     size_t numVariants() const { return m_variants.size(); }
-    const Vector<GetByVariant, 1>& variants() const { return m_variants; }
+    const Vector<GetByVariant, 1>& variants() const LIFETIME_BOUND { return m_variants; }
     const GetByVariant& at(size_t index) const { return m_variants[index]; }
     const GetByVariant& operator[](size_t index) const { return at(index); }
 
@@ -118,18 +125,19 @@ public:
     {
         return m_state == LikelyTakesSlowPath || m_state == ObservedTakesSlowPath || m_state == MakesCalls || m_state == ObservedSlowPathAndMakesCalls || m_state == CustomAccessor || m_state == ModuleNamespace || m_state == Megamorphic;
     }
-    bool observedStructureStubInfoSlowPath() const { return m_state == ObservedTakesSlowPath || m_state == ObservedSlowPathAndMakesCalls; }
-    bool makesCalls() const;
+    bool observedPropertyInlineCacheSlowPath() const { return m_state == ObservedTakesSlowPath || m_state == ObservedSlowPathAndMakesCalls; }
+    bool NODELETE makesCalls() const;
     
-    GetByStatus slowVersion() const;
+    GetByStatus NODELETE slowVersion() const;
     
     bool wasSeenInJIT() const { return m_wasSeenInJIT; }
     
     // Attempts to reduce the set of variants to fit the given structure set. This may be approximate.
     void filter(const StructureSet&);
+    void filterById(UniquedStringImpl*);
 
-    JSModuleNamespaceObject* moduleNamespaceObject() const { return m_moduleNamespaceData->m_moduleNamespaceObject; }
-    JSModuleEnvironment* moduleEnvironment() const { return m_moduleNamespaceData->m_moduleEnvironment; }
+    JSModuleNamespaceObject* moduleNamespaceObject() const LIFETIME_BOUND { return m_moduleNamespaceData->m_moduleNamespaceObject; }
+    JSModuleEnvironment* moduleEnvironment() const LIFETIME_BOUND { return m_moduleNamespaceData->m_moduleEnvironment; }
     ScopeOffset scopeOffset() const { return m_moduleNamespaceData->m_scopeOffset; }
     
     DECLARE_VISIT_AGGREGATE;
@@ -141,7 +149,7 @@ public:
 
     void dump(PrintStream&) const;
 
-    CacheableIdentifier singleIdentifier() const;
+    CacheableIdentifier NODELETE singleIdentifier() const;
 
     bool viaGlobalProxy() const
     {
@@ -151,7 +159,7 @@ public:
     }
 
 #if ENABLE(JIT)
-    CacheType preferredCacheType() const;
+    CacheType NODELETE preferredCacheType() const;
 #endif
     
 private:
@@ -159,7 +167,7 @@ private:
     
 #if ENABLE(JIT)
     GetByStatus(const ModuleNamespaceAccessCase&);
-    static GetByStatus computeForStubInfoWithoutExitSiteFeedback(const ConcurrentJSLocker&, CodeBlock* profiledBlock, StructureStubInfo*, CallLinkStatus::ExitSiteData, CodeOrigin);
+    static GetByStatus computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker&, CodeBlock* profiledBlock, PropertyInlineCache*, CallLinkStatus::ExitSiteData, CodeOrigin);
 #endif
     static GetByStatus computeFromLLInt(CodeBlock*, BytecodeIndex);
     static GetByStatus computeFor(CodeBlock*, ICStatusMap&, ExitFlag, CallLinkStatus::ExitSiteData, CodeOrigin);

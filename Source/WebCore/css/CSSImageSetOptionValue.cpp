@@ -27,92 +27,69 @@
 #include "CSSImageSetOptionValue.h"
 
 #include "CSSImageValue.h"
+#include "CSSPrimitiveNumericTypes+CSSValueVisitation.h"
+#include "CSSPrimitiveNumericTypes+Serialization.h"
 
 namespace WebCore {
 
-CSSImageSetOptionValue::CSSImageSetOptionValue(Ref<CSSValue>&& image, Ref<CSSPrimitiveValue>&& resolution)
-    : CSSValue(ImageSetOptionClass)
-    , m_image(WTFMove(image))
-    , m_resolution(WTFMove(resolution))
+CSSImageSetOptionValue::CSSImageSetOptionValue(Ref<CSSValue>&& image, std::optional<CSS::Resolution<>>&& resolution, std::optional<FunctionNotation<CSSValueType, CSS::String>>&& mimeType)
+    : CSSValue(ClassType::ImageSetOption)
+    , m_image(WTF::move(image))
+    , m_resolution(resolution.value_or(CSS::Literals::x(1)))
+    , m_mimeType(WTF::move(mimeType))
 {
 }
 
-CSSImageSetOptionValue::CSSImageSetOptionValue(Ref<CSSValue>&& image, Ref<CSSPrimitiveValue>&& resolution, String&& type)
-    : CSSValue(ImageSetOptionClass)
-    , m_image(WTFMove(image))
-    , m_resolution(WTFMove(resolution))
-    , m_mimeType(WTFMove(type))
-{
-}
-
-Ref<CSSImageSetOptionValue> CSSImageSetOptionValue::create(Ref<CSSValue>&& image)
+Ref<CSSImageSetOptionValue> CSSImageSetOptionValue::create(Ref<CSSValue>&& image, std::optional<CSS::Resolution<>>&& resolution, std::optional<FunctionNotation<CSSValueType, CSS::String>>&& mimeType)
 {
     ASSERT(is<CSSImageValue>(image) || image->isImageGeneratorValue());
-    return adoptRef(*new CSSImageSetOptionValue(WTFMove(image), CSSPrimitiveValue::create(1.0, CSSUnitType::CSS_X)));
-}
-
-Ref<CSSImageSetOptionValue> CSSImageSetOptionValue::create(Ref<CSSValue>&& image, Ref<CSSPrimitiveValue>&& resolution)
-{
-    ASSERT(is<CSSImageValue>(image) || image->isImageGeneratorValue());
-    return adoptRef(*new CSSImageSetOptionValue(WTFMove(image), WTFMove(resolution)));
-}
-
-Ref<CSSImageSetOptionValue> CSSImageSetOptionValue::create(Ref<CSSValue>&& image, Ref<CSSPrimitiveValue>&& resolution, String type)
-{
-    ASSERT(is<CSSImageValue>(image) || image->isImageGeneratorValue());
-    return adoptRef(*new CSSImageSetOptionValue(WTFMove(image), WTFMove(resolution), WTFMove(type)));
+    return adoptRef(*new CSSImageSetOptionValue( WTF::move(image), WTF::move(resolution), WTF::move(mimeType)));
 }
 
 bool CSSImageSetOptionValue::equals(const CSSImageSetOptionValue& other) const
 {
     if (!m_image->equals(other.m_image))
         return false;
-
-    if (!m_resolution->equals(other.m_resolution))
+    if (m_resolution != other.m_resolution)
         return false;
-
     if (m_mimeType != other.m_mimeType)
         return false;
-
     return true;
 }
 
-String CSSImageSetOptionValue::customCSSText() const
+String CSSImageSetOptionValue::customCSSText(const CSS::SerializationContext& context) const
 {
-    StringBuilder result;
-    result.append(m_image->cssText());
-    result.append(' ', m_resolution->cssText());
-    if (!m_mimeType.isNull())
-        result.append(" type(\""_s, m_mimeType, "\")"_s);
+    using namespace CSS::Literals;
 
-    return result.toString();
+    StringBuilder builder;
+    builder.append(m_image->cssText(context));
+
+    // FIXME: The resolution should probably not be serialized when m_resolution is the default value to comply with the shortest serialization principle.
+    builder.append(' ');
+    CSS::serializationForCSS(builder, context, m_resolution);
+
+    if (m_mimeType) {
+        builder.append(' ');
+        CSS::serializationForCSS(builder, context, *m_mimeType);
+    }
+
+    return builder.toString();
 }
 
-void CSSImageSetOptionValue::setResolution(Ref<CSSPrimitiveValue>&& resolution)
+IterationStatus CSSImageSetOptionValue::customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
 {
-    m_resolution = WTFMove(resolution);
+    if (func(m_image.get()) == IterationStatus::Done)
+        return IterationStatus::Done;
+    if (CSS::visitCSSValueChildren(func, m_resolution) == IterationStatus::Done)
+        return IterationStatus::Done;
+    if (CSS::visitCSSValueChildren(func, m_mimeType) == IterationStatus::Done)
+        return IterationStatus::Done;
+    return IterationStatus::Continue;
 }
 
-void CSSImageSetOptionValue::setType(String type)
+bool CSSImageSetOptionValue::customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>& handler) const
 {
-    m_mimeType = WTFMove(type);
-}
-
-bool CSSImageSetOptionValue::customTraverseSubresources(const Function<bool(const CachedResource&)>& handler) const
-{
-    return m_resolution->traverseSubresources(handler) || m_image->traverseSubresources(handler);
-}
-
-void CSSImageSetOptionValue::customSetReplacementURLForSubresources(const HashMap<String, String>& replacementURLStrings)
-{
-    m_image->setReplacementURLForSubresources(replacementURLStrings);
-    m_resolution->setReplacementURLForSubresources(replacementURLStrings);
-}
-
-void CSSImageSetOptionValue::customClearReplacementURLForSubresources()
-{
-    m_image->clearReplacementURLForSubresources();
-    m_resolution->clearReplacementURLForSubresources();
+    return m_image->traverseSubresources(handler);
 }
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "DFGNodeFlags.h"
+#include "IndexingType.h"
 #include "SpeculatedType.h"
 #include <wtf/PrintStream.h>
 
@@ -48,8 +49,14 @@ enum UseKind : uint8_t {
     RealNumberUse,
     BooleanUse,
     KnownBooleanUse,
+    // Note: A cell could be any HeapCell not just JSCells. We almost always use KnownStorageUse for Auxilary (i.e. not-JSCell) cells
+    // that's not a hard requirement.
     CellUse,
     KnownCellUse,
+    // This represents some storage. It could be a Butterfly, TypeArrayStorage, or JSFinalObject (for inline properties).
+    // Note: it's only valid to use a node with this kind if you also have an operand that is the object the storage was loaded from.
+    // FIXME: Maybe it's possible for validation to check this somehow?
+    KnownStorageUse,
     CellOrOtherUse,
     ObjectUse,
     ArrayUse,
@@ -131,6 +138,7 @@ inline SpeculatedType typeFilterFor(UseKind useKind)
         return SpecBoolean;
     case CellUse:
     case KnownCellUse:
+    case KnownStorageUse:
         return SpecCellCheck;
     case CellOrOtherUse:
         return SpecCellCheck | SpecOther;
@@ -178,8 +186,9 @@ inline SpeculatedType typeFilterFor(UseKind useKind)
     case SetObjectUse:
         return SpecSetObject;
     case MapIteratorObjectUse:
+        return SpecMapIteratorObject;
     case SetIteratorObjectUse:
-        return SpecObjectOther;
+        return SpecSetIteratorObject;
     case WeakMapObjectUse:
         return SpecWeakMapObject;
     case WeakSetObjectUse:
@@ -221,6 +230,7 @@ inline bool shouldNotHaveTypeCheck(UseKind kind)
     case UntypedUse:
     case KnownInt32Use:
     case KnownCellUse:
+    case KnownStorageUse:
     case KnownStringUse:
     case KnownPrimitiveUse:
     case KnownBooleanUse:
@@ -244,6 +254,17 @@ inline bool isDouble(UseKind kind)
     case DoubleRepUse:
     case DoubleRepRealUse:
     case DoubleRepAnyIntUse:
+        return true;
+    default:
+        return false;
+    }
+}
+
+inline bool isInt32(UseKind kind)
+{
+    switch (kind) {
+    case Int32Use:
+    case KnownInt32Use:
         return true;
     default:
         return false;
@@ -281,6 +302,7 @@ inline bool isCell(UseKind kind)
     case WeakMapObjectUse:
     case WeakSetObjectUse:
     case DataViewObjectUse:
+    case KnownStorageUse:
         return true;
     default:
         return false;
@@ -301,6 +323,8 @@ inline UseKind useKindForResult(NodeFlags result)
         return Int52RepUse;
     case NodeResultDouble:
         return DoubleRepUse;
+    case NodeResultStorage:
+        return KnownStorageUse;
     default:
         return UntypedUse;
     }
@@ -319,6 +343,7 @@ inline bool checkMayCrashIfInputIsEmpty(UseKind kind)
     case KnownBooleanUse:
     case CellUse:
     case KnownCellUse:
+    case KnownStorageUse:
     case CellOrOtherUse:
     case KnownOtherUse:
     case OtherUse:

@@ -25,19 +25,35 @@
 
 #pragma once
 
-#include "TextExtractionTypes.h"
+#include <WebCore/TextExtractionTypes.h>
 #include <wtf/Expected.h>
 
 namespace WebCore {
 
 class Element;
+class FloatRect;
 class LocalFrame;
 class Page;
+struct SimpleRange;
 enum class ExceptionCode : uint8_t;
 
 namespace TextExtraction {
 
-WEBCORE_EXPORT Item extractItem(std::optional<WebCore::FloatRect>&& collectionRectInRootView, Page&);
+WEBCORE_EXPORT Result extractItem(Request&&, LocalFrame&);
+
+WEBCORE_EXPORT Vector<std::pair<String, FloatRect>> extractAllTextAndRects(Page&);
+
+WEBCORE_EXPORT void handleInteraction(Interaction&&, LocalFrame&, CompletionHandler<void(bool, String&&, FloatRect)>&&);
+
+enum class Tense : bool { Present, Past };
+WEBCORE_EXPORT InteractionDescription interactionDescription(const Interaction&, LocalFrame&, Tense = Tense::Present);
+
+WEBCORE_EXPORT std::optional<SimpleRange> rangeForExtractedText(const LocalFrame&, ExtractedText&&);
+WEBCORE_EXPORT RefPtr<Element> elementForExtractedText(const LocalFrame&, ExtractedText&&);
+WEBCORE_EXPORT RefPtr<Element> containerElementForExtractedText(const LocalFrame&, ExtractedText&&);
+WEBCORE_EXPORT RefPtr<Element> containerElementForSearchTexts(const LocalFrame&, Vector<String>&&, std::optional<NodeIdentifier>&&);
+
+WEBCORE_EXPORT Vector<FilterRule> extractRules(Vector<FilterRuleData>&&);
 
 struct RenderedText {
     String textWithReplacedContent;

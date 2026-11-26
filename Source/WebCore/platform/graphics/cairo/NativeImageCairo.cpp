@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Apple Inc.  All rights reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,17 +35,17 @@
 
 namespace WebCore {
 
-IntSize PlatformImageNativeImageBackend::size() const
+IntSize NativeImage::size() const
 {
     return cairoSurfaceSize(m_platformImage.get());
 }
 
-bool PlatformImageNativeImageBackend::hasAlpha() const
+bool NativeImage::hasAlpha() const
 {
     return cairo_surface_get_content(m_platformImage.get()) != CAIRO_CONTENT_COLOR;
 }
 
-DestinationColorSpace PlatformImageNativeImageBackend::colorSpace() const
+DestinationColorSpace NativeImage::colorSpace() const
 {
     notImplemented();
     return DestinationColorSpace::SRGB();
@@ -64,14 +64,18 @@ std::optional<Color> NativeImage::singlePixelSolidColor() const
     return unpremultiplied(asSRGBA(PackedColor::ARGB { *pixel }));
 }
 
-void NativeImage::draw(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options)
-{
-    context.drawNativeImageInternal(*this, destinationRect, sourceRect, options);
-}
-
 void NativeImage::clearSubimages()
 {
 }
+
+#if USE(COORDINATED_GRAPHICS)
+uint64_t NativeImage::uniqueID() const
+{
+    if (auto& image = platformImage())
+        return getSurfaceUniqueID(image.get());
+    return 0;
+}
+#endif
 
 } // namespace WebCore
 

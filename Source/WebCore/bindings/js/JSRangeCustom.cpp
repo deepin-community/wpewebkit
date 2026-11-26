@@ -27,15 +27,16 @@
 #include "JSRange.h"
 
 #include "Range.h"
+#include <JavaScriptCore/StructureInlines.h>
 
 namespace WebCore {
 
 template<typename Visitor>
-void JSRange::visitAdditionalChildren(Visitor& visitor)
+void JSRange::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitNodesConcurrently(visitor);
+    wrapped().visitNodesInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSRange);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSRange);
 
 } // namespace WebCore

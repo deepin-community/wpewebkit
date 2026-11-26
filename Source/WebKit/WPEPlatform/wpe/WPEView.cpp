@@ -27,20 +27,38 @@
 #include "WPEView.h"
 
 #include "WPEBuffer.h"
-#include "WPEBufferDMABufFormats.h"
+#include "WPEBufferFormats.h"
 #include "WPEDisplayPrivate.h"
 #include "WPEEnumTypes.h"
 #include "WPEEvent.h"
 #include "WPEGestureControllerImpl.h"
+#include "WPESettings.h"
 #include "WPEToplevelPrivate.h"
 #include "WPEViewPrivate.h"
 #include <optional>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
 
+#if USE(ATK)
+#include "atk/WPEViewAccessibleAtk.h"
+#endif
+
 /**
  * WPEView:
  *
+ * A view that renders the contents of a WebKitWebView.
+ *
+ * [class@View] is an abstract class that platform implementations derive to
+ * represent the surface where web content is rendered. A [class@View] always
+ * belongs to a [class@Display] and is normally created automatically by a
+ * WebKitWebView when it is constructed with a [class@Display].
+ *
+ * The view receives the buffers produced by the web engine through
+ * [method@View.render_buffer] and notifies their state with the
+ * [signal@View::buffer-rendered] and [signal@View::buffer-released]
+ * signals. It also delivers input to the web content: platform
+ * implementations dispatch events with [method@View.event], which a
+ * browser application can observe through the [signal@View::event] signal.
  */
 struct _WPEViewPrivate {
     GRefPtr<WPEDisplay> display;
@@ -62,6 +80,10 @@ struct _WPEViewPrivate {
         guint32 time { 0 };
     } lastButtonPress;
     std::optional<GRefPtr<WPEGestureController>> gestureController;
+
+#if USE(ATK)
+    GRefPtr<WPEViewAccessible> accessible;
+#endif
 };
 
 WEBKIT_DEFINE_ABSTRACT_TYPE(WPEView, wpe_view, G_TYPE_OBJECT)
@@ -92,21 +114,22 @@ enum {
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 enum {
     CLOSED,
     RESIZED,
+    BUFFERS_CHANGED,
     BUFFER_RENDERED,
     BUFFER_RELEASED,
     EVENT,
     TOPLEVEL_STATE_CHANGED,
-    PREFERRED_DMA_BUF_FORMATS_CHANGED,
+    PREFERRED_BUFFER_FORMATS_CHANGED,
 
     LAST_SIGNAL
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 static void wpeViewSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
@@ -167,16 +190,6 @@ static void wpeViewGetProperty(GObject* object, guint propId, GValue* value, GPa
     }
 }
 
-static void wpeViewConstructed(GObject* object)
-{
-    G_OBJECT_CLASS(wpe_view_parent_class)->constructed(object);
-
-    // FIXME: add API to set the default view size.
-    auto* priv = WPE_VIEW(object)->priv;
-    priv->width = 1024;
-    priv->height = 768;
-}
-
 static void wpeViewDispose(GObject* object)
 {
     wpe_view_set_toplevel(WPE_VIEW(object), nullptr);
@@ -184,13 +197,25 @@ static void wpeViewDispose(GObject* object)
     G_OBJECT_CLASS(wpe_view_parent_class)->dispose(object);
 }
 
+#if USE(ATK)
+static WPEViewAccessible* wpeViewGetAccessible(WPEView* view)
+{
+    if (!view->priv->accessible)
+        view->priv->accessible = adoptGRef(wpeViewAccessibleAtkNew(view));
+    return view->priv->accessible.get();
+}
+#endif
+
 static void wpe_view_class_init(WPEViewClass* viewClass)
 {
     GObjectClass* objectClass = G_OBJECT_CLASS(viewClass);
     objectClass->set_property = wpeViewSetProperty;
     objectClass->get_property = wpeViewGetProperty;
-    objectClass->constructed = wpeViewConstructed;
     objectClass->dispose = wpeViewDispose;
+
+#if USE(ATK)
+    viewClass->get_accessible = wpeViewGetAccessible;
+#endif
 
     /**
      * WPEView:display:
@@ -243,13 +268,21 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
     /**
      * WPEView:scale:
      *
-     * The view scale
+     * The view scale.
+     *
+     * Scaling factor applied to the rendered output. This property follows
+     * the value of [property@Screen:scale] for the screen used to display
+     * the view.
+     *
+     * The [property@View:width] and [property@View:height] logical sizes
+     * are multiplied by this scaling factor to determine the physical size
+     * to be used for displaying the view.
      */
     sObjProperties[PROP_SCALE] =
         g_param_spec_double(
             "scale",
             nullptr, nullptr,
-            1., G_MAXDOUBLE, 1.,
+            0.05, 20., 1.,
             WEBKIT_PARAM_READABLE);
 
     /**
@@ -283,7 +316,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
      * Whether the view should be visible or not. This property
      * can be used to show or hide a view, but setting to %TRUE (which
      * is the default) doesn't mean it will always be shown, because
-     * the visbility also depends on the status of its toplevel (for
+     * the visibility also depends on the status of its toplevel (for
      * example if the toplevel is minimized the view will be hidden).
      * To know whether the view is actually visible, you can check
      * #WPEView:mapped property.
@@ -322,7 +355,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
             FALSE,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WPEView::closed:
@@ -351,6 +384,39 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
         0, nullptr, nullptr,
         g_cclosure_marshal_generic,
         G_TYPE_NONE, 0);
+
+    /**
+     * WPEView::buffers-changed:
+     * @view: a #WPEView
+     * @buffers: (nullable) (array length=n_buffers) (element-type WPEBuffer):
+     *    array of buffers
+     * @n_buffers: the amount of buffers in the @buffers array
+     *
+     * Emitted to notify that the set of graphics buffers used to render
+     * the view has changed.
+     *
+     * When buffers are about to be released, @n_buffers will be zero
+     * and @buffers will be %NULL.
+     *
+     * Buffers may be reconfigured at any time, but it is guaranteed that
+     * after buffer configuration and before buffers get released, buffers
+     * used for rendered content will be among those from the @buffers array.
+     *
+     * Platform implementations may use this to inspect the @buffers
+     * prior to their usage.
+     *
+     * See also [id@wpe_view_buffers_changed].
+     */
+    signals[BUFFERS_CHANGED] = g_signal_new(
+        "buffers-changed",
+        G_TYPE_FROM_CLASS(viewClass),
+        G_SIGNAL_RUN_LAST,
+        G_STRUCT_OFFSET(WPEViewClass, buffers_changed),
+        nullptr, nullptr,
+        g_cclosure_marshal_generic,
+        G_TYPE_NONE, 2,
+        G_TYPE_POINTER,
+        G_TYPE_UINT);
 
     /**
      * WPEView::buffer-rendered:
@@ -386,7 +452,7 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
         WPE_TYPE_BUFFER);
 
     /**
-     * WPEView::event
+     * WPEView::event:
      * @view: a #WPEView
      * @event: a #WPEEvent
      *
@@ -422,14 +488,14 @@ static void wpe_view_class_init(WPEViewClass* viewClass)
         WPE_TYPE_TOPLEVEL_STATE);
 
     /**
-     * WPEView::preferred-dma-buf-formats-changed:
+     * WPEView::preferred-buffer-formats-changed:
      * @view: a #WPEView
      *
-     * Emitted when the list of preferred DMA-BUF formats has changed.
-     * This can happen whe the @view becomes a candidate for scanout.
+     * Emitted when the list of preferred buffer formats has changed.
+     * This can happen when the @view becomes a candidate for scanout.
      */
-    signals[PREFERRED_DMA_BUF_FORMATS_CHANGED] = g_signal_new(
-        "preferred-dma-buf-formats-changed",
+    signals[PREFERRED_BUFFER_FORMATS_CHANGED] = g_signal_new(
+        "preferred-buffer-formats-changed",
         G_TYPE_FROM_CLASS(viewClass),
         G_SIGNAL_RUN_LAST,
         0, nullptr, nullptr,
@@ -462,9 +528,9 @@ void wpeViewScreenChanged(WPEView* view)
     g_object_notify_by_pspec(G_OBJECT(view), sObjProperties[PROP_SCREEN]);
 }
 
-void wpeViewPreferredDMABufFormatsChanged(WPEView* view)
+void wpeViewPreferredBufferFormatsChanged(WPEView* view)
 {
-    g_signal_emit(view, signals[PREFERRED_DMA_BUF_FORMATS_CHANGED], 0);
+    g_signal_emit(view, signals[PREFERRED_BUFFER_FORMATS_CHANGED], 0);
 }
 
 /**
@@ -530,8 +596,11 @@ void wpe_view_set_toplevel(WPEView* view, WPEToplevel* toplevel)
     if (priv->toplevel == toplevel)
         return;
 
-    if (toplevel && wpe_toplevel_get_n_views(toplevel) == wpe_toplevel_get_max_views(toplevel))
-        return;
+    if (toplevel) {
+        auto maxViews = wpe_toplevel_get_max_views(toplevel);
+        if (maxViews && wpe_toplevel_get_n_views(toplevel) == maxViews)
+            return;
+    }
 
     if (priv->toplevel)
         wpeToplevelRemoveView(priv->toplevel.get(), view);
@@ -543,7 +612,7 @@ void wpe_view_set_toplevel(WPEView* view, WPEToplevel* toplevel)
         wpeViewScaleChanged(view, wpe_toplevel_get_scale(priv->toplevel.get()));
         wpeViewToplevelStateChanged(view, wpe_toplevel_get_state(priv->toplevel.get()));
         wpeViewScreenChanged(view);
-        wpeViewPreferredDMABufFormatsChanged(view);
+        wpeViewPreferredBufferFormatsChanged(view);
     }
 
     g_object_notify_by_pspec(G_OBJECT(view), sObjProperties[PROP_TOPLEVEL]);
@@ -692,7 +761,7 @@ void wpe_view_set_visible(WPEView* view, gboolean visible)
  * wpe_view_get_mapped:
  * @view: a #WPEView
  *
- * Get whether @view is mapped. A #WPEView isa mapped if
+ * Get whether @view is mapped. A #WPEView is mapped if
  * #WPEView:visible is %TRUE and it's not hidden for other
  * reasons, like for example when its toplevel is minimized.
  * You can connect to notify::mapped signal of @view to
@@ -711,8 +780,8 @@ gboolean wpe_view_get_mapped(WPEView* view)
  * wpe_view_map:
  * @view: a #WPEView
  *
- * Make @view to be mapped. If #WPEView:visible is %TRUE and
- * the view can be shown (determined by #WPEViewClass::can_be_mapped)
+ * Make @view mapped. If #WPEView:visible is %TRUE and
+ * the view can be shown (determined by [vfunc@View.can_be_mapped])
  * #WPEView:mapped will be set to %TRUE.
  *
  * This function should only be called by #WPEView derived classes
@@ -737,7 +806,7 @@ void wpe_view_map(WPEView* view)
  * wpe_view_unmap:
  * @view: a #WPEView
  *
- * Make @view to be unmapped. This always sets the #WPEView:mapped
+ * Make @view unmapped. This always sets the #WPEView:mapped
  * property to %FALSE and the @view is considered to be hidden even
  * if #WPEView:visible is %TRUE.
  *
@@ -753,6 +822,46 @@ void wpe_view_unmap(WPEView* view)
 
     view->priv->mapped = FALSE;
     g_object_notify_by_pspec(G_OBJECT(view), sObjProperties[PROP_MAPPED]);
+}
+
+/**
+ * wpe_view_lock_pointer:
+ * @view: a #WPEView
+ *
+ * Disable the movements of the pointer in @view, locking it to a particular
+ * area; while the pointer is locked, mouse events are relative instead of
+ * absolute motions.
+ *
+ * Returns: %TRUE if the pointer is locked, or %FALSE otherwise
+ */
+gboolean wpe_view_lock_pointer(WPEView* view)
+{
+    g_return_val_if_fail(WPE_IS_VIEW(view), FALSE);
+
+    auto* viewClass = WPE_VIEW_GET_CLASS(view);
+    if (viewClass->lock_pointer)
+        return viewClass->lock_pointer(view);
+
+    return FALSE;
+}
+
+/**
+ * wpe_view_unlock_pointer:
+ * @view: a #WPEView
+ *
+ * Unlock the pointer in @view if it has been locked.
+ *
+ * Returns: %TRUE if the pointer is unlocked, or %FALSE otherwise
+ */
+gboolean wpe_view_unlock_pointer(WPEView* view)
+{
+    g_return_val_if_fail(WPE_IS_VIEW(view), FALSE);
+
+    auto* viewClass = WPE_VIEW_GET_CLASS(view);
+    if (viewClass->unlock_pointer)
+        return viewClass->unlock_pointer(view);
+
+    return FALSE;
 }
 
 /**
@@ -848,6 +957,23 @@ gboolean wpe_view_render_buffer(WPEView* view, WPEBuffer* buffer, const WPERecta
 }
 
 /**
+ * wpe_view_buffers_changed:
+ * @view: a #WPEView
+ * @buffers: (nullable) (array length=n_buffers): array of buffers
+ * @n_buffers: the number of buffers in @buffers
+ *
+ * Notify that the set of graphics buffers used to render the view has changed.
+ *
+ * The [signal@View::buffers-changed] signal will be emitted.
+ */
+void wpe_view_buffers_changed(WPEView* view, WPEBuffer** buffers, guint nBuffers)
+{
+    g_return_if_fail(WPE_IS_VIEW(view));
+
+    g_signal_emit(view, signals[BUFFERS_CHANGED], 0, buffers, nBuffers);
+}
+
+/**
  * wpe_view_buffer_rendered:
  * @view: a #WPEView
  * @buffer: a #WPEBuffer
@@ -892,6 +1018,16 @@ void wpe_view_event(WPEView* view, WPEEvent* event)
 
     gboolean handled;
     g_signal_emit(view, signals[EVENT], 0, event, &handled);
+
+    auto* priv = view->priv;
+    if (priv->lastButtonPress.pressCount && wpe_event_get_event_type(event) == WPE_EVENT_POINTER_MOVE) {
+        auto* settings = wpe_display_get_settings(priv->display.get());
+        int doubleClickDistance = wpe_settings_get_uint32(settings, WPE_SETTING_DOUBLE_CLICK_DISTANCE, nullptr);
+        double x, y;
+        wpe_event_get_position(event, &x, &y);
+        if (std::abs(x - priv->lastButtonPress.x) >= doubleClickDistance || std::abs(y - priv->lastButtonPress.y) >= doubleClickDistance)
+            priv->lastButtonPress.pressCount = 0;
+    }
 }
 
 /**
@@ -912,14 +1048,11 @@ guint wpe_view_compute_press_count(WPEView* view, gdouble x, gdouble y, guint bu
 
     auto* priv = view->priv;
     unsigned pressCount = 1;
-    if (priv->lastButtonPress.pressCount) {
-        // FIXME: make these configurable.
-        static const int doubleClickDistance = 5;
-        static const unsigned doubleClickTime = 400;
-        if (std::abs(x - priv->lastButtonPress.x) < doubleClickDistance
-            && std::abs(y - priv->lastButtonPress.y) < doubleClickDistance
-            && button == priv->lastButtonPress.button
-            && time - priv->lastButtonPress.time < doubleClickTime)
+    if (priv->lastButtonPress.pressCount && button == priv->lastButtonPress.button) {
+        auto* settings = wpe_display_get_settings(priv->display.get());
+        unsigned doubleClickTime = wpe_settings_get_uint32(settings, WPE_SETTING_DOUBLE_CLICK_TIME, nullptr);
+
+        if (time - priv->lastButtonPress.time < doubleClickTime)
             pressCount = priv->lastButtonPress.pressCount + 1;
     }
 
@@ -983,21 +1116,21 @@ gboolean wpe_view_get_has_focus(WPEView* view)
 }
 
 /**
- * wpe_view_get_preferred_dma_buf_formats:
+ * wpe_view_get_preferred_buffer_formats:
  * @view: a #WPEView
  *
- * Get the list of preferred DMA-BUF buffer formats for @view.
+ * Get the list of preferred buffer formats for @view.
  *
- * Returns: (transfer none) (nullable): a #WPEBufferDMABufFormats
+ * Returns: (transfer none) (nullable): a #WPEBufferFormats
  */
-WPEBufferDMABufFormats* wpe_view_get_preferred_dma_buf_formats(WPEView* view)
+WPEBufferFormats* wpe_view_get_preferred_buffer_formats(WPEView* view)
 {
     g_return_val_if_fail(WPE_IS_VIEW(view), nullptr);
 
     if (!view->priv->toplevel)
         return nullptr;
 
-    return wpe_toplevel_get_preferred_dma_buf_formats(view->priv->toplevel.get());
+    return wpe_toplevel_get_preferred_buffer_formats(view->priv->toplevel.get());
 }
 
 /**
@@ -1053,4 +1186,23 @@ WPEGestureController* wpe_view_get_gesture_controller(WPEView* view)
         view->priv->gestureController = adoptGRef(wpeGestureControllerImplNew());
 
     return view->priv->gestureController->get();
+}
+
+/**
+ * wpe_view_get_accessible:
+ * @view: a #WPEView
+ *
+ * Get the #WPEViewAccessible of @view.
+ *
+ * Returns: (transfer none) (nullable): a #WPEViewAccessible or %NULL
+ */
+WPEViewAccessible* wpe_view_get_accessible(WPEView* view)
+{
+    g_return_val_if_fail(WPE_IS_VIEW(view), nullptr);
+
+    auto* viewClass = WPE_VIEW_GET_CLASS(view);
+    if (viewClass->get_accessible)
+        return viewClass->get_accessible(view);
+
+    return nullptr;
 }

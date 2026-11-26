@@ -39,13 +39,12 @@ size_t pas_page_base_header_size(const pas_page_base_config* config,
     case pas_page_config_kind_segregated:
         PAS_ASSERT(pas_page_kind_get_config_kind(page_kind) == pas_page_config_kind_segregated);
         return pas_segregated_page_header_size(
-            *pas_page_base_config_get_segregated(config),
-            pas_page_kind_get_segregated_role(page_kind));
+            *pas_page_base_config_get_segregated(config));
     case pas_page_config_kind_bitfit:
         PAS_ASSERT(pas_page_kind_get_config_kind(page_kind) == pas_page_config_kind_bitfit);
         return pas_bitfit_page_header_size(*pas_page_base_config_get_bitfit(config));
     }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return 0;
 }
 
@@ -57,7 +56,7 @@ const pas_page_base_config* pas_page_base_get_config(pas_page_base* page)
     case pas_page_config_kind_bitfit:
         return &pas_bitfit_page_get_config(pas_page_base_get_bitfit(page))->base;
     }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return NULL;
 }
 
@@ -77,7 +76,7 @@ pas_page_base_get_granule_use_counts(pas_page_base* page)
         return pas_bitfit_page_get_granule_use_counts(
             bitfit_page, *pas_bitfit_page_get_config(bitfit_page));
     } }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return NULL;
 }
 
@@ -117,7 +116,7 @@ bool pas_page_base_is_empty(pas_page_base* page)
     case pas_page_config_kind_bitfit:
         return !pas_page_base_get_bitfit(page)->num_live_bits;
     }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return false;
 }
 

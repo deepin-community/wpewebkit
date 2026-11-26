@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google Inc.
+ * Copyright 2021 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -8,11 +8,18 @@
 #ifndef skgpu_graphite_Buffer_DEFINED
 #define skgpu_graphite_Buffer_DEFINED
 
-#include "include/gpu/GpuTypes.h"
+#include "include/gpu/graphite/GraphiteTypes.h"
 #include "src/gpu/graphite/Resource.h"
 #include "src/gpu/graphite/ResourceTypes.h"
 
+#include <cstddef>
+
+namespace skgpu {
+enum class Protected : bool;
+}
+
 namespace skgpu::graphite {
+class SharedContext;
 
 class Buffer : public Resource {
 public:
@@ -34,16 +41,23 @@ public:
 
     const char* getResourceType() const override { return "Buffer"; }
 
+    Protected isProtected() const override { return fIsProtected; }
+
 protected:
     Buffer(const SharedContext* sharedContext,
            size_t size,
-           bool commandBufferRefsAsUsageRefs = false)
+           Protected isProtected,
+           std::string_view label,
+           bool reusableRequiresPurgeable = false,
+           bool requiresPrepareForReturnToCache = false)
             : Resource(sharedContext,
                        Ownership::kOwned,
-                       skgpu::Budgeted::kYes,
                        size,
-                       /*commandBufferRefsAsUsageRefs=*/commandBufferRefsAsUsageRefs)
-            , fSize(size) {}
+                       label,
+                       reusableRequiresPurgeable,
+                       requiresPrepareForReturnToCache)
+            , fSize(size)
+            , fIsProtected(isProtected) {}
 
     void* fMapPtr = nullptr;
 
@@ -52,7 +66,8 @@ private:
     virtual void onAsyncMap(GpuFinishedProc, GpuFinishedContext);
     virtual void onUnmap() = 0;
 
-    size_t             fSize;
+    size_t    fSize;
+    Protected fIsProtected;
 };
 
 } // namespace skgpu::graphite

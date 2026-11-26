@@ -27,18 +27,25 @@
 #include "JSExecState.h"
 
 #include "EventLoop.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObject.h"
 #include "RejectedPromiseTracker.h"
 #include "ScriptExecutionContext.h"
 #include "WorkerGlobalScope.h"
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/MicrotaskQueue.h>
+#include <JavaScriptCore/ScriptProfilingScope.h>
+#include <JavaScriptCore/VMEntryScopeInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace WebCore {
 
 void JSExecState::didLeaveScriptContext(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    auto context = executionContext(lexicalGlobalObject);
+    RefPtr context = executionContext(lexicalGlobalObject);
     if (!context)
         return;
-    context->eventLoop().performMicrotaskCheckpoint();
+    context->eventLoop().performMicrotaskCheckpoint(lexicalGlobalObject->vm());
 }
 
 JSC::JSValue functionCallHandlerFromAnyThread(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue functionObject, const JSC::CallData& callData, JSC::JSValue thisValue, const JSC::ArgList& args, NakedPtr<JSC::Exception>& returnedException)
@@ -53,9 +60,10 @@ JSC::JSValue evaluateHandlerFromAnyThread(JSC::JSGlobalObject* lexicalGlobalObje
 
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 {
-    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
+    auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(globalObject);
+    if (!domGlobalObject)
         return nullptr;
-    return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
+    return domGlobalObject->scriptExecutionContext();
 }
 
 } // namespace WebCore

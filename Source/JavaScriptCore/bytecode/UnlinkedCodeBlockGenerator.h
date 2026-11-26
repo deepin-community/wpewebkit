@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2024, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "Strong.h"
 #include "UnlinkedCodeBlock.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -38,11 +39,7 @@ class UnlinkedCodeBlockGenerator {
     WTF_MAKE_TZONE_ALLOCATED(UnlinkedCodeBlockGenerator);
     WTF_MAKE_NONCOPYABLE(UnlinkedCodeBlockGenerator)
 public:
-    UnlinkedCodeBlockGenerator(VM& vm, UnlinkedCodeBlock* codeBlock)
-        : m_vm(vm)
-        , m_codeBlock(vm, codeBlock)
-    {
-    }
+    UnlinkedCodeBlockGenerator(VM&, UnlinkedCodeBlock*);
 
     VM& vm() { return m_vm; }
 
@@ -100,28 +97,28 @@ public:
     size_t numberOfExceptionHandlers() const { return m_exceptionHandlers.size(); }
     UnlinkedHandlerInfo& exceptionHandler(int index) { return m_exceptionHandlers[index]; }
     void addExceptionHandler(const UnlinkedHandlerInfo& handler) { m_exceptionHandlers.append(handler); }
-    UnlinkedHandlerInfo* handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
-    UnlinkedHandlerInfo* handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* NODELETE handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* NODELETE handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
 
     BitVector& bitVector(size_t i) { return m_bitVectors[i]; }
     unsigned addBitVector(BitVector&& bitVector)
     {
-        m_bitVectors.append(WTFMove(bitVector));
+        m_bitVectors.append(WTF::move(bitVector));
         return m_bitVectors.size() - 1;
     }
 
     unsigned numberOfConstantIdentifierSets() const { return m_constantIdentifierSets.size(); }
-    const Vector<IdentifierSet>& constantIdentifierSets() { return m_constantIdentifierSets; }
+    const Vector<IdentifierSet>& constantIdentifierSets() LIFETIME_BOUND { return m_constantIdentifierSets; }
     unsigned addSetConstant(IdentifierSet&& set)
     {
         ASSERT(m_vm.heap.isDeferred());
         unsigned result = m_constantIdentifierSets.size();
-        m_constantIdentifierSets.append(WTFMove(set));
+        m_constantIdentifierSets.append(WTF::move(set));
         return result;
     }
 
     const WriteBarrier<Unknown>& constantRegister(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()]; }
-    const Vector<WriteBarrier<Unknown>>& constantRegisters() { return m_constantRegisters; }
+    const Vector<WriteBarrier<Unknown>>& constantRegisters() LIFETIME_BOUND { return m_constantRegisters; }
     ALWAYS_INLINE JSValue getConstant(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()].get(); }
 
     SourceCodeRepresentation constantSourceCodeRepresentation(VirtualRegister reg) const
@@ -175,7 +172,7 @@ public:
     const Identifier& identifier(int index) const { return m_identifiers[index]; }
     void addIdentifier(const Identifier& i) { return m_identifiers.append(i); }
 
-    using OutOfLineJumpTargets = HashMap<JSInstructionStream::Offset, int>;
+    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
     void addOutOfLineJumpTarget(JSInstructionStream::Offset, int target);
     int outOfLineJumpOffset(JSInstructionStream::Offset);
     int outOfLineJumpOffset(const JSInstructionStream::Ref& instruction)
@@ -193,9 +190,9 @@ public:
 
     void applyModification(BytecodeRewriter&, JSInstructionStreamWriter&);
 
-    void finalize(std::unique_ptr<JSInstructionStream>);
+    [[nodiscard]] bool finalize(std::unique_ptr<JSInstructionStream>);
 
-    void dump(PrintStream&) const;
+    void NODELETE dump(PrintStream&) const;
 
     unsigned addBinaryArithProfile() { return m_numBinaryArithProfiles++; }
     unsigned addUnaryArithProfile() { return m_numUnaryArithProfiles++; }
@@ -216,7 +213,7 @@ private:
     Vector<UnlinkedHandlerInfo> m_exceptionHandlers;
     Vector<UnlinkedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     Vector<UnlinkedStringJumpTable> m_unlinkedStringSwitchJumpTables;
-    HashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
+    UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     Vector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
     Vector<BitVector> m_bitVectors;
     Vector<IdentifierSet> m_constantIdentifierSets;

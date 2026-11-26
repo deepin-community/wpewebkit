@@ -27,16 +27,16 @@ RenderTargetWgpu::RenderTargetWgpu(RenderTargetWgpu &&other)
 {}
 
 void RenderTargetWgpu::set(webgpu::ImageHelper *image,
-                           const wgpu::TextureView &texture,
+                           const webgpu::TextureViewHandle &texture,
                            const webgpu::LevelIndex level,
                            uint32_t layer,
-                           const wgpu::TextureFormat &format)
+                           WGPUTextureFormat format)
 {
     mImage       = image;
     mTextureView = texture;
     mLevelIndex  = level;
     mLayerIndex  = layer;
-    mFormat      = &format;
+    mFormat      = format;
 }
 
 void RenderTargetWgpu::reset()
@@ -44,12 +44,12 @@ void RenderTargetWgpu::reset()
     mTextureView = nullptr;
     mLevelIndex  = webgpu::LevelIndex(0);
     mLayerIndex  = 0;
-    mFormat      = nullptr;
+    mFormat      = WGPUTextureFormat_Undefined;
 }
 
-angle::Result RenderTargetWgpu::flushStagedUpdates(ContextWgpu *contextWgpu,
-                                                   webgpu::ClearValuesArray *deferredClears,
-                                                   uint32_t deferredClearIndex)
+angle::Result RenderTargetWgpu::flushImageStagedUpdates(ContextWgpu *contextWgpu,
+                                                        webgpu::ClearValuesArray *deferredClears,
+                                                        uint32_t deferredClearIndex)
 {
     gl::LevelIndex targetLevel = mImage->toGlLevel(mLevelIndex);
     ANGLE_TRY(mImage->flushSingleLevelUpdates(contextWgpu, targetLevel, deferredClears,

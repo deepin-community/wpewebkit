@@ -26,13 +26,17 @@
 #pragma once
 
 #include <span>
+#include <wtf/Box.h>
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
+#include <wtf/MappedFileData.h>
 #include <wtf/SHA1.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
-#include <wtf/OSObjectPtr.h>
+#include <wtf/darwin/DispatchOSObject.h>
 #endif
 
 #if USE(GLIB)
@@ -40,7 +44,6 @@
 #endif
 
 #if USE(CURL)
-#include <variant>
 #include <wtf/Box.h>
 #endif
 
@@ -56,38 +59,39 @@ class Data {
 public:
     Data() { }
     Data(std::span<const uint8_t>);
+    Data(Vector<uint8_t>&& data);
 
     ~Data() { }
 
     static Data empty();
-    static Data adoptMap(FileSystem::MappedFileData&&, FileSystem::PlatformFileHandle);
+    static Data adoptMap(FileSystem::MappedFileData&&, FileSystem::FileHandle&&);
 
 #if PLATFORM(COCOA)
     enum class Backing { Buffer, Map };
     Data(OSObjectPtr<dispatch_data_t>&&, Backing = Backing::Buffer);
 #endif
 #if USE(GLIB)
-    Data(GRefPtr<GBytes>&&, FileSystem::PlatformFileHandle fd = FileSystem::invalidPlatformFileHandle);
+    Data(GRefPtr<GBytes>&&, FileSystem::FileHandle&& = { });
 #elif USE(CURL)
-    Data(std::variant<Vector<uint8_t>, FileSystem::MappedFileData>&&);
-    Data(Vector<uint8_t>&& data) : Data(std::variant<Vector<uint8_t>, FileSystem::MappedFileData> { WTFMove(data) }) { }
+    Data(Variant<Vector<uint8_t>, FileSystem::MappedFileData>&&);
 #endif
-    bool isNull() const;
-    bool isEmpty() const { return !m_size; }
+    bool NODELETE isNull() const;
+    bool isEmpty() const { return !size(); }
 
-    std::span<const uint8_t> span() const;
-    size_t size() const { return m_size; }
+    std::span<const uint8_t> span() const LIFETIME_BOUND;
+    size_t size() const;
     bool isMap() const { return m_isMap; }
     RefPtr<WebCore::SharedMemory> tryCreateSharedMemory() const;
 
     Data subrange(size_t offset, size_t) const;
 
-    bool apply(const Function<bool(std::span<const uint8_t>)>&) const;
+    bool apply(NOESCAPE const Function<bool(std::span<const uint8_t>)>&) const;
 
     Data mapToFile(const String& path) const;
 
 #if PLATFORM(COCOA)
     dispatch_data_t dispatchData() const { return m_dispatchData.get(); }
+    Data copyData() const;
 #endif
 
 #if USE(GLIB)
@@ -96,22 +100,20 @@ public:
 private:
 #if PLATFORM(COCOA)
     mutable OSObjectPtr<dispatch_data_t> m_dispatchData;
+    mutable std::span<const uint8_t> m_data;
 #endif
 #if USE(GLIB)
     mutable GRefPtr<GBytes> m_buffer;
-    FileSystem::PlatformFileHandle m_fileDescriptor { FileSystem::invalidPlatformFileHandle };
+    Box<FileSystem::FileHandle> m_fileHandle;
 #endif
 #if USE(CURL)
-    Box<std::variant<Vector<uint8_t>, FileSystem::MappedFileData>> m_buffer;
+    Box<Variant<Vector<uint8_t>, FileSystem::MappedFileData>> m_buffer;
 #endif
-    mutable const uint8_t* m_data { nullptr };
-    size_t m_size { 0 };
     bool m_isMap { false };
 };
 
 Data concatenate(const Data&, const Data&);
 bool bytesEqual(const Data&, const Data&);
-Data adoptAndMapFile(FileSystem::PlatformFileHandle, size_t offset, size_t);
 Data mapFile(const String& path);
 
 using Salt = FileSystem::Salt;

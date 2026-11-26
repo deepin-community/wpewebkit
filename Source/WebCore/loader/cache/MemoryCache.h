@@ -24,10 +24,11 @@
 
 #pragma once
 
-#include "LoaderMalloc.h"
-#include "SecurityOriginHash.h"
-#include "Timer.h"
+#include <WebCore/LoaderMalloc.h>
+#include <WebCore/SecurityOriginHash.h>
+#include <WebCore/Timer.h>
 #include <pal/SessionID.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
@@ -61,8 +62,11 @@ struct ClientOrigin;
 // -------|-----+++++++++++++++|
 // -------|-----+++++++++++++++|+++++
 
-class MemoryCache {
-    WTF_MAKE_NONCOPYABLE(MemoryCache); WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
+class MemoryCache final : public CanMakeCheckedPtr<MemoryCache> {
+    WTF_MAKE_NONCOPYABLE(MemoryCache);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MemoryCache, Loader);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MemoryCache);
+
     friend NeverDestroyed<MemoryCache>;
     friend class Internals;
 public:
@@ -93,19 +97,23 @@ public:
 
     WEBCORE_EXPORT static MemoryCache& singleton();
 
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
+
     WEBCORE_EXPORT CachedResource* resourceForRequest(const ResourceRequest&, PAL::SessionID);
 
     bool add(CachedResource&);
     void remove(CachedResource&);
 
-    static bool shouldRemoveFragmentIdentifier(const URL&);
+    static bool NODELETE shouldRemoveFragmentIdentifier(const URL&);
     WEBCORE_EXPORT static URL removeFragmentIdentifierIfNeeded(const URL&);
 
     void revalidationSucceeded(CachedResource& revalidatingResource, const ResourceResponse&);
     void revalidationFailed(CachedResource& revalidatingResource);
 
-    void forEachResource(const Function<void(CachedResource&)>&);
-    void forEachSessionResource(PAL::SessionID, const Function<void(CachedResource&)>&);
+    void forEachResource(NOESCAPE const Function<void(CachedResource&)>&);
+    void forEachSessionResource(PAL::SessionID, NOESCAPE const Function<void(CachedResource&)>&);
     WEBCORE_EXPORT void destroyDecodedDataForAllImages();
 
     // Sets the cache's memory capacities, in bytes. These will hold only approximately,
@@ -135,7 +143,7 @@ public:
     void removeFromLRUList(CachedResource&);
 
     // Called to adjust the cache totals when a resource changes size.
-    void adjustSize(bool live, long long delta);
+    void NODELETE adjustSize(bool live, long long delta);
 
     // Track decoded resources that are in the cache and referenced by a Web page.
     void insertInLiveDecodedResourcesList(CachedResource&);
@@ -151,15 +159,15 @@ public:
     WEBCORE_EXPORT Statistics getStatistics();
     
     void resourceAccessed(CachedResource&);
-    bool inLiveDecodedResourcesList(CachedResource&) const;
+    bool NODELETE inLiveDecodedResourcesList(CachedResource&) const;
 
-    typedef HashSet<RefPtr<SecurityOrigin>> SecurityOriginSet;
+    using SecurityOriginSet = HashSet<Ref<SecurityOrigin>>;
     WEBCORE_EXPORT void removeResourcesWithOrigin(const SecurityOrigin&);
     void removeResourcesWithOrigin(const SecurityOrigin&, const String& cachePartition);
     WEBCORE_EXPORT void removeResourcesWithOrigin(const ClientOrigin&);
-    WEBCORE_EXPORT void removeResourcesWithOrigins(PAL::SessionID, const HashSet<RefPtr<SecurityOrigin>>&);
+    WEBCORE_EXPORT void removeResourcesWithOrigins(PAL::SessionID, const HashSet<Ref<SecurityOrigin>>&);
     WEBCORE_EXPORT void getOriginsWithCache(SecurityOriginSet& origins);
-    WEBCORE_EXPORT HashSet<RefPtr<SecurityOrigin>> originsWithCache(PAL::SessionID) const;
+    WEBCORE_EXPORT HashSet<Ref<SecurityOrigin>> originsWithCache(PAL::SessionID) const;
 
     // pruneDead*() - Flush decoded and encoded data from resources not referenced by Web pages.
     // pruneLive*() - Flush decoded data from resources still referenced by Web pages.
@@ -170,7 +178,7 @@ public:
     WEBCORE_EXPORT void pruneLiveResourcesToSize(unsigned targetSize, bool shouldDestroyDecodedDataForAllLiveResources = false);
 
 private:
-    using CachedResourceMap = HashMap<std::pair<URL, String /* partitionName */>, WeakPtr<CachedResource>>;
+    using CachedResourceMap = HashMap<std::pair<URL, String /* partitionName */>, RefPtr<CachedResource>>;
     using LRUList = WeakListHashSet<CachedResource>;
 
     MemoryCache();
@@ -183,12 +191,12 @@ private:
 
     unsigned liveCapacity() const;
     unsigned deadCapacity() const;
-    bool needsPruning() const;
+    bool NODELETE needsPruning() const;
 
     CachedResource* resourceForRequestImpl(const ResourceRequest&, CachedResourceMap&);
 
     CachedResourceMap& ensureSessionResourceMap(PAL::SessionID);
-    CachedResourceMap* sessionResourceMap(PAL::SessionID) const;
+    CachedResourceMap* NODELETE sessionResourceMap(PAL::SessionID) const;
 
     bool m_disabled { false };
     bool m_inPruneResources { false };

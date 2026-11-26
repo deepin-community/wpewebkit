@@ -1,2 +1,6 @@
+usr/include/mimalloc-*
+usr/lib/*/cmake/mimalloc-*
 usr/lib/*/girepository-1.0/*.typelib
+usr/lib/*/mimalloc-*
+usr/lib/*/pkgconfig/mimalloc.pc
 usr/share/gir-1.0/*.gir

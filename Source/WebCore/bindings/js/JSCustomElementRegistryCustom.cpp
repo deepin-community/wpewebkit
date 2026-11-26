@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSCustomElementRegistry.h"
 
+#include "ContextDestructionObserverInlines.h"
 #include "CustomElementRegistry.h"
 #include "Document.h"
 #include "HTMLNames.h"
@@ -34,6 +35,8 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMPromiseDeferred.h"
+#include "Settings.h"
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/SetForScope.h>
 
 
@@ -88,7 +91,7 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame.argumentCount() < 2))
+    if (callFrame.argumentCount() < 2) [[unlikely]]
         return throwException(&lexicalGlobalObject, scope, createNotEnoughArgumentsError(&lexicalGlobalObject));
 
     AtomString localName(callFrame.uncheckedArgument(0).toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject));
@@ -127,7 +130,7 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
     JSObject& prototypeObject = *asObject(prototypeValue);
 
     QualifiedName name(nullAtom(), localName, HTMLNames::xhtmlNamespaceURI);
-    auto elementInterface = JSCustomElementInterface::create(name, constructor, globalObject());
+    auto elementInterface = JSCustomElementInterface::create(name, constructor, realm());
 
     auto* connectedCallback = getCustomElementCallback(lexicalGlobalObject, prototypeObject, Identifier::fromString(vm, "connectedCallback"_s));
     if (connectedCallback)
@@ -138,6 +141,15 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
     if (disconnectedCallback)
         elementInterface->setDisconnectedCallback(disconnectedCallback);
     RETURN_IF_EXCEPTION(scope, { });
+
+    RefPtr document = dynamicDowncast<Document>(registry.scriptExecutionContext());
+    bool moveBeforeEnabled = document && document->settings().moveBeforeEnabled();
+    if (moveBeforeEnabled) {
+        auto* connectedMoveCallback = getCustomElementCallback(lexicalGlobalObject, prototypeObject, Identifier::fromString(vm, "connectedMoveCallback"_s));
+        if (connectedMoveCallback)
+            elementInterface->setConnectedMoveCallback(connectedMoveCallback);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     auto* adoptedCallback = getCustomElementCallback(lexicalGlobalObject, prototypeObject, Identifier::fromString(vm, "adoptedCallback"_s));
     if (adoptedCallback)
@@ -151,7 +163,7 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
         RETURN_IF_EXCEPTION(scope, { });
         if (!observedAttributesValue.isUndefined()) {
             auto observedAttributes = convert<IDLSequence<IDLAtomStringAdaptor<IDLDOMString>>>(lexicalGlobalObject, observedAttributesValue);
-            if (UNLIKELY(observedAttributes.hasException(scope)))
+            if (observedAttributes.hasException(scope)) [[unlikely]]
                 return { };
             elementInterface->setAttributeChangedCallback(attributeChangedCallback, observedAttributes.releaseReturnValue());
         }
@@ -161,7 +173,7 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
     RETURN_IF_EXCEPTION(scope, { });
     if (!disabledFeaturesValue.isUndefined()) {
         auto disabledFeatures = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, disabledFeaturesValue);
-        if (UNLIKELY(disabledFeatures.hasException(scope)))
+        if (disabledFeatures.hasException(scope)) [[unlikely]]
             return { };
 
         if (disabledFeatures.returnValue().contains("internals"_s))
@@ -196,7 +208,7 @@ JSValue JSCustomElementRegistry::define(JSGlobalObject& lexicalGlobalObject, Cal
             elementInterface->setFormStateRestoreCallback(formStateRestoreCallback);
     }
 
-    if (auto promise = registry.addElementDefinition(WTFMove(elementInterface)))
+    if (auto promise = registry.addElementDefinition(WTF::move(elementInterface)))
         promise->resolveWithJSValue(constructor);
 
     return jsUndefined();
@@ -207,7 +219,7 @@ static JSValue whenDefinedPromise(JSGlobalObject& lexicalGlobalObject, CallFrame
 {
     auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
 
-    if (UNLIKELY(callFrame.argumentCount() < 1))
+    if (callFrame.argumentCount() < 1) [[unlikely]]
         return throwException(&lexicalGlobalObject, scope, createNotEnoughArgumentsError(&lexicalGlobalObject));
 
     AtomString localName(callFrame.uncheckedArgument(0).toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject));
@@ -218,7 +230,7 @@ static JSValue whenDefinedPromise(JSGlobalObject& lexicalGlobalObject, CallFrame
         return jsUndefined();
     }
 
-    if (auto* elementInterface = registry.findInterface(localName)) {
+    if (RefPtr elementInterface = registry.findInterface(localName)) {
         DeferredPromise::create(globalObject, promise)->resolveWithJSValue(elementInterface->constructor());
         return &promise;
     }
@@ -232,14 +244,14 @@ static JSValue whenDefinedPromise(JSGlobalObject& lexicalGlobalObject, CallFrame
 
 JSValue JSCustomElementRegistry::whenDefined(JSGlobalObject& lexicalGlobalObject, CallFrame& callFrame)
 {
-    auto catchScope = DECLARE_CATCH_SCOPE(lexicalGlobalObject.vm());
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(lexicalGlobalObject.vm());
 
-    ASSERT(globalObject());
+    ASSERT(realm());
     auto* result = JSPromise::create(lexicalGlobalObject.vm(), lexicalGlobalObject.promiseStructure());
-    JSValue promise = whenDefinedPromise(lexicalGlobalObject, callFrame, *globalObject(), wrapped(), *result);
+    JSValue promise = whenDefinedPromise(lexicalGlobalObject, callFrame, *realm(), wrapped(), *result);
 
-    if (UNLIKELY(catchScope.exception())) {
-        rejectPromiseWithExceptionIfAny(lexicalGlobalObject, *globalObject(), *result, catchScope);
+    if (catchScope.exception()) [[unlikely]] {
+        rejectPromiseWithExceptionIfAny(lexicalGlobalObject, *realm(), *result, catchScope);
         // FIXME: We could have error since any JS call can throw stack-overflow errors.
         // https://bugs.webkit.org/show_bug.cgi?id=203402
         RETURN_IF_EXCEPTION(catchScope, JSC::jsUndefined());
@@ -250,11 +262,11 @@ JSValue JSCustomElementRegistry::whenDefined(JSGlobalObject& lexicalGlobalObject
 }
 
 template<typename Visitor>
-void JSCustomElementRegistry::visitAdditionalChildren(Visitor& visitor)
+void JSCustomElementRegistry::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitJSCustomElementInterfaces(visitor);
+    wrapped().visitJSCustomElementInterfacesInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCustomElementRegistry);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSCustomElementRegistry);
 
 } // namespace WebCore

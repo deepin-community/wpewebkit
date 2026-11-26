@@ -28,15 +28,16 @@
 
 #import "ArgumentCoders.h"
 #import "GeneratedSerializers.h"
+#import <WebCore/ScrollingNodeID.h>
 #import <wtf/text/TextStream.h>
 
 namespace WebKit {
 
 RemoteScrollingUIState::RemoteScrollingUIState(OptionSet<RemoteScrollingUIStateChanges> changes, HashSet<WebCore::ScrollingNodeID>&& nodesWithActiveScrollSnap, HashSet<WebCore::ScrollingNodeID>&& nodesWithActiveUserScrolls, HashSet<WebCore::ScrollingNodeID>&& nodesWithActiveRubberband)
     : m_changes(changes)
-    , m_nodesWithActiveScrollSnap(WTFMove(nodesWithActiveScrollSnap))
-    , m_nodesWithActiveUserScrolls(WTFMove(nodesWithActiveUserScrolls))
-    , m_nodesWithActiveRubberband(WTFMove(nodesWithActiveRubberband))
+    , m_nodesWithActiveScrollSnap(WTF::move(nodesWithActiveScrollSnap))
+    , m_nodesWithActiveUserScrolls(WTF::move(nodesWithActiveUserScrolls))
+    , m_nodesWithActiveRubberband(WTF::move(nodesWithActiveRubberband))
 {
 }
 

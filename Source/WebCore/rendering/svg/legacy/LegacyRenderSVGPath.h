@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2006 Apple Inc.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Google, Inc.
  * Copyright (C) 2011 Renata Hodovan <reni@webkit.org>
  * Copyright (C) 2011 University of Szeged
@@ -30,10 +30,10 @@
 namespace WebCore {
 
 class LegacyRenderSVGPath final : public LegacyRenderSVGShape {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRenderSVGPath);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGPath);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGPath);
 public:
-    LegacyRenderSVGPath(SVGGraphicsElement&, RenderStyle&&);
+    LegacyRenderSVGPath(SVGGraphicsElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGPath();
 
     void drawMarkers(PaintInfo&) final;
@@ -47,11 +47,10 @@ private:
     void strokeShape(GraphicsContext&) const override;
     bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace) override;
 
-    void styleDidChange(StyleDifference, const RenderStyle*) final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle*) final;
 
-    bool shouldStrokeZeroLengthSubpath() const;
-    Path* zeroLengthLinecapPath(const FloatPoint&) const;
-    FloatRect zeroLengthSubpathRect(const FloatPoint&, float) const;
+    bool NODELETE shouldStrokeZeroLengthSubpath() const;
+    FloatRect NODELETE zeroLengthSubpathRect(const FloatPoint&, float) const;
     void updateZeroLengthSubpaths();
     void strokeZeroLengthSubpaths(GraphicsContext&) const;
 

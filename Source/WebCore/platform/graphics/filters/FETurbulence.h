@@ -4,7 +4,7 @@
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) 2010 Renata Hodovan <reni@inf.u-szeged.hu>
- * Copyright (C) 2017-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,8 +24,8 @@
 
 #pragma once
 
-#include "ColorComponents.h"
-#include "FilterEffect.h"
+#include <WebCore/ColorComponents.h>
+#include <WebCore/FilterEffect.h>
 
 namespace WebCore {
 
@@ -35,29 +35,31 @@ enum class TurbulenceType : uint8_t {
     Turbulence
 };
 
-class FETurbulence : public FilterEffect {
+class FETurbulence final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FETurbulence);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FETurbulence);
 public:
     WEBCORE_EXPORT static Ref<FETurbulence> create(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FETurbulence&) const;
 
     TurbulenceType type() const { return m_type; }
-    bool setType(TurbulenceType);
+    bool NODELETE setType(TurbulenceType);
 
     float baseFrequencyX() const { return m_baseFrequencyX; }
-    bool setBaseFrequencyX(float);
+    bool NODELETE setBaseFrequencyX(float);
 
     float baseFrequencyY() const { return m_baseFrequencyY; }
-    bool setBaseFrequencyY(float);
+    bool NODELETE setBaseFrequencyY(float);
 
     float seed() const { return m_seed; }
-    bool setSeed(float);
+    bool NODELETE setSeed(float);
 
     int numOctaves() const { return m_numOctaves; }
-    bool setNumOctaves(int);
+    bool NODELETE setNumOctaves(int);
 
     bool stitchTiles() const { return m_stitchTiles; }
-    bool setStitchTiles(bool);
+    bool NODELETE setStitchTiles(bool);
 
 private:
     FETurbulence(TurbulenceType, float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed, bool stitchTiles, DestinationColorSpace);
@@ -68,6 +70,8 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode>) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;

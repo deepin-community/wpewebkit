@@ -4,19 +4,29 @@
 // found in the LICENSE file.
 //
 // CLContextVk.cpp: Implements the class methods for CLContextVk.
+//
+
+#ifdef UNSAFE_BUFFERS_BUILD
+#    pragma allow_unsafe_libc_calls
+#endif
 
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLCommandQueueVk.h"
 #include "libANGLE/renderer/vulkan/CLEventVk.h"
 #include "libANGLE/renderer/vulkan/CLMemoryVk.h"
 #include "libANGLE/renderer/vulkan/CLProgramVk.h"
+#include "libANGLE/renderer/vulkan/CLSamplerVk.h"
+#include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include "libANGLE/CLBuffer.h"
+#include "libANGLE/CLCommandQueue.h"
 #include "libANGLE/CLContext.h"
 #include "libANGLE/CLEvent.h"
+#include "libANGLE/CLImage.h"
 #include "libANGLE/CLProgram.h"
+#include "libANGLE/CLSampler.h"
 #include "libANGLE/cl_utils.h"
 
 namespace rx
@@ -30,7 +40,12 @@ CLContextVk::CLContextVk(const cl::Context &context, const cl::DevicePtrs device
     mDeviceQueueIndex = mRenderer->getDefaultDeviceQueueIndex();
 }
 
-CLContextVk::~CLContextVk() = default;
+CLContextVk::~CLContextVk()
+{
+    mMetaDescriptorPool.destroy(getRenderer());
+    mDescriptorSetLayoutCache.destroy(getRenderer());
+    mPipelineLayoutCache.destroy(getRenderer());
+}
 
 void CLContextVk::handleError(VkResult errorCode,
                               const char *file,
@@ -102,14 +117,18 @@ angle::Result CLContextVk::createBuffer(const cl::Buffer &buffer,
 }
 
 angle::Result CLContextVk::createImage(const cl::Image &image,
-                                       cl::MemFlags flags,
-                                       const cl_image_format &format,
-                                       const cl::ImageDescriptor &desc,
                                        void *hostPtr,
                                        CLMemoryImpl::Ptr *imageOut)
 {
-    UNIMPLEMENTED();
-    ANGLE_CL_RETURN_ERROR(CL_OUT_OF_RESOURCES);
+    CLImageVk *memory = new (std::nothrow) CLImageVk(image);
+    if (memory == nullptr)
+    {
+        ANGLE_CL_RETURN_ERROR(CL_OUT_OF_HOST_MEMORY);
+    }
+    ANGLE_TRY(memory->create(hostPtr));
+    *imageOut = CLMemoryImpl::Ptr(memory);
+    mAssociatedObjects->mMemories.emplace(image.getNative());
+    return angle::Result::Continue;
 }
 
 angle::Result CLContextVk::getSupportedImageFormats(cl::MemFlags flags,
@@ -118,14 +137,100 @@ angle::Result CLContextVk::getSupportedImageFormats(cl::MemFlags flags,
                                                     cl_image_format *imageFormats,
                                                     cl_uint *numImageFormats)
 {
-    UNIMPLEMENTED();
-    ANGLE_CL_RETURN_ERROR(CL_OUT_OF_RESOURCES);
+    // a 1D image buffer is backed by a Vulkan texel buffer (buffer view), so its supported formats
+    // must be queried against the buffer feature bits, not the (optimal tiling) image feature bits.
+    const bool is1DBuffer = cl::Is1DImageBuffer(imageType);
+
+    VkFormatFeatureFlags requiredFeatures = 0;
+
+    if (flags.intersects(CL_MEM_READ_ONLY) != 0)
+    {
+        requiredFeatures |= is1DBuffer ? VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT
+                                       : VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    }
+
+    if (flags.intersects(CL_MEM_WRITE_ONLY | CL_MEM_KERNEL_READ_AND_WRITE | CL_MEM_READ_WRITE) != 0)
+    {
+        requiredFeatures |= is1DBuffer ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT
+                                       : VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    }
+
+    std::vector<cl_image_format> finalSupportedFormats;
+
+    for (const auto &clFmt : kSupportedFormats)
+    {
+        if (cl::IsDepthOrder(clFmt.image_channel_order))
+        {
+            continue;
+        }
+        if (clFmt.image_channel_order == CL_A &&
+            !getRenderer()->getFeatures().enableAlphaChannelImages.enabled)
+        {
+            continue;
+        }
+
+        const vk::Format &vkFormat        = mRenderer->getFormat(cl::GetImageAngleFormat(clFmt));
+        const angle::Format &actualFormat = is1DBuffer
+                                                ? vkFormat.getActualBufferFormat()
+                                                : vkFormat.getActualImageFormat(vk::SampleOnly);
+
+        if (actualFormat.id != angle::FormatID::NONE)
+        {
+            const bool hasRequiredFeatures =
+                is1DBuffer
+                    ? mRenderer->hasBufferFormatFeatureBits(actualFormat.id, requiredFeatures)
+                    : mRenderer->hasImageFormatFeatureBits(actualFormat.id, requiredFeatures);
+
+            if (hasRequiredFeatures)
+            {
+                finalSupportedFormats.push_back(clFmt);
+            }
+        }
+    }
+
+    if (cl::Is2DImage(imageType))
+    {
+        CLExtensions::SupportedDepthOrderTypes supportedDepthOrderTypesUnion;
+        for (const cl::DevicePtr &device : mContext.getDevices())
+        {
+            // clGetSupportedImageFormats returns a union of image formats supported by all devices
+            // in the context
+            supportedDepthOrderTypesUnion |= device->getInfo().supportedDepthOrderTypes;
+        }
+        for (const cl::ImageChannelType imageChannelType : angle::AllEnums<cl::ImageChannelType>())
+        {
+            if (supportedDepthOrderTypesUnion.test(imageChannelType))
+            {
+                finalSupportedFormats.push_back({CL_DEPTH, cl::ToCLenum(imageChannelType)});
+            }
+        }
+    }
+
+    if (numImageFormats)
+    {
+        *numImageFormats = static_cast<cl_uint>(finalSupportedFormats.size());
+    }
+
+    if (imageFormats && numEntries)
+    {
+        const cl_uint finalNumEntries =
+            std::min(numEntries, static_cast<cl_uint>(finalSupportedFormats.size()));
+        std::copy_n(finalSupportedFormats.begin(), finalNumEntries, imageFormats);
+    }
+
+    return angle::Result::Continue;
 }
 
 angle::Result CLContextVk::createSampler(const cl::Sampler &sampler, CLSamplerImpl::Ptr *samplerOut)
 {
-    UNIMPLEMENTED();
-    ANGLE_CL_RETURN_ERROR(CL_OUT_OF_RESOURCES);
+    CLSamplerVk *samplerVk = new (std::nothrow) CLSamplerVk(sampler);
+    if (samplerVk == nullptr)
+    {
+        ANGLE_CL_RETURN_ERROR(CL_OUT_OF_HOST_MEMORY);
+    }
+    ANGLE_TRY(samplerVk->create());
+    *samplerOut = CLSamplerImpl::Ptr(samplerVk);
+    return angle::Result::Continue;
 }
 
 angle::Result CLContextVk::createProgramWithSource(const cl::Program &program,
@@ -191,6 +296,7 @@ angle::Result CLContextVk::linkProgram(const cl::Program &program,
     {
         ANGLE_CL_RETURN_ERROR(CL_OUT_OF_HOST_MEMORY);
     }
+    ANGLE_TRY(programImpl->init());
 
     cl::DevicePtrs linkDeviceList;
     CLProgramVk::LinkProgramsList linkProgramsList;
@@ -207,7 +313,7 @@ angle::Result CLContextVk::linkProgram(const cl::Program &program,
             // Should be valid at this point
             ASSERT(deviceProgramData != nullptr);
 
-            if (libraryOrObject.isSet(deviceProgramData->binaryType))
+            if (libraryOrObject.intersects(deviceProgramData->binaryType))
             {
                 linkPrograms.push_back(deviceProgramData);
             }
@@ -246,7 +352,8 @@ angle::Result CLContextVk::linkProgram(const cl::Program &program,
 
 angle::Result CLContextVk::createUserEvent(const cl::Event &event, CLEventImpl::Ptr *eventOut)
 {
-    *eventOut = CLEventImpl::Ptr(new (std::nothrow) CLEventVk(event));
+    *eventOut =
+        CLEventImpl::Ptr(new (std::nothrow) CLEventVk(event, cl::ExecutionStatus::Submitted));
     if (*eventOut == nullptr)
     {
         ANGLE_CL_RETURN_ERROR(CL_OUT_OF_HOST_MEMORY);
@@ -273,6 +380,53 @@ angle::Result CLContextVk::waitForEvents(const cl::EventPtrs &events)
     }
 
     return angle::Result::Continue;
+}
+
+angle::Result CLContextVk::allocateDescriptorSet(
+    CLKernelVk *kernelVk,
+    DescriptorSetIndex index,
+    angle::EnumIterator<DescriptorSetIndex> layoutIndex,
+    vk::OutsideRenderPassCommandBufferHelper *computePassCommands)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mDescriptorSetMutex);
+
+    return kernelVk->allocateDescriptorSet(index, layoutIndex, computePassCommands);
+}
+
+angle::Result CLContextVk::initializeDescriptorPools(CLKernelVk *kernelVk)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mDescriptorSetMutex);
+
+    return kernelVk->initializeDescriptorPools();
+}
+
+void CLContextVk::addCommandBufferDiagnostics(const std::string &commandBufferDiagnostics)
+{
+    mCommandBufferDiagnostics.push_back(commandBufferDiagnostics);
+}
+
+void CLContextVk::dumpCommandStreamDiagnostics()
+{
+    std::ostream &out = std::cout;
+    if (mCommandBufferDiagnostics.empty())
+    {
+        return;
+    }
+
+    out << "digraph {\n" << "    node [shape=box fontname=\"Consolas\"]\n";
+
+    for (size_t index = 0; index < mCommandBufferDiagnostics.size(); ++index)
+    {
+        std::string_view payload = mCommandBufferDiagnostics[index];
+        out << "    cb" << index << " [label =\"" << payload << "\"];\n";
+    }
+    for (size_t index = 0; index < mCommandBufferDiagnostics.size() - 1; ++index)
+    {
+        out << "    cb" << index << " -> cb" << index + 1 << "\n";
+    }
+    mCommandBufferDiagnostics.clear();
+
+    out << "}\n";
 }
 
 }  // namespace rx

@@ -57,18 +57,6 @@ enum RunLoopSourcePriority {
     // Used for timers that discard resources like backing store, buffers, etc.
     ReleaseUnusedResourcesTimer = 200,
 
-    // Rendering timer in the threaded compositor.
-    CompositingThreadUpdateTimer = 110,
-
-    // Layer flush.
-    LayerFlushTimer = 110,
-
-    // DisplayRefreshMonitor timer, should have the same value as the LayerFlushTimer.
-    DisplayRefreshMonitorTimer = 110,
-
-    // Rendering timer in the main thread when accelerated compositing is not used.
-    NonAcceleratedDrawingTimer = 100,
-
     // Async IO network callbacks.
     AsyncIONetwork = 100,
 };
@@ -83,11 +71,6 @@ enum RunLoopSourcePriority {
 
     JavascriptTimer = 10,
     MainThreadSharedTimer = 10,
-
-    LayerFlushTimer = 0,
-    DisplayRefreshMonitorTimer = 0,
-
-    CompositingThreadUpdateTimer = 0,
 
     ReleaseUnusedResourcesTimer = 0,
 

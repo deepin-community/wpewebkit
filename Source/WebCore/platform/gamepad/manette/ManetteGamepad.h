@@ -27,15 +27,20 @@
 
 #if ENABLE(GAMEPAD) && OS(LINUX)
 
+#include "GamepadEffectParameters.h"
 #include "PlatformGamepad.h"
 
 #include <libmanette.h>
 #include <wtf/HashMap.h>
+#include <wtf/RunLoop.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebCore {
 
 class ManetteGamepad final : public PlatformGamepad {
+    WTF_MAKE_TZONE_ALLOCATED(ManetteGamepad);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ManetteGamepad);
 public:
     // Refer https://www.w3.org/TR/gamepad/#gamepadbutton-interface
     enum class StandardGamepadAxis : int8_t {
@@ -44,14 +49,13 @@ public:
         LeftStickY,
         RightStickX,
         RightStickY,
-        Count,
     };
     enum class StandardGamepadButton : int8_t {
         Unknown = -1,
         A,
         B,
-        X,
         Y,
+        X,
         LeftShoulder,
         RightShoulder,
         LeftTrigger,
@@ -65,23 +69,45 @@ public:
         DPadLeft,
         DPadRight,
         Mode,
-        Count,
+    };
+    // Part of the axis bound to a button: "aN" (Full), "+aN" (Positive) or "-aN" (Negative).
+    enum class AxisRange : uint8_t {
+        Full,
+        Positive,
+        Negative,
+    };
+    struct AnalogButton {
+        StandardGamepadButton button;
+        AxisRange range;
+        bool inverted; // trailing '~'
     };
 
     ManetteGamepad(ManetteDevice*, unsigned index);
     virtual ~ManetteGamepad();
 
-    const Vector<SharedGamepadValue>& axisValues() const final { return m_axisValues; }
-    const Vector<SharedGamepadValue>& buttonValues() const final { return m_buttonValues; }
-
     void absoluteAxisChanged(ManetteDevice*, StandardGamepadAxis, double value);
-    void buttonPressedOrReleased(ManetteDevice*, StandardGamepadButton, bool pressed);
+    void buttonPressedOrReleased(ManetteDevice*, StandardGamepadButton, double value);
+    Vector<AnalogButton, 2> analogButtonsForEvent(ManetteEvent*) const;
 
 private:
+    const Vector<SharedGamepadValue>& axisValues() const LIFETIME_BOUND final { return m_axisValues; }
+    const Vector<SharedGamepadValue>& buttonValues() const LIFETIME_BOUND final { return m_buttonValues; }
+    void playEffect(GamepadHapticEffectType, const GamepadEffectParameters&, CompletionHandler<void(bool)>&&) final;
+    void stopEffects(CompletionHandler<void()>&&) final;
+    void effectDelayTimerFired();
+    void effectDurationTimerFired();
+    void startRumble(const GamepadEffectParameters&);
+    void parseAnalogButtons();
+
     GRefPtr<ManetteDevice> m_device;
 
     Vector<SharedGamepadValue> m_buttonValues;
     Vector<SharedGamepadValue> m_axisValues;
+    RunLoop::Timer m_effectDelayTimer;
+    RunLoop::Timer m_effectDurationTimer;
+    CompletionHandler<void(bool)> m_effectCompletionHandler;
+    GamepadEffectParameters m_pendingEffectParameters;
+    HashMap<uint16_t, Vector<AnalogButton, 2>, IntHash<uint16_t>, WTF::UnsignedWithZeroKeyHashTraits<uint16_t>> m_analogButtons; // hardware index -> buttons
 };
 
 } // namespace WebCore

@@ -25,49 +25,130 @@
 
 #pragma once
 
-#include "AnimationTimeline.h"
-#include "ScrollAxis.h"
-#include "ScrollTimelineOptions.h"
+#include <WebCore/AnimationTimeline.h>
+#include <WebCore/Element.h>
+#include <WebCore/RenderStyleConstants.h>
+#include <WebCore/ScrollAxis.h>
+#include <WebCore/ScrollTimelineOptions.h>
+#include <WebCore/StyleScrollFunction.h>
+#include <WebCore/Styleable.h>
 #include <wtf/Ref.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
-class CSSScrollValue;
+class AnimationTimelinesController;
+class Document;
 class Element;
+class ScrollableArea;
+struct ResolvableTimelineRange;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class ScrollTimeline : public AnimationTimeline {
 public:
-    static Ref<ScrollTimeline> create(ScrollTimelineOptions&& = { });
+    static Ref<ScrollTimeline> create(Document&, ScrollTimelineOptions&& = { });
     static Ref<ScrollTimeline> create(const AtomString&, ScrollAxis);
-    static Ref<ScrollTimeline> createFromCSSValue(const CSSScrollValue&);
+    static Ref<ScrollTimeline> create(Scroller, ScrollAxis);
+    static Ref<ScrollTimeline> createInactiveStyleOriginatedTimeline(const AtomString& name);
 
-    Element* source() const { return m_source.get(); }
+    const WeakStyleable& sourceStyleable() const LIFETIME_BOUND { return m_source; }
+    virtual RefPtr<Element> bindingsSource() const;
+    virtual RefPtr<Element> source() const;
+    void setSource(Element*);
+    void setSource(const Styleable&);
 
     ScrollAxis axis() const { return m_axis; }
     void setAxis(ScrollAxis axis) { m_axis = axis; }
 
-    const AtomString& name() const { return m_name; }
+    const AtomString& name() const LIFETIME_BOUND { return m_name; }
     void setName(const AtomString& name) { m_name = name; }
 
-    virtual Ref<CSSValue> toCSSValue() const;
+    bool isInactiveStyleOriginatedTimeline() const { return m_isInactiveStyleOriginatedTimeline; }
+
+    bool NODELETE matchesAnonymousScrollFunctionForSource(const Style::ScrollFunction&, const Styleable&) const;
+
+    AnimationTimeline::ShouldUpdateAnimationsAndSendEvents documentWillUpdateAnimationsAndSendEvents() override;
+    void updateCurrentTimeIfStale();
+
+    AnimationTimelinesController* controller() const override;
+
+    std::optional<WebAnimationTime> currentTime(UseCachedCurrentTime = UseCachedCurrentTime::Yes) override;
+    Style::SingleAnimationRange defaultRange() const override;
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> timelineScopeDeclaredElement() const { return m_timelineScopeElement; }
+    void setTimelineScopeElement(const Element&);
+    void clearTimelineScopeDeclaredElement() { m_timelineScopeElement = nullptr; }
+
+    virtual std::pair<WebAnimationTime, WebAnimationTime> intervalForAttachmentRange(const ResolvableTimelineRange&) const;
+
+    void removeTimelineFromDocument(Element*);
+
+    struct ResolvedScrollDirection {
+        bool isVertical;
+        bool isReversed;
+    };
+
+#if ENABLE(THREADED_ANIMATIONS)
+    WEBCORE_EXPORT std::optional<ScrollingNodeID> scrollingNodeIDForTesting() const;
+    void updateAcceleratedRepresentation();
+    bool canBeAccelerated() const final;
+#endif
 
 protected:
     explicit ScrollTimeline(const AtomString&, ScrollAxis);
 
-private:
-    enum class Scroller : uint8_t { Nearest, Root, Self };
+    struct Data {
+        float scrollOffset { 0 };
+        float rangeStart { 0 };
+        float rangeEnd { 0 };
+    };
+    virtual Data computeTimelineData(UseCachedCurrentTime = UseCachedCurrentTime::Yes) const;
 
-    explicit ScrollTimeline(ScrollTimelineOptions&& = { });
+    static ScrollableArea* scrollableAreaForSourceRenderer(const RenderElement*, Document&);
+    ResolvedScrollDirection resolvedScrollDirection() const;
+    void sourceMetricsDidChange();
+    bool isStyleOriginated() const { return m_isStyleOriginated; }
+
+#if ENABLE(THREADED_ANIMATIONS)
+    void scheduleAcceleratedRepresentationUpdate();
+#endif
+
+private:
+    explicit ScrollTimeline();
     explicit ScrollTimeline(Scroller, ScrollAxis);
 
     bool isScrollTimeline() const final { return true; }
+#if ENABLE(THREADED_ANIMATIONS)
+    Ref<AcceleratedTimeline> createAcceleratedRepresentation() const final;
+#endif
 
-    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_source;
+    void animationTimingDidChange(WebAnimation&) override;
+
+    struct CurrentTimeData {
+        float scrollOffset { 0 };
+        float maxScrollOffset { 0 };
+    };
+
+#if ENABLE(THREADED_ANIMATIONS)
+    ProgressResolutionData computeProgressResolutionData() const;
+#endif
+    CurrentTimeData computeCurrentTimeData() const;
+    void cacheCurrentTime();
+
+    WeakStyleable m_source;
     ScrollAxis m_axis { ScrollAxis::Block };
     AtomString m_name;
-    Scroller m_scroller { Scroller::Nearest };
+    Scroller m_scroller { Scroller::Self };
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_timelineScopeElement;
+    CurrentTimeData m_cachedCurrentTimeData { };
+    bool m_isInactiveStyleOriginatedTimeline { false };
+    bool m_isStyleOriginated { false };
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, const ScrollTimeline&);
 
 } // namespace WebCore
 

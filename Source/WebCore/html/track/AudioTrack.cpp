@@ -41,8 +41,11 @@
 #include "CommonAtomStrings.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioTrack);
 
 const AtomString& AudioTrack::descriptionKeyword()
 {
@@ -76,7 +79,7 @@ AudioTrack::AudioTrack(ScriptExecutionContext* context, AudioTrackPrivate& track
 
 AudioTrack::~AudioTrack()
 {
-    removeClientFromTrackPrivateBase(Ref { m_private });
+    removeClientFromTrackPrivateBase(protect(m_private));
 }
 
 void AudioTrack::setPrivate(AudioTrackPrivate& trackPrivate)
@@ -84,18 +87,18 @@ void AudioTrack::setPrivate(AudioTrackPrivate& trackPrivate)
     if (m_private.ptr() == &trackPrivate)
         return;
 
-    removeClientFromTrackPrivateBase(Ref { m_private });
+    removeClientFromTrackPrivateBase(protect(m_private));
     m_private = trackPrivate;
-    m_private->setEnabled(m_enabled);
+    trackPrivate.setEnabled(m_enabled);
     addClientToTrackPrivateBase(*this, trackPrivate);
 
 #if !RELEASE_LOG_DISABLED
-    m_private->setLogger(logger(), logIdentifier());
+    trackPrivate.setLogger(protect(logger()), logIdentifier());
 #endif
 
     updateKindFromPrivate();
     updateConfigurationFromPrivate();
-    setId(m_private->id());
+    setId(trackPrivate.id());
 }
 
 void AudioTrack::setLanguage(const AtomString& language)
@@ -122,7 +125,7 @@ void AudioTrack::setEnabled(bool enabled)
     if (m_enabled == enabled)
         return;
 
-    m_private->setEnabled(enabled);
+    protect(m_private)->setEnabled(enabled);
     m_clients.forEach([this] (auto& client) {
         client.audioTrackEnabledChanged(*this);
     });
@@ -142,7 +145,7 @@ void AudioTrack::clearClient(AudioTrackClient& client)
 
 size_t AudioTrack::inbandTrackIndex() const
 {
-    return m_private->trackIndex();
+    return protect(m_private)->trackIndex();
 }
 
 void AudioTrack::enabledChanged(bool enabled)
@@ -159,7 +162,11 @@ void AudioTrack::enabledChanged(bool enabled)
 
 void AudioTrack::configurationChanged(const PlatformAudioTrackConfiguration& configuration)
 {
-    m_configuration->setState(configuration);
+    if (m_configuration->updateState(configuration) == AudioTrackConfiguration::StateChanged::No)
+        return;
+    m_clients.forEach([this] (auto& client) {
+        client.audioTrackConfigurationChanged(*this);
+    });
 }
 
 void AudioTrack::idChanged(TrackID id)
@@ -170,17 +177,17 @@ void AudioTrack::idChanged(TrackID id)
     });
 }
 
-void AudioTrack::labelChanged(const AtomString& label)
+void AudioTrack::labelChanged(const String& label)
 {
-    setLabel(label);
+    setLabel(AtomString { label.isolatedCopy() });
     m_clients.forEach([this] (auto& client) {
         client.audioTrackLabelChanged(*this);
     });
 }
 
-void AudioTrack::languageChanged(const AtomString& language)
+void AudioTrack::languageChanged(const String& language)
 {
-    setLanguage(language);
+    setLanguage(AtomString { language.isolatedCopy() });
 }
 
 void AudioTrack::willRemove()
@@ -192,7 +199,7 @@ void AudioTrack::willRemove()
 
 void AudioTrack::updateKindFromPrivate()
 {
-    switch (m_private->kind()) {
+    switch (protect(m_private)->kind()) {
     case AudioTrackPrivate::Kind::Alternative:
         setKind("alternative"_s);
         break;
@@ -222,14 +229,14 @@ void AudioTrack::updateKindFromPrivate()
 
 void AudioTrack::updateConfigurationFromPrivate()
 {
-    m_configuration->setState(m_private->configuration());
+    configurationChanged(m_private->configuration());
 }
 
 #if !RELEASE_LOG_DISABLED
-void AudioTrack::setLogger(const Logger& logger, const void* logIdentifier)
+void AudioTrack::setLogger(const Logger& logger, uint64_t logIdentifier)
 {
     TrackBase::setLogger(logger, logIdentifier);
-    m_private->setLogger(logger, this->logIdentifier());
+    protect(m_private)->setLogger(logger, this->logIdentifier());
 }
 #endif
 

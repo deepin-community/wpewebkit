@@ -2,7 +2,7 @@
  * Copyright (C) 2007, 2008 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2009 Google, Inc.  All rights reserved.
+ * Copyright (C) 2009 Google, Inc. All rights reserved.
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2009-2010. All rights reserved.
  * Copyright (C) 2018 Adobe Systems Incorporated. All rights reserved.
@@ -27,7 +27,6 @@
 #include "config.h"
 #include "SVGRenderingContext.h"
 
-#include "BasicShapes.h"
 #include "LegacyRenderSVGImage.h"
 #include "LegacyRenderSVGResourceClipper.h"
 #include "LegacyRenderSVGResourceFilter.h"
@@ -35,20 +34,37 @@
 #include "LegacyRenderSVGRoot.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
+#include "PathOperation.h"
+#include "RenderElementInlines.h"
 #include "RenderLayer.h"
+#include "RenderSVGText.h"
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGGraphicsElement.h"
 #include "SVGLengthContext.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
+#include "Settings.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+#include <numbers>
 #include <wtf/MathExtras.h>
 
 namespace WebCore {
 
-static inline bool isRenderingMaskImage(const RenderObject& object)
+static inline bool NODELETE isRenderingMaskImage(const RenderObject& object)
 {
     return object.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask);
+}
+
+SVGRenderingContext::SVGRenderingContext(SVGRenderingContext&& other)
+    : m_renderer { other.m_renderer }
+    , m_paintInfo { other.m_paintInfo }
+    , m_savedContext { other.m_savedContext }
+    , m_filter { other.m_filter }
+    , m_savedPaintRect { other.m_savedPaintRect }
+    , m_renderingFlags { std::exchange(other.m_renderingFlags, 0) }
+    , m_pathClippingIsEntirelyWithinRendererContents { other.m_pathClippingIsEntirelyWithinRendererContents }
+{
 }
 
 SVGRenderingContext::~SVGRenderingContext()
@@ -97,9 +113,9 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     // Setup transparency layers before setting up SVG resources!
     bool isRenderingMask = isRenderingMaskImage(*m_renderer);
     // RenderLayer takes care of root opacity.
-    float opacity = (renderer.isLegacyRenderSVGRoot() || isRenderingMask) ? 1 : style.opacity();
-    bool hasBlendMode = style.hasBlendMode();
-    bool hasIsolation = style.hasIsolation();
+    float opacity = (renderer.isLegacyRenderSVGRoot() || isRenderingMask) ? 1 : Style::evaluate<float>(style.opacity());
+    bool hasBlendMode = style.blendMode() != BlendMode::Normal;
+    bool hasIsolation = style.isolation() != Isolation::Auto;
     bool isolateMaskForBlending = false;
 
     if (style.hasPositionedMask()) {
@@ -107,11 +123,10 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
             isolateMaskForBlending = graphicsElement->shouldIsolateBlending();
     }
 
-    if (opacity < 1 || hasBlendMode || isolateMaskForBlending || hasIsolation) {
-        FloatRect repaintRect = m_renderer->repaintRectInLocalCoordinates();
-        m_paintInfo->context().clip(repaintRect);
-
+    if (!(renderer.document().settings().layerBasedSVGEngineEnabled() && is<RenderSVGText>(renderer))) {
         if (opacity < 1 || hasBlendMode || isolateMaskForBlending || hasIsolation) {
+            FloatRect repaintRect = m_renderer->repaintRectInLocalCoordinates();
+            m_paintInfo->context().clip(repaintRect);
 
             if (hasBlendMode)
                 m_paintInfo->context().setCompositeOperation(m_paintInfo->context().compositeOperation(), style.blendMode());
@@ -125,7 +140,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
         }
     }
 
-    bool hasSimpleClip = is<ShapePathOperation>(style.clipPath()) || is<BoxPathOperation>(style.clipPath());
+    bool hasSimpleClip = WTF::holdsAlternative<Style::BasicShapePath>(style.clipPath()) || WTF::holdsAlternative<Style::BoxPath>(style.clipPath());
     if (hasSimpleClip && !is<LegacyRenderSVGRoot>(renderer))
         SVGRenderSupport::clipContextToCSSClippingArea(m_paintInfo->context(), renderer);
 
@@ -135,9 +150,6 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
         resources = SVGResourcesCache::cachedResourcesForRenderer(*m_renderer);
 
     if (!resources) {
-        if (style.hasReferenceFilterOnly())
-            return;
-
         m_renderingFlags |= RenderingPrepared;
         return;
     }
@@ -188,7 +200,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     m_renderingFlags |= RenderingPrepared;
 }
 
-static AffineTransform& currentContentTransformation()
+static AffineTransform& NODELETE currentContentTransformation()
 {
     static NeverDestroyed<AffineTransform> s_currentContentTransformation;
     return s_currentContentTransformation;
@@ -197,14 +209,14 @@ static AffineTransform& currentContentTransformation()
 float SVGRenderingContext::calculateScreenFontSizeScalingFactor(const RenderObject& renderer)
 {
     AffineTransform ctm = calculateTransformationToOutermostCoordinateSystem(renderer);
-    return narrowPrecisionToFloat(std::hypot(ctm.xScale(), ctm.yScale()) / sqrtOfTwoDouble);
+    return narrowPrecisionToFloat(std::hypot(ctm.xScale(), ctm.yScale()) / std::numbers::sqrt2);
 }
 
 AffineTransform SVGRenderingContext::calculateTransformationToOutermostCoordinateSystem(const RenderObject& renderer)
 {
     AffineTransform absoluteTransform = currentContentTransformation();
 
-    float deviceScaleFactor = renderer.document().deviceScaleFactor();
+    float deviceScaleFactor = protect(renderer.document())->deviceScaleFactor();
     // Walk up the render tree, accumulating SVG transforms.
     const RenderObject* ancestor = &renderer;
     while (ancestor) {
@@ -215,7 +227,7 @@ AffineTransform SVGRenderingContext::calculateTransformationToOutermostCoordinat
     }
 
     // Continue walking up the layer tree, accumulating CSS transforms.
-    RenderLayer* layer = ancestor ? ancestor->enclosingLayer() : nullptr;
+    CheckedPtr layer = ancestor ? ancestor->enclosingLayer() : nullptr;
     while (layer) {
         if (TransformationMatrix* layerTransform = layer->transform())
             absoluteTransform = layerTransform->toAffineTransform() * absoluteTransform;

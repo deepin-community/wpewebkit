@@ -2,7 +2,7 @@
  * Copyright (C) 2007 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2009 Google, Inc.  All rights reserved.
+ * Copyright (C) 2009 Google, Inc. All rights reserved.
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
  * Copyright (C) 2012 Zoltan Herczeg <zherczeg@webkit.org>.
  * Copyright (C) 2022 Apple Inc. All rights reserved.
@@ -48,6 +48,9 @@ public:
     {
     }
 
+    SVGRenderingContext(SVGRenderingContext&&);
+    SVGRenderingContext(const SVGRenderingContext&) = delete;
+
     SVGRenderingContext(RenderElement& object, PaintInfo& paintinfo, NeedsGraphicsContextSave needsGraphicsContextSave = DontSaveGraphicsContext)
     {
         prepareToRenderSVGContent(object, paintinfo, needsGraphicsContextSave);
@@ -75,6 +78,8 @@ public:
 
     // Support for the buffered-rendering hint.
     bool bufferForeground(RefPtr<ImageBuffer>&);
+
+    const RenderElement* renderer() const { return m_renderer; }
 
 private:
     // To properly revert partially successful initializtions in the destructor, we record all successful steps.

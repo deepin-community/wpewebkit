@@ -26,9 +26,10 @@
 
 #pragma once
 
-#include "ErrorType.h"
-#include "JSString.h"
-#include "PrivateName.h"
+#include <JavaScriptCore/ErrorType.h>
+#include <JavaScriptCore/JSCell.h>
+#include <JavaScriptCore/PrivateName.h>
+#include <JavaScriptCore/VM.h>
 #include <wtf/Expected.h>
 
 namespace JSC {
@@ -40,7 +41,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static constexpr bool needsDestruction = true;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -52,34 +53,42 @@ public:
 
     static Symbol* create(VM&);
     static Symbol* createWithDescription(VM&, const String&);
+    static Symbol* createWithDescription(VM&, const String&, JSString*);
     JS_EXPORT_PRIVATE static Symbol* create(VM&, SymbolImpl& uid);
 
     SymbolImpl& uid() const { return m_privateName.uid(); }
     PrivateName privateName() const { return m_privateName; }
-    String descriptiveString() const;
-    String description() const;
-    Expected<String, ErrorTypeWithExtension> tryGetDescriptiveString() const;
+    JSString* description(VM&);
 
-    JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
+    JSValue NODELETE toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
     JSObject* toObject(JSGlobalObject*) const;
     double toNumber(JSGlobalObject*) const;
+    JSString* toString(JSGlobalObject*);
 
     static constexpr ptrdiff_t offsetOfSymbolImpl()
     {
         // PrivateName is just a Ref<SymbolImpl> which can just be used as a SymbolImpl*.
         return OBJECT_OFFSETOF(Symbol, m_privateName);
     }
+    static constexpr ptrdiff_t offsetOfString() { return OBJECT_OFFSETOF(Symbol, m_string); }
+    static constexpr ptrdiff_t offsetOfDescription() { return OBJECT_OFFSETOF(Symbol, m_description); }
+
+    DECLARE_VISIT_CHILDREN;
+
+    Expected<String, ErrorTypeWithExtension> tryGetDescriptiveString() const;
 
 private:
-    static void destroy(JSCell*);
-
     Symbol(VM&);
     Symbol(VM&, const String&);
+    Symbol(VM&, const String&, JSString*);
     Symbol(VM&, SymbolImpl& uid);
 
+    static void destroy(JSCell*);
     void finishCreation(VM&);
 
     PrivateName m_privateName;
+    WriteBarrier<JSString> m_description;
+    WriteBarrier<JSString> m_string;
 };
 
 Symbol* asSymbol(JSValue);
@@ -87,7 +96,7 @@ Symbol* asSymbol(JSValue);
 inline Symbol* asSymbol(JSValue value)
 {
     ASSERT(value.asCell()->isSymbol());
-    return jsCast<Symbol*>(value.asCell());
+    return uncheckedDowncast<Symbol>(value.asCell());
 }
 
 } // namespace JSC

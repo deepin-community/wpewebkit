@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2021 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2024 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -21,16 +21,14 @@
 
 #pragma once
 
-#include "BlockDirectory.h"
-#include "MarkedBlock.h"
-#include "MarkedBlockSet.h"
-#include "PreciseAllocation.h"
+#include <JavaScriptCore/BlockDirectory.h>
+#include <JavaScriptCore/MarkedBlock.h>
+#include <JavaScriptCore/MarkedBlockSet.h>
+#include <JavaScriptCore/PreciseAllocation.h>
 #include <array>
-#include <wtf/Bag.h>
 #include <wtf/HashSet.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/RetainPtr.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/SinglyLinkedListWithTail.h>
 #include <wtf/Vector.h>
@@ -108,9 +106,9 @@ public:
     void reapWeakSets();
 
     template<typename Visitor>
-    Ref<SharedTask<void(Visitor&)>> forEachWeakInParallel();
+    Ref<SharedTask<void(Visitor&)>> forEachWeakInParallel(Visitor&);
 
-    MarkedBlockSet& blocks() { return m_blocks; }
+    MarkedBlockSet& blocks() LIFETIME_BOUND { return m_blocks; }
 
     void willStartIterating();
     bool isIterating() const { return m_isIterating; }
@@ -120,11 +118,11 @@ public:
     void stopAllocatingForGood();
     void resumeAllocating(); // If we just stopped allocation but we didn't do a collection, we need to resume allocation.
     
-    void prepareForMarking();
+    void NODELETE prepareForMarking();
     
     void prepareForConservativeScan();
 
-    typedef HashSet<MarkedBlock*>::iterator BlockIterator;
+    typedef UncheckedKeyHashSet<MarkedBlock*>::iterator BlockIterator;
 
     template<typename Functor> void forEachLiveCell(HeapIterationScope&, const Functor&);
     template<typename Functor> void forEachDeadCell(HeapIterationScope&, const Functor&);
@@ -133,11 +131,13 @@ public:
 
     void shrink();
     void freeBlock(MarkedBlock::Handle*);
-    void freeOrShrinkBlock(MarkedBlock::Handle*);
 
     void didAddBlock(MarkedBlock::Handle*);
     void didConsumeFreeList(MarkedBlock::Handle*);
-    void didAllocateInBlock(MarkedBlock::Handle*);
+    void NODELETE didAllocateInBlock(MarkedBlock::Handle*);
+
+    // FIXME: rdar://139998916
+    MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
     void beginMarking();
     void endMarking();
@@ -148,7 +148,7 @@ public:
     void assertNoUnswept();
     size_t objectCount();
     size_t size();
-    size_t capacity();
+    size_t NODELETE capacity();
 
     bool isPagedOut();
     
@@ -156,10 +156,11 @@ public:
     HeapVersion newlyAllocatedVersion() const { return m_newlyAllocatedVersion; }
     HeapVersion edenVersion() const { return m_edenVersion; }
 
-    const Vector<PreciseAllocation*>& preciseAllocations() const { return m_preciseAllocations; }
+    void registerPreciseAllocation(PreciseAllocation*, bool isNewAllocation);
+    const Vector<PreciseAllocation*>& preciseAllocations() const LIFETIME_BOUND { return m_preciseAllocations; }
     unsigned preciseAllocationsNurseryOffset() const { return m_preciseAllocationsNurseryOffset; }
     unsigned preciseAllocationsOffsetForThisCollection() const { return m_preciseAllocationsOffsetForThisCollection; }
-    HashSet<HeapCell*>* preciseAllocationSet() const { return m_preciseAllocationSet.get(); }
+    std::optional<UncheckedKeyHashSet<HeapCell*>>& preciseAllocationSet() LIFETIME_BOUND { return m_preciseAllocationSet; }
 
     void enablePreciseAllocationTracking();
     
@@ -169,9 +170,9 @@ public:
     PreciseAllocation** preciseAllocationsForThisCollectionEnd() const { return m_preciseAllocationsForThisCollectionEnd; }
     unsigned preciseAllocationsForThisCollectionSize() const { return m_preciseAllocationsForThisCollectionSize; }
     
-    BlockDirectory* firstDirectory() const { return m_directories.first(); }
+    BlockDirectory* firstDirectory() const LIFETIME_BOUND { return m_directories.first(); }
     
-    Lock& directoryLock() { return m_directoryLock; }
+    Lock& directoryLock() LIFETIME_BOUND { return m_directoryLock; }
     void addBlockDirectory(const AbstractLocker&, BlockDirectory*);
     
     // When this is true it means that we have flipped but the mark bits haven't converged yet.
@@ -199,11 +200,11 @@ private:
 
     template<typename Functor> inline void forEachDirectory(const Functor&);
     
-    void addActiveWeakSet(WeakSet*);
+    void NODELETE addActiveWeakSet(WeakSet*);
 
     Vector<Subspace*> m_subspaces;
 
-    std::unique_ptr<HashSet<HeapCell*>> m_preciseAllocationSet;
+    std::optional<UncheckedKeyHashSet<HeapCell*>> m_preciseAllocationSet;
     Vector<PreciseAllocation*> m_preciseAllocations;
     unsigned m_preciseAllocationsNurseryOffset { 0 };
     unsigned m_preciseAllocationsOffsetForThisCollection { 0 };
@@ -218,6 +219,7 @@ private:
     HeapVersion m_edenVersion { initialVersion };
     bool m_isIterating { false };
     bool m_isMarking { false };
+    bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;
     MarkedBlockSet m_blocks;
     

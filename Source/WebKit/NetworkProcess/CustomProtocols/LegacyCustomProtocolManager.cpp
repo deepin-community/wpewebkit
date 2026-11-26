@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2017 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,9 +29,9 @@
 
 #include "LegacyCustomProtocolManagerMessages.h"
 #include "LegacyCustomProtocolManagerProxyMessages.h"
+#include "MessageSenderInlines.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessCreationParameters.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/ResourceRequest.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -47,13 +47,18 @@ ASCIILiteral LegacyCustomProtocolManager::supplementName()
 LegacyCustomProtocolManager::LegacyCustomProtocolManager(NetworkProcess& networkProcess)
     : m_networkProcess(networkProcess)
 {
-    m_networkProcess->addMessageReceiver(Messages::LegacyCustomProtocolManager::messageReceiverName(), *this);
+    ASSERT(RunLoop::isMain());
+    networkProcess.addMessageReceiver(Messages::LegacyCustomProtocolManager::messageReceiverName(), *this);
 }
 
-Ref<NetworkProcess> LegacyCustomProtocolManager::protectedNetworkProcess() const
+void LegacyCustomProtocolManager::ref() const
 {
-    ASSERT(RunLoop::isMain());
-    return m_networkProcess.get();
+    m_networkProcess->ref();
+}
+
+void LegacyCustomProtocolManager::deref() const
+{
+    m_networkProcess->deref();
 }
 
 void LegacyCustomProtocolManager::initialize(const NetworkProcessCreationParameters& parameters)
@@ -68,7 +73,7 @@ LegacyCustomProtocolID LegacyCustomProtocolManager::addCustomProtocol(CustomProt
 {
     Locker locker { m_customProtocolMapLock };
     auto customProtocolID = LegacyCustomProtocolID::generate();
-    m_customProtocolMap.add(customProtocolID, WTFMove(customProtocol));
+    m_customProtocolMap.add(customProtocolID, WTF::move(customProtocol));
     return customProtocolID;
 }
 
@@ -80,12 +85,14 @@ void LegacyCustomProtocolManager::removeCustomProtocol(LegacyCustomProtocolID cu
 
 void LegacyCustomProtocolManager::startLoading(LegacyCustomProtocolID customProtocolID, const WebCore::ResourceRequest& request)
 {
-    protectedNetworkProcess()->send(Messages::LegacyCustomProtocolManagerProxy::StartLoading(customProtocolID, request));
+    ASSERT(RunLoop::isMain());
+    m_networkProcess->send(Messages::LegacyCustomProtocolManagerProxy::StartLoading(customProtocolID, request));
 }
 
 void LegacyCustomProtocolManager::stopLoading(LegacyCustomProtocolID customProtocolID)
 {
-    protectedNetworkProcess()->send(Messages::LegacyCustomProtocolManagerProxy::StopLoading(customProtocolID), 0);
+    ASSERT(RunLoop::isMain());
+    m_networkProcess->send(Messages::LegacyCustomProtocolManagerProxy::StopLoading(customProtocolID), 0);
 }
 
 } // namespace WebKit

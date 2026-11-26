@@ -34,6 +34,10 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 
+#if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
+#include <WebCore/NodeIdentifier.h>
+#endif
+
 OBJC_CLASS CAAnimation;
 OBJC_CLASS WKAnimationDelegate;
 
@@ -45,6 +49,12 @@ namespace WebKit {
 
 class RemoteLayerTreeDrawingAreaProxy;
 class WebPageProxy;
+struct MainFrameData;
+
+#if ENABLE(THREADED_ANIMATIONS)
+class RemoteAnimationStack;
+class RemoteAnimationTimeline;
+#endif
 
 class RemoteLayerTreeHost {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeHost);
@@ -52,69 +62,61 @@ public:
     explicit RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy&);
     ~RemoteLayerTreeHost();
 
-    RemoteLayerTreeNode* nodeForID(WebCore::PlatformLayerIdentifier) const;
-    RemoteLayerTreeNode* rootNode() const { return m_rootNode.get(); }
+    RemoteLayerTreeNode* nodeForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
+    RefPtr<RemoteLayerTreeNode> rootNode() const { return m_rootNode.get(); }
 
-    CALayer *layerForID(WebCore::PlatformLayerIdentifier) const;
-    CALayer *rootLayer() const;
+    RetainPtr<CALayer> layerForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
+    RetainPtr<CALayer> rootLayer() const;
 
-    RemoteLayerTreeDrawingAreaProxy& drawingArea() const;
+    RemoteLayerTreeDrawingAreaProxy& NODELETE drawingArea() const;
 
     // Returns true if the root layer changed.
-    bool updateLayerTree(const IPC::Connection&, const RemoteLayerTreeTransaction&, float indicatorScaleFactor  = 1);
-    void asyncSetLayerContents(WebCore::PlatformLayerIdentifier, ImageBufferBackendHandle&&, const WebCore::RenderingResourceIdentifier&);
+    bool updateLayerTree(const IPC::Connection&, const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, float indicatorScaleFactor  = 1);
+    void asyncSetLayerContents(WebCore::PlatformLayerIdentifier, RemoteLayerBackingStoreProperties&&);
 
     void setIsDebugLayerTreeHost(bool flag) { m_isDebugLayerTreeHost = flag; }
     bool isDebugLayerTreeHost() const { return m_isDebugLayerTreeHost; }
 
     typedef HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<WKAnimationDelegate>> LayerAnimationDelegateMap;
-    LayerAnimationDelegateMap& animationDelegates() { return m_animationDelegates; }
+    LayerAnimationDelegateMap& animationDelegates() LIFETIME_BOUND { return m_animationDelegates; }
 
-    void animationDidStart(WebCore::PlatformLayerIdentifier, CAAnimation *, MonotonicTime startTime);
-    void animationDidEnd(WebCore::PlatformLayerIdentifier, CAAnimation *);
+    void animationDidStart(std::optional<WebCore::PlatformLayerIdentifier>, CAAnimation *, MonotonicTime startTime);
+    void animationDidEnd(std::optional<WebCore::PlatformLayerIdentifier>, CAAnimation *);
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
     void animationsWereAddedToNode(RemoteLayerTreeNode&);
     void animationsWereRemovedFromNode(RemoteLayerTreeNode&);
+    RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&) const;
+    RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 #endif
 
-    void detachFromDrawingArea();
+    void NODELETE detachFromDrawingArea();
     void clearLayers();
 
     // Detach the root layer; it will be reattached upon the next incoming commit.
     void detachRootLayer();
 
-    // Turn all CAMachPort objects in layer contents into actual IOSurfaces.
-    // This avoids keeping an outstanding InUse reference when suspended.
-    void mapAllIOSurfaceBackingStore();
+    RetainPtr<CALayer> layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 
-    CALayer *layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
-
-    bool replayDynamicContentScalingDisplayListsIntoBackingStore() const;
-    bool threadedAnimationResolutionEnabled() const;
+    bool NODELETE replayDynamicContentScalingDisplayListsIntoBackingStore() const;
+    bool threadedAnimationsEnabled() const;
 
     bool cssUnprefixedBackdropFilterEnabled() const;
-
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
-    Seconds acceleratedTimelineTimeOrigin() const;
-    MonotonicTime animationCurrentTime() const;
-#endif
 
     void remotePageProcessDidTerminate(WebCore::ProcessIdentifier);
 
 private:
-    void createLayer(const RemoteLayerTreeTransaction::LayerCreationProperties&);
-    std::unique_ptr<RemoteLayerTreeNode> makeNode(const RemoteLayerTreeTransaction::LayerCreationProperties&);
 
-    bool updateBannerLayers(const RemoteLayerTreeTransaction&);
+    void createLayer(const RemoteLayerTreeTransaction::LayerCreationProperties&);
+    RefPtr<RemoteLayerTreeNode> makeNode(const RemoteLayerTreeTransaction::LayerCreationProperties&);
+
+    bool updateBannerLayers(const std::optional<MainFrameData>&);
 
     void layerWillBeRemoved(WebCore::ProcessIdentifier, WebCore::PlatformLayerIdentifier);
 
-    LayerContentsType layerContentsType() const;
-
     WeakPtr<RemoteLayerTreeDrawingAreaProxy> m_drawingArea;
-    WeakPtr<RemoteLayerTreeNode> m_rootNode;
-    HashMap<WebCore::PlatformLayerIdentifier, std::unique_ptr<RemoteLayerTreeNode>> m_nodes;
+    ThreadSafeWeakPtr<RemoteLayerTreeNode> m_rootNode;
+    HashMap<WebCore::PlatformLayerIdentifier, Ref<RemoteLayerTreeNode>> m_nodes;
     HashMap<WebCore::LayerHostingContextIdentifier, WebCore::PlatformLayerIdentifier> m_hostingLayers;
     HashMap<WebCore::LayerHostingContextIdentifier, WebCore::PlatformLayerIdentifier> m_hostedLayers;
     HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::PlatformLayerIdentifier>> m_hostedLayersInProcess;
@@ -122,8 +124,8 @@ private:
 #if HAVE(AVKIT)
     HashMap<WebCore::PlatformLayerIdentifier, PlaybackSessionContextIdentifier> m_videoLayers;
 #endif
-#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
-    HashSet<WebCore::PlatformLayerIdentifier> m_overlayRegionIDs;
+#if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
+    HashSet<WebCore::PlatformLayerIdentifier> m_modelLayers;
 #endif
     bool m_isDebugLayerTreeHost { false };
 };

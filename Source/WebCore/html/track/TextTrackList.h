@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2012 Apple Inc.  All rights reserved.
+ * Copyright (C) 2011, 2012 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO)
 
+#include "EventTargetInterfaces.h"
 #include "TrackListBase.h"
 #include <wtf/MediaTime.h>
 
@@ -35,50 +36,50 @@ namespace WebCore {
 class TextTrack;
 
 class TextTrackList final : public TrackListBase {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(TextTrackList);
+    WTF_MAKE_TZONE_ALLOCATED(TextTrackList);
 public:
     static Ref<TextTrackList> create(ScriptExecutionContext* context)
     {
-        auto list = adoptRef(*new TextTrackList(context));
+        Ref list = adoptRef(*new TextTrackList(context));
         list->suspendIfNeeded();
         return list;
     }
     virtual ~TextTrackList();
 
-    bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
-    unsigned length() const override;
-    int getTrackIndex(TextTrack&);
-    int getTrackIndexRelativeToRenderedTracks(TextTrack&);
-    bool contains(TrackBase&) const override;
+    void setOpaqueRoot(TrackOpaqueRoot&) final;
 
-    TextTrack* item(unsigned index) const;
-    TextTrack* getTrackById(const AtomString&) const;
-    TextTrack* getTrackById(TrackID) const;
+    bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
+    unsigned length() const final;
+    int getTrackIndex(TextTrack&);
+    int NODELETE getTrackIndexRelativeToRenderedTracks(TextTrack&);
+    bool contains(TrackBase&) const final;
+
+    TextTrack* NODELETE item(unsigned index) const;
+    RefPtr<TextTrack> getTrackById(const AtomString&) const;
+    RefPtr<TextTrack> getTrackById(TrackID) const;
     TextTrack* lastItem() const { return item(length() - 1); }
 
     void append(Ref<TextTrack>&&);
-    void remove(TrackBase&, bool scheduleEvent = true) override;
+    void remove(TrackBase&, bool scheduleEvent = true) final;
 
     void setDuration(MediaTime duration) { m_duration = duration; }
-    const MediaTime& duration() const { return m_duration; }
+    const MediaTime& duration() const LIFETIME_BOUND { return m_duration; }
 
     // EventTarget
-    enum EventTargetInterfaceType eventTargetInterface() const override;
+    enum EventTargetInterfaceType eventTargetInterface() const final;
 
 private:
-    TextTrackList(ScriptExecutionContext*);
+    explicit TextTrackList(ScriptExecutionContext*);
 
     void invalidateTrackIndexesAfterTrack(TextTrack&);
 
-    Vector<RefPtr<TrackBase>> m_addTrackTracks;
-    Vector<RefPtr<TrackBase>> m_elementTracks;
+    Vector<Ref<TrackBase>> m_addTrackTracks;
+    Vector<Ref<TrackBase>> m_elementTracks;
     MediaTime m_duration;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::TextTrackList)
-    static bool isType(const WebCore::TrackListBase& trackList) { return trackList.type() == WebCore::TrackListBase::TextTrackList; }
-SPECIALIZE_TYPE_TRAITS_END()
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(TextTrackList)
 
 #endif // ENABLE(VIDEO)

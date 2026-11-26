@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,12 +26,17 @@
 #include "config.h"
 #include "FormatBlockCommand.h"
 
+#include "CSSSerializationContext.h"
 #include "Document.h"
 #include "Editing.h"
+#include "EditingStyle.h"
 #include "Element.h"
 #include "HTMLElement.h"
 #include "HTMLNames.h"
+#include "MutableStyleProperties.h"
 #include "NodeName.h"
+#include "SimpleRange.h"
+#include "StylePropertiesInlines.h"
 #include "VisibleUnits.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RobinHoodHashSet.h>
@@ -43,14 +48,14 @@ using namespace HTMLNames;
 static RefPtr<Node> enclosingBlockToSplitTreeTo(Node* startNode);
 static bool isElementForFormatBlock(const QualifiedName& tagName);
 
-static inline bool isElementForFormatBlock(Node& node)
+static inline bool NODELETE isElementForFormatBlock(Node& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     return element && isElementForFormatBlock(element->tagQName());
 }
 
 FormatBlockCommand::FormatBlockCommand(Ref<Document>&& document, const QualifiedName& tagName)
-    : ApplyBlockElementCommand(WTFMove(document), tagName)
+    : ApplyBlockElementCommand(WTF::move(document), tagName)
     , m_didApply(false)
 {
 }
@@ -65,9 +70,9 @@ void FormatBlockCommand::formatSelection(const VisiblePosition& startOfSelection
 
 void FormatBlockCommand::formatRange(const Position& start, const Position& end, const Position& endOfSelection, RefPtr<Element>& blockNode)
 {
-    RefPtr nodeToSplitTo = enclosingBlockToSplitTreeTo(start.deprecatedNode());
+    RefPtr nodeToSplitTo = enclosingBlockToSplitTreeTo(protect(start.deprecatedNode()));
     ASSERT(nodeToSplitTo);
-    RefPtr<Node> outerBlock = (start.deprecatedNode() == nodeToSplitTo) ? start.deprecatedNode() : splitTreeToNode(*start.deprecatedNode(), *nodeToSplitTo);
+    RefPtr<Node> outerBlock = (start.deprecatedNode() == nodeToSplitTo) ? protect(start.deprecatedNode()) : splitTreeToNode(*protect(start.deprecatedNode()), *nodeToSplitTo);
     if (!outerBlock)
         return;
 
@@ -85,7 +90,7 @@ void FormatBlockCommand::formatRange(const Position& start, const Position& end,
         // Already in a block element that only contains the current paragraph
         if (refNode->hasTagName(tagName()))
             return;
-        nodeAfterInsertionPosition = WTFMove(refNode);
+        nodeAfterInsertionPosition = WTF::move(refNode);
     }
 
     if (!blockNode) {
@@ -93,9 +98,22 @@ void FormatBlockCommand::formatRange(const Position& start, const Position& end,
         // this by splitting all parents of the current paragraph up to that point.
         blockNode = createBlockElement();
         insertNodeBefore(*blockNode, *nodeAfterInsertionPosition);
+        // Preserve the inline style of the element being replaced so that formatting
+        // such as color and font properties are not lost when the block type changes.
+        // See: https://bugs.webkit.org/show_bug.cgi?id=47054
+        if (RefPtr element = dynamicDowncast<HTMLElement>(nodeAfterInsertionPosition)) {
+            if (element->hasAttribute(styleAttr)) {
+                auto style = EditingStyle::create(protect(element->inlineStyle()));
+                if (RefPtr styledBlockNode = dynamicDowncast<StyledElement>(blockNode))
+                    style->removeStyleFromRulesAndContext(*styledBlockNode, protect(styledBlockNode->parentNode()));
+                if (!style->isEmpty())
+                    blockNode->setAttribute(styleAttr, AtomString { protect(style->style())->asText(CSS::defaultSerializationContext()) });
+            }
+        }
     }
 
-    Position lastParagraphInBlockNode = blockNode->lastChild() ? positionAfterNode(blockNode->lastChild()) : Position();
+    RefPtr lastChild = blockNode->lastChild();
+    Position lastParagraphInBlockNode = lastChild ? positionAfterNode(*lastChild) : Position();
     bool wasEndOfParagraph = isEndOfParagraph(lastParagraphInBlockNode);
 
     moveParagraphWithClones(start, end, blockNode.get(), outerBlock.get());
@@ -117,14 +135,14 @@ RefPtr<Element> FormatBlockCommand::elementForFormatBlockCommand(const std::opti
     if (!commonAncestorElement)
         return nullptr;
 
-    auto rootEditableElement = range->start.container->rootEditableElement();
-    if (!rootEditableElement || commonAncestor->contains(rootEditableElement))
+    RefPtr rootEditableElement = protect(range->start.container)->rootEditableElement();
+    if (!rootEditableElement || commonAncestor->contains(rootEditableElement.get()))
         return nullptr;
 
     return commonAncestorElement;
 }
 
-bool isElementForFormatBlock(const QualifiedName& tagName)
+bool NODELETE isElementForFormatBlock(const QualifiedName& tagName)
 {
     using namespace ElementNames;
 
@@ -161,17 +179,18 @@ bool isElementForFormatBlock(const QualifiedName& tagName)
 RefPtr<Node> enclosingBlockToSplitTreeTo(Node* startNode)
 {
     RefPtr lastBlock = startNode;
-    for (RefPtr n = startNode; n; n = n->parentNode()) {
-        if (!n->hasEditableStyle())
+    for (RefPtr node = startNode; node; node = node->parentNode()) {
+        if (!node->hasEditableStyle())
             return lastBlock;
-        if (isTableCell(*n) || n->hasTagName(bodyTag) || !n->parentNode() || !n->parentNode()->hasEditableStyle() || isElementForFormatBlock(*n))
-            return n;
-        if (isBlock(*n))
-            lastBlock = n;
-        if (isListHTMLElement(n.get())) {
-            if (n->parentNode()->hasEditableStyle())
-                return n->parentNode();
-            return n;
+        RefPtr parentNode = node->parentNode();
+        if (isTableCell(*node) || node->hasTagName(bodyTag) || !parentNode || !parentNode->hasEditableStyle() || isElementForFormatBlock(*node))
+            return node;
+        if (isBlock(*node))
+            lastBlock = node;
+        if (isListHTMLElement(node.get())) {
+            if (parentNode->hasEditableStyle())
+                return parentNode;
+            return node;
         }
     }
     return lastBlock;

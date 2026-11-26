@@ -37,12 +37,13 @@ class TextureUpload
 class ShareGroupVk : public ShareGroupImpl
 {
   public:
-    ShareGroupVk(const egl::ShareGroupState &state);
+    ShareGroupVk(const egl::ShareGroupState &state, vk::Renderer *renderer);
     void onDestroy(const egl::Display *display) override;
 
     void onContextAdd() override;
 
-    FramebufferCache &getFramebufferCache() { return mFramebufferCache; }
+    SamplerCache &getSamplerCache() { return mSamplerCache; }
+    SamplerYcbcrConversionCache &getYuvConversionCache() { return mYuvConversionCache; }
 
     bool hasAnyContextWithRobustness() const { return mState.hasAnyContextWithRobustness(); }
 
@@ -51,7 +52,7 @@ class ShareGroupVk : public ShareGroupImpl
     // synchronous update to the caches.
     PipelineLayoutCache &getPipelineLayoutCache() { return mPipelineLayoutCache; }
     DescriptorSetLayoutCache &getDescriptorSetLayoutCache() { return mDescriptorSetLayoutCache; }
-    const egl::ContextMap &getContexts() const { return mState.getContexts(); }
+    const egl::SharedContextMap &getContexts() const { return mState.getContexts(); }
     vk::DescriptorSetArray<vk::MetaDescriptorPool> &getMetaDescriptorPools()
     {
         return mMetaDescriptorPools;
@@ -60,12 +61,11 @@ class ShareGroupVk : public ShareGroupImpl
     // Used to flush the mutable textures more often.
     angle::Result onMutableTextureUpload(ContextVk *contextVk, TextureVk *newTexture);
 
-    vk::BufferPool *getDefaultBufferPool(vk::Renderer *renderer,
-                                         VkDeviceSize size,
+    vk::BufferPool *getDefaultBufferPool(VkDeviceSize size,
                                          uint32_t memoryTypeIndex,
                                          BufferUsageType usageType);
-    void pruneDefaultBufferPools(vk::Renderer *renderer);
-    bool isDueForBufferPoolPrune(vk::Renderer *renderer);
+
+    void pruneDefaultBufferPools();
 
     void calculateTotalBufferCount(size_t *bufferCount, VkDeviceSize *totalSize) const;
     void logBufferPools() const;
@@ -82,15 +82,6 @@ class ShareGroupVk : public ShareGroupImpl
 
     void onTextureRelease(TextureVk *textureVk);
 
-    VertexInputGraphicsPipelineCache *getVertexInputGraphicsPipelineCache()
-    {
-        return &mVertexInputGraphicsPipelineCache;
-    }
-    FragmentOutputGraphicsPipelineCache *getFragmentOutputGraphicsPipelineCache()
-    {
-        return &mFragmentOutputGraphicsPipelineCache;
-    }
-
     angle::Result scheduleMonolithicPipelineCreationTask(
         ContextVk *contextVk,
         vk::WaitableMonolithicPipelineCreationTask *taskOut);
@@ -100,25 +91,37 @@ class ShareGroupVk : public ShareGroupImpl
     {
         return &mRefCountedEventsGarbageRecycler;
     }
-    void cleanupRefCountedEventGarbage(vk::Renderer *renderer)
-    {
-        mRefCountedEventsGarbageRecycler.cleanup(renderer);
-    }
-    void cleanupExcessiveRefCountedEventGarbage(vk::Renderer *renderer)
+    void cleanupRefCountedEventGarbage() { mRefCountedEventsGarbageRecycler.cleanup(mRenderer); }
+    void cleanupExcessiveRefCountedEventGarbage()
     {
         // TODO: b/336844257 needs tune.
         constexpr size_t kExcessiveGarbageCountThreshold = 256;
         if (mRefCountedEventsGarbageRecycler.getGarbageCount() > kExcessiveGarbageCountThreshold)
         {
-            mRefCountedEventsGarbageRecycler.cleanup(renderer);
+            mRefCountedEventsGarbageRecycler.cleanup(mRenderer);
         }
     }
+
+    void onFrameBoundary();
+    uint32_t getCurrentFrameCount() const { return mCurrentFrameCount; }
+
+    void imageWillFallbackFromTileMemory(vk::ImageHelper *image);
+    void finalizeImageLayoutInAllSharedContexts(vk::ImageHelper *image);
 
   private:
     angle::Result updateContextsPriority(ContextVk *contextVk, egl::ContextPriority newPriority);
 
-    // VkFramebuffer caches
-    FramebufferCache mFramebufferCache;
+    bool isDueForBufferPoolPrune();
+
+    vk::Renderer *mRenderer;
+
+    // Tracks the total number of frames rendered.
+    uint32_t mCurrentFrameCount;
+
+
+    // VkSampler and VkSamplerYcbcrConversion caches
+    SamplerCache mSamplerCache;
+    SamplerYcbcrConversionCache mYuvConversionCache;
 
     void resetPrevTexture() { mTextureUpload.resetPrevTexture(); }
 
@@ -143,13 +146,6 @@ class ShareGroupVk : public ShareGroupImpl
 
     // The system time when last pruneEmptyBuffer gets called.
     double mLastPruneTime;
-
-    // Used when VK_EXT_graphics_pipeline_library is available, the vertex input and fragment output
-    // partial pipelines are created in the following caches.  These caches are in the share group
-    // because linked pipelines using these pipeline libraries are referenced from
-    // ProgramExecutableVk, and as such must stay alive as long as the program may be alive.
-    VertexInputGraphicsPipelineCache mVertexInputGraphicsPipelineCache;
-    FragmentOutputGraphicsPipelineCache mFragmentOutputGraphicsPipelineCache;
 
     // The system time when the last monolithic pipeline creation job was launched.  This is
     // rate-limited to avoid hogging all cores and interfering with the application threads.  A

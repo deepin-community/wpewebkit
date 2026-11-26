@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc.
+ * Copyright (C) 2011 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Sencha, Inc.
  * Copyright (C) 2010 Igalia S.L.
  * All rights reserved.
@@ -55,7 +55,7 @@ public:
     ShadowBlur(const FloatSize& radius, const FloatSize& offset, const Color&, bool shadowsIgnoreTransforms = false);
     ShadowBlur(const GraphicsDropShadow&, bool shadowsIgnoreTransforms = false);
 
-    void setShadowValues(const FloatSize&, const FloatSize& , const Color&, bool ignoreTransforms = false);
+    void NODELETE setShadowValues(const FloatSize&, const FloatSize& , const Color&, bool ignoreTransforms = false);
 
     void setShadowsIgnoreTransforms(bool ignoreTransforms) { m_shadowsIgnoreTransforms = ignoreTransforms; }
     bool shadowsIgnoreTransforms() const { return m_shadowsIgnoreTransforms; }
@@ -77,12 +77,12 @@ public:
 
     void blurLayerImage(std::span<uint8_t>, const IntSize&, int stride);
 
-    void clear();
+    void NODELETE clear();
 
     ShadowType type() const { return m_type; }
 
 private:
-    void updateShadowBlurValues();
+    void NODELETE updateShadowBlurValues();
 
     void drawShadowBuffer(GraphicsContext&, ImageBuffer&, const FloatPoint&, const FloatSize&);
 
@@ -101,7 +101,7 @@ private:
     };
 
     std::optional<ShadowBlur::LayerImageProperties> calculateLayerBoundingRect(const AffineTransform&, const FloatRect& layerArea, const IntRect& clipRect);
-    IntSize templateSize(const IntSize& blurredEdgeSize, const FloatRoundedRect::Radii&) const;
+    IntSize templateSize(const IntSize& blurredEdgeSize, const CornerRadii&) const;
 
     void blurShadowBuffer(ImageBuffer& layerImage, const IntSize& templateSize);
     void blurAndColorShadowBuffer(ImageBuffer& layerImage, const IntSize& templateSize);
@@ -114,8 +114,8 @@ private:
     void drawRectShadowWithTiling(const AffineTransform&, const FloatRoundedRect& shadowedRect, const IntSize& shadowTemplateSize, const IntSize& blurredEdgeSize, const DrawImageCallback&, const FillRectCallback&, const LayerImageProperties&);
     void drawRectShadowWithTilingWithLayerImageBuffer(ImageBuffer& layerImage, const AffineTransform&, const FloatRoundedRect& shadowedRect, const IntSize& templateSize, const IntSize& edgeSize, const DrawImageCallback&, const FillRectCallback&, const FloatRect& templateShadow, bool redrawNeeded = true);
 
-    void drawLayerPiecesAndFillCenter(ImageBuffer& layerImage, const FloatRect& shadowBounds, const FloatRoundedRect::Radii&, const IntSize& roundedRadius, const IntSize& templateSize, const DrawImageCallback&, const FillRectCallback&);
-    void drawLayerPieces(ImageBuffer& layerImage, const FloatRect& shadowBounds, const FloatRoundedRect::Radii&, const IntSize& roundedRadius, const IntSize& templateSize, const DrawImageCallback&);
+    void drawLayerPiecesAndFillCenter(ImageBuffer& layerImage, const FloatRect& shadowBounds, const CornerRadii&, const IntSize& roundedRadius, const IntSize& templateSize, const DrawImageCallback&, const FillRectCallback&);
+    void drawLayerPieces(ImageBuffer& layerImage, const FloatRect& shadowBounds, const CornerRadii&, const IntSize& roundedRadius, const IntSize& templateSize, const DrawImageCallback&);
 
     IntSize blurredEdgeSize() const;
 

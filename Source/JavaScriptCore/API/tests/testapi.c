@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -69,13 +69,23 @@
 #include "JSObjectGetProxyTargetTest.h"
 #include "MultithreadedMultiVMExecutionTest.h"
 #include "PingPongStackOverflowTest.h"
+#include "TemporalCoreTest.h"
 #include "TypedArrayCTest.h"
+#include "VMManagerStopTheWorldTest.h"
+
+#if defined(JSC_SUPPORTS_SWIFT) && JSC_SUPPORTS_SWIFT
+#include "SwiftTestingHarness.h"
+#endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if JSC_OBJC_API_ENABLED
 void testObjectiveCAPI(const char*);
 #endif
 
+void initializeWTFForTesting(void);
 void configureJSCForTesting(void);
+int testLaunchJSCFromNonMainThread(const char* filter);
 int testCAPIViaCpp(const char* filter);
 
 bool assertTrue(bool value, const char* message);
@@ -381,7 +391,7 @@ static JSValueRef MyObject_convertToType(JSContextRef context, JSObjectRef objec
     return JSValueMakeNull(context);
 }
 
-static JSValueRef MyObject_convertToTypeWrapper(JSContextRef context, JSObjectRef object, JSType type, JSValueRef* exception)
+static JSValueRef NODELETE MyObject_convertToTypeWrapper(JSContextRef context, JSObjectRef object, JSType type, JSValueRef* exception)
 {
     UNUSED_PARAM(context);
     UNUSED_PARAM(object);
@@ -391,7 +401,7 @@ static JSValueRef MyObject_convertToTypeWrapper(JSContextRef context, JSObjectRe
     return 0;
 }
 
-static bool MyObject_set_nullGetForwardSet(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSValueRef* exception)
+static bool NODELETE MyObject_set_nullGetForwardSet(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSValueRef* exception)
 {
     UNUSED_PARAM(ctx);
     UNUSED_PARAM(object);
@@ -752,7 +762,7 @@ static JSValueRef Base_callAsFunction(JSContextRef ctx, JSObjectRef function, JS
     return JSValueMakeNumber(ctx, 1); // distinguish base call from derived call
 }
 
-static JSValueRef Base_returnHardNull(JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
+static JSValueRef NODELETE Base_returnHardNull(JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
 {
     UNUSED_PARAM(ctx);
     UNUSED_PARAM(function);
@@ -939,7 +949,7 @@ static JSObjectRef myConstructor_callAsConstructor(JSContextRef context, JSObjec
     return result;
 }
 
-static JSObjectRef myBadConstructor_callAsConstructor(JSContextRef context, JSObjectRef constructorObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
+static JSObjectRef NODELETE myBadConstructor_callAsConstructor(JSContextRef context, JSObjectRef constructorObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
 {
     UNUSED_PARAM(context);
     UNUSED_PARAM(constructorObject);
@@ -1169,7 +1179,7 @@ static bool globalContextNameTest(void)
 }
 
 IGNORE_GCC_WARNINGS_BEGIN("unused-but-set-variable")
-static void checkConstnessInJSObjectNames(void)
+static void NODELETE checkConstnessInJSObjectNames(void)
 {
     JSStaticFunction fun;
     fun.name = "something";
@@ -1189,42 +1199,54 @@ void JSSynchronousGarbageCollectForDebugging(JSContextRef);
 static void checkJSStringOOBUTF8(void)
 {
     const size_t sourceCStringSize = 200;
-    const size_t outCStringSize = 10;
+    const size_t cStringSize = 10;
+    const size_t outCStringSize = cStringSize + sourceCStringSize;
 
-    char* sourceCString = (char*)malloc(sourceCStringSize);
-    memset(sourceCString, 0, sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char sourceCString[sourceCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(sourceCString, 0, sizeof(sourceCString));
     for (size_t i = 0; i < sourceCStringSize - 1; ++i)
         sourceCString[i] = '0' + (i%10);
 
-    char* outCString = (char*)malloc(outCStringSize + sourceCStringSize);
-    memset(outCString, 0x13, outCStringSize + sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char outCString[outCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(outCString, 0x13, sizeof(outCString));
 
     JSStringRef str = JSStringCreateWithUTF8CString(sourceCString);
-    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, outCStringSize);
+    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, cStringSize);
 
     assertTrue(bytesWritten == 10, "we report 10 bytes written precisely");
 
     for (size_t i = 0; i < sizeof(outCString); ++i) {
-        if (i == outCStringSize - 1)
+        if (i == cStringSize - 1)
             assertTrue(outCString[i] == '\0', "string terminated");
-        else if (i < outCStringSize - 1)
+        else if (i < cStringSize - 1)
             assertTrue(outCString[i] == sourceCString[i], "string copied");
         else
             assertTrue(outCString[i] == 0x13, "did not write past the end");
     }
 
     JSStringRelease(str);
-    free(outCString);
-    free(sourceCString);
 }
 
 static void checkJSStringOOBUTF16(void)
 {
     const size_t sourceCStringSize = 22;
-    const size_t outCStringSize = 20;
+    const size_t cStringSize = 20;
+    const size_t outCStringSize = cStringSize + sourceCStringSize;
 
-    char* sourceCString = (char*)malloc(sourceCStringSize);
-    memset(sourceCString, 0, sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char sourceCString[sourceCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(sourceCString, 0, sizeof(sourceCString));
     for (size_t i = 0; i < sourceCStringSize - 1; ++i)
         sourceCString[i] = '0' + (i%10);
 
@@ -1233,35 +1255,42 @@ static void checkJSStringOOBUTF16(void)
     sourceCString[5] = '\x98';
     sourceCString[6] = '\x81';
 
-    char* outCString = (char*)malloc(outCStringSize + sourceCStringSize);
-    memset(outCString, 0x13, outCStringSize + sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char outCString[outCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(outCString, 0x13, sizeof(outCString));
 
     JSStringRef str = JSStringCreateWithUTF8CString(sourceCString);
-    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, outCStringSize);
+    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, cStringSize);
 
     assertTrue(bytesWritten == 20, "we report 20 bytes written precisely");
 
     for (size_t i = 0; i < sizeof(outCString); ++i) {
-        if (i == outCStringSize - 1)
+        if (i == cStringSize - 1)
             assertTrue(outCString[i] == '\0', "string terminated");
-        else if (i < outCStringSize - 1)
+        else if (i < cStringSize - 1)
             assertTrue(outCString[i] == sourceCString[i], "string copied");
         else
             assertTrue(outCString[i] == 0x13, "did not write past the end");
     }
 
     JSStringRelease(str);
-    free(outCString);
-    free(sourceCString);
 }
 
 static void checkJSStringOOBUTF16AtEnd(void)
 {
     const size_t sourceCStringSize = 22;
-    const size_t outCStringSize = 20;
+    const size_t cStringSize = 20;
+    const size_t outCStringSize = cStringSize + sourceCStringSize;
 
-    char* sourceCString = (char*)malloc(sourceCStringSize);
-    memset(sourceCString, 0, sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char sourceCString[sourceCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(sourceCString, 0, sizeof(sourceCString));
     for (size_t i = 0; i < sourceCStringSize - 1; ++i)
         sourceCString[i] = '0' + (i%10);
 
@@ -1270,11 +1299,15 @@ static void checkJSStringOOBUTF16AtEnd(void)
     sourceCString[19] = '\x98';
     sourceCString[20] = '\x81';
 
-    char* outCString = (char*)malloc(outCStringSize + sourceCStringSize);
-    memset(outCString, 0x13, outCStringSize + sourceCStringSize);
+IGNORE_WARNINGS_BEGIN("vla")
+IGNORE_WARNINGS_BEGIN("gnu-folding-constant")
+    char outCString[outCStringSize];
+IGNORE_WARNINGS_END
+IGNORE_WARNINGS_END
+    memset(outCString, 0x13, sizeof(outCString));
 
     JSStringRef str = JSStringCreateWithUTF8CString(sourceCString);
-    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, outCStringSize);
+    size_t bytesWritten = JSStringGetUTF8CString(str, outCString, cStringSize);
 
     assertTrue(bytesWritten == 18, "we report 18 bytes written precisely");
 
@@ -1288,8 +1321,6 @@ static void checkJSStringOOBUTF16AtEnd(void)
     }
 
     JSStringRelease(str);
-    free(outCString);
-    free(sourceCString);
 }
 
 static void checkJSStringOOB(void)
@@ -1301,6 +1332,31 @@ static void checkJSStringOOB(void)
     printf(".\n");
     checkJSStringOOBUTF16AtEnd();
     printf("PASS: checkJSStringOOB\n");
+}
+
+static void checkJSStringInvalid(void)
+{
+    printf("Test: checkJSStringInvalid\n");
+    JSChar* source = (JSChar*)malloc(sizeof(JSChar) * 4);
+    source[0] = 'a';
+    source[1] = 'b';
+    source[2] = 'c';
+    source[3] = 0xD800;
+    JSStringRef string = JSStringCreateWithCharacters(source, 4);
+
+    char* out = (char*)malloc(sizeof(char) * 32);
+    memset(out, 1, sizeof(char) * 32);
+    size_t bytesWritten = JSStringGetUTF8CString(string, out, sizeof(char) * 32);
+
+    assertTrue(bytesWritten == 4, "we report 4 bytes written precisely");
+    assertTrue(out[0] == 'a', "a");
+    assertTrue(out[1] == 'b', "b");
+    assertTrue(out[2] == 'c', "c");
+    assertTrue(out[3] == '\0', "string terminated");
+
+    JSStringRelease(string);
+    free(out);
+    free(source);
 }
 
 static const unsigned numWeakRefs = 10000;
@@ -1548,25 +1604,36 @@ int main(int argc, char* argv[])
     SetErrorMode(0);
 #endif
 
+    initializeWTFForTesting();
     configureJSCForTesting();
 
 #if !OS(WINDOWS)
-    char resolvedPath[PATH_MAX];
-    if (!realpath(argv[0], resolvedPath))
-        fprintf(stdout, "Could not get the absolute pathname for: %s\n", argv[0]);
-    char* newCWD = dirname(resolvedPath);
-    if (chdir(newCWD))
-        fprintf(stdout, "Could not chdir to: %s\n", newCWD);
+    char *resolvedPath = realpath(argv[0], NULL);
+    if (!resolvedPath)
+        fprintf(stderr, "Could not get the absolute pathname for: %s\n", argv[0]);
+    else {
+        char *newCWD = dirname(resolvedPath);
+        if (chdir(newCWD))
+            fprintf(stderr, "Could not chdir to: %s\n", newCWD);
+        free(resolvedPath);
+    }
 #endif
 
     const char* filter = argc > 1 ? argv[1] : NULL;
+    // This test needs to run before anything else.
+    failed += testLaunchJSCFromNonMainThread(filter);
+
 #if JSC_OBJC_API_ENABLED
     testObjectiveCAPI(filter);
 #endif
 
+#if defined(JSC_SUPPORTS_SWIFT) && JSC_SUPPORTS_SWIFT
+    failed += testSwiftAPI(filter);
+#endif
+
     RELEASE_ASSERT(!testCAPIViaCpp(filter));
     if (filter)
-        return 0;
+        return failed;
 
     testCompareAndSwap();
     startMultithreadedMultiVMExecutionTest();
@@ -1888,6 +1955,7 @@ int main(int argc, char* argv[])
     assertEqualsAsUTF8String(jsOneString, "1");
 
     checkJSStringOOB();
+    checkJSStringInvalid();
 
     checkConstnessInJSObjectNames();
 
@@ -2277,6 +2345,7 @@ int main(int argc, char* argv[])
         JSGlobalContextRelease(context);
     }
     failed |= testTypedArrayCAPI();
+    failed |= testTemporalCore();
     failed |= testFunctionOverrides();
     failed |= testFunctionToString();
     failed |= testGlobalContextWithFinalizer();
@@ -2344,10 +2413,11 @@ int main(int argc, char* argv[])
     // For now, we'll just run them here at the end as a workaround.
     failed |= testPingPongStackOverflow();
     failed |= testExecutionTimeLimit();
+    failed |= testVMManagerStopTheWorld();
 
     if (failed) {
         printf("FAIL: Some tests failed.\n");
-        return 1;
+        return failed;
     }
 
     printf("PASS: Program exited normally.\n");
@@ -2391,3 +2461,5 @@ __declspec(dllexport) int WINAPI dllLauncherEntryPoint(int argc, char* argv[])
     return main(argc, argv);
 }
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

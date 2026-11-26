@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, Google Inc. All rights reserved.
+ * Copyright (c) 2012-2013 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -30,9 +30,9 @@
 
 #pragma once
 
-#include "FloatSize.h"
-#include "IntSize.h"
-#include "LayoutUnit.h"
+#include <WebCore/FloatSize.h>
+#include <WebCore/IntSize.h>
+#include <WebCore/LayoutUnit.h>
 
 namespace WTF {
 class TextStream;
@@ -51,7 +51,7 @@ class LayoutSize {
 public:
     LayoutSize() = default;
     LayoutSize(const IntSize& size) : m_width(size.width()), m_height(size.height()) { }
-    template<typename T, typename U> LayoutSize(T width, U height) : m_width(width), m_height(height) { }
+    template<typename T, typename U> constexpr LayoutSize(T width, U height) : m_width(width), m_height(height) { }
 
     explicit LayoutSize(const FloatSize& size) : m_width(size.width()), m_height(size.height()) { }
     
@@ -94,8 +94,8 @@ public:
         m_height *= heightScale;
     }
 
-    LayoutSize constrainedBetween(const LayoutSize& min, const LayoutSize& max) const;
-    
+    WEBCORE_EXPORT LayoutSize constrainedBetween(const LayoutSize& min, const LayoutSize& max) const;
+
     LayoutSize expandedTo(const LayoutSize& other) const
     {
         return LayoutSize(m_width > other.m_width ? m_width : other.m_width,
@@ -206,5 +206,12 @@ inline FloatSize roundSizeToDevicePixels(const LayoutSize& size, float pixelSnap
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const LayoutSize&);
 
-} // namespace WebCore
+struct LayoutSizeLimits {
+    LayoutSize m_min;
+    LayoutSize m_max;
+    LayoutSize clamp(const LayoutSize& size) { return size.constrainedBetween(m_min, m_max); }
+    bool fits(const LayoutSize& size) { return size == clamp(size); }
+    LayoutSize distance(const LayoutSize& size) { return size - clamp(size); }
+};
 
+} // namespace WebCore

@@ -25,18 +25,21 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
 #if ENABLE(VIDEO)
 
-#include "FloatSize.h"
-#include "PlaneLayout.h"
-#include "PlatformVideoColorSpace.h"
-#include "VideoPixelFormat.h"
 #include <JavaScriptCore/TypedArrays.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/PlaneLayout.h>
+#include <WebCore/PlatformVideoColorSpace.h>
+#include <WebCore/VideoPixelFormat.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MediaTime.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
-typedef struct __CVBuffer *CVPixelBufferRef;
+#if PLATFORM(COCOA)
+typedef struct CF_BRIDGED_TYPE(id) __CVBuffer *CVPixelBufferRef;
+#endif
 
 namespace WebCore {
 
@@ -97,8 +100,10 @@ public:
     using CopyCallback = CompletionHandler<void(std::optional<Vector<PlaneLayout>>&&)>;
     void copyTo(std::span<uint8_t>, VideoPixelFormat, Vector<ComputedPlaneLayout>&&, CopyCallback&&);
 
-    virtual FloatSize presentationSize() const = 0;
+    virtual IntSize presentationSize() const = 0;
     virtual uint32_t pixelFormat() const = 0;
+    virtual bool isEncoded() const { return false; }
+    virtual bool hasSameEncodedFormat(const VideoFrame&) const { return false; }
 
     virtual bool isRemoteProxy() const { return false; }
     virtual bool isLibWebRTC() const { return false; }
@@ -111,11 +116,15 @@ public:
 #endif
     WEBCORE_EXPORT virtual void setOwnershipIdentity(const ProcessIdentity&) { }
 
-    void initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
+    void NODELETE initializeCharacteristics(MediaTime presentationTime, bool isMirrored, Rotation);
 
-    void paintInContext(GraphicsContext&, const FloatRect&, const ImageOrientation&, bool shouldDiscardAlpha);
+    RefPtr<NativeImage> copyNativeImage() const;
+    const PlatformVideoColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
 
-    const PlatformVideoColorSpace& colorSpace() const { return m_colorSpace; }
+    bool hasNoTransformation() const { return m_rotation == VideoFrameRotation::None && !m_isMirrored; }
+    bool has90DegreeRotation() const { return m_rotation == VideoFrameRotation::Left || m_rotation == VideoFrameRotation::Right; }
+
+    WEBCORE_EXPORT bool is10bits() const;
 
 protected:
     WEBCORE_EXPORT VideoFrame(MediaTime presentationTime, bool isMirrored, Rotation, PlatformVideoColorSpace&& = { });

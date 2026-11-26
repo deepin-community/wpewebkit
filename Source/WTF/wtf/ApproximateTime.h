@@ -39,6 +39,10 @@ class ApproximateTime final : public GenericTimeMixin<ApproximateTime> {
 public:
     static constexpr ClockType clockType = ClockType::Approximate;
 
+    // Declared here, not inherited: Swift's C++ interop importer mishandles
+    // an `operator bool` inherited from a template base (rdar://181622867).
+    explicit constexpr operator bool() const { return !!m_value; }
+
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - ApproximateTime().
     constexpr ApproximateTime() = default;
 
@@ -49,13 +53,7 @@ public:
 
     WTF_EXPORT_PRIVATE static ApproximateTime now();
 
-    ApproximateTime approximateApproximateTime() const { return *this; }
-    WTF_EXPORT_PRIVATE WallTime approximateWallTime() const;
-    WTF_EXPORT_PRIVATE MonotonicTime approximateMonotonicTime() const;
-
     WTF_EXPORT_PRIVATE void dump(PrintStream&) const;
-
-    struct MarkableTraits;
 
 private:
     friend class GenericTimeMixin<ApproximateTime>;
@@ -66,7 +64,8 @@ private:
 };
 static_assert(sizeof(ApproximateTime) == sizeof(double));
 
-struct ApproximateTime::MarkableTraits {
+template<>
+struct MarkableTraits<ApproximateTime> {
     static bool isEmptyValue(ApproximateTime time)
     {
         return time.isNaN();

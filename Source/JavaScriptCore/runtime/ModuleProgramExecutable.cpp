@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "ModuleProgramExecutable.h"
 
 #include "CodeCache.h"
 #include "Debugger.h"
@@ -65,17 +66,20 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
-    SymbolTable* symbolTable = jsCast<SymbolTable*>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
-    m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm));
+    SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
+    m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::create(JSGlobalObject* globalObject, const SourceCode& source)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source);
     executable->finishCreation(vm);
     executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block.
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return executable;
 }
 
@@ -92,7 +96,7 @@ auto ModuleProgramExecutable::ensureTemplateObjectMap(VM&) -> TemplateObjectMap&
 template<typename Visitor>
 void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ModuleProgramExecutable* thisObject = jsCast<ModuleProgramExecutable*>(cell);
+    ModuleProgramExecutable* thisObject = uncheckedDowncast<ModuleProgramExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);

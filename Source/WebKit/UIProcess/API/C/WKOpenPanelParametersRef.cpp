@@ -50,17 +50,17 @@ bool WKOpenPanelParametersGetAllowsMultipleFiles(WKOpenPanelParametersRef parame
 
 WKArrayRef WKOpenPanelParametersCopyAcceptedMIMETypes(WKOpenPanelParametersRef parametersRef)
 {
-    return toAPI(&toImpl(parametersRef)->acceptMIMETypes().leakRef());
+    return toAPILeakingRef(protect(toImpl(parametersRef))->acceptMIMETypes());
 }
 
 WKArrayRef WKOpenPanelParametersCopyAcceptedFileExtensions(WKOpenPanelParametersRef parametersRef)
 {
-    return toAPI(&toImpl(parametersRef)->acceptFileExtensions().leakRef());
+    return toAPILeakingRef(protect(toImpl(parametersRef))->acceptFileExtensions());
 }
 
 WKArrayRef WKOpenPanelParametersCopyAllowedMIMETypes(WKOpenPanelParametersRef parametersRef)
 {
-    return toAPI(&toImpl(parametersRef)->allowedMIMETypes().leakRef());
+    return toAPILeakingRef(protect(toImpl(parametersRef))->allowedMIMETypes());
 }
 
 // Deprecated.
@@ -81,5 +81,5 @@ bool WKOpenPanelParametersGetMediaCaptureType(WKOpenPanelParametersRef parameter
 
 WKArrayRef WKOpenPanelParametersCopySelectedFileNames(WKOpenPanelParametersRef parametersRef)
 {
-    return toAPI(&toImpl(parametersRef)->selectedFileNames().leakRef());
+    return toAPILeakingRef(protect(toImpl(parametersRef))->selectedFileNames());
 }

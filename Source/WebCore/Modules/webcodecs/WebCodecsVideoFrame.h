@@ -27,13 +27,13 @@
 
 #if ENABLE(WEB_CODECS)
 
-#include "ContextDestructionObserver.h"
-#include "DOMRectReadOnly.h"
-#include "JSDOMPromiseDeferredForward.h"
-#include "PlaneLayout.h"
-#include "VideoColorSpaceInit.h"
-#include "WebCodecsAlphaOption.h"
-#include "WebCodecsVideoFrameData.h"
+#include <WebCore/ContextDestructionObserver.h>
+#include <WebCore/DOMRectReadOnly.h>
+#include <WebCore/JSDOMPromiseDeferredForward.h>
+#include <WebCore/PlaneLayout.h>
+#include <WebCore/VideoColorSpaceInit.h>
+#include <WebCore/WebCodecsAlphaOption.h>
+#include <WebCore/WebCodecsVideoFrameData.h>
 
 namespace WebCore {
 
@@ -56,16 +56,21 @@ class WebCodecsVideoFrame : public RefCounted<WebCodecsVideoFrame>, public Conte
 public:
     ~WebCodecsVideoFrame();
 
-    using CanvasImageSource = std::variant<RefPtr<HTMLImageElement>
-        , RefPtr<SVGImageElement>
-        , RefPtr<HTMLCanvasElement>
-        , RefPtr<ImageBitmap>
-        , RefPtr<CSSStyleImageValue>
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    using CanvasImageSource = Variant<
+          Ref<HTMLImageElement>
+        , Ref<SVGImageElement>
+        , Ref<HTMLCanvasElement>
+        , Ref<ImageBitmap>
+        , Ref<CSSStyleImageValue>
 #if ENABLE(OFFSCREEN_CANVAS)
-        , RefPtr<OffscreenCanvas>
+        , Ref<OffscreenCanvas>
 #endif
 #if ENABLE(VIDEO)
-        , RefPtr<HTMLVideoElement>
+        , Ref<HTMLVideoElement>
 #endif
     >;
 
@@ -81,41 +86,42 @@ public:
         std::optional<size_t> displayHeight;
     };
     struct BufferInit {
-        VideoPixelFormat format { VideoPixelFormat::I420 };
+        std::optional<VideoPixelFormat> format;
         size_t codedWidth { 0 };
         size_t codedHeight { 0 };
         int64_t timestamp { 0 };
-        std::optional<uint64_t> duration;
+        std::optional<uint64_t> duration { };
 
-        std::optional<Vector<PlaneLayout>> layout;
+        std::optional<Vector<PlaneLayout>> layout { };
 
-        std::optional<DOMRectInit> visibleRect;
+        std::optional<DOMRectInit> visibleRect { };
 
-        std::optional<size_t> displayWidth;
-        std::optional<size_t> displayHeight;
+        std::optional<size_t> displayWidth { };
+        std::optional<size_t> displayHeight { };
 
-        std::optional<VideoColorSpaceInit> colorSpace;
+        std::optional<VideoColorSpaceInit> colorSpace { };
     };
 
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, CanvasImageSource&&, Init&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, BufferSource&&, BufferInit&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, ImageBuffer&, IntSize, Init&&);
+    WEBCORE_EXPORT static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<NativeImage>&&);
     static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext&, Ref<VideoFrame>&&, BufferInit&&);
-    static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext& context, WebCodecsVideoFrameData&& data) { return adoptRef(*new WebCodecsVideoFrame(context, WTFMove(data))); }
+    static Ref<WebCodecsVideoFrame> create(ScriptExecutionContext& context, WebCodecsVideoFrameData&& data) { return adoptRef(*new WebCodecsVideoFrame(context, WTF::move(data))); }
 
     std::optional<VideoPixelFormat> format() const { return m_data.format; }
     size_t codedWidth() const { return m_data.codedWidth; }
     size_t codedHeight() const { return m_data.codedHeight; }
 
-    DOMRectReadOnly* codedRect() const;
-    DOMRectReadOnly* visibleRect() const;
+    DOMRectReadOnly* NODELETE codedRect() const;
+    DOMRectReadOnly* NODELETE visibleRect() const;
 
     size_t displayWidth() const { return m_data.displayWidth; }
     size_t displayHeight() const { return m_data.displayHeight; }
     std::optional<uint64_t> duration() const { return m_data.duration; }
     int64_t timestamp() const { return m_data.timestamp; }
-    VideoColorSpace& colorSpace() const;
+    VideoColorSpace& NODELETE colorSpace() const;
 
     struct CopyToOptions {
         std::optional<DOMRectInit> rect;
@@ -131,11 +137,11 @@ public:
     bool isDetached() const { return m_isDetached; }
     RefPtr<VideoFrame> internalFrame() const { return m_data.internalFrame; }
 
-    void setDisplaySize(size_t, size_t);
-    void setVisibleRect(const DOMRectInit&);
+    void NODELETE setDisplaySize(size_t, size_t);
+    void NODELETE setVisibleRect(const DOMRectInit&);
     bool shoudlDiscardAlpha() const { return m_data.format && (*m_data.format == VideoPixelFormat::RGBX || *m_data.format == VideoPixelFormat::BGRX); }
 
-    const WebCodecsVideoFrameData& data() const { return m_data; }
+    const WebCodecsVideoFrameData& data() const LIFETIME_BOUND { return m_data; }
 
     size_t memoryCost() const { return m_data.memoryCost(); }
 

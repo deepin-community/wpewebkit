@@ -37,12 +37,12 @@ GstElement* GStreamerHolePunchQuirkWesteros::createHolePunchVideoSink(bool isLeg
         return nullptr;
 
     // Westeros using holepunch.
-    GstElement* videoSink = makeGStreamerElement("westerossink", "WesterosVideoSink");
+    GstElement* videoSink = makeGStreamerElement("westerossink"_s, "WesterosVideoSink"_s);
     g_object_set(videoSink, "zorder", 0.0f, nullptr);
     if (isPIPRequested) {
         g_object_set(videoSink, "res-usage", 0u, nullptr);
         // Set context for pipelines that use ERM in decoder elements.
-        auto context = adoptGRef(gst_context_new("erm", FALSE));
+        GRefPtr context = adoptGRef(gst_context_new("erm", FALSE));
         auto contextStructure = gst_context_writable_structure(context.get());
         gst_structure_set(contextStructure, "res-usage", G_TYPE_UINT, 0x0u, nullptr);
         auto playerPrivate = reinterpret_cast<const MediaPlayerPrivateGStreamer*>(player->playerPrivate());
@@ -53,15 +53,13 @@ GstElement* GStreamerHolePunchQuirkWesteros::createHolePunchVideoSink(bool isLeg
 
 bool GStreamerHolePunchQuirkWesteros::setHolePunchVideoRectangle(GstElement* videoSink, const IntRect& rect)
 {
-    if (UNLIKELY(!gstObjectHasProperty(videoSink, "rectangle")))
+    if (!gstObjectHasProperty(videoSink, "rectangle"_s)) [[unlikely]]
         return false;
 
     auto rectString = makeString(rect.x(), ',', rect.y(), ',', rect.width(), ',', rect.height());
     g_object_set(videoSink, "rectangle", rectString.ascii().data(), nullptr);
     return true;
 }
-
-#undef GST_CAT_DEFAULT
 
 } // namespace WebCore
 

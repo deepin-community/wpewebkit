@@ -23,14 +23,15 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://drafts.csswg.org/css-contain/#contentvisibilityautostatechangeevent
 [
-    EnabledBySetting=CSSContentVisibilityEnabled,
     Exposed=Window
 ] interface ContentVisibilityAutoStateChangeEvent : Event {
     constructor([AtomString] DOMString type, optional ContentVisibilityAutoStateChangeEventInit eventInitDict = {});
     readonly attribute boolean skipped;
 };
 
+// https://drafts.csswg.org/css-contain/#dictdef-contentvisibilityautostatechangeeventinit
 dictionary ContentVisibilityAutoStateChangeEventInit : EventInit {
     boolean skipped = false;
 };

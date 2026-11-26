@@ -27,6 +27,7 @@
 
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
+#include <JavaScriptCore/CallFrame.h>
 #include <wtf/FixedVector.h>
 
 namespace WebCore {
@@ -41,7 +42,7 @@ struct VariadicConverter {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         auto result = WebCore::convert<IDL>(lexicalGlobalObject, value);
-        if (UNLIKELY(result.hasException(scope)))
+        if (result.hasException(scope)) [[unlikely]]
             return std::nullopt;
 
         return result.releaseReturnValue();
@@ -61,7 +62,7 @@ VariadicArguments<IDL> convertVariadicArguments(JSC::JSGlobalObject& lexicalGlob
     if (startIndex >= length)
         return { };
 
-    auto result = VariadicArguments<IDL>::createWithSizeFromGenerator(length - startIndex, [&](size_t i) -> std::optional<VariadicItem<IDL>> {
+    auto result = VariadicArguments<IDL>::createWithSizeFromFailableGenerator(length - startIndex, [&](size_t i) -> std::optional<VariadicItem<IDL>> {
         auto result = VariadicConverter<IDL>::convert(lexicalGlobalObject, callFrame.uncheckedArgument(i + startIndex));
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 

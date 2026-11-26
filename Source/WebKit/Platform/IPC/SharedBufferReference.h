@@ -40,24 +40,25 @@ public:
 
     explicit SharedBufferReference(RefPtr<WebCore::FragmentedSharedBuffer>&& buffer)
         : m_size(buffer ? buffer->size() : 0)
-        , m_buffer(WTFMove(buffer)) { }
+        , m_buffer(WTF::move(buffer)) { }
     explicit SharedBufferReference(Ref<WebCore::FragmentedSharedBuffer>&& buffer)
         : m_size(buffer->size())
-        , m_buffer(WTFMove(buffer)) { }
+        , m_buffer(WTF::move(buffer)) { }
     explicit SharedBufferReference(RefPtr<WebCore::SharedBuffer>&& buffer)
         : m_size(buffer ? buffer->size() : 0)
-        , m_buffer(WTFMove(buffer)) { }
+        , m_buffer(WTF::move(buffer)) { }
     explicit SharedBufferReference(Ref<WebCore::SharedBuffer>&& buffer)
         : m_size(buffer->size())
-        , m_buffer(WTFMove(buffer)) { }
+        , m_buffer(WTF::move(buffer)) { }
     explicit SharedBufferReference(const WebCore::FragmentedSharedBuffer& buffer)
         : m_size(buffer.size())
         , m_buffer(const_cast<WebCore::FragmentedSharedBuffer*>(&buffer)) { }
 
 #if !USE(UNIX_DOMAIN_SOCKETS)
     struct SerializableBuffer {
-        size_t size;
+        uint64_t size;
         std::optional<WebCore::SharedMemory::Handle> handle;
+        std::optional<WebCore::MemoryLedger> ledger;
     };
     SharedBufferReference(std::optional<SerializableBuffer>&&);
 #endif
@@ -71,6 +72,8 @@ public:
     bool isEmpty() const { return !size(); }
     bool isNull() const { return isEmpty() && !m_buffer; }
 
+    void transferOwnershipToReceiver(WebCore::MemoryLedger ledger) { m_ledger = ledger; }
+
 #if USE(UNIX_DOMAIN_SOCKETS)
     RefPtr<WebCore::FragmentedSharedBuffer> buffer() const { return m_buffer; }
 #else
@@ -81,17 +84,18 @@ public:
     // It relies on an implementation detail that makes m_buffer become a contiguous SharedBuffer
     // once it's deserialised over IPC.
     RefPtr<WebCore::SharedBuffer> unsafeBuffer() const;
-    std::span<const uint8_t> span() const;
+    std::span<const uint8_t> span() const LIFETIME_BOUND;
     RefPtr<WebCore::SharedMemory> sharedCopy() const;
 
 private:
     SharedBufferReference(Ref<WebCore::SharedMemory>&& memory, size_t size)
         : m_size(size)
-        , m_memory(WTFMove(memory)) { }
+        , m_memory(WTF::move(memory)) { }
 
     size_t m_size { 0 };
     mutable RefPtr<WebCore::FragmentedSharedBuffer> m_buffer;
     RefPtr<WebCore::SharedMemory> m_memory; // Only set on the receiver side and if m_size isn't 0.
+    std::optional<WebCore::MemoryLedger> m_ledger;
 };
 
 } // namespace IPC

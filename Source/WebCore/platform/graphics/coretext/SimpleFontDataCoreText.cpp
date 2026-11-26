@@ -25,8 +25,9 @@
  */
 
 #include "config.h"
-#include "Font.h"
+#include "SimpleFontDataCoreText.h"
 
+#include "Font.h"
 #include <CoreText/CoreText.h>
 #include <pal/spi/cf/CoreTextSPI.h>
 
@@ -37,7 +38,7 @@ static CTParagraphStyleRef paragraphStyleWithCompositionLanguageNone()
     static LazyNeverDestroyed<RetainPtr<CTParagraphStyleRef>> paragraphStyle;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [&] {
-        paragraphStyle.construct(CTParagraphStyleCreate(nullptr, 0));
+        paragraphStyle.construct(adoptCF(CTParagraphStyleCreate(nullptr, 0)));
         CTParagraphStyleSetCompositionLanguage(paragraphStyle.get().get(), kCTCompositionLanguageNone);
     });
     return paragraphStyle.get().get();
@@ -54,13 +55,13 @@ static CFNumberRef zeroValue()
     return zeroValue.get().get();
 }
 
-RetainPtr<CFDictionaryRef> Font::getCFStringAttributes(bool enableKerning, FontOrientation orientation, const AtomString& locale) const
+extern RetainPtr<CFDictionaryRef> getCFStringAttributes(const Font& font, bool enableKerning, FontOrientation orientation, const AtomString& locale)
 {
-    CFTypeRef keys[5];
-    CFTypeRef values[5];
+    std::array<CFTypeRef, 5> keys;
+    std::array<CFTypeRef, 5> values;
 
     keys[0] = kCTFontAttributeName;
-    values[0] = platformData().ctFont();
+    values[0] = font.platformData().ctFont();
     size_t count = 1;
 
     RetainPtr<CFStringRef> localeString;
@@ -89,7 +90,7 @@ RetainPtr<CFDictionaryRef> Font::getCFStringAttributes(bool enableKerning, FontO
 
     ASSERT(count <= std::size(keys));
 
-    return adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, count, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    return adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys.data(), values.data(), count, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
 }
 
 } // namespace WebCore

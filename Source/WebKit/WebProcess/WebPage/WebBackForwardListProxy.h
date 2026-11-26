@@ -39,27 +39,27 @@ class WebBackForwardListProxy : public WebCore::BackForwardClient {
 public: 
     static Ref<WebBackForwardListProxy> create(WebPage& page) { return adoptRef(*new WebBackForwardListProxy(page)); }
 
-    static WebCore::HistoryItem* itemForID(const WebCore::BackForwardItemIdentifier&);
-    static void removeItem(const WebCore::BackForwardItemIdentifier&);
+    static void removeItem(WebCore::BackForwardFrameItemIdentifier);
 
-    enum class OverwriteExistingItem : bool { No, Yes };
-    void addItemFromUIProcess(const WebCore::BackForwardItemIdentifier&, Ref<WebCore::HistoryItem>&&, WebCore::PageIdentifier, OverwriteExistingItem);
-
-    void clear();
+    void NODELETE clearCachedListCounts();
+    void invalidateCachedListCounts() { m_cachedBackForwardListCounts = std::nullopt; }
 
 private:
     WebBackForwardListProxy(WebPage&);
 
-    void addItem(WebCore::FrameIdentifier, Ref<WebCore::HistoryItem>&&) override;
+    void addItem(Ref<WebCore::HistoryItem>&&) override;
+    void setChildItem(WebCore::BackForwardFrameItemIdentifier, Ref<WebCore::HistoryItem>&&) final;
 
     void goToItem(WebCore::HistoryItem&) override;
-        
-    RefPtr<WebCore::HistoryItem> itemAtIndex(int) override;
+
+    Vector<Ref<WebCore::HistoryItem>> allItems(WebCore::FrameIdentifier) final;
+    RefPtr<WebCore::HistoryItem> itemAtIndex(int, WebCore::FrameIdentifier) override;
+
     unsigned backListCount() const override;
     unsigned forwardListCount() const override;
     bool containsItem(const WebCore::HistoryItem&) const final;
+    bool isWebBackForwardListProxy() const final { return true; }
     const WebBackForwardListCounts& cacheListCountsIfNecessary() const;
-    void clearCachedListCounts();
 
     void close() override;
 
@@ -68,3 +68,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebBackForwardListProxy)
+static bool isType(const WebCore::BackForwardClient& client) { return client.isWebBackForwardListProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()

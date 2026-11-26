@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,11 +29,11 @@
 #include "config.h"
 #include "ExceptionHelpers.h"
 
-#include "CatchScope.h"
 #include "ErrorHandlingScope.h"
 #include "Exception.h"
 #include "JSCInlines.h"
 #include "RuntimeType.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
@@ -43,17 +43,25 @@ namespace JSC {
 JSObject* createStackOverflowError(JSGlobalObject* globalObject)
 {
     auto* error = createRangeError(globalObject, "Maximum call stack size exceeded."_s);
-    jsCast<ErrorInstance*>(error)->setStackOverflowError();
+    uncheckedDowncast<ErrorInstance>(error)->setStackOverflowError();
     return error;
 }
 
 JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Identifier& ident)
 {
-    if (ident.isPrivateName())
-        return createReferenceError(globalObject, makeString("Can't find private variable: PrivateSymbol."_s, ident.string()));
-    return createReferenceError(globalObject, makeString("Can't find variable: "_s, ident.string()));
+    String message;
+    if (ident.isPrivateName()) {
+        message = tryMakeString("Can't find private variable: PrivateSymbol."_s, ident.string());
+        if (!message) [[unlikely]]
+            message = "Can't find private variable"_s;
+    } else {
+        message = tryMakeString("Can't find variable: "_s, ident.string());
+        if (!message) [[unlikely]]
+            message = "Can't find variable"_s;
+    }
+    return createReferenceError(globalObject, message);
 }
-    
+
 String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
 {
     if (v.isString()) {
@@ -80,7 +88,7 @@ String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
     return v.toString(globalObject)->value(globalObject);
 }
     
-static StringView clampErrorMessage(const String& originalMessage)
+static StringView NODELETE clampErrorMessage(const String& originalMessage LIFETIME_BOUND)
 {
     // Hopefully this is sufficiently long. Note, this is the length of the string not the number of bytes used.
     constexpr unsigned maxLength = 2 * KB;
@@ -94,14 +102,14 @@ static String defaultApproximateSourceError(const String& originalMessage, Strin
 
 String defaultSourceAppender(const String& originalMessage, StringView sourceText, RuntimeType, ErrorInstance::SourceTextWhereErrorOccurred occurrence)
 {
-    if (occurrence == ErrorInstance::FoundApproximateSource)
+    if (occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource)
         return defaultApproximateSourceError(originalMessage, sourceText);
 
-    ASSERT(occurrence == ErrorInstance::FoundExactSource);
+    ASSERT(occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource);
     return makeString(clampErrorMessage(originalMessage), " (evaluating '"_s, sourceText, "')"_s);
 }
 
-static StringView functionCallBase(StringView sourceText)
+static StringView NODELETE functionCallBase(StringView sourceText)
 { 
     // This function retrieves the 'foo.bar' substring from 'foo.bar(baz)'.
     // FIXME: This function has simple processing of /* */ style comments.
@@ -116,7 +124,7 @@ static StringView functionCallBase(StringView sourceText)
         // and their closing parenthesis, the text range passed into the message appender 
         // will not include the text in between these parentheses, it will just be the desired
         // text that precedes the parentheses.
-        return String();
+        return { };
     }
 
     unsigned parenStack = 1;
@@ -125,7 +133,7 @@ static StringView functionCallBase(StringView sourceText)
     // Note that we're scanning text right to left instead of the more common left to right, 
     // so syntax detection is backwards.
     while (parenStack && idx) {
-        UChar curChar = sourceText[idx];
+        char16_t curChar = sourceText[idx];
         if (isInMultiLineComment) {
             if (curChar == '*' && sourceText[idx - 1] == '/') {
                 isInMultiLineComment = false;
@@ -149,7 +157,7 @@ static StringView functionCallBase(StringView sourceText)
         // in the above string processing. This algorithm is mostly best effort
         // and it works for most JS text in practice. However, if we determine
         // that the algorithm failed, we should just return the empty value.
-        return String();
+        return { };
     }
 
     // Don't display the ?. of an optional call.
@@ -163,10 +171,10 @@ String notAFunctionSourceAppender(const String& originalMessage, StringView sour
 {
     ASSERT(type != TypeFunction);
 
-    if (occurrence == ErrorInstance::FoundApproximateSource)
+    if (occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource)
         return defaultApproximateSourceError(originalMessage, sourceText);
 
-    ASSERT(occurrence == ErrorInstance::FoundExactSource);
+    ASSERT(occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource);
     auto notAFunctionIndex = originalMessage.reverseFind("is not a function"_s);
     RELEASE_ASSERT(notAFunctionIndex != notFound);
     auto displayValue = StringView { originalMessage }.left(notAFunctionIndex - 1);
@@ -174,7 +182,7 @@ String notAFunctionSourceAppender(const String& originalMessage, StringView sour
     StringView base = functionCallBase(sourceText);
     if (!base)
         return defaultApproximateSourceError(originalMessage, sourceText);
-    StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     builder.append(base, " is not a function. (In '"_s, sourceText, "', '"_s, base, "' is "_s);
     if (type == TypeSymbol)
         builder.append("a Symbol"_s);
@@ -195,10 +203,10 @@ static String invalidParameterInSourceAppender(const String& originalMessage, St
 {
     ASSERT_UNUSED(type, type != TypeObject);
 
-    if (occurrence == ErrorInstance::FoundApproximateSource)
+    if (occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource)
         return defaultApproximateSourceError(originalMessage, sourceText);
 
-    ASSERT(occurrence == ErrorInstance::FoundExactSource);
+    ASSERT(occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource);
     auto inIndex = sourceText.reverseFind("in"_s);
     if (inIndex == notFound) {
         // This should basically never happen, since JS code must use the literal
@@ -216,10 +224,10 @@ static String invalidParameterInSourceAppender(const String& originalMessage, St
 
 inline String invalidParameterInstanceofSourceAppender(const String& content, const String& originalMessage, StringView sourceText, RuntimeType, ErrorInstance::SourceTextWhereErrorOccurred occurrence)
 {
-    if (occurrence == ErrorInstance::FoundApproximateSource)
+    if (occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource)
         return defaultApproximateSourceError(originalMessage, sourceText);
 
-    ASSERT(occurrence == ErrorInstance::FoundExactSource);
+    ASSERT(occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource);
     auto instanceofIndex = sourceText.reverseFind("instanceof"_s);
     // This can happen when Symbol.hasInstance function is directly called.
     if (instanceofIndex == notFound)
@@ -245,7 +253,7 @@ static String invalidParameterInstanceofhasInstanceValueNotFunctionSourceAppende
 
 static String invalidPrototypeSourceAppender(const String& originalMessage, StringView sourceText, RuntimeType, ErrorInstance::SourceTextWhereErrorOccurred occurrence)
 {
-    if (occurrence == ErrorInstance::FoundApproximateSource)
+    if (occurrence == ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource)
         return defaultApproximateSourceError(originalMessage, sourceText);
 
     auto extendsIndex = sourceText.reverseFind("extends"_s);
@@ -268,13 +276,13 @@ String constructErrorMessage(JSGlobalObject* globalObject, JSValue value, const 
 JSObject* createError(JSGlobalObject* globalObject, JSValue value, const String& message, ErrorInstance::SourceAppender appender)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto errorMessage = constructErrorMessage(globalObject, value, message);
-    if (UNLIKELY(scope.exception() || !errorMessage)) {
+    if (scope.exception() || !errorMessage) [[unlikely]] {
         // When we see an exception, we're not returning immediately because
-        // we're in a CatchScope, i.e. no exceptions are thrown past this scope.
-        // We're using a CatchScope because the contract for createError() is
+        // we're in a TopExceptionScope, i.e. no exceptions are thrown past this scope.
+        // We're using a TopExceptionScope because the contract for createError() is
         // that it only creates an error object; it doesn't throw it.
         scope.clearException();
         return createOutOfMemoryError(globalObject);
@@ -327,17 +335,34 @@ JSObject* createInvalidPrototypeError(JSGlobalObject* globalObject, JSValue valu
 
 JSObject* createErrorForDuplicateGlobalVariableDeclaration(JSGlobalObject* globalObject, UniquedStringImpl* key)
 {
-    return createSyntaxError(globalObject, makeString("Can't create duplicate variable: '"_s, StringView(key), '\''));
+    String message = tryMakeString("Can't create duplicate variable: '"_s, StringView(key), '\'');
+    if (!message) [[unlikely]]
+        message = "Can't create duplicate variable"_s;
+    return createSyntaxError(globalObject, message);
 }
 
 JSObject* createErrorForInvalidGlobalFunctionDeclaration(JSGlobalObject* globalObject, const Identifier& ident)
 {
-    return createTypeError(globalObject, makeString("Can't declare global function '"_s, ident.string(), "': property must be either configurable or both writable and enumerable"_s));
+    String message = tryMakeString("Can't declare global function '"_s, ident.string(), "': property must be either configurable or both writable and enumerable"_s);
+    if (!message) [[unlikely]]
+        message = "Can't declare global function: property must be either configurable or both writable and enumerable"_s;
+    return createTypeError(globalObject, message);
 }
 
 JSObject* createErrorForInvalidGlobalVarDeclaration(JSGlobalObject* globalObject, const Identifier& ident)
 {
-    return createTypeError(globalObject, makeString("Can't declare global variable '"_s, ident.string(), "': global object must be extensible"_s));
+    String message = tryMakeString("Can't declare global variable '"_s, ident.string(), "': global object must be extensible"_s);
+    if (!message) [[unlikely]]
+        message = "Can't declare global variable: global object must be extensible"_s;
+    return createTypeError(globalObject, message);
+}
+
+JSObject* createTDZError(JSGlobalObject* globalObject, StringView ident)
+{
+    String message = tryMakeString("Cannot access '"_s, ident, "' before initialization."_s);
+    if (!message) [[unlikely]]
+        return createTDZError(globalObject);
+    return createReferenceError(globalObject, message);
 }
 
 JSObject* createTDZError(JSGlobalObject* globalObject)

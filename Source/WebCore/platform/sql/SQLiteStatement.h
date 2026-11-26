@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,19 @@
 
 #pragma once
 
-#include "SQLValue.h"
-#include "SQLiteDatabase.h"
+#include <WebCore/SQLValue.h>
+#include <WebCore/SQLiteDatabase.h>
 #include <span>
 #include <wtf/CheckedRef.h>
+#include <wtf/TZoneMalloc.h>
 
 struct sqlite3_stmt;
 
 namespace WebCore {
 
 class SQLiteStatement : public CanMakeThreadSafeCheckedPtr<SQLiteStatement> {
-    WTF_MAKE_NONCOPYABLE(SQLiteStatement); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(SQLiteStatement, WEBCORE_EXPORT);
+    WTF_MAKE_NONCOPYABLE(SQLiteStatement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SQLiteStatement);
 public:
     WEBCORE_EXPORT ~SQLiteStatement();
@@ -58,13 +60,11 @@ public:
     WEBCORE_EXPORT int step();
     WEBCORE_EXPORT int reset();
     
-    // steps and finalizes the query.
-    // returns true if all 3 steps succeed with step() returning SQLITE_DONE
-    // returns false otherwise  
+    // Returns true if step() returns SQLITE_DONE, false otherwise.
     WEBCORE_EXPORT bool executeCommand();
 
-    // Returns -1 on last-step failing.  Otherwise, returns number of rows
-    // returned in the last step()
+    // Returns the number of columns in the current result row, or 0 if
+    // step() has not been called or did not return SQLITE_ROW.
     int columnCount();
 
     bool isReadOnly();
@@ -80,7 +80,7 @@ public:
     WEBCORE_EXPORT Vector<uint8_t> columnBlob(int col);
 
     // The returned Span stays valid until the next step() / reset() or destruction of the statement.
-    std::span<const uint8_t> columnBlobAsSpan(int col);
+    std::span<const uint8_t> columnBlobAsSpan(int col) LIFETIME_BOUND;
 
     SQLiteDatabase& database() { return m_database.get(); }
     
@@ -94,7 +94,7 @@ private:
     template<typename T, typename... Args> bool bindImpl(int i, T first, Args&&... args);
     template<typename T> bool bindImpl(int, T);
 
-    CheckedRef<SQLiteDatabase> m_database;
+    const CheckedRef<SQLiteDatabase> m_database;
     sqlite3_stmt* m_statement;
 };
 

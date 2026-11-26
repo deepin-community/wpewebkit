@@ -3,7 +3,7 @@
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2010 Zoltan Herczeg <zherczeg@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,8 +23,8 @@
 
 #pragma once
 
-#include "FilterEffect.h"
-#include "FloatPoint.h"
+#include <WebCore/FilterEffect.h>
+#include <WebCore/FloatPoint.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -36,35 +36,37 @@ enum class EdgeModeType : uint8_t {
     None
 };
 
-class FEConvolveMatrix : public FilterEffect {
+class FEConvolveMatrix final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEConvolveMatrix);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEConvolveMatrix);
 public:
     WEBCORE_EXPORT static Ref<FEConvolveMatrix> create(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FEConvolveMatrix&) const;
 
     IntSize kernelSize() const { return m_kernelSize; }
-    void setKernelSize(const IntSize&);
+    void NODELETE setKernelSize(const IntSize&);
 
-    const Vector<float>& kernel() const { return m_kernelMatrix; }
+    const Vector<float>& kernel() const LIFETIME_BOUND { return m_kernelMatrix; }
     void setKernel(const Vector<float>&);
 
     float divisor() const { return m_divisor; }
-    bool setDivisor(float);
+    bool NODELETE setDivisor(float);
 
     float bias() const { return m_bias; }
-    bool setBias(float);
+    bool NODELETE setBias(float);
 
     IntPoint targetOffset() const { return m_targetOffset; }
-    bool setTargetOffset(const IntPoint&);
+    bool NODELETE setTargetOffset(const IntPoint&);
 
     EdgeModeType edgeMode() const { return m_edgeMode; }
-    bool setEdgeMode(EdgeModeType);
+    bool NODELETE setEdgeMode(EdgeModeType);
 
     FloatPoint kernelUnitLength() const { return m_kernelUnitLength; }
-    bool setKernelUnitLength(const FloatPoint&);
+    bool NODELETE setKernelUnitLength(const FloatPoint&);
 
     bool preserveAlpha() const { return m_preserveAlpha; }
-    bool setPreserveAlpha(bool);
+    bool NODELETE setPreserveAlpha(bool);
 
 private:
     FEConvolveMatrix(const IntSize& kernelSize, float divisor, float bias, const IntPoint& targetOffset, EdgeModeType, const FloatPoint& kernelUnitLength, bool preserveAlpha, const Vector<float>& kernelMatrix, DestinationColorSpace);
@@ -73,6 +75,8 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode>) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;

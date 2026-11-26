@@ -29,7 +29,10 @@
 #include "ResizeObservation.h"
 #include "ResizeObserverCallback.h"
 #include <wtf/Lock.h>
-#include <wtf/RefCounted.h>
+#include <wtf/OrderedHashSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/WeakHashMap.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
 namespace JSC {
@@ -45,15 +48,15 @@ class Element;
 struct ResizeObserverOptions;
 
 struct ResizeObserverData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
-    Vector<WeakPtr<ResizeObserver>> observers;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ResizeObserverData);
+    WeakHashSet<ResizeObserver> observers;
 };
 
 using NativeResizeObserverCallback = void (*)(const Vector<Ref<ResizeObserverEntry>>&, ResizeObserver&);
-using JSOrNativeResizeObserverCallback = std::variant<RefPtr<ResizeObserverCallback>, NativeResizeObserverCallback>;
+using JSOrNativeResizeObserverCallback = Variant<Ref<ResizeObserverCallback>, NativeResizeObserverCallback>;
 
-class ResizeObserver : public RefCounted<ResizeObserver>, public CanMakeWeakPtr<ResizeObserver> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ResizeObserver);
+class ResizeObserver : public RefCountedAndCanMakeWeakPtr<ResizeObserver> {
+    WTF_MAKE_TZONE_ALLOCATED(ResizeObserver);
 public:
     static Ref<ResizeObserver> create(Document&, Ref<ResizeObserverCallback>&&);
     static Ref<ResizeObserver> createNativeObserver(Document&, NativeResizeObserverCallback&&);
@@ -76,6 +79,10 @@ public:
 
     void resetObservationSize(Element&);
 
+    const Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>>& activeObservationTargets() const LIFETIME_BOUND WTF_REQUIRES_LOCK(m_observationTargetsLock) { return m_activeObservationTargets; }
+    const Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>>& targetsWaitingForFirstObservation() const LIFETIME_BOUND WTF_REQUIRES_LOCK(m_observationTargetsLock) { return m_targetsWaitingForFirstObservation; }
+    Lock& observationTargetsLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_observationTargetsLock) { return m_observationTargetsLock; }
+
     ResizeObserverCallback* callbackConcurrently();
     bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&) const;
 
@@ -86,17 +93,33 @@ private:
     void removeAllTargets();
     bool removeObservation(const Element&);
     void observeInternal(Element&, const ResizeObserverBoxOptions);
-    bool isNativeCallback();
-    bool isJSCallback();
+    bool NODELETE isNativeCallback();
+    bool NODELETE isJSCallback();
+
+    struct ResizeObservationHashFunctions {
+        using T = Ref<ResizeObservation>;
+        using PtrType = const ResizeObservation*;
+
+        static unsigned hash(const PtrType observation) { return PtrHash<Element*>::hash(observation->target()); }
+        static bool equal(const PtrType a, const PtrType b) { return a->target() == b->target(); }
+        static const bool safeToCompareToEmptyOrDeleted = true;
+
+        static unsigned hash(const T& observation) { return hash(observation.ptr()); }
+        static bool equal(const T& a, const T& b) { return equal(a.ptr(), b.ptr()); }
+        static bool equal(const PtrType a, const T& b) { return equal(a, b.ptr()); }
+        static bool equal(const T& a, const PtrType b) { return equal(a.ptr(), b); }
+    };
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
-    JSOrNativeResizeObserverCallback m_JSOrNativeCallback;
-    Vector<Ref<ResizeObservation>> m_observations;
+    const JSOrNativeResizeObserverCallback m_JSOrNativeCallback;
+    OrderedHashSet<Ref<ResizeObservation>, ResizeObservationHashFunctions> m_observations;
+    WeakHashMap<Element, Ref<ResizeObservation>, WeakPtrImplWithEventTargetData> m_observationMap;
 
     Vector<Ref<ResizeObservation>> m_activeObservations;
-    Vector<GCReachableRef<Element>> m_activeObservationTargets;
-    Vector<GCReachableRef<Element>> m_targetsWaitingForFirstObservation;
+    Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_activeObservationTargets WTF_GUARDED_BY_LOCK(m_observationTargetsLock);
+    Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_targetsWaitingForFirstObservation WTF_GUARDED_BY_LOCK(m_observationTargetsLock);
 
+    mutable Lock m_observationTargetsLock;
     bool m_hasSkippedObservations { false };
 };
 

@@ -49,7 +49,7 @@ unsigned short PerformanceNavigation::type() const
     if (!frame)
         return TYPE_NAVIGATE;
 
-    DocumentLoader* documentLoader = frame->loader().documentLoader();
+    auto* documentLoader = frame->loader().documentLoader();
     if (!documentLoader)
         return TYPE_NAVIGATE;
 
@@ -66,15 +66,15 @@ unsigned short PerformanceNavigation::type() const
 
 unsigned short PerformanceNavigation::redirectCount() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     if (!frame)
         return 0;
 
-    RefPtr loader = frame->loader().documentLoader();
-    if (!loader)
+    auto* documentLoader = frame->loader().documentLoader();
+    if (!documentLoader)
         return 0;
 
-    auto* metrics = loader->response().deprecatedNetworkLoadMetricsOrNull();
+    auto* metrics = documentLoader->response().deprecatedNetworkLoadMetricsOrNull();
     if (!metrics)
         return 0;
 

@@ -31,28 +31,28 @@ class StylePropertyShorthand {
 public:
     StylePropertyShorthand() = default;
 
-    template<unsigned numProperties> StylePropertyShorthand(CSSPropertyID id, const CSSPropertyID (&properties)[numProperties])
+    template<std::size_t numProperties> StylePropertyShorthand(CSSPropertyID id, std::span<const CSSPropertyID, numProperties> properties)
         : m_properties(properties)
-        , m_length(numProperties)
         , m_shorthandID(id)
     {
+        static_assert(numProperties != std::dynamic_extent);
     }
 
-    const CSSPropertyID* begin() const { return properties(); }
-    const CSSPropertyID* end() const { return properties() + length(); }
+    const CSSPropertyID* begin() const { return std::to_address(properties().begin()); }
+    const CSSPropertyID* end() const { return std::to_address(properties().end()); }
 
-    const CSSPropertyID* properties() const { return m_properties; }
-    unsigned length() const { return m_length; }
+    size_t length() const { return m_properties.size(); }
     CSSPropertyID id() const { return m_shorthandID; }
 
+    std::span<const CSSPropertyID> properties() const { return m_properties; }
+
 private:
-    const CSSPropertyID* m_properties { nullptr };
-    unsigned m_length { 0 };
+    std::span<const CSSPropertyID> m_properties;
     CSSPropertyID m_shorthandID { CSSPropertyInvalid };
 };
 
 // Custom StylePropertyShorthand function.
-StylePropertyShorthand transitionShorthandForParsing();
+StylePropertyShorthand NODELETE transitionShorthandForParsing();
 
 // Returns empty value if the property is not a shorthand.
 // The implementation is generated in StylePropertyShorthandFunctions.cpp.
@@ -63,7 +63,7 @@ StylePropertyShorthand shorthandForProperty(CSSPropertyID);
 using StylePropertyShorthandVector = Vector<StylePropertyShorthand, 4>;
 StylePropertyShorthandVector matchingShorthandsForLonghand(CSSPropertyID);
 
-unsigned indexOfShorthandForLonghand(CSSPropertyID, const StylePropertyShorthandVector&);
+unsigned NODELETE indexOfShorthandForLonghand(CSSPropertyID, const StylePropertyShorthandVector&);
 
 } // namespace WebCore
 

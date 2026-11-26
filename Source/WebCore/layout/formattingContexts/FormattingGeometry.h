@@ -27,8 +27,18 @@
 
 #include "FormattingContext.h"
 #include "LayoutBoxGeometry.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "StyleZoomPrimitives.h"
 
 namespace WebCore {
+
+namespace Style {
+struct InsetEdge;
+struct MarginEdge;
+struct PaddingEdge;
+struct PreferredSize;
+}
+
 namespace Layout {
 
 struct ComputedHorizontalMargin;
@@ -67,8 +77,8 @@ public:
     ComputedHorizontalMargin computedHorizontalMargin(const Box&, const HorizontalConstraints&) const;
     ComputedVerticalMargin computedVerticalMargin(const Box&, const HorizontalConstraints&) const;
 
-    std::optional<LayoutUnit> computedValue(const Length& geometryProperty, LayoutUnit containingBlockWidth) const;
-    std::optional<LayoutUnit> fixedValue(const Length& geometryProperty) const;
+    std::optional<LayoutUnit> computedValue(const auto&, LayoutUnit containingBlockWidth, const Style::ZoomFactor&) const;
+    std::optional<LayoutUnit> fixedValue(const auto&, const Style::ZoomFactor&) const;
 
     std::optional<LayoutUnit> computedMinHeight(const Box&, std::optional<LayoutUnit> containingBlockHeight = std::nullopt) const;
     std::optional<LayoutUnit> computedMaxHeight(const Box&, std::optional<LayoutUnit> containingBlockHeight = std::nullopt) const;
@@ -90,8 +100,8 @@ public:
     bool isTableFormattingGeometry() const { return formattingContext().isTableFormattingContext(); }
 
 protected:
-    const LayoutState& layoutState() const { return m_formattingContext.layoutState(); }
-    const FormattingContext& formattingContext() const { return m_formattingContext; }
+    const LayoutState& layoutState() const LIFETIME_BOUND { return m_formattingContext.layoutState(); }
+    const FormattingContext& formattingContext() const LIFETIME_BOUND { return m_formattingContext; }
 
 private:
     VerticalGeometry outOfFlowReplacedVerticalGeometry(const ElementBox&, const HorizontalConstraints&, const VerticalConstraints&, const OverriddenVerticalValues&) const;
@@ -109,16 +119,31 @@ private:
     LayoutUnit staticHorizontalPositionForOutOfFlowPositioned(const Box&, const HorizontalConstraints&) const;
 
     enum class HeightType { Min, Max, Normal };
-    std::optional<LayoutUnit> computedHeightValue(const Box&, HeightType, std::optional<LayoutUnit> containingBlockHeight) const;
+    template<HeightType> std::optional<LayoutUnit> computedHeightValue(const Box&, std::optional<LayoutUnit> containingBlockHeight) const;
 
     enum class WidthType { Min, Max, Normal };
-    std::optional<LayoutUnit> computedWidthValue(const Box&, WidthType, LayoutUnit containingBlockWidth) const;
+    template<WidthType> std::optional<LayoutUnit> computedWidthValue(const Box&, LayoutUnit containingBlockWidth) const;
 
     const FormattingContext& m_formattingContext;
 };
 
+std::optional<LayoutUnit> FormattingGeometry::computedValue(const auto& geometryProperty, LayoutUnit containingBlockWidth, const Style::ZoomFactor& zoom) const
+{
+    // In general, the computed value resolves the specified value as far as possible without laying out the content.
+    if (geometryProperty.isSpecified())
+        return Style::evaluate<LayoutUnit>(geometryProperty, containingBlockWidth, zoom);
+    return { };
 }
+
+std::optional<LayoutUnit> FormattingGeometry::fixedValue(const auto& geometryProperty, const Style::ZoomFactor& zoom) const
+{
+    if (auto fixed = geometryProperty.tryFixed())
+        return Style::evaluate<LayoutUnit>(*fixed, zoom);
+    return { };
 }
+
+} // namespace Layout
+} // namespace WebCore
 
 #define SPECIALIZE_TYPE_TRAITS_LAYOUT_FORMATTING_GEOMETRY(ToValueTypeName, predicate) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Layout::ToValueTypeName) \

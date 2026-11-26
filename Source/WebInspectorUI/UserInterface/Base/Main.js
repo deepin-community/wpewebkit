@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,10 +24,7 @@
  */
 
 WI.ContentViewCookieType = {
-    ApplicationCache: "application-cache",
     CookieStorage: "cookie-storage",
-    Database: "database",
-    DatabaseTable: "database-table",
     DOMStorage: "dom-storage",
     Resource: "resource", // includes Frame too.
     Timelines: "timelines"
@@ -63,8 +60,6 @@ WI.loaded = function()
     // Register observers for events from the InspectorBackend.
     if (InspectorBackend.registerAnimationDispatcher)
         InspectorBackend.registerAnimationDispatcher(WI.AnimationObserver);
-    if (InspectorBackend.registerApplicationCacheDispatcher)
-        InspectorBackend.registerApplicationCacheDispatcher(WI.ApplicationCacheObserver);
     if (InspectorBackend.registerBrowserDispatcher)
         InspectorBackend.registerBrowserDispatcher(WI.BrowserObserver);
     if (InspectorBackend.registerCPUProfilerDispatcher)
@@ -79,8 +74,6 @@ WI.loaded = function()
         InspectorBackend.registerDOMDispatcher(WI.DOMObserver);
     if (InspectorBackend.registerDOMStorageDispatcher)
         InspectorBackend.registerDOMStorageDispatcher(WI.DOMStorageObserver);
-    if (InspectorBackend.registerDatabaseDispatcher)
-        InspectorBackend.registerDatabaseDispatcher(WI.DatabaseObserver);
     if (InspectorBackend.registerDebuggerDispatcher)
         InspectorBackend.registerDebuggerDispatcher(WI.DebuggerObserver);
     if (InspectorBackend.registerHeapDispatcher)
@@ -120,7 +113,7 @@ WI.loaded = function()
         WI.targetManager = new WI.TargetManager,
         WI.networkManager = new WI.NetworkManager,
         WI.domStorageManager = new WI.DOMStorageManager,
-        WI.databaseManager = new WI.DatabaseManager,
+        WI.storageManager = new WI.StorageManager,
         WI.indexedDBManager = new WI.IndexedDBManager,
         WI.domManager = new WI.DOMManager,
         WI.cssManager = new WI.CSSManager,
@@ -128,7 +121,6 @@ WI.loaded = function()
         WI.runtimeManager = new WI.RuntimeManager,
         WI.heapManager = new WI.HeapManager,
         WI.memoryManager = new WI.MemoryManager,
-        WI.applicationCacheManager = new WI.ApplicationCacheManager,
         WI.timelineManager = new WI.TimelineManager,
         WI.auditManager = new WI.AuditManager,
         WI.debuggerManager = new WI.DebuggerManager,
@@ -140,6 +132,8 @@ WI.loaded = function()
         WI.deviceSettingsManager = new WI.DeviceSettingsManager,
     ];
 
+    WI.domUndoCoordinator = new WI.DOMUndoCoordinator;
+
     // Register for events.
     WI.debuggerManager.addEventListener(WI.DebuggerManager.Event.Paused, WI._debuggerDidPause, WI);
     WI.debuggerManager.addEventListener(WI.DebuggerManager.Event.Resumed, WI._debuggerDidResume, WI);
@@ -147,10 +141,10 @@ WI.loaded = function()
     WI.domManager.addEventListener(WI.DOMManager.Event.InspectModeStateChanged, WI._inspectModeStateChanged, WI);
     WI.domManager.addEventListener(WI.DOMManager.Event.DOMNodeWasInspected, WI._domNodeWasInspected, WI);
     WI.domStorageManager.addEventListener(WI.DOMStorageManager.Event.DOMStorageObjectWasInspected, WI._domStorageWasInspected, WI);
-    WI.databaseManager.addEventListener(WI.DatabaseManager.Event.DatabaseWasInspected, WI._databaseWasInspected, WI);
     WI.networkManager.addEventListener(WI.NetworkManager.Event.MainFrameDidChange, WI._mainFrameDidChange, WI);
     WI.networkManager.addEventListener(WI.NetworkManager.Event.FrameWasAdded, WI._frameWasAdded, WI);
     WI.browserManager.enable();
+    WI.storageManager.enable();
 
     WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, WI._mainResourceDidChange, WI);
 
@@ -183,10 +177,10 @@ WI.loaded = function()
 
     // Targets.
     WI.backendTarget = null;
-    WI._backendTargetAvailablePromise = new WI.WrappedPromise;
+    WI._backendTargetAvailablePromise = Promise.withResolvers();
 
     WI.pageTarget = null;
-    WI._pageTargetAvailablePromise = new WI.WrappedPromise;
+    WI._pageTargetAvailablePromise = Promise.withResolvers();
 
     // COMPATIBILITY (iOS 13.0): Target.exists was "replaced" by differentiating "web" debuggables
     // into "page" (direct) and "web-page" debuggables (multiplexing).
@@ -239,12 +233,16 @@ WI.contentLoaded = function()
     document.body.classList.add(WI.sharedApp.debuggableType);
     document.body.setAttribute("dir", WI.resolvedLayoutDirection());
 
+    if (WI.Platform.name === "mac")
+        WI._updateAccentColorClass();
+
     WI.layoutMeasurementContainer = document.body.appendChild(document.createElement("div"));
     WI.layoutMeasurementContainer.id = "layout-measurement-container";
 
     WI.settings.showJavaScriptTypeInformation.addEventListener(WI.Setting.Event.Changed, WI._showJavaScriptTypeInformationSettingChanged, WI);
     WI.settings.enableControlFlowProfiler.addEventListener(WI.Setting.Event.Changed, WI._enableControlFlowProfilerSettingChanged, WI);
     WI.settings.resourceCachingDisabled.addEventListener(WI.Setting.Event.Changed, WI._resourceCachingDisabledSettingChanged, WI);
+    WI.settings.clearNetworkOnNavigate.addEventListener(WI.Setting.Event.Changed, WI._clearResourceDataOnNavigateSettingChanged, WI);
     WI.settings.experimentalAllowInspectingInspector.addEventListener(WI.Setting.Event.Changed, WI._allowInspectingInspectorSettingChanged, WI);
 
     function setTabSize() {
@@ -416,15 +414,12 @@ WI.contentLoaded = function()
     WI._inspectModeTabBarButton.addEventListener(WI.ButtonNavigationItem.Event.Clicked, WI._toggleInspectMode, WI);
     inspectedPageControlNavigationItems.push(WI._inspectModeTabBarButton);
 
-    // COMPATIBILITY (iOS 12.2): Page.overrideSetting did not exist.
-    if (InspectorBackend.hasCommand("Page.overrideUserAgent") && InspectorBackend.hasCommand("Page.overrideSetting")) {
-        const deviceSettingsTooltip = WI.UIString("Device Settings");
-        WI._deviceSettingsTabBarButton = new WI.ActivateButtonNavigationItem("device-settings", deviceSettingsTooltip, deviceSettingsTooltip, InspectorFrontendHost.isRemote ? "Images/Device.svg" : "Images/Computer.svg");
-        WI._deviceSettingsTabBarButton.addEventListener(WI.ButtonNavigationItem.Event.Clicked, WI._handleDeviceSettingsTabBarButtonClicked, WI);
-        inspectedPageControlNavigationItems.push(WI._deviceSettingsTabBarButton);
+    const deviceSettingsTooltip = WI.UIString("Device Settings");
+    WI._deviceSettingsTabBarButton = new WI.ActivateButtonNavigationItem("device-settings", deviceSettingsTooltip, deviceSettingsTooltip, InspectorFrontendHost.isRemote ? "Images/Device.svg" : "Images/Computer.svg");
+    WI._deviceSettingsTabBarButton.addEventListener(WI.ButtonNavigationItem.Event.Clicked, WI._handleDeviceSettingsTabBarButtonClicked, WI);
+    inspectedPageControlNavigationItems.push(WI._deviceSettingsTabBarButton);
 
-        WI._deviceSettingsPopover = null;
-    }
+    WI._deviceSettingsPopover = null;
 
     if (InspectorFrontendHost.isRemote || WI.isDebugUIEnabled()) {
         let reloadToolTip;
@@ -450,7 +445,6 @@ WI.contentLoaded = function()
     WI.tabBar.addNavigationItemBefore(WI._consoleDividerNavigationItem);
 
     WI._consoleWarningsTabBarButton = new WI.ButtonNavigationItem("console-warnings", WI.UIString("0 Console warnings"), "Images/IssuesEnabled.svg");
-    WI._consoleWarningsTabBarButton.imageType = WI.ButtonNavigationItem.ImageType.IMG;
     WI._consoleWarningsTabBarButton.hidden = true;
     WI._consoleWarningsTabBarButton.addEventListener(WI.ButtonNavigationItem.Event.Clicked, function(event) {
         WI.showConsoleTab({
@@ -460,7 +454,6 @@ WI.contentLoaded = function()
     }, WI);
 
     WI._consoleErrorsTabBarButton = new WI.ButtonNavigationItem("console-errors", WI.UIString("0 Console errors"), "Images/ErrorsEnabled.svg");
-    WI._consoleErrorsTabBarButton.imageType = WI.ButtonNavigationItem.ImageType.IMG;
     WI._consoleErrorsTabBarButton.hidden = true;
     WI._consoleErrorsTabBarButton.addEventListener(WI.ButtonNavigationItem.Event.Clicked, function(event) {
         WI.showConsoleTab({
@@ -487,11 +480,6 @@ WI.contentLoaded = function()
         WI._dockedResizerElement = document.getElementById("docked-resizer");
         WI._dockedResizerElement.classList.add(WI.Popover.IgnoreAutoDismissClassName);
         WI._dockedResizerElement.addEventListener("mousedown", WI._handleDockedResizerMouseDown);
-    }
-
-    if (supportsUndocked) {
-        let undockedTitleAreaElement = document.getElementById("undocked-title-area");
-        undockedTitleAreaElement.addEventListener("mousedown", WI._handleUndockedTitleAreaMouseDown);
     }
 
     WI._dockingAvailable = false;
@@ -940,56 +928,27 @@ WI.resizeDockedFrameMouseDown = function(event)
 
     let isDockedBottom = WI.dockConfiguration === WI.DockConfiguration.Bottom;
 
-    let windowProperty = isDockedBottom ? "innerHeight" : "innerWidth";
-    let eventScreenProperty = isDockedBottom ? "screenY" : "screenX";
-    let eventClientProperty = isDockedBottom ? "clientY" : "clientX";
+    let windowDimensionProperty = isDockedBottom ? "innerHeight" : "innerWidth";
+    let cursorPositionProperty = isDockedBottom ? "screenY" : "screenX";
 
     let resizerElement = event.target;
-    let firstClientPosition = event[eventClientProperty];
-    let lastScreenPosition = event[eventScreenProperty];
+    let initialWindowDimension = window[windowDimensionProperty] * WI.getZoomFactor();
+    let initialCursorPosition = event[cursorPositionProperty];
 
     function dividerDrag(event)
     {
         if (event.button !== 0)
             return;
 
-        let position = event[eventScreenProperty];
-        let delta = position - lastScreenPosition;
-        let clientPosition = event[eventClientProperty];
-
-        lastScreenPosition = position;
-
-        if (WI.dockConfiguration === WI.DockConfiguration.Left) {
-            // If the mouse is travelling rightward but is positioned left of the resizer, ignore the event.
-            if (delta > 0 && clientPosition < firstClientPosition)
-                return;
-
-            // If the mouse is travelling leftward but is positioned to the right of the resizer, ignore the event.
-            if (delta < 0 && clientPosition > window[windowProperty])
-                return;
-
-            // We later subtract the delta from the current position, but since the inspected view and inspector view
-            // are flipped when docked to left, we want dragging to have the opposite effect from docked to right.
+        let delta = event[cursorPositionProperty] - initialCursorPosition;
+        if (WI.dockConfiguration === WI.DockConfiguration.Left)
             delta *= -1;
-        } else {
-            // If the mouse is travelling downward/rightward but is positioned above/left of the resizer, ignore the event.
-            if (delta > 0 && clientPosition < firstClientPosition)
-                return;
 
-            // If the mouse is travelling upward/leftward but is positioned below/right of the resizer, ignore the event.
-            if (delta < 0 && clientPosition > firstClientPosition)
-                return;
-        }
-
-        let dimension = Math.max(0, window[windowProperty] - delta);
-        // If zoomed in/out, there be greater/fewer document pixels shown, but the inspector's
-        // width or height should be the same in device pixels regardless of the document zoom.
-        dimension *= WI.getZoomFactor();
-
+        let newDimension = Math.max(0, Math.round(initialWindowDimension - delta));
         if (isDockedBottom)
-            InspectorFrontendHost.setAttachedWindowHeight(dimension);
+            InspectorFrontendHost.setAttachedWindowHeight(newDimension);
         else
-            InspectorFrontendHost.setAttachedWindowWidth(dimension);
+            InspectorFrontendHost.setAttachedWindowWidth(newDimension);
     }
 
     function elementDragEnd(event)
@@ -1412,9 +1371,7 @@ WI.tabContentViewClassForRepresentedObject = function(representedObject)
         return WI.SourcesTabContentView;
 
     if (representedObject instanceof WI.DOMStorageObject || representedObject instanceof WI.CookieStorageObject ||
-        representedObject instanceof WI.DatabaseTableObject || representedObject instanceof WI.DatabaseObject ||
-        representedObject instanceof WI.ApplicationCacheFrame || representedObject instanceof WI.IndexedDatabaseObjectStore ||
-        representedObject instanceof WI.IndexedDatabase || representedObject instanceof WI.IndexedDatabaseObjectStoreIndex)
+        representedObject instanceof WI.IndexedDatabaseObjectStore || representedObject instanceof WI.IndexedDatabase || representedObject instanceof WI.IndexedDatabaseObjectStoreIndex)
         return WI.StorageTabContentView;
 
     if (representedObject instanceof WI.AuditTestCase || representedObject instanceof WI.AuditTestGroup
@@ -1894,6 +1851,48 @@ WI._updateModifierKeys = function(event)
         WI.notifications.dispatchEventToListeners(WI.Notification.GlobalModifierKeysDidChange, event);
 };
 
+WI._updateAccentColorClass = function()
+{
+    let testElement = document.createElement("div");
+    testElement.style.color = "-apple-system-control-accent";
+    testElement.style.position = "absolute";
+    testElement.style.visibility = "hidden";
+    document.body.appendChild(testElement);
+    let accentColorString = getComputedStyle(testElement).color;
+    document.body.removeChild(testElement);
+
+    let accentColor = WI.Color.fromString(accentColorString);
+    if (!accentColor)
+        return;
+
+    let hsl = accentColor.hsl;
+    if (hsl[1] < 20) {
+        let isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        let darkFallbacks = {
+            accent: "hsl(212, 100%, 71%)",
+            selected: "hsl(219, 80%, 43%)",
+            selectedActive: "hsl(218, 85%, 62%)",
+            selectedText: "hsl(230, 51%, 36%)",
+        };
+        let lightFallbacks = {
+            accent: "hsl(212, 92%, 54%)",
+            selected: "hsl(212, 92%, 54%)",
+            selectedActive: "hsl(218, 85%, 52%)",
+            selectedText: "hsl(210, 98%, 93%)",
+        };
+        let {accent, selected, selectedActive, selectedText} = isDark ? darkFallbacks : lightFallbacks;
+        document.body.style.setProperty("--system-accent-color", accent);
+        document.body.style.setProperty("--selected-background-color", selected);
+        document.body.style.setProperty("--selected-background-color-active", selectedActive);
+        document.body.style.setProperty("--selected-text-background-color", selectedText);
+    } else {
+        document.body.style.removeProperty("--system-accent-color");
+        document.body.style.removeProperty("--selected-background-color");
+        document.body.style.removeProperty("--selected-background-color-active");
+        document.body.style.removeProperty("--selected-text-background-color");
+    }
+};
+
 WI._windowKeyDown = function(event)
 {
     WI._updateModifierKeys(event);
@@ -2083,21 +2082,10 @@ WI._handleDockedResizerMouseDown = function(event)
     WI.resizeDockedFrameMouseDown(event);
 };
 
-WI._handleUndockedTitleAreaMouseDown = function(event)
-{
-    WI.moveUndockedWindowMouseDown(event);
-};
-
 WI._domStorageWasInspected = function(event)
 {
     WI.showStorageTab({initiatorHint: WI.TabBrowser.TabNavigationInitiator.Inspect});
     WI.showRepresentedObject(event.data.domStorage, null, {ignoreSearchTab: true});
-};
-
-WI._databaseWasInspected = function(event)
-{
-    WI.showStorageTab({initiatorHint: WI.TabBrowser.TabNavigationInitiator.Inspect});
-    WI.showRepresentedObject(event.data.database, null, {ignoreSearchTab: true});
 };
 
 WI._domNodeWasInspected = function(event)
@@ -2609,10 +2597,14 @@ WI.setZoomFactor = function(factor)
 
 WI.resolvedLayoutDirection = function()
 {
-    let layoutDirection = WI.settings.debugLayoutDirection.value;
-    if (layoutDirection === WI.LayoutDirection.System)
-        layoutDirection = InspectorFrontendHost.userInterfaceLayoutDirection();
-    return layoutDirection;
+    // When the value is changed from Web Inspector Settings, Web Inspector reopens automatically.
+    // When the value is changed at the system level, the user is prompted to restart the computer.
+    if (!WI._layoutDirection) {
+        let layoutDirection = WI.settings.debugLayoutDirection.value;
+        WI._layoutDirection = layoutDirection === WI.LayoutDirection.System ? InspectorFrontendHost.userInterfaceLayoutDirection() : layoutDirection;
+    }
+
+    return WI._layoutDirection;
 };
 
 WI.resolveLayoutDirectionForElement = function(element)
@@ -2642,27 +2634,6 @@ WI.setLayoutDirection = function(value)
     InspectorFrontendHost.reopen();
 };
 
-WI.undockedTitleAreaHeight = function()
-{
-    if (WI.dockConfiguration !== WI.DockConfiguration.Undocked)
-        return 0;
-
-    if (WI.Platform.name === "mac") {
-        switch (WI.Platform.version.name) {
-        case "monterey":
-        case "big-sur":
-            /* Keep in sync with `--undocked-title-area-height` CSS variable. */
-            return 27 / WI.getZoomFactor();
-
-        case "catalina":
-            /* Keep in sync with `--undocked-title-area-height` CSS variable. */
-            return 22 / WI.getZoomFactor();
-        }
-    }
-
-    return 0;
-};
-
 WI._showTabAtIndexFromShortcut = function(i)
 {
     if (i <= WI.tabBar.tabCount) {
@@ -2674,30 +2645,51 @@ WI._showTabAtIndexFromShortcut = function(i)
 
 WI._showJavaScriptTypeInformationSettingChanged = function(event)
 {
-    if (WI.settings.showJavaScriptTypeInformation.value) {
-        for (let target of WI.targets)
+    let shouldEnable = WI.settings.showJavaScriptTypeInformation.value;
+    for (let target of WI.targets) {
+        // FIXME: <https://webkit.org/b/298910> Add Runtime support for FrameTarget.
+        if (target instanceof WI.FrameTarget)
+            continue;
+
+        if (shouldEnable)
             target.RuntimeAgent.enableTypeProfiler();
-    } else {
-        for (let target of WI.targets)
+        else
             target.RuntimeAgent.disableTypeProfiler();
     }
 };
 
 WI._enableControlFlowProfilerSettingChanged = function(event)
 {
-    if (WI.settings.enableControlFlowProfiler.value) {
-        for (let target of WI.targets)
+    let shouldEnable = WI.settings.enableControlFlowProfiler.value;
+    for (let target of WI.targets) {
+        // FIXME: <https://webkit.org/b/298910> Add Runtime support for FrameTarget.
+        if (target instanceof WI.FrameTarget)
+            continue;
+
+        if (shouldEnable)
             target.RuntimeAgent.enableControlFlowProfiler();
-    } else {
-        for (let target of WI.targets)
+        else
             target.RuntimeAgent.disableControlFlowProfiler();
     }
 };
 
 WI._resourceCachingDisabledSettingChanged = function(event)
 {
-    for (let target of WI.targets)
+    for (let target of WI.targets) {
+        // FIXME: <https://webkit.org/b/298979> Add Network support for FrameTarget.
+        if (target instanceof WI.FrameTarget)
+            continue;
+
         target.NetworkAgent.setResourceCachingDisabled(WI.settings.resourceCachingDisabled.value);
+    }
+};
+
+WI._clearResourceDataOnNavigateSettingChanged = function(event)
+{
+    for (let target of WI.targets) {
+        if (target.hasCommand("Network.setClearResourceDataOnNavigate"))
+            target.NetworkAgent.setClearResourceDataOnNavigate(WI.settings.clearNetworkOnNavigate.value);
+    }
 };
 
 WI._allowInspectingInspectorSettingChanged = function(event)
@@ -2878,7 +2870,7 @@ WI.linkifyElement = function(linkElement, sourceCodeLocation, options = {}) {
     linkElement.addEventListener("click", showSourceCodeLocation);
     linkElement.addEventListener("contextmenu", (event) => {
         let contextMenu = WI.ContextMenu.createFromEvent(event);
-        WI.appendContextMenuItemsForSourceCode(contextMenu, sourceCodeLocation);
+        WI.appendContextMenuItemsForNetworkResource(contextMenu, sourceCodeLocation);
     });
 };
 
@@ -2996,16 +2988,12 @@ WI._redoKeyboardShortcut = function(event)
 
 WI.undo = function()
 {
-    let target = WI.assumingMainTarget();
-    if (target.hasCommand("DOM.undo"))
-        target.DOMAgent.undo();
+    WI.domUndoCoordinator.undo();
 };
 
 WI.redo = function()
 {
-    let target = WI.assumingMainTarget();
-    if (target.hasCommand("DOM.redo"))
-        target.DOMAgent.redo();
+    WI.domUndoCoordinator.redo();
 };
 
 WI.highlightRangesWithStyleClass = function(element, resultRanges, styleClass, changes)
@@ -3224,6 +3212,14 @@ Object.defineProperty(WI, "targets",
 WI.assumingMainTarget = function()
 {
     return WI.mainTarget;
+};
+
+// Site Isolation runs cross-origin iframes in separate WebContent processes, each surfaced to the
+// frontend as its own WI.FrameTarget (rather than a WI.Frame in the page tree). The presence of any
+// FrameTarget is therefore the signal that Site Isolation is active for this inspection.
+WI.isSiteIsolationEnabled = function()
+{
+    return WI.targets.some((target) => target instanceof WI.FrameTarget);
 };
 
 WI.reset = async function()

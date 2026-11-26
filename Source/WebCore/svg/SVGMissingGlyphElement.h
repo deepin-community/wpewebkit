@@ -25,7 +25,7 @@
 namespace WebCore {
 
 class SVGMissingGlyphElement final : public SVGElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGMissingGlyphElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGMissingGlyphElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGMissingGlyphElement);
 public:
     static Ref<SVGMissingGlyphElement> create(const QualifiedName&, Document&);
@@ -33,7 +33,7 @@ public:
 private:
     SVGMissingGlyphElement(const QualifiedName&, Document&);
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
 };
 
 } // namespace WebCore

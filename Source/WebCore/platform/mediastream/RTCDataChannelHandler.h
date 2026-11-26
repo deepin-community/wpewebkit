@@ -27,18 +27,18 @@
 
 #if ENABLE(WEB_RTC)
 
-#include "RTCPriorityType.h"
-#include "ScriptExecutionContextIdentifier.h"
+#include <WebCore/RTCPriorityType.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 struct RTCDataChannelInit {
-    std::optional<bool> ordered;
+    bool ordered;
     std::optional<unsigned short> maxPacketLifeTime;
     std::optional<unsigned short> maxRetransmits;
     String protocol;
-    std::optional<bool> negotiated;
+    bool negotiated;
     std::optional<unsigned short> id;
     RTCPriorityType priority { RTCPriorityType::Low };
 
@@ -55,8 +55,8 @@ inline RTCDataChannelInit RTCDataChannelInit::isolatedCopy() const &
 
 inline RTCDataChannelInit RTCDataChannelInit::isolatedCopy() &&
 {
-    auto copy = WTFMove(*this);
-    copy.protocol = WTFMove(copy.protocol).isolatedCopy();
+    auto copy = WTF::move(*this);
+    copy.protocol = WTF::move(copy.protocol).isolatedCopy();
     return copy;
 }
 
@@ -66,7 +66,7 @@ class RTCDataChannelHandler {
 public:
     virtual ~RTCDataChannelHandler() = default;
 
-    virtual void setClient(RTCDataChannelHandlerClient&, ScriptExecutionContextIdentifier) = 0;
+    virtual void setClient(RTCDataChannelHandlerClient&, std::optional<ScriptExecutionContextIdentifier>) = 0;
 
     virtual bool sendStringData(const CString&) = 0;
     virtual bool sendRawData(std::span<const uint8_t>) = 0;

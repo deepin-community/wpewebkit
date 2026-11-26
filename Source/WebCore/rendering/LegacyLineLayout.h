@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "LegacyInlineFlowBox.h"
-#include "LineWidth.h"
-#include "RenderLineBoxList.h"
-#include "RenderStyleConstants.h"
-#include "TrailingObjects.h"
+#include <WebCore/LegacyInlineFlowBox.h>
+#include <WebCore/LineWidth.h>
+#include <WebCore/RenderLineBoxList.h>
+#include <WebCore/RenderStyleConstants.h>
+#include <WebCore/TrailingObjects.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -49,24 +50,25 @@ struct WordMeasurement;
 template <class Run> class BidiRunList;
 
 class LegacyLineLayout {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(LegacyLineLayout);
 public:
     LegacyLineLayout(RenderBlockFlow&);
     ~LegacyLineLayout();
 
-    RenderLineBoxList& lineBoxes() { return m_lineBoxes; }
-    const RenderLineBoxList& lineBoxes() const { return m_lineBoxes; }
-
-    LegacyRootInlineBox* legacyRootBox() const { return downcast<LegacyRootInlineBox>(m_lineBoxes.firstLegacyLineBox()); }
+    LegacyRootInlineBox* legacyRootBox() const { return m_legacyRootInlineBox.get(); }
+    void deleteLegacyRootBox(bool runCleanup = false);
 
     void layoutLineBoxes();
+    void shiftLineBy(LayoutUnit shiftX, LayoutUnit shiftY);
 
     LegacyRootInlineBox* constructLine(BidiRunList<BidiRun>&, const LineInfo&);
     void addOverflowFromInlineChildren();
 
-    size_t lineCount() const;
+    size_t NODELETE lineCount() const;
 
     static void appendRunsForObject(BidiRunList<BidiRun>*, int start, int end, RenderObject&, InlineBidiResolver&);
+
+    static bool shouldSkipCreatingRunsForObject(RenderObject&);
 
 private:
     std::unique_ptr<LegacyRootInlineBox> createRootInlineBox();
@@ -80,11 +82,11 @@ private:
     void layoutRunsAndFloats(bool hasInlineChild);
     void layoutRunsAndFloatsInRange(InlineBidiResolver&);
 
-    const RenderStyle& style() const;
-    const LocalFrameViewLayoutContext& layoutContext() const;
+    const Style::ComputedStyle& NODELETE style() const LIFETIME_BOUND;
+    const LocalFrameViewLayoutContext& NODELETE layoutContext() const;
 
     RenderBlockFlow& m_flow;
-    RenderLineBoxList m_lineBoxes;
+    std::unique_ptr<LegacyRootInlineBox> m_legacyRootInlineBox;
 };
 
 };

@@ -23,14 +23,19 @@
 #include "config.h"
 #include "Event.h"
 
+#include "DOMWrapperWorld.h"
 #include "Document.h"
 #include "EventNames.h"
 #include "EventPath.h"
 #include "EventTarget.h"
 #include "InspectorInstrumentation.h"
+#include "JSDOMGlobalObject.h"
+#include "JSNodeCustomInlines.h"
 #include "LocalDOMWindow.h"
 #include "Performance.h"
+#include "ScriptWrappableInlines.h"
 #include "UserGestureIndicator.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include "WorkerGlobalScope.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -40,7 +45,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Event);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Event);
 
 ALWAYS_INLINE Event::Event(MonotonicTime createTime, enum EventInterfaceType eventInterface, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
     : m_isInitialized { !type.isNull() }
@@ -53,14 +58,16 @@ ALWAYS_INLINE Event::Event(MonotonicTime createTime, enum EventInterfaceType eve
     , m_defaultHandled { false }
     , m_isDefaultEventHandlerIgnored { false }
     , m_isTrusted { isTrusted == IsTrusted::Yes }
+    , m_isTrustedForBindingsOnly { false }
     , m_isExecutingPassiveEventListener { false }
     , m_currentTargetIsInShadowTree { false }
+    , m_isAutofillEvent { false }
     , m_eventPhase { NONE }
-    , m_eventInterface(enumToUnderlyingType(eventInterface))
+    , m_eventInterface(std::to_underlying(eventInterface))
     , m_type { type }
     , m_createTime { createTime }
 {
-    ASSERT(m_eventInterface == enumToUnderlyingType(eventInterface));
+    ASSERT(m_eventInterface == std::to_underlying(eventInterface));
 }
 
 Event::Event(enum EventInterfaceType eventInterface, IsTrusted isTrusted)
@@ -87,6 +94,7 @@ Event::Event(enum EventInterfaceType eventInterface, const AtomString& eventType
 {
     ASSERT(!eventType.isNull());
     m_isConstructedFromInitializer = true;
+    m_isTrustedForBindingsOnly = initializer.trustedForBindingsOnly;
 }
 
 Event::~Event() = default;
@@ -129,19 +137,17 @@ void Event::setTarget(RefPtr<EventTarget>&& target)
     if (m_target == target)
         return;
 
-    m_target = WTFMove(target);
+    {
+        Locker targetLocker { m_targetLock };
+        m_target = WTF::move(target);
+    }
     if (m_target)
         receivedTarget();
 }
 
-RefPtr<EventTarget> Event::protectedCurrentTarget() const
-{
-    return m_currentTarget;
-}
-
 void Event::setCurrentTarget(RefPtr<EventTarget>&& currentTarget, std::optional<bool> isInShadowTree)
 {
-    m_currentTarget = WTFMove(currentTarget);
+    m_currentTarget = WTF::move(currentTarget);
     if (isInShadowTree)
         m_currentTargetIsInShadowTree = *isInShadowTree;
     else {
@@ -152,14 +158,16 @@ void Event::setCurrentTarget(RefPtr<EventTarget>&& currentTarget, std::optional<
 
 void Event::setEventPath(const EventPath& path)
 {
-    m_eventPath = &path;
+    m_eventPath = path;
 }
 
-Vector<Ref<EventTarget>> Event::composedPath() const
+Vector<Ref<EventTarget>> Event::composedPath(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
     if (!m_eventPath)
         return Vector<Ref<EventTarget>>();
-    return m_eventPath->computePathUnclosedToTarget(*protectedCurrentTarget());
+    if (downcast<JSDOMGlobalObject>(&lexicalGlobalObject)->world().shadowRootIsAlwaysOpen())
+        return m_eventPath->computePathTreatingAllShadowRootsAsOpen();
+    return m_eventPath->computePathUnclosedToTarget(*protect(currentTarget()));
 }
 
 void Event::setUnderlyingEvent(Event* underlyingEvent)
@@ -176,9 +184,9 @@ DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context)
 {
     RefPtr<Performance> performance;
     if (auto* globalScope = dynamicDowncast<WorkerGlobalScope>(context))
-        performance = &globalScope->performance();
-    else if (RefPtr window = downcast<Document>(context).domWindow())
-        performance = &window->performance();
+        performance = globalScope->performance();
+    else if (RefPtr window = downcast<Document>(context).window())
+        performance = window->performance();
 
     if (!performance)
         return 0;
@@ -201,6 +209,16 @@ void Event::resetAfterDispatch()
 
     InspectorInstrumentation::eventDidResetAfterDispatch(*this);
 }
+
+template<typename Visitor>
+void Event::visitInGCThread(Visitor& visitor)
+{
+    Locker targetLocker { m_targetLock };
+    addWebCoreOpaqueRoot(visitor, dynamicDowncast<Node>(m_target.get()));
+}
+
+template void Event::visitInGCThread(JSC::AbstractSlotVisitor&);
+template void Event::visitInGCThread(JSC::SlotVisitor&);
 
 String Event::debugDescription() const
 {

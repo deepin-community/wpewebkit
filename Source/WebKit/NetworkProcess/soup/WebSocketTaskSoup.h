@@ -35,10 +35,10 @@ namespace WebKit {
 class NetworkSocketChannel;
 struct SessionSet;
 
-class WebSocketTask {
+class WebSocketTask : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebSocketTask> {
     WTF_MAKE_TZONE_ALLOCATED(WebSocketTask);
 public:
-    WebSocketTask(NetworkSocketChannel&, const WebCore::ResourceRequest&, SoupSession*, SoupMessage*, const String& protocol);
+    static Ref<WebSocketTask> create(NetworkSocketChannel&, const WebCore::ResourceRequest&, SoupSession*, SoupMessage*, const String& protocol);
     ~WebSocketTask();
 
     void sendString(std::span<const uint8_t>, CompletionHandler<void()>&&);
@@ -51,6 +51,8 @@ public:
     SessionSet* sessionSet() { return nullptr; }
 
 private:
+    WebSocketTask(NetworkSocketChannel&, const WebCore::ResourceRequest&, SoupSession*, SoupMessage*, const String& protocol);
+
     void didConnect(GRefPtr<SoupWebsocketConnection>&&);
     void didFail(String&&);
     void didClose(unsigned short code, const String& reason);
@@ -62,7 +64,7 @@ private:
     static void didReceiveErrorCallback(WebSocketTask*, GError*);
     static void didCloseCallback(WebSocketTask*);
 
-    NetworkSocketChannel& m_channel;
+    WeakPtr<NetworkSocketChannel> m_channel;
     WebCore::ResourceRequest m_request;
     GRefPtr<SoupMessage> m_handshakeMessage;
     GRefPtr<SoupWebsocketConnection> m_connection;

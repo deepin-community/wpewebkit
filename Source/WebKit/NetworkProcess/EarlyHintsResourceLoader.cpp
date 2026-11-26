@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,10 +27,13 @@
 #include "EarlyHintsResourceLoader.h"
 
 #include "MessageSenderInlines.h"
+#include "NetworkConnectionToWebProcess.h"
 #include "NetworkLoadParameters.h"
+#include "NetworkProcess.h"
 #include "PreconnectTask.h"
 #include "WebPageMessages.h"
 #include <WebCore/ContentSecurityPolicy.h>
+#include <WebCore/HTTPStatusCodes.h>
 #include <WebCore/LinkHeader.h>
 #include <WebCore/ResourceLoaderOptions.h>
 #include <WebCore/ResourceRequest.h>
@@ -39,10 +42,21 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(CONTENT_EXTENSIONS)
+#include "NetworkContentRuleListManager.h"
+#include <WebCore/ContentExtensionsBackend.h>
+#include <WebCore/ContentRuleListResults.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EarlyHintsResourceLoader);
+
+Ref<EarlyHintsResourceLoader> EarlyHintsResourceLoader::create(NetworkResourceLoader& loader)
+{
+    return adoptRef(*new EarlyHintsResourceLoader(loader));
+}
 
 EarlyHintsResourceLoader::EarlyHintsResourceLoader(NetworkResourceLoader& loader)
     : m_loader(&loader)
@@ -65,7 +79,7 @@ void EarlyHintsResourceLoader::enqueueSecurityPolicyViolationEvent(SecurityPolic
 
 void EarlyHintsResourceLoader::handleEarlyHintsResponse(ResourceResponse&& response)
 {
-    RELEASE_ASSERT(response.httpStatusCode() == 103);
+    RELEASE_ASSERT(response.httpStatusCode() == httpStatus103EarlyHints);
 
     if (!m_loader)
         return;
@@ -101,7 +115,7 @@ void EarlyHintsResourceLoader::handleEarlyHintsResponse(ResourceResponse&& respo
 
 ResourceRequest EarlyHintsResourceLoader::constructPreconnectRequest(const ResourceRequest& originalRequest, const URL& url)
 {
-    ResourceRequest request { url };
+    ResourceRequest request { URL { url } };
 
     // firstPartyForCookies and user agent are part of the HTTP socket pool keys in CFNetwork: rdar://59434166
     auto firstPartyForCookies = originalRequest.firstPartyForCookies();
@@ -118,23 +132,26 @@ ResourceRequest EarlyHintsResourceLoader::constructPreconnectRequest(const Resou
 void EarlyHintsResourceLoader::startPreconnectTask(const URL& baseURL, const LinkHeader& header, const ContentSecurityPolicy& contentSecurityPolicy)
 {
 #if ENABLE(SERVER_PRECONNECT)
-    if (!m_loader || !m_loader->parameters().linkPreconnectEarlyHintsEnabled)
+    RefPtr loader = m_loader;
+    if (!loader || !loader->parameters().linkPreconnectEarlyHintsEnabled)
         return;
 
     URL url(baseURL, header.url());
     if (!url.isValid() || url.protocol() != "https"_s)
         return;
 
-    const auto& originalRequest = m_loader->originalRequest();
-    if (!contentSecurityPolicy.allowConnectToSource(url, ContentSecurityPolicy::RedirectResponseReceived::No, originalRequest.url()))
+    const auto& originalRequest = loader->originalRequest();
+    if (!contentSecurityPolicy.allowConnectToSource(url, { }, ContentSecurityPolicy::RedirectResponseReceived::No, originalRequest.url()))
         return;
 
-    auto* networkSession = m_loader->connectionToWebProcess().networkSession();
+    CheckedPtr networkSession = protect(loader->connectionToWebProcess())->networkSession();
     if (!networkSession)
         return;
 
+    const auto& loaderParameters = loader->parameters();
+
     NetworkLoadParameters parameters;
-    auto globalFrameID = m_loader->globalFrameID();
+    auto globalFrameID = loader->globalFrameID();
     parameters.webPageProxyID = globalFrameID.webPageProxyID;
     parameters.webPageID = globalFrameID.webPageID;
     parameters.webFrameID = globalFrameID.frameID;
@@ -143,15 +160,82 @@ void EarlyHintsResourceLoader::startPreconnectTask(const URL& baseURL, const Lin
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
     parameters.request = constructPreconnectRequest(originalRequest, url);
-    parameters.isNavigatingToAppBoundDomain = m_loader->parameters().isNavigatingToAppBoundDomain;
-    (new PreconnectTask(*networkSession, WTFMove(parameters), [](const WebCore::ResourceError&, const WebCore::NetworkLoadMetrics&) { }))->start();
+    parameters.isNavigatingToAppBoundDomain = loaderParameters.isNavigatingToAppBoundDomain;
+    parameters.advancedPrivacyProtections = loaderParameters.advancedPrivacyProtections;
+    parameters.allowPrivacyProxy = loaderParameters.allowPrivacyProxy;
+    parameters.hadMainFrameMainResourcePrivateRelayed = loaderParameters.hadMainFrameMainResourcePrivateRelayed;
 
-    addConsoleMessage(MessageSource::Network, MessageLevel::Info, makeString("Preconnecting to "_s, url.string(), " due to early hint"_s));
+    startPreconnectTaskAfterContentRuleListCheck(WTF::move(parameters), baseURL);
 #else
     UNUSED_PARAM(baseURL);
     UNUSED_PARAM(header);
     UNUSED_PARAM(contentSecurityPolicy);
-#endif
+#endif // ENABLE(SERVER_PRECONNECT)
+}
+
+void EarlyHintsResourceLoader::startPreconnectTaskAfterContentRuleListCheck(NetworkLoadParameters&& parameters, const URL& mainDocumentURL)
+{
+#if ENABLE(SERVER_PRECONNECT)
+#if ENABLE(CONTENT_EXTENSIONS)
+    RefPtr loader = m_loader;
+    if (!loader)
+        return;
+
+    // Without an identifier we cannot tell which content rule lists apply, so fail closed: a
+    // preconnect is only an optimization, while issuing one puts a DNS query and a TLS ClientHello
+    // carrying the target's SNI on the wire.
+    auto userContentControllerIdentifier = loader->parameters().userContentControllerIdentifier;
+    if (!userContentControllerIdentifier)
+        return;
+
+    // This is a main-frame navigation (handleEarlyHintsResponse bails out otherwise), so the
+    // navigation's own URL is both the main document URL and the frame URL, matching what
+    // ContentExtensionsBackend::processContentRuleListsForLoad computes for the renderer-side path.
+    Ref networkProcess = protect(loader->connectionToWebProcess())->networkProcess();
+    protect(networkProcess->networkContentRuleListManager())->contentExtensionsBackend(*userContentControllerIdentifier, [weakThis = WeakPtr { *this }, parameters = WTF::move(parameters), mainDocumentURL = URL { mainDocumentURL }](auto& backend) mutable {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+
+        auto url = parameters.request.url();
+        auto results = backend.processContentRuleListsForPingLoad(url, mainDocumentURL, mainDocumentURL, parameters.request.httpMethod(), ContentExtensions::ContentExtensionsBackend::MainFrameContext::Yes);
+        if (results.shouldBlock()) {
+            protectedThis->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Info, makeString("Content blocker prevented frame displaying "_s, mainDocumentURL.string(), " from preconnecting to "_s, url.string(), " due to early hint"_s));
+            return;
+        }
+        ContentExtensions::applyResultsToRequest(WTF::move(results), nullptr, parameters.request);
+
+        protectedThis->startPreconnectTaskIgnoringContentRuleLists(WTF::move(parameters));
+    });
+#else
+    UNUSED_PARAM(mainDocumentURL);
+    startPreconnectTaskIgnoringContentRuleLists(WTF::move(parameters));
+#endif // ENABLE(CONTENT_EXTENSIONS)
+#else
+    UNUSED_PARAM(parameters);
+    UNUSED_PARAM(mainDocumentURL);
+#endif // ENABLE(SERVER_PRECONNECT)
+}
+
+void EarlyHintsResourceLoader::startPreconnectTaskIgnoringContentRuleLists(NetworkLoadParameters&& parameters)
+{
+#if ENABLE(SERVER_PRECONNECT)
+    RefPtr loader = m_loader;
+    if (!loader)
+        return;
+
+    CheckedPtr networkSession = protect(loader->connectionToWebProcess())->networkSession();
+    if (!networkSession)
+        return;
+
+    auto url = parameters.request.url();
+    Ref preconnectTask = PreconnectTask::create(*networkSession, WTF::move(parameters));
+    preconnectTask->start();
+
+    addConsoleMessage(MessageSource::Network, MessageLevel::Info, makeString("Preconnecting to "_s, url.string(), " due to early hint"_s));
+#else
+    UNUSED_PARAM(parameters);
+#endif // ENABLE(SERVER_PRECONNECT)
 }
 
 } // namespace WebKit

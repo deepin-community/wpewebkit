@@ -27,8 +27,10 @@
 #include "PushMessageData.h"
 
 #include "Blob.h"
+#include "ExceptionOr.h"
 #include "JSDOMGlobalObject.h"
 #include "TextResourceDecoder.h"
+#include <JavaScriptCore/GenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -36,7 +38,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(PushMessageData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PushMessageData);
 
 ExceptionOr<Ref<JSC::ArrayBuffer>> PushMessageData::arrayBuffer()
 {

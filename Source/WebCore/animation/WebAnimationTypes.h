@@ -25,14 +25,14 @@
 
 #pragma once
 
-#include "CSSPropertyNames.h"
-#include "CSSValue.h"
-#include "EventTarget.h"
+#include <WebCore/CSSPropertyNames.h>
+#include <WebCore/EventTarget.h>
+#include <WebCore/WebAnimationTime.h>
 #include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/OrderedHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringHash.h>
@@ -40,23 +40,11 @@
 namespace WebCore {
 
 class AnimationEventBase;
-class AnimationList;
 class CSSAnimation;
+class CSSOMKeywordValue;
 class CSSTransition;
 class StyleOriginatedAnimation;
 class WebAnimation;
-
-struct WebAnimationsMarkableDoubleTraits {
-    static bool isEmptyValue(double value)
-    {
-        return std::isnan(value);
-    }
-
-    static constexpr double emptyValue()
-    {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-};
 
 enum class AnimationImpact : uint8_t {
     RequiresRecomposite     = 1 << 0,
@@ -64,21 +52,20 @@ enum class AnimationImpact : uint8_t {
 };
 
 enum class UseAcceleratedAction : bool { No, Yes };
+enum class UseCachedCurrentTime : bool { No, Yes };
+enum class EndpointInclusiveActiveInterval : bool { No, Yes };
 
 enum class WebAnimationType : uint8_t { CSSAnimation, CSSTransition, WebAnimation };
 
-using MarkableDouble = Markable<double, WebAnimationsMarkableDoubleTraits>;
-
 using WeakStyleOriginatedAnimations = Vector<WeakPtr<StyleOriginatedAnimation, WeakPtrImplWithEventTargetData>>;
-using AnimationCollection = ListHashSet<Ref<WebAnimation>>;
+using AnimationCollection = OrderedHashSet<Ref<WebAnimation>>;
 using AnimationEvents = Vector<Ref<AnimationEventBase>>;
-using CSSAnimationCollection = ListHashSet<Ref<CSSAnimation>>;
+using CSSAnimationCollection = OrderedHashSet<Ref<CSSAnimation>>;
 
-using AnimatableCSSProperty = std::variant<CSSPropertyID, AtomString>;
+using AnimatableCSSProperty = Variant<CSSPropertyID, AtomString>;
 using AnimatableCSSPropertyToTransitionMap = HashMap<AnimatableCSSProperty, Ref<CSSTransition>>;
 
 enum class AcceleratedEffectProperty : uint16_t {
-    Invalid = 1 << 0,
     Opacity = 1 << 1,
     Transform = 1 << 2,
     Translate = 1 << 3,
@@ -106,7 +93,7 @@ constexpr OptionSet<AcceleratedEffectProperty> transformRelatedAcceleratedProper
 };
 
 struct CSSPropertiesBitSet {
-    WTF::BitSet<numCSSProperties> m_properties { };
+    WTF::BitSet<cssPropertyIDEnumValueCount> m_properties { };
 };
 
 } // namespace WebCore

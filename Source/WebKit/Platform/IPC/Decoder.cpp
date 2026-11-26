@@ -30,22 +30,21 @@
 #include "Logging.h"
 #include "MessageFlags.h"
 #include <stdio.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace IPC {
 
-static uint8_t* copyBuffer(std::span<const uint8_t> buffer)
+static MallocSpan<uint8_t> copyBuffer(std::span<const uint8_t> buffer)
 {
-    uint8_t* bufferCopy;
-    const size_t bufferSize = buffer.size_bytes();
-    if (!tryFastMalloc(bufferSize).getValue(bufferCopy)) {
-        RELEASE_LOG_FAULT(IPC, "Decoder::copyBuffer: tryFastMalloc(%lu) failed", bufferSize);
-        return nullptr;
+    auto bufferCopy = MallocSpan<uint8_t>::tryMalloc(buffer.size());
+    if (!bufferCopy) {
+        RELEASE_LOG_FAULT(IPC, "Decoder::copyBuffer: tryMalloc(%zu) failed", buffer.size());
+        return { };
     }
-
-    memcpy(bufferCopy, buffer.data(), bufferSize);
+    memcpySpan(bufferCopy.mutableSpan(), buffer);
     return bufferCopy;
 }
 
@@ -53,18 +52,20 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Decoder);
 
 std::unique_ptr<Decoder> Decoder::create(std::span<const uint8_t> buffer, Vector<Attachment>&& attachments)
 {
-    return Decoder::create({ copyBuffer(buffer), buffer.size() }, [](auto buffer) { fastFree(const_cast<uint8_t*>(buffer.data())); }, WTFMove(attachments)); // NOLINT
+    auto bufferCopy = copyBuffer(buffer);
+    auto bufferCopySpan = bufferCopy.span();
+    return Decoder::create(bufferCopySpan, [bufferCopy = WTF::move(bufferCopy)](auto) { }, WTF::move(attachments)); // NOLINT
 }
 
 std::unique_ptr<Decoder> Decoder::create(std::span<const uint8_t> buffer, BufferDeallocator&& bufferDeallocator, Vector<Attachment>&& attachments)
 {
     ASSERT(bufferDeallocator);
     ASSERT(!!buffer.data());
-    if (UNLIKELY(!buffer.data())) {
-        RELEASE_LOG_FAULT(IPC, "Decoder::create() called with a null buffer (buffer size: %lu)", buffer.size_bytes());
+    if (!buffer.data()) [[unlikely]] {
+        RELEASE_LOG_FAULT(IPC, "Decoder::create() called with a null buffer (buffer size: %zu)", buffer.size_bytes());
         return nullptr;
     }
-    auto decoder = std::unique_ptr<Decoder>(new Decoder(buffer, WTFMove(bufferDeallocator), WTFMove(attachments)));
+    auto decoder = std::unique_ptr<Decoder>(new Decoder(buffer, WTF::move(bufferDeallocator), WTF::move(attachments)));
     if (!decoder->isValid())
         return nullptr;
     return decoder;
@@ -73,33 +74,39 @@ std::unique_ptr<Decoder> Decoder::create(std::span<const uint8_t> buffer, Buffer
 Decoder::Decoder(std::span<const uint8_t> buffer, BufferDeallocator&& bufferDeallocator, Vector<Attachment>&& attachments)
     : m_buffer { buffer }
     , m_bufferPosition { m_buffer.begin() }
-    , m_bufferDeallocator { WTFMove(bufferDeallocator) }
-    , m_attachments { WTFMove(attachments) }
+    , m_bufferDeallocator { WTF::move(bufferDeallocator) }
+    , m_attachments { WTF::move(attachments) }
 {
-    if (UNLIKELY(reinterpret_cast<uintptr_t>(m_buffer.data()) % alignof(uint64_t))) {
+    if (reinterpret_cast<uintptr_t>(m_buffer.data()) % alignof(uint64_t)) [[unlikely]] {
         markInvalid();
         return;
     }
 
     auto messageFlags = decode<OptionSet<MessageFlags>>();
-    if (UNLIKELY(!messageFlags))
+    if (!messageFlags) [[unlikely]]
         return;
-    m_messageFlags = WTFMove(*messageFlags);
+    m_messageFlags = WTF::move(*messageFlags);
 
     auto messageName = decode<MessageName>();
-    if (UNLIKELY(!messageName))
+    if (!messageName) [[unlikely]]
         return;
-    m_messageName = WTFMove(*messageName);
+    m_messageName = WTF::move(*messageName);
 
     auto destinationID = decode<uint64_t>();
-    if (UNLIKELY(!destinationID))
+    if (!destinationID) [[unlikely]]
         return;
     // 0 is a valid destinationID but we can at least reject -1 which is the HashTable deleted value.
     if (*destinationID && !WTF::ObjectIdentifierGenericBase<uint64_t>::isValidIdentifier(*destinationID)) {
         markInvalid();
         return;
     }
-    m_destinationID = WTFMove(*destinationID);
+    m_destinationID = WTF::move(*destinationID);
+    if (messageIsSync(m_messageName)) {
+        auto syncRequestID = decode<SyncRequestID>();
+        if (!syncRequestID) [[unlikely]]
+            return;
+        m_syncRequestID = syncRequestID;
+    }
 }
 
 Decoder::Decoder(std::span<const uint8_t> stream, uint64_t destinationID)
@@ -115,16 +122,21 @@ Decoder::Decoder(std::span<const uint8_t> stream, uint64_t destinationID)
     }
 
     auto messageName = decode<MessageName>();
-    if (UNLIKELY(!messageName))
+    if (!messageName) [[unlikely]]
         return;
-    m_messageName = WTFMove(*messageName);
+    m_messageName = WTF::move(*messageName);
+    if (messageIsSync(m_messageName)) {
+        auto syncRequestID = decode<SyncRequestID>();
+        if (!syncRequestID) [[unlikely]]
+            return;
+        m_syncRequestID = syncRequestID;
+    }
 }
 
 Decoder::~Decoder()
 {
     if (isValid())
         markInvalid();
-    // FIXME: We need to dispose of the mach ports in cases of failure.
 }
 
 ShouldDispatchWhenWaitingForSyncReply Decoder::shouldDispatchMessageWhenWaitingForSyncReply() const
@@ -146,17 +158,10 @@ bool Decoder::shouldMaintainOrderingWithAsyncMessages() const
     return m_messageFlags.contains(MessageFlags::MaintainOrderingWithAsyncMessages);
 }
 
-#if ENABLE(IPC_TESTING_API)
-bool Decoder::hasSyncMessageDeserializationFailure() const
-{
-    return m_messageFlags.contains(MessageFlags::SyncMessageDeserializationFailure);
-}
-#endif
-
 #if PLATFORM(MAC)
 void Decoder::setImportanceAssertion(ImportanceAssertion&& assertion)
 {
-    m_importanceAssertion = WTFMove(assertion);
+    m_importanceAssertion = WTF::move(assertion);
 }
 #endif
 
@@ -170,7 +175,9 @@ std::unique_ptr<Decoder> Decoder::unwrapForTesting(Decoder& decoder)
     if (!wrappedMessage)
         return nullptr;
 
-    auto wrappedDecoder = Decoder::create(*wrappedMessage, WTFMove(attachments));
+    auto wrappedDecoder = Decoder::create(*wrappedMessage, WTF::move(attachments));
+    if (!wrappedDecoder)
+        return nullptr;
     wrappedDecoder->setIsAllowedWhenWaitingForSyncReplyOverride(true);
     return wrappedDecoder;
 }

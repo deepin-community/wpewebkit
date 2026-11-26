@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Google Inc.
+ * Copyright 2017 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -9,7 +9,7 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/SkColorData.h"
+#include "src/core/SkColorData.h"
 #include "src/gpu/ganesh/GrSamplerState.h"
 #include "src/gpu/ganesh/ops/GrOp.h"
 
@@ -87,9 +87,10 @@ public:
                                  GrAAType,
                                  SkCanvas::SrcRectConstraint,
                                  const SkMatrix& viewMatrix,
-                                 sk_sp<GrColorSpaceXform> textureXform);
+                                 sk_sp<GrColorSpaceXform> textureXform,
+                                 bool setMayHavePersp);
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     static uint32_t ClassID();
 #endif
 

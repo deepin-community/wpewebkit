@@ -31,11 +31,14 @@
 #include "ScrollExtents.h"
 #include "ScrollableArea.h"
 #include "TimingFunction.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
-static FloatSize perpendicularAbsoluteUnitVector(ScrollDirection direction)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollAnimationKeyboard);
+
+static FloatSize NODELETE perpendicularAbsoluteUnitVector(ScrollDirection direction)
 {
     switch (direction) {
     case ScrollDirection::ScrollUp:

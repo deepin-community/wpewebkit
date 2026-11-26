@@ -22,11 +22,13 @@
 #include "config.h"
 #include "SVGTextLayoutEngineBaseline.h"
 
-#include "FontCascade.h"
-#include "RenderElement.h"
+#include "FontCascadeInlines.h"
+#include "RenderElementInlines.h"
+#include "RenderSVGInlineText.h"
 #include "SVGLengthContext.h"
-#include "SVGRenderStyle.h"
 #include "SVGTextMetrics.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 
@@ -35,38 +37,37 @@ SVGTextLayoutEngineBaseline::SVGTextLayoutEngineBaseline(const FontCascade& font
 {
 }
 
-float SVGTextLayoutEngineBaseline::calculateBaselineShift(const SVGRenderStyle& style, SVGElement* context) const
+float SVGTextLayoutEngineBaseline::calculateBaselineShift(const Style::ComputedStyle& style) const
 {
-    if (style.baselineShift() == BaselineShift::Length) {
-        auto baselineShiftValueLength = style.baselineShiftValue();
-        if (baselineShiftValueLength.lengthType() == SVGLengthType::Percentage)
-            return baselineShiftValueLength.valueAsPercentage() * m_font.size();
-
-        SVGLengthContext lengthContext(context);
-        return baselineShiftValueLength.value(lengthContext);
-    }
-
-    switch (style.baselineShift()) {
-    case BaselineShift::Baseline:
-        return 0;
-    case BaselineShift::Sub:
-        return -m_font.metricsOfPrimaryFont().height() / 2;
-    case BaselineShift::Super:
-        return m_font.metricsOfPrimaryFont().height() / 2;
-    case BaselineShift::Length:
-        break;
-    }
-    ASSERT_NOT_REACHED();
-    return 0;
+    return WTF::switchOn(style.baselineShift(),
+        [](const CSS::Keyword::Baseline&) -> float {
+            return 0;
+        },
+        [&](const CSS::Keyword::Sub&) -> float {
+            return -m_font->metricsOfPrimaryFont().height() / 2;
+        },
+        [&](const CSS::Keyword::Super&) -> float {
+            return m_font->metricsOfPrimaryFont().height() / 2;
+        },
+        [&](const Style::SVGBaselineShift::LengthPercentage& value) -> float {
+            return Style::evaluate<float>(value, m_font->size(), style.usedZoomForLength());
+        }
+    );
 }
 
-AlignmentBaseline SVGTextLayoutEngineBaseline::dominantBaselineToAlignmentBaseline(bool isVerticalText, const RenderObject* textRenderer) const
+AlignmentBaseline SVGTextLayoutEngineBaseline::dominantBaselineToAlignmentBaseline(bool isVerticalText, const RenderElement& textRenderer) const
 {
-    ASSERT(textRenderer);
-    ASSERT(textRenderer->parent());
+    ASSERT(textRenderer.parent());
 
-    DominantBaseline baseline = textRenderer->style().svgStyle().dominantBaseline();
+    DominantBaseline baseline = textRenderer.style().dominantBaseline();
     if (baseline == DominantBaseline::Auto) {
+        // Per SVG2 and CSS Inline 3, auto maps to alphabetic in horizontal writing
+        // modes and to central in vertical writing modes. The CSS Inline 3 spec
+        // distinguishes text-orientation values for vertical text, but SVG2 says
+        // "the origin point of glyphs is always handled as for central in vertical
+        // writing modes" for backwards compatibility.
+        // https://drafts.csswg.org/css-inline-3/#propdef-dominant-baseline
+        // https://w3c.github.io/svgwg/svg2-draft/text.html#DominantBaselineProperty
         if (isVerticalText)
             baseline = DominantBaseline::Central;
         else
@@ -78,9 +79,9 @@ AlignmentBaseline SVGTextLayoutEngineBaseline::dominantBaselineToAlignmentBaseli
         // FIXME: The dominant-baseline and the baseline-table components are set by determining the predominant script of the character data content.
         return AlignmentBaseline::Alphabetic;
     case DominantBaseline::NoChange:
-        return dominantBaselineToAlignmentBaseline(isVerticalText, textRenderer->parent());
+        return dominantBaselineToAlignmentBaseline(isVerticalText, *textRenderer.parent());
     case DominantBaseline::ResetSize:
-        return dominantBaselineToAlignmentBaseline(isVerticalText, textRenderer->parent());
+        return dominantBaselineToAlignmentBaseline(isVerticalText, *textRenderer.parent());
     case DominantBaseline::Ideographic:
         return AlignmentBaseline::Ideographic;
     case DominantBaseline::Alphabetic:
@@ -103,18 +104,18 @@ AlignmentBaseline SVGTextLayoutEngineBaseline::dominantBaselineToAlignmentBaseli
     }
 }
 
-float SVGTextLayoutEngineBaseline::calculateAlignmentBaselineShift(bool isVerticalText, const RenderObject& textRenderer) const
+float SVGTextLayoutEngineBaseline::calculateAlignmentBaselineShift(bool isVerticalText, const RenderSVGInlineText& textRenderer) const
 {
-    const RenderObject* textRendererParent = textRenderer.parent();
+    CheckedPtr textRendererParent = textRenderer.parent();
     ASSERT(textRendererParent);
 
-    AlignmentBaseline baseline = textRenderer.style().svgStyle().alignmentBaseline();
+    AlignmentBaseline baseline = textRenderer.style().alignmentBaseline();
     if (baseline == AlignmentBaseline::Baseline) {
-        baseline = dominantBaselineToAlignmentBaseline(isVerticalText, textRendererParent);
+        baseline = dominantBaselineToAlignmentBaseline(isVerticalText, *textRendererParent);
         ASSERT(baseline != AlignmentBaseline::Baseline);
     }
 
-    const FontMetrics& fontMetrics = m_font.metricsOfPrimaryFont();
+    const FontMetrics& fontMetrics = m_font->metricsOfPrimaryFont();
     float ascent = fontMetrics.ascent();
     float descent = fontMetrics.descent();
 
@@ -145,36 +146,52 @@ float SVGTextLayoutEngineBaseline::calculateAlignmentBaselineShift(bool isVertic
     return 0;
 }
 
-float SVGTextLayoutEngineBaseline::calculateGlyphOrientationAngle(bool isVerticalText, const SVGRenderStyle& style, const UChar& character) const
+float SVGTextLayoutEngineBaseline::calculateGlyphOrientationAngle(bool isVerticalText, const Style::ComputedStyle& style, const char32_t& character) const
 {
-    switch (isVerticalText ? style.glyphOrientationVertical() : style.glyphOrientationHorizontal()) {
-    case GlyphOrientation::Auto:
-        // Spec: Fullwidth ideographic and fullwidth Latin text will be set with a glyph-orientation of 0-degrees.
-        // Text which is not fullwidth will be set with a glyph-orientation of 90-degrees.
-        // FIXME: There's not an accurate way to tell if text is fullwidth by looking at a single character.
-        switch (static_cast<UEastAsianWidth>(u_getIntPropertyValue(character, UCHAR_EAST_ASIAN_WIDTH))) {
-        case U_EA_NEUTRAL:
-        case U_EA_HALFWIDTH:
-        case U_EA_NARROW:
-            return 90;
-        case U_EA_AMBIGUOUS:
-        case U_EA_FULLWIDTH:
-        case U_EA_WIDE:
-            return 0;
-        }
-        ASSERT_NOT_REACHED();
+    if (!isVerticalText)
+        return 0.0f;
+
+    auto writingMode = style.writingMode();
+
+    // In the sideways-* writing modes every glyph is typeset rotated a quarter
+    // turn toward the block direction, independent of 'text-orientation' and the
+    // character's intrinsic vertical orientation. sideways-rl rotates clockwise
+    // (90deg); sideways-lr rotates counter-clockwise (reported as -90deg).
+    if (!writingMode.isVerticalTypographic())
+        return writingMode.isBlockFlipped() ? 90.0f : 270.0f;
+
+    // In the vertical typographic modes (vertical-rl / vertical-lr) the CSS
+    // 'text-orientation' property (SVG2 / CSS Writing Modes 3) determines the
+    // glyph orientation, superseding the deprecated 'glyph-orientation-vertical'.
+    // The initial 'mixed' value falls back to 'glyph-orientation-vertical' so the
+    // legacy property keeps working when 'text-orientation' is unset.
+    // https://drafts.csswg.org/css-writing-modes-3/#text-orientation
+    switch (writingMode.computedTextOrientation()) {
+    case TextOrientation::Upright:
+        return 0.0f;
+    case TextOrientation::Sideways:
+        return 90.0f;
+    case TextOrientation::Mixed:
         break;
-    case GlyphOrientation::Degrees90:
-        return 90;
-    case GlyphOrientation::Degrees180:
-        return 180;
-    case GlyphOrientation::Degrees270:
-        return 270;
-    case GlyphOrientation::Degrees0:
-        return 0;
     }
-    ASSERT_NOT_REACHED();
-    return 0;
+
+    return Style::valueRepresentation(style.glyphOrientationVertical(),
+        [&](const CSS::Keyword::Auto&) {
+            auto verticalOrientation = static_cast<UVerticalOrientation>(u_getIntPropertyValue(character, UCHAR_VERTICAL_ORIENTATION));
+            switch (verticalOrientation) {
+            case U_VO_UPRIGHT:
+            case U_VO_TRANSFORMED_UPRIGHT:
+                return 0.0f;
+            case U_VO_ROTATED:
+            case U_VO_TRANSFORMED_ROTATED:
+                return 90.0f;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        },
+        [](const Style::Angle<>& angle) {
+            return Style::evaluate<float>(angle);
+        }
+    );
 }
 
 static inline bool glyphOrientationIsMultiplyOf180Degrees(float orientationAngle)
@@ -182,19 +199,16 @@ static inline bool glyphOrientationIsMultiplyOf180Degrees(float orientationAngle
     return !(fmodf(orientationAngle, 180));
 }
 
-float SVGTextLayoutEngineBaseline::calculateGlyphAdvanceAndOrientation(bool isVerticalText, SVGTextMetrics& metrics, float angle, float& xOrientationShift, float& yOrientationShift) const
+float SVGTextLayoutEngineBaseline::calculateGlyphAdvanceAndOrientation(bool isVerticalText, const SVGTextMetrics& metrics, float angle, float& xOrientationShift, float& yOrientationShift) const
 {
     bool orientationIsMultiplyOf180Degrees = glyphOrientationIsMultiplyOf180Degrees(angle);
 
     // The function is based on spec requirements:
     //
-    // Spec: If the 'glyph-orientation-horizontal' results in an orientation angle that is not a multiple of
-    // of 180 degrees, then the current text position is incremented according to the vertical metrics of the glyph.
-    //
     // Spec: If if the 'glyph-orientation-vertical' results in an orientation angle that is not a multiple of
     // 180 degrees, then the current text position is incremented according to the horizontal metrics of the glyph.
 
-    const FontMetrics& fontMetrics = m_font.metricsOfPrimaryFont();
+    const FontMetrics& fontMetrics = m_font->metricsOfPrimaryFont();
     float ascent = fontMetrics.ascent();
     float descent = fontMetrics.descent();
 

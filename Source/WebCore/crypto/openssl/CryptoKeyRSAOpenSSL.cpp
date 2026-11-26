@@ -29,10 +29,11 @@
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyPair.h"
 #include "CryptoKeyRSAComponents.h"
+#include "ExceptionOr.h"
 #include "OpenSSLUtilities.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
-#include <openssl/X509.h>
 #include <openssl/evp.h>
+#include <openssl/x509.h>
 
 namespace WebCore {
 
@@ -141,12 +142,12 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, 
     if (EVP_PKEY_set1_RSA(pkey.get(), rsa.get()) != 1)
         return nullptr;
 
-    return adoptRef(new CryptoKeyRSA(identifier, hash, hasHash, keyType, WTFMove(pkey), extractable, usages));
+    return adoptRef(new CryptoKeyRSA(identifier, hash, hasHash, keyType, WTF::move(pkey), extractable, usages));
 }
 
 CryptoKeyRSA::CryptoKeyRSA(CryptoAlgorithmIdentifier identifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType type, PlatformRSAKeyContainer&& platformKey, bool extractable, CryptoKeyUsageBitmap usages)
     : CryptoKey(identifier, type, extractable, usages)
-    , m_platformKey(WTFMove(platformKey))
+    , m_platformKey(WTF::move(platformKey))
     , m_restrictedToSpecificHash(hasHash)
     , m_hash(hash)
 {
@@ -221,28 +222,28 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
         return;
     }
 
-    auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTFMove(publicPKey), true, usages);
-    auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTFMove(privatePKey), extractable, usages);
-    callback(CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) });
+    auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTF::move(publicPKey), true, usages);
+    auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTF::move(privatePKey), extractable, usages);
+    callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
 }
 
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
-    const uint8_t* ptr = keyData.data();
+    const uint8_t* ptr = keyData.span().data();
 
     // We use d2i_PUBKEY() to import a public key.
     auto pkey = EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
     if (!pkey || EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA)
         return nullptr;
 
-    return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Public, WTFMove(pkey), extractable, usages));
+    return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Public, WTF::move(pkey), extractable, usages));
 }
 
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
-    const uint8_t* ptr = keyData.data();
+    const uint8_t* ptr = keyData.span().data();
 
     // We use d2i_PKCS8_PRIV_KEY_INFO() to import a private key.
     auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
@@ -253,7 +254,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identif
     if (!pkey || EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA)
         return nullptr;
 
-    return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Private, WTFMove(pkey), extractable, usages));
+    return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Private, WTF::move(pkey), extractable, usages));
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportSpki() const
@@ -266,7 +267,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportSpki() const
         return Exception { ExceptionCode::OperationError };
 
     Vector<uint8_t> keyData(len);
-    auto ptr = keyData.data();
+    auto ptr = keyData.mutableSpan().data();
     if (i2d_PUBKEY(platformKey(), &ptr) < 0)
         return Exception { ExceptionCode::OperationError };
 
@@ -287,7 +288,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportPkcs8() const
         return Exception { ExceptionCode::OperationError };
 
     Vector<uint8_t> keyData(len);
-    auto ptr = keyData.data();
+    auto ptr = keyData.mutableSpan().data();
     if (i2d_PKCS8_PRIV_KEY_INFO(p8inf.get(), &ptr) < 0)
         return Exception { ExceptionCode::OperationError };
 
@@ -297,6 +298,8 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportPkcs8() const
 auto CryptoKeyRSA::algorithm() const -> KeyAlgorithm
 {
     RSA* rsa = EVP_PKEY_get0_RSA(platformKey());
+
+    // FIXME: `CryptoRsaKeyAlgorithm` stores `modulusLength` as an `unsigned` requiring us to cast below. We should find a way to remove the need for a cast / ensure the cast is safe and doesn't overflow.
 
     auto modulusLength = getRSAModulusLength(rsa);
     Vector<uint8_t> publicExponent;
@@ -308,19 +311,21 @@ auto CryptoKeyRSA::algorithm() const -> KeyAlgorithm
     }
 
     if (m_restrictedToSpecificHash) {
-        CryptoRsaHashedKeyAlgorithm result;
-        result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
-        result.modulusLength = modulusLength;
-        result.publicExponent = Uint8Array::tryCreate(publicExponent.data(), publicExponent.size());
-        result.hash.name = CryptoAlgorithmRegistry::singleton().name(m_hash);
-        return result;
+        return CryptoRsaHashedKeyAlgorithm {
+            CryptoRsaKeyAlgorithm {
+                CryptoKeyAlgorithm { CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier()) },
+                static_cast<unsigned>(modulusLength),
+                Uint8Array::create(publicExponent.span())
+            },
+            CryptoKeyAlgorithm { CryptoAlgorithmRegistry::singleton().name(m_hash) }
+        };
     }
 
-    CryptoRsaKeyAlgorithm result;
-    result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
-    result.modulusLength = modulusLength;
-    result.publicExponent = Uint8Array::tryCreate(publicExponent.data(), publicExponent.size());
-    return result;
+    return CryptoRsaKeyAlgorithm {
+        CryptoKeyAlgorithm { CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier()) },
+        static_cast<unsigned>(modulusLength),
+        Uint8Array::create(publicExponent.span())
+    };
 }
 
 std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
@@ -393,7 +398,7 @@ std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
 
         return CryptoKeyRSAComponents::createPrivateWithAdditionalData(
             convertToBytes(n), convertToBytes(e), convertToBytes(d),
-            WTFMove(firstPrimeInfo), WTFMove(secondPrimeInfo), Vector<CryptoKeyRSAComponents::PrimeInfo> { });
+            WTF::move(firstPrimeInfo), WTF::move(secondPrimeInfo), Vector<CryptoKeyRSAComponents::PrimeInfo> { });
     }
     default:
         ASSERT_NOT_REACHED();

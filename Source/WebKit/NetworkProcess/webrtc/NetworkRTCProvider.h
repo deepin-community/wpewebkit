@@ -43,14 +43,9 @@
 
 #if !PLATFORM(COCOA)
 
-ALLOW_COMMA_BEGIN
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/p2p/base/basic_packet_socket_factory.h>
-#include <webrtc/rtc_base/third_party/sigslot/sigslot.h>
-
-ALLOW_DEPRECATED_DECLARATIONS_END
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #endif
 
@@ -59,9 +54,9 @@ class Connection;
 class Decoder;
 }
 
-namespace rtc {
+namespace webrtc {
 class SocketAddress;
-struct PacketOptions;
+struct AsyncSocketPacketOptions;
 }
 
 namespace WebCore {
@@ -73,6 +68,7 @@ namespace WebKit {
 class NetworkConnectionToWebProcess;
 class NetworkSession;
 struct RTCPacketOptions;
+struct RTCSocketCreationFlags;
 
 struct SocketComparator {
     bool operator()(const WebCore::LibWebRTCSocketIdentifier& a, const WebCore::LibWebRTCSocketIdentifier& b) const
@@ -81,7 +77,9 @@ struct SocketComparator {
     }
 };
 
-class NetworkRTCProvider : private FunctionDispatcher, private IPC::MessageReceiver, public ThreadSafeRefCounted<NetworkRTCProvider, WTF::DestructionThread::MainRunLoop> {
+class NetworkRTCProvider : private FunctionDispatcher, private IPC::MessageReceiver, public ThreadSafeRefCounted<NetworkRTCProvider, WTF::DestructionThread::MainRunLoop>, public CanMakeThreadSafeCheckedPtr<NetworkRTCProvider> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NetworkRTCProvider);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(NetworkRTCProvider);
 public:
     static Ref<NetworkRTCProvider> create(NetworkConnectionToWebProcess& connection)
     {
@@ -91,7 +89,10 @@ public:
     }
     ~NetworkRTCProvider();
 
-    void didReceiveNetworkRTCMonitorMessage(IPC::Connection& connection, IPC::Decoder& decoder) { m_rtcMonitor.didReceiveMessage(connection, decoder); }
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
+    void didReceiveNetworkRTCMonitorMessage(IPC::Connection& connection, IPC::Decoder& decoder) { protect(m_rtcMonitor)->didReceiveMessage(connection, decoder); }
 
     class Socket {
     public:
@@ -103,7 +104,7 @@ public:
 
         virtual void close() = 0;
         virtual void setOption(int option, int value) = 0;
-        virtual void sendTo(std::span<const uint8_t>, const rtc::SocketAddress&, const rtc::PacketOptions&) = 0;
+        virtual void sendTo(std::span<const uint8_t>, const webrtc::SocketAddress&, const webrtc::AsyncSocketPacketOptions&) = 0;
     };
 
     std::unique_ptr<Socket> takeSocket(WebCore::LibWebRTCSocketIdentifier);
@@ -118,30 +119,34 @@ public:
     void closeSocket(WebCore::LibWebRTCSocketIdentifier);
 
 #if PLATFORM(COCOA)
-    const std::optional<audit_token_t>& sourceApplicationAuditToken() const { return m_sourceApplicationAuditToken; }
-    const char* applicationBundleIdentifier() const { return m_applicationBundleIdentifier.data(); }
+    bool NODELETE webRTCInterfaceMonitoringViaNWEnabled() const;
+    const std::optional<audit_token_t>& sourceApplicationAuditToken() const LIFETIME_BOUND { return m_sourceApplicationAuditToken; }
+    const char* applicationBundleIdentifier() const LIFETIME_BOUND { return m_applicationBundleIdentifier.data(); }
 #endif
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&);
+    void updateSharedPreferencesForWebProcess(const SharedPreferencesForWebProcess&);
 
 private:
     explicit NetworkRTCProvider(NetworkConnectionToWebProcess&);
     void startListeningForIPC();
 
-    void createUDPSocket(WebCore::LibWebRTCSocketIdentifier, const RTCNetwork::SocketAddress&, uint16_t, uint16_t, WebPageProxyIdentifier, bool isFirstParty, bool isRelayDisabled, WebCore::RegistrableDomain&&);
-    void createClientTCPSocket(WebCore::LibWebRTCSocketIdentifier, const RTCNetwork::SocketAddress&, const RTCNetwork::SocketAddress&, String&& userAgent, int, WebPageProxyIdentifier, bool isFirstParty, bool isRelayDisabled, WebCore::RegistrableDomain&&);
+    void createUDPSocket(WebCore::LibWebRTCSocketIdentifier, const RTCNetwork::SocketAddress&, uint16_t, uint16_t, WebPageProxyIdentifier, RTCSocketCreationFlags, WebCore::RegistrableDomain&&);
+    void createClientTCPSocket(WebCore::LibWebRTCSocketIdentifier, const RTCNetwork::SocketAddress&, const RTCNetwork::SocketAddress&, String&& userAgent, int, WebPageProxyIdentifier, RTCSocketCreationFlags, WebCore::RegistrableDomain&&);
     void sendToSocket(WebCore::LibWebRTCSocketIdentifier, std::span<const uint8_t>, RTCNetwork::SocketAddress&&, RTCPacketOptions&&);
     void setSocketOption(WebCore::LibWebRTCSocketIdentifier, int option, int value);
 
     void createResolver(LibWebRTCResolverIdentifier, String&&);
     void stopResolver(LibWebRTCResolverIdentifier);
-    void getInterfaceName(URL&&, WebPageProxyIdentifier, bool isFirstParty, bool isRelayDisabled, WebCore::RegistrableDomain&&, CompletionHandler<void(String&&)>&&);
+    void getInterfaceName(URL&&, WebPageProxyIdentifier, RTCSocketCreationFlags, WebCore::RegistrableDomain&&, CompletionHandler<void(String&&)>&&);
 
     void addSocket(WebCore::LibWebRTCSocketIdentifier, std::unique_ptr<Socket>&&);
 
 #if PLATFORM(COCOA)
     const String& attributedBundleIdentifierFromPageIdentifier(WebPageProxyIdentifier);
 #else
-    static rtc::Thread& rtcNetworkThread();
-    void createSocket(WebCore::LibWebRTCSocketIdentifier, std::unique_ptr<rtc::AsyncPacketSocket>&&, Socket::Type, Ref<IPC::Connection>&&);
+    static webrtc::Thread& rtcNetworkThread();
+    void createSocket(WebCore::LibWebRTCSocketIdentifier, std::unique_ptr<webrtc::AsyncPacketSocket>&&, Socket::Type, Ref<IPC::Connection>&&);
 #endif
 
     // FunctionDispatcher
@@ -152,7 +157,7 @@ private:
 
     void signalSocketIsClosed(WebCore::LibWebRTCSocketIdentifier);
 
-    void assertIsRTCNetworkThread();
+    void NODELETE assertIsRTCNetworkThread();
 
     static constexpr size_t maxSockets { 256 };
 
@@ -162,16 +167,18 @@ private:
     bool m_isStarted { true };
 
     NetworkRTCMonitor m_rtcMonitor;
+    mutable Lock m_sharedPreferencesLock;
+    SharedPreferencesForWebProcess m_sharedPreferences WTF_GUARDED_BY_LOCK(m_sharedPreferencesLock);
 
 #if PLATFORM(COCOA)
     HashMap<WebPageProxyIdentifier, String> m_attributedBundleIdentifiers;
     std::optional<audit_token_t> m_sourceApplicationAuditToken;
     CString m_applicationBundleIdentifier;
-    Ref<WorkQueue> m_rtcNetworkThreadQueue;
+    const Ref<WorkQueue> m_rtcNetworkThreadQueue;
 #endif
 
 #if !PLATFORM(COCOA)
-    UniqueRef<rtc::BasicPacketSocketFactory> m_packetSocketFactory;
+    UniqueRef<webrtc::BasicPacketSocketFactory> m_packetSocketFactory;
 #endif
 };
 

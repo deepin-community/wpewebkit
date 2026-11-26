@@ -26,12 +26,16 @@
 #pragma once
 
 #include "CaretAnimator.h"
+#include "LayoutRect.h"
+#include <wtf/TZoneMalloc.h>
 
 #if HAVE(REDESIGNED_TEXT_CURSOR)
 
 namespace WebCore {
 
 class OpacityCaretAnimator final : public CaretAnimator {
+    WTF_MAKE_TZONE_ALLOCATED(OpacityCaretAnimator);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(OpacityCaretAnimator);
 public:
     explicit OpacityCaretAnimator(CaretAnimationClient&, std::optional<LayoutRect> = std::nullopt);
 
@@ -55,7 +59,7 @@ private:
 
     void setBlinkingSuspended(bool) final;
 
-    Seconds keyframeTimeDelta() const;
+    Seconds NODELETE keyframeTimeDelta() const;
     LayoutRect caretRepaintRectForLocalRect(LayoutRect) const final;
 
     MonotonicTime m_lastTimeCaretOpacityWasToggled;

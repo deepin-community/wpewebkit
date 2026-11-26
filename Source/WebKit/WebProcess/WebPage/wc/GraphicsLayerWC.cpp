@@ -54,7 +54,7 @@ public:
             tileUpdate.index = entry.key;
             tileUpdate.willRemove = tile.willRemove();
             if (tileUpdate.willRemove) {
-                update.background.tileUpdates.append(WTFMove(tileUpdate));
+                update.background.tileUpdates.append(WTF::move(tileUpdate));
                 continue;
             }
             if (!tile.hasDirtyRect())
@@ -70,8 +70,8 @@ public:
             context.translate(-dirtyRect.x(), -dirtyRect.y());
             m_owner.paintGraphicsLayerContents(context, dirtyRect);
             image->flushDrawingContextAsync();
-            tileUpdate.backingStore.setImageBuffer(WTFMove(image));
-            update.background.tileUpdates.append(WTFMove(tileUpdate));
+            tileUpdate.backingStore.setImageBuffer(WTF::move(image));
+            update.background.tileUpdates.append(WTF::move(tileUpdate));
         }
         m_tileGrid.clearDirtyRects();
         return repainted;
@@ -96,7 +96,7 @@ public:
 
     // TiledBacking override
     void setClient(TiledBackingClient*) final { }
-    PlatformLayerIdentifier layerIdentifier() const final { return m_owner.primaryLayerID(); }
+    PlatformLayerIdentifier layerIdentifier() const final { return *m_owner.primaryLayerID(); }
     TileGridIdentifier primaryGridIdentifier() const final { return TileGridIdentifier { 0 }; }
     std::optional<TileGridIdentifier> secondaryGridIdentifier() const final { return { }; }
     void setVisibleRect(const FloatRect&) final { }
@@ -106,7 +106,7 @@ public:
     FloatRect coverageRect() const final { return { }; };
     bool tilesWouldChangeForCoverageRect(const FloatRect&) const final { return false; }
     void setTiledScrollingIndicatorPosition(const FloatPoint&) final { }
-    void setTopContentInset(float) final { }
+    void setObscuredContentInsets(const FloatBoxExtent&) final { }
     void setVelocity(const VelocityData&) final { }
     void setTileSizeUpdateDelayDisabledForTesting(bool) final { };
     void setScrollability(OptionSet<Scrollability>) final { }
@@ -142,6 +142,9 @@ public:
     float tilingScaleFactor() const final { return 1; }
     IntRect bounds() const final { return { { }, IntSize(m_owner.size()) }; };
     IntRect boundsWithoutMargin() const final { return bounds(); };
+    void clearObscuredInsetsAdjustments() final { }
+    void obscuredInsetsWillChange(FloatBoxExtent&&) final { }
+    FloatRect adjustedTileClipRectForObscuredInsets(const FloatRect&) const final { return { }; }
 
 private:
     bool m_isInWindow { false };
@@ -167,14 +170,14 @@ GraphicsLayerWC::~GraphicsLayerWC()
         m_observer->graphicsLayerRemoved(*this);
 }
 
-PlatformLayerIdentifier GraphicsLayerWC::primaryLayerID() const
+std::optional<PlatformLayerIdentifier> GraphicsLayerWC::primaryLayerID() const
 {
     return m_layerID;
 }
 
 void GraphicsLayerWC::setNeedsDisplay()
 {
-    setNeedsDisplayInRect({ { }, m_size }, ClipToLayer);
+    setNeedsDisplayInRect({ { }, m_size }, ShouldClipToLayer::Clip);
 }
 
 void GraphicsLayerWC::setNeedsDisplayInRect(const WebCore::FloatRect& rect, ShouldClipToLayer shouldClip)
@@ -195,7 +198,7 @@ void GraphicsLayerWC::setContentsNeedsDisplay()
 
 bool GraphicsLayerWC::setChildren(Vector<Ref<GraphicsLayer>>&& children)
 {
-    bool childrenChanged = GraphicsLayer::setChildren(WTFMove(children));
+    bool childrenChanged = GraphicsLayer::setChildren(WTF::move(children));
     if (childrenChanged)
         noteLayerPropertyChanged(WCLayerChange::Children);
     return childrenChanged;
@@ -203,31 +206,31 @@ bool GraphicsLayerWC::setChildren(Vector<Ref<GraphicsLayer>>&& children)
 
 void GraphicsLayerWC::addChild(Ref<GraphicsLayer>&& childLayer)
 {
-    GraphicsLayer::addChild(WTFMove(childLayer));
+    GraphicsLayer::addChild(WTF::move(childLayer));
     noteLayerPropertyChanged(WCLayerChange::Children);
 }
 
 void GraphicsLayerWC::addChildAtIndex(Ref<GraphicsLayer>&& childLayer, int index)
 {
-    GraphicsLayer::addChildAtIndex(WTFMove(childLayer), index);
+    GraphicsLayer::addChildAtIndex(WTF::move(childLayer), index);
     noteLayerPropertyChanged(WCLayerChange::Children);
 }
 
 void GraphicsLayerWC::addChildBelow(Ref<GraphicsLayer>&& childLayer, GraphicsLayer* sibling)
 {
-    GraphicsLayer::addChildBelow(WTFMove(childLayer), sibling);
+    GraphicsLayer::addChildBelow(WTF::move(childLayer), sibling);
     noteLayerPropertyChanged(WCLayerChange::Children);
 }
 
 void GraphicsLayerWC::addChildAbove(Ref<GraphicsLayer>&& childLayer, GraphicsLayer* sibling)
 {
-    GraphicsLayer::addChildAbove(WTFMove(childLayer), sibling);
+    GraphicsLayer::addChildAbove(WTF::move(childLayer), sibling);
     noteLayerPropertyChanged(WCLayerChange::Children);
 }
 
 bool GraphicsLayerWC::replaceChild(GraphicsLayer* oldChild, Ref<GraphicsLayer>&& newChild)
 {
-    if (GraphicsLayer::replaceChild(oldChild, WTFMove(newChild))) {
+    if (GraphicsLayer::replaceChild(oldChild, WTF::move(newChild))) {
         noteLayerPropertyChanged(WCLayerChange::Children);
         return true;
     }
@@ -243,7 +246,7 @@ void GraphicsLayerWC::setMaskLayer(RefPtr<GraphicsLayer>&& layer)
 {
     if (layer == m_maskLayer)
         return;
-    GraphicsLayer::setMaskLayer(WTFMove(layer));
+    GraphicsLayer::setMaskLayer(WTF::move(layer));
     noteLayerPropertyChanged(WCLayerChange::MaskLayer);
 }
 
@@ -259,7 +262,7 @@ void GraphicsLayerWC::setReplicatedByLayer(RefPtr<GraphicsLayer>&& layer)
 {
     if (layer == m_replicaLayer)
         return;
-    GraphicsLayer::setReplicatedByLayer(WTFMove(layer));
+    GraphicsLayer::setReplicatedByLayer(WTF::move(layer));
     noteLayerPropertyChanged(WCLayerChange::ReplicaLayer);
 }
 
@@ -474,13 +477,7 @@ void GraphicsLayerWC::setShowRepaintCounter(bool show)
 
 static bool filtersCanBeComposited(const FilterOperations& filters)
 {
-    if (!filters.size())
-        return false;
-    for (const auto& filterOperation : filters) {
-        if (filterOperation->type() == FilterOperation::Type::Reference)
-            return false;
-    }
-    return true;
+    return !filters.isEmpty();
 }
 
 bool GraphicsLayerWC::setFilters(const FilterOperations& filters)
@@ -527,6 +524,8 @@ void GraphicsLayerWC::noteLayerPropertyChanged(OptionSet<WCLayerChange> flags, S
         return;
     bool needsFlush = !m_uncommittedChanges;
     m_uncommittedChanges.add(flags);
+    if (client().isFlushingLayers())
+        return;
     if (needsFlush && scheduleFlush == ScheduleFlush)
         client().notifyFlushRequired(this);
 }
@@ -536,8 +535,7 @@ void GraphicsLayerWC::flushCompositingState(const FloatRect& passedVisibleRect)
     // passedVisibleRect doesn't contain the scrollbar area. Inflate it.
     FloatRect visibleRect = passedVisibleRect;
     visibleRect.inflate(20.f);
-    TransformState state(TransformState::UnapplyInverseTransformDirection, FloatQuad(visibleRect));
-    state.setSecondaryQuad(FloatQuad { visibleRect });
+    TransformState state(TransformState::UnapplyInverseTransformDirection, FloatQuad(visibleRect), FloatQuad { visibleRect });
     recursiveCommitChanges(state);
 }
 
@@ -545,12 +543,13 @@ void GraphicsLayerWC::flushCompositingStateForThisLayerOnly()
 {
     if (!m_uncommittedChanges)
         return;
-    WCLayerUpdateInfo update;
-    update.id = primaryLayerID();
-    update.changes = std::exchange(m_uncommittedChanges, { });
+    WCLayerUpdateInfo update {
+        .id = *primaryLayerID(),
+        .changes = std::exchange(m_uncommittedChanges, { })
+    };
     if (update.changes & WCLayerChange::Children) {
         update.children = WTF::map(children(), [](auto& layer) {
-            return layer->primaryLayerID();
+            return *layer->primaryLayerID();
         });
     }
     if (update.changes & WCLayerChange::MaskLayer) {
@@ -632,7 +631,7 @@ void GraphicsLayerWC::flushCompositingStateForThisLayerOnly()
     }
     if (update.changes & WCLayerChange::RemoteFrame)
         update.hostIdentifier = m_hostIdentifier;
-    m_observer->commitLayerUpdateInfo(WTFMove(update));
+    m_observer->commitLayerUpdateInfo(WTF::move(update));
 }
 
 TiledBacking* GraphicsLayerWC::tiledBacking() const
@@ -719,10 +718,10 @@ GraphicsLayerWC::VisibleAndCoverageRects GraphicsLayerWC::computeVisibleAndCover
     if (masksToBounds()) {
         ASSERT(accumulation == TransformState::FlattenTransform);
         // Flatten, and replace the quad in the TransformState with one that is clipped to this layer's bounds.
-        state.flatten();
-        state.setQuad(clipRectForSelf);
         if (state.isMappingSecondaryQuad())
-            state.setSecondaryQuad(FloatQuad { clipRectForSelf });
+            state.reset(clipRectForSelf, clipRectForSelf);
+        else
+            state.reset(clipRectForSelf);
     }
 
     FloatRect coverageRect = clipRectForSelf;

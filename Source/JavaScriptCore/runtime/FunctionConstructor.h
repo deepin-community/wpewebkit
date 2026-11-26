@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include "InternalFunction.h"
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/ParserModes.h>
 
 namespace WTF {
 class TextPosition;
@@ -29,6 +30,7 @@ class TextPosition;
 namespace JSC {
 
 class FunctionPrototype;
+class SourceOrigin;
 enum class SourceTaintedOrigin : uint8_t;
 
 class FunctionConstructor final : public InternalFunction {
@@ -52,12 +54,8 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(FunctionConstructor, InternalFunction);
 
-enum class FunctionConstructionMode {
-    Function,
-    Generator,
-    Async,
-    AsyncGenerator,
-};
+
+ASCIILiteral functionConstructorPrefix(FunctionConstructionMode);
 
 JSObject* constructFunction(JSGlobalObject*, const ArgList&, const Identifier& functionName, const SourceOrigin&, const String& sourceURL, SourceTaintedOrigin, const WTF::TextPosition&, FunctionConstructionMode = FunctionConstructionMode::Function, JSValue newTarget = JSValue());
 JSObject* constructFunction(JSGlobalObject*, CallFrame*, const ArgList&, FunctionConstructionMode = FunctionConstructionMode::Function, JSValue newTarget = JSValue());

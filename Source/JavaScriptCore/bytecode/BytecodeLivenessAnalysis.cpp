@@ -43,7 +43,7 @@ BytecodeLivenessAnalysis::BytecodeLivenessAnalysis(CodeBlock* codeBlock)
 {
     runLivenessFixpoint(codeBlock, codeBlock->instructions(), m_graph);
 
-    if (UNLIKELY(Options::dumpBytecodeLivenessResults()))
+    if (Options::dumpBytecodeLivenessResults()) [[unlikely]]
         dumpResults(codeBlock);
 }
 
@@ -159,7 +159,7 @@ void BytecodeLivenessAnalysis::dumpResults(CodeBlock* codeBlock)
 }
 
 template<typename EnumType1, typename EnumType2>
-constexpr bool enumValuesEqualAsIntegral(EnumType1 v1, EnumType2 v2)
+constexpr bool NODELETE enumValuesEqualAsIntegral(EnumType1 v1, EnumType2 v2)
 {
     using IntType1 = typename std::underlying_type<EnumType1>::type;
     using IntType2 = typename std::underlying_type<EnumType2>::type;
@@ -180,9 +180,11 @@ WTF::BitSet<maxNumCheckpointTmps> tmpLivenessForCheckpoint(const CodeBlock& code
     switch (codeBlock.instructions().at(bytecodeIndex)->opcodeID()) {
     case op_call_varargs:
     case op_tail_call_varargs:
-    case op_construct_varargs: {
+    case op_construct_varargs:
+    case op_super_construct_varargs: {
         static_assert(enumValuesEqualAsIntegral(OpCallVarargs::makeCall, OpTailCallVarargs::makeCall) && enumValuesEqualAsIntegral(OpCallVarargs::argCountIncludingThis, OpTailCallVarargs::argCountIncludingThis));
         static_assert(enumValuesEqualAsIntegral(OpCallVarargs::makeCall, OpConstructVarargs::makeCall) && enumValuesEqualAsIntegral(OpCallVarargs::argCountIncludingThis, OpConstructVarargs::argCountIncludingThis));
+        static_assert(enumValuesEqualAsIntegral(OpCallVarargs::makeCall, OpSuperConstructVarargs::makeCall) && enumValuesEqualAsIntegral(OpCallVarargs::argCountIncludingThis, OpSuperConstructVarargs::argCountIncludingThis));
         if (checkpoint == OpCallVarargs::makeCall)
             result.set(OpCallVarargs::argCountIncludingThis);
         return result;
@@ -190,8 +192,14 @@ WTF::BitSet<maxNumCheckpointTmps> tmpLivenessForCheckpoint(const CodeBlock& code
     case op_iterator_open: {
         return result;
     }
+    case op_async_iterator_open: {
+        return result;
+    }
     case op_iterator_next: {
         result.set(OpIteratorNext::nextResult);
+        return result;
+    }
+    case op_instanceof: {
         return result;
     }
     default:

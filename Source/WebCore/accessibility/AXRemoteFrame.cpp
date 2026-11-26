@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,16 +26,33 @@
 #include "config.h"
 #include "AXRemoteFrame.h"
 
+#include "AccessibilityObjectInlines.h"
+#include "AccessibilityScrollView.h"
+
 namespace WebCore {
 
-Ref<AXRemoteFrame> AXRemoteFrame::create()
+AXRemoteFrame::AXRemoteFrame(AXID axID, AXObjectCache& cache)
+    : AccessibilityMockObject(axID, cache)
 {
-    return adoptRef(*new AXRemoteFrame);
+}
+
+Ref<AXRemoteFrame> AXRemoteFrame::create(AXID axID, AXObjectCache& cache)
+{
+    return adoptRef(*new AXRemoteFrame(axID, cache));
+}
+
+bool AXRemoteFrame::computeIsIgnored() const
+{
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (RefPtr hostingScrollView = dynamicDowncast<AccessibilityScrollView>(parentObject()))
+        return hostingScrollView->isIgnoredFromHostingFrame();
+#endif
+    return false;
 }
 
 LayoutRect AXRemoteFrame::elementRect() const
 {
-    auto* parent = parentObject();
+    RefPtr parent = parentObject();
     return parent ? parent->elementRect() : LayoutRect();
 }
 

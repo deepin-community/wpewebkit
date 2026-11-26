@@ -31,12 +31,13 @@
 #include "B3UpsilonValue.h"
 #include <wtf/GraphNodeWorklist.h>
 #include <wtf/IndexMap.h>
+#include <wtf/SequesteredMalloc.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC { namespace B3 {
 
 class PhiChildren {
-    WTF_MAKE_TZONE_ALLOCATED(PhiChildren);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(PhiChildren);
 public:
     PhiChildren(Procedure&);
     ~PhiChildren();
@@ -162,7 +163,7 @@ public:
     UpsilonCollection at(Value* value) { return UpsilonCollection(this, value, &m_upsilons[value]); }
     UpsilonCollection operator[](Value* value) { return at(value); }
 
-    const Vector<Value*, 8>& phis() const { return m_phis; }
+    const Vector<Value*, 8>& phis() const LIFETIME_BOUND { return m_phis; }
 
 private:
     IndexMap<Value*, Vector<UpsilonValue*>> m_upsilons;

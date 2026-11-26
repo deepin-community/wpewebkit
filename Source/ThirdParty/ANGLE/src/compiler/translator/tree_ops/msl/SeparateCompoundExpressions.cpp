@@ -8,7 +8,6 @@
 
 #include "common/system_utils.h"
 #include "compiler/translator/IntermRebuild.h"
-#include "compiler/translator/tree_ops/SimplifyLoopConditions.h"
 #include "compiler/translator/tree_ops/msl/SeparateCompoundExpressions.h"
 #include "compiler/translator/tree_util/IntermNode_util.h"
 #include "compiler/translator/util.h"
@@ -172,6 +171,12 @@ class Separator : public TIntermRebuild
     {
         ASSERT(!mStmtsStack.empty());
         return mStmtsStack.back();
+    }
+
+    bool nodeExistsInCurrStmts(TIntermNode *node)
+    {
+        const auto &currStmts = getCurrStmts();
+        return std::find(currStmts.begin(), currStmts.end(), node) != currStmts.end();
     }
 
     std::unordered_map<const TVariable *, TIntermDeclaration *> &getCurrBindingMap()
@@ -454,7 +459,16 @@ class Separator : public TIntermRebuild
         TIntermTyped *newRight      = pullMappedExpr(right, isAssign && !isCompoundAssign);
         if (op == TOperator::EOpComma)
         {
-            pushBinding(node, *newRight);
+            // Avoid adding a redundant right child statement to the statement stack for the current
+            // block. This could occur because the right node is a TIntermAggregate type (such as
+            // EOpCallFunctionInAST type) and as part of the post traversal action for a
+            // TIntermAggregate node, it gets added to the statement stack. In that case, when the
+            // code execution reaches this point, the right node will get added again resulting in a
+            // reudundant statement.
+            if (!nodeExistsInCurrStmts(newRight))
+            {
+                pushBinding(node, *newRight);
+            }
             return node;
         }
         else
@@ -658,11 +672,6 @@ bool sh::SeparateCompoundExpressions(TCompiler &compiler,
     if (angle::GetBoolEnvironmentVar("GMT_DISABLE_SEPARATE_COMPOUND_EXPRESSIONS"))
     {
         return true;
-    }
-
-    if (!SimplifyLoopConditions(&compiler, &root, &compiler.getSymbolTable()))
-    {
-        return false;
     }
 
     if (!PrePass(compiler).rebuildRoot(root))

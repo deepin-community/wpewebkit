@@ -60,7 +60,7 @@ class Connection;
 namespace WebKit {
 
 #if USE(FOUNDATION)
-typedef NSBundle *PlatformBundle;
+typedef RetainPtr<NSBundle> PlatformBundle;
 #elif USE(GLIB)
 typedef ::GModule* PlatformBundle;
 #else
@@ -88,7 +88,7 @@ public:
     void setClient(std::unique_ptr<API::InjectedBundle::Client>&&);
     void postMessage(const String&, API::Object*);
     void postSynchronousMessage(const String&, API::Object*, RefPtr<API::Object>& returnData);
-    void setServiceWorkerProxyCreationCallback(void (*)(uint64_t));
+    void NODELETE setServiceWorkerProxyCreationCallback(void (*)(uint64_t));
 
     // TestRunner only SPI
     void addOriginAccessAllowListEntry(const String&, const String&, const String&, bool);
@@ -122,16 +122,16 @@ public:
 
     static bool isProcessingUserGesture();
 
-    void setTabKeyCyclesThroughElements(WebPage*, bool enabled);
+    void NODELETE setTabKeyCyclesThroughElements(WebPage*, bool enabled);
     void setSerialLoadingEnabled(bool);
-    void setAccessibilityIsolatedTreeEnabled(bool);
+    void NODELETE setAccessibilityIsolatedTreeEnabled(bool);
     void dispatchPendingLoadRequests();
 
 #if PLATFORM(COCOA)
     WKWebProcessBundleParameters *bundleParameters();
 
     void extendClassesForParameterCoder(API::Array& classes);
-    NSSet* classesForCoder();
+    RetainPtr<NSSet> classesForCoder();
 #endif
 
 private:
@@ -155,3 +155,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::InjectedBundle)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::Bundle; }
+SPECIALIZE_TYPE_TRAITS_END()

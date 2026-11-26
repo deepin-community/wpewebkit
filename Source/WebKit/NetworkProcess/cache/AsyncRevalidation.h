@@ -25,12 +25,11 @@
 
 #pragma once
 
-#if ENABLE(NETWORK_CACHE_STALE_WHILE_REVALIDATE)
-
 #include "NetworkCache.h"
 #include "NetworkCacheEntry.h"
 #include "NetworkCacheSpeculativeLoad.h"
 #include <wtf/CompletionHandler.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -38,11 +37,6 @@ namespace WebCore {
 namespace NetworkCache {
 class AsyncRevalidation;
 }
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::NetworkCache::AsyncRevalidation> : std::true_type { };
 }
 
 namespace WebCore {
@@ -56,7 +50,7 @@ class SpeculativeLoad;
 
 namespace NetworkCache {
 
-class AsyncRevalidation : public CanMakeWeakPtr<AsyncRevalidation> {
+class AsyncRevalidation final : public RefCountedAndCanMakeWeakPtr<AsyncRevalidation> {
     WTF_MAKE_TZONE_ALLOCATED(AsyncRevalidation);
 public:
     enum class Result {
@@ -64,20 +58,20 @@ public:
         Timeout,
         Success,
     };
-    AsyncRevalidation(Cache&, const GlobalFrameID&, const WebCore::ResourceRequest&, std::unique_ptr<NetworkCache::Entry>&&, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, CompletionHandler<void(Result)>&&);
+    static Ref<AsyncRevalidation> create(Cache&, const GlobalFrameID&, const WebCore::ResourceRequest&, std::unique_ptr<NetworkCache::Entry>&&, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, CompletionHandler<void(Result)>&&);
+
     void cancel();
 
     const SpeculativeLoad& load() const { return *m_load; }
 
 private:
+    AsyncRevalidation(Cache&, const GlobalFrameID&, const WebCore::ResourceRequest&, std::unique_ptr<NetworkCache::Entry>&&, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, CompletionHandler<void(Result)>&&);
     void staleWhileRevalidateEnding();
 
-    std::unique_ptr<SpeculativeLoad> m_load;
+    const RefPtr<SpeculativeLoad> m_load;
     WebCore::Timer m_timer;
     CompletionHandler<void(Result)> m_completionHandler;
 };
 
 } // namespace NetworkCache
 } // namespace WebKit
-
-#endif // ENABLE(NETWORK_CACHE_STALE_WHILE_REVALIDATE)

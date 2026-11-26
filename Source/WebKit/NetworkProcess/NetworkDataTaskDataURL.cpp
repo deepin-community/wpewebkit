@@ -60,7 +60,7 @@ Ref<NetworkDataTask> NetworkDataTaskDataURL::create(NetworkSession& session, Net
 }
 
 NetworkDataTaskDataURL::NetworkDataTaskDataURL(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
-    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation)
+    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
 {
 }
 
@@ -81,7 +81,7 @@ void NetworkDataTaskDataURL::resume()
         if (m_state == State::Canceling || m_state == State::Completed)
             return;
 
-        didDecodeDataURL(WTFMove(decodeResult));
+        didDecodeDataURL(WTF::move(decodeResult));
     });
 }
 
@@ -106,7 +106,7 @@ NetworkDataTask::State NetworkDataTaskDataURL::state() const
 
 void NetworkDataTaskDataURL::setPendingDownloadLocation(const String& filename, SandboxExtension::Handle&& sandboxExtensionHandle, bool allowOverwrite)
 {
-    NetworkDataTask::setPendingDownloadLocation(filename, WTFMove(sandboxExtensionHandle), allowOverwrite);
+    NetworkDataTask::setPendingDownloadLocation(filename, WTF::move(sandboxExtensionHandle), allowOverwrite);
     m_allowOverwriteDownload = allowOverwrite;
 }
 
@@ -134,7 +134,7 @@ void NetworkDataTaskDataURL::didDecodeDataURL(std::optional<WebCore::DataURLDeco
 
     m_response = ResourceResponse::dataURLResponse(firstRequest().url(), result.value());
 
-    didReceiveResponse(ResourceResponse(m_response), NegotiatedLegacyTLS::No, PrivateRelayed::No, std::nullopt, [this, protectedThis = Ref { *this }, data = WTFMove(result.value().data)](PolicyAction policyAction) mutable {
+    didReceiveResponse(ResourceResponse(m_response), NegotiatedLegacyTLS::No, PrivateRelayed::No, std::nullopt, [this, protectedThis = Ref { *this }, data = WTF::move(result.value().data)](PolicyAction policyAction) mutable {
         if (m_state == State::Canceling || m_state == State::Completed)
             return;
 
@@ -148,7 +148,7 @@ void NetworkDataTaskDataURL::didDecodeDataURL(std::optional<WebCore::DataURLDeco
             invalidateAndCancel();
             break;
         case PolicyAction::Download:
-            downloadDecodedData(WTFMove(data));
+            downloadDecodedData(WTF::move(data));
             break;
         case PolicyAction::LoadWillContinueInAnotherProcess:
             ASSERT_NOT_REACHED();
@@ -159,8 +159,8 @@ void NetworkDataTaskDataURL::didDecodeDataURL(std::optional<WebCore::DataURLDeco
 
 void NetworkDataTaskDataURL::downloadDecodedData(Vector<uint8_t>&& data)
 {
-    FileSystem::PlatformFileHandle downloadDestinationFile = FileSystem::openFile(m_pendingDownloadLocation, FileSystem::FileOpenMode::Truncate, FileSystem::FileAccessPermission::All, !m_allowOverwriteDownload);
-    if (!FileSystem::isHandleValid(downloadDestinationFile)) {
+    auto downloadDestinationFile = FileSystem::openFile(m_pendingDownloadLocation, FileSystem::FileOpenMode::Truncate, FileSystem::FileAccessPermission::All, { }, !m_allowOverwriteDownload);
+    if (!downloadDestinationFile) {
 #if USE(CURL)
         ResourceError error(CURLE_WRITE_ERROR, m_response.url());
 #elif USE(SOUP)
@@ -173,27 +173,25 @@ void NetworkDataTaskDataURL::downloadDecodedData(Vector<uint8_t>&& data)
     }
 
     auto& downloadManager = m_session->networkProcess().downloadManager();
-    auto download = makeUnique<Download>(downloadManager, m_pendingDownloadID, *this, *m_session, suggestedFilename());
-    auto* downloadPtr = download.get();
-    downloadManager.dataTaskBecameDownloadTask(m_pendingDownloadID, WTFMove(download));
-    downloadPtr->didCreateDestination(m_pendingDownloadLocation);
+    Ref download = Download::create(downloadManager, *m_pendingDownloadID, *this, *m_session, suggestedFilename());
+    downloadManager.dataTaskBecameDownloadTask(*m_pendingDownloadID, download.copyRef());
+    download->didCreateDestination(m_pendingDownloadLocation);
 
-    if (-1 == FileSystem::writeToFile(downloadDestinationFile, data.span())) {
-        FileSystem::closeFile(downloadDestinationFile);
+    if (!downloadDestinationFile.write(data.span())) {
+        downloadDestinationFile = { };
         FileSystem::deleteFile(m_pendingDownloadLocation);
 #if USE(CURL)
         ResourceError error(CURLE_WRITE_ERROR, m_response.url());
 #elif USE(SOUP)
         ResourceError error(downloadDestinationError(m_response, "Cannot write destination file."_s));
 #endif
-        downloadPtr->didFail(error, { });
+        download->didFail(error, { });
         invalidateAndCancel();
         return;
     }
 
-    downloadPtr->didReceiveData(data.size(), 0, 0);
-    FileSystem::closeFile(downloadDestinationFile);
-    downloadPtr->didFinish();
+    download->didReceiveData(data.size(), 0, 0);
+    download->didFinish();
     m_state = State::Completed;
 }
 

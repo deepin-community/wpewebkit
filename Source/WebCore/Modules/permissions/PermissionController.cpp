@@ -30,13 +30,13 @@
 
 namespace WebCore {
 
-static RefPtr<PermissionController>& sharedController()
+static RefPtr<PermissionController>& NODELETE sharedController()
 {
     static MainThreadNeverDestroyed<RefPtr<PermissionController>> controller;
     return controller;
 }
 
-PermissionController& PermissionController::shared()
+PermissionController& PermissionController::singleton()
 {
     auto& controller = sharedController();
     if (!controller)
@@ -47,7 +47,7 @@ PermissionController& PermissionController::shared()
 void PermissionController::setSharedController(Ref<PermissionController>&& controller)
 {
     ASSERT(!sharedController());
-    sharedController() = WTFMove(controller);
+    sharedController() = WTF::move(controller);
 }
 
 } // namespace WebCore

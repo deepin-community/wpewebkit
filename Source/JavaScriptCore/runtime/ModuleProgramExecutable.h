@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include "GlobalExecutable.h"
+#include <JavaScriptCore/GlobalExecutable.h>
 
 namespace JSC {
 
+class SymbolTable;
 class UnlinkedModuleProgramCodeBlock;
 
 class ModuleProgramExecutable final : public GlobalExecutable {
@@ -43,20 +44,20 @@ public:
         return vm.moduleProgramExecutableSpace<mode>();
     }
 
-    static ModuleProgramExecutable* create(JSGlobalObject*, const SourceCode&);
+    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&);
 
     static void destroy(JSCell*);
 
     ModuleProgramCodeBlock* codeBlock() const
     {
-        return bitwise_cast<ModuleProgramCodeBlock*>(Base::codeBlock());
+        return std::bit_cast<ModuleProgramCodeBlock*>(Base::codeBlock());
     }
 
     UnlinkedModuleProgramCodeBlock* getUnlinkedCodeBlock(JSGlobalObject*);
 
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock() const
     {
-        return bitwise_cast<UnlinkedModuleProgramCodeBlock*>(Base::unlinkedCodeBlock());
+        return std::bit_cast<UnlinkedModuleProgramCodeBlock*>(Base::unlinkedCodeBlock());
     }
 
     Ref<JSC::JITCode> generatedJITCode()
@@ -68,9 +69,11 @@ public:
 
     DECLARE_INFO;
 
+    DECLARE_VISIT_CHILDREN;
+
     bool isAsync() const { return features() & AwaitFeature; }
 
-    SymbolTable* moduleEnvironmentSymbolTable() { return m_moduleEnvironmentSymbolTable.get(); }
+    SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -79,8 +82,6 @@ private:
     friend class ScriptExecutable;
 
     ModuleProgramExecutable(JSGlobalObject*, const SourceCode&);
-
-    DECLARE_VISIT_CHILDREN;
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;

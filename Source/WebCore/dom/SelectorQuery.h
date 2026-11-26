@@ -25,13 +25,13 @@
 
 #pragma once
 
-#include "CSSSelectorList.h"
 #include "CSSSelectorParser.h"
 #include "ExceptionOr.h"
 #include "NodeList.h"
 #include "SecurityOriginData.h"
 #include "SelectorCompiler.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/AtomStringHash.h>
 
@@ -42,27 +42,30 @@ class ContainerNode;
 class Document;
 class Element;
 
+namespace Style {
+struct SelectorMatchingState;
+};
+
 class SelectorDataList {
 public:
     explicit SelectorDataList(const CSSSelectorList&);
     bool matches(Element&) const;
-    Element* closest(Element&) const;
+    RefPtr<Element> closest(Element&) const;
     Ref<NodeList> queryAll(ContainerNode& rootNode) const;
     Element* queryFirst(ContainerNode& rootNode) const;
 
     bool shouldStoreInDocument() const { return m_matchType == MatchType::TagNameMatch || m_matchType == MatchType::ClassNameMatch; }
-    AtomString classNameToMatch() const;
+    AtomString NODELETE classNameToMatch() const;
 
 private:
     struct SelectorData {
-        const CSSSelector* selector;
+        const CSSSelector& selector;
 #if ENABLE(CSS_SELECTOR_JIT)
         mutable CompiledSelector compiledSelector { };
 #endif
     };
 
-    bool selectorMatches(const SelectorData&, Element&, const ContainerNode& rootNode) const;
-    Element* selectorClosest(const SelectorData&, Element&, const ContainerNode& rootNode) const;
+    bool selectorMatches(const SelectorData&, Element&, const ContainerNode& rootNode, Style::SelectorMatchingState* = nullptr) const;
 
     template <typename OutputType> void execute(ContainerNode& rootNode, OutputType&) const;
     template <typename OutputType> void executeFastPathForIdSelector(const ContainerNode& rootNode, const SelectorData&, const CSSSelector* idSelector, OutputType&) const;
@@ -78,7 +81,7 @@ private:
     static bool compileSelector(const SelectorData&);
 #endif // ENABLE(CSS_SELECTOR_JIT)
 
-    Vector<SelectorData> m_selectors;
+    FixedVector<SelectorData> m_selectors;
     mutable enum MatchType {
         CompilableSingle,
         CompilableSingleWithRootFilter,
@@ -97,13 +100,13 @@ private:
 };
 
 class SelectorQuery {
+    WTF_MAKE_TZONE_ALLOCATED(SelectorQuery);
     WTF_MAKE_NONCOPYABLE(SelectorQuery);
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     explicit SelectorQuery(CSSSelectorList&&);
     bool matches(Element&) const;
-    Element* closest(Element&) const;
+    RefPtr<Element> closest(Element&) const;
     Ref<NodeList> queryAll(ContainerNode& rootNode) const;
     Element* queryFirst(ContainerNode& rootNode) const;
 
@@ -116,9 +119,9 @@ private:
 };
 
 class SelectorQueryCache {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(SelectorQueryCache);
 public:
-    static SelectorQueryCache& singleton();
+    static SelectorQueryCache& NODELETE singleton();
 
     SelectorQuery* add(const String&, const Document&);
     void clear();
@@ -133,7 +136,7 @@ inline bool SelectorQuery::matches(Element& element) const
     return m_selectors.matches(element);
 }
 
-inline Element* SelectorQuery::closest(Element& element) const
+inline RefPtr<Element> SelectorQuery::closest(Element& element) const
 {
     return m_selectors.closest(element);
 }

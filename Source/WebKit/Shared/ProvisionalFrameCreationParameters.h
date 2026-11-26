@@ -25,12 +25,33 @@
 
 #pragma once
 
+#include <WebCore/FrameIdentifier.h>
+#include <WebCore/IntRect.h>
 #include <WebCore/LayerHostingContextIdentifier.h>
+#include <WebCore/ReferrerPolicy.h>
+
+namespace WebCore {
+enum class ScrollbarMode : uint8_t;
+enum class SandboxFlag : uint16_t;
+using SandboxFlags = OptionSet<SandboxFlag>;
+}
 
 namespace WebKit {
 
+enum class CommitTiming : bool {
+    WaitForLoad,
+    Immediately,
+};
+
 struct ProvisionalFrameCreationParameters {
+    WebCore::FrameIdentifier frameID;
+    std::optional<WebCore::FrameIdentifier> frameIDBeforeProvisionalNavigation;
     std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier;
+    WebCore::SandboxFlags effectiveSandboxFlags;
+    WebCore::ReferrerPolicy effectiveReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
+    WebCore::ScrollbarMode scrollingMode;
+    std::optional<WebCore::IntRect> initialRect;
+    CommitTiming commitTiming { CommitTiming::WaitForLoad };
 };
 
 } // namespace WebKit

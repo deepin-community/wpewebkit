@@ -33,6 +33,7 @@
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/TrackBase.h>
 #include <wtf/Ref.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -49,6 +50,7 @@ struct AudioTrackPrivateRemoteConfiguration;
 class RemoteAudioTrackProxy final
     : public ThreadSafeRefCounted<RemoteAudioTrackProxy, WTF::DestructionThread::Main>
     , public WebCore::AudioTrackPrivateClient {
+    WTF_MAKE_TZONE_ALLOCATED(RemoteAudioTrackProxy);
 public:
     static Ref<RemoteAudioTrackProxy> create(GPUConnectionToWebProcess& connectionToWebProcess, WebCore::AudioTrackPrivate& trackPrivate, WebCore::MediaPlayerIdentifier mediaPlayerIdentifier)
     {
@@ -56,6 +58,10 @@ public:
     }
 
     virtual ~RemoteAudioTrackProxy();
+
+    // WebCore::AudioTrackPrivateClient.
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
     WebCore::TrackID id() const { return m_trackPrivate->id(); };
     void setEnabled(bool enabled)
@@ -74,15 +80,15 @@ private:
 
     // TrackPrivateBaseClient
     void idChanged(WebCore::TrackID) final;
-    void labelChanged(const AtomString&) final;
-    void languageChanged(const AtomString&) final;
+    void labelChanged(const String&) final;
+    void languageChanged(const String&) final;
     void willRemove() final;
 
     AudioTrackPrivateRemoteConfiguration configuration();
     void configurationChanged();
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_connectionToWebProcess;
-    Ref<WebCore::AudioTrackPrivate> m_trackPrivate;
+    const Ref<WebCore::AudioTrackPrivate> m_trackPrivate;
     WebCore::TrackID m_id;
     WebCore::MediaPlayerIdentifier m_mediaPlayerIdentifier;
     bool m_enabled { false };

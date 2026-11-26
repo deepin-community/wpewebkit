@@ -30,14 +30,14 @@
 namespace WebCore {
 
 class HTMLArticleElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLArticleElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLArticleElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLArticleElement);
 public:
     static Ref<HTMLArticleElement> create(const QualifiedName&, Document&);
 
 private:
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
 
     HTMLArticleElement(const QualifiedName&, Document&);
 };

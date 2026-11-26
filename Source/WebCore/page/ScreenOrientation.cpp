@@ -26,22 +26,27 @@
 #include "config.h"
 #include "ScreenOrientation.h"
 
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "ContextDestructionObserverInlines.h"
+#include "DocumentFullscreen.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "Event.h"
 #include "EventNames.h"
+#include "EventTargetInlines.h"
 #include "FrameDestructionObserverInlines.h"
-#include "FullscreenManager.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalDOMWindow.h"
 #include "Page.h"
+#include "Settings.h"
 #include "VisibilityState.h"
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "DocumentPage.h"
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ScreenOrientation);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ScreenOrientation);
 
 Ref<ScreenOrientation> ScreenOrientation::create(Document* document)
 {
@@ -54,14 +59,14 @@ ScreenOrientation::ScreenOrientation(Document* document)
     : ActiveDOMObject(document)
 {
     if (shouldListenForChangeNotification()) {
-        if (auto* manager = this->manager())
+        if (RefPtr manager = this->manager())
             manager->addObserver(*this);
     }
 }
 
 ScreenOrientation::~ScreenOrientation()
 {
-    if (auto* manager = this->manager())
+    if (RefPtr manager = this->manager())
         manager->removeObserver(*this);
 }
 
@@ -79,7 +84,7 @@ ScreenOrientationManager* ScreenOrientation::manager() const
     return page ? page->screenOrientationManager() : nullptr;
 }
 
-static bool isSupportedLockType(ScreenOrientationLockType lockType)
+static bool NODELETE isSupportedLockType(ScreenOrientationLockType lockType)
 {
     switch (lockType) {
     case ScreenOrientationLockType::Any:
@@ -94,13 +99,13 @@ static bool isSupportedLockType(ScreenOrientationLockType lockType)
 
 void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
 {
-    auto* document = this->document();
+    RefPtr document = this->document();
     if (!document || !document->isFullyActive()) {
         promise->reject(Exception { ExceptionCode::InvalidStateError, "Document is not fully active."_s });
         return;
     }
 
-    auto* manager = this->manager();
+    RefPtr manager = this->manager();
     if (!manager) {
         promise->reject(Exception { ExceptionCode::InvalidStateError, "No browsing context"_s });
         return;
@@ -119,7 +124,7 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
 
     if (document->settings().fullscreenRequirementForScreenOrientationLockingEnabled()) {
 #if ENABLE(FULLSCREEN_API)
-        if (CheckedPtr fullscreenManager = document->fullscreenManagerIfExists(); !fullscreenManager || !fullscreenManager->isFullscreen()) {
+        if (RefPtr documentFullscreen = document->fullscreenIfExists(); !documentFullscreen || !documentFullscreen->isFullscreen()) {
 #else
         if (true) {
 #endif
@@ -132,14 +137,14 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
         return;
     }
     if (auto previousPromise = manager->takeLockPromise()) {
-        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [previousPromise = WTFMove(previousPromise)]() mutable {
+        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [previousPromise = WTF::move(previousPromise)](auto&) mutable {
             previousPromise->reject(Exception { ExceptionCode::AbortError, "A new lock request was started"_s });
         });
     }
-    manager->setLockPromise(*this, WTFMove(promise));
-    manager->lock(lockType, [this, protectedThis = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
-        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [this, exception = WTFMove(exception)]() mutable {
-            auto* manager = this->manager();
+    manager->setLockPromise(*this, WTF::move(promise));
+    manager->lock(lockType, [pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
+        queueTaskKeepingObjectAlive(pendingActivity->object(), TaskSource::DOMManipulation, [exception = WTF::move(exception)](auto& orientation) mutable {
+            auto* manager = orientation.manager();
             if (!manager)
                 return;
 
@@ -148,7 +153,7 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
                 return;
 
             if (exception)
-                promise->reject(WTFMove(*exception));
+                promise->reject(WTF::move(*exception));
             else
                 promise->resolve();
         });
@@ -157,7 +162,7 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
 
 ExceptionOr<void> ScreenOrientation::unlock()
 {
-    auto* document = this->document();
+    RefPtr document = this->document();
     if (!document || !document->isFullyActive())
         return Exception { ExceptionCode::InvalidStateError, "Document is not fully active."_s };
 
@@ -167,14 +172,14 @@ ExceptionOr<void> ScreenOrientation::unlock()
     if (document->page() && !document->page()->isVisible())
         return Exception { ExceptionCode::SecurityError, "Only visible documents can unlock the screen orientation"_s };
 
-    if (auto* manager = this->manager())
+    if (RefPtr manager = this->manager())
         manager->unlock();
     return { };
 }
 
 auto ScreenOrientation::type() const -> Type
 {
-    auto* manager = this->manager();
+    RefPtr manager = this->manager();
     if (!manager)
         return naturalScreenOrientationType();
     return manager->currentOrientation();
@@ -182,7 +187,7 @@ auto ScreenOrientation::type() const -> Type
 
 uint16_t ScreenOrientation::angle() const
 {
-    auto* manager = this->manager();
+    RefPtr manager = this->manager();
     auto orientation = manager ? manager->currentOrientation() : naturalScreenOrientationType();
 
     // https://w3c.github.io/screen-orientation/#dfn-screen-orientation-values-table
@@ -215,10 +220,10 @@ uint16_t ScreenOrientation::angle() const
 
 void ScreenOrientation::visibilityStateChanged()
 {
-    auto* document = this->document();
+    RefPtr document = this->document();
     if (!document)
         return;
-    auto* manager = this->manager();
+    RefPtr manager = this->manager();
     if (!manager)
         return;
 
@@ -230,7 +235,7 @@ void ScreenOrientation::visibilityStateChanged()
 
 bool ScreenOrientation::shouldListenForChangeNotification() const
 {
-    auto* document = this->document();
+    RefPtr document = this->document();
     if (!document || !document->frame())
         return false;
     return document->visibilityState() == VisibilityState::Visible;
@@ -243,7 +248,7 @@ void ScreenOrientation::screenOrientationDidChange(ScreenOrientationType)
 
 void ScreenOrientation::suspend(ReasonForSuspension)
 {
-    if (auto* manager = this->manager())
+    if (RefPtr manager = this->manager())
         manager->removeObserver(*this);
 }
 
@@ -251,19 +256,19 @@ void ScreenOrientation::resume()
 {
     if (!shouldListenForChangeNotification())
         return;
-    if (auto* manager = this->manager())
+    if (RefPtr manager = this->manager())
         manager->addObserver(*this);
 }
 
 void ScreenOrientation::stop()
 {
-    auto* manager = this->manager();
+    RefPtr manager = this->manager();
     if (!manager)
         return;
 
     manager->removeObserver(*this);
     if (manager->lockRequester() == this) {
-        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [promise = manager->takeLockPromise()] {
+        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [promise = manager->takeLockPromise()](auto&) {
             promise->reject(Exception { ExceptionCode::AbortError, "Document is no longer fully active"_s });
         });
     }
@@ -272,6 +277,11 @@ void ScreenOrientation::stop()
 bool ScreenOrientation::virtualHasPendingActivity() const
 {
     return m_hasChangeEventListener;
+}
+
+ScriptExecutionContext* ScreenOrientation::scriptExecutionContext() const
+{
+    return ActiveDOMObject::scriptExecutionContext();
 }
 
 void ScreenOrientation::eventListenersDidChange()

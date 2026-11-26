@@ -29,7 +29,6 @@
 #include "pas_get_page_base_and_kind_for_small_other_in_fast_megapage.h"
 #include "pas_heap_config.h"
 #include "pas_page_base.h"
-#include "pas_large_map.h"
 
 PAS_BEGIN_EXTERN_C;
 
@@ -55,7 +54,7 @@ static PAS_ALWAYS_INLINE pas_page_base* pas_get_page_base(void* ptr,
         return NULL;
     } }
     
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return NULL;
 }
 

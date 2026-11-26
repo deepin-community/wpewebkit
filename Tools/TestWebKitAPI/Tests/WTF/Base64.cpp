@@ -36,13 +36,13 @@ TEST(Base64, Encode)
 {
     static constexpr OptionSet<Base64EncodeOption> options;
 
-    EXPECT_ENCODE("", ""_s.span8());
-    EXPECT_ENCODE("Zg==", "f"_s.span8());
-    EXPECT_ENCODE("Zm8=", "fo"_s.span8());
-    EXPECT_ENCODE("Zm9v", "foo"_s.span8());
-    EXPECT_ENCODE("Zm9vYg==", "foob"_s.span8());
-    EXPECT_ENCODE("Zm9vYmE=", "fooba"_s.span8());
-    EXPECT_ENCODE("Zm9vYmFy", "foobar"_s.span8());
+    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg==", byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8=", byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg==", byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE=", byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
 
     EXPECT_ENCODE("AA==", Vector<uint8_t>({ 0 }));
     EXPECT_ENCODE("AQ==", Vector<uint8_t>({ 1 }));
@@ -58,13 +58,13 @@ TEST(Base64, EncodeOmitPadding)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::OmitPadding };
 
-    EXPECT_ENCODE("", ""_s.span8());
-    EXPECT_ENCODE("Zg", "f"_s.span8());
-    EXPECT_ENCODE("Zm8", "fo"_s.span8());
-    EXPECT_ENCODE("Zm9v", "foo"_s.span8());
-    EXPECT_ENCODE("Zm9vYg", "foob"_s.span8());
-    EXPECT_ENCODE("Zm9vYmE", "fooba"_s.span8());
-    EXPECT_ENCODE("Zm9vYmFy", "foobar"_s.span8());
+    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg", byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8", byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg", byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE", byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
 
     EXPECT_ENCODE("AA", Vector<uint8_t>({ 0 }));
     EXPECT_ENCODE("AQ", Vector<uint8_t>({ 1 }));
@@ -80,13 +80,13 @@ TEST(Base64, EncodeURL)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::URL };
 
-    EXPECT_ENCODE("", ""_s.span8());
-    EXPECT_ENCODE("Zg==", "f"_s.span8());
-    EXPECT_ENCODE("Zm8=", "fo"_s.span8());
-    EXPECT_ENCODE("Zm9v", "foo"_s.span8());
-    EXPECT_ENCODE("Zm9vYg==", "foob"_s.span8());
-    EXPECT_ENCODE("Zm9vYmE=", "fooba"_s.span8());
-    EXPECT_ENCODE("Zm9vYmFy", "foobar"_s.span8());
+    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg==", byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8=", byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg==", byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE=", byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
 
     EXPECT_ENCODE("AA==", Vector<uint8_t>({ 0 }));
     EXPECT_ENCODE("AQ==", Vector<uint8_t>({ 1 }));
@@ -102,13 +102,13 @@ TEST(Base64, EncodeURLOmitPadding)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::URL, Base64EncodeOption::OmitPadding };
 
-    EXPECT_ENCODE("", ""_s.span8());
-    EXPECT_ENCODE("Zg", "f"_s.span8());
-    EXPECT_ENCODE("Zm8", "fo"_s.span8());
-    EXPECT_ENCODE("Zm9v", "foo"_s.span8());
-    EXPECT_ENCODE("Zm9vYg", "foob"_s.span8());
-    EXPECT_ENCODE("Zm9vYmE", "fooba"_s.span8());
-    EXPECT_ENCODE("Zm9vYmFy", "foobar"_s.span8());
+    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg", byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8", byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg", byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE", byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
 
     EXPECT_ENCODE("AA", Vector<uint8_t>({ 0 }));
     EXPECT_ENCODE("AQ", Vector<uint8_t>({ 1 }));
@@ -294,6 +294,22 @@ TEST(Base64, DecodeURLValidatePaddingIgnoreWhitespace)
     EXPECT_TRUE(Vector<uint8_t>({ 0, 1 }) == base64Decode(" A A E = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 254, 255 }) == base64Decode(" _ v 8 = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 0, 1, 128, 254, 255 }) == base64Decode(" A A G A _ v 8 = "_s, options));
+}
+
+TEST(Base64, EncodedSizeRejectsInputAboveUnsignedRange)
+{
+    static constexpr OptionSet<Base64EncodeOption> options;
+
+    size_t hugeLengthTruncatingToSmallValue = static_cast<size_t>(std::numeric_limits<unsigned>::max()) + 100;
+    EXPECT_EQ(calculateBase64EncodedSize(hugeLengthTruncatingToSmallValue, options), 0U);
+
+    EXPECT_EQ(calculateBase64EncodedSize(static_cast<size_t>(WTF::maximumBase64EncoderInputBufferSize) + 1, options), 0U);
+
+    EXPECT_EQ(calculateBase64EncodedSize(0, options), 0U);
+    EXPECT_EQ(calculateBase64EncodedSize(1, options), 4U);
+    EXPECT_EQ(calculateBase64EncodedSize(3, options), 4U);
+    EXPECT_EQ(calculateBase64EncodedSize(6, options), 8U);
+    EXPECT_NE(calculateBase64EncodedSize(WTF::maximumBase64EncoderInputBufferSize, options), 0U);
 }
 
 } // namespace TestWebKitAPI

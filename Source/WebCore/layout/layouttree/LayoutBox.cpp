@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,35 +27,38 @@
 #include "LayoutBox.h"
 
 #include "LayoutBoxGeometry.h"
+#include "LayoutBoxInlines.h"
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
 #include "LayoutPhase.h"
+#include "LayoutShape.h"
 #include "LayoutState.h"
 #include "RenderObject.h"
-#include "RenderStyleInlines.h"
-#include "Shape.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Box);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Box);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Box::BoxRareData);
 
-Box::Box(ElementAttributes&& elementAttributes, RenderStyle&& style, std::unique_ptr<RenderStyle>&& firstLineStyle, OptionSet<BaseTypeFlag> baseTypeFlags)
+
+Box::Box(ElementAttributes&& elementAttributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
     : m_nodeType(elementAttributes.nodeType)
     , m_isAnonymous(static_cast<bool>(elementAttributes.isAnonymous))
     , m_baseTypeFlags(baseTypeFlags.toRaw())
-    , m_style(WTFMove(style))
+    , m_style(WTF::move(style))
 {
     if (firstLineStyle)
-        ensureRareData().firstLineStyle = WTFMove(firstLineStyle);
+        ensureRareData().firstLineStyle = WTF::move(firstLineStyle);
 }
 
 Box::~Box()
 {
-    if (UNLIKELY(m_hasRareData))
+    if (m_hasRareData) [[unlikely]]
         removeRareData();
     if (m_renderer)
         m_renderer->clearLayoutBox();
@@ -74,14 +77,16 @@ UniqueRef<Box> Box::removeFromParent()
     previousOrLast = std::exchange(m_previousSibling, nullptr);
     m_parent = nullptr;
 
-    return makeUniqueRefFromNonNullUniquePtr(WTFMove(ownedSelf));
+    return makeUniqueRefFromNonNullUniquePtr(WTF::move(ownedSelf));
 }
 
-void Box::updateStyle(RenderStyle&& newStyle, std::unique_ptr<RenderStyle>&& newFirstLineStyle)
+void Box::updateStyle(Style::ComputedStyle&& newStyle, std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle)
 {
-    m_style = WTFMove(newStyle);
+    m_style = WTF::move(newStyle);
     if (newFirstLineStyle)
-        ensureRareData().firstLineStyle = WTFMove(newFirstLineStyle);
+        ensureRareData().firstLineStyle = WTF::move(newFirstLineStyle);
+    else if (hasRareData())
+        rareData().firstLineStyle = { };
 }
 
 bool Box::establishesFormattingContext() const
@@ -165,12 +170,12 @@ bool Box::establishesFlexFormattingContext() const
 
 bool Box::establishesGridFormattingContext() const
 {
-    return isGridBox();
+    return isGridFormattingContext();
 }
 
 bool Box::establishesIndependentFormattingContext() const
 {
-    return isLayoutContainmentBox() || isAbsolutelyPositioned() || isFlexItem();
+    return isLayoutContainmentBox() || isAbsolutelyPositioned() || isFlexItem() || isGridItem();
 }
 
 bool Box::isRelativelyPositioned() const
@@ -216,24 +221,26 @@ bool Box::isFloatAvoider() const
 
 bool Box::isInlineBlockBox() const
 {
-    return m_style.display() == DisplayType::InlineBlock;
+    return m_style.display() == Style::DisplayType::InlineFlowRoot;
 }
 
 bool Box::isInlineTableBox() const
 {
-    return m_style.display() == DisplayType::InlineTable;
+    return m_style.display() == Style::DisplayType::InlineTable;
 }
 
 bool Box::isBlockLevelBox() const
 {
     // Block level elements generate block level boxes.
     auto display = m_style.display();
-    return display == DisplayType::Block
-        || display == DisplayType::ListItem
-        || display == DisplayType::Table
-        || display == DisplayType::Flex
-        || display == DisplayType::Grid
-        || display == DisplayType::FlowRoot;
+    return display == Style::DisplayType::BlockFlow
+        || display == Style::DisplayType::BlockFlowRoot
+        || display == Style::DisplayType::BlockTable
+        || display == Style::DisplayType::BlockFlex
+        || display == Style::DisplayType::BlockGrid
+        || display == Style::DisplayType::BlockGridLanes
+        || display == Style::DisplayType::BlockDeprecatedFlex
+        || display == Style::DisplayType::BlockFlowListItem;
 }
 
 bool Box::isBlockBox() const
@@ -246,15 +253,17 @@ bool Box::isInlineLevelBox() const
 {
     // Inline level elements generate inline level boxes.
     auto display = m_style.display();
-    return display == DisplayType::Inline
-        || display == DisplayType::InlineBox
-        || display == DisplayType::InlineFlex
-        || display == DisplayType::InlineGrid
-        || display == DisplayType::Ruby
-        || display == DisplayType::RubyBase
-        || display == DisplayType::RubyAnnotation
-        || isInlineBlockBox()
-        || isInlineTableBox();
+    return is<ElementBox>(*this) &&
+          (display == Style::DisplayType::InlineFlow
+        || display == Style::DisplayType::InlineFlowRoot
+        || display == Style::DisplayType::InlineTable
+        || display == Style::DisplayType::InlineFlex
+        || display == Style::DisplayType::InlineGrid
+        || display == Style::DisplayType::InlineGridLanes
+        || display == Style::DisplayType::InlineRuby
+        || display == Style::DisplayType::InlineDeprecatedFlex
+        || display == Style::DisplayType::RubyBase
+        || display == Style::DisplayType::RubyText);
 }
 
 bool Box::isInlineBox() const
@@ -262,7 +271,10 @@ bool Box::isInlineBox() const
     // An inline box is one that is both inline-level and whose contents participate in its containing inline formatting context.
     // A non-replaced element with a 'display' value of 'inline' generates an inline box.
     auto display = m_style.display();
-    return (display == DisplayType::Inline || display == DisplayType::Ruby || display == DisplayType::RubyBase) && !isReplacedBox();
+    return is<ElementBox>(*this) &&
+          (display == Style::DisplayType::InlineFlow
+        || display == Style::DisplayType::InlineRuby
+        || display == Style::DisplayType::RubyBase) && !isReplacedBox();
 }
 
 bool Box::isAtomicInlineBox() const
@@ -278,14 +290,18 @@ bool Box::isFlexItem() const
     return isInFlow() && parent().isFlexBox();
 }
 
+bool Box::isGridItem() const
+{
+    return isInFlow() && parent().isGridFormattingContext();
+}
+
 bool Box::isBlockContainer() const
 {
     auto display = m_style.display();
-    return display == DisplayType::Block
-        || display == DisplayType::FlowRoot
-        || display == DisplayType::ListItem
-        || display == DisplayType::RubyBlock
-        || isInlineBlockBox()
+    return display == Style::DisplayType::BlockFlow
+        || display == Style::DisplayType::BlockFlowRoot
+        || display == Style::DisplayType::BlockFlowListItem
+        || display == Style::DisplayType::BlockRuby
         || isTableCell()
         || isTableCaption(); // TODO && !replaced element
 }
@@ -304,22 +320,23 @@ bool Box::isLayoutContainmentBox() const
             return isAtomicInlineBox();
         return true;
     };
-    return m_style.usedContain().contains(Containment::Layout) && supportsLayoutContainment();
+    return m_style.usedContain().contains(Style::ContainValue::Layout) && supportsLayoutContainment();
 }
 
 bool Box::isRubyAnnotationBox() const
 {
-    return m_style.display() == DisplayType::RubyAnnotation;
+    return m_style.display() == Style::DisplayType::RubyText;
 }
 
 bool Box::isInterlinearRubyAnnotationBox() const
 {
-    return isRubyAnnotationBox() && m_style.rubyPosition() != RubyPosition::InterCharacter;
+    return isRubyAnnotationBox() && !m_style.isInterCharacterRubyPosition();
 }
 
 bool Box::isInternalRubyBox() const
 {
-    return m_style.display() == DisplayType::RubyBase || m_style.display() == DisplayType::RubyAnnotation;
+    return m_style.display() == Style::DisplayType::RubyBase
+        || m_style.display() == Style::DisplayType::RubyText;
 }
 
 bool Box::isSizeContainmentBox() const
@@ -336,14 +353,25 @@ bool Box::isSizeContainmentBox() const
             return isAtomicInlineBox();
         return true;
     };
-    return m_style.usedContain().contains(Containment::Size) && supportsSizeContainment();
+    return m_style.usedContain().contains(Style::ContainValue::Size) && supportsSizeContainment();
 }
 
 bool Box::isInternalTableBox() const
 {
     // table-row-group, table-header-group, table-footer-group, table-row, table-cell, table-column-group, table-column
     // generates the appropriate internal table box which participates in a table formatting context.
-    return isTableBody() || isTableHeader() || isTableFooter() || isTableRow() || isTableCell() || isTableColumnGroup() || isTableColumn();
+    return isTableBody()
+        || isTableHeader()
+        || isTableFooter()
+        || isTableRow()
+        || isTableCell()
+        || isTableColumnGroup()
+        || isTableColumn();
+}
+
+bool Box::isRubyBase() const
+{
+    return style().display() == Style::DisplayType::RubyBase;
 }
 
 const Box* Box::nextInFlowSibling() const
@@ -358,6 +386,14 @@ const Box* Box::nextInFlowOrFloatingSibling() const
 {
     auto* nextSibling = this->nextSibling();
     while (nextSibling && !(nextSibling->isInFlow() || nextSibling->isFloatingPositioned()))
+        nextSibling = nextSibling->nextSibling();
+    return nextSibling;
+}
+
+const Box* Box::nextOutOfFlowSibling() const
+{
+    auto* nextSibling = this->nextSibling();
+    while (nextSibling && !nextSibling->isOutOfFlowPositioned())
         nextSibling = nextSibling->nextSibling();
     return nextSibling;
 }
@@ -378,15 +414,44 @@ const Box* Box::previousInFlowOrFloatingSibling() const
     return previousSibling;
 }
 
-bool Box::isDescendantOf(const ElementBox& ancestor) const
+const Box* Box::previousOutOfFlowSibling() const
 {
-    if (ancestor.isInitialContainingBlock())
-        return true;
-    for (auto& containingBlock : containingBlockChain(*this)) {
-        if (&containingBlock == &ancestor)
+    auto* previousSibling = this->previousSibling();
+    while (previousSibling && !previousSibling->isOutOfFlowPositioned())
+        previousSibling = previousSibling->previousSibling();
+    return previousSibling;
+}
+
+bool Box::isDescendantOf(const Box& box) const
+{
+
+    for (auto* ancestor = &parent(); !ancestor->isInitialContainingBlock(); ancestor = &ancestor->parent()) {
+        if (ancestor == &box)
             return true;
     }
     return false;
+}
+
+bool Box::isDescendantOfWithinFormattingContext(const Box& box) const
+{
+    for (CheckedPtr ancestor = &parent(); !ancestor->establishesFormattingContext(); ancestor = &ancestor->parent()) {
+        if (ancestor == &box)
+            return true;
+    }
+    return false;
+}
+
+bool Box::isInFormattingContextEstablishedBy(const ElementBox& formattingContextRoot) const
+{
+    ASSERT(formattingContextRoot.establishesFormattingContext());
+
+    CheckedPtr ancestor = &parent();
+    while (true) {
+        if (ancestor->establishesFormattingContext())
+            break;
+        ancestor = &ancestor->parent();
+    }
+    return ancestor == &formattingContextRoot;
 }
 
 bool Box::isOverflowVisible() const
@@ -477,25 +542,25 @@ std::optional<LayoutUnit> Box::columnWidth() const
     return rareData().columnWidth;
 }
 
-const Shape* Box::shape() const
+const LayoutShape* Box::shape() const
 {
     if (!hasRareData())
         return nullptr;
     return rareData().shape.get();
 }
 
-void Box::setShape(RefPtr<const Shape> shape)
+void Box::setShape(RefPtr<const LayoutShape> shape)
 {
-    ensureRareData().shape = WTFMove(shape);
+    ensureRareData().shape = WTF::move(shape);
 }
 
 const ElementBox* Box::associatedRubyAnnotationBox() const
 {
-    if (style().display() != DisplayType::RubyBase)
+    if (style().display() != Style::DisplayType::RubyBase)
         return nullptr;
 
     auto* next = nextSibling();
-    if (!next || next->style().display() != DisplayType::RubyAnnotation)
+    if (!next || next->style().display() != Style::DisplayType::RubyText)
         return nullptr;
 
     return dynamicDowncast<ElementBox>(next);
@@ -508,6 +573,12 @@ Box::RareDataMap& Box::rareDataMap()
 }
 
 const Box::BoxRareData& Box::rareData() const
+{
+    ASSERT(hasRareData());
+    return *rareDataMap().get(this);
+}
+
+Box::BoxRareData& Box::rareData()
 {
     ASSERT(hasRareData());
     return *rareDataMap().get(this);

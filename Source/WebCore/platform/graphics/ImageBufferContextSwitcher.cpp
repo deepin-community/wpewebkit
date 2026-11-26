@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,11 +30,14 @@
 #include "FilterResults.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinationContext, const FloatRect &sourceImageRect, const DestinationColorSpace& colorSpace, RefPtr<Filter>&& filter, FilterResults* results)
-    : GraphicsContextSwitcher(WTFMove(filter))
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferContextSwitcher);
+
+ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinationContext, const FloatRect& sourceImageRect, const DestinationColorSpace& colorSpace, RefPtr<Filter>&& filter, FilterResults* results)
+    : GraphicsContextSwitcher(WTF::move(filter))
     , m_sourceImageRect(sourceImageRect)
     , m_results(results)
 {
@@ -52,15 +55,15 @@ ImageBufferContextSwitcher::ImageBufferContextSwitcher(GraphicsContext& destinat
     }
 
     auto state = destinationContext.state();
-    m_sourceImage->context().mergeAllChanges(state);
+    protect(m_sourceImage)->context().mergeAllChanges(state);
 }
 
 GraphicsContext* ImageBufferContextSwitcher::drawingContext(GraphicsContext& context) const
 {
-    return m_sourceImage ? &m_sourceImage->context() : &context;
+    return m_sourceImage ? &protect(m_sourceImage)->context() : &context;
 }
 
-void ImageBufferContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect& repaintRect, const FloatRect&)
+void ImageBufferContextSwitcher::beginClipAndDrawSourceImage(GraphicsContext& destinationContext, const FloatRect& repaintRect, const FloatRect&, NOESCAPE const Function<void(GraphicsContext&)>&)
 {
     if (auto* context = drawingContext(destinationContext)) {
         context->save();
@@ -81,7 +84,7 @@ void ImageBufferContextSwitcher::endDrawSourceImage(GraphicsContext& destination
 {
     if (!m_filter) {
         if (m_sourceImage)
-            destinationContext.drawImageBuffer(*m_sourceImage, m_sourceImageRect, { destinationContext.compositeOperation(), destinationContext.blendMode() });
+            destinationContext.drawImageBuffer(*protect(m_sourceImage), m_sourceImageRect, { destinationContext.compositeOperation(), destinationContext.blendMode() });
         return;
     }
 

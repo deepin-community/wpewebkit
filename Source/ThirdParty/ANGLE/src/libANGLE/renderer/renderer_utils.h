@@ -11,12 +11,14 @@
 #define LIBANGLE_RENDERER_RENDERER_UTILS_H_
 
 #include <cstdint>
+#include "common/unsafe_buffers.h"
 
 #include <limits>
 #include <map>
 
 #include "GLSLANG/ShaderLang.h"
 #include "common/angleutils.h"
+#include "common/hash_containers.h"
 #include "common/utilities.h"
 #include "libANGLE/ImageIndex.h"
 #include "libANGLE/angletypes.h"
@@ -26,7 +28,7 @@ namespace angle
 struct FeatureSetBase;
 struct Format;
 struct ImageLoadContext;
-enum class FormatID;
+enum class FormatID : uint8_t;
 }  // namespace angle
 
 namespace gl
@@ -42,6 +44,11 @@ namespace egl
 class AttributeMap;
 struct DisplayState;
 }  // namespace egl
+
+namespace sh
+{
+struct BlockMemberInfo;
+}
 
 namespace rx
 {
@@ -66,12 +73,10 @@ enum class SurfaceRotation
 
 bool IsRotatedAspectRatio(SurfaceRotation rotation);
 
-using SpecConstUsageBits = angle::PackedEnumBitSet<sh::vk::SpecConstUsage, uint32_t>;
-
-void RotateRectangle(const SurfaceRotation rotation,
-                     const bool flipY,
-                     const int framebufferWidth,
-                     const int framebufferHeight,
+void RotateRectangle(SurfaceRotation rotation,
+                     bool flipY,
+                     int framebufferWidth,
+                     int framebufferHeight,
                      const gl::Rectangle &incoming,
                      gl::Rectangle *outgoing);
 
@@ -221,8 +226,8 @@ class MultisampleTextureInitializer
 class IncompleteTextureSet final : angle::NonCopyable
 {
   public:
-    IncompleteTextureSet();
-    ~IncompleteTextureSet();
+    IncompleteTextureSet()  = default;
+    ~IncompleteTextureSet() = default;
 
     void onDestroy(const gl::Context *context);
 
@@ -248,7 +253,8 @@ struct SetFloatUniformMatrixGLSL
                     GLsizei countIn,
                     GLboolean transpose,
                     const GLfloat *value,
-                    uint8_t *targetData);
+                    uint8_t *targetData,
+                    bool isFloat16);
 };
 
 template <int cols, int rows>
@@ -259,14 +265,91 @@ struct SetFloatUniformMatrixHLSL
                     GLsizei countIn,
                     GLboolean transpose,
                     const GLfloat *value,
-                    uint8_t *targetData);
+                    uint8_t *targetData,
+                    bool isFloat16);
 };
 
 // Helper method to de-tranpose a matrix uniform for an API query.
-void GetMatrixUniform(GLenum type, GLfloat *dataOut, const GLfloat *source, bool transpose);
+void GetMatrixUniform(GLenum type,
+                      GLfloat *dataOut,
+                      const GLfloat *source,
+                      bool transpose,
+                      bool isFloat16);
 
 template <typename NonFloatT>
-void GetMatrixUniform(GLenum type, NonFloatT *dataOut, const NonFloatT *source, bool transpose);
+void GetMatrixUniform(GLenum type,
+                      NonFloatT *dataOut,
+                      const NonFloatT *source,
+                      bool transpose,
+                      bool isFloat16);
+
+// Contains a CPU-side buffer and its data layout, used as a shadow buffer for default uniform
+// blocks in VK and WGPU backends.
+struct BufferAndLayout final : private angle::NonCopyable
+{
+    BufferAndLayout();
+    ~BufferAndLayout();
+
+    // Shadow copies of the shader uniform data.
+    angle::MemoryBuffer uniformData;
+
+    // Tells us where to write on a call to a setUniform method. They are arranged in uniform
+    // location order.
+    std::vector<sh::BlockMemberInfo> uniformLayout;
+};
+
+template <typename T>
+void UpdateBufferWithLayout(GLsizei count,
+                            uint32_t arrayIndex,
+                            int componentCount,
+                            const T *v,
+                            const sh::BlockMemberInfo &layoutInfo,
+                            angle::MemoryBuffer *uniformData);
+
+template <typename T>
+void ReadFromBufferWithLayout(int componentCount,
+                              uint32_t arrayIndex,
+                              T *dst,
+                              const sh::BlockMemberInfo &layoutInfo,
+                              const angle::MemoryBuffer *uniformData,
+                              bool isFloat16);
+
+using DefaultUniformBlockMap = gl::ShaderMap<std::shared_ptr<BufferAndLayout>>;
+
+template <typename T>
+void SetUniform(const gl::ProgramExecutable *executable,
+                GLint location,
+                GLsizei count,
+                const T *v,
+                GLenum entryPointType,
+                DefaultUniformBlockMap *defaultUniformBlocks,
+                gl::ShaderBitSet *defaultUniformBlocksDirty);
+
+template <int cols, int rows>
+void SetUniformMatrixfv(const gl::ProgramExecutable *executable,
+                        GLint location,
+                        GLsizei count,
+                        GLboolean transpose,
+                        const GLfloat *value,
+                        DefaultUniformBlockMap *defaultUniformBlocks,
+                        gl::ShaderBitSet *defaultUniformBlocksDirty);
+
+template <typename T>
+void GetUniform(const gl::ProgramExecutable *executable,
+                GLint location,
+                T *v,
+                GLenum entryPointType,
+                const DefaultUniformBlockMap *defaultUniformBlocks);
+
+// Remove `[*]` from uniform names
+std::string RemoveArraySubscripts(const std::string &uniformName);
+
+// Maps sampler-in-struct uniform names to extracted sampler names, matching the transformation done
+// by the translator (RewriteStructSamplers).  Indices must have already been stripped from the
+// uniformName.
+std::string GetExtractedStructSamplerName(
+    const std::string uniformNameWithoutIndices,
+    angle::HashMap<std::string, size_t> *extractedSamplerIndices);
 
 const angle::Format &GetFormatFromFormatType(GLenum format, GLenum type);
 
@@ -301,7 +384,7 @@ uint32_t LineLoopRestartIndexCountHelper(GLsizei indexCount, const uint8_t *srcP
     GLsizei loopStartIndex = 0;
     for (GLsizei curIndex = 0; curIndex < indexCount; curIndex++)
     {
-        In vertex = inIndices[curIndex];
+        In vertex = ANGLE_UNSAFE_TODO(inIndices[curIndex]);
         if (vertex != restartIndex)
         {
             numIndices++;
@@ -310,12 +393,16 @@ uint32_t LineLoopRestartIndexCountHelper(GLsizei indexCount, const uint8_t *srcP
         {
             if (curIndex > loopStartIndex)
             {
-                numIndices += 2;
+                if (curIndex > (loopStartIndex + 1))
+                {
+                    numIndices += 1;
+                }
+                numIndices += 1;
             }
             loopStartIndex = curIndex + 1;
         }
     }
-    if (indexCount > loopStartIndex)
+    if (indexCount > (loopStartIndex + 1))
     {
         numIndices++;
     }
@@ -342,8 +429,9 @@ inline uint32_t GetLineLoopWithRestartIndexCount(gl::DrawElementsType glIndexTyp
 
 // Writes the line-strip vertices for a line loop to outPtr,
 // where outLimit is calculated as in GetPrimitiveRestartIndexCount.
+// Returns number of vertices written.
 template <typename In, typename Out>
-void CopyLineLoopIndicesWithRestart(GLsizei indexCount, const uint8_t *srcPtr, uint8_t *outPtr)
+size_t CopyLineLoopIndicesWithRestart(GLsizei indexCount, const uint8_t *srcPtr, uint8_t *outPtr)
 {
     constexpr In restartIndex     = gl::GetPrimitiveRestartIndexFromType<In>();
     constexpr Out outRestartIndex = gl::GetPrimitiveRestartIndexFromType<Out>();
@@ -352,29 +440,40 @@ void CopyLineLoopIndicesWithRestart(GLsizei indexCount, const uint8_t *srcPtr, u
     GLsizei loopStartIndex        = 0;
     for (GLsizei curIndex = 0; curIndex < indexCount; curIndex++)
     {
-        In vertex = inIndices[curIndex];
+        In vertex = ANGLE_UNSAFE_TODO(inIndices[curIndex]);
         if (vertex != restartIndex)
         {
-            *(outIndices++) = static_cast<Out>(vertex);
+            *(ANGLE_UNSAFE_TODO(outIndices++)) = static_cast<Out>(vertex);
         }
         else
         {
             if (curIndex > loopStartIndex)
             {
-                // Emit an extra vertex only if the loop is not empty.
-                *(outIndices++) = inIndices[loopStartIndex];
+                if (curIndex > (loopStartIndex + 1))
+                {
+                    // Emit an extra vertex only if the loop has more than one vertex.
+                    *(ANGLE_UNSAFE_TODO(outIndices++)) =
+                        ANGLE_UNSAFE_TODO(inIndices[loopStartIndex]);
+                }
                 // Then restart the strip.
-                *(outIndices++) = outRestartIndex;
+                *(ANGLE_UNSAFE_TODO(outIndices++)) = outRestartIndex;
             }
             loopStartIndex = curIndex + 1;
         }
     }
-    if (indexCount > loopStartIndex)
+    if (indexCount > (loopStartIndex + 1))
     {
-        // Close the last loop if not empty.
-        *(outIndices++) = inIndices[loopStartIndex];
+        // Close the last loop if it has more than one vertex.
+        ANGLE_UNSAFE_TODO(*(outIndices++) = inIndices[loopStartIndex]);
     }
+    return static_cast<size_t>(outIndices - reinterpret_cast<Out *>(outPtr));
 }
+
+void StreamEmulatedLineLoopIndices(gl::DrawElementsType glIndexType,
+                                   GLsizei indexCount,
+                                   const uint8_t *srcPtr,
+                                   uint8_t *outPtr,
+                                   bool shouldConvertUint8);
 
 void GetSamplePosition(GLsizei sampleCount, size_t index, GLfloat *xy);
 
@@ -456,7 +555,7 @@ class ResetBaseVertexBaseInstance : angle::NonCopyable
 
 angle::FormatID ConvertToSRGB(angle::FormatID formatID);
 angle::FormatID ConvertToLinear(angle::FormatID formatID);
-bool IsOverridableLinearFormat(angle::FormatID formatID);
+bool IsOverridableLinearOrSRGBFormat(angle::FormatID formatID);
 
 template <bool swizzledLuma = true>
 const gl::ColorGeneric AdjustBorderColor(const angle::ColorGeneric &borderColorGeneric,
@@ -467,17 +566,21 @@ template <typename LargerInt>
 GLint LimitToInt(const LargerInt physicalDeviceValue)
 {
     static_assert(sizeof(LargerInt) >= sizeof(int32_t), "Incorrect usage of LimitToInt");
+    return static_cast<GLint>(
+        std::min(physicalDeviceValue, static_cast<LargerInt>(std::numeric_limits<int32_t>::max())));
+}
 
-    // Limit to INT_MAX / 2 instead of INT_MAX.  If the limit is queried as float, the imprecision
-    // in floating point can cause the value to exceed INT_MAX.  This trips dEQP up.
-    return static_cast<GLint>(std::min(
-        physicalDeviceValue, static_cast<LargerInt>(std::numeric_limits<int32_t>::max() / 2)));
+template <typename LargerInt>
+GLint LimitToIntAnd(const LargerInt physicalDeviceValue, const uint64_t cap)
+{
+    LargerInt result = LimitToInt(physicalDeviceValue);
+    return static_cast<GLint>(std::min(static_cast<uint64_t>(result), cap));
 }
 
 bool TextureHasAnyRedefinedLevels(const gl::CubeFaceArray<gl::TexLevelMask> &redefinedLevels);
 bool IsTextureLevelRedefined(const gl::CubeFaceArray<gl::TexLevelMask> &redefinedLevels,
                              gl::TextureType textureType,
-                             gl::LevelIndex level);
+                             gl::OwnerLevel level);
 
 enum class TextureLevelDefinition
 {
@@ -499,14 +602,13 @@ bool TextureRedefineLevel(const TextureLevelAllocation levelAllocation,
                           const TextureLevelDefinition levelDefinition,
                           bool immutableFormat,
                           uint32_t levelCount,
-                          const uint32_t layerIndex,
-                          const gl::ImageIndex &index,
-                          gl::LevelIndex imageFirstAllocatedLevel,
+                          const gl::OwnerImageIndex &index,
+                          gl::OwnerLevel imageFirstAllocatedLevel,
                           gl::CubeFaceArray<gl::TexLevelMask> *redefinedLevels);
 
-void TextureRedefineGenerateMipmapLevels(gl::LevelIndex baseLevel,
-                                         gl::LevelIndex maxLevel,
-                                         gl::LevelIndex firstGeneratedLevel,
+void TextureRedefineGenerateMipmapLevels(gl::OwnerLevel baseLevel,
+                                         gl::OwnerLevel maxLevel,
+                                         gl::OwnerLevel firstGeneratedLevel,
                                          gl::CubeFaceArray<gl::TexLevelMask> *redefinedLevels);
 
 enum class ImageMipLevels
@@ -539,6 +641,12 @@ inline size_t PackSampleCount(int32_t sampleCount)
     ASSERT(1 <= sampleCount && sampleCount <= 16);
     ASSERT(gl::isPow2(sampleCount));
     return gl::ScanForward(static_cast<uint32_t>(sampleCount));
+}
+
+inline GLuint GetMultiviewAdjustedDivisor(int numViews, GLuint divisor)
+{
+    uint64_t adjusted = static_cast<uint64_t>(numViews) * static_cast<uint64_t>(divisor);
+    return static_cast<GLuint>(std::min<uint64_t>(adjusted, std::numeric_limits<GLuint>::max()));
 }
 
 }  // namespace rx

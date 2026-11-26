@@ -140,18 +140,6 @@ void ProgramPipelineState::updateExecutableTextures()
     }
 }
 
-void ProgramPipelineState::updateExecutableSpecConstUsageBits()
-{
-    rx::SpecConstUsageBits specConstUsageBits;
-    for (const ShaderType shaderType : mExecutable->getLinkedShaderStages())
-    {
-        const SharedProgramExecutable &programExecutable = getShaderProgramExecutable(shaderType);
-        ASSERT(programExecutable);
-        specConstUsageBits |= programExecutable->getSpecConstUsageBits();
-    }
-    mExecutable->mPod.specConstUsageBits = specConstUsageBits;
-}
-
 ProgramPipeline::ProgramPipeline(rx::GLImplFactory *factory, ProgramPipelineID handle)
     : RefCountObject(factory->generateSerial(), handle),
       mProgramPipelineImpl(factory->createProgramPipeline(mState)),
@@ -181,6 +169,11 @@ void ProgramPipeline::onDestroy(const Context *context)
             ASSERT(program->getRefCount());
             program->release(context);
         }
+    }
+
+    if (context && context->retainIdUntilObjectDestroyed())
+    {
+        context->onProgramPipelineDestroy(this);
     }
 
     getImplementation()->destroy(context);
@@ -437,6 +430,11 @@ void ProgramPipeline::updateFragmentInoutRangeAndEnablesPerSampleShading()
     mState.mExecutable->mPod.hasDiscard           = fragmentExecutable->mPod.hasDiscard;
     mState.mExecutable->mPod.enablesPerSampleShading =
         fragmentExecutable->mPod.enablesPerSampleShading;
+    mState.mExecutable->mPod.hasDepthInputAttachment =
+        fragmentExecutable->mPod.hasDepthInputAttachment;
+    mState.mExecutable->mPod.hasStencilInputAttachment =
+        fragmentExecutable->mPod.hasStencilInputAttachment;
+    mState.mExecutable->mPod.hasFragCoord = fragmentExecutable->mPod.hasFragCoord;
 }
 
 void ProgramPipeline::updateLinkedVaryings()
@@ -484,7 +482,6 @@ void ProgramPipeline::updateExecutable()
 
     // All Shader ProgramExecutable properties
     mState.updateExecutableTextures();
-    mState.updateExecutableSpecConstUsageBits();
     updateLinkedVaryings();
 }
 
@@ -590,6 +587,8 @@ angle::Result ProgramPipeline::link(const Context *context)
 
         mState.mExecutable->mTransformFeedbackVaryingNames =
             (*tfExecutable)->mTransformFeedbackVaryingNames;
+        mState.mExecutable->mPod.transformFeedbackBufferMode =
+            (*tfExecutable)->mPod.transformFeedbackBufferMode;
 
         if (!mState.mExecutable->linkMergedVaryings(caps, limitations, clientVersion, isWebGL,
                                                     mergedVaryings, linkingVariables,
@@ -619,6 +618,9 @@ angle::Result ProgramPipeline::link(const Context *context)
         mState.mExecutable->copySamplerBindingsFromProgram(*executable);
         mState.mExecutable->copyImageBindingsFromProgram(*executable);
     }
+    // Update active uniform and storage buffer block indices mask
+    mState.mExecutable->updateActiveUniformBufferBlocks();
+    mState.mExecutable->updateActiveStorageBufferBlocks();
 
     if (mState.mExecutable->hasLinkedShaderStage(ShaderType::Fragment))
     {
@@ -669,6 +671,18 @@ bool ProgramPipeline::linkVaryings()
                 getShaderProgramExecutable(previousShaderType);
             ASSERT(previousExecutable);
 
+            if (previousExecutable == programExecutable)
+            {
+                continue;
+            }
+            if (!LinkValidateInOutNumberMatching(
+                    previousExecutable->getLinkedOutputVaryings(previousShaderType),
+                    programExecutable->getLinkedInputVaryings(shaderType), previousShaderType,
+                    shaderType, previousExecutable->getLinkedShaderVersion(previousShaderType),
+                    programExecutable->getLinkedShaderVersion(shaderType), mState.mInfoLog))
+            {
+                return false;
+            }
             if (!LinkValidateShaderInterfaceMatching(
                     previousExecutable->getLinkedOutputVaryings(previousShaderType),
                     programExecutable->getLinkedInputVaryings(shaderType), previousShaderType,
@@ -707,6 +721,7 @@ void ProgramPipeline::validate(const Context *context)
     const Caps &caps = context->getCaps();
     mState.mValid    = true;
     mState.mInfoLog.reset();
+    bool noActiveStage = true;
 
     if (mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessControl) !=
         mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessEvaluation))
@@ -722,6 +737,7 @@ void ProgramPipeline::validate(const Context *context)
         Program *shaderProgram = mState.mPrograms[shaderType];
         if (shaderProgram)
         {
+            noActiveStage = false;
             shaderProgram->resolveLink(context);
             shaderProgram->validate(caps);
             std::string shaderInfoString = shaderProgram->getExecutable().getInfoLogString();
@@ -739,6 +755,13 @@ void ProgramPipeline::validate(const Context *context)
                 return;
             }
         }
+    }
+
+    if (noActiveStage)
+    {
+        mState.mValid = false;
+        mState.mInfoLog << "Program pipeline has no active stage yet.\n";
+        return;
     }
 
     intptr_t programPipelineError = context->getStateCache().getProgramPipelineError(context);

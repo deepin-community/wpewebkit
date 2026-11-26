@@ -30,22 +30,43 @@
 #include "ImageQualityController.h"
 #include "PaintInfo.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderLayer.h"
+#include "RenderObjectInlines.h"
+#include "StyleContain.h"
+#include "StyleObjectViewBox.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderViewTransitionCapture);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderViewTransitionCapture);
 
-RenderViewTransitionCapture::RenderViewTransitionCapture(Type type, Document& document, RenderStyle&& style)
-    : RenderReplaced(type, document, WTFMove(style), { }, ReplacedFlag::IsViewTransitionCapture)
+RenderViewTransitionCapture::RenderViewTransitionCapture(Type type, Document& document, Style::ComputedStyle&& style, bool isRootElement)
+    : RenderReplaced(type, document, WTF::move(style), { }, ReplacedFlag::IsViewTransitionCapture)
+    , m_isRootElementCapture(isRootElement)
 {
 }
 
 RenderViewTransitionCapture::~RenderViewTransitionCapture() = default;
 
+bool RenderViewTransitionCapture::canUseExistingLayers() const
+{
+    return !hasNonVisibleOverflow() && style().objectViewBox().isNone();
+}
+
+RefPtr<ImageBuffer> RenderViewTransitionCapture::image()
+{
+    if (!style().objectViewBox().isNone())
+        return nullptr;
+    return m_oldImage;
+}
+
 void RenderViewTransitionCapture::setImage(RefPtr<ImageBuffer> oldImage)
 {
     m_oldImage = oldImage;
+    if (hasLayer())
+        layer()->contentChanged(ContentChangeType::Image);
+    if (parent())
+        repaint();
 }
 
 bool RenderViewTransitionCapture::setCapturedSize(const LayoutSize& size, const LayoutRect& overflowRect, const LayoutPoint& layerToLayoutOffset)
@@ -64,7 +85,7 @@ void RenderViewTransitionCapture::intrinsicSizeChanged()
     if (intrinsicSize() == m_imageIntrinsicSize)
         return;
     setIntrinsicSize(m_imageIntrinsicSize);
-    setPreferredLogicalWidthsDirty(true);
+    invalidateContentLogicalWidths();
     setNeedsLayout();
 }
 
@@ -74,14 +95,33 @@ void RenderViewTransitionCapture::paintReplaced(PaintInfo& paintInfo, const Layo
     if (context.detectingContentfulPaint())
         return;
 
+    RefPtr oldImage = m_oldImage;
+    if (!oldImage)
+        return;
+
     LayoutRect replacedContentRect = this->replacedContentRect();
     replacedContentRect.moveBy(paintOffset);
 
-    FloatRect paintRect = m_localOverflowRect;
+    auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
+
+    // dstRect: where to draw on screen.
+    // srcRect: which portion of the snapshot to draw (defaults to the full image).
+    FloatRect dstRect = m_localOverflowRect;
+    FloatRect srcRect = FloatRect { { }, FloatSize(oldImage->logicalSize()) };
+
+    if (viewBox) {
+        if (hasNonVisibleOverflow()) {
+            // Clipped (e.g. contain: paint): map only the view-box region onto replacedContentRect.
+            dstRect = FloatRect(replacedContentRect);
+            srcRect = FloatRect(*viewBox);
+        } else {
+            // Overflow-visible: scale the full image so the view-box region maps onto replacedContentRect.
+            dstRect = snapRectToDevicePixels(computePaintRectForObjectViewBox(replacedContentRect), document().deviceScaleFactor());
+        }
+    }
 
     InterpolationQualityMaintainer interpolationMaintainer(context, ImageQualityController::interpolationQualityFromStyle(style()));
-    if (m_oldImage)
-        context.drawImageBuffer(*m_oldImage, paintRect, { context.compositeOperation() });
+    context.drawImageBuffer(*oldImage, dstRect, srcRect, { context.compositeOperation() });
 }
 
 void RenderViewTransitionCapture::layout()
@@ -95,15 +135,41 @@ void RenderViewTransitionCapture::layout()
     m_localOverflowRect.scale(m_scale.width(), m_scale.height());
     m_localOverflowRect.moveBy(replacedContentRect().location());
 
-    addVisualOverflow(m_localOverflowRect);
+    auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
+
+    // For the clipped view-box case, don't expand visual overflow: the element clips to its
+    // own border, and expanding would expose stale CA contents outside the painted area.
+    if (viewBox && hasNonVisibleOverflow())
+        return;
+
+    LayoutRect overflowRect = m_localOverflowRect;
+    if (viewBox)
+        overflowRect.unite(computePaintRectForObjectViewBox(replacedContentRect()));
+    addVisualOverflow(overflowRect);
 }
 
 void RenderViewTransitionCapture::updateFromStyle()
 {
     RenderReplaced::updateFromStyle();
 
-    if (effectiveOverflowX() != Overflow::Visible || effectiveOverflowY() != Overflow::Visible)
+    // The ::view-transition-new(root) capture should hold exactly the snapshot containing
+    // block without overflow, but can host layers that extend outside this area. Force overflow
+    // clipping.
+    // effectiveOverflowX/Y checks paintContainmentApplies(), which requires element() != null and
+    // therefore always returns false for pseudo-elements. Check usedContain() directly so that
+    // contain: paint on ::view-transition-old/new correctly triggers overflow clipping.
+    if (effectiveOverflowX() != Overflow::Visible || effectiveOverflowY() != Overflow::Visible
+        || style().usedContain().contains(Style::ContainValue::Paint)
+        || (m_isRootElementCapture && style().pseudoElementType() == PseudoElementType::ViewTransitionNew))
         setHasNonVisibleOverflow();
+}
+
+void RenderViewTransitionCapture::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
+{
+    RenderReplaced::styleDidChange(diff, oldStyle);
+
+    if (oldStyle && oldStyle->usedVisibility() != style().usedVisibility() && hasLayer())
+        layer()->setNeedsCompositingLayerConnection();
 }
 
 LayoutPoint RenderViewTransitionCapture::captureContentInset() const
@@ -119,13 +185,20 @@ Node* RenderViewTransitionCapture::nodeForHitTest() const
     return document().documentElement();
 }
 
+bool RenderViewTransitionCapture::paintsContent() const
+{
+    if (style().pseudoElementType() == PseudoElementType::ViewTransitionOld)
+        return true;
+    return !canUseExistingLayers();
+}
+
 String RenderViewTransitionCapture::debugDescription() const
 {
     StringBuilder builder;
 
     builder.append(renderName(), " 0x"_s, hex(reinterpret_cast<uintptr_t>(this), Lowercase));
 
-    builder.append(" ::view-transition-"_s, style().pseudoElementType() == PseudoId::ViewTransitionNew ? "new("_s : "old("_s);
+    builder.append(" ::view-transition-"_s, style().pseudoElementType() == PseudoElementType::ViewTransitionNew ? "new("_s : "old("_s);
     builder.append(style().pseudoElementNameArgument(), ')');
     return builder.toString();
 }

@@ -29,16 +29,18 @@
 #include "config.h"
 #include "DebuggerCallFrame.h"
 
-#include "CatchScope.h"
 #include "CodeBlock.h"
 #include "DebuggerEvalEnabler.h"
 #include "DebuggerScope.h"
+#include "DirectEvalExecutable.h"
 #include "Interpreter.h"
 #include "JSFunction.h"
 #include "JSWithScope.h"
 #include "ShadowChickenInlines.h"
 #include "StackVisitor.h"
 #include "StrongInlines.h"
+#include "TopExceptionScope.h"
+#include "VMEntryScopeInlines.h"
 
 namespace JSC {
 
@@ -59,7 +61,7 @@ private:
 
 Ref<DebuggerCallFrame> DebuggerCallFrame::create(VM& vm, CallFrame* callFrame)
 {
-    if (UNLIKELY(!callFrame)) {
+    if (!callFrame) [[unlikely]] {
         ShadowChicken::Frame emptyFrame;
         RELEASE_ASSERT(!emptyFrame.isTailDeleted);
         return adoptRef(*new DebuggerCallFrame(vm, callFrame, emptyFrame));
@@ -89,7 +91,7 @@ Ref<DebuggerCallFrame> DebuggerCallFrame::create(VM& vm, CallFrame* callFrame)
             callFrame = frame.frame;
         Ref<DebuggerCallFrame> currentFrame = adoptRef(*new DebuggerCallFrame(vm, callFrame, frame));
         currentFrame->m_caller = currentParent;
-        currentParent = WTFMove(currentFrame);
+        currentParent = WTF::move(currentFrame);
     }
     return *currentParent;
 }
@@ -112,7 +114,7 @@ RefPtr<DebuggerCallFrame> DebuggerCallFrame::callerFrame()
 
 JSGlobalObject* DebuggerCallFrame::globalObject(VM& vm)
 {
-    return scope(vm)->globalObject();
+    return scope(vm)->realm();
 }
 
 SourceID DebuggerCallFrame::sourceID() const
@@ -132,7 +134,7 @@ String DebuggerCallFrame::functionName(VM& vm) const
         return String();
 
     if (isTailDeleted()) {
-        if (JSFunction* func = jsDynamicCast<JSFunction*>(m_shadowChickenFrame.callee))
+        if (JSFunction* func = dynamicDowncast<JSFunction>(m_shadowChickenFrame.callee))
             return func->calculatedDisplayName(vm);
         return String::fromLatin1(m_shadowChickenFrame.codeBlock->inferredName().data());
     }
@@ -153,7 +155,7 @@ DebuggerScope* DebuggerCallFrame::scope(VM& vm)
             scope = m_shadowChickenFrame.scope;
         else if (codeBlock && codeBlock->scopeRegister().isValid())
             scope = m_validMachineFrame->scope(codeBlock->scopeRegister().offset());
-        else if (JSCallee* callee = jsDynamicCast<JSCallee*>(m_validMachineFrame->jsCallee()))
+        else if (JSCallee* callee = dynamicDowncast<JSCallee>(m_validMachineFrame->jsCallee()))
             scope = callee->scope();
         else
             scope = m_validMachineFrame->lexicalGlobalObject(vm)->globalLexicalEnvironment();
@@ -172,7 +174,7 @@ DebuggerCallFrame::Type DebuggerCallFrame::type(VM&) const
     if (isTailDeleted())
         return FunctionType;
 
-    if (jsDynamicCast<JSFunction*>(m_validMachineFrame->jsCallee()))
+    if (is<JSFunction>(m_validMachineFrame->jsCallee()))
         return FunctionType;
 
     return ProgramType;
@@ -231,7 +233,7 @@ JSValue DebuggerCallFrame::evaluateWithScopeExtension(VM& vm, const String& scri
         return jsUndefined();
 
     JSLockHolder lock(vm);
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     
     JSGlobalObject* globalObject = codeBlock->globalObject();
     DebuggerEvalEnabler evalEnabler(globalObject, DebuggerEvalEnabler::Mode::EvalOnGlobalObjectAtDebuggerEntry);
@@ -250,7 +252,7 @@ JSValue DebuggerCallFrame::evaluateWithScopeExtension(VM& vm, const String& scri
     JSScope::collectClosureVariablesUnderTDZ(scope(vm)->jsScope(), variablesUnderTDZ, privateNameEnvironment);
 
     auto* eval = DirectEvalExecutable::create(globalObject, makeSource(script, callFrame->callerSourceOrigin(vm), SourceTaintedOrigin::Untainted), codeBlock->ownerExecutable()->lexicallyScopedFeatures(), codeBlock->unlinkedCodeBlock()->derivedContextType(), codeBlock->unlinkedCodeBlock()->needsClassFieldInitializer(), codeBlock->unlinkedCodeBlock()->privateBrandRequirement(), codeBlock->unlinkedCodeBlock()->isArrowFunction(), codeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, &variablesUnderTDZ, &privateNameEnvironment);
-    if (UNLIKELY(catchScope.exception())) {
+    if (catchScope.exception()) [[unlikely]] {
         exception = catchScope.exception();
         catchScope.clearException();
         return jsUndefined();
@@ -262,8 +264,16 @@ JSValue DebuggerCallFrame::evaluateWithScopeExtension(VM& vm, const String& scri
         eval->setTaintedByWithScope();
     }
 
-    JSValue result = vm.interpreter.executeEval(eval, debuggerCallFrame->thisValue(vm), debuggerCallFrame->scope(vm)->jsScope());
-    if (UNLIKELY(catchScope.exception())) {
+    JSValue result;
+    {
+        auto* jsScope = debuggerCallFrame->scope(vm)->jsScope();
+        VMEntryScope entryScope(vm, jsScope->realm());
+        if (vm.disallowVMEntryCount) [[unlikely]]
+            result = VM::checkVMEntryPermission();
+        else
+            result = vm.interpreter.executeEval(eval, debuggerCallFrame->thisValue(vm), jsScope);
+    }
+    if (catchScope.exception()) [[unlikely]] {
         exception = catchScope.exception();
         catchScope.clearException();
     }
@@ -284,7 +294,7 @@ void DebuggerCallFrame::invalidate()
             frame->m_scope->invalidateChain();
             frame->m_scope.clear();
         }
-        frame = WTFMove(frame->m_caller);
+        frame = WTF::move(frame->m_caller);
     }
 }
 

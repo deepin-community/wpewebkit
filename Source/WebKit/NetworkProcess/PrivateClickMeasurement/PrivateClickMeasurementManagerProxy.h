@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,7 @@ namespace PCM {
 class ManagerProxy : public ManagerInterface {
     WTF_MAKE_TZONE_ALLOCATED(ManagerProxy);
 public:
-    ManagerProxy(const String& machServiceName, NetworkSession&);
+    static Ref<ManagerProxy> create(const String& machServiceName, NetworkSession&);
 
     using ApplicationBundleIdentifier = String;
 
@@ -62,14 +62,17 @@ public:
     void setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBundleIdentifier&&) final;
     void destroyStoreForTesting(CompletionHandler<void()>&&) final;
     void allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo&) final;
+    void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&) final;
 
 private:
+    ManagerProxy(const String& machServiceName, NetworkSession&);
+
     template<MessageType messageType, typename... Args>
     void sendMessage(Args&&...) const;
     template<MessageType messageType, typename... Args, typename... ReplyArgs>
     void sendMessageWithReply(CompletionHandler<void(ReplyArgs...)>&&, Args&&...) const;
 
-    Connection m_connection;
+    const Ref<Connection> m_connection;
 };
 
 } // namespace PCM

@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2023 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2023 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -34,7 +34,7 @@ static JSC_DECLARE_CUSTOM_SETTER(regExpObjectSetLastIndexSloppy);
 
 RegExpObject::RegExpObject(VM& vm, Structure* structure, RegExp* regExp, bool areLegacyFeaturesEnabled)
     : JSNonFinalObject(vm, structure)
-    , m_regExpAndFlags(bitwise_cast<uintptr_t>(regExp) | (areLegacyFeaturesEnabled ? 0 : legacyFeaturesDisabledFlag)) // lastIndexIsNotWritableFlag is not set.
+    , m_regExpAndFlags(std::bit_cast<uintptr_t>(regExp) | (areLegacyFeaturesEnabled ? 0 : legacyFeaturesDisabledFlag)) // lastIndexIsNotWritableFlag is not set.
 {
     m_lastIndex.setWithoutWriteBarrier(jsNumber(0));
 }
@@ -51,7 +51,7 @@ void RegExpObject::finishCreation(VM& vm)
 template<typename Visitor>
 void RegExpObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    RegExpObject* thisObject = jsCast<RegExpObject*>(cell);
+    RegExpObject* thisObject = uncheckedDowncast<RegExpObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.appendUnbarriered(thisObject->regExp());
@@ -64,7 +64,7 @@ bool RegExpObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 {
     VM& vm = globalObject->vm();
     if (propertyName == vm.propertyNames->lastIndex) {
-        RegExpObject* regExp = jsCast<RegExpObject*>(object);
+        RegExpObject* regExp = uncheckedDowncast<RegExpObject>(object);
         unsigned attributes = regExp->lastIndexIsWritable() ? PropertyAttribute::DontDelete | PropertyAttribute::DontEnum : PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         slot.setValue(regExp, attributes, regExp->getLastIndex());
         return true;
@@ -80,7 +80,7 @@ bool RegExpObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Pr
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
-void RegExpObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject* globalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void RegExpObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
     if (mode == DontEnumPropertiesMode::Include)
@@ -93,7 +93,7 @@ bool RegExpObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (propertyName == vm.propertyNames->lastIndex) {
-        RegExpObject* regExp = jsCast<RegExpObject*>(object);
+        RegExpObject* regExp = uncheckedDowncast<RegExpObject>(object);
         if (descriptor.configurablePresent() && descriptor.configurable())
             return typeError(globalObject, scope, shouldThrow, UnconfigurablePropertyChangeConfigurabilityError);
         if (descriptor.enumerablePresent() && descriptor.enumerable())
@@ -115,8 +115,10 @@ bool RegExpObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
             regExp->setLastIndex(globalObject, descriptor.value(), false);
             RETURN_IF_EXCEPTION(scope, false);
         }
-        if (descriptor.writablePresent() && !descriptor.writable())
+        if (descriptor.writablePresent() && !descriptor.writable()) {
             regExp->setLastIndexIsNotWritable();
+            regExp->realm()->regExpLastIndexWritableWatchpointSet().fireAll(vm, "RegExp lastIndex was made non-writable");
+        }
         return true;
     }
 
@@ -125,25 +127,25 @@ bool RegExpObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
 
 JSC_DEFINE_CUSTOM_SETTER(regExpObjectSetLastIndexStrict, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
 {
-    return jsCast<RegExpObject*>(JSValue::decode(thisValue))->setLastIndex(globalObject, JSValue::decode(value), true);
+    return uncheckedDowncast<RegExpObject>(JSValue::decode(thisValue))->setLastIndex(globalObject, JSValue::decode(value), true);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(regExpObjectSetLastIndexSloppy, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
 {
-    return jsCast<RegExpObject*>(JSValue::decode(thisValue))->setLastIndex(globalObject, JSValue::decode(value), false);
+    return uncheckedDowncast<RegExpObject>(JSValue::decode(thisValue))->setLastIndex(globalObject, JSValue::decode(value), false);
 }
 
 bool RegExpObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RegExpObject* thisObject = jsCast<RegExpObject*>(cell);
+    RegExpObject* thisObject = uncheckedDowncast<RegExpObject>(cell);
 
     if (propertyName == vm.propertyNames->lastIndex) {
         if (!thisObject->lastIndexIsWritable())
             return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
 
-        if (UNLIKELY(slot.thisValue() != thisObject))
+        if (slot.thisValue() != thisObject) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
 
         bool result = thisObject->setLastIndex(globalObject, value, slot.isStrictMode());
@@ -178,7 +180,15 @@ JSValue RegExpObject::matchGlobal(JSGlobalObject* globalObject, JSString* string
     setLastIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto s = string->value(globalObject);
+    if (regExp->hasValidAtom()) {
+        if (string->isSubstring()) {
+            auto& cache = globalObject->regExpGlobalData().substringGlobalAtomCache();
+            RELEASE_AND_RETURN(scope, cache.collectMatches(globalObject, string->asRope(), regExp));
+        }
+        RELEASE_AND_RETURN(scope, collectGlobalAtomMatches(globalObject, string, regExp));
+    }
+
+    auto s = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     ASSERT(!s->isNull());

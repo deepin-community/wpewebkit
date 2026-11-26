@@ -39,18 +39,19 @@ namespace WebKit {
 
 class WebPageProxy;
 
-class WebPageProxyTesting : public IPC::MessageSender {
+class WebPageProxyTesting : public IPC::MessageSender, public RefCounted<WebPageProxyTesting> {
     WTF_MAKE_TZONE_ALLOCATED(WebPageProxyTesting);
     WTF_MAKE_NONCOPYABLE(WebPageProxyTesting);
 public:
-    explicit WebPageProxyTesting(WebPageProxy&);
+    static Ref<WebPageProxyTesting> create(WebPageProxy& page) { return adoptRef(*new WebPageProxyTesting(page)); }
 
-    void setDefersLoading(bool);
     void isLayerTreeFrozen(CompletionHandler<void(bool)>&&);
+    void numberOfLiveDocuments(CompletionHandler<void(uint64_t)>&&);
     void dispatchActivityStateUpdate();
     void setCrossSiteLoadWithLinkDecorationForTesting(const URL& fromURL, const URL& toURL, bool wasFiltered, CompletionHandler<void()>&&);
     void setPermissionLevel(const String& origin, bool allowed);
     bool isEditingCommandEnabled(const String& commandName);
+    void resetStateBetweenTests();
 
     void dumpPrivateClickMeasurement(CompletionHandler<void(const String&)>&&);
     void clearPrivateClickMeasurement(CompletionHandler<void()>&&);
@@ -70,23 +71,33 @@ public:
 #endif
 
     void clearWheelEventTestMonitor();
+    void startMonitoringWheelEventsForTesting(CompletionHandler<void()>&&);
+    void waitForWheelEventsToCompleteForTesting(CompletionHandler<void()>&&);
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    void setIndexOfGetDisplayMediaDeviceSelectedForTesting(std::optional<unsigned>);
-    void setSystemCanPromptForGetDisplayMediaForTesting(bool);
+    void NODELETE setIndexOfGetDisplayMediaDeviceSelectedForTesting(std::optional<unsigned>);
+    void NODELETE setSystemCanPromptForGetDisplayMediaForTesting(bool);
 #endif
 
-    void setTopContentInset(float, CompletionHandler<void()>&&);
+    void setObscuredContentInsets(float top, float right, float bottom, float left, CompletionHandler<void()>&&);
 
-    void setPageScaleFactor(float scaleFactor, WebCore::IntPoint, CompletionHandler<void()>&&);
+    void clearBackForwardList(CompletionHandler<void()>&&);
+
+    void setTracksRepaints(bool, CompletionHandler<void()>&&);
+    void displayAndTrackRepaints(CompletionHandler<void()>&&);
+
+    void storageAreaMapCount(CompletionHandler<void(uint64_t)>&&);
+
 private:
+    explicit WebPageProxyTesting(WebPageProxy&);
+
     bool sendMessage(UniqueRef<IPC::Encoder>&&, OptionSet<IPC::SendOption>) final;
     bool sendMessageWithAsyncReply(UniqueRef<IPC::Encoder>&&, AsyncReplyHandler, OptionSet<IPC::SendOption>) final;
 
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
-    Ref<WebPageProxy> protectedPage() const;
+    WebPageProxy& page() const { return m_page; }
 
     WeakRef<WebPageProxy> m_page;
 };

@@ -77,6 +77,7 @@ struct Capabilities {
     std::optional<Proxy> proxy;
     std::optional<String> targetAddr;
     std::optional<int> targetPort;
+    std::optional<uint64_t> processID;
 #if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<String> browserBinary;
     std::optional<Vector<String>> browserArguments;
@@ -85,6 +86,8 @@ struct Capabilities {
 #if PLATFORM(GTK)
     std::optional<bool> useOverlayScrollbars;
 #endif
+    // https://w3c.github.io/webdriver-bidi/#websocket-url
+    std::optional<bool> webSocketURL;
 };
 
 } // namespace WebDriver

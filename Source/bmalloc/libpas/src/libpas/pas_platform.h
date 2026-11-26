@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Apple Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,6 @@
 
 #ifdef __APPLE__
 #include <Availability.h>
-#include <AvailabilityMacros.h>
-#include <TargetConditionals.h>
 #endif
 
 /* PAS_CPU() - the target CPU architecture */
@@ -56,6 +54,17 @@
 #if defined(_MSC_VER)
 #define PAS_COMPILER_MSVC 1
 #endif
+
+/* PAS_COMPILER_HAS_CLANG_FEATURE() - whether the compiler supports a particular language or library feature. */
+/* Adapted from BCompiler.h */
+/* http://clang.llvm.org/docs/LanguageExtensions.html#has-feature-and-has-extension */
+#ifdef __has_feature
+#define PAS_COMPILER_HAS_CLANG_FEATURE(x) __has_feature(x)
+#else
+#define PAS_COMPILER_HAS_CLANG_FEATURE(x) 0
+#endif
+
+#define PAS_ASAN_ENABLED PAS_COMPILER_HAS_CLANG_FEATURE(address_sanitizer)
 
 /* PAS_IGNORE_WARNINGS */
 
@@ -132,6 +141,10 @@
 #define PAS_OS_LINUX 1
 #endif
 
+#if defined(__ANDROID__) || defined(ANDROID)
+#define PAS_OS_ANDROID 1
+#endif
+
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__FreeBSD_kernel__)
 #define PAS_OS_FREEBSD 1
 #endif
@@ -140,7 +153,7 @@
 #define PAS_OS_WINDOWS 1
 #endif
 
-#if PAS_OS(DARWIN) && !defined(BUILDING_WITH_CMAKE)
+#if PAS_OS(DARWIN)
 #if TARGET_OS_IOS
 #define PAS_OS_IOS 1
 #define PAS_PLATFORM_IOS 1
@@ -197,6 +210,39 @@
 #define PAS_CPU_ADDRESS64 1
 #else
 #error "Unsupported compiler for libpas"
+#endif
+
+#if PAS_PLATFORM(COCOA)
+/* Should be aligned with the definition in WTF/wtf/PlatformUse.h */
+#if defined __has_include && __has_include(<CoreFoundation/CFPriv.h>)
+#define PAS_USE_APPLE_INTERNAL_SDK 1
+#else
+#define PAS_USE_APPLE_INTERNAL_SDK 0
+#endif
+#else // !PAS_PLATFORM(COCOA)
+#define PAS_USE_APPLE_INTERNAL_SDK 0
+#endif // PAS_PLATFORM(COCOA)
+
+#ifndef PAS_USE_OPENSOURCE_MTE
+#define PAS_USE_OPENSOURCE_MTE 1
+// For legacy consumers of certain headers
+#ifndef MTE_ENABLED_IN_BUILD
+#define MTE_ENABLED_IN_BUILD 0
+#endif // MTE_ENABLED_IN_BUILD
+#endif // PAS_USE_OPENSOURCE_MTE
+
+/* PAS_ALLOW_UNSAFE_BUFFER_USAGE */
+
+#if PAS_COMPILER(CLANG)
+#define PAS_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    _Pragma("clang diagnostic push") \
+    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage\"")
+
+#define PAS_ALLOW_UNSAFE_BUFFER_USAGE_END \
+    _Pragma("clang diagnostic pop")
+#else
+#define PAS_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#define PAS_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 #endif /* PAS_PLATFORM_H */

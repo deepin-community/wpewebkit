@@ -52,7 +52,7 @@ static cairo_user_data_key_t freeTypeFaceKey;
 
 FontCustomPlatformData::FontCustomPlatformData(FT_Face freeTypeFace, FontPlatformData::CreationData&& data)
     : m_fontFace(adoptRef(cairo_ft_font_face_create_for_ft_face(freeTypeFace, FT_LOAD_DEFAULT)))
-    , creationData(WTFMove(data))
+    , creationData(WTF::move(data))
     , m_renderingResourceIdentifier(RenderingResourceIdentifier::generate())
 {
     // Cairo doesn't do FreeType reference counting, so we need to ensure that when
@@ -80,7 +80,7 @@ static RefPtr<FcPattern> defaultFontconfigOptions()
     return adoptRef(FcPatternDuplicate(pattern));
 }
 
-FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription& description, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription& description, const FontCreationContext& fontCreationContext)
 {
     auto* freeTypeFace = static_cast<FT_Face>(cairo_font_face_get_user_data(m_fontFace.get(), &freeTypeFaceKey));
     ASSERT(freeTypeFace);
@@ -99,13 +99,20 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
 
 #if ENABLE(VARIATION_FONTS)
     auto variants = buildVariationSettings(freeTypeFace, description, fontCreationContext);
-    if (!variants.isEmpty()) {
+    if (!variants.isEmpty())
         FcPatternAddString(pattern.get(), FC_FONT_VARIATIONS, reinterpret_cast<const FcChar8*>(variants.utf8().data()));
-    }
+    auto defaultValues = defaultVariationValues(freeTypeFace, ShouldLocalizeAxisNames::No);
+    bool hasWeightVariationAxis = defaultValues.contains(FontVariationAxisTag::wght);
+    bool hasSlopeVariationAxis = defaultValues.contains(FontVariationAxisTag::slnt) || defaultValues.contains(FontVariationAxisTag::ital);
+#else
+    bool hasWeightVariationAxis = false;
+    bool hasSlopeVariationAxis = false;
 #endif
+    bool syntheticBold = computeSyntheticBold(hasWeightVariationAxis, description, fontCreationContext);
+    bool syntheticItalic = computeSyntheticItalic(hasSlopeVariationAxis, description, fontCreationContext);
 
     auto size = description.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
-    FontPlatformData platformData(m_fontFace.get(), WTFMove(pattern), size, freeTypeFace->face_flags & FT_FACE_FLAG_FIXED_WIDTH, bold, italic, description.orientation());
+    FontPlatformData platformData(m_fontFace.get(), WTF::move(pattern), size, freeTypeFace->face_flags & FT_FACE_FLAG_FIXED_WIDTH, syntheticBold, syntheticItalic, description.orientation());
 
     platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.computedSize());
     return platformData;
@@ -116,7 +123,7 @@ static bool initializeFreeTypeLibrary(FT_Library& library)
     // https://www.freetype.org/freetype2/docs/design/design-4.html
     // https://lists.nongnu.org/archive/html/freetype-devel/2004-10/msg00022.html
 
-    FT_Memory memory = bitwise_cast<FT_Memory>(ft_smalloc(sizeof(*memory)));
+    FT_Memory memory = std::bit_cast<FT_Memory>(ft_smalloc(sizeof(*memory)));
     if (!memory)
         return false;
 
@@ -153,7 +160,7 @@ RefPtr<FontCustomPlatformData> FontCustomPlatformData::create(SharedBuffer& buff
     if (FT_New_Memory_Face(library, reinterpret_cast<const FT_Byte*>(span.data()), span.size(), 0, &freeTypeFace))
         return nullptr;
     FontPlatformData::CreationData creationData = { buffer, itemInCollection };
-    return adoptRef(new FontCustomPlatformData(freeTypeFace, WTFMove(creationData)));
+    return adoptRef(new FontCustomPlatformData(freeTypeFace, WTF::move(creationData)));
 }
 
 RefPtr<FontCustomPlatformData> FontCustomPlatformData::createMemorySafe(SharedBuffer&, const String&)
@@ -210,6 +217,18 @@ bool FontCustomPlatformData::supportsTechnology(const FontTechnology& technology
 #endif
 
     return false;
+}
+
+std::optional<Ref<FontCustomPlatformData>> FontCustomPlatformData::tryMakeFromSerializationData(FontCustomPlatformSerializedData&&, bool)
+{
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+
+FontCustomPlatformSerializedData FontCustomPlatformData::serializedData() const
+{
+    ASSERT_NOT_REACHED();
+    return FontCustomPlatformSerializedData { creationData.fontFaceData, creationData.itemInCollection, m_renderingResourceIdentifier };
 }
 
 }

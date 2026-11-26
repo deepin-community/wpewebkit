@@ -23,13 +23,15 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=UseGPUProcessForMediaEnabled
+]
 messages -> RemoteMediaPlayerProxy {
-    PrepareForPlayback(bool privateMode, enum:uint8_t WebCore::MediaPlayerPreload preload, bool preservesPitch, enum:uint8_t WebCore::MediaPlayerPitchCorrectionAlgorithm pitchCorrectionAlgorithm, bool prepareToPlay, bool prepareForRendering, WebCore::IntSize presentationSize, float videoContentScale, enum:uint8_t WebCore::DynamicRangeMode mode)
+    PrepareForPlayback(bool privateMode, enum:uint8_t WebCore::MediaPlayerPreload preload, bool preservesPitch, enum:uint8_t WebCore::MediaPlayerPitchCorrectionAlgorithm pitchCorrectionAlgorithm, bool prepareToPlay, bool prepareForRendering, WebCore::IntSize presentationSize, float videoContentScale, bool isFullscreen, enum:uint8_t WebCore::DynamicRangeMode mode, WebCore::PlatformDynamicRangeLimit platformDynamicRangeLimit)
 
-    Load(URL url, std::optional<WebKit::SandboxExtensionHandle> sandboxExtension, WebCore::ContentType contentType, String keySystem, bool requiresRemotePlayback) -> (struct WebKit::RemoteMediaPlayerConfiguration playerConfiguration)
-#if ENABLE(MEDIA_SOURCE)
-    LoadMediaSource(URL url, WebCore::ContentType contentType, bool webMParserEnabled, WebKit::RemoteMediaSourceIdentifier mediaSourceIdentifier) -> (struct WebKit::RemoteMediaPlayerConfiguration playerConfiguration)
-#endif
+    Load(URL url, std::optional<WebKit::SandboxExtensionHandle> sandboxExtension, struct WebCore::MediaPlayerLoadOptions options) -> (struct WebKit::RemoteMediaPlayerConfiguration playerConfiguration)
     CancelLoad()
 
     PrepareToPlay()
@@ -37,10 +39,11 @@ messages -> RemoteMediaPlayerProxy {
     Play()
     Pause()
 
+    SetVolumeLocked(bool volumeLocked)
     SetVolume(double volume)
     SetMuted(bool muted)
 
-    SeekToTarget(struct WebCore::SeekTarget target)
+    SeekToTarget(struct WebCore::SeekTarget target) -> (Expected<WebCore::MediaTimeUpdateData, WebCore::PlatformMediaError> result)
 
     SetPreload(enum:uint8_t WebCore::MediaPlayerPreload preload)
     SetPrivateBrowsingMode(bool privateMode)
@@ -49,6 +52,7 @@ messages -> RemoteMediaPlayerProxy {
 
     PrepareForRendering()
     SetPageIsVisible(bool visible)
+    SetViewportVisibility(enum:uint8_t WebCore::MediaPlayerViewportVisibility visibility)
     SetShouldMaintainAspectRatio(bool maintainAspectRatio)
     AcceleratedRenderingStateChanged(bool canBeAccelerated)
     SetShouldDisableSleep(bool disable)
@@ -56,17 +60,17 @@ messages -> RemoteMediaPlayerProxy {
     DidLoadingProgress() -> (bool flag)
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
-    UpdateVideoFullscreenInlineImage()
-    SetVideoFullscreenMode(WebCore::MediaPlayer::VideoFullscreenMode mode)
-    SetVideoFullscreenGravity(enum:uint8_t WebCore::MediaPlayerVideoGravity gravity)
-    VideoFullscreenStandbyChanged(bool standby)
+    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] UpdateVideoFullscreenInlineImage()
+    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] SetVideoFullscreenMode(WebCore::MediaPlayer::VideoFullscreenMode mode)
+    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] SetVideoFullscreenGravity(enum:uint8_t WebCore::MediaPlayerVideoGravity gravity)
+    [EnabledBy=VideoPresentationManagerEnabled || VideoPresentationModeAPIEnabled] VideoFullscreenStandbyChanged(bool standby)
 #endif
 
     SetBufferingPolicy(enum:uint8_t WebCore::MediaPlayerBufferingPolicy policy)
     SetPresentationSize(WebCore::IntSize size)
 
 #if PLATFORM(COCOA)
-    SetVideoLayerSizeFenced(WebCore::FloatSize size, MachSendRight machSendRight)
+    SetVideoLayerSizeFenced(WebCore::FloatSize size, struct MachSendRightAnnotated sendRightAnnotated)
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -76,24 +80,19 @@ messages -> RemoteMediaPlayerProxy {
 #endif
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-    SetLegacyCDMSession(std::optional<WebKit::RemoteLegacyCDMSessionIdentifier> instanceId)
-    KeyAdded()
+    [EnabledBy=LegacyEncryptedMediaAPIEnabled] SetLegacyCDMSession(std::optional<WebKit::RemoteLegacyCDMSessionIdentifier> instanceId)
+    [EnabledBy=LegacyEncryptedMediaAPIEnabled] KeyAdded()
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    CdmInstanceAttached(WebKit::RemoteCDMInstanceIdentifier instanceId)
-    CdmInstanceDetached(WebKit::RemoteCDMInstanceIdentifier instanceId)
-    AttemptToDecryptWithInstance(WebKit::RemoteCDMInstanceIdentifier instanceId)
+    [EnabledBy=EncryptedMediaAPIEnabled] CdmInstanceAttached(WebKit::RemoteCDMInstanceIdentifier instanceId)
+    [EnabledBy=EncryptedMediaAPIEnabled] CdmInstanceDetached(WebKit::RemoteCDMInstanceIdentifier instanceId)
+    [EnabledBy=EncryptedMediaAPIEnabled] AttemptToDecryptWithInstance(WebKit::RemoteCDMInstanceIdentifier instanceId)
 #endif
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA) && ENABLE(ENCRYPTED_MEDIA)
-    SetShouldContinueAfterKeyNeeded(bool should)
+    [EnabledBy=LegacyEncryptedMediaAPIEnabled] SetShouldContinueAfterKeyNeeded(bool should)
 #endif
-
-    BeginSimulatedHDCPError()
-    EndSimulatedHDCPError()
-
-    NotifyActiveSourceBuffersChanged()
 
     ApplicationWillResignActive()
     ApplicationDidBecomeActive()
@@ -111,25 +110,25 @@ messages -> RemoteMediaPlayerProxy {
     SetVideoPlaybackMetricsUpdateInterval(double interval)
 
     SetPreferredDynamicRangeMode(enum:uint8_t WebCore::DynamicRangeMode mode)
+    SetPlatformDynamicRangeLimit(WebCore::PlatformDynamicRangeLimit platformDynamicRangeLimit)
 
 #if PLATFORM(IOS_FAMILY)
     ErrorLog() -> (String errorLog) Synchronous
     AccessLog() -> (String accessLog) Synchronous
+    SetSceneIdentifier(String sceneIdentifier)
 #endif
 
 #if ENABLE(WEB_AUDIO)
-    CreateAudioSourceProvider()
-    SetShouldEnableAudioSourceProvider(bool shouldEnable)
+    [EnabledBy=WebAudioEnabled] CreateAudioSourceProvider()
+    [EnabledBy=WebAudioEnabled] SetShouldEnableAudioSourceProvider(bool shouldEnable)
 #endif
 
 #if PLATFORM(COCOA)
     NativeImageForCurrentTime() -> (std::optional<MachSendRight> sendRight, WebCore::DestinationColorSpace colorSpace) Synchronous
     ColorSpace() -> (WebCore::DestinationColorSpace colorSpace) Synchronous
-#if !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-    void WillBeAskedToPaintGL()
 #endif
-#endif
-    VideoFrameForCurrentTimeIfChanged() -> (std::optional<WebKit::RemoteVideoFrameProxyProperties> videoFrame, bool changed) Synchronous
+    VideoFrameForCurrentTimeIfChanged() -> (struct std::optional<WebKit::RemoteVideoFrameProxyProperties> videoFrame, bool changed) Synchronous
+    BitmapImageForCurrentTime() -> (std::optional<WebCore::ShareableBitmapHandle> image)
 
     PlayAtHostTime(MonotonicTime time)
     PauseAtHostTime(MonotonicTime time)
@@ -141,7 +140,7 @@ messages -> RemoteMediaPlayerProxy {
 
     SetShouldDisableHDR(bool shouldDisable)
 
-    RequestHostingContextID() -> (uint32_t contextID)
+    RequestHostingContext() -> (struct WebCore::HostingContext layerHostingContext)
 
     SetShouldCheckHardwareSupport(bool value)
 
@@ -150,7 +149,19 @@ messages -> RemoteMediaPlayerProxy {
     SetSpatialTrackingLabel(String spatialTrackingLabel);
 #endif
 
+#if HAVE(SPATIAL_AUDIO_EXPERIENCE)
+    SetPrefersSpatialAudioExperience(bool value)
+#endif
+
+    AudioOutputDeviceChanged(String deviceId)
     IsInFullscreenOrPictureInPictureChanged(bool value)
+    SetSoundStageSize(enum:uint8_t WebCore::MediaPlayerSoundStageSize value)
+
+    SetHasMessageClientForTesting(bool value)
+
+#if PLATFORM(MAC)
+    ScreenReservedChanged(bool value)
+#endif
 }
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, Google Inc. All rights reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,9 @@
 #include "ChannelCountMode.h"
 #include "ChannelInterpretation.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
-#include <variant>
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/LoggerHelper.h>
 
@@ -38,12 +39,13 @@
 namespace WebCore {
 
 class AudioNodeInput;
-struct AudioNodeOptions;
 class AudioNodeOutput;
 class AudioParam;
 class BaseAudioContext;
+struct AudioNodeOptions;
+template<typename> class ExceptionOr;
 
-enum class NoiseInjectionPolicy : bool;
+enum class NoiseInjectionPolicy : uint8_t;
 
 // An AudioNode is the basic building block for handling audio within an AudioContext.
 // It may be an audio source, an intermediate processing module, or an audio destination.
@@ -53,12 +55,14 @@ enum class NoiseInjectionPolicy : bool;
 
 class AudioNode
     : public EventTarget
+    , public CanMakeThreadSafeCheckedPtr<AudioNode>
 #if !RELEASE_LOG_DISABLED
     , private LoggerHelper
 #endif
 {
     WTF_MAKE_NONCOPYABLE(AudioNode);
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(AudioNode);
+    WTF_MAKE_TZONE_ALLOCATED(AudioNode);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AudioNode);
 public:
     enum NodeType {
         NodeTypeDestination,
@@ -101,6 +105,7 @@ public:
 
     // Can be called from main thread or context's audio thread.  It must be called while the context's graph lock is held.
     void decrementConnectionCountWithLock();
+    void derefWithLock() const;
 
     // The AudioNodeInput(s) (if any) will already have their input data available when process() is called.
     // Subclasses will take this input data and put the results in the AudioBus(s) of its AudioNodeOutput(s) (if any).
@@ -122,8 +127,8 @@ public:
     unsigned numberOfInputs() const { return m_inputs.size(); }
     unsigned numberOfOutputs() const { return m_outputs.size(); }
 
-    AudioNodeInput* input(unsigned);
-    AudioNodeOutput* output(unsigned);
+    AudioNodeInput* NODELETE input(unsigned);
+    AudioNodeOutput* NODELETE output(unsigned);
 
     // Called from main thread by corresponding JavaScript methods.
     ExceptionOr<void> connect(AudioNode&, unsigned outputIndex, unsigned inputIndex);
@@ -155,6 +160,8 @@ public:
 #endif
 
     bool isMarkedForDeletion() const { return m_isMarkedForDeletion; }
+    void clearIsMarkedForDeletion() { m_isMarkedForDeletion = false; }
+    bool hasReferences() const { return m_normalRefCount || m_connectionRefCount; }
 
     // tailTime() is the length of time (not counting latency time) where non-zero output may occur after continuous silent input.
     virtual double tailTime() const = 0;
@@ -170,10 +177,12 @@ public:
     // happen on the main thread.
     virtual bool requiresTailProcessing() const = 0;
 
+    virtual bool isAudioScheduledSourceNode() const { return false; }
+
     // propagatesSilence() should return true if the node will generate silent output when given silent input. By default, AudioNode
     // will take tailTime() and latencyTime() into account when determining whether the node will propagate silence.
     virtual bool propagatesSilence() const;
-    bool inputsAreSilent();
+    bool NODELETE inputsAreSilent();
     void silenceOutputs();
 
     void enableOutputsIfNecessary();
@@ -197,7 +206,7 @@ public:
     bool isTailProcessing() const { return m_isTailProcessing; }
     void setIsTailProcessing(bool isTailProcessing) { m_isTailProcessing = isTailProcessing; }
 
-    NoiseInjectionPolicy noiseInjectionPolicy() const;
+    OptionSet<NoiseInjectionPolicy> noiseInjectionPolicies() const;
     virtual float noiseInjectionMultiplier() const { return 0; }
 
 protected:
@@ -207,7 +216,6 @@ protected:
 
     void markNodeForDeletionIfNecessary();
     void unmarkNodeForDeletionIfNecessary();
-    void derefWithLock() const;
 
     struct DefaultAudioNodeOptions {
         unsigned channelCount;
@@ -227,17 +235,17 @@ protected:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "AudioNode"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
 #endif
 
-    void initializeDefaultNodeOptions(unsigned count, ChannelCountMode, ChannelInterpretation);
+    void NODELETE initializeDefaultNodeOptions(unsigned count, ChannelCountMode, ChannelInterpretation);
 
     virtual void updatePullStatus() { }
 
 private:
-    using WeakOrStrongContext = std::variant<Ref<BaseAudioContext>, WeakPtr<BaseAudioContext, WeakPtrImplWithEventTargetData>>;
+    using WeakOrStrongContext = Variant<Ref<BaseAudioContext>, WeakPtr<BaseAudioContext, WeakPtrImplWithEventTargetData>>;
     static WeakOrStrongContext toWeakOrStrongContext(BaseAudioContext&, NodeType);
 
     // EventTarget
@@ -249,7 +257,7 @@ private:
 
     WeakOrStrongContext m_context;
 
-    Vector<std::unique_ptr<AudioNodeInput>> m_inputs;
+    Vector<Ref<AudioNodeInput>> m_inputs;
     Vector<std::unique_ptr<AudioNodeOutput>> m_outputs;
 
     double m_lastProcessingTime { -1 };
@@ -275,7 +283,7 @@ private:
 
 #if !RELEASE_LOG_DISABLED
     mutable Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const uint64_t m_logIdentifier;
 #endif
 
     unsigned m_channelCount { 2 };
@@ -286,20 +294,29 @@ private:
 template<typename T> struct AudioNodeConnectionRefDerefTraits {
     static ALWAYS_INLINE T* refIfNotNull(T* ptr)
     {
-        if (LIKELY(ptr))
+        if (ptr) [[likely]]
             ptr->incrementConnectionCount();
         return ptr;
     }
 
+    static ALWAYS_INLINE T& ref(T& ref)
+    {
+        ref.incrementConnectionCount();
+        return ref;
+    }
+
     static ALWAYS_INLINE void derefIfNotNull(T* ptr)
     {
-        if (LIKELY(ptr))
+        if (ptr) [[likely]]
             ptr->decrementConnectionCount();
     }
 };
 
 template<typename T>
 using AudioConnectionRefPtr = RefPtr<T, RawPtrTraits<T>, AudioNodeConnectionRefDerefTraits<T>>;
+
+template<typename T>
+using AudioConnectionRef = Ref<T, RawPtrTraits<T>, AudioNodeConnectionRefDerefTraits<T>>;
 
 String convertEnumerationToString(AudioNode::NodeType);
 
@@ -312,3 +329,10 @@ template<> struct LogArgument<WebCore::AudioNode::NodeType> {
 };
 
 } // namespace WTF
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(AudioNode)
+
+#define SPECIALIZE_TYPE_TRAITS_AUDIONODE(ToValueTypeName, NodeTypeName) \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName) \
+static bool isType(const WebCore::AudioNode& node) { return node.nodeType() == WebCore::AudioNode::NodeTypeName; } \
+SPECIALIZE_TYPE_TRAITS_END()

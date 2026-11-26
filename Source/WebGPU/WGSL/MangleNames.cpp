@@ -54,15 +54,15 @@ struct MangledName {
 
     String toString() const
     {
-        static const ASCIILiteral prefixes[] = {
+        static const auto prefixes = WTF::toArray<ASCIILiteral>({
             "type"_s,
             "local"_s,
             "global"_s,
             "parameter"_s,
             "function"_s,
             "field"_s,
-        };
-        return makeString(prefixes[WTF::enumToUnderlyingType(kind)], String::number(index));
+        });
+        return makeString(prefixes[std::to_underlying(kind)], String::number(index));
     }
 };
 
@@ -92,13 +92,13 @@ private:
     void introduceVariable(AST::Identifier&, MangledName::Kind);
     void readVariable(AST::Identifier&) const;
 
-    MangledName makeMangledName(const String&, MangledName::Kind);
+    MangledName NODELETE makeMangledName(const String&, MangledName::Kind);
 
     void visitVariableDeclaration(AST::Variable&, MangledName::Kind);
 
     ShaderModule& m_shaderModule;
     HashMap<AST::Structure*, NameMap> m_structFieldMapping;
-    uint32_t m_indexPerType[MangledName::numberOfKinds] { 0 };
+    std::array<uint32_t, MangledName::numberOfKinds> m_indexPerType { 0 };
 };
 
 void NameManglerVisitor::run()
@@ -130,7 +130,7 @@ void NameManglerVisitor::visit(AST::Structure& structure)
         fieldMap.add(member.name(), mangledName);
         m_shaderModule.replace(&member.name(), AST::Identifier::makeWithSpan(member.name().span(), mangledName.toString()));
     }
-    auto result = m_structFieldMapping.add(&structure, WTFMove(fieldMap));
+    auto result = m_structFieldMapping.add(&structure, WTF::move(fieldMap));
     ASSERT_UNUSED(result, result.isNewEntry);
 }
 
@@ -187,7 +187,7 @@ MangledName NameManglerVisitor::makeMangledName(const String& name, MangledName:
 {
     return MangledName {
         kind,
-        m_indexPerType[WTF::enumToUnderlyingType(kind)]++,
+        m_indexPerType[std::to_underlying(kind)]++,
         name
     };
 }

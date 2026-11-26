@@ -23,6 +23,7 @@
 
 #include "MediaSessionIdentifier.h"
 #include "PlatformMediaSession.h"
+#include <wtf/TZoneMalloc.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace WebCore {
@@ -35,7 +36,7 @@ enum class MediaSessionGLibMprisRegistrationEligiblilty : uint8_t {
 class MediaSessionManagerGLib;
 
 class MediaSessionGLib {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(MediaSessionGLib);
 
 public:
     static std::unique_ptr<MediaSessionGLib> create(MediaSessionManagerGLib&, MediaSessionIdentifier);
@@ -45,14 +46,14 @@ public:
 
     MediaSessionManagerGLib& manager() const { return m_manager; }
 
-    GVariant* getPlaybackStatusAsGVariant(std::optional<const PlatformMediaSession*>);
+    GVariant* getPlaybackStatusAsGVariant(std::optional<const PlatformMediaSessionInterface*>);
     GVariant* getMetadataAsGVariant(std::optional<NowPlayingInfo>);
     GVariant* getPositionAsGVariant();
     GVariant* canSeekAsGVariant();
 
     void emitPositionChanged(double time);
     void updateNowPlaying(NowPlayingInfo&);
-    void playbackStatusChanged(PlatformMediaSession&);
+    void playbackStatusChanged(PlatformMediaSessionInterface&);
 
     void unregisterMprisSession();
 
@@ -72,6 +73,7 @@ private:
     unsigned m_ownerId { 0 };
     unsigned m_rootRegistrationId { 0 };
     unsigned m_playerRegistrationId { 0 };
+    static bool m_dBusAddressFailed;
 };
 
 String convertEnumerationToString(MediaSessionGLib::MprisRegistrationEligiblilty);

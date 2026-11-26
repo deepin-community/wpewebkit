@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
@@ -34,7 +35,7 @@ namespace WebCore {
 class ContentSecurityPolicyDirectiveList;
 
 class ContentSecurityPolicyDirective {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ContentSecurityPolicyDirective);
 public:
     ContentSecurityPolicyDirective(const ContentSecurityPolicyDirectiveList& directiveList, const String& name, const String& value)
         : m_name(name)
@@ -45,13 +46,13 @@ public:
 
     virtual ~ContentSecurityPolicyDirective() = 0;
 
-    const String& name() const { return m_name; }
-    const String& text() const { return m_text; }
-    virtual const String& nameForReporting() const { return m_name; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    const String& text() const LIFETIME_BOUND { return m_text; }
+    virtual const String& nameForReporting() const LIFETIME_BOUND { return m_name; }
 
-    const ContentSecurityPolicyDirectiveList& directiveList() const { return m_directiveList; }
+    const ContentSecurityPolicyDirectiveList& directiveList() const LIFETIME_BOUND { return m_directiveList; }
 
-    bool isDefaultSrc() const;
+    bool NODELETE isDefaultSrc() const;
 
 private:
     String m_name;

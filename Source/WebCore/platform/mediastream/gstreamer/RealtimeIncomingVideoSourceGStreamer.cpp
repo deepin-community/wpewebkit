@@ -24,6 +24,7 @@
 
 #include "GStreamerCommon.h"
 #include "GStreamerWebRTCUtils.h"
+#include "GUniquePtrGStreamer.h"
 #include "VideoFrameGStreamer.h"
 #include <wtf/text/MakeString.h>
 
@@ -33,7 +34,7 @@ GST_DEBUG_CATEGORY(webkit_webrtc_incoming_video_debug);
 namespace WebCore {
 
 RealtimeIncomingVideoSourceGStreamer::RealtimeIncomingVideoSourceGStreamer(AtomString&& videoTrackId)
-    : RealtimeIncomingSourceGStreamer(CaptureDevice { WTFMove(videoTrackId), CaptureDevice::DeviceType::Camera, emptyString() })
+    : RealtimeIncomingSourceGStreamer(CaptureDevice { WTF::move(videoTrackId), CaptureDevice::DeviceType::Camera, "remote video"_s })
 {
     static std::once_flag debugRegisteredFlag;
     std::call_once(debugRegisteredFlag, [] {
@@ -64,7 +65,7 @@ const RealtimeMediaSourceSettings& RealtimeIncomingVideoSourceGStreamer::setting
 
     settings.setSupportedConstraints(constraints);
 
-    m_currentSettings = WTFMove(settings);
+    m_currentSettings = WTF::move(settings);
     return m_currentSettings.value();
 }
 
@@ -100,8 +101,14 @@ void RealtimeIncomingVideoSourceGStreamer::dispatchSample(GRefPtr<GstSample>&& s
     }
 
     ensureSizeAndFramerate(GRefPtr<GstCaps>(caps));
+    auto [rotation, isMirrored] = webkitGstBufferGetVideoRotation(buffer);
 
-    videoFrameAvailable(VideoFrameGStreamer::create(WTFMove(sample), intrinsicSize(), fromGstClockTime(GST_BUFFER_PTS(buffer))), { });
+    VideoFrameGStreamer::CreateOptions options(intrinsicSize());
+    options.presentationTime = fromGstClockTime(GST_BUFFER_PTS(buffer));
+    options.rotation = rotation;
+    options.isMirrored = isMirrored;
+    options.contentHint = VideoFrameContentHint::WebRTC;
+    videoFrameAvailable(VideoFrameGStreamer::create(WTF::move(sample), options), { });
 }
 
 const GstStructure* RealtimeIncomingVideoSourceGStreamer::stats()
@@ -109,15 +116,14 @@ const GstStructure* RealtimeIncomingVideoSourceGStreamer::stats()
     m_stats.reset(gst_structure_new_empty("incoming-video-stats"));
 
     forEachVideoFrameObserver([&](auto& observer) {
-        auto stats = observer.queryAdditionalStats();
+        GUniquePtr<GstStructure> stats(observer.queryAdditionalStats());
         if (!stats)
             return;
 
-        gst_structure_foreach(stats.get(), reinterpret_cast<GstStructureForeachFunc>(+[](GQuark fieldId, const GValue* value, gpointer userData) -> gboolean {
-            auto* source = reinterpret_cast<RealtimeIncomingVideoSourceGStreamer*>(userData);
-            gst_structure_set_value(source->m_stats.get(), g_quark_to_string(fieldId), value);
+        gstStructureForeach(stats.get(), [&](auto id, auto value) -> bool {
+            gstStructureIdSetValue(m_stats.get(), id, value);
             return TRUE;
-        }), this);
+        });
     });
     return m_stats.get();
 }

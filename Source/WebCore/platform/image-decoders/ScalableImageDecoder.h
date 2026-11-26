@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006, 2016 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006, 2016 Apple Inc. All rights reserved.
  * Copyright (C) 2008-2009 Torch Mobile, Inc.
  * Copyright (C) Research In Motion Limited 2009-2010. All rights reserved.
  * Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies)
@@ -35,6 +35,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/Lock.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -44,7 +45,8 @@ namespace WebCore {
 // (e.g. JPEGImageDecoder). This base manages the ScalableImageDecoderFrame cache.
 
 class ScalableImageDecoder : public ImageDecoder {
-    WTF_MAKE_NONCOPYABLE(ScalableImageDecoder); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ScalableImageDecoder);
+    WTF_MAKE_NONCOPYABLE(ScalableImageDecoder);
 public:
     ScalableImageDecoder(AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption)
         : m_premultiplyAlpha(alphaOption == AlphaOption::Premultiplied)
@@ -120,25 +122,14 @@ public:
         return true;
     }
 
-    // Lazily-decodes enough of the image to get the frame count (if
-    // possible), without decoding the individual frames.
-    // FIXME: Right now that has to be done by each subclass; factor the
-    // decode call out and use it here.
-    size_t frameCount() const override { return 1; }
+    size_t frameCount() const override;
 
     RepetitionCount repetitionCount() const override { return RepetitionCountNone; }
-
-    // Decodes as much of the requested frame as possible, and returns an
-    // ScalableImageDecoder-owned pointer.
-    virtual ScalableImageDecoderFrame* frameBufferAtIndex(size_t) = 0;
 
     bool frameIsCompleteAtIndex(size_t) const override;
 
     // Make the best effort guess to check if the requested frame has alpha channel.
     bool frameHasAlphaAtIndex(size_t) const override;
-
-    // Number of bytes in the decoded frame requested. Return 0 if not yet decoded.
-    unsigned frameBytesAtIndex(size_t, SubsamplingLevel = SubsamplingLevel::Default) const override;
 
     Seconds frameDurationAtIndex(size_t) const final;
 
@@ -152,23 +143,9 @@ public:
 
     enum { ICCColorProfileHeaderLength = 128 };
 
-    static bool rgbColorProfile(const char* profileData, unsigned profileLength)
-    {
-        ASSERT_UNUSED(profileLength, profileLength >= ICCColorProfileHeaderLength);
-
-        return !memcmp(&profileData[16], "RGB ", 4);
-    }
-
     size_t bytesDecodedToDetermineProperties() const final { return 0; }
 
     static SubsamplingLevel subsamplingLevelForScale(float, SubsamplingLevel) { return SubsamplingLevel::Default; }
-
-    static bool inputDeviceColorProfile(const char* profileData, unsigned profileLength)
-    {
-        ASSERT_UNUSED(profileLength, profileLength >= ICCColorProfileHeaderLength);
-
-        return !memcmp(&profileData[12], "mntr", 4) || !memcmp(&profileData[12], "scnr", 4);
-    }
 
     // Sets the "decode failure" flag. For caller convenience (since so
     // many callers want to return false after calling this), returns false
@@ -182,16 +159,28 @@ public:
 
     bool failed() const { return m_encodedDataStatus == EncodedDataStatus::Error; }
 
-    // Clears decoded pixel data from before the provided frame unless that
-    // data may be needed to decode future frames (e.g. due to GIF frame
-    // compositing).
-    void clearFrameBufferCache(size_t) override { }
+    void clearFrameBufferCache(size_t) override;
 
     // If the image has a cursor hot-spot, stores it in the argument
     // and returns true. Otherwise returns false.
     std::optional<IntPoint> hotSpot() const override { return std::nullopt; }
 
 protected:
+    // Decodes as much of the requested frame as possible, and returns an
+    // ScalableImageDecoder-owned pointer.
+    virtual ScalableImageDecoderFrame* frameBufferAtIndex(size_t) WTF_REQUIRES_LOCK(m_lock) = 0;
+
+    // Lazily-decodes enough of the image to get the frame count (if
+    // possible), without decoding the individual frames.
+    // FIXME: Right now that has to be done by each subclass; factor the
+    // decode call out and use it here.
+    virtual size_t decodeIfNeededAndGetFrameCount() const WTF_REQUIRES_LOCK(m_lock) { return 1; }
+
+    // Clears decoded pixel data from before the provided frame unless that
+    // data may be needed to decode future frames (e.g. due to GIF frame
+    // compositing).
+    virtual void clearDecodedPixelDataIfNeeded(size_t) WTF_REQUIRES_LOCK(m_lock) { }
+
     RefPtr<const SharedBuffer> m_data;
     Vector<ScalableImageDecoderFrame, 1> m_frameBufferCache WTF_GUARDED_BY_LOCK(m_lock);
     mutable Lock m_lock;

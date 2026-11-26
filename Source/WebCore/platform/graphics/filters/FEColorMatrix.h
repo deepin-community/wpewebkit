@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,10 +22,12 @@
 
 #pragma once
 
-#include "FilterEffect.h"
+#include <WebCore/FilterEffect.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
+
+template<size_t, size_t> class ColorMatrix;
 
 enum class ColorMatrixType : uint8_t {
     FECOLORMATRIX_TYPE_UNKNOWN          = 0,
@@ -35,20 +37,24 @@ enum class ColorMatrixType : uint8_t {
     FECOLORMATRIX_TYPE_LUMINANCETOALPHA = 4
 };
 
-class FEColorMatrix : public FilterEffect {
+class FEColorMatrix final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEColorMatrix);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEColorMatrix);
 public:
     WEBCORE_EXPORT static Ref<FEColorMatrix> create(ColorMatrixType, Vector<float>&&, DestinationColorSpace = DestinationColorSpace::SRGB());
+    static Ref<FEColorMatrix> create(ColorMatrixType, const ColorMatrix<5, 4>&, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FEColorMatrix&) const;
 
     ColorMatrixType type() const { return m_type; }
-    bool setType(ColorMatrixType);
+    bool NODELETE setType(ColorMatrixType);
 
-    const Vector<float>& values() const { return m_values; }
+    const Vector<float>& values() const LIFETIME_BOUND { return m_values; }
     bool setValues(const Vector<float>&);
 
-    static void calculateSaturateComponents(float* components, float value);
-    static void calculateHueRotateComponents(float* components, float value);
+    WEBCORE_EXPORT static bool areValuesValidForType(ColorMatrixType, const Vector<float>& values);
+    static void NODELETE calculateSaturateComponents(std::span<float, 9> components, float value);
+    static void NODELETE calculateHueRotateComponents(std::span<float, 9> components, float value);
     static Vector<float> normalizedFloats(const Vector<float>& values);
 
 private:
@@ -56,9 +62,9 @@ private:
 
     bool operator==(const FilterEffect& other) const override { return areEqual<FEColorMatrix>(*this, other); }
 
-    bool resultIsAlphaImage(const FilterImageVector& inputs) const override;
+    bool resultIsAlphaImage(std::span<const Ref<FilterImage>> inputs) const override;
 
-    OptionSet<FilterRenderingMode> supportedFilterRenderingModes() const override;
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const override;
 
     std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;

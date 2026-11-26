@@ -24,41 +24,55 @@
 
 #include "Color.h"
 #include "FloatPoint.h"
+#include "GraphicsContext.h"
 #include "InlineTextBoxStyle.h"
 #include "RenderStyleConstants.h"
+#include "StyleTextDecorationInset.h"
+#include "StyleTextDecorationThickness.h"
+#include "StyleTextUnderlineOffset.h"
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
 
-class FilterOperations;
 class FontCascade;
-class GraphicsContext;
 class RenderObject;
-class RenderStyle;
-class ShadowData;
 class TextRun;
-    
+
+namespace Style {
+class ComputedStyle;
+}
+
 class TextDecorationPainter {
 public:
-    TextDecorationPainter(GraphicsContext&, const FontCascade&, const ShadowData*, const FilterOperations*, bool isPrinting, bool isHorizontal);
+    TextDecorationPainter(GraphicsContext&, const FontCascade&, const Style::TextShadows&, const Style::AppleColorFilter&, bool isPrinting, WritingMode);
 
     struct Styles {
-        bool operator==(const Styles&) const;
+        bool NODELETE operator==(const Styles&) const;
 
         struct DecorationStyleAndColor {
             Color color;
             TextDecorationStyle decorationStyle { TextDecorationStyle::Solid };
+            // The originating box's text-decoration-thickness, kept unresolved so each painting box can resolve it
+            // against its own font size and zoom. Empty when this Styles has no originator (e.g. a default-constructed
+            // override on a marked text that does not set a decoration); the painter then resolves auto against the
+            // painting box.
+            std::optional<Style::TextDecorationThickness> thickness;
+
+            bool operator==(const DecorationStyleAndColor&) const = default;
         };
         DecorationStyleAndColor underline;
         DecorationStyleAndColor overline;
         DecorationStyleAndColor linethrough;
 
-        TextDecorationSkipInk skipInk { TextDecorationSkipInk::None };
+        std::optional<Style::TextUnderlineOffset> underlineOffset;
+
+        std::optional<Style::TextDecorationInset> inset;
+        BoxDecorationBreak boxDecorationBreak { BoxDecorationBreak::Slice };
     };
     struct BackgroundDecorationGeometry {
         FloatPoint textOrigin;
         FloatPoint boxOrigin;
-        float textBoxWidth { 0.f };
+        float width { 0.f };
         float textDecorationThickness { 0.f };
         float underlineOffset { 0.f };
         float overlineOffset { 0.f };
@@ -66,7 +80,7 @@ public:
         float clippingOffset { 0.f };
         WavyStrokeParameters wavyStrokeParameters;
     };
-    void paintBackgroundDecorations(const RenderStyle&, const TextRun&, const BackgroundDecorationGeometry&, OptionSet<TextDecorationLine>, const Styles&);
+    void paintBackgroundDecorations(const Style::ComputedStyle&, const TextRun&, const BackgroundDecorationGeometry&, Style::TextDecorationLine, const Styles&, float deviceScaleFactor);
 
     struct ForegroundDecorationGeometry {
         FloatPoint boxOrigin;
@@ -77,18 +91,18 @@ public:
     };
     void paintForegroundDecorations(const ForegroundDecorationGeometry&, const Styles&);
 
-    static Color decorationColor(const RenderStyle&, OptionSet<PaintBehavior> paintBehavior = { });
-    static Styles stylesForRenderer(const RenderObject&, OptionSet<TextDecorationLine> requestedDecorations, bool firstLineStyle = false, OptionSet<PaintBehavior> paintBehavior = { }, PseudoId = PseudoId::None);
-    static OptionSet<TextDecorationLine> textDecorationsInEffectForStyle(const TextDecorationPainter::Styles&);
+    static Color decorationColor(const Style::ComputedStyle&, OptionSet<PaintBehavior> paintBehavior = { });
+    static Styles stylesForRenderer(const RenderObject&, Style::TextDecorationLine requestedDecorations, bool firstLineStyle = false, OptionSet<PaintBehavior> paintBehavior = { }, std::optional<PseudoElementType> = { });
+    static Style::TextDecorationLine NODELETE textDecorationsInEffectForStyle(const TextDecorationPainter::Styles&);
 
 private:
     void paintLineThrough(const ForegroundDecorationGeometry&, const Color&, const Styles&);
 
     GraphicsContext& m_context;
     bool m_isPrinting { false };
-    bool m_isHorizontal { true };
-    const ShadowData* m_shadow { nullptr };
-    const FilterOperations* m_shadowColorFilter { nullptr };
+    WritingMode m_writingMode;
+    SUPPRESS_FORWARD_DECL_MEMBER const Style::TextShadows& m_shadow;
+    SUPPRESS_FORWARD_DECL_MEMBER const Style::AppleColorFilter& m_shadowColorFilter;
     const FontCascade& m_font;
 };
 

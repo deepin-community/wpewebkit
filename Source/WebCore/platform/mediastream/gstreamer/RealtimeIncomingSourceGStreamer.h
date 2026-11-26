@@ -28,12 +28,12 @@ namespace WebCore {
 
 class RealtimeIncomingSourceGStreamer : public RealtimeMediaSource, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingSourceGStreamer> {
 public:
-    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingSourceGStreamer>::ref(); }
-    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingSourceGStreamer>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeIncomingSourceGStreamer>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
     GstElement* bin() const { return m_bin.get(); }
-    bool setBin(const GRefPtr<GstElement>&);
+    bool setBin(GRefPtr<GstElement> &&);
+
+    void tearDown();
 
     bool hasClient(const GRefPtr<GstElement>&);
     int registerClient(GRefPtr<GstElement>&&);
@@ -41,9 +41,7 @@ public:
 
     void handleUpstreamEvent(GRefPtr<GstEvent>&&);
     bool handleUpstreamQuery(GstQuery*);
-    void handleDownstreamEvent(GstElement* sink, GRefPtr<GstEvent>&&);
-
-    void tearDown();
+    GstPadProbeReturn handleDownstreamEvent(GRefPtr<GstEvent>&&);
 
 protected:
     RealtimeIncomingSourceGStreamer(const CaptureDevice&);
@@ -58,8 +56,10 @@ private:
 
     GRefPtr<GstElement> m_bin;
     GRefPtr<GstElement> m_sink;
+    unsigned long m_sinkPadProbeId;
     Lock m_clientLock;
     HashMap<int, GRefPtr<GstElement>> m_clients WTF_GUARDED_BY_LOCK(m_clientLock);
+    MonotonicTime m_lastTagUpdate;
 };
 
 } // namespace WebCore

@@ -35,12 +35,15 @@
 #include "ColorConversion.h"
 #include "ColorSerialization.h"
 #include "ColorSpace.h"
+#include "ContextDestructionObserverInlines.h"
 #include "ContextMenu.h"
 #include "ContextMenuController.h"
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
 #include "DOMWrapperWorld.h"
-#include "Document.h"
+#include "DiagnosticLoggingClient.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Event.h"
 #include "File.h"
@@ -49,18 +52,21 @@
 #include "FrameDestructionObserverInlines.h"
 #include "HTMLIFrameElement.h"
 #include "HitTestResult.h"
-#include "InspectorController.h"
 #include "InspectorDebuggableType.h"
 #include "JSDOMConvertInterface.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSExecState.h"
 #include "JSInspectorFrontendHost.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
 #include "MouseEvent.h"
-#include "Node.h"
+#include "NodeDocument.h"
 #include "OffscreenCanvasRenderingContext2D.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "PagePasteboardContext.h"
 #include "Pasteboard.h"
 #include "Path2D.h"
@@ -69,8 +75,11 @@
 #include "SystemSoundManager.h"
 #include "UserGestureIndicator.h"
 #include "WebCorePersistentCoders.h"
+#include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/ScriptFunctionCall.h>
 #include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <pal/system/Sound.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/JSONValues.h>
@@ -80,6 +89,8 @@
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(COCOA)
+#include "ScriptSourceCode.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/spi/darwin/OSVariantSPI.h>
 #endif
 
@@ -131,7 +142,7 @@ private:
 
             ScriptFunctionCall function(m_globalObject, m_frontendApiObject.get(), "contextMenuItemSelected"_s, WebCore::functionCallHandlerFromAnyThread);
             function.appendArgument(itemNumber);
-            function.call();
+            std::ignore = function.call();
         }
     }
     
@@ -139,14 +150,14 @@ private:
     {
         if (m_frontendHost) {
             ScriptFunctionCall function(m_globalObject, m_frontendApiObject.get(), "contextMenuCleared"_s, WebCore::functionCallHandlerFromAnyThread);
-            function.call();
+            std::ignore = function.call();
 
             m_frontendHost->m_menuProvider = nullptr;
         }
         m_items.clear();
     }
 
-    InspectorFrontendHost* m_frontendHost;
+    WeakPtr<InspectorFrontendHost> m_frontendHost;
     JSC::JSGlobalObject* m_globalObject;
     JSC::Strong<JSC::JSObject> m_frontendApiObject;
     Vector<ContextMenuItem> m_items;
@@ -171,8 +182,8 @@ void InspectorFrontendHost::disconnectClient()
 {
     m_client = nullptr;
 #if ENABLE(CONTEXT_MENUS)
-    if (m_menuProvider)
-        m_menuProvider->disconnect();
+    if (RefPtr menuProvider = m_menuProvider.get())
+        menuProvider->disconnect();
 #endif
     m_frontendPage = nullptr;
 }
@@ -181,15 +192,15 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
 {
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
+    RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
     auto& globalObject = *localMainFrame->script().globalObject(world);
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     globalObject.putDirect(vm, JSC::Identifier::fromString(vm, "InspectorFrontendHost"_s), toJS<IDLInterface<InspectorFrontendHost>>(globalObject, globalObject, *this));
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         reportException(&globalObject, scope.exception());
 }
 
@@ -271,27 +282,20 @@ void InspectorFrontendHost::inspectedURLChanged(const String& newURL)
 
 void InspectorFrontendHost::setZoomFactor(float zoom)
 {
-    if (m_frontendPage) {
-        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
-            localMainFrame->setPageAndTextZoomFactors(zoom, 1);
-    }
+    if (m_client)
+        m_client->setPageAndTextZoomFactors(zoom, 1);
 }
 
 float InspectorFrontendHost::zoomFactor()
 {
-    if (m_frontendPage) {
-        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
-            return localMainFrame->pageZoomFactor();
-    }
-
-    return 1.0;
+    return m_client ? m_client->pageZoomFactor() : 1.0;
 }
 
 void InspectorFrontendHost::setForcedAppearance(String appearance)
 {
     if (appearance == "light"_s) {
         if (m_frontendPage)
-            m_frontendPage->setUseDarkAppearanceOverride(false);
+            protect(m_frontendPage)->setUseDarkAppearanceOverride(false);
         if (m_client)
             m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Light);
         return;
@@ -299,14 +303,14 @@ void InspectorFrontendHost::setForcedAppearance(String appearance)
 
     if (appearance == "dark"_s) {
         if (m_frontendPage)
-            m_frontendPage->setUseDarkAppearanceOverride(true);
+            protect(m_frontendPage)->setUseDarkAppearanceOverride(true);
         if (m_client)
             m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Dark);
         return;
     }
 
     if (m_frontendPage)
-        m_frontendPage->setUseDarkAppearanceOverride(std::nullopt);
+        protect(m_frontendPage)->setUseDarkAppearanceOverride(std::nullopt);
     if (m_client)
         m_client->setForcedAppearance(InspectorFrontendClient::Appearance::System);
 }
@@ -377,6 +381,8 @@ static String debuggableTypeToString(DebuggableType debuggableType)
         return "service-worker"_s;
     case DebuggableType::WebPage:
         return "web-page"_s;
+    case DebuggableType::WasmDebugger:
+        return "wasm-debugger"_s;
     }
 
     ASSERT_NOT_REACHED();
@@ -421,12 +427,8 @@ String InspectorFrontendHost::platform() const
 
 String InspectorFrontendHost::platformVersionName() const
 {
-#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
-    return "monterey"_s;
-#elif PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 110000
-    return "big-sur"_s;
-#elif PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101500
-    return "catalina"_s;
+#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
+    return "tahoe"_s;
 #else
     return emptyString();
 #endif
@@ -435,7 +437,7 @@ String InspectorFrontendHost::platformVersionName() const
 void InspectorFrontendHost::copyText(const String& text)
 {
     auto pageID = m_frontendPage ? m_frontendPage->mainFrame().pageID() : std::nullopt;
-    Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(WTFMove(pageID)))->writePlainText(text, Pasteboard::CannotSmartReplace);
+    Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(WTF::move(pageID)))->writePlainText(text, Pasteboard::CannotSmartReplace);
 }
 
 void InspectorFrontendHost::killText(const String& text, bool shouldPrependToKillRing, bool shouldStartNewSequence)
@@ -443,19 +445,19 @@ void InspectorFrontendHost::killText(const String& text, bool shouldPrependToKil
     if (!m_frontendPage)
         return;
 
-    RefPtr focusedOrMainFrame = m_frontendPage->checkedFocusController()->focusedOrMainFrame();
+    RefPtr focusedOrMainFrame = m_frontendPage->focusController().focusedOrMainFrame();
     if (!focusedOrMainFrame)
         return;
 
-    Editor& editor = focusedOrMainFrame->editor();
-    editor.setStartNewKillRingSequence(shouldStartNewSequence);
+    Ref editor = focusedOrMainFrame->editor();
+    editor->setStartNewKillRingSequence(shouldStartNewSequence);
     Editor::KillRingInsertionMode insertionMode = shouldPrependToKillRing ? Editor::KillRingInsertionMode::PrependText : Editor::KillRingInsertionMode::AppendText;
-    editor.addTextToKillRing(text, insertionMode);
+    editor->addTextToKillRing(text, insertionMode);
 }
 
 void InspectorFrontendHost::openURLExternally(const String& url)
 {
-    if (WTF::protocolIsJavaScript(url))
+    if (WTF::isValidJavaScriptURL(url))
         return;
 
     if (m_client)
@@ -481,7 +483,7 @@ bool InspectorFrontendHost::canSave(SaveMode saveMode)
 void InspectorFrontendHost::save(Vector<SaveData>&& saveDatas, bool forceSaveAs)
 {
     if (m_client)
-        m_client->save(WTFMove(saveDatas), forceSaveAs);
+        m_client->save(WTF::move(saveDatas), forceSaveAs);
 }
 
 bool InspectorFrontendHost::canLoad()
@@ -498,7 +500,7 @@ void InspectorFrontendHost::load(const String& path, Ref<DeferredPromise>&& prom
         return;
     }
 
-    m_client->load(path, [promise = WTFMove(promise)](const String& content) {
+    m_client->load(path, [promise = WTF::move(promise)](const String& content) {
         if (!content)
             promise->reject(ExceptionCode::NotFoundError);
         else
@@ -520,7 +522,7 @@ void InspectorFrontendHost::pickColorFromScreen(Ref<DeferredPromise>&& promise)
         return;
     }
 
-    m_client->pickColorFromScreen([promise = WTFMove(promise)](const std::optional<WebCore::Color>& color) {
+    m_client->pickColorFromScreen([promise = WTF::move(promise)](const std::optional<WebCore::Color>& color) {
         if (!color) {
             promise->resolve();
             return;
@@ -528,7 +530,7 @@ void InspectorFrontendHost::pickColorFromScreen(Ref<DeferredPromise>&& promise)
 
         String serializedColor;
         // FIXME: <webkit.org/b/241198> Inspector frontend should support all color function gamuts.
-        if (color->colorSpace() != ColorSpace::SRGB || color->colorSpace() != ColorSpace::DisplayP3) {
+        if (color->colorSpace() != ColorSpace::SRGB && color->colorSpace() != ColorSpace::DisplayP3) {
             // DisplayP3 is the least-lossy format the frontend currently supports. This conversion will only be lossy
             // if the color space the system is providing colors in were to support a wider gamut than DisplayP3.
             auto colorForFrontend = color->toColorTypeLossy<DisplayP3<float>>();
@@ -558,7 +560,7 @@ static void populateContextMenu(Vector<InspectorFrontendHost::ContextMenuItem>&&
 
         if (item.type == "subMenu"_s && item.subItems) {
             ContextMenu subMenu;
-            populateContextMenu(WTFMove(*item.subItems), subMenu);
+            populateContextMenu(WTF::move(*item.subItems), subMenu);
 
             menu.appendItem({ ContextMenuItemType::Submenu, ContextMenuItemTagNoAction, item.label, &subMenu });
             continue;
@@ -582,10 +584,10 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
     ASSERT(m_frontendPage);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
+    RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
-    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorld());
+    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorldSingleton());
     auto& vm = globalObject.vm();
     auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);
@@ -593,10 +595,10 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     auto* frontendAPIObject = asObject(value);
 
     ContextMenu menu;
-    populateContextMenu(WTFMove(items), menu);
+    populateContextMenu(WTF::move(items), menu);
 
-    auto menuProvider = FrontendMenuProvider::create(this, &globalObject, frontendAPIObject, menu.items());
-    m_menuProvider = menuProvider.ptr();
+    Ref menuProvider = FrontendMenuProvider::create(this, &globalObject, frontendAPIObject, menu.items());
+    m_menuProvider = menuProvider;
     m_frontendPage->contextMenuController().showContextMenu(event, menuProvider);
 #else
     UNUSED_PARAM(event);
@@ -611,8 +613,14 @@ void InspectorFrontendHost::dispatchEventAsContextMenuEvent(Event& event)
         return;
 
     auto& mouseEvent = downcast<MouseEvent>(event);
-    auto& frame = *downcast<Node>(mouseEvent.target())->document().frame();
-    m_frontendPage->contextMenuController().showContextMenuAt(frame, roundedIntPoint(mouseEvent.absoluteLocation()));
+    Ref frame = *downcast<Node>(mouseEvent.target())->document().frame();
+    auto location = LayoutPoint(mouseEvent.absoluteLocation());
+    if (RefPtr<LocalFrameView> view = frame->view()) {
+        FloatBoxExtent insets = view->obscuredContentInsets();
+        location.move(insets.left(), insets.top());
+    }
+
+    m_frontendPage->contextMenuController().showContextMenuAt(frame, roundedIntPoint(location));
 #else
     UNUSED_PARAM(event);
 #endif
@@ -647,7 +655,7 @@ bool InspectorFrontendHost::isBeingInspected()
     if (!m_frontendPage)
         return false;
 
-    InspectorController& inspectorController = m_frontendPage->inspectorController();
+    PageInspectorController& inspectorController = m_frontendPage->inspectorController();
     return inspectorController.hasLocalFrontend() || inspectorController.hasRemoteFrontend();
 }
 
@@ -678,11 +686,7 @@ bool InspectorFrontendHost::engineeringSettingsAllowed()
 
 bool InspectorFrontendHost::supportsShowCertificate() const
 {
-#if PLATFORM(COCOA)
-    return true;
-#else
-    return false;
-#endif
+    return m_frontendPage->settings().inspectorSupportsShowingCertificate();
 }
 
 bool InspectorFrontendHost::showCertificate(const String& serializedCertificate)
@@ -694,7 +698,7 @@ bool InspectorFrontendHost::showCertificate(const String& serializedCertificate)
     if (!data)
         return false;
 
-    WTF::Persistence::Decoder decoder({ data->data(), data->size() });
+    WTF::Persistence::Decoder decoder(data->span());
     std::optional<CertificateInfo> certificateInfo;
     decoder >> certificateInfo;
     if (!certificateInfo)
@@ -763,8 +767,8 @@ void InspectorFrontendHost::logDiagnosticEvent(const String& eventName, const St
 
     DiagnosticLoggingClient::ValueDictionary dictionary;
     for (auto& [key, value] : *payloadObject) {
-        if (auto valuePayload = valuePayloadFromJSONValue(WTFMove(value)))
-            dictionary.set(key, WTFMove(valuePayload.value()));
+        if (auto valuePayload = valuePayloadFromJSONValue(WTF::move(value)))
+            dictionary.set(key, WTF::move(valuePayload.value()));
     }
 
     m_client->logDiagnosticEvent(makeString("WebInspector."_s, eventName), dictionary);
@@ -786,7 +790,7 @@ void InspectorFrontendHost::didShowExtensionTab(const String& extensionID, const
     if (!m_client)
         return;
 
-    auto* frame = extensionFrameElement.contentFrame();
+    RefPtr frame = extensionFrameElement.contentFrame();
     if (!frame)
         return;
 
@@ -819,24 +823,23 @@ void InspectorFrontendHost::inspectedPageDidNavigate(const String& newURLString)
 
 ExceptionOr<JSC::JSValue> InspectorFrontendHost::evaluateScriptInExtensionTab(HTMLIFrameElement& extensionFrameElement, const String& scriptSource)
 {
-    auto* frame = dynamicDowncast<LocalFrame>(extensionFrameElement.contentFrame());
+    RefPtr frame = dynamicDowncast<LocalFrame>(extensionFrameElement.contentFrame());
     if (!frame)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
     Ref protectedFrame(*frame);
 
-    JSDOMGlobalObject* frameGlobalObject = frame->script().globalObject(mainThreadNormalWorld());
+    JSDOMGlobalObject* frameGlobalObject = frame->script().globalObject(mainThreadNormalWorldSingleton());
     if (!frameGlobalObject)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
-
     JSC::SuspendExceptionScope scope(frameGlobalObject->vm());
-    ValueOrException result = frame->script().evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorld());
+    ValueOrException result = frame->script().evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
     
     if (!result)
         return Exception { ExceptionCode::InvalidStateError, result.error().message };
 
-    return WTFMove(result.value());
+    return WTF::move(result.value());
 }
 
 #endif // ENABLE(INSPECTOR_EXTENSIONS)

@@ -31,7 +31,12 @@
 #include "config.h"
 #include "BMPImageReader.h"
 
+#include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
+
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BMPImageReader);
 
 BMPImageReader::BMPImageReader(ScalableImageDecoder* parent, size_t decodedAndHeaderOffset, size_t imgDataOffset, bool usesAndMask)
     : m_parent(parent)
@@ -49,7 +54,7 @@ BMPImageReader::BMPImageReader(ScalableImageDecoder* parent, size_t decodedAndHe
     , m_andMaskState(usesAndMask ? NotYetDecoded : None)
 {
     // Clue-in decodeBMP() that we need to detect the correct info header size.
-    memset(&m_infoHeader, 0, sizeof(m_infoHeader));
+    zeroBytes(m_infoHeader);
 }
 
 bool BMPImageReader::decodeBMP(bool onlySize)
@@ -618,7 +623,7 @@ bool BMPImageReader::processRLEData()
                 // RLE8 has one color index that gets repeated; RLE4 has two
                 // color indexes in the upper and lower 4 bits of the byte,
                 // which are alternated.
-                size_t colorIndexes[2] = {code, code};
+                std::array<size_t, 2> colorIndexes { code, code };
                 if (m_infoHeader.biCompression == RLE4) {
                     colorIndexes[0] = (colorIndexes[0] >> 4) & 0xf;
                     colorIndexes[1] &= 0xf;
@@ -644,8 +649,11 @@ BMPImageReader::ProcessingResult BMPImageReader::processNonRLEData(bool inRLE, i
     if (!inRLE)
         numPixels = m_parent->size().width();
 
+    // An RLE absolute-mode run can start partway into a row.
+    const int startX = m_coord.x();
+
     // Fail if we're being asked to decode more pixels than remain in the row.
-    const int endX = m_coord.x() + numPixels;
+    const int endX = startX + numPixels;
     if (endX > m_parent->size().width())
         return Failure;
 
@@ -696,8 +704,45 @@ BMPImageReader::ProcessingResult BMPImageReader::processNonRLEData(bool inRLE, i
             }
         } else {
             // RGB data.  Decode pixels one at a time, left to right.
+            //
+            // Returns the pixel data for the current X coordinate in a
+            // uint32_t. m_decodedOffset points at the start of the row for
+            // non-RLE data, but at the start of the run for an RLE
+            // absolute-mode run, which can begin mid-row; so index relative
+            // to startX rather than by absolute column, which keeps the reads
+            // within the paddedNumBytes checked above.
+            // NOTE: Only as many bytes of the return value as are needed to
+            // hold the pixel data will actually be set.
+            auto readCurrentPixel = [this, bytesPerPixel, startX]() -> uint32_t {
+                const int offset = (m_coord.x() - startX) * bytesPerPixel;
+                switch (bytesPerPixel) {
+                case 2:
+                    return readUint16(offset);
+
+                case 3: {
+                    // It doesn't matter that we never set the most significant
+                    // byte of the return value here in little-endian mode, the
+                    // caller won't read it.
+                    uint32_t pixel;
+                    memcpySpan(asMutableByteSpan(pixel), m_data->span().subspan(m_decodedOffset + offset, 3));
+#if CPU(BIG_ENDIAN)
+                    pixel = ((pixel & 0xff00) << 8) | ((pixel & 0xff0000) >> 8) | ((pixel & 0xff000000) >> 24);
+#endif
+
+                    return pixel;
+                }
+
+                case 4:
+                    return readUint32(offset);
+
+                default:
+                    ASSERT_NOT_REACHED();
+                    return 0;
+                }
+            };
+
             while (m_coord.x() < endX) {
-                const uint32_t pixel = readCurrentPixel(bytesPerPixel);
+                const uint32_t pixel = readCurrentPixel();
 
                 // Some BMPs specify an alpha channel but don't actually use it
                 // (it contains all 0s).  To avoid displaying these images as

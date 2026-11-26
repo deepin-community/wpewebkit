@@ -25,14 +25,15 @@
 
 #pragma once
 
-#include "MessagePortIdentifier.h"
-#include "ResourceLoaderIdentifier.h"
-#include "ResourceResponse.h"
-#include "ScriptExecutionContextIdentifier.h"
-#include "WorkerOptions.h"
-#include "WorkerScriptLoaderClient.h"
+#include <WebCore/MessagePortIdentifier.h>
+#include <WebCore/ResourceLoaderIdentifier.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/WorkerOptions.h>
+#include <WebCore/WorkerScriptLoaderClient.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/RefCounted.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -42,20 +43,25 @@ class WorkerScriptLoader;
 struct WorkerFetchResult;
 struct WorkerInitializationData;
 
-class SharedWorkerScriptLoader : private WorkerScriptLoaderClient {
-    WTF_MAKE_FAST_ALLOCATED;
+class SharedWorkerScriptLoader final : public RefCounted<SharedWorkerScriptLoader>, private WorkerScriptLoaderClient {
+    WTF_MAKE_TZONE_ALLOCATED(SharedWorkerScriptLoader);
 public:
-    SharedWorkerScriptLoader(URL&&, SharedWorker&, WorkerOptions&&);
+    static Ref<SharedWorkerScriptLoader> create(URL&&, SharedWorker&, WorkerOptions&&);
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void load(CompletionHandler<void(WorkerFetchResult&&, WorkerInitializationData&&)>&&);
 
-    const URL& url() const { return m_url; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
     SharedWorker& worker() { return m_worker.get(); }
-    const WorkerOptions& options() const { return m_options; }
+    const WorkerOptions& options() const LIFETIME_BOUND { return m_options; }
 
 private:
-    void didReceiveResponse(ScriptExecutionContextIdentifier, ResourceLoaderIdentifier, const ResourceResponse&) final;
-    void notifyFinished(ScriptExecutionContextIdentifier) final;
+    SharedWorkerScriptLoader(URL&&, SharedWorker&, WorkerOptions&&);
+
+    void didReceiveResponse(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const ResourceResponse&) final;
+    void notifyFinished(std::optional<ScriptExecutionContextIdentifier>) final;
 
     const WorkerOptions m_options;
     const Ref<SharedWorker> m_worker;

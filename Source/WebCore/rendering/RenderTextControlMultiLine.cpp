@@ -28,26 +28,23 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderLayerScrollableArea.h"
-#include "RenderStyleSetters.h"
 #include "ShadowRoot.h"
-#include "StyleInheritedData.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "TextControlInnerElements.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderTextControlMultiLine);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTextControlMultiLine);
 
-RenderTextControlMultiLine::RenderTextControlMultiLine(HTMLTextAreaElement& element, RenderStyle&& style)
-    : RenderTextControl(Type::TextControlMultiLine, element, WTFMove(style))
+RenderTextControlMultiLine::RenderTextControlMultiLine(HTMLTextAreaElement& element, Style::ComputedStyle&& style)
+    : RenderTextControl(Type::TextControlMultiLine, element, WTF::move(style))
 {
     ASSERT(isRenderTextControlMultiLine());
 }
 
-RenderTextControlMultiLine::~RenderTextControlMultiLine()
-{
-    // Do not add any code here. Add it to willBeDestroyed() instead.
-}
+// Do not add any code in below destructor. Add it to willBeDestroyed() instead.
+RenderTextControlMultiLine::~RenderTextControlMultiLine() = default;
 
 HTMLTextAreaElement& RenderTextControlMultiLine::textAreaElement() const
 {
@@ -75,7 +72,7 @@ float RenderTextControlMultiLine::getAverageCharWidth()
     // Since Lucida Grande is the default font, we want this to match the width
     // of Courier New, the default font for textareas in IE, Firefox and Safari Win.
     // 1229 is the avgCharWidth value in the OS/2 table for Courier New.
-    if (style().fontCascade().firstFamily() == "Lucida Grande"_s)
+    if (style().fontCascade().firstFamily().name == "Lucida Grande"_s)
         return scaleEmToUnits(1229);
 #endif
 
@@ -86,7 +83,7 @@ LayoutUnit RenderTextControlMultiLine::preferredContentLogicalWidth(float charWi
 {
     float width = ceilf(charWidth * textAreaElement().cols());
 
-    auto overflow = style().isHorizontalWritingMode() ? style().overflowY() : style().overflowX();
+    auto overflow = writingMode().isHorizontal() ? style().overflowY() : style().overflowX();
 
     // We are able to have a vertical scrollbar if the overflow style is scroll or auto
     if ((overflow == Overflow::Scroll) || (overflow == Overflow::Auto))
@@ -100,20 +97,15 @@ LayoutUnit RenderTextControlMultiLine::computeControlLogicalHeight(LayoutUnit li
     return lineHeight * textAreaElement().rows() + nonContentHeight;
 }
 
-LayoutUnit RenderTextControlMultiLine::baselinePosition(FontBaseline baselineType, bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
-{
-    return RenderBox::baselinePosition(baselineType, firstLine, direction, linePositionMode);
-}
-
-void RenderTextControlMultiLine::layoutExcludedChildren(bool relayoutChildren)
+void RenderTextControlMultiLine::layoutExcludedChildren(RelayoutChildren relayoutChildren)
 {
     RenderTextControl::layoutExcludedChildren(relayoutChildren);
-    HTMLElement* placeholder = textFormControlElement().placeholderElement();
-    RenderElement* placeholderRenderer = placeholder ? placeholder->renderer() : 0;
+    RefPtr placeholder = protect(textFormControlElement())->placeholderElement();
+    CheckedPtr placeholderRenderer = placeholder ? placeholder->renderer() : 0;
     if (!placeholderRenderer)
         return;
-    if (CheckedPtr placeholderBox = dynamicDowncast<RenderBox>(placeholderRenderer)) {
-        placeholderBox->mutableStyle().setLogicalWidth(Length(contentLogicalWidth() - placeholderBox->borderAndPaddingLogicalWidth(), LengthType::Fixed));
+    if (CheckedPtr placeholderBox = dynamicDowncast<RenderBox>(placeholderRenderer.get())) {
+        placeholderBox->mutableStyle().setLogicalWidth(Style::PreferredSize::Fixed { contentBoxLogicalWidth() - placeholderBox->borderAndPaddingLogicalWidth() });
         placeholderBox->layoutIfNeeded();
         placeholderBox->setX(borderLeft() + paddingLeft());
         placeholderBox->setY(borderTop() + paddingTop());

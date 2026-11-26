@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "CSSKeywordValue.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSValue.h"
 
@@ -32,21 +33,21 @@ namespace WebCore {
 
 class CSSOffsetRotateValue final : public CSSValue {
 public:
-    static Ref<CSSOffsetRotateValue> create(RefPtr<CSSPrimitiveValue>&& modifier, RefPtr<CSSPrimitiveValue>&& angle)
+    static Ref<CSSOffsetRotateValue> create(RefPtr<CSSValue>&& modifier, RefPtr<CSSValue>&& angle)
     {
-        return adoptRef(*new CSSOffsetRotateValue(WTFMove(modifier), WTFMove(angle)));
+        return adoptRef(*new CSSOffsetRotateValue(downcast<CSSKeywordValue>(WTF::move(modifier)), downcast<CSSPrimitiveValue>(WTF::move(angle))));
     }
 
-    String customCSSText() const;
+    String customCSSText(const CSS::SerializationContext&) const;
 
-    CSSPrimitiveValue* modifier() const { return m_modifier.get(); }
+    CSSKeywordValue* modifier() const { return m_modifier.get(); }
     CSSPrimitiveValue* angle() const { return m_angle.get(); }
 
-    bool isInitialValue() const;
+    bool NODELETE isInitialValue() const;
 
     bool equals(const CSSOffsetRotateValue&) const;
 
-    IterationStatus customVisitChildren(const Function<IterationStatus(CSSValue&)>& func) const
+    IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
     {
         if (m_modifier) {
             if (func(*m_modifier) == IterationStatus::Done)
@@ -60,22 +61,18 @@ public:
     }
 
 private:
-    CSSOffsetRotateValue(RefPtr<CSSPrimitiveValue>&& modifier, RefPtr<CSSPrimitiveValue>&& angle)
-        : CSSValue(OffsetRotateClass)
-        , m_modifier(WTFMove(modifier))
-        , m_angle(WTFMove(angle))
+    CSSOffsetRotateValue(RefPtr<CSSKeywordValue>&& modifier, RefPtr<CSSPrimitiveValue>&& angle)
+        : CSSValue(ClassType::OffsetRotate)
+        , m_modifier(WTF::move(modifier))
+        , m_angle(WTF::move(angle))
     {
         ASSERT(m_modifier || m_angle);
-
-        if (m_modifier)
-            ASSERT(m_modifier->isValueID());
-
         if (m_angle)
             ASSERT(m_angle->isAngle());
     }
 
-    RefPtr<CSSPrimitiveValue> m_modifier;
-    RefPtr<CSSPrimitiveValue> m_angle;
+    const RefPtr<CSSKeywordValue> m_modifier;
+    const RefPtr<CSSPrimitiveValue> m_angle;
 };
 
 } // namespace WebCore

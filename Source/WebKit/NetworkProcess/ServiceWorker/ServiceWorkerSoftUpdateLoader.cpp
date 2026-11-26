@@ -44,20 +44,25 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ServiceWorkerSoftUpdateLoader);
 
+Ref<ServiceWorkerSoftUpdateLoader> ServiceWorkerSoftUpdateLoader::create(NetworkSession& session, WebCore::ServiceWorkerJobData&& jobData, bool shouldRefreshCache, WebCore::ResourceRequest&& request, Handler&& completionHandler)
+{
+    return adoptRef(*new ServiceWorkerSoftUpdateLoader(session, WTF::move(jobData), shouldRefreshCache, WTF::move(request), WTF::move(completionHandler)));
+}
+
 ServiceWorkerSoftUpdateLoader::ServiceWorkerSoftUpdateLoader(NetworkSession& session, ServiceWorkerJobData&& jobData, bool shouldRefreshCache, ResourceRequest&& request, Handler&& completionHandler)
-    : m_completionHandler(WTFMove(completionHandler))
-    , m_jobData(WTFMove(jobData))
+    : m_completionHandler(WTF::move(completionHandler))
+    , m_jobData(WTF::move(jobData))
     , m_session(session)
 {
     ASSERT(!request.isConditional());
 
-    if (session.cache()) {
+    if (RefPtr cache = session.cache()) {
         // We set cache policy to disable speculative loading/async revalidation from the cache.
         request.setCachePolicy(ResourceRequestCachePolicy::ReturnCacheDataDontLoad);
 
         OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections;
         bool allowPrivacyProxy { true };
-        session.cache()->retrieve(request, NetworkCache::GlobalFrameID { }, NavigatingToAppBoundDomain::No, allowPrivacyProxy, advancedPrivacyProtections, [this, weakThis = WeakPtr { *this }, request, shouldRefreshCache](auto&& entry, auto&&) mutable {
+        cache->retrieve(request, std::nullopt, NavigatingToAppBoundDomain::No, allowPrivacyProxy, advancedPrivacyProtections, [this, weakThis = WeakPtr { *this }, request, shouldRefreshCache](auto&& entry, auto&&) mutable {
             if (!weakThis)
                 return;
             if (!m_session) {
@@ -71,7 +76,7 @@ ServiceWorkerSoftUpdateLoader::ServiceWorkerSoftUpdateLoader(NetworkSession& ses
 
             request.setCachePolicy(ResourceRequestCachePolicy::RefreshAnyCacheData);
             if (entry) {
-                m_cacheEntry = WTFMove(entry);
+                m_cacheEntry = WTF::move(entry);
 
                 String eTag = m_cacheEntry->response().httpHeaderField(HTTPHeaderName::ETag);
                 if (!eTag.isEmpty())
@@ -81,11 +86,11 @@ ServiceWorkerSoftUpdateLoader::ServiceWorkerSoftUpdateLoader(NetworkSession& ses
                 if (!lastModified.isEmpty())
                     request.setHTTPHeaderField(HTTPHeaderName::IfModifiedSince, lastModified);
             }
-            loadFromNetwork(*m_session, WTFMove(request));
+            loadFromNetwork(CheckedRef { *m_session }.get(), WTF::move(request));
         });
         return;
     }
-    loadFromNetwork(session, WTFMove(request));
+    loadFromNetwork(session, WTF::move(request));
 }
 
 ServiceWorkerSoftUpdateLoader::~ServiceWorkerSoftUpdateLoader()
@@ -99,7 +104,7 @@ void ServiceWorkerSoftUpdateLoader::fail(ResourceError&& error)
     if (!m_completionHandler)
         return;
 
-    m_completionHandler(workerFetchError(WTFMove(error)));
+    m_completionHandler(workerFetchError(WTF::move(error)));
     didComplete();
 }
 
@@ -107,12 +112,12 @@ void ServiceWorkerSoftUpdateLoader::loadWithCacheEntry(NetworkCache::Entry& entr
 {
     auto error = processResponse(entry.response());
     if (!error.isNull()) {
-        fail(WTFMove(error));
+        fail(WTF::move(error));
         return;
     }
 
     if (RefPtr buffer = entry.buffer())
-        didReceiveBuffer(*buffer, 0);
+        didReceiveBuffer(*buffer);
     didFinishLoading({ });
 }
 
@@ -123,9 +128,12 @@ void ServiceWorkerSoftUpdateLoader::loadFromNetwork(NetworkSession& session, Res
     parameters.contentSniffingPolicy = ContentSniffingPolicy::DoNotSniffContent;
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.needsCertificateInfo = true;
-    parameters.request = WTFMove(request);
-    m_networkLoad = makeUnique<NetworkLoad>(*this, WTFMove(parameters), session);
-    m_networkLoad->start();
+    parameters.request = WTF::move(request);
+    // We do not want to retry this load if it fails through private relay.
+    parameters.hadMainFrameMainResourcePrivateRelayed = true;
+    Ref networkLoad = NetworkLoad::create(*this, WTF::move(parameters), session);
+    m_networkLoad = networkLoad.copyRef();
+    networkLoad->start();
 
 #if PLATFORM(COCOA)
     session.appPrivacyReportTestingData().setDidPerformSoftUpdate();
@@ -148,7 +156,7 @@ void ServiceWorkerSoftUpdateLoader::didReceiveResponse(ResourceResponse&& respon
     }
     auto error = processResponse(response);
     if (!error.isNull()) {
-        fail(WTFMove(error));
+        fail(WTF::move(error));
         completionHandler(PolicyAction::Ignore);
         return;
     }
@@ -176,13 +184,13 @@ ResourceError ServiceWorkerSoftUpdateLoader::processResponse(const ResourceRespo
     return { };
 }
 
-void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuffer& buffer, uint64_t reportedEncodedDataLength)
+void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuffer& buffer)
 {
     if (!m_decoder) {
         if (!m_responseEncoding.isEmpty())
             m_decoder = TextResourceDecoder::create("text/javascript"_s, m_responseEncoding);
         else
-            m_decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8");
+            m_decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s);
     }
 
     buffer.forEachSegment([&](auto segment) {
@@ -193,8 +201,8 @@ void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSh
 
 void ServiceWorkerSoftUpdateLoader::didFinishLoading(const WebCore::NetworkLoadMetrics&)
 {
-    if (m_decoder)
-        m_script.append(m_decoder->flush());
+    if (RefPtr decoder = m_decoder)
+        m_script.append(decoder->flush());
     m_completionHandler({ ScriptBuffer { m_script.toString() }, m_jobData.scriptURL, m_certificateInfo, m_contentSecurityPolicy, m_crossOriginEmbedderPolicy, m_referrerPolicy, { } });
     didComplete();
 }

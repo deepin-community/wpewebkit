@@ -65,7 +65,7 @@ public:
 
 private:
     
-    void clearIsLoadedFrom()
+    void NODELETE clearIsLoadedFrom()
     {
         for (unsigned i = 0; i < m_graph.m_variableAccessData.size(); ++i)
             m_graph.m_variableAccessData[i].setIsLoadedFrom(false);
@@ -122,7 +122,7 @@ private:
     }
     
     template<OperandKind operandKind>
-    void clearVariables()
+    void NODELETE clearVariables()
     {
         ASSERT(
             m_block->variablesAtHead.sizeFor<operandKind>()
@@ -299,7 +299,7 @@ private:
         }
     }
     
-    void canonicalizeSet(Node* node)
+    void NODELETE canonicalizeSet(Node* node)
     {
         m_block->variablesAtTail.setOperand(node->operand(), node);
     }
@@ -428,8 +428,10 @@ private:
             size_t index = entry.m_index;
             
             if (verbose) {
-                dataLog(" Iterating on phi from block ", block, " ");
-                m_graph.dump(WTF::dataFile(), "", currentPhi);
+                WTF::dataFile().atomically([&](auto&) {
+                    dataLog(" Iterating on phi from block ", block, " ");
+                    m_graph.dump(WTF::dataFile(), "", currentPhi);
+                });
             }
 
             for (size_t i = predecessors.size(); i--;) {
@@ -461,8 +463,11 @@ private:
                     || variableInPrevious->op() == SetArgumentDefinitely
                     || variableInPrevious->op() == SetArgumentMaybe);
           
-                if (verbose)
-                    m_graph.dump(WTF::dataFile(), "    Adding new variable from predecessor ", variableInPrevious);
+                if (verbose) {
+                    WTF::dataFile().atomically([&](auto& out) {
+                        m_graph.dump(out, "    Adding new variable from predecessor ", variableInPrevious);
+                    });
+                }
 
                 if (!currentPhi->child1()) {
                     currentPhi->children.setChild1(Edge(variableInPrevious));
@@ -498,7 +503,7 @@ private:
     };
     
     template<OperandKind operandKind>
-    Vector<PhiStackEntry, 128>& phiStackFor()
+    Vector<PhiStackEntry, 128>& NODELETE phiStackFor()
     {
         switch (operandKind) {
         case OperandKind::Argument: return m_argumentPhiStack;

@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "AuxiliaryBarrier.h"
-#include "JSObject.h"
-#include <wtf/TaggedArrayStoragePtr.h>
+#include <JavaScriptCore/AuxiliaryBarrier.h>
+#include <JavaScriptCore/JSObject.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -234,7 +235,7 @@ protected:
         bool operator!() const { return !m_structure; }
         
         Structure* structure() const { return m_structure; }
-        void* vector() const { return m_vector.getMayBeNull(); }
+        void* vector() const LIFETIME_BOUND { return m_vector.getMayBeNull(); }
         size_t length() const { return m_length; }
         size_t byteOffset() const { return m_byteOffset; }
         TypedArrayMode mode() const { return m_mode; }
@@ -252,8 +253,6 @@ protected:
     
     JS_EXPORT_PRIVATE JSArrayBufferView(VM&, ConstructionContext&);
     JS_EXPORT_PRIVATE void finishCreation(VM&);
-
-    DECLARE_VISIT_CHILDREN;
     
 public:
     TypedArrayMode mode() const { return m_mode; }
@@ -279,18 +278,18 @@ public:
     }
 
     bool hasVector() const { return !!m_vector; }
-    void* vector() const { return m_vector.getMayBeNull(); }
-    void* vectorWithoutPACValidation() const { return m_vector.getUnsafe(); }
+    void* vector() const LIFETIME_BOUND { return m_vector.getMayBeNull(); }
+    void* vectorWithoutPACValidation() const LIFETIME_BOUND { return m_vector.getUnsafe(); }
 
-    std::span<const uint8_t> span() const { return { static_cast<const uint8_t*>(vector()), byteLength() }; }
+    std::span<const uint8_t> span() const LIFETIME_BOUND { return { static_cast<const uint8_t*>(vector()), byteLength() }; }
     
     size_t byteOffset() const
     {
-        if (LIKELY(canUseRawFieldsDirectly()))
+        if (canUseRawFieldsDirectly()) [[likely]]
             return byteOffsetRaw();
 
         IdempotentArrayBufferByteLengthGetter<std::memory_order_seq_cst> getter;
-        if (UNLIKELY(isArrayBufferViewOutOfBounds(const_cast<JSArrayBufferView*>(this), getter)))
+        if (isArrayBufferViewOutOfBounds(const_cast<JSArrayBufferView*>(this), getter)) [[unlikely]]
             return 0;
         return byteOffsetRaw();
     }
@@ -299,7 +298,7 @@ public:
 
     size_t length() const
     {
-        if (LIKELY(canUseRawFieldsDirectly()))
+        if (canUseRawFieldsDirectly()) [[likely]]
             return lengthRaw();
 
         IdempotentArrayBufferByteLengthGetter<std::memory_order_seq_cst> getter;
@@ -312,7 +311,7 @@ public:
     {
         // The absence of overflow is already checked in the constructor, so I only add the extra sanity check when asserts are enabled.
         // https://tc39.es/proposal-resizablearraybuffer/#sec-get-%typedarray%.prototype.bytelength
-        if (LIKELY(canUseRawFieldsDirectly()))
+        if (canUseRawFieldsDirectly()) [[likely]]
             return byteLengthRaw();
 
         IdempotentArrayBufferByteLengthGetter<std::memory_order_seq_cst> getter;
@@ -333,23 +332,27 @@ public:
     bool isOutOfBounds() const
     {
         // https://tc39.es/proposal-resizablearraybuffer/#sec-isarraybufferviewoutofbounds
-        if (UNLIKELY(isDetached()))
+        if (isDetached()) [[unlikely]]
             return true;
-        if (LIKELY(!isResizableNonShared()))
+        if (!isResizableNonShared()) [[likely]]
             return false;
         IdempotentArrayBufferByteLengthGetter<std::memory_order_seq_cst> getter;
         return isArrayBufferViewOutOfBounds(const_cast<JSArrayBufferView*>(this), getter);
     }
 
     DECLARE_EXPORT_INFO;
+
+    DECLARE_VISIT_CHILDREN;
     
     static constexpr ptrdiff_t offsetOfVector() { return OBJECT_OFFSETOF(JSArrayBufferView, m_vector); }
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(JSArrayBufferView, m_length); }
     static constexpr ptrdiff_t offsetOfByteOffset() { return OBJECT_OFFSETOF(JSArrayBufferView, m_byteOffset); }
     static constexpr ptrdiff_t offsetOfMode() { return OBJECT_OFFSETOF(JSArrayBufferView, m_mode); }
-    
+
     static inline RefPtr<ArrayBufferView> toWrapped(VM&, JSValue);
+    static inline RefPtr<ArrayBufferView> toWrappedAllowResizable(VM&, JSValue);
     static inline RefPtr<ArrayBufferView> toWrappedAllowShared(VM&, JSValue);
+    static inline RefPtr<ArrayBufferView> toWrappedAllowSharedAndResizable(VM&, JSValue);
 
     bool isIteratorProtocolFastAndNonObservable();
 
@@ -360,7 +363,7 @@ private:
     JS_EXPORT_PRIVATE ArrayBuffer* slowDownAndWasteMemory();
     static void finalize(JSCell*);
     void detachFromArrayBuffer();
-
+    void refreshVector(void* newData);
 
 protected:
     friend class LLIntOffsetsExtractor;
@@ -389,3 +392,5 @@ namespace WTF {
 JS_EXPORT_PRIVATE void printInternal(PrintStream&, JSC::TypedArrayMode);
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

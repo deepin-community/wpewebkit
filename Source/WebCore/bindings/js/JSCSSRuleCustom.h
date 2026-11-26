@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "CSSRule.h"
-#include "CSSStyleSheet.h"
-#include "WebCoreOpaqueRootInlines.h"
+#include <WebCore/CSSRule.h>
+#include <WebCore/CSSStyleSheet.h>
+#include <WebCore/WebCoreOpaqueRootInlines.h>
 
 namespace WebCore {
 
@@ -35,11 +35,7 @@ WebCoreOpaqueRoot root(StyleSheet*);
 
 inline WebCoreOpaqueRoot root(CSSRule* rule)
 {
-    if (rule->parentRule())
-        return root(rule->parentRule());
-    if (rule->parentStyleSheet())
-        return root(rule->parentStyleSheet());
-    return WebCoreOpaqueRoot { rule };
+    return rule->opaqueRootForGCThread();
 }
 
 } // namespace WebCore

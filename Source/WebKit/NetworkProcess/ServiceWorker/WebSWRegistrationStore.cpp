@@ -28,8 +28,16 @@
 
 #include "NetworkStorageManager.h"
 #include <WebCore/SWServer.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSWRegistrationStore);
+
+Ref<WebSWRegistrationStore> WebSWRegistrationStore::create(WebCore::SWServer& server, NetworkStorageManager& manager)
+{
+    return adoptRef(*new WebSWRegistrationStore(server, manager));
+}
 
 WebSWRegistrationStore::WebSWRegistrationStore(WebCore::SWServer& server, NetworkStorageManager& manager)
     : m_server(server)
@@ -39,24 +47,15 @@ WebSWRegistrationStore::WebSWRegistrationStore(WebCore::SWServer& server, Networ
     ASSERT(RunLoop::isMain());
 }
 
-CheckedPtr<NetworkStorageManager> WebSWRegistrationStore::checkedManager() const
-{
-    return m_manager.get();
-}
-
-RefPtr<WebCore::SWServer> WebSWRegistrationStore::protectedServer() const
-{
-    return m_server.get();
-}
-
 void WebSWRegistrationStore::clearAll(CompletionHandler<void()>&& callback)
 {
     m_updates.clear();
     m_updateTimer.stop();
-    if (!m_manager)
-        return callback();
 
-    checkedManager()->clearServiceWorkerRegistrations(WTFMove(callback));
+    if (RefPtr manager = m_manager.get())
+        manager->clearServiceWorkerRegistrations(WTF::move(callback));
+    else
+        callback();
 }
 
 void WebSWRegistrationStore::flushChanges(CompletionHandler<void()>&& callback)
@@ -64,28 +63,36 @@ void WebSWRegistrationStore::flushChanges(CompletionHandler<void()>&& callback)
     if (m_updateTimer.isActive())
         m_updateTimer.stop();
 
-    updateToStorage(WTFMove(callback));
+    updateToStorage(WTF::move(callback));
 }
 
 void WebSWRegistrationStore::closeFiles(CompletionHandler<void()>&& callback)
 {
-    if (!m_manager)
-        return callback();
-
-    checkedManager()->closeServiceWorkerRegistrationFiles(WTFMove(callback));
+    if (RefPtr manager = m_manager.get())
+        manager->closeServiceWorkerRegistrationFiles(WTF::move(callback));
+    else
+        callback();
 }
 
-void WebSWRegistrationStore::importRegistrations(CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>)>&& callback)
+void WebSWRegistrationStore::importRegistrationsForOrigin(const WebCore::SecurityOriginData& topOrigin, CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>&&)>&& callback)
 {
-    if (!m_manager)
-        return callback(std::nullopt);
+    if (RefPtr manager = m_manager)
+        manager->importServiceWorkerRegistrationsForOrigin(topOrigin, WTF::move(callback));
+    else
+        callback(std::nullopt);
+}
 
-    checkedManager()->importServiceWorkerRegistrations(WTFMove(callback));
+void WebSWRegistrationStore::importOriginList(CompletionHandler<void(std::optional<HashSet<WebCore::ClientOrigin>>&&)>&& callback)
+{
+    if (RefPtr manager = m_manager)
+        manager->importServiceWorkerOriginList(WTF::move(callback));
+    else
+        callback(std::nullopt);
 }
 
 void WebSWRegistrationStore::updateRegistration(const WebCore::ServiceWorkerContextData& registration)
 {
-    m_updates.set(registration.registration.key, registration);
+    m_updates.set(registration.registration.key, registration.copy());
     scheduleUpdateIfNecessary();
 }
 
@@ -93,6 +100,14 @@ void WebSWRegistrationStore::removeRegistration(const WebCore::ServiceWorkerRegi
 {
     m_updates.set(key, std::nullopt);
     scheduleUpdateIfNecessary();
+}
+
+void WebSWRegistrationStore::retrieveWorkerScripts(WebCore::ServiceWorkerIdentifier identifier, const WebCore::ServiceWorkerRegistrationKey& registrationKey, const URL& scriptURL, const Vector<URL>& importedScriptURLs, CompletionHandler<void(std::optional<WebCore::ServiceWorkerScripts>&&)>&& callback)
+{
+    if (RefPtr manager = m_manager.get())
+        manager->retrieveServiceWorkerScripts(identifier, registrationKey, scriptURL, Vector<URL> { importedScriptURLs }, WTF::move(callback));
+    else
+        callback(std::nullopt);
 }
 
 void WebSWRegistrationStore::scheduleUpdateIfNecessary()
@@ -115,22 +130,24 @@ void WebSWRegistrationStore::updateToStorage(CompletionHandler<void()>&& callbac
         if (!registation)
             registrationsToDelete.append(key);
         else
-            registrationsToUpdate.append(WTFMove(*registation));
+            registrationsToUpdate.append(WTF::move(*registation));
     }
     m_updates.clear();
 
-    if (!m_manager)
+    RefPtr manager = m_manager.get();
+    if (!manager)
         return callback();
 
-    checkedManager()->updateServiceWorkerRegistrations(WTFMove(registrationsToUpdate), WTFMove(registrationsToDelete), [this, weakThis = WeakPtr { *this }, callback = WTFMove(callback)](auto&& result) mutable {
+    manager->updateServiceWorkerRegistrations(WTF::move(registrationsToUpdate), WTF::move(registrationsToDelete), [weakThis = WeakPtr { *this }, callback = WTF::move(callback)](auto&& result) mutable {
         ASSERT(RunLoop::isMain());
 
-        if (!weakThis || !m_server || !result)
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !protectedThis->m_server || !result)
             return callback();
 
-        auto allScripts = WTFMove(result.value());
+        auto allScripts = WTF::move(result.value());
         for (auto&& scripts : allScripts)
-            protectedServer()->didSaveWorkerScriptsToDisk(scripts.identifier, WTFMove(scripts.mainScript), WTFMove(scripts.importedScripts));
+            protect(protectedThis->m_server)->didSaveWorkerScriptsToDisk(scripts.identifier, WTF::move(scripts.mainScript), WTF::move(scripts.importedScripts));
 
         callback();
     });

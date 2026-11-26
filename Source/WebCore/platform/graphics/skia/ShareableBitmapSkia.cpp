@@ -31,15 +31,20 @@
 #include "GraphicsContextSkia.h"
 #include "NotImplemented.h"
 
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win ports
 #include <skia/core/SkSurface.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
 std::optional<DestinationColorSpace> ShareableBitmapConfiguration::validateColorSpace(std::optional<DestinationColorSpace> colorSpace)
 {
     return colorSpace;
+}
+
+CheckedUint32 ShareableBitmapConfiguration::calculateBitsPerComponent(const DestinationColorSpace& colorSpace)
+{
+    return (calculateBytesPerPixel(colorSpace) / 4) * 8;
 }
 
 CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerPixel(const DestinationColorSpace& colorSpace)
@@ -52,10 +57,10 @@ CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerRow(const IntSize& 
     return SkImageInfo::MakeN32Premul(size.width(), size.height(), colorSpace.platformColorSpace()).minRowBytes();
 }
 
-std::unique_ptr<GraphicsContext> ShareableBitmap::createGraphicsContext()
+sk_sp<SkSurface> ShareableBitmap::createSurface()
 {
     ref();
-    SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
+    SkSurfaceProps properties = FontRenderOptions::singleton().createSurfaceProps();
     auto surface = SkSurfaces::WrapPixels(m_configuration.imageInfo(), mutableSpan().data(), bytesPerRow(), [](void*, void* context) {
         static_cast<ShareableBitmap*>(context)->deref();
     }, this, &properties);
@@ -64,7 +69,18 @@ std::unique_ptr<GraphicsContext> ShareableBitmap::createGraphicsContext()
     if (!canvas)
         return nullptr;
 
-    return makeUnique<GraphicsContextSkia>(*canvas, RenderingMode::Unaccelerated, RenderingPurpose::ShareableSnapshot, [surface = WTFMove(surface)] { });
+    return surface;
+}
+
+std::unique_ptr<GraphicsContext> ShareableBitmap::createGraphicsContext()
+{
+    auto surface = createSurface();
+    if (!surface)
+        return nullptr;
+
+    auto* canvas = surface->getCanvas();
+    ASSERT(canvas);
+    return makeUnique<GraphicsContextSkia>(*canvas, RenderingMode::Unaccelerated, RenderingPurpose::ShareableSnapshot, [surface = WTF::move(surface)] { });
 }
 
 void ShareableBitmap::paint(GraphicsContext& context, const IntPoint& dstPoint, const IntRect& srcRect)
@@ -79,7 +95,10 @@ void ShareableBitmap::paint(GraphicsContext& context, float scaleFactor, const I
     FloatRect scaledDestRect(dstPoint, srcRect.size());
     scaledDestRect.scale(scaleFactor);
     auto image = createPlatformImage(BackingStoreCopy::DontCopyBackingStore);
-    context.platformContext()->drawImageRect(image.get(), scaledSrcRect, scaledDestRect, { }, nullptr, { });
+    SkPaint paint;
+    if (context.compositeMode().operation == CompositeOperator::Copy)
+        paint.setBlendMode(SkBlendMode::kSrc);
+    context.platformContext()->drawImageRect(image.get(), scaledSrcRect, scaledDestRect, { }, &paint, { });
 }
 
 RefPtr<Image> ShareableBitmap::createImage()
@@ -87,7 +106,7 @@ RefPtr<Image> ShareableBitmap::createImage()
     return BitmapImage::create(createPlatformImage(BackingStoreCopy::DontCopyBackingStore));
 }
 
-PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy backingStoreCopy, ShouldInterpolate)
+PlatformImagePtr ShareableBitmap::createBasePlatformImage(BackingStoreCopy backingStoreCopy, ShouldInterpolate)
 {
     sk_sp<SkData> pixelData;
     if (backingStoreCopy == BackingStoreCopy::CopyBackingStore)
@@ -99,6 +118,11 @@ PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy backingSt
         }, this);
     }
     return SkImages::RasterFromData(m_configuration.imageInfo(), pixelData, bytesPerRow());
+}
+
+PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy copyBehavior, ShouldInterpolate shouldInterpolate)
+{
+    return createBasePlatformImage(copyBehavior, shouldInterpolate);
 }
 
 void ShareableBitmap::setOwnershipOfMemory(const ProcessIdentity&)

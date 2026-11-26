@@ -26,7 +26,6 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
 #include "FontGenericFamilies.h"
 #include "InternalSettingsGenerated.h"
 #include "Settings.h"
@@ -34,12 +33,13 @@
 namespace WebCore {
 
 class Page;
+template<typename> class ExceptionOr;
 
 class InternalSettings : public InternalSettingsGenerated {
 public:
     static Ref<InternalSettings> create(Page*);
     static InternalSettings* from(Page*);
-    void hostDestroyed();
+    void NODELETE hostDestroyed();
     void resetToConsistentState();
 
     // Settings
@@ -58,10 +58,7 @@ public:
 
     using EditingBehaviorType = WebCore::EditingBehaviorType;
     ExceptionOr<void> setEditingBehavior(EditingBehaviorType);
-    
-    using StorageBlockingPolicy = WebCore::StorageBlockingPolicy;
-    ExceptionOr<void> setStorageBlockingPolicy(StorageBlockingPolicy);
-    
+
     using UserInterfaceDirectionPolicy = WebCore::UserInterfaceDirectionPolicy;
     ExceptionOr<void> setUserInterfaceDirectionPolicy(UserInterfaceDirectionPolicy);
 
@@ -72,15 +69,15 @@ public:
     ExceptionOr<void> setFontLoadTimingOverride(FontLoadTimingOverride);
 
     using ForcedAccessibilityValue = WebCore::ForcedAccessibilityValue;
-    ForcedAccessibilityValue forcedColorsAreInvertedAccessibilityValue() const;
-    void setForcedColorsAreInvertedAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedDisplayIsMonochromeAccessibilityValue() const;
-    void setForcedDisplayIsMonochromeAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedPrefersContrastAccessibilityValue() const;
-    void setForcedPrefersContrastAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedPrefersReducedMotionAccessibilityValue() const;
-    void setForcedPrefersReducedMotionAccessibilityValue(ForcedAccessibilityValue);
-    ForcedAccessibilityValue forcedSupportsHighDynamicRangeValue() const;
+    ForcedAccessibilityValue NODELETE forcedColorsAreInvertedAccessibilityValue() const;
+    void NODELETE setForcedColorsAreInvertedAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedDisplayIsMonochromeAccessibilityValue() const;
+    void NODELETE setForcedDisplayIsMonochromeAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedPrefersContrastAccessibilityValue() const;
+    void NODELETE setForcedPrefersContrastAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedPrefersReducedMotionAccessibilityValue() const;
+    void NODELETE setForcedPrefersReducedMotionAccessibilityValue(ForcedAccessibilityValue);
+    ForcedAccessibilityValue NODELETE forcedSupportsHighDynamicRangeValue() const;
     void setForcedSupportsHighDynamicRangeValue(ForcedAccessibilityValue);
 
     ExceptionOr<void> setAllowAnimationControlsOverride(bool);
@@ -88,8 +85,7 @@ public:
     // DeprecatedGlobalSettings.
     ExceptionOr<void> setCustomPasteboardDataEnabled(bool);
 
-    bool vp9DecoderEnabled() const;
-    bool mediaSourceInlinePaintingEnabled() const;
+    bool NODELETE vp9DecoderEnabled() const;
 
     ExceptionOr<void> setShouldManageAudioSessionCategory(bool);
 
@@ -125,7 +121,9 @@ public:
 private:
     explicit InternalSettings(Page*);
 
-    Settings& settings() const;
+    bool isInternalSettings() const final { return true; }
+
+    Settings& NODELETE settings() const;
     static ASCIILiteral supplementName();
 
     class Backup {
@@ -145,7 +143,6 @@ private:
         Seconds m_minimumDOMTimerInterval;
         Seconds m_originalTimeWithoutMouseMovementBeforeHidingControls;
         WebCore::EditingBehaviorType m_originalEditingBehavior;
-        WebCore::StorageBlockingPolicy m_storageBlockingPolicy;
         WebCore::UserInterfaceDirectionPolicy m_userInterfaceDirectionPolicy;
         TextDirection m_systemLayoutDirection;
         WebCore::ForcedAccessibilityValue m_forcedColorsAreInvertedAccessibilityValue;
@@ -170,3 +167,7 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::InternalSettings)
+    static bool isType(const WebCore::InternalSettingsGenerated& settings) { return settings.isInternalSettings(); }
+SPECIALIZE_TYPE_TRAITS_END()

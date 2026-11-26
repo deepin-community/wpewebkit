@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2008 Alex Mathews <possessedpenguinbob@gmail.com>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
- * Copyright (C) 2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -27,29 +27,33 @@
 #include "Filter.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
+#include "NativeImage.h"
 #include "Pattern.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-bool FETileSoftwareApplier::apply(const Filter& filter, const FilterImageVector& inputs, FilterImage& result) const
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FETileSoftwareApplier);
+
+bool FETileSoftwareApplier::apply(const Filter& filter, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const
 {
-    auto& input = inputs[0].get();
+    Ref input = inputs[0];
 
     RefPtr resultImage = result.imageBuffer();
-    RefPtr inputImage = input.imageBuffer();
+    RefPtr inputImage = input->imageBuffer();
     if (!resultImage || !inputImage)
         return false;
 
-    auto inputImageRect = input.absoluteImageRect();
+    auto inputImageRect = input->absoluteImageRect();
     auto resultImageRect = result.absoluteImageRect();
 
-    auto tileRect = input.maxEffectRect(filter);
+    auto tileRect = input->maxEffectRect(filter);
     tileRect.scale(filter.filterScale());
 
     auto maxResultRect = result.maxEffectRect(filter);
     maxResultRect.scale(filter.filterScale());
 
-    auto tileImage = ImageBuffer::create(tileRect.size(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8, bufferOptionsForRendingMode(filter.renderingMode()));
+    auto tileImage = ImageBuffer::create(tileRect.size(), filter.renderingMode(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!tileImage)
         return false;
 
@@ -63,7 +67,7 @@ bool FETileSoftwareApplier::apply(const Filter& filter, const FilterImageVector&
     auto pattern = Pattern::create({ tileImage.releaseNonNull() }, { true, true, patternTransform });
 
     auto& resultContext = resultImage->context();
-    resultContext.setFillPattern(WTFMove(pattern));
+    resultContext.setFillPattern(WTF::move(pattern));
     resultContext.fillRect(FloatRect(FloatPoint(), resultImageRect.size()));
     return true;
 }

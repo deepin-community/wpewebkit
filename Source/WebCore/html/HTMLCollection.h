@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2003-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,20 +22,20 @@
 
 #pragma once
 
-#include "CollectionIndexCache.h"
-#include "Element.h"
-#include "HTMLNames.h"
-#include "LiveNodeList.h"
+#include <WebCore/CollectionIndexCache.h>
+#include <WebCore/Element.h>
+#include <WebCore/HTMLNames.h>
+#include <WebCore/LiveNodeList.h>
 #include <wtf/HashMap.h>
 
 namespace WebCore {
 
 class CollectionNamedElementCache {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CollectionNamedElementCache);
 public:
     inline const Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* findElementsWithId(const AtomString& id) const;
     inline const Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>>* findElementsWithName(const AtomString& name) const;
-    const Vector<AtomString>& propertyNames() const { return m_propertyNames; }
+    const Vector<AtomString>& propertyNames() const LIFETIME_BOUND { return m_propertyNames; }
     
     inline void appendToIdCache(const AtomString& id, Element&);
     inline void appendToNameCache(const AtomString& name, Element&);
@@ -60,7 +60,7 @@ private:
 
 // HTMLCollection subclasses NodeList to maintain legacy ObjC API compatibility.
 class HTMLCollection : public NodeList {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(HTMLCollection, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(HTMLCollection, WEBCORE_EXPORT);
 public:
     WEBCORE_EXPORT virtual ~HTMLCollection();
 
@@ -77,8 +77,7 @@ public:
     inline bool isRootedAtTreeScope() const;
     inline NodeListInvalidationType invalidationType() const;
     inline CollectionType type() const;
-    inline ContainerNode& ownerNode() const;
-    inline Ref<ContainerNode> protectedOwnerNode() const;
+    ContainerNode& ownerNode() const { return m_ownerNode; }
     inline ContainerNode& rootNode() const;
     inline void invalidateCacheForAttribute(const QualifiedName& attributeName);
     WEBCORE_EXPORT virtual void invalidateCacheForDocument(Document&);
@@ -99,8 +98,8 @@ protected:
 
     void invalidateNamedElementCache(Document&) const;
 
-    enum RootType { IsRootedAtNode, IsRootedAtTreeScope };
-    static RootType rootTypeFromCollectionType(CollectionType);
+    enum class RootType : bool { AtNode, AtTreeScope };
+    static RootType NODELETE rootTypeFromCollectionType(CollectionType);
 
     mutable Lock m_namedElementCacheAssignmentLock;
 
@@ -108,31 +107,27 @@ protected:
     const unsigned m_invalidationType : 4; // NodeListInvalidationType
     const unsigned m_rootType : 1; // RootType
 
-    Ref<ContainerNode> m_ownerNode;
+    const Ref<ContainerNode> m_ownerNode;
 
     mutable std::unique_ptr<CollectionNamedElementCache> m_namedElementCache;
 };
 
 inline size_t CollectionNamedElementCache::memoryCost() const
 {
-    // memoryCost() may be invoked concurrently from a GC thread, and we need to be careful about what data we access here and how.
-    // It is safe to access m_idMap.size(), m_nameMap.size(), and m_propertyNames.size() because they don't chase pointers.
-    return (m_idMap.size() + m_nameMap.size()) * sizeof(Element*) + m_propertyNames.size() * sizeof(AtomString);
+    // memoryCost() may be invoked concurrently from a GC thread. This is safe because
+    // the named element cache is immutable after creation and its lifetime is protected
+    // by m_namedElementCacheAssignmentLock in HTMLCollection::memoryCost().
+    return m_idMap.byteSize() + m_nameMap.byteSize() + m_propertyNames.capacity() * sizeof(AtomString);
 }
 
-inline ContainerNode& HTMLCollection::ownerNode() const
+inline CollectionType HTMLCollection::type() const
 {
-    return m_ownerNode;
-}
-
-inline Ref<ContainerNode> HTMLCollection::protectedOwnerNode() const
-{
-    return m_ownerNode;
+    return static_cast<CollectionType>(m_collectionType);
 }
 
 } // namespace WebCore
 
-#define SPECIALIZE_TYPE_TRAITS_HTMLCOLLECTION(ClassName, Type) \
+#define SPECIALIZE_TYPE_TRAITS_HTMLCOLLECTION(ClassName) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ClassName) \
-    static bool isType(const WebCore::HTMLCollection& collection) { return collection.type() == WebCore::Type; } \
+    static bool isType(const WebCore::HTMLCollection& collection) { return collection.type() == WebCore::CollectionClassTraits<WebCore::ClassName>::collectionType; } \
 SPECIALIZE_TYPE_TRAITS_END()

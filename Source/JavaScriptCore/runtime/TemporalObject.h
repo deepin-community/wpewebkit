@@ -21,47 +21,13 @@
 
 #pragma once
 
-#include "JSObject.h"
-#include <variant>
-#include <wtf/Int128.h>
+#include <JavaScriptCore/IntlObject.h>
+#include <JavaScriptCore/JSCTimeZone.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/TemporalCoreTypes.h>
+#include <JavaScriptCore/TemporalEnums.h>
 
 namespace JSC {
-
-#define JSC_TEMPORAL_PLAIN_DATE_UNITS(macro) \
-    macro(year, Year) \
-    macro(month, Month) \
-    macro(day, Day) \
-
-
-#define JSC_TEMPORAL_PLAIN_TIME_UNITS(macro) \
-    macro(hour, Hour) \
-    macro(minute, Minute) \
-    macro(second, Second) \
-    macro(millisecond, Millisecond) \
-    macro(microsecond, Microsecond) \
-    macro(nanosecond, Nanosecond) \
-
-
-#define JSC_TEMPORAL_UNITS(macro) \
-    macro(year, Year) \
-    macro(month, Month) \
-    macro(week, Week) \
-    macro(day, Day) \
-    JSC_TEMPORAL_PLAIN_TIME_UNITS(macro) \
-
-
-enum class TemporalUnit : uint8_t {
-#define JSC_DEFINE_TEMPORAL_UNIT_ENUM(name, capitalizedName) capitalizedName,
-    JSC_TEMPORAL_UNITS(JSC_DEFINE_TEMPORAL_UNIT_ENUM)
-#undef JSC_DEFINE_TEMPORAL_UNIT_ENUM
-};
-#define JSC_COUNT_TEMPORAL_UNITS(name, capitalizedName) + 1
-static constexpr unsigned numberOfTemporalUnits = 0 JSC_TEMPORAL_UNITS(JSC_COUNT_TEMPORAL_UNITS);
-static constexpr unsigned numberOfTemporalPlainDateUnits = 0 JSC_TEMPORAL_PLAIN_DATE_UNITS(JSC_COUNT_TEMPORAL_UNITS);
-static constexpr unsigned numberOfTemporalPlainTimeUnits = 0 JSC_TEMPORAL_PLAIN_TIME_UNITS(JSC_COUNT_TEMPORAL_UNITS);
-#undef JSC_COUNT_TEMPORAL_UNITS
-
-extern const TemporalUnit temporalUnitsInTableOrder[numberOfTemporalUnits];
 
 class TemporalObject final : public JSNonFinalObject {
 public:
@@ -85,16 +51,8 @@ private:
     void finishCreation(VM&);
 };
 
-enum class RoundingMode : uint8_t {
-    Ceil,
-    Floor,
-    Expand,
-    Trunc,
-    HalfCeil,
-    HalfFloor,
-    HalfExpand,
-    HalfTrunc,
-    HalfEven
+enum class TemporalAuto : bool {
+    Auto
 };
 
 enum class Precision : uint8_t {
@@ -115,31 +73,68 @@ enum class UnitGroup : uint8_t {
     Time,
 };
 
-double nonNegativeModulo(double x, double y);
-WTF::String ellipsizeAt(unsigned maxLength, const WTF::String&);
-PropertyName temporalUnitPluralPropertyName(VM&, TemporalUnit);
-PropertyName temporalUnitSingularPropertyName(VM&, TemporalUnit);
-std::optional<TemporalUnit> temporalUnitType(StringView);
-std::optional<TemporalUnit> temporalLargestUnit(JSGlobalObject*, JSObject* options, std::initializer_list<TemporalUnit> disallowedUnits, TemporalUnit autoValue);
-std::optional<TemporalUnit> temporalSmallestUnit(JSGlobalObject*, JSObject* options, std::initializer_list<TemporalUnit> disallowedUnits);
-std::tuple<TemporalUnit, TemporalUnit, RoundingMode, double> extractDifferenceOptions(JSGlobalObject*, JSValue, UnitGroup, TemporalUnit defaultSmallestUnit, TemporalUnit defaultLargestUnit);
-std::optional<unsigned> temporalFractionalSecondDigits(JSGlobalObject*, JSObject* options);
-PrecisionData secondsStringPrecision(JSGlobalObject*, JSObject* options);
-RoundingMode temporalRoundingMode(JSGlobalObject*, JSObject*, RoundingMode);
-RoundingMode negateTemporalRoundingMode(RoundingMode);
-void formatSecondsStringFraction(StringBuilder&, unsigned fraction, std::tuple<Precision, unsigned>);
-void formatSecondsStringPart(StringBuilder&, unsigned second, unsigned fraction, PrecisionData);
-std::optional<double> maximumRoundingIncrement(TemporalUnit);
-double temporalRoundingIncrement(JSGlobalObject*, JSObject* options, std::optional<double> dividend, bool inclusive);
-double roundNumberToIncrement(double, double increment, RoundingMode);
-Int128 roundNumberToIncrement(Int128, Int128 increment, RoundingMode);
-void rejectObjectWithCalendarOrTimeZone(JSGlobalObject*, JSObject*);
-
-enum class TemporalOverflow : bool {
-    Constrain,
-    Reject,
+enum class AllowedUnit : uint8_t {
+    Auto,
+    Day,
+    None
 };
 
+enum class AddOrSubtract : bool {
+    Add,
+    Subtract
+};
+
+struct ParsedMonthCode {
+    uint8_t monthNumber;
+    bool isLeapMonth;
+};
+
+static inline bool isAbsentUnit(Variant<TemporalAuto, std::optional<TemporalUnit>> unit)
+{
+    return std::holds_alternative<std::optional<TemporalUnit>>(unit) && !std::get<std::optional<TemporalUnit>>(unit);
+}
+
+WTF::String ellipsizeAt(unsigned maxLength, const WTF::String&);
+PropertyName NODELETE temporalUnitPluralPropertyName(VM&, TemporalUnit);
+PropertyName NODELETE temporalUnitSingularPropertyName(VM&, TemporalUnit);
+std::optional<TemporalUnit> temporalUnitType(StringView);
+
+enum class TemporalUnitDefault : uint8_t { Unset, Required };
+Variant<TemporalAuto, std::optional<TemporalUnit>>
+temporalUnitValued(JSGlobalObject*, JSObject*, PropertyName, TemporalUnitDefault = TemporalUnitDefault::Unset);
+void validateTemporalUnitValue(JSGlobalObject*, Variant<TemporalAuto, std::optional<TemporalUnit>>, UnitGroup, AllowedUnit, StringView);
+void validateTemporalRoundingIncrement(JSGlobalObject*, double, std::optional<double>, Inclusivity);
+std::tuple<TemporalUnit, TemporalUnit, RoundingMode, double> extractDifferenceOptions(JSGlobalObject*, JSValue, UnitGroup, TemporalUnit, TemporalUnit, DifferenceOperation = DifferenceOperation::Until);
+std::optional<unsigned> temporalFractionalSecondDigits(JSGlobalObject*, JSObject* options);
+// https://tc39.es/proposal-temporal/#sec-temporal-tosecondsstringprecisionrecord
+PrecisionData toSecondsStringPrecisionRecord(std::optional<TemporalUnit> smallestUnit, std::optional<unsigned> fractionalDigitCount);
+RoundingMode temporalRoundingMode(JSGlobalObject*, JSObject*, RoundingMode);
+void formatSecondsStringFraction(StringBuilder&, unsigned fraction, std::tuple<Precision, unsigned>);
+void formatSecondsStringPart(StringBuilder&, unsigned second, unsigned fraction, PrecisionData);
+double temporalRoundingIncrement(JSGlobalObject*, JSObject* options);
+double roundNumberToIncrement(double, double increment, RoundingMode);
+bool isPartialTemporalObject(JSGlobalObject*, JSValue);
+
 TemporalOverflow toTemporalOverflow(JSGlobalObject*, JSObject*);
+TemporalOverflow toTemporalOverflow(JSGlobalObject*, JSValue);
+String temporalShowCalendarName(JSGlobalObject*, JSObject*);
+CalendarID toTemporalCalendarIdentifier(JSGlobalObject*, JSValue);
+TemporalDisambiguation toTemporalDisambiguation(JSGlobalObject*, JSObject*);
+TemporalOffsetDisambiguation toTemporalOffset(JSGlobalObject*, JSObject*, TemporalOffsetDisambiguation fallback);
+
+enum class TemporalDateFormat : uint8_t {
+    Date,
+    YearMonth,
+    MonthDay
+};
+
+enum class TemporalAnyProperties : bool {
+    None,
+    Some,
+};
+
+void throwTemporalError(JSGlobalObject*, ThrowScope&, const TemporalError&);
+
+std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject*, JSValue);
 
 } // namespace JSC

@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <wayland-client-protocol.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/text/StringCommon.h>
 #include <xkbcommon/xkbcommon.h>
 
 typedef struct _TextInputV3Global TextInputV3Global;
@@ -139,6 +140,7 @@ static uint32_t toTextInputV3Purpose(WPEInputPurpose purpose)
 {
     switch (purpose) {
     case WPE_INPUT_PURPOSE_FREE_FORM:
+    case WPE_INPUT_PURPOSE_SEARCH:
         return ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL;
     case WPE_INPUT_PURPOSE_ALPHA:
         return ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_ALPHA;
@@ -348,8 +350,7 @@ static void textInputV3Enable(WPEIMContextWaylandV3* context, TextInputV3Global*
     textInputV3UpdateState(context, ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_OTHER);
 
     // Mutter only pops up the OSK on >1 consecutive zwp_text_input_v3_enable() calls
-    WPEInputHints hints;
-    g_object_get(context, "input-hints", &hints, nullptr);
+    WPEInputHints hints = wpe_input_method_context_get_input_hints(WPE_INPUT_METHOD_CONTEXT(context));
     if (!(hints & WPE_INPUT_HINT_INHIBIT_OSK)) {
         zwp_text_input_v3_enable(global->textInput);
         textInputV3CommitState(context);
@@ -439,7 +440,19 @@ static const struct zwp_text_input_v3_listener textInputListenerV3 = {
 
         if (updateIm && global->serial == serial)
             textInputV3UpdateState(context, ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_INPUT_METHOD);
-    }
+    },
+#ifdef ZWP_TEXT_INPUT_V3_ACTION_SINCE_VERSION
+    // action
+    nullptr,
+#endif
+#ifdef ZWP_TEXT_INPUT_V3_LANGUAGE_SINCE_VERSION
+    // language
+    nullptr,
+#endif
+#ifdef ZWP_TEXT_INPUT_V3_PREEDIT_HINT_SINCE_VERSION
+    // preedit_hint
+    nullptr
+#endif
 };
 
 static void wpeIMContextWaylandV3GlobalFree(gpointer data)
@@ -493,24 +506,41 @@ static void wpeIMContextWaylandV3Dispose(GObject* object)
     G_OBJECT_CLASS(wpe_im_context_wayland_v3_parent_class)->dispose(object);
 }
 
+// text-input-v3 counts the pre-edit cursor in bytes, but WPEInputMethodContext counts it in characters.
+// Offsets out of range are clamped, and an offset inside a character counts as after it.
+static unsigned preeditCharacterOffset(std::span<const char> text, int32_t byteOffset)
+{
+    auto clampedByteOffset = std::clamp<size_t>(std::max(byteOffset, 0), 0, text.size());
+    return g_utf8_pointer_to_offset(text.data(), text.subspan(clampedByteOffset).data());
+}
+
 static void wpeIMContextWaylandV3GetPreeditString(WPEInputMethodContext* context, char** text, GList** underlines, guint* cursorOffset)
 {
     auto* self = WPE_IM_CONTEXT_WAYLAND_V3(context);
+    const auto& preedit = self->priv->currentPreedit;
+    auto preeditText = unsafeSpan(preedit.text ? preedit.text.get() : "");
 
     if (text != nullptr)
-        *text = self->priv->currentPreedit.text ? g_strdup(self->priv->currentPreedit.text.get()) : g_strdup("");
+        *text = g_strndup(preeditText.data(), preeditText.size());
+
+    // Both offsets are -1 when the cursor is hidden. Put it at the end of the pre-edit then.
+    unsigned cursorBegin, cursorEnd;
+    if (preedit.cursorBegin == -1 && preedit.cursorEnd == -1)
+        cursorBegin = cursorEnd = g_utf8_strlen(preeditText.data(), preeditText.size());
+    else {
+        cursorBegin = preeditCharacterOffset(preeditText, preedit.cursorBegin);
+        cursorEnd = preeditCharacterOffset(preeditText, preedit.cursorEnd);
+    }
 
     if (underlines != nullptr) {
         *underlines = nullptr;
-        if (self->priv->currentPreedit.cursorBegin != self->priv->currentPreedit.cursorEnd) {
-            *underlines =
-                g_list_prepend(*underlines, wpe_input_method_underline_new(self->priv->currentPreedit.cursorBegin,
-                    self->priv->currentPreedit.cursorEnd));
-        }
-    };
+        // The cursor end can be before the cursor begin, for example for a selection made backwards.
+        if (cursorBegin != cursorEnd)
+            *underlines = g_list_prepend(*underlines, wpe_input_method_underline_new(std::min(cursorBegin, cursorEnd), std::max(cursorBegin, cursorEnd)));
+    }
 
     if (cursorOffset)
-        *cursorOffset = self->priv->currentPreedit.cursorBegin;
+        *cursorOffset = cursorBegin;
 }
 
 static void wpeIMContextWaylandV3FocusIn(WPEInputMethodContext* context)
@@ -602,10 +632,11 @@ static void wpe_im_context_wayland_v3_class_init(WPEIMContextWaylandV3Class* kla
     imContextClass->reset = wpeIMContextWaylandV3Reset;
 }
 
-WPEInputMethodContext* wpe_im_context_wayland_v3_new(WPEDisplayWayland* display)
+WPEInputMethodContext* wpe_im_context_wayland_v3_new(WPEDisplayWayland* display, WPEView* view)
 {
     g_return_val_if_fail(WPE_IS_DISPLAY_WAYLAND(display), nullptr);
+    g_return_val_if_fail(WPE_IS_VIEW_WAYLAND(view), nullptr);
 
     textInputV3GetGlobalByDisplay(display); // ensure creation of listener
-    return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V3, nullptr));
+    return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V3, "view", view, nullptr));
 }

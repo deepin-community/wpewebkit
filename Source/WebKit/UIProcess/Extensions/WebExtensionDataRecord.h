@@ -54,31 +54,35 @@ public:
 
     using Type = WebExtensionDataType;
 
-    const String& displayName() const { return m_displayName; }
-    const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
+    const String& displayName() const LIFETIME_BOUND { return m_displayName; }
+    const String& uniqueIdentifier() const LIFETIME_BOUND { return m_uniqueIdentifier; }
 
-    OptionSet<Type> types() const;
+    OptionSet<Type> NODELETE types() const;
 
-    size_t totalSize() const;
+    size_t NODELETE totalSize() const;
     size_t sizeOfTypes(OptionSet<Type>) const;
 
     size_t sizeOfType(Type type) const { return m_typeSizes.get(type); }
     void setSizeOfType(Type type, size_t size) { m_typeSizes.set(type, size); }
 
+#if PLATFORM(COCOA)
     NSArray *errors();
     void addError(NSString *debugDescription, Type);
+#endif
 
 #ifdef __OBJC__
     WKWebExtensionDataRecord *wrapper() const { return (WKWebExtensionDataRecord *)API::ObjectImpl<API::Object::Type::WebExtensionDataRecord>::wrapper(); }
 #endif
 
-    bool operator==(const WebExtensionDataRecord&) const;
+    bool NODELETE operator==(const WebExtensionDataRecord&) const;
 
 private:
     String m_displayName;
     String m_uniqueIdentifier;
     HashMap<Type, size_t> m_typeSizes;
+#if PLATFORM(COCOA)
     RetainPtr<NSMutableArray> m_errors;
+#endif
 };
 
 class WebExtensionDataRecordHolder : public RefCounted<WebExtensionDataRecordHolder> {
@@ -92,9 +96,10 @@ public:
         return adoptRef(*new WebExtensionDataRecordHolder(std::forward<Args>(args)...));
     }
 
-    WebExtensionDataRecordHolder() { };
-
     HashMap<String, Ref<WebExtensionDataRecord>> recordsMap;
+
+private:
+    WebExtensionDataRecordHolder() = default;
 };
 
 } // namespace WebKit

@@ -29,6 +29,9 @@
 #if ENABLE(WEBXR)
 
 #include "DOMPointReadOnly.h"
+#include "ExceptionOr.h"
+#include "JSValueInWrappedObjectInlines.h"
+#include "ScriptWrappableInlines.h"
 #include "TransformationMatrix.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -47,7 +50,7 @@ static bool normalizeQuaternion(DOMPointInit& q)
     return true;
 }
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebXRRigidTransform);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRRigidTransform);
 
 Ref<WebXRRigidTransform> WebXRRigidTransform::create()
 {
@@ -148,7 +151,7 @@ const WebXRRigidTransform& WebXRRigidTransform::inverse()
     // Inverse should always return the same object.
     if (m_inverse)
         return *m_inverse;
-    
+
     auto inverseTransform = m_rawTransform.inverse();
     ASSERT(!!inverseTransform);
 

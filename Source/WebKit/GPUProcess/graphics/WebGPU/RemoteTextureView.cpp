@@ -41,28 +41,28 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteTextureView);
 RemoteTextureView::RemoteTextureView(WebCore::WebGPU::TextureView& textureView, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(textureView)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteTextureView::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteTextureView::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteTextureView::~RemoteTextureView() = default;
 
 void RemoteTextureView::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteTextureView::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteTextureView::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteTextureView::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteTextureView::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

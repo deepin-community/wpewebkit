@@ -8,22 +8,23 @@
 
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
-#include "include/core/SkPathEffect.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
 #include "include/core/SkStrokeRec.h"
-#include "include/gpu/GrRecordingContext.h"
-#include "include/private/SkColorData.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkMatrixPriv.h"
+#include "src/core/SkPathEffectBase.h"
 #include "src/core/SkPointPriv.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/core/SkSafeMath.h"
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
@@ -48,8 +49,8 @@
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
 
-#if defined(GR_TEST_UTILS)
-#include "src/base/SkRandom.h"
+#if defined(GPU_TEST_UTILS)
+#include "src/core/SkRandom.h"
 #include "src/gpu/ganesh/GrDrawOpTest.h"
 #include "src/gpu/ganesh/GrTestUtils.h"
 #endif
@@ -79,7 +80,7 @@ using namespace skia_private;
 
 using AAMode = skgpu::ganesh::DashOp::AAMode;
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 constexpr int kAAModeCnt = static_cast<int>(skgpu::ganesh::DashOp::AAMode::kCoverageWithMSAA) + 1;
 #endif
 
@@ -99,8 +100,8 @@ void calc_dash_scaling(SkScalar* parallelScale, SkScalar* perpScale,
 
     SkVector vecSrcPerp;
     SkPointPriv::RotateCW(vecSrc, &vecSrcPerp);
-    viewMatrix.mapVectors(&vecSrc, 1);
-    viewMatrix.mapVectors(&vecSrcPerp, 1);
+    vecSrc = viewMatrix.mapVector(vecSrc);
+    vecSrcPerp = viewMatrix.mapVector(vecSrcPerp);
 
     // parallelScale tells how much to scale along the line parallel to the dash line
     // perpScale tells how much to scale in the direction perpendicular to the dash line
@@ -121,7 +122,7 @@ void align_to_x_axis(const SkPoint pts[2], SkMatrix* rotMatrix, SkPoint ptsRot[2
     vec.scale(inv);
     rotMatrix->setSinCos(-vec.fY, vec.fX, pts[0].fX, pts[0].fY);
     if (ptsRot) {
-        rotMatrix->mapPoints(ptsRot, pts, 2);
+        rotMatrix->mapPoints({ptsRot, 2}, {pts, 2});
         // correction for numerical issues if map doesn't make ptsRot exactly horizontal
         ptsRot[1].fY = pts[0].fY;
     }
@@ -183,8 +184,8 @@ void setup_dashed_rect(const SkRect& rect,
                         offset + len + bloatX,  halfDevRectHeight };
 
     if (kRound_DashCap == cap) {
-        SkScalar radius = SkScalarHalf(strokeWidth) - 0.5f;
-        SkScalar centerX = SkScalarHalf(endInterval);
+        float radius = (strokeWidth / 2.f) - 0.5f;
+        float centerX = endInterval / 2.f;
 
         vertices.writeQuad(GrQuad::MakeFromRect(rect, matrix),
                            VertexWriter::TriStripFromRect(dashRect),
@@ -193,8 +194,8 @@ void setup_dashed_rect(const SkRect& rect,
                            centerX);
     } else {
         SkASSERT(kNonRound_DashCap == cap);
-        SkScalar halfOffLen = SkScalarHalf(endInterval);
-        SkScalar halfStroke = SkScalarHalf(strokeWidth);
+        float halfOffLen = endInterval / 2.f;
+        float halfStroke = strokeWidth / 2.f;
         SkRect rectParam;
         rectParam.setLTRB(halfOffLen                 + 0.5f, -halfStroke + 0.5f,
                           halfOffLen + startInterval - 0.5f,  halfStroke - 0.5f);
@@ -279,13 +280,13 @@ private:
 
     DashOpImpl(GrPaint&& paint, const LineData& geometry, SkPaint::Cap cap, AAMode aaMode,
                bool fullDash, const GrUserStencilSettings* stencilSettings)
-            : INHERITED(ClassID())
+            : GrMeshDrawOp(ClassID())
+            , fStencilSettings(stencilSettings)
             , fColor(paint.getColor4f())
-            , fFullDash(fullDash)
             , fCap(cap)
             , fAAMode(aaMode)
             , fProcessorSet(std::move(paint))
-            , fStencilSettings(stencilSettings) {
+            , fFullDash(fullDash) {
         fLines.push_back(geometry);
 
         // compute bounds
@@ -396,6 +397,7 @@ private:
         STArray<kNumStackDashes, SkRect, true> rects;
         STArray<kNumStackDashes, DashDraw, true> draws;
 
+        SkSafeMath safeMath;
         int totalRectCount = 0;
         int rectOffset = 0;
         rects.push_back_n(3 * instanceCount);
@@ -435,7 +437,7 @@ private:
                     startPts[1].fY = startPts[0].fY;
                     startPts[1].fX = std::min(startPts[0].fX + draw.fIntervals[0] - draw.fPhase,
                                               draw.fPtsRot[1].fX);
-                    startRect.setBounds(startPts, 2);
+                    startRect = SkRect::BoundsOrEmpty(startPts);
                     startRect.outset(strokeAdj, halfSrcStroke);
 
                     hasStartRect = true;
@@ -471,7 +473,7 @@ private:
                     endPts[0].fY = endPts[1].fY;
                     endPts[0].fX = endPts[1].fX - endingInterval;
 
-                    endRect.setBounds(endPts, 2);
+                    endRect = SkRect::BoundsOrEmpty(endPts);
                     endRect.outset(strokeAdj, halfSrcStroke);
 
                     hasEndRect = true;
@@ -547,14 +549,14 @@ private:
                 // one giant dash
                 draw.fPtsRot[0].fX -= hasStartRect ? startAdj : 0;
                 draw.fPtsRot[1].fX += hasEndRect ? endAdj : 0;
-                startRect.setBounds(draw.fPtsRot, 2);
+                startRect = SkRect::BoundsOrEmpty(draw.fPtsRot);
                 startRect.outset(strokeAdj, halfSrcStroke);
                 hasStartRect = true;
                 hasEndRect = false;
                 lineDone = true;
 
                 SkPoint devicePts[2];
-                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot, 2);
+                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot);
                 SkScalar lineLength = SkPoint::Distance(devicePts[0], devicePts[1]);
                 if (hasCap) {
                     lineLength += 2.f * halfDevStroke;
@@ -562,9 +564,9 @@ private:
                 devIntervals[0] = lineLength;
             }
 
-            totalRectCount += !lineDone ? 1 : 0;
-            totalRectCount += hasStartRect ? 1 : 0;
-            totalRectCount += hasEndRect ? 1 : 0;
+            totalRectCount = safeMath.addInt(totalRectCount, !lineDone ? 1 : 0);
+            totalRectCount = safeMath.addInt(totalRectCount, hasStartRect ? 1 : 0);
+            totalRectCount = safeMath.addInt(totalRectCount, hasEndRect ? 1 : 0);
 
             if (SkPaint::kRound_Cap == cap && 0 != args.fSrcStrokeWidth) {
                 // need to adjust this for round caps to correctly set the dashPos attrib on
@@ -574,7 +576,7 @@ private:
 
             if (!lineDone) {
                 SkPoint devicePts[2];
-                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot, 2);
+                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot);
                 draw.fLineLength = SkPoint::Distance(devicePts[0], devicePts[1]);
                 if (hasCap) {
                     draw.fLineLength += 2.f * halfDevStroke;
@@ -604,7 +606,7 @@ private:
             draw.fHasEndRect = hasEndRect;
         }
 
-        if (!totalRectCount) {
+        if (!totalRectCount || !safeMath) {
             return;
         }
 
@@ -703,7 +705,7 @@ private:
         return CombineResult::kMerged;
     }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     SkString onDumpInfo() const override {
         SkString string;
         for (const auto& geo : fLines) {
@@ -728,19 +730,16 @@ private:
     SkPaint::Cap cap() const { return fCap; }
 
     STArray<1, LineData, true> fLines;
-    SkPMColor4f fColor;
-    bool fUsesLocalCoords : 1;
-    bool fFullDash : 1;
-    // We use 3 bits for this 3-value enum because MSVS makes the underlying types signed.
-    SkPaint::Cap fCap : 3;
-    AAMode fAAMode;
-    GrProcessorSet fProcessorSet;
     const GrUserStencilSettings* fStencilSettings;
-
     GrSimpleMesh*  fMesh = nullptr;
     GrProgramInfo* fProgramInfo = nullptr;
 
-    using INHERITED = GrMeshDrawOp;
+    SkPMColor4f fColor;
+    SkPaint::Cap fCap;
+    AAMode fAAMode;
+    GrProcessorSet fProcessorSet;
+    bool fUsesLocalCoords : 1;
+    bool fFullDash : 1;
 };
 
 /*
@@ -754,7 +753,7 @@ private:
  */
 class DashingCircleEffect : public GrGeometryProcessor {
 public:
-    typedef SkPathEffect::DashInfo DashInfo;
+    typedef SkPathEffectBase::DashInfo DashInfo;
 
     static GrGeometryProcessor* Make(SkArenaAlloc* arena,
                                      const SkPMColor4f&,
@@ -915,7 +914,7 @@ DashingCircleEffect::DashingCircleEffect(const SkPMColor4f& color,
 
 GR_DEFINE_GEOMETRY_PROCESSOR_TEST(DashingCircleEffect)
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 GrGeometryProcessor* DashingCircleEffect::TestCreate(GrProcessorTestData* d) {
     AAMode aaMode = static_cast<AAMode>(d->fRandom->nextULessThan(kAAModeCnt));
     GrColor color = GrTest::RandomColor(d->fRandom);
@@ -941,7 +940,7 @@ GrGeometryProcessor* DashingCircleEffect::TestCreate(GrProcessorTestData* d) {
  */
 class DashingLineEffect : public GrGeometryProcessor {
 public:
-    typedef SkPathEffect::DashInfo DashInfo;
+    typedef SkPathEffectBase::DashInfo DashInfo;
 
     static GrGeometryProcessor* Make(SkArenaAlloc* arena,
                                      const SkPMColor4f&,
@@ -1129,7 +1128,7 @@ DashingLineEffect::DashingLineEffect(const SkPMColor4f& color,
 
 GR_DEFINE_GEOMETRY_PROCESSOR_TEST(DashingLineEffect)
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 GrGeometryProcessor* DashingLineEffect::TestCreate(GrProcessorTestData* d) {
     AAMode aaMode = static_cast<AAMode>(d->fRandom->nextULessThan(kAAModeCnt));
     GrColor color = GrTest::RandomColor(d->fRandom);
@@ -1268,7 +1267,7 @@ bool CanDrawDashLine(const SkPoint pts[2], const GrStyle& style, const SkMatrix&
 
 } // namespace skgpu::ganesh::DashOp
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 
 GR_DRAW_OP_TEST_DEFINE(DashOpImpl) {
     SkMatrix viewMatrix = GrTest::TestMatrixPreservesRightAngles(random);
@@ -1336,7 +1335,7 @@ GR_DRAW_OP_TEST_DEFINE(DashOpImpl) {
     p.setStyle(SkPaint::kStroke_Style);
     p.setStrokeWidth(SkIntToScalar(1));
     p.setStrokeCap(cap);
-    p.setPathEffect(GrTest::TestDashPathEffect::Make(intervals, 2, phase));
+    p.setPathEffect(GrTest::TestDashPathEffect::Make(intervals, phase));
 
     GrStyle style(p);
 
@@ -1344,4 +1343,4 @@ GR_DRAW_OP_TEST_DEFINE(DashOpImpl) {
                                                  style, GrGetRandomStencil(random, context));
 }
 
-#endif // defined(GR_TEST_UTILS)
+#endif // defined(GPU_TEST_UTILS)

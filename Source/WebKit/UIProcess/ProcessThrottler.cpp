@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,6 +32,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/EnumTraits.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -46,8 +47,13 @@
 namespace WebKit {
     
 static constexpr Seconds processSuspensionTimeout { 20_s };
-static constexpr Seconds removeAllAssertionsTimeout { 8_min };
+static constexpr Seconds removeAllAssertionsTimeout { 4_min };
 static constexpr Seconds processAssertionCacheLifetime { 1_s };
+
+Ref<ProcessThrottlerActivity> ProcessThrottlerActivity::create(ProcessThrottler& throttler, ASCIILiteral name, ProcessThrottlerActivityType type, IsQuietActivity isQuietActivity)
+{
+    return adoptRef(*new ProcessThrottlerActivity(throttler, name, type, isQuietActivity));
+}
 
 class ProcessThrottler::ProcessAssertionCache final : public CanMakeCheckedPtr<ProcessThrottler::ProcessAssertionCache> {
     WTF_MAKE_TZONE_ALLOCATED(ProcessThrottler::ProcessAssertionCache);
@@ -61,7 +67,7 @@ public:
         auto type = assertion->type();
         assertion->setInvalidationHandler(nullptr);
         ASSERT(!m_entries.contains(type));
-        m_entries.add(type, makeUniqueRef<CachedAssertion>(*this, WTFMove(assertion)));
+        m_entries.add(type, CachedAssertion::create(*this, WTF::move(assertion)));
     }
 
     RefPtr<ProcessAssertion> tryTake(ProcessAssertionType type)
@@ -84,40 +90,49 @@ public:
     }
 
 private:
-    class CachedAssertion {
+    class CachedAssertion : public RefCountedAndCanMakeWeakPtr<CachedAssertion> {
         WTF_MAKE_TZONE_ALLOCATED(CachedAssertion);
     public:
+        static Ref<CachedAssertion> create(ProcessAssertionCache& cache, Ref<ProcessAssertion>&& assertion)
+        {
+            return adoptRef(*new CachedAssertion(cache, WTF::move(assertion)));
+        }
+
+        bool NODELETE isValid() const { return m_assertion->isValid(); }
+        Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
+
+    private:
         CachedAssertion(ProcessAssertionCache& cache, Ref<ProcessAssertion>&& assertion)
             : m_cache(cache)
-            , m_assertion(WTFMove(assertion))
-            , m_expirationTimer(RunLoop::main(), this, &CachedAssertion::entryExpired)
+            , m_assertion(WTF::move(assertion))
+            , m_expirationTimer(RunLoop::mainSingleton(), "CachedAssertion::ExpirationTimer"_s, this, &CachedAssertion::entryExpired)
         {
             m_expirationTimer.startOneShot(processAssertionCacheLifetime);
         }
 
-        bool isValid() const { return m_assertion->isValid(); }
-        Ref<ProcessAssertion> release() { return m_assertion.releaseNonNull(); }
-
-    private:
         void entryExpired()
         {
             ASSERT(m_assertion);
             m_cache->remove(m_assertion->type());
         }
 
-        CheckedRef<ProcessAssertionCache> m_cache;
+        const CheckedRef<ProcessAssertionCache> m_cache;
         RefPtr<ProcessAssertion> m_assertion;
         RunLoop::Timer m_expirationTimer;
     };
 
-    HashMap<ProcessAssertionType, UniqueRef<CachedAssertion>, IntHash<ProcessAssertionType>, WTF::StrongEnumHashTraits<ProcessAssertionType>> m_entries;
+    HashMap<ProcessAssertionType, Ref<CachedAssertion>, IntHash<ProcessAssertionType>, WTF::StrongEnumHashTraits<ProcessAssertionType>> m_entries;
     bool m_isEnabled { true };
 };
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ProcessThrottlerProcessAssertionCache, ProcessThrottler::ProcessAssertionCache);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(ProcessThrottlerProcessAssertionCacheCachedAssertion, ProcessThrottler::ProcessAssertionCache::CachedAssertion);
+} // namespace WebKit
 
-static uint64_t generatePrepareToSuspendRequestID()
+namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottler::ProcessAssertionCache::CachedAssertion);
+
+static uint64_t NODELETE generatePrepareToSuspendRequestID()
 {
     static uint64_t prepareToSuspendRequestID = 0;
     return ++prepareToSuspendRequestID;
@@ -126,9 +141,9 @@ static uint64_t generatePrepareToSuspendRequestID()
 ProcessThrottler::ProcessThrottler(AuxiliaryProcessProxy& process, bool shouldTakeUIBackgroundAssertion)
     : m_assertionCache(makeUniqueRef<ProcessAssertionCache>())
     , m_process(process)
-    , m_prepareToSuspendTimeoutTimer(RunLoop::main(), this, &ProcessThrottler::prepareToSuspendTimeoutTimerFired)
-    , m_dropNearSuspendedAssertionTimer(RunLoop::main(), this, &ProcessThrottler::dropNearSuspendedAssertionTimerFired)
-    , m_prepareToDropLastAssertionTimeoutTimer(RunLoop::main(), this, &ProcessThrottler::prepareToDropLastAssertionTimeoutTimerFired)
+    , m_prepareToSuspendTimeoutTimer(RunLoop::mainSingleton(), "ProcessThrottler::PrepareToSuspendTimeoutTimer"_s, this, &ProcessThrottler::prepareToSuspendTimeoutTimerFired)
+    , m_dropNearSuspendedAssertionTimer(RunLoop::mainSingleton(), "ProcessThrottler::DropNearSuspendedAssertionTimer"_s, this, &ProcessThrottler::dropNearSuspendedAssertionTimerFired)
+    , m_prepareToDropLastAssertionTimeoutTimer(RunLoop::mainSingleton(), "ProcessThrottler::PrepareToDropLastAssertionTimeoutTimer"_s, this, &ProcessThrottler::prepareToDropLastAssertionTimeoutTimerFired)
     , m_shouldTakeUIBackgroundAssertion(shouldTakeUIBackgroundAssertion)
 {
 }
@@ -138,9 +153,36 @@ ProcessThrottler::~ProcessThrottler()
     invalidateAllActivities();
 }
 
+NEVER_INLINE static void crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread()
+{
+#if PLATFORM(COCOA)
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::CrashWhenMutatingProcessAssertionsFromBackgroundThread)) {
+        static bool didLog;
+        if (!didLog) {
+            didLog = true;
+            RELEASE_LOG_FAULT(API, "Detected usage of WebKit APIs off the main thread. This is a misuse of the API that can lead to corruption of WebKit's internal data, and will cause a crash when using newer SDKs.");
+        }
+        return;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED("Terminating process due to improper usage of WebKit APIs off the main thread.");
+#else
+    ASSERT(isMainRunLoop());
+#endif
+}
+
+static void assertIfCalledFromBackgroundThread()
+{
+    if (isMainRunLoop()) [[likely]]
+        return;
+
+    crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread();
+}
+
 bool ProcessThrottler::addActivity(Activity& activity)
 {
-    ASSERT(isMainRunLoop());
+    assertIfCalledFromBackgroundThread();
+
     if (!m_allowsActivities) {
         if (!activity.isQuietActivity())
             PROCESSTHROTTLER_RELEASE_LOG("addActivity: not allowed to add %s activity %s", activity.isForeground() ? "foreground" : "background", activity.name().characters());
@@ -151,13 +193,14 @@ bool ProcessThrottler::addActivity(Activity& activity)
         m_foregroundActivities.add(activity);
     else
         m_backgroundActivities.add(activity);
-    updateThrottleStateIfNeeded();
+    updateThrottleStateIfNeeded(activity.name());
     return true;
 }
 
 void ProcessThrottler::removeActivity(Activity& activity)
 {
-    ASSERT(isMainRunLoop());
+    assertIfCalledFromBackgroundThread();
+
     if (!m_allowsActivities) {
         ASSERT(m_foregroundActivities.isEmptyIgnoringNullReferences());
         ASSERT(m_backgroundActivities.isEmptyIgnoringNullReferences());
@@ -173,17 +216,18 @@ void ProcessThrottler::removeActivity(Activity& activity)
     if (!wasRemoved)
         return;
 
-    updateThrottleStateIfNeeded();
+    updateThrottleStateIfNeeded({ });
 }
 
 void ProcessThrottler::invalidateAllActivities()
 {
-    ASSERT(isMainRunLoop());
+    assertIfCalledFromBackgroundThread();
+
     PROCESSTHROTTLER_RELEASE_LOG("invalidateAllActivities: BEGIN (foregroundActivityCount: %u, backgroundActivityCount: %u)", m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
     while (!m_foregroundActivities.isEmptyIgnoringNullReferences())
-        m_foregroundActivities.begin()->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
+        Ref { *m_foregroundActivities.begin() }->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
     while (!m_backgroundActivities.isEmptyIgnoringNullReferences())
-        m_backgroundActivities.begin()->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
+        Ref { *m_backgroundActivities.begin() }->invalidate(ProcessThrottlerActivity::ForceEnableActivityLogging::Yes);
     PROCESSTHROTTLER_RELEASE_LOG("invalidateAllActivities: END");
 }
 
@@ -231,7 +275,7 @@ String ProcessThrottler::assertionName(ProcessAssertionType type) const
         return "Unknown"_s;
     }();
 
-    return makeString(protectedProcess()->clientName(), ' ', typeString, " Assertion"_s);
+    return makeString(protect(m_process)->clientName(), ' ', typeString, " Assertion"_s);
 }
 
 ProcessAssertionType ProcessThrottler::assertionTypeForState(ProcessThrottleState state)
@@ -250,6 +294,8 @@ ProcessAssertionType ProcessThrottler::assertionTypeForState(ProcessThrottleStat
 
 void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
 {
+    assertIfCalledFromBackgroundThread();
+
     m_state = newState;
 
     ProcessAssertionType newType = assertionTypeForState(newState);
@@ -261,7 +307,7 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
         return;
 
     Ref process = m_process.get();
-    PROCESSTHROTTLER_RELEASE_LOG("setThrottleState: Updating process assertion type to %u (foregroundActivities=%u, backgroundActivities=%u)", WTF::enumToUnderlyingType(newType), m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
+    PROCESSTHROTTLER_RELEASE_LOG("setThrottleState: Updating process assertion type to %u (foregroundActivities=%u, backgroundActivities=%u)", std::to_underlying(newType), m_foregroundActivities.computeSize(), m_backgroundActivities.computeSize());
 
     // Keep the previous assertion active until the new assertion is taken asynchronously.
     RefPtr previousAssertion = std::exchange(m_assertion, nullptr);
@@ -271,16 +317,16 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
     m_assertion = m_assertionCache->tryTake(newType);
     if (!m_assertion) {
         if (m_shouldTakeUIBackgroundAssertion) {
-            Ref assertion = ProcessAndUIAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTFMove(previousAssertion)] { });
+            Ref assertion = ProcessAndUIAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
             assertion->setUIAssertionExpirationHandler([weakThis = WeakPtr { *this }] {
                 if (weakThis)
                     weakThis->uiAssertionWillExpireImminently();
             });
-            m_assertion = WTFMove(assertion);
+            m_assertion = WTF::move(assertion);
         } else
-            m_assertion = ProcessAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTFMove(previousAssertion)] { });
+            m_assertion = ProcessAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
     }
-    m_assertion->setInvalidationHandler([weakThis = WeakPtr { *this }] {
+    RefPtr { m_assertion }->setInvalidationHandler([weakThis = WeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->assertionWasInvalidated();
     });
@@ -293,33 +339,36 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
     } else
         m_dropNearSuspendedAssertionTimer.stop();
 
-    protectedProcess()->didChangeThrottleState(newState);
+    process->didChangeThrottleState(newState);
 }
 
-void ProcessThrottler::ref()
+void ProcessThrottler::ref() const
 {
     // Forward ref-counting to our owner.
     m_process->ref();
 }
 
-void ProcessThrottler::deref()
+void ProcessThrottler::deref() const
 {
     // Forward ref-counting to our owner.
     m_process->deref();
 }
 
-void ProcessThrottler::updateThrottleStateIfNeeded()
+void ProcessThrottler::updateThrottleStateIfNeeded(ASCIILiteral lastAddedActivity)
 {
     if (!m_isConnectedToProcess)
         return;
 
     if (shouldBeRunnable()) {
         if (m_state == ProcessThrottleState::Suspended || m_pendingRequestToSuspendID) {
+#if !RELEASE_LOG_DISABLED
+            const char* probableWakeupReason = !lastAddedActivity.isNull() ? lastAddedActivity.characters() : "unknown";
             if (m_state == ProcessThrottleState::Suspended)
-                PROCESSTHROTTLER_RELEASE_LOG("updateThrottleStateIfNeeded: sending ProcessDidResume IPC because the process was suspended");
+                PROCESSTHROTTLER_RELEASE_LOG("updateThrottleStateIfNeeded: sending ProcessDidResume IPC because the process was suspended (probable wakeup reason: %" PUBLIC_LOG_STRING ")", probableWakeupReason);
             else
-                PROCESSTHROTTLER_RELEASE_LOG("updateThrottleStateIfNeeded: sending ProcessDidResume IPC because the WebProcess is still processing request to suspend=%" PRIu64, *m_pendingRequestToSuspendID);
-            protectedProcess()->sendProcessDidResume(expectedThrottleState() == ProcessThrottleState::Foreground ? AuxiliaryProcessProxy::ResumeReason::ForegroundActivity : AuxiliaryProcessProxy::ResumeReason::BackgroundActivity);
+                PROCESSTHROTTLER_RELEASE_LOG("updateThrottleStateIfNeeded: sending ProcessDidResume IPC because the WebProcess is still processing request to suspend=%" PRIu64 " (probable wakeup reason: %" PUBLIC_LOG_STRING ")", *m_pendingRequestToSuspendID, probableWakeupReason);
+#endif
+            protect(m_process)->sendProcessDidResume(expectedThrottleState() == ProcessThrottleState::Foreground ? AuxiliaryProcessProxy::ResumeReason::ForegroundActivity : AuxiliaryProcessProxy::ResumeReason::BackgroundActivity);
             clearPendingRequestToSuspend();
         }
     } else {
@@ -402,10 +451,10 @@ void ProcessThrottler::sendPrepareToSuspendIPC(IsSuspensionImminent isSuspension
         Ref process = m_process.get();
         double remainingRunTime = ProcessAssertion::remainingRunTimeInSeconds(process->processID());
         PROCESSTHROTTLER_RELEASE_LOG("sendPrepareToSuspendIPC: Sending PrepareToSuspend(%" PRIu64 ", isSuspensionImminent=%d) IPC, remainingRunTime=%fs", *m_pendingRequestToSuspendID, isSuspensionImminent == IsSuspensionImminent::Yes, remainingRunTime);
-        process->sendPrepareToSuspend(isSuspensionImminent, remainingRunTime, [this, weakThis = WeakPtr { *this }, requestToSuspendID = *m_pendingRequestToSuspendID]() mutable {
+        process->sendPrepareToSuspend(isSuspensionImminent, remainingRunTime, [weakThis = WeakPtr { *this }, requestToSuspendID = *m_pendingRequestToSuspendID]() mutable {
             RefPtr protectedThis = weakThis.get();
-            if (protectedThis && m_pendingRequestToSuspendID && *m_pendingRequestToSuspendID == requestToSuspendID)
-                processReadyToSuspend();
+            if (protectedThis && protectedThis->m_pendingRequestToSuspendID && *protectedThis->m_pendingRequestToSuspendID == requestToSuspendID)
+                protectedThis->processReadyToSuspend();
         });
     }
 
@@ -426,20 +475,14 @@ void ProcessThrottler::assertionWasInvalidated()
     invalidateAllActivities();
 }
 
-bool ProcessThrottler::isValidBackgroundActivity(const ActivityVariant& variant)
+bool ProcessThrottler::isValidBackgroundActivity(const ProcessThrottler::Activity* activity)
 {
-    if (!std::holds_alternative<UniqueRef<Activity>>(variant))
-        return false;
-    auto& activity = std::get<UniqueRef<Activity>>(variant).get();
-    return activity.isValid() && !activity.isForeground();
+    return activity && activity->isValid() && !activity->isForeground();
 }
 
-bool ProcessThrottler::isValidForegroundActivity(const ActivityVariant& variant)
+bool ProcessThrottler::isValidForegroundActivity(const ProcessThrottler::Activity* activity)
 {
-    if (!std::holds_alternative<UniqueRef<Activity>>(variant))
-        return false;
-    auto& activity = std::get<UniqueRef<Activity>>(variant).get();
-    return activity.isValid() && activity.isForeground();
+    return activity && activity->isValid() && activity->isForeground();
 }
 
 void ProcessThrottler::setAllowsActivities(bool allow)
@@ -508,61 +551,69 @@ void ProcessThrottler::clearAssertion()
         m_prepareToDropLastAssertionTimeoutTimer.startOneShot(10_s);
 
     m_assertionToClearAfterPrepareToDropLastAssertion = std::exchange(m_assertion, nullptr);
-    protectedProcess()->prepareToDropLastAssertion([this, weakThis = WeakPtr { *this }] {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis)
-            return;
-        PROCESSTHROTTLER_RELEASE_LOG("clearAssertion: Releasing near-suspended assertion");
-        m_prepareToDropLastAssertionTimeoutTimer.stop();
-        m_assertionToClearAfterPrepareToDropLastAssertion = nullptr;
-        if (!m_assertion)
-            protectedProcess()->didDropLastAssertion();
+    protect(m_process)->prepareToDropLastAssertion([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->dropLastAssertion();
     });
 }
 
-Ref<AuxiliaryProcessProxy> ProcessThrottler::protectedProcess() const
-{
-    return m_process.get();
-}
-
-bool ProcessThrottler::isSuspended() const
-{
-    return m_isConnectedToProcess && !m_assertion;
+void ProcessThrottler::dropLastAssertion() {
+    PROCESSTHROTTLER_RELEASE_LOG("clearAssertion: Releasing near-suspended assertion");
+    m_prepareToDropLastAssertionTimeoutTimer.stop();
+    m_assertionToClearAfterPrepareToDropLastAssertion = nullptr;
+    if (!m_assertion)
+        protect(m_process)->didDropLastAssertion();
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessThrottlerTimedActivity);
 
-ProcessThrottlerTimedActivity::ProcessThrottlerTimedActivity(Seconds timeout, ProcessThrottler::ActivityVariant&& activity)
-    : m_timer(RunLoop::main(), this, &ProcessThrottlerTimedActivity::activityTimedOut)
+Ref<ProcessThrottlerTimedActivity> ProcessThrottlerTimedActivity::create(Seconds timeout, RefPtr<Activity>&& activity)
+{
+    return adoptRef(*new ProcessThrottlerTimedActivity(timeout, WTF::move(activity)));
+}
+
+ProcessThrottlerTimedActivity::ProcessThrottlerTimedActivity(Seconds timeout, RefPtr<ProcessThrottlerTimedActivity::Activity>&& activity)
+    : m_timer(RunLoop::mainSingleton(), "ProcessThrottlerTimedActivity::Timer"_s, this, &ProcessThrottlerTimedActivity::activityTimedOut)
     , m_timeout(timeout)
-    , m_activity(WTFMove(activity))
+    , m_activity(WTF::move(activity))
 {
     updateTimer();
 }
 
-auto ProcessThrottlerTimedActivity::operator=(ProcessThrottler::ActivityVariant&& activity) -> ProcessThrottlerTimedActivity&
+void ProcessThrottlerTimedActivity::setActivity(RefPtr<ProcessThrottlerTimedActivity::Activity>&& activity)
 {
-    m_activity = WTFMove(activity);
+    m_activity = WTF::move(activity);
     updateTimer();
-    return *this;
 }
 
 void ProcessThrottlerTimedActivity::activityTimedOut()
 {
-    RELEASE_LOG_ERROR(ProcessSuspension, "%p - ProcessThrottlerTimedActivity::activityTimedOut:", this);
-    // Use variant::swap() to make sure that m_activity is in a good state when the underlying
+    RELEASE_LOG(ProcessSuspension, "%p - ProcessThrottlerTimedActivity::activityTimedOut: %" PUBLIC_LOG_STRING " (timeout: %.f sec)", this, m_activity ? m_activity->name().characters() : "null", m_timeout.seconds());
+    // Use std::exchange to make sure that m_activity is in a good state when the underlying
     // ProcessThrottlerActivity gets destroyed. This is important as destroying the activity runs code
     // that may use / modify m_activity.
-    ActivityVariant nullActivity { nullptr };
-    m_activity.swap(nullActivity);
+    std::exchange(m_activity, nullptr);
 }
 
 void ProcessThrottlerTimedActivity::updateTimer()
 {
-    if (std::holds_alternative<std::nullptr_t>(m_activity))
+    if (!m_activity)
         m_timer.stop();
     else
         m_timer.startOneShot(m_timeout);
+}
+
+void ProcessThrottlerTimedActivity::setTimeout(Seconds timeout)
+{
+    if (timeout < 0_s || m_timeout == timeout)
+        return;
+
+    m_timeout = timeout;
+
+    if (m_timer.isActive()) {
+        Seconds secondsUntilFire = std::max(m_timer.secondsUntilFire(), 0_s);
+        m_timer.startOneShot(timeout > secondsUntilFire ? timeout - secondsUntilFire : 0_s);
+    }
 }
 
 #define PROCESSTHROTTLER_ACTIVITY_RELEASE_LOG(msg, ...) RELEASE_LOG(ProcessSuspension, "%p - [PID=%d, throttler=%p] ProcessThrottler::Activity::" msg, this, m_throttler ? m_throttler->m_process->processID() : 0, m_throttler.get(), ##__VA_ARGS__)
@@ -589,11 +640,15 @@ ProcessThrottlerActivity::ProcessThrottlerActivity(ProcessThrottler& throttler, 
 void ProcessThrottlerActivity::invalidate(ForceEnableActivityLogging forceEnableActivityLogging)
 {
     ASSERT(isValid());
+    RefPtr throttler = m_throttler.get();
+    if (!throttler)
+        return;
+
     if (!isQuietActivity() || forceEnableActivityLogging == ForceEnableActivityLogging::Yes) {
         PROCESSTHROTTLER_ACTIVITY_RELEASE_LOG("invalidate: Ending %" PUBLIC_LOG_STRING " activity / '%" PUBLIC_LOG_STRING "'",
             m_type == ProcessThrottlerActivityType::Foreground ? "foreground" : "background", m_name.characters());
     }
-    Ref { *m_throttler }->removeActivity(*this);
+    throttler->removeActivity(*this);
     m_throttler = nullptr;
 }
 
@@ -609,13 +664,11 @@ static void logActivityNames(WTF::TextStream& ts, ASCIILiteral description, cons
     didLog = true;
 
     bool isFirstItem = true;
-    for (const auto& activity : activities) {
-        if (!activity.isQuietActivity()) {
-            if (!isFirstItem)
-                ts << ", "_s;
-            ts << activity.name();
-            isFirstItem = false;
-        }
+    for (Ref activity : activities) {
+        if (!isFirstItem)
+            ts << ", "_s;
+        ts << activity->name();
+        isFirstItem = false;
     }
 }
 

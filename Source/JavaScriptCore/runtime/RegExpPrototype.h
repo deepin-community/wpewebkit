@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2022 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -53,9 +53,15 @@ private:
     void finishCreation(VM&, JSGlobalObject*);
 };
 
-JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncMatchFast);
-JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncSearchFast);
-JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncSplitFast);
-JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncTestFast);
+class RegExpObject;
+class JSString;
+
+JSValue regExpExec(JSGlobalObject*, JSValue thisValue, JSString* inputString);
+JSValue regExpMatchFast(JSGlobalObject*, RegExpObject*, JSString* inputString);
+JSValue regExpReplaceGeneric(JSGlobalObject*, JSObject* thisObject, JSString* inputString, JSValue replaceValue);
+JSValue regExpSearchFast(JSGlobalObject*, RegExpObject*, JSString* inputString);
+JSValue regExpSearchGeneric(JSGlobalObject*, JSObject* thisObject, JSString* inputString);
+JSCell* regExpSplitFast(JSGlobalObject*, RegExpObject*, JSString* inputString, unsigned limit);
+JSValue regExpSplitSlow(JSGlobalObject*, JSObject* thisObject, JSString* inputString, JSValue limitValue);
 
 } // namespace JSC

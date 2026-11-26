@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,14 +48,18 @@ class ApplePayPaymentHandler final : public PaymentHandler, public PaymentSessio
 public:
     static ExceptionOr<void> validateData(Document&, JSC::JSValue);
     static bool handlesIdentifier(const PaymentRequest::MethodIdentifier&);
-    static bool hasActiveSession(Document&);
+    static bool NODELETE hasActiveSession(Document&);
+
+    // ContextDestructionObserver.
+    void ref() const final { PaymentHandler::ref(); }
+    void deref() const final { PaymentHandler::deref(); }
 
 private:
     friend class PaymentHandler;
     explicit ApplePayPaymentHandler(Document&, const PaymentRequest::MethodIdentifier&, PaymentRequest&);
 
-    Document& document() const;
-    PaymentCoordinator& paymentCoordinator() const;
+    Document& NODELETE document() const;
+    PaymentCoordinator& NODELETE paymentCoordinator() const;
 
     ExceptionOr<Vector<ApplePayShippingMethod>> computeShippingMethods() const;
     ExceptionOr<std::tuple<ApplePayLineItem, Vector<ApplePayLineItem>>> computeTotalAndLineItems() const;
@@ -82,7 +86,7 @@ private:
     ExceptionOr<void> retry(PaymentValidationErrors&&) final;
 
     // PaymentSession
-    unsigned version() const final;
+    unsigned NODELETE version() const final;
     void validateMerchant(URL&&) final;
     void didAuthorizePayment(const Payment&) final;
     void didSelectShippingMethod(const ApplePayShippingMethod&) final;
@@ -94,7 +98,7 @@ private:
     void didCancelPaymentSession(PaymentSessionError&&) final;
 
     PaymentRequest::MethodIdentifier m_identifier;
-    Ref<PaymentRequest> m_paymentRequest;
+    const Ref<PaymentRequest> m_paymentRequest;
     std::optional<ApplePayRequest> m_applePayRequest;
     std::optional<ApplePayPaymentMethodType> m_selectedPaymentMethodType;
 

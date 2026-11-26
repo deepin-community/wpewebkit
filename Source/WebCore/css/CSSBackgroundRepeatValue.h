@@ -33,10 +33,10 @@ enum CSSValueID : uint16_t;
 
 class CSSBackgroundRepeatValue final : public CSSValue {
 public:
-    static Ref<CSSBackgroundRepeatValue> create(CSSValueID repeatXValue, CSSValueID repeatYValue);
+    static Ref<CSSBackgroundRepeatValue> NODELETE create(CSSValueID repeatXValue, CSSValueID repeatYValue);
 
-    String customCSSText() const;
-    bool equals(const CSSBackgroundRepeatValue&) const;
+    String customCSSText(const CSS::SerializationContext&) const;
+    bool NODELETE equals(const CSSBackgroundRepeatValue&) const;
 
     CSSValueID xValue() const { return m_xValue; }
     CSSValueID yValue() const { return m_yValue; }

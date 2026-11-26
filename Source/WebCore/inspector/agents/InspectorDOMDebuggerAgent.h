@@ -35,11 +35,13 @@
 #include <JavaScriptCore/Breakpoint.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorDebuggerAgent.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
 #include <wtf/RefPtr.h>
-#include <wtf/RobinHoodHashMap.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -55,12 +57,12 @@ class ScriptExecutionContext;
 
 class InspectorDOMDebuggerAgent : public InspectorAgentBase, public Inspector::DOMDebuggerBackendDispatcherHandler, public Inspector::InspectorDebuggerAgent::Listener {
     WTF_MAKE_NONCOPYABLE(InspectorDOMDebuggerAgent);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(InspectorDOMDebuggerAgent);
 public:
     ~InspectorDOMDebuggerAgent() override;
 
     // InspectorAgentBase
-    void didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*) override;
+    void didCreateFrontendAndBackend() override;
     void willDestroyFrontendAndBackend(Inspector::DisconnectReason) override;
     void discardAgent() override;
     virtual bool enabled() const;
@@ -83,6 +85,8 @@ public:
     void didHandleEvent(ScriptExecutionContext&, Event&, const RegisteredEventListener&);
     void willFireTimer(bool oneShot);
     void didFireTimer(bool oneShot);
+    void willFireAnimationFrame();
+    void didFireAnimationFrame();
     void willSendRequest(ResourceRequest&);
     void willSendRequestOfType(ResourceRequest&);
 
@@ -91,15 +95,13 @@ protected:
     virtual void enable();
     virtual void disable();
 
-    virtual bool setAnimationFrameBreakpoint(Inspector::Protocol::ErrorString&, RefPtr<JSC::Breakpoint>&&) = 0;
-
     Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
 
 private:
     void breakOnURLIfNeeded(const String&);
 
-    RefPtr<Inspector::DOMDebuggerBackendDispatcher> m_backendDispatcher;
-    Inspector::InjectedScriptManager& m_injectedScriptManager;
+    const Ref<Inspector::DOMDebuggerBackendDispatcher> m_backendDispatcher;
+    const CheckedRef<Inspector::InjectedScriptManager> m_injectedScriptManager;
 
     struct EventBreakpoint {
         String eventName;
@@ -119,17 +121,33 @@ private:
         bool matches(const String&);
 
     private:
-        // Avoid having to (re)match the regex each time an event is dispatched.
-        std::optional<JSC::Yarr::RegularExpression> m_eventNameMatchRegex;
+        std::optional<Inspector::ContentSearchUtilities::Searcher> m_eventNameSearcher;
+
+        // Avoid having to (re)match the searcher each time an event is dispatched.
         HashSet<String> m_knownMatchingEventNames;
     };
     Vector<EventBreakpoint> m_listenerBreakpoints;
     RefPtr<JSC::Breakpoint> m_pauseOnAllIntervalsBreakpoint;
     RefPtr<JSC::Breakpoint> m_pauseOnAllListenersBreakpoint;
     RefPtr<JSC::Breakpoint> m_pauseOnAllTimeoutsBreakpoint;
+    RefPtr<JSC::Breakpoint> m_pauseOnAllAnimationFramesBreakpoint;
 
-    MemoryCompactRobinHoodHashMap<String, Ref<JSC::Breakpoint>> m_urlTextBreakpoints;
-    MemoryCompactRobinHoodHashMap<String, Ref<JSC::Breakpoint>> m_urlRegexBreakpoints;
+    struct URLBreakpoint {
+        String url;
+        bool isRegex { false };
+
+        // This is only used for the breakpoint configuration (i.e. it's irrelevant when comparing).
+        Ref<JSC::Breakpoint> specialBreakpoint;
+
+        // Cached so the searcher isn't recompiled for every request while the breakpoint exists.
+        Inspector::ContentSearchUtilities::Searcher searcher;
+
+        inline bool operator==(const URLBreakpoint& other) const
+        {
+            return url == other.url && isRegex == other.isRegex;
+        }
+    };
+    Vector<URLBreakpoint> m_urlBreakpoints;
     RefPtr<JSC::Breakpoint> m_pauseOnAllURLsBreakpoint;
 };
 

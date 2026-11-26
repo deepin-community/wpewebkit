@@ -28,12 +28,17 @@
 
 #include "AccessibilityObject.h"
 #include "CharacterData.h"
-#include "Editing.h"
+#include "ContainerNodeInlines.h"
+#include "DocumentView.h"
+#include "EditingInlines.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementRareData.h"
 #include "EventLoop.h"
+#include "FontCascadeInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLBRElement.h"
 #include "HTMLElement.h"
+#include "HTMLHeadingElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
@@ -46,12 +51,17 @@
 #include "RenderBox.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include "TextIterator.h"
 #include "TextManipulationItem.h"
 #include "VisibleUnits.h"
+#include <algorithm>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TextManipulationController);
 
 inline bool TextManipulationControllerExclusionRule::match(const Element& element) const
 {
@@ -90,7 +100,7 @@ public:
         for (Ref element : lineageOfType<Element>(*startingElement)) {
             if (auto typeOrNullopt = typeForElement(element.get())) {
                 type = *typeOrNullopt;
-                matchingElement = WTFMove(element);
+                matchingElement = WTF::move(element);
                 break;
             }
         }
@@ -134,24 +144,24 @@ void TextManipulationController::startObservingParagraphs(ManipulationItemCallba
     if (!document)
         return;
 
-    m_callback = WTFMove(callback);
-    m_exclusionRules = WTFMove(exclusionRules);
+    m_callback = WTF::move(callback);
+    m_exclusionRules = WTF::move(exclusionRules);
 
-    observeParagraphs(firstPositionInNode(document.get()), lastPositionInNode(document.get()));
+    observeParagraphs(firstPositionInNode(*document), lastPositionInNode(*document));
     flushPendingItemsForCallback();
 }
 
-static bool isInPrivateUseArea(UChar character)
+static bool NODELETE isInPrivateUseArea(char16_t character)
 {
     return 0xE000 <= character && character <= 0xF8FF;
 }
 
-static bool isTokenDelimiter(UChar character)
+static bool NODELETE isTokenDelimiter(char16_t character)
 {
     return isHTMLLineBreak(character) || isInPrivateUseArea(character);
 }
 
-static bool isNotSpace(UChar character)
+static bool NODELETE isNotSpace(char16_t character)
 {
     if (character == noBreakSpace)
         return false;
@@ -190,7 +200,7 @@ public:
     {
         CurrentContent content = { m_node.copyRef(), m_text ? m_text.value() : Vector<String> { }, !!m_text };
         if (content.node) {
-            if (CheckedPtr renderer = content.node->renderer()) {
+            if (auto* renderer = content.node->renderer()) {
                 if (renderer->isRenderReplaced()) {
                     content.isTextContent = false;
                     content.isReplacedContent = true;
@@ -200,7 +210,7 @@ public:
         return content;
     }
 
-    bool atEnd() const { return !m_text && m_node == m_pastEndNode; }
+    bool NODELETE atEnd() const { return !m_text && m_node == m_pastEndNode; }
 
 private:
     bool shouldAdvanceIteratorPastCurrentNode() const
@@ -258,7 +268,7 @@ private:
     std::optional<Vector<String>> m_text;
 };
 
-static bool shouldExtractValueForTextManipulation(const HTMLInputElement& input)
+static bool NODELETE shouldExtractValueForTextManipulation(const HTMLInputElement& input)
 {
     // FIXME: Consider using `type()` instead of checking the attribute, so that plain text fields
     // with and without an explicit `type="text"` behave consistently.
@@ -268,10 +278,10 @@ static bool shouldExtractValueForTextManipulation(const HTMLInputElement& input)
     return input.isTextButton();
 }
 
-static bool isAttributeForTextManipulation(const QualifiedName& nameToCheck)
+static bool NODELETE isAttributeForTextManipulation(const QualifiedName& nameToCheck)
 {
     using namespace HTMLNames;
-    static const QualifiedName* const attributeNames[] = {
+    static const std::array attributeNames {
         &titleAttr.get(),
         &altAttr.get(),
         &placeholderAttr.get(),
@@ -287,7 +297,7 @@ static bool isAttributeForTextManipulation(const QualifiedName& nameToCheck)
     return false;
 }
 
-static bool canPerformTextManipulationByReplacingEntireTextContent(const Element& element)
+static bool NODELETE canPerformTextManipulationByReplacingEntireTextContent(const Element& element)
 {
     return element.hasTagName(HTMLNames::titleTag) || element.hasTagName(HTMLNames::optionTag);
 }
@@ -298,7 +308,7 @@ static std::optional<TextManipulationTokenInfo> tokenInfo(Node* node)
         return std::nullopt;
 
     TextManipulationTokenInfo result;
-    result.documentURL = node->document().url();
+    result.documentURL = protect(node)->document().url();
     RefPtr element = dynamicDowncast<Element>(*node);
     if (!element)
         element = node->parentElement();
@@ -332,7 +342,7 @@ static bool isEnclosingItemBoundaryElement(const Element& element)
     auto displayType = renderer->style().display();
     bool isListItem = element.hasTagName(HTMLNames::liTag);
     if (isListItem || element.hasTagName(HTMLNames::aTag)) {
-        if (displayType == DisplayType::Block || displayType == DisplayType::InlineBlock)
+        if (displayType == Style::DisplayType::BlockFlow || displayType == Style::DisplayType::InlineFlowRoot)
             return true;
 
         auto floating = renderer->style().floating();
@@ -349,14 +359,13 @@ static bool isEnclosingItemBoundaryElement(const Element& element)
             return true;
     }
 
-    if (displayType == DisplayType::TableCell)
+    if (displayType == Style::DisplayType::TableCell)
         return true;
 
-    if (element.hasTagName(HTMLNames::spanTag) && displayType == DisplayType::InlineBlock)
+    if (element.hasTagName(HTMLNames::spanTag) && displayType == Style::DisplayType::InlineFlowRoot)
         return true;
 
-    if (displayType == DisplayType::Block && (element.hasTagName(HTMLNames::h1Tag) || element.hasTagName(HTMLNames::h2Tag) || element.hasTagName(HTMLNames::h3Tag)
-        || element.hasTagName(HTMLNames::h4Tag) || element.hasTagName(HTMLNames::h5Tag) || element.hasTagName(HTMLNames::h6Tag)))
+    if (displayType == Style::DisplayType::BlockFlow && is<HTMLHeadingElement>(element))
         return true;
 
     return false;
@@ -364,11 +373,11 @@ static bool isEnclosingItemBoundaryElement(const Element& element)
 
 static bool shouldIgnoreNodeInTextField(const Node& node)
 {
-    RefPtr input = dynamicDowncast<HTMLInputElement>(node.shadowHost());
+    auto* input = dynamicDowncast<HTMLInputElement>(node.shadowHost());
     if (!input)
         return false;
 
-    return input->lastChangeWasUserEdit() || input->isAutoFilled();
+    return input->lastChangeWasUserEdit() || input->autofilled();
 }
 
 TextManipulationController::ManipulationUnit TextManipulationController::createUnit(const Vector<String>& text, Node& textNode)
@@ -388,12 +397,12 @@ TextManipulationController::ManipulationUnit TextManipulationController::createU
 
 bool TextManipulationController::shouldExcludeNodeBasedOnStyle(const Node& node)
 {
-    auto* style = node.renderStyle();
+    CheckedPtr style = node.renderStyle();
     if (!style)
         return false;
 
-    auto& font = style->fontCascade().primaryFont();
-    auto familyName = font.platformData().familyName();
+    Ref font = style->fontCascade().primaryFont();
+    auto familyName = font->platformData().familyName();
     if (familyName.isEmpty())
         return false;
 
@@ -404,7 +413,7 @@ bool TextManipulationController::shouldExcludeNodeBasedOnStyle(const Node& node)
     // FIXME: We should reconsider whether a node should be excluded if the primary font
     // used to render the node changes, since this "icon font" heuristic may return a
     // different result.
-    bool result = font.isProbablyOnlyUsedToRenderIcons();
+    bool result = font->isProbablyOnlyUsedToRenderIcons();
     m_cachedFontFamilyExclusionResults.set(familyName, result);
     return result;
 }
@@ -421,7 +430,7 @@ void TextManipulationController::parse(ManipulationUnit& unit, const String& tex
         if (isTokenDelimiter(character)) {
             if (positionOfLastNonHTMLSpace != notFound && startPositionOfCurrentToken <= positionOfLastNonHTMLSpace) {
                 auto stringForToken = text.substring(startPositionOfCurrentToken, positionOfLastNonHTMLSpace + 1 - startPositionOfCurrentToken);
-                unit.tokens.append(TextManipulationToken { m_tokenIdentifier.generate(), stringForToken, tokenInfo(&textNode), isNodeExcluded });
+                unit.tokens.append(TextManipulationToken { TextManipulationTokenIdentifier::generate(), stringForToken, tokenInfo(&textNode), isNodeExcluded });
                 startPositionOfCurrentToken = positionOfLastNonHTMLSpace + 1;
             }
 
@@ -433,7 +442,7 @@ void TextManipulationController::parse(ManipulationUnit& unit, const String& tex
             auto stringForToken = text.substring(startPositionOfCurrentToken, index + 1 - startPositionOfCurrentToken);
             if (unit.tokens.isEmpty() && !unit.firstTokenContainsDelimiter)
                 unit.firstTokenContainsDelimiter = true;
-            unit.tokens.append(TextManipulationToken { m_tokenIdentifier.generate(), stringForToken, tokenInfo(&textNode), true });
+            unit.tokens.append(TextManipulationToken { TextManipulationTokenIdentifier::generate(), stringForToken, tokenInfo(&textNode), true });
             startPositionOfCurrentToken = index + 1;
             unit.lastTokenContainsDelimiter = true;
         } else if (isNotSpace(character)) {
@@ -445,7 +454,7 @@ void TextManipulationController::parse(ManipulationUnit& unit, const String& tex
 
     if (startPositionOfCurrentToken < text.length()) {
         auto stringForToken = text.substring(startPositionOfCurrentToken, index + 1 - startPositionOfCurrentToken);
-        unit.tokens.append(TextManipulationToken { m_tokenIdentifier.generate(), stringForToken, tokenInfo(&textNode), isNodeExcluded });
+        unit.tokens.append(TextManipulationToken { TextManipulationTokenIdentifier::generate(), stringForToken, tokenInfo(&textNode), isNodeExcluded });
         unit.lastTokenContainsDelimiter = false;
     }
 }
@@ -468,12 +477,12 @@ void TextManipulationController::addItemIfPossible(Vector<ManipulationUnit>&& un
 
     ASSERT(end);
     auto startPosition = firstPositionInOrBeforeNode(units[index].node.ptr());
-    auto endPosition = positionAfterNode(units[end - 1].node.ptr());
+    auto endPosition = positionAfterNode(units[end - 1].node);
     Vector<TextManipulationToken> tokens;
     for (; index < end; ++index)
-        tokens.appendVector(WTFMove(units[index].tokens));
+        tokens.appendVector(WTF::move(units[index].tokens));
 
-    addItem(ManipulationItemData { startPosition, endPosition, nullptr, nullQName(), WTFMove(tokens) });
+    addItem(ManipulationItemData { startPosition, endPosition, nullptr, nullQName(), WTF::move(tokens) });
 }
 
 void TextManipulationController::observeParagraphs(const Position& start, const Position& end)
@@ -496,7 +505,7 @@ void TextManipulationController::observeParagraphs(const Position& start, const 
         ASSERT(contentNode);
 
         if (RefPtr shadowRoot = contentNode->shadowRoot(); shadowRoot && shadowRoot->mode() != ShadowRootMode::UserAgent)
-            observeParagraphs(firstPositionInNode(shadowRoot.get()), lastPositionInNode(shadowRoot.get()));
+            observeParagraphs(firstPositionInNode(*shadowRoot), lastPositionInNode(*shadowRoot));
 
         while (!enclosingItemBoundaryElements.isEmpty() && !enclosingItemBoundaryElements.last()->contains(contentNode.get())) {
             addItemIfPossible(std::exchange(unitsInCurrentParagraph, { }));
@@ -510,29 +519,29 @@ void TextManipulationController::observeParagraphs(const Position& start, const 
 
         if (RefPtr currentElement = dynamicDowncast<Element>(*contentNode)) {
             if (!content.isTextContent && canPerformTextManipulationByReplacingEntireTextContent(*currentElement))
-                addItem(ManipulationItemData { Position(), Position(), *currentElement, nullQName(), { TextManipulationToken { m_tokenIdentifier.generate(), currentElement->textContent(), tokenInfo(currentElement.get()) } } });
+                addItem(ManipulationItemData { Position(), Position(), *currentElement, nullQName(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), currentElement->textContent(), tokenInfo(currentElement.get()) } } });
 
             if (currentElement->hasAttributes()) {
-                for (auto& attribute : currentElement->attributesIterator()) {
+                for (auto& attribute : currentElement->attributes()) {
                     if (isAttributeForTextManipulation(attribute.name()))
-                        addItem(ManipulationItemData { Position(), Position(), *currentElement, attribute.name(), { TextManipulationToken { m_tokenIdentifier.generate(), attribute.value(), tokenInfo(currentElement.get()) } } });
+                        addItem(ManipulationItemData { Position(), Position(), *currentElement, attribute.name(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), attribute.value(), tokenInfo(currentElement.get()) } } });
                 }
             }
 
             if (RefPtr input = dynamicDowncast<HTMLInputElement>(*currentElement)) {
                 if (shouldExtractValueForTextManipulation(*input))
-                    addItem(ManipulationItemData { { }, { }, *currentElement, HTMLNames::valueAttr, { TextManipulationToken { m_tokenIdentifier.generate(), input->value(), tokenInfo(currentElement.get()) } } });
+                    addItem(ManipulationItemData { { }, { }, *currentElement, HTMLNames::valueAttr, { TextManipulationToken { TextManipulationTokenIdentifier::generate(), input->value(), tokenInfo(currentElement.get()) } } });
             }
 
             if (isEnclosingItemBoundaryElement(*currentElement)) {
                 addItemIfPossible(std::exchange(unitsInCurrentParagraph, { }));
-                enclosingItemBoundaryElements.append(*WTFMove(currentElement));
+                enclosingItemBoundaryElements.append(*WTF::move(currentElement));
             }
         }
 
         if (content.isReplacedContent) {
             if (!unitsInCurrentParagraph.isEmpty())
-                unitsInCurrentParagraph.append(ManipulationUnit { *contentNode, { TextManipulationToken { m_tokenIdentifier.generate(), "[]"_s, tokenInfo(content.node.get()), true } } });
+                unitsInCurrentParagraph.append(ManipulationUnit { *contentNode, { TextManipulationToken { TextManipulationTokenIdentifier::generate(), "[]"_s, tokenInfo(content.node.get()), true } } });
             continue;
         }
 
@@ -547,7 +556,7 @@ void TextManipulationController::observeParagraphs(const Position& start, const 
             continue;
 
         bool currentUnitEndsWithDelimiter = currentUnit.lastTokenContainsDelimiter;
-        unitsInCurrentParagraph.append(WTFMove(currentUnit));
+        unitsInCurrentParagraph.append(WTF::move(currentUnit));
 
         if (currentUnitEndsWithDelimiter)
             addItemIfPossible(std::exchange(unitsInCurrentParagraph, { }));
@@ -590,25 +599,25 @@ void TextManipulationController::scheduleObservationUpdate()
 
     m_didScheduleObservationUpdate = true;
 
-    m_document->eventLoop().queueTask(TaskSource::InternalAsyncTask, [weakThis = WeakPtr { *this }] {
-        auto* controller = weakThis.get();
+    protect(m_document)->eventLoop().queueTask(TaskSource::InternalAsyncTask, [weakThis = WeakPtr { *this }] {
+        CheckedPtr controller = weakThis.get();
         if (!controller)
             return;
 
         controller->m_didScheduleObservationUpdate = false;
 
-        HashSet<Ref<Node>> nodesToObserve;
-        for (auto& text : controller->m_manipulatedNodesWithNewContent) {
-            if (!controller->m_manipulatedNodes.contains(text))
+        NodeSet nodesToObserve;
+        for (Ref text : controller->m_manipulatedNodesWithNewContent) {
+            if (!controller->m_manipulatedNodes.contains(text.get()))
                 continue;
             if (shouldIgnoreNodeInTextField(text))
                 continue;
-            controller->m_manipulatedNodes.remove(text);
+            controller->m_manipulatedNodes.remove(text.get());
             nodesToObserve.add(text);
         }
         controller->m_manipulatedNodesWithNewContent.clear();
 
-        for (auto& node : controller->m_addedOrNewlyRenderedNodes) {
+        for (Ref node : controller->m_addedOrNewlyRenderedNodes) {
             if (shouldIgnoreNodeInTextField(node))
                 continue;
             nodesToObserve.add(node);
@@ -619,11 +628,11 @@ void TextManipulationController::scheduleObservationUpdate()
             return;
 
         RefPtr<Node> commonAncestor;
-        for (auto& node : nodesToObserve) {
+        for (Ref node : nodesToObserve) {
             if (!node->isConnected())
                 continue;
 
-            if (RefPtr host = dynamicDowncast<HTMLInputElement>(node->shadowHost()); host && host->lastChangeWasUserEdit())
+            if (auto* host = dynamicDowncast<HTMLInputElement>(node->shadowHost()); host && host->lastChangeWasUserEdit())
                 continue;
 
             if (!commonAncestor)
@@ -633,10 +642,10 @@ void TextManipulationController::scheduleObservationUpdate()
         }
 
         Position start;
-        if (RefPtr element = dynamicDowncast<Element>(commonAncestor.get())) {
+        if (RefPtr element = dynamicDowncast<Element>(commonAncestor)) {
             // Ensure to include the element in the range.
             if (canPerformTextManipulationByReplacingEntireTextContent(*element))
-                start = positionBeforeNode(commonAncestor.get());
+                start = positionBeforeNode(*element);
         }
         if (start.isNull())
             start = firstPositionInOrBeforeNode(commonAncestor.get());
@@ -659,15 +668,15 @@ void TextManipulationController::addItem(ManipulationItemData&& itemData)
 
     ASSERT(m_document);
     ASSERT(!itemData.tokens.isEmpty());
-    auto newID = m_itemIdentifier.generate();
+    auto newID = TextManipulationItemIdentifier::generate();
     m_pendingItemsForCallback.append(TextManipulationItem {
         m_document->frame()->frameID(),
         !m_document->frame()->isMainFrame(),
-        !m_document->topOrigin().isSameSiteAs(m_document->securityOrigin()),
+        !protect(m_document)->topOrigin().isSameSiteAs(protect(protect(m_document)->securityOrigin())),
         newID,
         itemData.tokens.map([](auto& token) { return token; })
     });
-    m_items.add(newID, WTFMove(itemData));
+    m_items.add(newID, WTF::move(itemData));
 
     if (m_pendingItemsForCallback.size() >= itemCallbackBatchingSize)
         flushPendingItemsForCallback();
@@ -683,27 +692,30 @@ void TextManipulationController::flushPendingItemsForCallback()
     m_pendingItemsForCallback.clear();
 }
 
-auto TextManipulationController::completeManipulation(const Vector<WebCore::TextManipulationItem>& completionItems) -> Vector<ManipulationFailure>
+TextManipulationController::ManipulationResult TextManipulationController::completeManipulation(const Vector<TextManipulationItem>& completionItems)
 {
     Vector<ManipulationFailure> failures;
-    HashSet<Ref<Node>> containersWithoutVisualOverflowBeforeReplacement;
+    Vector<uint64_t> succeededIndexes;
+    NodeSet containersWithoutVisualOverflowBeforeReplacement;
     for (unsigned i = 0; i < completionItems.size(); ++i) {
         auto& itemToComplete = completionItems[i];
         auto frameID = itemToComplete.frameID;
+        if (!frameID)
+            continue;
         auto itemID = itemToComplete.identifier;
-        if (!frameID || !m_document || !m_document->frame() || frameID != m_document->frame()->frameID()) {
-            failures.append(ManipulationFailure { frameID, itemID, i, ManipulationFailure::Type::NotAvailable });
+        if (!m_document || !m_document->frame() || (frameID != m_document->frame()->frameID())) {
+            failures.append(ManipulationFailure { *frameID, itemID, i, ManipulationFailure::Type::NotAvailable });
             continue;
         }
 
         if (!itemID) {
-            failures.append(ManipulationFailure { frameID, itemID, i, ManipulationFailure::Type::InvalidItem });
+            failures.append(ManipulationFailure { *frameID, itemID, i, ManipulationFailure::Type::InvalidItem });
             continue;
         }
 
-        auto itemDataIterator = m_items.find(itemID);
+        auto itemDataIterator = m_items.find(*itemID);
         if (itemDataIterator == m_items.end()) {
-            failures.append(ManipulationFailure { frameID, itemID, i, ManipulationFailure::Type::InvalidItem });
+            failures.append(ManipulationFailure { *frameID, itemID, i, ManipulationFailure::Type::InvalidItem });
             continue;
         }
 
@@ -711,8 +723,12 @@ auto TextManipulationController::completeManipulation(const Vector<WebCore::Text
         std::exchange(itemData, itemDataIterator->value);
         m_items.remove(itemDataIterator);
 
-        if (auto failureOrNullopt = replace(itemData, itemToComplete.tokens, containersWithoutVisualOverflowBeforeReplacement))
-            failures.append(ManipulationFailure { frameID, itemID, i, *failureOrNullopt });
+        if (auto failureOrNullopt = replace(itemData, itemToComplete.tokens, containersWithoutVisualOverflowBeforeReplacement)) {
+            failures.append(ManipulationFailure { *frameID, itemID, i, *failureOrNullopt });
+            continue;
+        }
+
+        succeededIndexes.append(i);
     }
 
     if (!containersWithoutVisualOverflowBeforeReplacement.isEmpty()) {
@@ -728,15 +744,15 @@ auto TextManipulationController::completeManipulation(const Vector<WebCore::Text
             if (!box || !box->hasVisualOverflow())
                 continue;
 
-            auto& style = box->style();
-            if (style.width().isFixed() && style.height().isFixed() && !style.hasOutOfFlowPosition() && !style.hasClip()) {
+            CheckedRef style = box->style();
+            if (style->width().isFixed() && style->height().isFixed() && !style->hasOutOfFlowPosition() && style->clip().isAuto()) {
                 element->setInlineStyleProperty(CSSPropertyOverflowX, CSSValueHidden);
                 element->setInlineStyleProperty(CSSPropertyOverflowY, CSSValueAuto);
             }
         }
     }
 
-    return failures;
+    return { WTF::move(failures), WTF::move(succeededIndexes) };
 }
 
 struct TokenExchangeData {
@@ -763,7 +779,7 @@ Vector<Ref<Node>> TextManipulationController::getPath(Node* ancestor, Node* node
     return path;
 }
 
-void TextManipulationController::updateInsertions(Vector<NodeEntry>& lastTopDownPath, const Vector<Ref<Node>>& currentTopDownPath, Node* currentNode, HashSet<Ref<Node>>& insertedNodes, Vector<NodeInsertion>& insertions)
+void TextManipulationController::updateInsertions(Vector<NodeEntry>& lastTopDownPath, const Vector<Ref<Node>>& currentTopDownPath, Node* currentNode, NodeSet& insertedNodes, Vector<NodeInsertion>& insertions)
 {
     size_t i = 0;
     while (i < lastTopDownPath.size() && i < currentTopDownPath.size() && lastTopDownPath[i].first.ptr() == currentTopDownPath[i].ptr())
@@ -776,13 +792,13 @@ void TextManipulationController::updateInsertions(Vector<NodeEntry>& lastTopDown
         for (;i < currentTopDownPath.size(); ++i) {
             Ref<Node> node = currentTopDownPath[i];
             if (!insertedNodes.add(node.copyRef()).isNewEntry) {
-                auto clonedNode = node->cloneNodeInternal(node->protectedDocument(), Node::CloningOperation::OnlySelf);
+                auto clonedNode = node->cloneNode(false);
                 if (auto* data = node->eventTargetData())
                     data->eventListenerMap.copyEventListenersNotCreatedFromMarkupToTarget(clonedNode.ptr());
-                node = WTFMove(clonedNode);
+                node = WTF::move(clonedNode);
             }
             insertions.append(NodeInsertion { lastTopDownPath.size() ? lastTopDownPath.last().second.ptr() : nullptr, node.copyRef() });
-            lastTopDownPath.append({ currentTopDownPath[i].copyRef(), WTFMove(node) });
+            lastTopDownPath.append({ currentTopDownPath[i].copyRef(), WTF::move(node) });
         }
     }
 
@@ -790,7 +806,7 @@ void TextManipulationController::updateInsertions(Vector<NodeEntry>& lastTopDown
         insertions.append(NodeInsertion { lastTopDownPath.size() ? lastTopDownPath.last().second.ptr() : nullptr, *currentNode });
 }
 
-auto TextManipulationController::replace(const ManipulationItemData& item, const Vector<TextManipulationToken>& replacementTokens, HashSet<Ref<Node>>& containersWithoutVisualOverflowBeforeReplacement) -> std::optional<ManipulationFailure::Type>
+auto TextManipulationController::replace(const ManipulationItemData& item, const Vector<TextManipulationToken>& replacementTokens, NodeSet& containersWithoutVisualOverflowBeforeReplacement) -> std::optional<ManipulationFailure::Type>
 {
     if (item.start.isOrphan() || item.end.isOrphan())
         return ManipulationFailure::Type::ContentChanged;
@@ -812,7 +828,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
             newValue.append(replacementTokens[i].content);
         }
         if (item.attributeName == nullQName())
-            element->setTextContent(newValue.toString());
+            element->setTextContent(String { newValue.toString() });
         else if (RefPtr input = dynamicDowncast<HTMLInputElement>(*element); input && item.attributeName == HTMLNames::valueAttr)
             input->setValue(newValue.toString());
         else
@@ -822,7 +838,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
         return std::nullopt;
     }
 
-    if (RefPtr container = item.start.containerNode(); container && shouldIgnoreNodeInTextField(*container))
+    if (auto* container = item.start.containerNode(); container && shouldIgnoreNodeInTextField(*container))
         return ManipulationFailure::Type::ContentChanged;
 
     size_t currentTokenIndex = 0;
@@ -830,7 +846,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
     RefPtr<Node> commonAncestor;
     RefPtr<Node> firstContentNode;
     RefPtr<Node> lastChildOfCommonAncestorInRange;
-    HashSet<Ref<Node>> nodesToRemove;
+    NodeSet nodesToRemove;
     
     for (ParagraphContentIterator iterator { item.start, item.end }; !iterator.atEnd(); iterator.advance()) {
         auto content = iterator.currentContent();
@@ -853,9 +869,9 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
 
             tokensInCurrentNode.append(item.tokens[currentTokenIndex]);
         } else
-            tokensInCurrentNode = createUnit(content.text, *content.node).tokens;
+            tokensInCurrentNode = createUnit(content.text, protect(*content.node)).tokens;
 
-        bool isNodeIncluded = WTF::anyOf(tokensInCurrentNode, [] (auto& token) {
+        bool isNodeIncluded = std::ranges::any_of(tokensInCurrentNode, [](auto& token) {
             return !token.isExcluded;
         });
         for (auto& token : tokensInCurrentNode) {
@@ -873,7 +889,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
         if (!firstContentNode)
             firstContentNode = content.node;
 
-        auto parentNode = content.node->parentNode();
+        RefPtr parentNode = content.node->parentNode();
         if (!commonAncestor)
             commonAncestor = parentNode;
         else if (!parentNode->isDescendantOf(commonAncestor.get())) {
@@ -896,7 +912,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
     for (RefPtr node = commonAncestor; node; node = node->parentNode())
         nodesToRemove.remove(*node);
 
-    HashSet<Ref<Node>> reusedOriginalNodes;
+    NodeSet reusedOriginalNodes;
     Vector<NodeInsertion> insertions;
     auto startTopDownPath = getPath(commonAncestor.get(), firstContentNode.get());
     while (!startTopDownPath.isEmpty()) {
@@ -934,7 +950,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
             for (RefPtr descendentNode = NodeTraversal::next(*originalNode, originalNode.get()); descendentNode; descendentNode = NodeTraversal::next(*descendentNode, originalNode.get()))
                 nodesToRemove.remove(*descendentNode);
         } else
-            replacementNode = Text::create(commonAncestor->protectedDocument(), WTFMove(replacementText));
+            replacementNode = Text::create(protect(commonAncestor->document()), WTF::move(replacementText));
 
         auto topDownPath = getPath(commonAncestor.get(), originalNode.get());
         updateInsertions(lastTopDownPath, topDownPath, replacementNode.get(), reusedOriginalNodes, insertions);
@@ -942,7 +958,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
 
     RefPtr<Node> node = item.end.firstNode();
     if (node && lastChildOfCommonAncestorInRange->contains(node.get())) {
-        auto topDownPath = getPath(commonAncestor.get(), node->parentNode());
+        auto topDownPath = getPath(commonAncestor.get(), protect(node->parentNode()));
         updateInsertions(lastTopDownPath, topDownPath, nullptr, reusedOriginalNodes, insertions);
     }
     while (lastChildOfCommonAncestorInRange->contains(node.get())) {

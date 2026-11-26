@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 
 #include <WebCore/UniqueIDBDatabase.h>
 #include <WebCore/UniqueIDBDatabaseManager.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 class IDBRequestData;
@@ -45,6 +46,8 @@ namespace WebKit {
 class IDBStorageRegistry;
 
 class IDBStorageManager final : public WebCore::IDBServer::UniqueIDBDatabaseManager {
+    WTF_MAKE_TZONE_ALLOCATED(IDBStorageManager);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBStorageManager);
 public:
     static void createVersionDirectoryIfNeeded(const String& rootDirectory);
     static String idbStorageOriginDirectory(const String& rootDirectory, const WebCore::ClientOrigin&);
@@ -53,9 +56,9 @@ public:
     static bool migrateOriginData(const String& oldOriginDirectory, const String& newOriginDirectory);
 
     using QuotaCheckFunction = Function<void(uint64_t spaceRequested, CompletionHandler<void(bool)>&&)>;
-    IDBStorageManager(const String& path, IDBStorageRegistry&, QuotaCheckFunction&&);
+    IDBStorageManager(const String& path, IDBStorageRegistry&, QuotaCheckFunction&&, bool useSQLiteMemoryBackingStore);
     ~IDBStorageManager();
-    bool isActive() const;
+    bool NODELETE isActive() const;
     bool hasDataInMemory() const;
     void closeDatabasesForDeletion();
     void stopDatabaseActivitiesForSuspend();
@@ -65,6 +68,7 @@ public:
     void openDBRequestCancelled(const WebCore::IDBOpenRequestData&);
     void deleteDatabase(WebCore::IDBServer::IDBConnectionToClient&, const WebCore::IDBOpenRequestData&);
     Vector<WebCore::IDBDatabaseNameAndVersion> getAllDatabaseNamesAndVersions();
+    void tryCloseDatabase(const WebCore::IDBDatabaseIdentifier&);
 
 private:
     WebCore::IDBServer::UniqueIDBDatabase& getOrCreateUniqueIDBDatabase(const WebCore::IDBDatabaseIdentifier&);
@@ -78,9 +82,11 @@ private:
     void requestSpace(const WebCore::ClientOrigin&, uint64_t size, CompletionHandler<void(bool)>&&) final;
 
     String m_path;
-    IDBStorageRegistry& m_registry;
+    const CheckedRef<IDBStorageRegistry> m_registry;
     QuotaCheckFunction m_quotaCheckFunction;
     HashMap<WebCore::IDBDatabaseIdentifier, std::unique_ptr<WebCore::IDBServer::UniqueIDBDatabase>> m_databases;
+    bool m_useSQLiteMemoryBackingStore { false };
+    bool m_isClosing { false };
 };
 
 } // namespace WebKit

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MessageReceiver.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/Ref.h>
 
 namespace WTF {
@@ -34,12 +35,17 @@ class WorkQueue;
 
 namespace WebKit {
 
+class WebProcess;
+
 class WebInspectorInterruptDispatcher final : private IPC::MessageReceiver {
 public:
-    WebInspectorInterruptDispatcher();
+    explicit WebInspectorInterruptDispatcher(WebProcess&);
     ~WebInspectorInterruptDispatcher();
     
     void initializeConnection(IPC::Connection&);
+
+    void ref() const final;
+    void deref() const final;
     
 private:
     // IPC::MessageReceiver overrides.
@@ -47,7 +53,8 @@ private:
     
     void notifyNeedDebuggerBreak();
     
-    Ref<WTF::WorkQueue> m_queue;
+    const CheckedRef<WebProcess> m_process;
+    const Ref<WTF::WorkQueue> m_queue;
 };
 
 } // namespace WebKit

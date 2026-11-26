@@ -38,15 +38,15 @@ public:
     Expression& test() { return m_test.get(); }
     CompoundStatement& trueBody() { return m_trueBody.get(); }
     Statement* maybeFalseBody() { return m_falseBody; }
-    Attribute::List& attributes() { return m_attributes; }
+    Attribute::List& attributes() LIFETIME_BOUND { return m_attributes; }
 
 private:
     IfStatement(SourceSpan span, Expression::Ref&& test, CompoundStatement::Ref&& trueBody, Statement::Ptr falseBody, Attribute::List&& attributes)
         : Statement(span)
-        , m_test(WTFMove(test))
-        , m_trueBody(WTFMove(trueBody))
+        , m_test(WTF::move(test))
+        , m_trueBody(WTF::move(trueBody))
         , m_falseBody(falseBody)
-        , m_attributes(WTFMove(attributes))
+        , m_attributes(WTF::move(attributes))
     { }
 
     Expression::Ref m_test;

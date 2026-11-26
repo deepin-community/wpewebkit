@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -40,14 +41,14 @@ enum class ContactProperty : uint8_t;
 
 struct ContactsSelectOptions;
 
-class ContactsManager final : public RefCounted<ContactsManager>, public CanMakeWeakPtr<ContactsManager> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ContactsManager);
+class ContactsManager final : public RefCountedAndCanMakeWeakPtr<ContactsManager> {
+    WTF_MAKE_TZONE_ALLOCATED(ContactsManager);
 public:
-    static Ref<ContactsManager> create(Navigator&);
+    static Ref<ContactsManager> NODELETE create(Navigator&);
     ~ContactsManager();
 
-    LocalFrame* frame() const;
-    Navigator* navigator();
+    LocalFrame* NODELETE frame() const;
+    Navigator* NODELETE navigator();
 
     void getProperties(Ref<DeferredPromise>&&);
     void select(const Vector<ContactProperty>&, const ContactsSelectOptions&, Ref<DeferredPromise>&&);

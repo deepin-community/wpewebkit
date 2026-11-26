@@ -5,8 +5,10 @@
 //
 // ProgramExecutable.cpp: Collects the interfaces common to both Programs and
 // ProgramPipelines in order to execute/draw with either.
+//
 
 #include "libANGLE/ProgramExecutable.h"
+#include "common/unsafe_buffers.h"
 
 #include "common/string_utils.h"
 #include "libANGLE/Context.h"
@@ -360,8 +362,8 @@ void CopyStringToBuffer(GLchar *buffer,
 {
     ASSERT(bufSize > 0);
     size_t length = std::min<size_t>(bufSize - 1, string.length());
-    memcpy(buffer, string.c_str(), length);
-    buffer[length] = '\0';
+    ANGLE_UNSAFE_TODO(memcpy(buffer, string.c_str(), length));
+    ANGLE_UNSAFE_TODO(buffer[length]) = '\0';
 
     if (lengthOut)
     {
@@ -576,6 +578,11 @@ void GetInterfaceBlockName(const UniformBlockIndex index,
 
     const auto &block = list[index.value];
 
+    if (length)
+    {
+        *length = 0;
+    }
+
     if (bufSize > 0)
     {
         std::string blockName = block.name;
@@ -670,8 +677,9 @@ void UniformStateQueryCastLoop(DestT *dataOut, const uint8_t *srcPointer, int co
         // We only work with strides of 4 bytes for uniform components. (GLfloat/GLint)
         // Don't use SrcT stride directly since GLboolean has a stride of 1 byte.
         size_t offset               = comp * 4;
-        const SrcT *typedSrcPointer = reinterpret_cast<const SrcT *>(&srcPointer[offset]);
-        dataOut[comp]               = UniformStateQueryCast<DestT>(*typedSrcPointer);
+        const SrcT *typedSrcPointer =
+            reinterpret_cast<const SrcT *>(&ANGLE_UNSAFE_TODO(srcPointer[offset]));
+        ANGLE_UNSAFE_TODO(dataOut[comp]) = UniformStateQueryCast<DestT>(*typedSrcPointer);
     }
 }
 }  // anonymous namespace
@@ -744,9 +752,10 @@ ProgramExecutable::ProgramExecutable(rx::GLImplFactory *factory, InfoLog *infoLo
       mInfoLog(infoLog),
       mCachedBaseVertex(0),
       mCachedBaseInstance(0),
-      mIsPPO(false)
+      mIsPPO(false),
+      mBinaryRetrieveableHint(false)
 {
-    memset(&mPod, 0, sizeof(mPod));
+    ANGLE_UNSAFE_TODO(memset(&mPod, 0, sizeof(mPod)));
     reset();
 }
 
@@ -789,10 +798,13 @@ void ProgramExecutable::reset()
 
     mPod.fragmentInoutIndices.reset();
 
-    mPod.hasClipDistance         = false;
-    mPod.hasDiscard              = false;
-    mPod.enablesPerSampleShading = false;
-    mPod.hasYUVOutput            = false;
+    mPod.hasClipDistance           = false;
+    mPod.hasDiscard                = false;
+    mPod.enablesPerSampleShading   = false;
+    mPod.hasYUVOutput              = false;
+    mPod.hasDepthInputAttachment   = false;
+    mPod.hasStencilInputAttachment = false;
+    mPod.hasFragCoord              = false;
 
     mPod.advancedBlendEquations.reset();
 
@@ -818,7 +830,7 @@ void ProgramExecutable::reset()
     mPod.drawBufferTypeMask.reset();
     mPod.computeShaderLocalSize.fill(1);
 
-    mPod.specConstUsageBits.reset();
+    mPod.padding = 0;
 
     mActiveSamplersMask.reset();
     mActiveSamplerRefCounts = {};
@@ -827,6 +839,9 @@ void ProgramExecutable::reset()
     mActiveSamplerFormats.fill(SamplerFormat::InvalidEnum);
 
     mActiveImagesMask.reset();
+
+    mActiveUniformBufferBlocks.reset();
+    mActiveStorageBufferBlocks.reset();
 
     mUniformBlockIndexToBufferBinding = {};
 
@@ -847,6 +862,7 @@ void ProgramExecutable::reset()
     mSamplerBindings.clear();
     mSamplerBoundTextureUnits.clear();
     mImageBindings.clear();
+    mPixelLocalStorageLayouts.clear();
 
     mPostLinkSubTasks.clear();
     mPostLinkSubTaskWaitableEvents.clear();
@@ -947,6 +963,12 @@ void ProgramExecutable::load(gl::BinaryInputStream *stream)
         }
     }
 
+    // ANGLE_shader_pixel_local_storage.
+    size_t plsCount = stream->readInt<size_t>();
+    ASSERT(mPixelLocalStorageLayouts.empty());
+    mPixelLocalStorageLayouts.resize(plsCount);
+    stream->readBytes(angle::as_writable_byte_span(mPixelLocalStorageLayouts));
+
     // These values are currently only used by PPOs, so only load them when the program is marked
     // separable to save memory.
     if (mPod.isSeparable)
@@ -1042,11 +1064,15 @@ void ProgramExecutable::save(gl::BinaryOutputStream *stream) const
     {
         stream->writeInt(imageBinding.boundImageUnits.size());
         stream->writeInt(static_cast<unsigned int>(imageBinding.textureType));
-        for (size_t i = 0; i < imageBinding.boundImageUnits.size(); ++i)
+        for (unsigned int boundImageUnit : imageBinding.boundImageUnits)
         {
-            stream->writeInt(imageBinding.boundImageUnits[i]);
+            stream->writeInt(boundImageUnit);
         }
     }
+
+    // ANGLE_shader_pixel_local_storage.
+    stream->writeInt<size_t>(mPixelLocalStorageLayouts.size());
+    stream->writeBytes(angle::as_byte_span(mPixelLocalStorageLayouts));
 
     // These values are currently only used by PPOs, so only save them when the program is marked
     // separable to save memory.
@@ -1274,12 +1300,7 @@ bool ProgramExecutable::linkMergedVaryings(const Caps &caps,
     // Map the varyings to the register file
     // In WebGL, we use a slightly different handling for packing variables.
     gl::PackMode packMode = PackMode::ANGLE_RELAXED;
-    if (limitations.noFlexibleVaryingPacking)
-    {
-        // D3D9 pack mode is strictly more strict than WebGL, so takes priority.
-        packMode = PackMode::ANGLE_NON_CONFORMANT_D3D9;
-    }
-    else if (webglCompatibility)
+    if (webglCompatibility)
     {
         packMode = PackMode::WEBGL_STRICT;
     }
@@ -1629,7 +1650,9 @@ bool ProgramExecutable::linkValidateOutputVariables(
 
         // Don't store outputs for gl_FragDepth, gl_FragColor, etc.
         if (outputVariable.isBuiltIn())
+        {
             continue;
+        }
 
         int fixedLocation = GetOutputLocationForLink(fragmentOutputLocations, outputVariable);
         if (fixedLocation == -1)
@@ -1680,7 +1703,9 @@ bool ProgramExecutable::linkValidateOutputVariables(
 
         // Don't store outputs for gl_FragDepth, gl_FragColor, etc.
         if (outputVariable.isBuiltIn())
+        {
             continue;
+        }
 
         AssignOutputIndex(fragmentOutputIndices, outputVariable);
         ASSERT(outputVariable.pod.index == 0 || outputVariable.pod.index == 1);
@@ -1939,8 +1964,9 @@ bool ProgramExecutable::linkAtomicCounterBuffers(const Caps &caps)
     {
         auto &uniform = mUniforms[index];
 
-        uniform.pod.blockOffset                    = uniform.getOffset();
-        uniform.pod.blockArrayStride               = uniform.isArray() ? 4 : 0;
+        uniform.pod.blockArrayStride = uniform.isArray() ? 4 : 0;
+        uniform.pod.blockOffset =
+            uniform.getOffset() + uniform.pod.blockArrayStride * uniform.getOuterArrayOffset();
         uniform.pod.blockMatrixStride              = 0;
         uniform.pod.flagBits.blockIsRowMajorMatrix = false;
         uniform.pod.flagBits.isBlock               = true;
@@ -1973,9 +1999,8 @@ bool ProgramExecutable::linkAtomicCounterBuffers(const Caps &caps)
     // per-stage and combined gl_Max*AtomicCounterBuffers.
     GLint combinedShaderACBCount           = 0;
     gl::ShaderMap<GLint> perShaderACBCount = {};
-    for (size_t bufferIndex = 0; bufferIndex < mAtomicCounterBuffers.size(); ++bufferIndex)
+    for (const AtomicCounterBuffer &acb : mAtomicCounterBuffers)
     {
-        AtomicCounterBuffer &acb        = mAtomicCounterBuffers[bufferIndex];
         const ShaderBitSet shaderStages = acb.activeShaders();
         for (gl::ShaderType shaderType : shaderStages)
         {
@@ -2317,11 +2342,6 @@ void ProgramExecutable::getTransformFeedbackVarying(GLuint index,
     ASSERT(index < mLinkedTransformFeedbackVaryings.size());
     const auto &var     = mLinkedTransformFeedbackVaryings[index];
     std::string varName = var.nameWithArrayIndex();
-    GLsizei lastNameIdx = std::min(bufSize - 1, static_cast<GLsizei>(varName.length()));
-    if (length)
-    {
-        *length = lastNameIdx;
-    }
     if (size)
     {
         *size = var.size();
@@ -2330,10 +2350,14 @@ void ProgramExecutable::getTransformFeedbackVarying(GLuint index,
     {
         *type = var.type;
     }
-    if (name)
+
+    if (length)
     {
-        memcpy(name, varName.c_str(), lastNameIdx);
-        name[lastNameIdx] = '\0';
+        *length = 0;
+    }
+    if (name && bufSize > 0)
+    {
+        CopyStringToBuffer(name, varName, bufSize, length);
     }
 }
 
@@ -2344,17 +2368,17 @@ void ProgramExecutable::getActiveAttribute(GLuint index,
                                            GLenum *type,
                                            GLchar *name) const
 {
+    if (length)
+    {
+        *length = 0;
+    }
+
     if (mProgramInputs.empty())
     {
         // Program is not successfully linked
         if (bufsize > 0)
         {
             name[0] = '\0';
-        }
-
-        if (length)
-        {
-            *length = 0;
         }
 
         *type = GL_NONE;
@@ -2407,6 +2431,11 @@ void ProgramExecutable::getActiveUniform(GLuint index,
                                          GLenum *type,
                                          GLchar *name) const
 {
+    if (length)
+    {
+        *length = 0;
+    }
+
     if (mUniforms.empty())
     {
         // Program is not successfully linked
@@ -2415,13 +2444,15 @@ void ProgramExecutable::getActiveUniform(GLuint index,
             name[0] = '\0';
         }
 
-        if (length)
+        if (size)
         {
-            *length = 0;
+            *size = 0;
         }
 
-        *size = 0;
-        *type = GL_NONE;
+        if (type)
+        {
+            *type = GL_NONE;
+        }
     }
 
     ASSERT(index < mUniforms.size());
@@ -2433,8 +2464,14 @@ void ProgramExecutable::getActiveUniform(GLuint index,
         CopyStringToBuffer(name, string, bufsize, length);
     }
 
-    *size = clampCast<GLint>(uniform.getBasicTypeElementCount());
-    *type = uniform.getType();
+    if (size)
+    {
+        *size = clampCast<GLint>(uniform.getBasicTypeElementCount());
+    }
+    if (type)
+    {
+        *type = uniform.getType();
+    }
 }
 
 GLint ProgramExecutable::getActiveUniformMaxLength() const
@@ -2915,6 +2952,24 @@ void ProgramExecutable::remapUniformBlockBinding(UniformBlockIndex uniformBlockI
     mUniformBufferBindingToUniformBlocks[uniformBlockBinding].set(uniformBlockIndex.value);
 }
 
+void ProgramExecutable::updateActiveUniformBufferBlocks()
+{
+    for (size_t blockIndex = 0; blockIndex < mUniformBlocks.size(); blockIndex++)
+    {
+        mActiveUniformBufferBlocks.set(blockIndex,
+                                       mUniformBlocks[blockIndex].activeShaderCount() > 0);
+    }
+}
+
+void ProgramExecutable::updateActiveStorageBufferBlocks()
+{
+    for (size_t blockIndex = 0; blockIndex < mShaderStorageBlocks.size(); blockIndex++)
+    {
+        mActiveStorageBufferBlocks.set(blockIndex,
+                                       mShaderStorageBlocks[blockIndex].activeShaderCount() > 0);
+    }
+}
+
 void ProgramExecutable::setUniformValuesFromBindingQualifiers()
 {
     for (unsigned int samplerIndex : mPod.samplerUniformRange)
@@ -2947,7 +3002,9 @@ GLsizei ProgramExecutable::clampUniformCount(const VariableLocation &locationInf
                                              const T *v)
 {
     if (count == 1)
+    {
         return 1;
+    }
 
     const LinkedUniform &linkedUniform = mUniforms[locationInfo.index];
 
@@ -2995,7 +3052,7 @@ void ProgramExecutable::updateSamplerUniform(Context *context,
 {
     ASSERT(isSamplerUniformIndex(locationInfo.index));
     GLuint samplerIndex                    = getSamplerIndexFromUniformIndex(locationInfo.index);
-    SamplerBinding &samplerBinding         = mSamplerBindings[samplerIndex];
+    const SamplerBinding &samplerBinding   = mSamplerBindings[samplerIndex];
     std::vector<GLuint> &boundTextureUnits = mSamplerBoundTextureUnits;
 
     if (locationInfo.arrayIndex >= samplerBinding.textureUnitsCount)
@@ -3011,7 +3068,7 @@ void ProgramExecutable::updateSamplerUniform(Context *context,
     {
         GLint oldTextureUnit =
             samplerBinding.getTextureUnit(boundTextureUnits, arrayIndex + locationInfo.arrayIndex);
-        GLint newTextureUnit = v[arrayIndex];
+        GLint newTextureUnit = ANGLE_UNSAFE_TODO(v[arrayIndex]);
 
         if (oldTextureUnit == newTextureUnit)
         {

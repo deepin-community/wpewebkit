@@ -5,7 +5,7 @@
 //
 // CompiledShaderState.h:
 //   Defines a struct containing any data that is needed to build
-//   a ShaderState from a TCompiler.
+//   a CompiledShaderState from a TCompiler.
 //
 
 #ifndef COMMON_COMPILEDSHADERSTATE_H_
@@ -31,10 +31,6 @@ using CompilerMetadataFlags = angle::PackedEnumBitSet<sh::MetadataFlags, uint32_
 namespace gl
 {
 
-// @todo this type is also defined in compiler/Compiler.h and libANGLE/renderer_utils.h. Move this
-// to a single common definition?
-using SpecConstUsageBits = angle::PackedEnumBitSet<sh::vk::SpecConstUsage, uint32_t>;
-
 // Helper functions for serializing shader variables
 void WriteShaderVar(gl::BinaryOutputStream *stream, const sh::ShaderVariable &var);
 void LoadShaderVar(gl::BinaryInputStream *stream, sh::ShaderVariable *var);
@@ -44,12 +40,16 @@ void LoadShInterfaceBlock(gl::BinaryInputStream *stream, sh::InterfaceBlock *blo
 
 bool CompareShaderVar(const sh::ShaderVariable &x, const sh::ShaderVariable &y);
 
+std::string JoinShaderSources(GLsizei count, const char *const *string, const GLint *length);
+
 struct CompiledShaderState
 {
     CompiledShaderState(gl::ShaderType shaderType);
     ~CompiledShaderState();
 
-    void buildCompiledShaderState(const ShHandle compilerHandle, const bool isBinaryOutput);
+    void buildCompiledShaderState(const ShHandle compilerHandle,
+                                  ShShaderOutput outputType);
+    void buildPassthroughCompiledShaderState(std::shared_ptr<const std::string> inputShaderSource);
 
     void serialize(gl::BinaryOutputStream &stream) const;
     void deserialize(gl::BinaryInputStream &stream);
@@ -70,7 +70,7 @@ struct CompiledShaderState
     const gl::ShaderType shaderType;
 
     int shaderVersion;
-    std::string translatedSource;
+    std::shared_ptr<const std::string> translatedSource;
     sh::BinaryBlob compiledBinary;
     sh::WorkGroupSize localSize;
 
@@ -85,7 +85,6 @@ struct CompiledShaderState
 
     sh::CompilerMetadataFlags metadataFlags;
     gl::BlendEquationBitSet advancedBlendEquations;
-    SpecConstUsageBits specConstUsageBits;
 
     // GL_OVR_multiview / GL_OVR_multiview2
     int numViews;
@@ -102,6 +101,10 @@ struct CompiledShaderState
     GLenum tessGenSpacing;
     GLenum tessGenVertexOrder;
     GLenum tessGenPointMode;
+
+    // ANGLE_shader_pixel_local_storage: A mapping from binding index to the PLS uniform format at
+    // that index.
+    std::vector<ShPixelLocalStorageLayout> pixelLocalStorageLayouts;
 };
 
 using SharedCompiledShaderState = std::shared_ptr<CompiledShaderState>;

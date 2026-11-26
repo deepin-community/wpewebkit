@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "Subspace.h"
+#include <JavaScriptCore/AllocatorForMode.h>
+#include <JavaScriptCore/Subspace.h>
 
 namespace JSC {
 
@@ -47,7 +48,9 @@ public:
     
     static constexpr ptrdiff_t offsetOfAllocatorForSizeStep() { return OBJECT_OFFSETOF(CompleteSubspace, m_allocatorForSizeStep); }
     
-    Allocator* allocatorForSizeStep() { return &m_allocatorForSizeStep[0]; }
+    std::span<Allocator, MarkedSpace::numSizeClasses> allocatorsForSizeSteps() { return m_allocatorForSizeStep; }
+
+    void prepareAllAllocators();
 
 private:
     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);

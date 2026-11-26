@@ -23,46 +23,46 @@
 
 #pragma once
 
-#include "Autofill.h"
-#include "HTMLElement.h"
-#include "ValidatedFormListedElement.h"
+#include <WebCore/Autofill.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/ValidatedFormListedElement.h>
 
 #if ENABLE(AUTOCAPITALIZE)
-#include "Autocapitalize.h"
+#include <WebCore/Autocapitalize.h>
 #endif
 
 namespace WebCore {
 
 class HTMLFormControlElement : public HTMLElement, public ValidatedFormListedElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLFormControlElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLFormControlElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLFormControlElement);
 public:
+    USING_CAN_MAKE_WEAKPTR(HTMLElement);
+
     virtual ~HTMLFormControlElement();
 
-    bool isValidatedFormListedElement() const final { return true; }
-    bool isFormListedElement() const final { return true; }
+    bool NODELETE isValidatedFormListedElement() const final { return true; }
+    bool NODELETE isFormListedElement() const final { return true; }
 
     bool matchesValidPseudoClass() const override { return ValidatedFormListedElement::matchesValidPseudoClass(); }
     bool matchesInvalidPseudoClass() const override { return ValidatedFormListedElement::matchesInvalidPseudoClass(); }
     bool matchesUserValidPseudoClass() const override { return ValidatedFormListedElement::matchesUserValidPseudoClass(); }
     bool matchesUserInvalidPseudoClass() const override { return ValidatedFormListedElement::matchesUserInvalidPseudoClass(); }
 
-    bool isDisabledFormControl() const override { return isDisabled(); }
+    bool NODELETE isDisabledFormControl() const override { return isDisabled(); }
     bool supportsFocus() const override { return !isDisabled(); }
 
     WEBCORE_EXPORT String formEnctype() const;
-    WEBCORE_EXPORT void setFormEnctype(const AtomString&);
     WEBCORE_EXPORT String formMethod() const;
-    WEBCORE_EXPORT void setFormMethod(const AtomString&);
-    bool formNoValidate() const;
+    bool NODELETE formNoValidate() const;
     WEBCORE_EXPORT String formAction() const;
-    WEBCORE_EXPORT void setFormAction(const AtomString&);
 
     bool formControlValueMatchesRenderer() const { return m_valueMatchesRenderer; }
     void setFormControlValueMatchesRenderer(bool b) { m_valueMatchesRenderer = b; }
 
     bool wasChangedSinceLastFormControlChangeEvent() const { return m_wasChangedSinceLastFormControlChangeEvent; }
-    void setChangedSinceLastFormControlChangeEvent(bool);
+    void NODELETE setChangedSinceLastFormControlChangeEvent(bool);
+    bool wasCreatedByTaintedScript() const { return m_wasCreatedByTaintedScript; }
 
     virtual void dispatchFormControlChangeEvent();
     void dispatchChangeEvent();
@@ -89,9 +89,8 @@ public:
 #endif
 
     WEBCORE_EXPORT String autocomplete() const;
-    WEBCORE_EXPORT void setAutocomplete(const AtomString&);
 
-    AutofillMantle autofillMantle() const;
+    AutofillMantle NODELETE autofillMantle() const;
 
     WEBCORE_EXPORT AutofillData autofillData() const;
 
@@ -101,39 +100,32 @@ public:
 
     RefPtr<HTMLElement> popoverTargetElement() const;
     const AtomString& popoverTargetAction() const;
-    void setPopoverTargetAction(const AtomString& value);
 
-    RefPtr<Element> commandForElement() const;
-
-    bool isKeyboardFocusable(KeyboardEvent*) const override;
+    bool isKeyboardFocusable(const FocusEventData&) const override;
 
     using Node::ref;
     using Node::deref;
 
 protected:
-    HTMLFormControlElement(const QualifiedName& tagName, Document&, HTMLFormElement*);
+    HTMLFormControlElement(const QualifiedName& tagName, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
-    void didFinishInsertingNode() override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
+    void postConnectionSteps() override;
     void didAttachRenderers() override;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) override;
-    void removedFromAncestor(RemovalType, ContainerNode&) override;
+    void removingSteps(RemovalType, ContainerNode&) override;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
 
     void disabledStateChanged() override;
-    void readOnlyStateChanged() override;
     virtual void requiredStateChanged();
 
     bool isMouseFocusable() const override;
 
-    void didRecalcStyle(Style::Change) override;
+    void didRecalcStyle(OptionSet<Style::Change>) override;
 
     void dispatchBlurEvent(RefPtr<Element>&& newFocusedElement) override;
 
-    void handlePopoverTargetAction() const;
-
-    CommandType commandType() const;
-    void handleCommand();
+    void handlePopoverTargetAction(const EventTarget*);
 
 private:
     void refFormAssociatedElement() const final { ref(); }
@@ -142,29 +134,24 @@ private:
     void runFocusingStepsForAutofocus() final;
     HTMLElement* validationAnchorElement() final { return this; }
 
-    bool isFormControlElement() const final { return true; }
-
     // These functions can be called concurrently for ValidityState.
     HTMLElement& asHTMLElement() final { return *this; }
     const HTMLFormControlElement& asHTMLElement() const final { return *this; }
 
-    FormAssociatedElement* asFormAssociatedElement() final { return this; }
-    FormListedElement* asFormListedElement() final { return this; }
-    ValidatedFormListedElement* asValidatedFormListedElement() final { return this; }
+    FormAssociatedElement* NODELETE asFormAssociatedElement() final { return this; }
+    FormListedElement* NODELETE asFormListedElement() final { return this; }
+    ValidatedFormListedElement* NODELETE asValidatedFormListedElement() final { return this; }
 
     unsigned m_isRequired : 1;
     unsigned m_valueMatchesRenderer : 1;
     unsigned m_wasChangedSinceLastFormControlChangeEvent : 1;
+    unsigned m_wasCreatedByTaintedScript : 1;
 };
 
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::HTMLFormControlElement)
     static bool isType(const WebCore::Element& element) { return element.isFormControlElement(); }
-    static bool isType(const WebCore::Node& node)
-    {
-        auto* element = dynamicDowncast<WebCore::Element>(node);
-        return element && isType(*element);
-    }
-    static bool isType(const WebCore::FormListedElement& element) { return element.isFormControlElement(); }
+    static bool isType(const WebCore::Node& node) { return node.isFormControlElement(); }
+    static bool isType(const WebCore::FormListedElement& listedElement) { return listedElement.asHTMLElement().isFormControlElement(); }
 SPECIALIZE_TYPE_TRAITS_END()

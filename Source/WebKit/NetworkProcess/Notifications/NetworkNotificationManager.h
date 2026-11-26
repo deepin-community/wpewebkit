@@ -27,14 +27,18 @@
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
 
+#include "NetworkProcess.h"
 #include "NotificationManagerMessageHandler.h"
-#include "WebPushDaemonConnection.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "WebPushDaemonConnectionConfiguration.h"
 #include "WebPushMessage.h"
 #include <WebCore/ExceptionData.h>
 #include <WebCore/NotificationDirection.h>
 #include <WebCore/PushSubscriptionData.h>
+#include <WebCore/ServiceWorkerIdentifier.h>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -45,16 +49,18 @@ class SecurityOriginData;
 namespace WebKit {
 
 namespace WebPushD {
+class Connection;
 enum class MessageType : uint8_t;
 }
 
-class NetworkSession;
-
-class NetworkNotificationManager : public NotificationManagerMessageHandler {
+class NetworkNotificationManager : public NotificationManagerMessageHandler, public RefCounted<NetworkNotificationManager> {
     WTF_MAKE_TZONE_ALLOCATED(NetworkNotificationManager);
-    friend class NetworkSession;
 public:
-    NetworkSession& networkSession() const { return m_networkSession; }
+    static Ref<NetworkNotificationManager> create(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&, NetworkProcess&);
+    ~NetworkNotificationManager();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void setPushAndNotificationsEnabledForOrigin(const WebCore::SecurityOriginData&, bool, CompletionHandler<void()>&&);
     void getPendingPushMessage(CompletionHandler<void(const std::optional<WebPushMessage>&)>&&);
@@ -63,30 +69,36 @@ public:
     void subscribeToPushService(URL&& scopeURL, Vector<uint8_t>&& applicationServerKey, CompletionHandler<void(Expected<WebCore::PushSubscriptionData, WebCore::ExceptionData>&&)>&&);
     void unsubscribeFromPushService(URL&& scopeURL, std::optional<WebCore::PushSubscriptionIdentifier>, CompletionHandler<void(Expected<bool, WebCore::ExceptionData>&&)>&&);
     void getPushSubscription(URL&& scopeURL, CompletionHandler<void(Expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData>&&)>&&);
-    void getPushPermissionState(URL&& scopeURL, CompletionHandler<void(Expected<uint8_t, WebCore::ExceptionData>&&)>&&);
+
+    void requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&&) final;
+    void getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
+
     void incrementSilentPushCount(WebCore::SecurityOriginData&&, CompletionHandler<void(unsigned)>&&);
     void removeAllPushSubscriptions(CompletionHandler<void(unsigned)>&&);
     void removePushSubscriptionsForOrigin(WebCore::SecurityOriginData&&, CompletionHandler<void(unsigned)>&&);
+    void getAllPushSubscriptionOrigins(CompletionHandler<void(Vector<WebCore::SecurityOriginData>&&)>&&);
 
+    void showNotification(const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>&&, CompletionHandler<void()>&&);
     void getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(Expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&&);
+    void clearNotifications(const Vector<WTF::UUID>& notificationIDs) final;
 
     void getAppBadgeForTesting(CompletionHandler<void(std::optional<uint64_t>)>&&);
+    void setAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t> badge) final;
+
+    void setServiceWorkerIsBeingInspected(const URL&, bool isInspected);
 
 private:
-    NetworkNotificationManager(NetworkSession&, const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&);
+    NetworkNotificationManager(const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&&, NetworkProcess&);
 
     void showNotification(IPC::Connection&, const WebCore::NotificationData&, RefPtr<WebCore::NotificationResources>&&, CompletionHandler<void()>&&) final;
-    void cancelNotification(const WTF::UUID& notificationID) final;
-    void clearNotifications(const Vector<WTF::UUID>& notificationIDs) final;
+    void cancelNotification(WebCore::SecurityOriginData&&, const WTF::UUID& notificationID) final;
     void didDestroyNotification(const WTF::UUID& notificationID) final;
     void pageWasNotifiedOfNotificationPermission() final { }
-    void requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&&) final;
-    void setAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t> badge) final;
-    void getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
     void getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&) final;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const final;
 
-    NetworkSession& m_networkSession;
-    std::unique_ptr<WebPushD::Connection> m_connection;
+    RefPtr<WebPushD::Connection> m_connection;
+    const Ref<NetworkProcess> m_networkProcess;
 };
 
 } // namespace WebKit

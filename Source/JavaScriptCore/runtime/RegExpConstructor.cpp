@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2019 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
  *  Copyright (C) 2009 Torch Mobile, Inc.
  *
  *  This library is free software; you can redistribute it and/or
@@ -26,6 +26,7 @@
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
 #include "ParseInt.h"
+#include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpPrototype.h"
 #include "YarrFlags.h"
@@ -93,10 +94,9 @@ void RegExpConstructor::finishCreation(VM& vm, RegExpPrototype* regExpPrototype)
 
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, regExpPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
-    JSGlobalObject* globalObject = regExpPrototype->globalObject();
+    JSGlobalObject* globalObject = regExpPrototype->realm();
 
-    if (Options::useRegExpEscape())
-        JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("escape"_s, regExpConstructorEscape, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public);
+    JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("escape"_s, regExpConstructorEscape, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public);
 
     GetterSetter* speciesGetterSetter = GetterSetter::create(vm, globalObject, JSFunction::create(vm, globalObject, 0, "get [Symbol.species]"_s, globalFuncSpeciesGetter, ImplementationVisibility::Public, SpeciesGetterIntrinsic), nullptr);
     putDirectNonIndexAccessorWithoutTransition(vm, vm.propertyNames->speciesSymbol, speciesGetterSetter, PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
@@ -108,22 +108,22 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = callFrame->argument(0);
-    if (UNLIKELY(!value.isString()))
+    if (!value.isString()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.escape requires a string"_s);
 
-    auto string = asString(value)->value(globalObject);
+    auto view = asString(value)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    StringBuilder builder;
-    builder.reserveCapacity(string->length());
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    builder.reserveCapacity(view->length());
 
-    for (unsigned i = 0; i < string->length();) {
+    for (unsigned i = 0; i < view->length() && !builder.hasOverflowed();) {
         char32_t codePoint;
-        if (string->is8Bit())
-            codePoint = string->span8()[i++];
+        if (view->is8Bit())
+            codePoint = view->span8()[i++];
         else {
-            auto characters = string->span16();
-            U16_NEXT(characters, i, string->length(), codePoint);
+            auto characters = view->span16();
+            U16_NEXT(characters, i, view->length(), codePoint);
         }
 
         if (builder.isEmpty() && isASCIIAlphanumeric(codePoint)) {
@@ -174,6 +174,10 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
             builder.append(U16_LEAD(codePoint), U16_TRAIL(codePoint));
     }
 
+    if (builder.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, builder.toString())));
 }
 
@@ -272,7 +276,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorMultiline, (JSGlobalObject* globalO
     return true;
 }
 
-static inline bool areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
+static inline bool NODELETE areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
 {
     if (!newTarget)
         return true;
@@ -305,19 +309,13 @@ inline OptionSet<Yarr::Flags> toFlags(JSGlobalObject* globalObject, JSValue flag
     return result.value();
 }
 
-static JSObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSValue patternArg, JSValue flagsArg)
+RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, const String& pattern, OptionSet<Yarr::Flags> flags)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    String pattern = patternArg.isUndefined() ? emptyString() : patternArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto flags = toFlags(globalObject, flagsArg);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     RegExp* regExp = RegExp::create(vm, pattern, flags);
-    if (UNLIKELY(!regExp->isValid())) {
+    if (!regExp->isValid()) [[unlikely]] {
         throwException(globalObject, scope, regExp->errorToThrow(globalObject));
         return nullptr;
     }
@@ -325,6 +323,19 @@ static JSObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, J
     Structure* structure = getRegExpStructure(globalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
+}
+
+RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSValue patternArg, JSValue flagsArg)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    String pattern = patternArg.isUndefined() ? emptyString() : patternArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto flags = toFlags(globalObject, flagsArg);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    RELEASE_AND_RETURN(scope, regExpCreate(globalObject, newTarget, pattern, flags));
 }
 
 JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JSObject* callee, JSValue newTarget)
@@ -335,20 +346,20 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
     JSValue flagsArg = args.at(1);
 
     bool isPatternRegExp = patternArg.inherits<RegExpObject>();
-    bool constructAsRegexp = isRegExp(vm, globalObject, patternArg);
+    bool constructAsRegExp = isRegExp(vm, globalObject, patternArg);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (!newTarget && constructAsRegexp && flagsArg.isUndefined()) {
+    if (!newTarget && constructAsRegExp && flagsArg.isUndefined()) {
         JSValue constructor = patternArg.get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (callee == constructor) {
-            // We know that patternArg is a object otherwise constructAsRegexp would be false.
+            // We know that patternArg is a object otherwise constructAsRegExp would be false.
             return patternArg.getObject();
         }
     }
 
     if (isPatternRegExp) {
-        RegExp* regExp = jsCast<RegExpObject*>(patternArg)->regExp();
+        RegExp* regExp = uncheckedDowncast<RegExpObject>(patternArg)->regExp();
         Structure* structure = getRegExpStructure(globalObject, newTarget);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -357,7 +368,7 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
             RETURN_IF_EXCEPTION(scope, nullptr);
 
             regExp = RegExp::create(vm, regExp->pattern(), flags);
-            if (UNLIKELY(!regExp->isValid())) {
+            if (!regExp->isValid()) [[unlikely]] {
                 throwException(globalObject, scope, regExp->errorToThrow(globalObject));
                 return nullptr;
             }
@@ -366,7 +377,7 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
         return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
     }
 
-    if (constructAsRegexp) {
+    if (constructAsRegExp) {
         JSValue pattern = patternArg.get(globalObject, vm.propertyNames->source);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (flagsArg.isUndefined()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +28,6 @@
 
 #include "pas_allocator_index.h"
 #include "pas_allocator_scavenge_action.h"
-#include "pas_darwin_spi.h"
 #include "pas_deallocator_scavenge_action.h"
 #include "pas_decommit_exclusion_range.h"
 #include "pas_fast_tls.h"
@@ -36,9 +35,12 @@
 #include "pas_local_allocator.h"
 #include "pas_local_allocator_result.h"
 #include "pas_malloc_stack_logging.h"
-#include "pas_segregated_page_config_kind_and_role.h"
+#include "pas_segregated_page_config_kind.h"
 #include "pas_utils.h"
-#include <pthread.h>
+
+#include "pas_thread.h"
+
+#if LIBPAS_ENABLED
 
 #define PAS_THREAD_LOCAL_CACHE_DESTROYED 1
 
@@ -85,7 +87,11 @@ PAS_API extern pas_fast_tls pas_thread_local_cache_fast_tls;
 #endif
 
 #if PAS_HAVE_THREAD_KEYWORD
+#if PAS_OS(WINDOWS)
+PAS_API extern __declspec(thread) void* pas_thread_local_cache_pointer;
+#else
 PAS_API extern __thread void* pas_thread_local_cache_pointer;
+#endif
 #define PAS_THREAD_LOCAL_KEY pas_thread_local_cache_pointer
 #endif
 
@@ -203,10 +209,6 @@ PAS_API pas_decommit_exclusion_range pas_thread_local_cache_compute_decommit_exc
 PAS_API void pas_thread_local_cache_ensure_committed(pas_thread_local_cache* thread_local_cache,
                                                      pas_allocator_index begin_allocator_index,
                                                      pas_allocator_index end_allocator_index);
-
-PAS_API void pas_thread_local_cache_did_recommit_accidentally(pas_thread_local_cache* thread_local_cache,
-                                                              pas_allocator_index begin_allocator_index,
-                                                              pas_allocator_index end_allocator_index);
 
 static PAS_ALWAYS_INLINE void*
 pas_thread_local_cache_get_local_allocator_direct_without_any_checks_whatsoever(
@@ -344,8 +346,6 @@ pas_thread_local_cache_get_local_allocator_if_can_set_cache_for_possibly_uniniti
 PAS_API pas_allocator_index pas_thread_local_cache_allocator_index_for_allocator(pas_thread_local_cache* cache,
                                                                                  void* allocator);
 
-PAS_API unsigned pas_thread_local_cache_get_num_allocators(pas_thread_local_cache* cache);
-
 PAS_API void pas_thread_local_cache_stop_local_allocators(
     pas_thread_local_cache* thread_local_cache,
     pas_lock_hold_mode heap_lock_hold_mode);
@@ -377,48 +377,48 @@ PAS_API bool pas_thread_local_cache_for_all(pas_allocator_scavenge_action alloca
 PAS_API PAS_NEVER_INLINE void pas_thread_local_cache_append_deallocation_slow(
     pas_thread_local_cache* thread_local_cache,
     uintptr_t begin,
-    pas_segregated_page_config_kind_and_role kind_and_role);
+    pas_segregated_page_config_kind kind);
 
 static PAS_ALWAYS_INLINE uintptr_t pas_thread_local_cache_encode_object(
     uintptr_t begin,
-    pas_segregated_page_config_kind_and_role kind_and_role)
+    pas_segregated_page_config_kind kind)
 {
-    return begin | (uintptr_t)kind_and_role << PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_SHIFT;
+    return begin | (uintptr_t)kind << PAS_SEGREGATED_PAGE_CONFIG_KIND_SHIFT;
 }
 
 static PAS_ALWAYS_INLINE void pas_thread_local_cache_append_deallocation(
     pas_thread_local_cache* thread_local_cache,
     uintptr_t begin,
-    pas_segregated_page_config_kind_and_role kind_and_role)
+    pas_segregated_page_config_kind kind)
 {
     unsigned index;
 
     index = thread_local_cache->deallocation_log_index;
     if (PAS_UNLIKELY(index >= PAS_DEALLOCATION_LOG_SIZE - 1)) {
-        pas_thread_local_cache_append_deallocation_slow(thread_local_cache, begin, kind_and_role);
+        pas_thread_local_cache_append_deallocation_slow(thread_local_cache, begin, kind);
         return;
     }
-    
-    thread_local_cache->deallocation_log[index++] = pas_thread_local_cache_encode_object(begin, kind_and_role);
+
+    thread_local_cache->deallocation_log[index++] = pas_thread_local_cache_encode_object(begin, kind);
     thread_local_cache->deallocation_log_index = index;
 }
 
 static PAS_ALWAYS_INLINE void pas_thread_local_cache_append_deallocation_with_size(
     pas_thread_local_cache* thread_local_cache,
     uintptr_t begin, size_t object_size,
-    pas_segregated_page_config_kind_and_role kind_and_role)
+    pas_segregated_page_config_kind kind)
 {
     size_t new_num_logged_bytes;
 
     new_num_logged_bytes = thread_local_cache->num_logged_bytes + object_size;
     if (new_num_logged_bytes > PAS_DEALLOCATION_LOG_MAX_BYTES) {
-        pas_thread_local_cache_append_deallocation_slow(thread_local_cache, begin, kind_and_role);
+        pas_thread_local_cache_append_deallocation_slow(thread_local_cache, begin, kind);
         return;
     }
 
     thread_local_cache->num_logged_bytes = new_num_logged_bytes;
-    
-    pas_thread_local_cache_append_deallocation(thread_local_cache, begin, kind_and_role);
+
+    pas_thread_local_cache_append_deallocation(thread_local_cache, begin, kind);
 }
 
 PAS_API void pas_thread_local_cache_shrink(pas_thread_local_cache* thread_local_cache,
@@ -426,5 +426,5 @@ PAS_API void pas_thread_local_cache_shrink(pas_thread_local_cache* thread_local_
 
 PAS_END_EXTERN_C;
 
+#endif /* LIBPAS_ENABLED */
 #endif /* PAS_THREAD_LOCAL_CACHE_H */
-

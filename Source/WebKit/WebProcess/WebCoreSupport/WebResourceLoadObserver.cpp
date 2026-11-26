@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2019-2020 Apple Inc. All rights reserved.
+* Copyright (C) 2019-2025 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -29,15 +29,16 @@
 #include "Logging.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebProcess.h"
+#include <WebCore/DocumentPage.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/HTMLFrameOwnerElement.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/HTTPStatusCodes.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameLoaderClient.h>
-#include <WebCore/Page.h>
+#include <WebCore/Settings.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebKit {
@@ -57,7 +58,7 @@ void WebResourceLoadObserver::setShouldLogUserInteraction(bool value)
 
 static bool is3xxRedirect(const ResourceResponse& response)
 {
-    return response.httpStatusCode() >= 300 && response.httpStatusCode() <= 399;
+    return response.httpStatusCode() >= httpStatus300MultipleChoices && response.httpStatusCode() < httpStatus400BadRequest;
 }
 
 WebResourceLoadObserver::WebResourceLoadObserver(ResourceLoadStatistics::IsEphemeral isEphemeral)
@@ -74,6 +75,10 @@ WebResourceLoadObserver::~WebResourceLoadObserver()
 
 void WebResourceLoadObserver::requestStorageAccessUnderOpener(const RegistrableDomain& domainInNeedOfStorageAccess, WebPage& openerPage, Document& openerDocument)
 {
+    RefPtr page = openerDocument.page();
+    if (!page || !page->settings().storageAccessAPIEnabled())
+        return;
+
     auto openerUrl = openerDocument.url();
     RegistrableDomain openerDomain { openerUrl };
     if (domainInNeedOfStorageAccess != openerDomain
@@ -111,7 +116,7 @@ void WebResourceLoadObserver::scheduleNotificationIfNeeded()
 void WebResourceLoadObserver::updateCentralStatisticsStore(CompletionHandler<void()>&& completionHandler)
 {
     m_notificationTimer.stop();
-    Ref { WebProcess::singleton().ensureNetworkProcessConnection().connection() }->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::ResourceLoadStatisticsUpdated(takeStatistics()), WTFMove(completionHandler));
+    Ref { WebProcess::singleton().ensureNetworkProcessConnection().connection() }->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::ResourceLoadStatisticsUpdated(takeStatistics()), WTF::move(completionHandler));
 }
 
 
@@ -127,7 +132,7 @@ String WebResourceLoadObserver::statisticsForURL(const URL& url)
 Vector<ResourceLoadStatistics> WebResourceLoadObserver::takeStatistics()
 {
     return WTF::map(std::exchange(m_resourceStatisticsMap, { }), [](auto&& entry) {
-        return ResourceLoadStatistics { WTFMove(*entry.value) };
+        return ResourceLoadStatistics { WTF::move(*entry.value) };
     });
 }
 
@@ -283,23 +288,19 @@ void WebResourceLoadObserver::logSubresourceLoading(const LocalFrame* frame, con
     if (isEphemeral())
         return;
 
-    ASSERT(frame->page());
-
     if (!frame)
         return;
 
-    auto* page = frame->page();
+    RefPtr page = frame->page();
+    ASSERT(page);
     if (!page)
         return;
+    const URL& topFrameURL = page->mainFrameURL();
 
     bool isRedirect = is3xxRedirect(redirectResponse);
     const URL& redirectedFromURL = redirectResponse.url();
     const URL& targetURL = newRequest.url();
-    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localMainFrame)
-        return;
-    const URL& topFrameURL = frame ? localMainFrame->document()->url() : URL();
-    
+
     auto targetHost = targetURL.host();
     auto topFrameHost = topFrameURL.host();
 
@@ -367,7 +368,11 @@ void WebResourceLoadObserver::logWebSocketLoading(const URL& targetURL, const UR
 
 void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const Document& document)
 {
-    auto& url = document.url();
+    RefPtr page = document.page();
+    if (!page)
+        return;
+
+    auto& url = page->mainFrameURL();
     if (url.protocolIsAbout() || url.protocolIsFile() || url.isEmpty())
         return;
 
@@ -386,13 +391,15 @@ void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const 
         statistics.mostRecentUserInteractionTime = newTime;
     }
 
-    if (RefPtr frame = document.frame()) {
-        if (RefPtr opener = dynamicDowncast<LocalFrame>(frame->opener())) {
-            if (RefPtr openerDocument = opener->document()) {
-                if (auto* openerPage = openerDocument->page())
-                    requestStorageAccessUnderOpener(topFrameDomain, Ref { *WebPage::fromCorePage(*openerPage) }, *openerDocument);
-            }
+    if (RefPtr mainFrameDocument = document.mainFrameDocument()) {
+        RefPtr frame = mainFrameDocument->frame();
+        if (RefPtr opener = frame ? dynamicDowncast<LocalFrame>(frame->opener()) : nullptr) {
+            RefPtr openerDocument = opener->document();
+            if (RefPtr openerPage = openerDocument ? openerDocument->page() : nullptr)
+                requestStorageAccessUnderOpener(topFrameDomain, Ref { *WebPage::fromCorePage(*openerPage) }, *openerDocument);
         }
+    } else {
+        LOG_ONCE(SiteIsolation, "Unable to request storage access under opener when logging user interation without access to the main frame document ");
     }
 
     // We notify right away in case of a user interaction instead of waiting the usual 5 seconds because we want

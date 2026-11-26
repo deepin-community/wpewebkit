@@ -90,12 +90,13 @@ class FramebufferMtl : public FramebufferImpl
                                     size_t index,
                                     GLfloat *xy) const override;
 
+    void onAttachmentDetached(const gl::Context *context, size_t dirtyBit) override;
+
     RenderTargetMtl *getColorReadRenderTarget(const gl::Context *context) const;
     RenderTargetMtl *getDepthRenderTarget() const { return mDepthRenderTarget; }
     RenderTargetMtl *getStencilRenderTarget() const { return mStencilRenderTarget; }
 
-    void setFlipY(bool flipY) { mFlipY = flipY; }
-    bool flipY() const { return mFlipY; }
+    bool getFlipY() const;
 
     gl::Rectangle getCompleteRenderArea() const;
     int getSamples() const;
@@ -124,12 +125,11 @@ class FramebufferMtl : public FramebufferImpl
                                  const PackPixelsParams &packPixelsParams,
                                  const RenderTargetMtl *renderTarget,
                                  uint8_t *pixels) const;
-    void setBackbuffer(WindowSurfaceMtl *backbuffer) { mBackbuffer = backbuffer; }
+    void setBackbuffer(WindowSurfaceMtl *backbuffer, bool flipY);
     WindowSurfaceMtl *getBackbuffer() const { return mBackbuffer; }
 
   private:
     void reset();
-    gl::FramebufferStatus checkPackedDepthStencilAttachment() const;
     angle::Result invalidateImpl(const gl::Context *context,
                                  size_t count,
                                  const GLenum *attachments);
@@ -160,6 +160,9 @@ class FramebufferMtl : public FramebufferImpl
     angle::Result clearWithDraw(const gl::Context *context,
                                 gl::DrawBufferMask clearColorBuffers,
                                 const mtl::ClearRectParams &clearOpts);
+
+    bool needsRG16UnormMSAAClearWorkaround(const ContextMtl *contextMtl,
+                                           gl::DrawBufferMask clearColorBuffers) const;
 
     // Initialize load store options for a render pass's first start (i.e. not render pass resuming
     // from interruptions such as those caused by a conversion compute pass)
@@ -198,8 +201,6 @@ class FramebufferMtl : public FramebufferImpl
                                      uint32_t dstBufferRowPitch,
                                      const mtl::BufferRef *dstBuffer) const;
 
-    bool totalBitsUsedIsLessThanOrEqualToMaxBitsSupported(const gl::Context *context) const;
-
     RenderTargetMtl *getColorReadRenderTargetNoCache(const gl::Context *context) const;
     angle::Result prepareForUse(const gl::Context *context) const;
 
@@ -221,6 +222,7 @@ class FramebufferMtl : public FramebufferImpl
 #endif
 
     mtl::RenderPassDesc mRenderPassDesc;
+    bool mRenderPassDescChangedBeforeSyncState = false;
 
     const mtl::Format *mRenderPassFirstColorAttachmentFormat = nullptr;
     bool mRenderPassAttachmentsSameColorType                 = false;
@@ -230,7 +232,7 @@ class FramebufferMtl : public FramebufferImpl
     bool mRenderPassCleanStart = false;
 
     WindowSurfaceMtl *mBackbuffer = nullptr;
-    bool mFlipY                   = false;
+    bool mBackbufferFlipY         = false;
 
     mtl::BufferRef mReadPixelBuffer;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,43 +35,16 @@
 #include "MarkedSpaceInlines.h"
 #include "StackVisitor.h"
 #include "VMEntryRecord.h"
-#include <mutex>
+#include "VMManager.h"
 #include <wtf/Expected.h>
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(VMInspector);
-
-VM* VMInspector::m_recentVM { nullptr };
-
-VMInspector& VMInspector::singleton()
-{
-    static VMInspector* manager;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        manager = new VMInspector();
-    });
-    return *manager;
-}
-
-void VMInspector::add(VM* vm)
-{
-    Locker locker { m_lock };
-    m_recentVM = vm;
-    m_vmList.append(vm);
-}
-
-void VMInspector::remove(VM* vm)
-{
-    Locker locker { m_lock };
-    if (m_recentVM == vm)
-        m_recentVM = nullptr;
-    m_vmList.remove(vm);
-}
-
 #if ENABLE(JIT)
-static bool ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+static bool NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     static constexpr unsigned maxRetries = 2;
     unsigned tryCount = 0;
@@ -83,61 +56,14 @@ static bool ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 }
 #endif // ENABLE(JIT)
 
-bool VMInspector::isValidVMSlow(VM* vm)
-{
-    bool found = false;
-    forEachVM([&] (VM& nextVM) {
-        if (vm == &nextVM) {
-            m_recentVM = vm;
-            found = true;
-            return IterationStatus::Done;
-        }
-        return IterationStatus::Continue;
-    });
-    return found;
-}
-
-void VMInspector::dumpVMs()
-{
-    unsigned i = 0;
-    WTFLogAlways("Registered VMs:");
-    forEachVM([&] (VM& nextVM) {
-        WTFLogAlways("  [%u] VM %p", i++, &nextVM);
-        return IterationStatus::Continue;
-    });
-}
-
-void VMInspector::forEachVM(Function<IterationStatus(VM&)>&& func)
-{
-    VMInspector& inspector = singleton();
-    Locker lock { inspector.getLock() };
-    inspector.iterate(func);
-}
-
 // Returns null if the callFrame doesn't actually correspond to any active VM.
 VM* VMInspector::vmForCallFrame(CallFrame* callFrame)
 {
-    VMInspector& inspector = singleton();
-    Locker lock { inspector.getLock() };
-
-    auto isOnVMStack = [] (VM& vm, CallFrame* callFrame) -> bool {
+    return VMManager::findMatchingVM([&] (VM& vm) -> bool {
         void* stackBottom = vm.stackPointerAtVMEntry(); // high memory
         void* stackTop = vm.stackLimit(); // low memory
         return stackBottom > callFrame && callFrame > stackTop;
-    };
-
-    if (m_recentVM && isOnVMStack(*m_recentVM, callFrame))
-        return m_recentVM;
-
-    VM* ownerVM = nullptr;
-    inspector.iterate([&] (VM& vm) {
-        if (isOnVMStack(vm, callFrame)) {
-            ownerVM = &vm;
-            return IterationStatus::Done;
-        }
-        return IterationStatus::Continue;
     });
-    return ownerVM;
 }
 
 WTF_IGNORES_THREAD_SAFETY_ANALYSIS auto VMInspector::isValidExecutableMemory(void* machinePC) -> Expected<bool, Error>
@@ -166,7 +92,7 @@ auto VMInspector::codeBlockForMachinePC(void* machinePC) -> Expected<CodeBlock*,
 #if ENABLE(JIT)
     CodeBlock* codeBlock = nullptr;
     bool hasTimeout = false;
-    iterate([&] (VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS {
+    VMManager::forEachVM([&] (VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS {
         if (!vm.isInService())
             return IterationStatus::Continue;
 
@@ -193,7 +119,7 @@ auto VMInspector::codeBlockForMachinePC(void* machinePC) -> Expected<CodeBlock*,
 
         Locker locker { AdoptLock, codeBlockSetLock };
         vm.heap.forEachCodeBlockIgnoringJITPlans(locker, [&] (CodeBlock* cb) {
-            JITCode* jitCode = cb->jitCode().get();
+            RefPtr jitCode = cb->jitCode();
             if (!jitCode) {
                 // If the codeBlock is a replacement codeBlock which is in the process of being
                 // compiled, its jitCode will be null, and we can disregard it as a match for
@@ -268,7 +194,7 @@ struct CellAddressCheckFunctor : MarkedBlock::CountFunctor {
     {
     }
 
-    IterationStatus operator()(HeapCell* cell, HeapCell::Kind) const
+    IterationStatus NODELETE operator()(HeapCell* cell, HeapCell::Kind) const
     {
         if (cell == candidate) {
             found = true;
@@ -300,7 +226,7 @@ bool VMInspector::isValidCodeBlock(VM* vm, CodeBlock* candidate)
         {
         }
 
-        void operator()(CodeBlock* codeBlock) const
+        void NODELETE operator()(CodeBlock* codeBlock) const
         {
             if (codeBlock == candidate)
                 found = true;
@@ -330,7 +256,7 @@ CodeBlock* VMInspector::codeBlockForFrame(VM* vm, CallFrame* topCallFrame, unsig
         {
         }
 
-        IterationStatus operator()(StackVisitor& visitor) const
+        IterationStatus NODELETE operator()(StackVisitor& visitor) const
         {
             auto currentFrame = nextFrame++;
             if (currentFrame == targetFrame) {
@@ -403,7 +329,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     auto valueAsString = [&] (JSValue v) -> CString {
         if (!v.isCell() || VMInspector::isValidCell(&vm.heap, reinterpret_cast<JSCell*>(JSValue::encode(v))))
             return toCString(v);
-        return "";
+        return ""_s;
     };
 
     CallFrame* topCallFrame = vm.topCallFrame;
@@ -413,7 +339,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     // Check if frame is an entryFrame.
     entryFrame = vm.topEntryFrame;
     while (entryFrame) {
-        if (entryFrame == bitwise_cast<EntryFrame*>(callFrame)) {
+        if (entryFrame == std::bit_cast<EntryFrame*>(callFrame)) {
             dataLogLn("CallFrame ", RawPointer(callFrame), " is an EntryFrame.");
             auto* entryRecord = vmEntryRecord(entryFrame);
             dataLogLn("    previous entryFrame: ", RawPointer(entryRecord->prevTopEntryFrame()));
@@ -438,7 +364,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
 
     // Dumping from low memory to high memory.
     JSCell* owner = callFrame->codeOwnerCell();
-    CodeBlock* codeBlock = jsDynamicCast<CodeBlock*>(owner);
+    CodeBlock* codeBlock = dynamicDowncast<CodeBlock>(owner);
     unsigned numCalleeLocals = codeBlock ? codeBlock->numCalleeLocals() : 0;
     unsigned numVars = codeBlock ? codeBlock->numVars() : 0;
     bool isWasm = false;
@@ -500,14 +426,14 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     
     dataLogF("% 4d  CallerFrame      : %10p  %p \n", registerNumber++, it++, callFrame->callerFrame());
     if constexpr (isARM64E())
-        dataLogF("% 4d  ReturnPC         : %10p  %p (pac signed %p) \n", registerNumber++, it++, callFrame->returnPCForInspection(), callFrame->rawReturnPCForInspection());
+        dataLogF("% 4d  ReturnPC         : %10p  %p (pac signed %p) \n", registerNumber++, it++, callFrame->returnPCForInspection(), callFrame->rawReturnPC());
     else
         dataLogF("% 4d  ReturnPC         : %10p  %p \n", registerNumber++, it++, callFrame->returnPCForInspection());
     dataLogF("% 4d  CodeBlock        : %10p  0x%llx ", registerNumber++, it++, (long long)codeBlock);
     dataLogLn(codeBlock);
     long long calleeBits = (long long)callFrame->callee().rawPtr();
-    auto calleeString = valueAsString(it->jsValue()).data();
-    dataLogF("% 4d  Callee           : %10p  0x%llx %s\n", registerNumber++, it++, calleeBits, calleeString);
+    auto calleeString = valueAsString(it->jsValue());
+    dataLogF("% 4d  Callee           : %10p  0x%llx %s\n", registerNumber++, it++, calleeBits, calleeString.data());
     
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) {
         if (visitor->callFrame() == callFrame) {
@@ -581,7 +507,7 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     size_t cellSize = cell->cellSize();
     size_t slotCount = cellSize / sizeof(EncodedJSValue);
 
-    EncodedJSValue* slots = bitwise_cast<EncodedJSValue*>(cell);
+    EncodedJSValue* slots = std::bit_cast<EncodedJSValue*>(cell);
     unsigned indentation = 0;
 
     auto indent = [&] {
@@ -633,8 +559,6 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
                 ? butterfly->base(preCapacity, propertyCapacity)
                 : butterfly->base(structure);
 
-            unsigned publicLength = butterfly->publicLength();
-            unsigned vectorLength = butterfly->vectorLength();
             size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
 
             size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
@@ -642,11 +566,13 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 
             INDENT out.println("base ", RawPointer(base));
             INDENT out.println("hasIndexingHeader ", (hasIndexingHeader ? "YES" : "NO"), " hasAnyArrayStorage ", (hasAnyArrayStorage ? "YES" : "NO"));
-            if (hasIndexingHeader) {
-                INDENT out.print("publicLength ", publicLength, " vectorLength ", vectorLength);
+            if (hasIndexedProperties(indexingType)) {
+                INDENT out.print("publicLength ", butterfly->publicLength(), " vectorLength ", butterfly->vectorLength());
                 if (hasAnyArrayStorage)
                     out.print(" indexBias ", butterfly->arrayStorage()->m_indexBias);
                 out.print("\n");
+            } else if (hasIndexingHeader) {
+                INDENT out.println("arrayBuffer ", RawPointer(butterfly->indexingHeader()->arrayBuffer()));
             }
             INDENT out.println("preCapacity ", preCapacity, " propertyCapacity ", propertyCapacity);
 
@@ -710,5 +636,7 @@ void VMInspector::dumpSubspaceHashes(VM* vm)
     });
     dataLogLn();
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace JSC

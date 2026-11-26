@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010-2021 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2011 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2011 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,19 +30,21 @@
 #include "Connection.h"
 #include "DebuggableInfoData.h"
 #include "MessageReceiver.h"
+#include "WebInspectorBackendProxy.h"
 #include "WebInspectorUtilities.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyIdentifier.h"
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <WebCore/Color.h>
 #include <WebCore/FloatRect.h>
-#include <WebCore/InspectorClient.h>
+#include <WebCore/InspectorBackendClient.h>
 #include <WebCore/InspectorFrontendClient.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/RefPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
+
 
 #if PLATFORM(MAC)
 #include "WKGeometry.h"
@@ -83,8 +85,9 @@ class WebPreferences;
 #if ENABLE(INSPECTOR_EXTENSIONS)
 class WebInspectorUIExtensionControllerProxy;
 #endif
+class WebInspectorBackendProxy;
 
-enum class AttachmentSide {
+enum class AttachmentSide : uint8_t {
     Bottom,
     Right,
     Left,
@@ -98,6 +101,7 @@ class WebInspectorUIProxy
     , public WebCore::WindowMessageListener
 #endif
 {
+    friend class WebInspectorBackendProxy;
 public:
     static Ref<WebInspectorUIProxy> create(WebPageProxy& inspectedPage)
     {
@@ -107,14 +111,17 @@ public:
     explicit WebInspectorUIProxy(WebPageProxy&);
     virtual ~WebInspectorUIProxy();
 
+    void ref() const final { API::ObjectImpl<API::Object::Type::Inspector>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::Inspector>::deref(); }
+
     void invalidate();
 
     API::InspectorClient& inspectorClient() { return *m_inspectorClient; }
     void setInspectorClient(std::unique_ptr<API::InspectorClient>&&);
 
     // Public APIs
-    RefPtr<WebPageProxy> inspectedPage() const { return m_inspectedPage.get(); }
-    RefPtr<WebPageProxy> inspectorPage() const { return m_inspectorPage.get(); }
+    WebPageProxy* inspectedPage() const { return m_inspectedPage; }
+    WebPageProxy* inspectorPage() const { return m_inspectorPage; }
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     WebInspectorUIExtensionControllerProxy* extensionController() const { return m_extensionController.get(); }
@@ -155,7 +162,7 @@ public:
     void attachmentWillMoveFromWindow(NSWindow *oldWindow);
     void attachmentDidMoveToWindow(NSWindow *newWindow);
 
-    const WebCore::FloatRect& sheetRect() const { return m_sheetRect; }
+    const WebCore::FloatRect& sheetRect() const LIFETIME_BOUND { return m_sheetRect; }
 #endif
 
 #if PLATFORM(WIN)
@@ -184,7 +191,7 @@ public:
     void setAttachedWindowHeight(unsigned);
     void setAttachedWindowWidth(unsigned);
 
-    void setSheetRect(const WebCore::FloatRect&);
+    void NODELETE setSheetRect(const WebCore::FloatRect&);
 
     void startWindowDrag();
 
@@ -195,8 +202,11 @@ public:
     void toggleElementSelection();
 
     bool isUnderTest() const { return m_underTest; }
+    void markAsUnderTest() { m_underTest = true; }
 
     void setDiagnosticLoggingAvailable(bool);
+
+    void systemAppearanceDidChange();
 
     // Provided by platform WebInspectorUIProxy implementations.
     static String inspectorPageURL();
@@ -214,8 +224,12 @@ public:
     void evaluateInFrontendForTesting(const String&);
 
 private:
+    const Ref<WebInspectorBackendProxy> m_backend;
+
     void createFrontendPage();
     void closeFrontendPageAndWindow();
+
+    void dispatchDidChangeLocalInspectorAttachment();
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -224,7 +238,7 @@ private:
     void sendMessageToFrontend(const String& message) override;
     ConnectionType connectionType() const override { return ConnectionType::Local; }
 
-    WebPageProxy* platformCreateFrontendPage();
+    RefPtr<WebPageProxy> platformCreateFrontendPage();
     void platformCreateFrontendWindow();
     void platformCloseFrontendPageAndWindow();
 
@@ -235,7 +249,7 @@ private:
     void platformBringInspectedPageToFront();
     void platformHide();
     bool platformIsFront();
-    void platformAttachAvailabilityChanged(bool);
+    void NODELETE platformAttachAvailabilityChanged(bool);
     void platformSetForcedAppearance(WebCore::InspectorFrontendClient::Appearance);
     void platformOpenURLExternally(const String&);
     void platformInspectedURLChanged(const String&);
@@ -244,14 +258,14 @@ private:
     void platformDetach();
     void platformSetAttachedWindowHeight(unsigned);
     void platformSetAttachedWindowWidth(unsigned);
-    void platformSetSheetRect(const WebCore::FloatRect&);
+    void NODELETE platformSetSheetRect(const WebCore::FloatRect&);
     void platformStartWindowDrag();
     void platformRevealFileExternally(const String&);
     void platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
     void platformLoad(const String& path, CompletionHandler<void(const String&)>&&);
     void platformPickColorFromScreen(CompletionHandler<void(const std::optional<WebCore::Color>&)>&&);
 
-#if PLATFORM(MAC)
+#if PLATFORM(MAC) || PLATFORM(GTK) || PLATFORM(WIN)
     bool platformCanAttach(bool webProcessCanAttach);
 #elif PLATFORM(WPE)
     bool platformCanAttach(bool) { return false; }
@@ -259,10 +273,11 @@ private:
     bool platformCanAttach(bool webProcessCanAttach) { return webProcessCanAttach; }
 #endif
 
-    // Called by WebInspectorUIProxy messages
-    void openLocalInspectorFrontend(bool canAttach, bool underTest);
+    // Called by WebInspectorBackendProxy and WebInspectorUIProxy messages
+    void requestOpenLocalInspectorFrontend();
     void setFrontendConnection(IPC::Connection::Handle&&);
 
+    void openLocalInspectorFrontend();
     void sendMessageToBackend(const String&);
     void frontendLoaded();
     void didClose();
@@ -274,10 +289,11 @@ private:
     void inspectedURLChanged(const String&);
     void showCertificate(const WebCore::CertificateInfo&);
     void setInspectorPageDeveloperExtrasEnabled(bool);
+    void setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor);
     void elementSelectionChanged(bool);
-    void timelineRecordingChanged(bool);
+    void NODELETE timelineRecordingChanged(bool);
 
-    void setDeveloperPreferenceOverride(WebCore::InspectorClient::DeveloperPreference, std::optional<bool>);
+    void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>);
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
     void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
 #endif
@@ -293,7 +309,7 @@ private:
 
     unsigned inspectionLevel() const;
 
-    WebPreferences& inspectorPagePreferences() const;
+    WebPreferences& NODELETE inspectorPagePreferences() const;
 
 #if PLATFORM(MAC)
     void applyForcedAppearance();
@@ -331,7 +347,7 @@ private:
     bool m_isOpening { false };
     bool m_closing { false };
 
-    AttachmentSide m_attachmentSide {AttachmentSide::Bottom};
+    AttachmentSide m_attachmentSide { AttachmentSide::Bottom };
 
 #if PLATFORM(MAC)
     RetainPtr<WKInspectorViewController> m_inspectorViewController;
@@ -362,3 +378,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebInspectorUIProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::Inspector; }
+SPECIALIZE_TYPE_TRAITS_END()

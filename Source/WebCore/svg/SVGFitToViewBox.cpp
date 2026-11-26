@@ -25,6 +25,7 @@
 #include "AffineTransform.h"
 #include "Document.h"
 #include "FloatRect.h"
+#include "NodeDocument.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElement.h"
 #include "SVGNames.h"
@@ -36,26 +37,29 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFitToViewBox);
+
 SVGFitToViewBox::SVGFitToViewBox(SVGElement* contextElement, SVGPropertyAccess access)
     : m_viewBox(SVGAnimatedRect::create(contextElement, access))
     , m_preserveAspectRatio(SVGAnimatedPreserveAspectRatio::create(contextElement, access))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::viewBoxAttr, &SVGFitToViewBox::m_viewBox>();
         PropertyRegistry::registerProperty<SVGNames::preserveAspectRatioAttr, &SVGFitToViewBox::m_preserveAspectRatio>();
-    });
+    }
 }
 
 void SVGFitToViewBox::setViewBox(const FloatRect& viewBox)
 {
-    Ref { m_viewBox }->setBaseValInternal(viewBox);
+    m_viewBox->setBaseValInternal(viewBox);
     m_isViewBoxValid = true;
 }
 
 void SVGFitToViewBox::resetViewBox()
 {
-    Ref { m_viewBox }->setBaseValInternal({ });
+    m_viewBox->setBaseValInternal({ });
     m_isViewBoxValid = false;
 }
 
@@ -70,7 +74,7 @@ bool SVGFitToViewBox::parseAttribute(const QualifiedName& name, const AtomString
     if (name == SVGNames::viewBoxAttr) {
         if (!value.isNull()) {
             if (auto result = parseViewBox(value)) {
-                setViewBox(WTFMove(*result));
+                setViewBox(WTF::move(*result));
                 return true;
             }
         }
@@ -93,12 +97,12 @@ std::optional<FloatRect> SVGFitToViewBox::parseViewBox(StringView value)
     });
 }
 
-std::optional<FloatRect> SVGFitToViewBox::parseViewBox(StringParsingBuffer<LChar>& buffer, bool validate)
+std::optional<FloatRect> SVGFitToViewBox::parseViewBox(StringParsingBuffer<Latin1Character>& buffer, bool validate)
 {
     return parseViewBoxGeneric(buffer, validate);
 }
 
-std::optional<FloatRect> SVGFitToViewBox::parseViewBox(StringParsingBuffer<UChar>& buffer, bool validate)
+std::optional<FloatRect> SVGFitToViewBox::parseViewBox(StringParsingBuffer<char16_t>& buffer, bool validate)
 {
     return parseViewBoxGeneric(buffer, validate);
 }
@@ -118,26 +122,26 @@ template<typename CharacterType> std::optional<FloatRect> SVGFitToViewBox::parse
         Ref document = m_viewBox->contextElement()->document();
 
         if (!x || !y || !width || !height) {
-            document->checkedSVGExtensions()->reportWarning(makeString("Problem parsing viewBox=\""_s, stringToParse, "\""_s));
+            protect(document->svgExtensions())->reportWarning(makeString("Problem parsing viewBox=\""_s, stringToParse, "\""_s));
             return std::nullopt;
         }
 
         // Check that width is positive.
         if (*width < 0.0) {
-            document->checkedSVGExtensions()->reportError("A negative value for ViewBox width is not allowed"_s);
+            protect(document->svgExtensions())->reportError("A negative value for ViewBox width is not allowed"_s);
             return std::nullopt;
         }
 
         // Check that height is positive.
         if (*height < 0.0) {
-            document->checkedSVGExtensions()->reportError("A negative value for ViewBox height is not allowed"_s);
+            protect(document->svgExtensions())->reportError("A negative value for ViewBox height is not allowed"_s);
             return std::nullopt;
         }
 
         // Nothing should come after the last, fourth number.
         skipOptionalSVGSpaces(buffer);
         if (buffer.hasCharactersRemaining()) {
-            document->checkedSVGExtensions()->reportWarning(makeString("Problem parsing viewBox=\""_s, stringToParse, "\""_s));
+            protect(document->svgExtensions())->reportWarning(makeString("Problem parsing viewBox=\""_s, stringToParse, "\""_s));
             return std::nullopt;
         }
     }
@@ -147,7 +151,8 @@ template<typename CharacterType> std::optional<FloatRect> SVGFitToViewBox::parse
 
 AffineTransform SVGFitToViewBox::viewBoxToViewTransform(const FloatRect& viewBoxRect, const SVGPreserveAspectRatioValue& preserveAspectRatio, float viewWidth, float viewHeight)
 {
-    if (!viewBoxRect.width() || !viewBoxRect.height() || !viewWidth || !viewHeight)
+    // Per SVG spec, negative viewBox dimensions are invalid and should be ignored
+    if (!viewBoxRect.width() || !viewBoxRect.height() || !viewWidth || !viewHeight || viewBoxRect.width() < 0 || viewBoxRect.height() < 0)
         return AffineTransform();
 
     return preserveAspectRatio.getCTM(viewBoxRect.x(), viewBoxRect.y(), viewBoxRect.width(), viewBoxRect.height(), viewWidth, viewHeight);

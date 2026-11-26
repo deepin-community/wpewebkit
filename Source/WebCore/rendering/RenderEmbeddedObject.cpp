@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 2000 Simon Hausmann <hausmann@kde.org>
  *           (C) 2000 Stefan Schimanski (1Stein@gmx.de)
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -30,7 +30,7 @@
 #include "Cursor.h"
 #include "EventHandler.h"
 #include "EventNames.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 #include "FontSelector.h"
 #include "GraphicsContext.h"
 #include "HTMLEmbedElement.h"
@@ -46,12 +46,13 @@
 #include "Page.h"
 #include "PaintInfo.h"
 #include "Path.h"
-#include "PlatformMouseEvent.h"
 #include "PluginViewBase.h"
 #include "RenderBoxInlines.h"
 #include "RenderLayoutState.h"
+#include "RenderObjectInlines.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
+#include "RenderWidgetInlines.h"
 #include "Settings.h"
 #include "SystemFontDatabase.h"
 #include "Text.h"
@@ -63,7 +64,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderEmbeddedObject);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderEmbeddedObject);
 
 static const float replacementTextRoundedRectHeight = 22;
 static const float replacementTextRoundedRectLeftTextMargin = 10;
@@ -80,23 +81,18 @@ static constexpr auto replacementTextRoundedRectColor = SRGBA<uint8_t> { 125, 12
 static constexpr auto replacementTextColor = SRGBA<uint8_t> { 240, 240, 240 };
 static constexpr auto unavailablePluginBorderColor = Color::white.colorWithAlphaByte(216);
 
-RenderEmbeddedObject::RenderEmbeddedObject(HTMLFrameOwnerElement& element, RenderStyle&& style)
-    : RenderWidget(Type::EmbeddedObject, element, WTFMove(style))
-    , m_isPluginUnavailable(false)
-    , m_unavailablePluginIndicatorIsPressed(false)
-    , m_mouseDownWasInUnavailablePluginIndicator(false)
+RenderEmbeddedObject::RenderEmbeddedObject(HTMLFrameOwnerElement& element, Style::ComputedStyle&& style)
+    : RenderWidget(Type::EmbeddedObject, element, WTF::move(style))
 {
     ASSERT(isRenderEmbeddedObject());
 }
 
-RenderEmbeddedObject::~RenderEmbeddedObject()
-{
-    // Do not add any code here. Add it to willBeDestroyed() instead.
-}
+// Do not add any code in below destructor. Add it to willBeDestroyed() instead.
+RenderEmbeddedObject::~RenderEmbeddedObject() = default;
 
 void RenderEmbeddedObject::willBeDestroyed()
 {
-    view().frameView().removeEmbeddedObjectToUpdate(*this);
+    protect(view())->frameView().removeEmbeddedObjectToUpdate(*this);
     RenderWidget::willBeDestroyed();
 }
 
@@ -105,7 +101,7 @@ bool RenderEmbeddedObject::requiresAcceleratedCompositing() const
     if (RenderWidget::requiresAcceleratedCompositing())
         return true;
 
-    auto* pluginViewBase = dynamicDowncast<PluginViewBase>(widget());
+    RefPtr pluginViewBase = dynamicDowncast<PluginViewBase>(widget());
     if (!pluginViewBase)
         return false;
     return pluginViewBase->layerHostingStrategy() != PluginLayerHostingStrategy::None;
@@ -128,11 +124,11 @@ bool RenderEmbeddedObject::usesAsyncScrolling() const
     return pluginViewBase->usesAsyncScrolling();
 }
 
-ScrollingNodeID RenderEmbeddedObject::scrollingNodeID() const
+std::optional<ScrollingNodeID> RenderEmbeddedObject::scrollingNodeID() const
 {
     RefPtr pluginViewBase = dynamicDowncast<PluginViewBase>(widget());
     if (!pluginViewBase)
-        return { };
+        return std::nullopt;
     return pluginViewBase->scrollingNodeID();
 }
 
@@ -153,20 +149,20 @@ void RenderEmbeddedObject::didAttachScrollingNode()
 }
 
 #if !PLATFORM(IOS_FAMILY)
-static String unavailablePluginReplacementText(RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason)
+static String unavailablePluginReplacementText(PluginUnavailabilityReason pluginUnavailabilityReason)
 {
     switch (pluginUnavailabilityReason) {
-    case RenderEmbeddedObject::PluginMissing:
+    case PluginUnavailabilityReason::PluginMissing:
         return missingPluginText();
-    case RenderEmbeddedObject::PluginCrashed:
+    case PluginUnavailabilityReason::PluginCrashed:
         return crashedPluginText();
-    case RenderEmbeddedObject::PluginBlockedByContentSecurityPolicy:
+    case PluginUnavailabilityReason::PluginBlockedByContentSecurityPolicy:
         return blockedPluginByContentSecurityPolicyText();
-    case RenderEmbeddedObject::InsecurePluginVersion:
+    case PluginUnavailabilityReason::InsecurePluginVersion:
         return insecurePluginVersionText();
-    case RenderEmbeddedObject::UnsupportedPlugin:
+    case PluginUnavailabilityReason::UnsupportedPlugin:
         return unsupportedPluginText();
-    case RenderEmbeddedObject::PluginTooSmall:
+    case PluginUnavailabilityReason::PluginTooSmall:
         return pluginTooSmallText();
     }
 
@@ -175,7 +171,7 @@ static String unavailablePluginReplacementText(RenderEmbeddedObject::PluginUnava
 }
 #endif
 
-static bool shouldUnavailablePluginMessageBeButton(Page& page, RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason)
+static bool shouldUnavailablePluginMessageBeButton(Page& page, PluginUnavailabilityReason pluginUnavailabilityReason)
 {
     return page.chrome().client().shouldUnavailablePluginMessageBeButton(pluginUnavailabilityReason);
 }
@@ -185,24 +181,10 @@ void RenderEmbeddedObject::setPluginUnavailabilityReason(PluginUnavailabilityRea
 #if PLATFORM(IOS_FAMILY)
     UNUSED_PARAM(pluginUnavailabilityReason);
 #else
-    setPluginUnavailabilityReasonWithDescription(pluginUnavailabilityReason, unavailablePluginReplacementText(pluginUnavailabilityReason));
-#endif
-}
-
-void RenderEmbeddedObject::setPluginUnavailabilityReasonWithDescription(PluginUnavailabilityReason pluginUnavailabilityReason, const String& description)
-{
-#if PLATFORM(IOS_FAMILY)
-    UNUSED_PARAM(pluginUnavailabilityReason);
-    UNUSED_PARAM(description);
-#else
     ASSERT(!m_isPluginUnavailable);
     m_isPluginUnavailable = true;
     m_pluginUnavailabilityReason = pluginUnavailabilityReason;
-
-    if (description.isEmpty())
-        m_unavailablePluginReplacementText = unavailablePluginReplacementText(pluginUnavailabilityReason);
-    else
-        m_unavailablePluginReplacementText = description;
+    m_unavailablePluginReplacementText = unavailablePluginReplacementText(pluginUnavailabilityReason);
 #endif
 }
 
@@ -221,13 +203,13 @@ void RenderEmbeddedObject::paint(PaintInfo& paintInfo, const LayoutPoint& paintO
 
     if (isPluginUnavailable()) {
         if (countsTowardsRelevantObjects)
-            page().addRelevantUnpaintedObject(*this, visualOverflowRect());
+            protect(page())->addRelevantUnpaintedObject(*this, visualOverflowRect());
         RenderReplaced::paint(paintInfo, paintOffset);
         return;
     }
 
     if (countsTowardsRelevantObjects)
-        page().addRelevantRepaintedObject(*this, visualOverflowRect());
+        protect(page())->addRelevantRepaintedObject(*this, visualOverflowRect());
 
     RenderWidget::paint(paintInfo, paintOffset);
 }
@@ -257,7 +239,9 @@ static void drawReplacementArrow(GraphicsContext& context, const FloatRect& insi
 
 void RenderEmbeddedObject::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (!showsUnavailablePluginIndicator())
+    ASSERT(!isSkippedContentRoot(*this));
+
+    if (!isPluginUnavailable())
         return;
 
     if (paintInfo.phase == PaintPhase::Selection)
@@ -299,7 +283,7 @@ void RenderEmbeddedObject::paintReplaced(PaintInfo& paintInfo, const LayoutPoint
     context.setFillColor(replacementTextColor);
     context.drawBidiText(font, run, FloatPoint(labelX, labelY));
 
-    if (shouldUnavailablePluginMessageBeButton(page(), m_pluginUnavailabilityReason)) {
+    if (shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason)) {
         arrowRect.inflate(-replacementArrowCirclePadding);
 
         context.beginTransparencyLayer(1.0);
@@ -310,15 +294,6 @@ void RenderEmbeddedObject::paintReplaced(PaintInfo& paintInfo, const LayoutPoint
         drawReplacementArrow(context, arrowRect);
         context.endTransparencyLayer();
     }
-}
-
-void RenderEmbeddedObject::setUnavailablePluginIndicatorIsHidden(bool hidden)
-{
-    auto newState = hidden ? UnavailablePluginIndicatorState::Hidden : UnavailablePluginIndicatorState::Visible;
-    if (m_isUnavailablePluginIndicatorState == newState)
-        return;
-    m_isUnavailablePluginIndicatorState = newState;
-    repaint();
 }
 
 LayoutRect RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumulatedOffset) const
@@ -336,7 +311,7 @@ LayoutRect RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& a
 
 void RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumulatedOffset, FloatRect& contentRect, FloatRect& indicatorRect, FloatRect& replacementTextRect, FloatRect& arrowRect, FontCascade& font, TextRun& run, float& textWidth) const
 {
-    bool includesArrow = shouldUnavailablePluginMessageBeButton(page(), m_pluginUnavailabilityReason);
+    bool includesArrow = shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason);
 
     contentRect = contentBoxRect();
     contentRect.moveBy(roundedIntPoint(accumulatedOffset));
@@ -345,7 +320,7 @@ void RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumul
     fontDescription.setOneFamily(SystemFontDatabase::singleton().systemFontShorthandFamily(SystemFontDatabase::FontShorthand::WebkitSmallControl));
     fontDescription.setWeight(boldWeightValue());
     fontDescription.setComputedSize(12);
-    font = FontCascade(WTFMove(fontDescription));
+    font = FontCascade(WTF::move(fontDescription));
     font.update(nullptr);
 
     run = TextRun(m_unavailablePluginReplacementText);
@@ -365,11 +340,6 @@ void RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumul
     }
 }
 
-LayoutRect RenderEmbeddedObject::unavailablePluginIndicatorBounds(const LayoutPoint& accumulatedOffset) const
-{
-    return getReplacementTextGeometry(accumulatedOffset);
-}
-
 void RenderEmbeddedObject::layout()
 {
     StackStats::LayoutCheckPoint layoutCheckPoint;
@@ -378,7 +348,8 @@ void RenderEmbeddedObject::layout()
     updateLogicalWidth();
     updateLogicalHeight();
 
-    RenderWidget::layout();
+    LayoutSize oldSize = contentBoxRect().size();
+    RenderReplaced::layout();
 
     clearOverflow();
     addVisualEffectOverflow();
@@ -386,9 +357,12 @@ void RenderEmbeddedObject::layout()
     updateLayerTransform();
 
     if (!widget())
-        view().frameView().addEmbeddedObjectToUpdate(*this);
+        protect(view())->frameView().addEmbeddedObjectToUpdate(*this);
 
     clearNeedsLayout();
+
+    if (m_hasShadowContent)
+        layoutShadowContent(oldSize);
 }
 
 bool RenderEmbeddedObject::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
@@ -399,19 +373,19 @@ bool RenderEmbeddedObject::nodeAtPoint(const HitTestRequest& request, HitTestRes
     if (!is<PluginViewBase>(widget()))
         return true;
 
-    PluginViewBase& view = downcast<PluginViewBase>(*widget());
+    Ref view = downcast<PluginViewBase>(*widget());
     IntPoint roundedPoint = locationInContainer.roundedPoint();
 
-    if (Scrollbar* horizontalScrollbar = view.horizontalScrollbar()) {
+    if (RefPtr horizontalScrollbar = view->horizontalScrollbar()) {
         if (horizontalScrollbar->shouldParticipateInHitTesting() && horizontalScrollbar->frameRect().contains(roundedPoint)) {
-            result.setScrollbar(horizontalScrollbar);
+            result.setScrollbar(WTF::move(horizontalScrollbar));
             return true;
         }
     }
 
-    if (Scrollbar* verticalScrollbar = view.verticalScrollbar()) {
+    if (RefPtr verticalScrollbar = view->verticalScrollbar()) {
         if (verticalScrollbar->shouldParticipateInHitTesting() && verticalScrollbar->frameRect().contains(roundedPoint)) {
-            result.setScrollbar(verticalScrollbar);
+            result.setScrollbar(WTF::move(verticalScrollbar));
             return true;
         }
     }
@@ -438,12 +412,12 @@ bool RenderEmbeddedObject::isInUnavailablePluginIndicator(const FloatPoint& poin
 
 bool RenderEmbeddedObject::isInUnavailablePluginIndicator(const MouseEvent& event) const
 {
-    return isInUnavailablePluginIndicator(absoluteToLocal(event.absoluteLocation(), UseTransforms));
+    return isInUnavailablePluginIndicator(absoluteToLocal(event.absoluteLocation(), MapCoordinatesMode::UseTransforms));
 }
 
 void RenderEmbeddedObject::handleUnavailablePluginIndicatorEvent(Event* event)
 {
-    if (!shouldUnavailablePluginMessageBeButton(page(), m_pluginUnavailabilityReason))
+    if (!shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason))
         return;
 
     RefPtr mouseEvent = dynamicDowncast<MouseEvent>(*event);
@@ -480,15 +454,20 @@ void RenderEmbeddedObject::handleUnavailablePluginIndicatorEvent(Event* event)
 
 CursorDirective RenderEmbeddedObject::getCursor(const LayoutPoint& point, Cursor& cursor) const
 {
-    if (showsUnavailablePluginIndicator() && shouldUnavailablePluginMessageBeButton(page(), m_pluginUnavailabilityReason) && isInUnavailablePluginIndicator(point)) {
+    if (isPluginUnavailable() && shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason) && isInUnavailablePluginIndicator(point)) {
         cursor = handCursor();
-        return SetCursor;
+        return CursorDirective::SetCursor;
     }
-    if (widget() && widget()->isPluginViewBase()) {
+    if (widget() && protect(widget())->isPluginViewBase()) {
         // A plug-in is responsible for setting the cursor when the pointer is over it.
-        return DoNotSetCursor;
+        return CursorDirective::DoNotSetCursor;
     }
     return RenderWidget::getCursor(point, cursor);
+}
+
+bool RenderEmbeddedObject::paintsContent() const
+{
+    return !requiresAcceleratedCompositing();
 }
 
 }

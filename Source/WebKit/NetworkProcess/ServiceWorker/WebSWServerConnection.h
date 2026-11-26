@@ -38,6 +38,8 @@
 #include <WebCore/PushSubscriptionData.h>
 #include <WebCore/SWServer.h>
 #include <pal/SessionID.h>
+#include <wtf/CheckedRef.h>
+#include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -53,50 +55,63 @@ template<> struct AsyncReplyError<WebCore::ExceptionOr<bool>> {
 
 namespace WebCore {
 class ServiceWorkerRegistrationKey;
+struct CookieChangeSubscription;
 struct ClientOrigin;
 struct ExceptionData;
 struct MessageWithMessagePorts;
 struct ServiceWorkerClientData;
+struct ServiceWorkerRoute;
 }
 
 namespace WebKit {
 
 class NetworkConnectionToWebProcess;
 class NetworkProcess;
-class NetworkResourceLoadParameters;
 class NetworkResourceLoader;
 class ServiceWorkerFetchTask;
 
+struct NetworkResourceLoadParameters;
+struct SharedPreferencesForWebProcess;
+
 class WebSWServerConnection final : public WebCore::SWServer::Connection, public IPC::MessageSender, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(WebSWServerConnection);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebSWServerConnection);
 public:
-    WebSWServerConnection(NetworkConnectionToWebProcess&, WebCore::SWServer&, IPC::Connection&, WebCore::ProcessIdentifier);
+    static Ref<WebSWServerConnection> create(NetworkConnectionToWebProcess&, WebCore::SWServer&, IPC::Connection&, WebCore::ProcessIdentifier);
     WebSWServerConnection(const WebSWServerConnection&) = delete;
     ~WebSWServerConnection() final;
 
-    using WebCore::SWServer::Connection::weakPtrFactory;
-    using WebCore::SWServer::Connection::WeakValueType;
-    using WebCore::SWServer::Connection::WeakPtrImplType;
+    void ref() const final { WebCore::SWServer::Connection::ref(); }
+    void deref() const final { WebCore::SWServer::Connection::deref(); }
+
+    USING_CAN_MAKE_WEAKPTR(WebCore::SWServer::Connection);
 
     IPC::Connection& ipcConnection() const { return m_contentConnection.get(); }
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
+
     NetworkSession* session();
-    PAL::SessionID sessionID() const;
+    PAL::SessionID NODELETE sessionID() const;
 
     RefPtr<ServiceWorkerFetchTask> createFetchTask(NetworkResourceLoader&, const WebCore::ResourceRequest&);
     void fetchTaskTimedOut(WebCore::ServiceWorkerIdentifier);
+    void fetchTaskReceivedMainResourceResponse(std::optional<WebCore::ServiceWorkerIdentifier>, const WebCore::ResourceResponse&, WebCore::FrameIdentifier);
 
-    void transferServiceWorkerLoadToNewWebProcess(NetworkResourceLoader&, WebCore::SWServerRegistration&, WebCore::ProcessIdentifier);
+    void transferServiceWorkerLoadToNewWebProcess(NetworkResourceLoader&, WebCore::SWServerRegistration&, const WebCore::ResourceRequest&);
     std::optional<WebCore::SWServer::GatheredClientData> gatherClientData(WebCore::ScriptExecutionContextIdentifier);
 
     void registerServiceWorkerClient(WebCore::ClientOrigin&&, WebCore::ServiceWorkerClientData&&, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>&, String&& userAgent);
     void registerServiceWorkerClientInternal(WebCore::ClientOrigin&&, WebCore::ServiceWorkerClientData&&, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>&, String&& userAgent, WebCore::SWServer::IsBeingCreatedClient);
     void unregisterServiceWorkerClient(const WebCore::ScriptExecutionContextIdentifier&);
 
+#if ENABLE(CONTENT_EXTENSIONS)
+    void reportNetworkUsageToWorkerClient(WebCore::ScriptExecutionContextIdentifier, uint64_t bytesTransferredOverNetworkDelta);
+#endif
+
 private:
+    WebSWServerConnection(NetworkConnectionToWebProcess&, WebCore::SWServer&, IPC::Connection&, WebCore::ProcessIdentifier);
+
     // Implement SWServer::Connection (Messages to the client WebProcess)
     void rejectJobInClient(WebCore::ServiceWorkerJobIdentifier, const WebCore::ExceptionData&) final;
     void resolveRegistrationJobInClient(WebCore::ServiceWorkerJobIdentifier, const WebCore::ServiceWorkerRegistrationData&, WebCore::ShouldNotifyWhenResolved) final;
@@ -118,12 +133,13 @@ private:
     void startFetch(ServiceWorkerFetchTask&, WebCore::SWServerWorker&);
 
     void matchRegistration(const WebCore::SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(std::optional<WebCore::ServiceWorkerRegistrationData>&&)>&&);
+    void whenRegistrationReady(const WebCore::SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(std::optional<WebCore::ServiceWorkerRegistrationData>&&)>&&);
     void getRegistrations(const WebCore::SecurityOriginData& topOrigin, const URL& clientURL, CompletionHandler<void(const Vector<WebCore::ServiceWorkerRegistrationData>&)>&&);
 
     void terminateWorkerFromClient(WebCore::ServiceWorkerIdentifier, CompletionHandler<void()>&&);
     void whenServiceWorkerIsTerminatedForTesting(WebCore::ServiceWorkerIdentifier, CompletionHandler<void()>&&);
 
-    void postMessageToServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier destinationContextIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceServiceWorkerIdentifier, const String& sourceOrigin) final;
+    void postMessageToServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier destinationContextIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceServiceWorkerIdentifier, const WebCore::SecurityOriginData&) final;
 
     void contextConnectionCreated(WebCore::SWServerToContextConnection&) final;
     void updateBackgroundFetchRegistration(const WebCore::BackgroundFetchInformation&) final;
@@ -151,9 +167,17 @@ private:
 
     void retrieveRecordResponseBody(WebCore::BackgroundFetchRecordIdentifier, RetrieveRecordResponseBodyCallbackIdentifier);
 
+    void addCookieChangeSubscriptions(WebCore::ServiceWorkerRegistrationIdentifier, Vector<WebCore::CookieChangeSubscription>&&, ExceptionOrVoidCallback&&);
+    void removeCookieChangeSubscriptions(WebCore::ServiceWorkerRegistrationIdentifier, Vector<WebCore::CookieChangeSubscription>&&, ExceptionOrVoidCallback&&);
+    using ExceptionOrCookieChangeSubscriptionsCallback = CompletionHandler<void(Expected<Vector<WebCore::CookieChangeSubscription>, WebCore::ExceptionData>&&)>;
+    void cookieChangeSubscriptions(WebCore::ServiceWorkerRegistrationIdentifier, ExceptionOrCookieChangeSubscriptionsCallback&&);
+    void addRoutes(WebCore::ServiceWorkerRegistrationIdentifier, Vector<WebCore::ServiceWorkerRoute>&&, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&&);
+
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
     void getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(Expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&&);
 #endif
+
+    bool checkTopOrigin(const WebCore::SecurityOriginData&);
 
     URL clientURLFromIdentifier(WebCore::ServiceWorkerOrClientIdentifier);
 
@@ -161,13 +185,19 @@ private:
     uint64_t messageSenderDestinationID() const final { return 0; }
     
     template<typename U> static void sendToContextProcess(WebCore::SWServerToContextConnection&, U&& message);
-    NetworkProcess& networkProcess();
+    NetworkProcess& NODELETE networkProcess();
+
+    bool isWebSWServerConnection() const final { return true; }
 
     WeakPtr<NetworkConnectionToWebProcess> m_networkConnectionToWebProcess;
-    Ref<IPC::Connection> m_contentConnection;
+    const Ref<IPC::Connection> m_contentConnection;
     HashMap<WebCore::ScriptExecutionContextIdentifier, WebCore::ClientOrigin> m_clientOrigins;
     HashMap<WebCore::ServiceWorkerJobIdentifier, CompletionHandler<void(UnregisterJobResult&&)>> m_unregisterJobs;
     bool m_isThrottleable { true };
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebSWServerConnection)
+    static bool isType(const WebCore::SWServer::Connection& connection) { return connection.isWebSWServerConnection(); }
+SPECIALIZE_TYPE_TRAITS_END()

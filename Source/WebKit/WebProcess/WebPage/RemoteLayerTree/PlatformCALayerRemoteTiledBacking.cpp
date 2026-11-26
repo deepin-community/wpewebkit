@@ -36,14 +36,12 @@ using namespace WebCore;
 
 PlatformCALayerRemoteTiledBacking::PlatformCALayerRemoteTiledBacking(LayerType layerType, PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
     : PlatformCALayerRemote(layerType, owner, context)
-    , m_tileController(makeUnique<TileController>(this, WebCore::TileController::AllowScrollPerformanceLogging::No))
+    , m_tileController(makeUniqueRef<TileController>(this, WebCore::TileController::AllowScrollPerformanceLogging::No))
 {
     PlatformCALayerRemote::setContentsScale(m_tileController->contentsScale());
 }
 
-PlatformCALayerRemoteTiledBacking::~PlatformCALayerRemoteTiledBacking()
-{
-}
+PlatformCALayerRemoteTiledBacking::~PlatformCALayerRemoteTiledBacking() = default;
 
 void PlatformCALayerRemoteTiledBacking::setNeedsDisplayInRect(const FloatRect& dirtyRect)
 {
@@ -87,14 +85,28 @@ void PlatformCALayerRemoteTiledBacking::setAcceleratesDrawing(bool acceleratesDr
     m_tileController->setAcceleratesDrawing(acceleratesDrawing);
 }
 
-bool PlatformCALayerRemoteTiledBacking::wantsDeepColorBackingStore() const
+#if HAVE(SUPPORT_HDR_DISPLAY)
+bool PlatformCALayerRemoteTiledBacking::setNeedsDisplayIfEDRHeadroomExceeds(float headroom)
 {
-    return m_tileController->wantsDeepColorBackingStore();
+    return m_tileController->setNeedsDisplayIfEDRHeadroomExceeds(headroom);
 }
 
-void PlatformCALayerRemoteTiledBacking::setWantsDeepColorBackingStore(bool wantsDeepColorBackingStore)
+void PlatformCALayerRemoteTiledBacking::setTonemappingEnabled(bool enabled)
 {
-    m_tileController->setWantsDeepColorBackingStore(wantsDeepColorBackingStore);
+    PlatformCALayerRemote::setTonemappingEnabled(enabled);
+    m_tileController->setTonemappingEnabled(enabled);
+}
+#endif
+
+
+ContentsFormat PlatformCALayerRemoteTiledBacking::contentsFormat() const
+{
+    return m_tileController->contentsFormat();
+}
+
+void PlatformCALayerRemoteTiledBacking::setContentsFormat(ContentsFormat contentsFormat)
+{
+    m_tileController->setContentsFormat(contentsFormat);
 }
 
 float PlatformCALayerRemoteTiledBacking::contentsScale() const

@@ -30,12 +30,21 @@
 #include "WebPreferencesDefinitions.h"
 #include "WebPreferencesStore.h"
 #include <wtf/RefPtr.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/WeakHashSet.h>
+#include <wtf/WeakPtr.h>
 
 #define DECLARE_PREFERENCE_GETTER_AND_SETTERS(KeyUpper, KeyLower, TypeName, Type, DefaultValue, HumanReadableName, HumanReadableDescription) \
     void set##KeyUpper(const Type& value); \
     void delete##KeyUpper(); \
     Type KeyLower() const;
+
+#define DECLARE_INSPECTOR_OVERRIDE_SETTERS(KeyUpper, KeyLower, Type) \
+    void set##KeyUpper##InspectorOverride(std::optional<Type> inspectorOverride);
+
+#define DECLARE_INSPECTOR_OVERRIDE_STORE(KeyUpper, KeyLower, Type) \
+    std::optional<Type> m_##KeyLower##InspectorOverride;
+
 
 namespace WebKit {
 
@@ -56,10 +65,11 @@ public:
     void addPage(WebPageProxy&);
     void removePage(WebPageProxy&);
 
-    const WebPreferencesStore& store() const { return m_store; }
+    const WebPreferencesStore& store() const LIFETIME_BOUND { return m_store; }
 
     // Implemented in generated file WebPreferencesGetterSetters.cpp.
     FOR_EACH_WEBKIT_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
+    FOR_EACH_WEBKIT_PREFERENCE_WITH_INSPECTOR_OVERRIDE(DECLARE_INSPECTOR_OVERRIDE_SETTERS)
 
     static const Vector<RefPtr<API::Object>>& features();
     static const Vector<RefPtr<API::Object>>& experimentalFeatures();
@@ -73,6 +83,8 @@ public:
     // enableAllExperimentalFeatures() should enable settings for testing based on status, or be replaced with an API that WebKitTestRunner can use to enable arbitrary settings.
     void enableAllExperimentalFeatures();
     void resetAllInternalDebugFeatures();
+    void disableRichJavaScriptFeatures();
+    void disableMediaPlaybackRelatedFeatures();
 
     // Exposed for WebKitTestRunner use only.
     void setBoolValueForKey(const String&, bool value, bool ephemeral);
@@ -81,8 +93,11 @@ public:
     void setStringValueForKey(const String&, const String& value, bool ephemeral);
     void forceUpdate() { update(); }
 
-    void startBatchingUpdates();
+    void NODELETE startBatchingUpdates();
     void endBatchingUpdates();
+
+    static void NODELETE forceSiteIsolationAlwaysOnForTesting();
+    static bool NODELETE forcedSiteIsolationAlwaysOnForTesting();
 
 private:
     void platformInitializeStore();
@@ -94,16 +109,16 @@ private:
         explicit UpdateBatch(WebPreferences& preferences)
             : m_preferences(preferences)
         {
-            m_preferences.startBatchingUpdates();
+            m_preferences->startBatchingUpdates();
         }
         
         ~UpdateBatch()
         {
-            m_preferences.endBatchingUpdates();
+            m_preferences->endBatchingUpdates();
         }
         
     private:
-        WebPreferences& m_preferences;
+        const Ref<WebPreferences> m_preferences;
     };
 
     void updateStringValueForKey(const String& key, const String& value, bool ephemeral);
@@ -136,6 +151,22 @@ private:
     WeakHashSet<WebPageProxy> m_pages;
     unsigned m_updateBatchCount { 0 };
     bool m_needUpdateAfterBatch { false };
-};
+
+    FOR_EACH_WEBKIT_PREFERENCE_WITH_INSPECTOR_OVERRIDE(DECLARE_INSPECTOR_OVERRIDE_STORE)
+} SWIFT_SHARED_REFERENCE(refPrefs, derefPrefs) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 
 } // namespace WebKit
+
+inline void refPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
+{
+    obj->ref();
+}
+
+inline void derefPrefs(WebKit::WebPreferences* WTF_NONNULL obj)
+{
+    obj->deref();
+}
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebPreferences)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::Preferences; }
+SPECIALIZE_TYPE_TRAITS_END()

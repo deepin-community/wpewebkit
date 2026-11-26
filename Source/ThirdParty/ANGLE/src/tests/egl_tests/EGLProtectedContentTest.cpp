@@ -8,7 +8,9 @@
 //
 
 #include <gtest/gtest.h>
+#include "common/unsafe_buffers.h"
 
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -22,8 +24,6 @@ using namespace std::chrono_literals;
 
 using namespace angle;
 
-GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(EGLProtectedContentTest);
-
 class EGLProtectedContentTest : public ANGLETest<>
 {
   public:
@@ -31,9 +31,14 @@ class EGLProtectedContentTest : public ANGLETest<>
 
     void testSetUp() override
     {
-        EGLint dispattrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(), EGL_NONE};
-        mDisplay           = eglGetPlatformDisplayEXT(
-            EGL_PLATFORM_ANGLE_ANGLE, reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), dispattrs);
+        EGLAttrib dispattrs[] = {
+            EGL_PLATFORM_ANGLE_TYPE_ANGLE, GetParam().getRenderer(),
+            EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE,
+            static_cast<EGLAttrib>(mOSWindow ? mOSWindow->getNativeDisplayPlatformType()
+                                             : GetPbufferOnlyDefaultPlatformType()),
+            EGL_NONE};
+        mDisplay              = eglGetPlatformDisplay(GetEglPlatform(),
+                                                      reinterpret_cast<void *>(EGL_DEFAULT_DISPLAY), dispattrs);
         EXPECT_TRUE(mDisplay != EGL_NO_DISPLAY);
         EXPECT_EGL_TRUE(eglInitialize(mDisplay, nullptr, nullptr));
         mMajorVersion = GetParam().majorVersion;
@@ -41,6 +46,12 @@ class EGLProtectedContentTest : public ANGLETest<>
 
     void testTearDown() override
     {
+        if (mOSWindow != nullptr)
+        {
+            mOSWindow->destroy();
+            OSWindow::Delete(&mOSWindow);
+        }
+
         if (mDisplay != EGL_NO_DISPLAY)
         {
             eglTerminate(mDisplay);
@@ -50,7 +61,7 @@ class EGLProtectedContentTest : public ANGLETest<>
         ASSERT_EGL_SUCCESS() << "Error during test TearDown";
     }
 
-    bool chooseConfig(EGLConfig *config, bool mutableRenderBuffer = false)
+    bool chooseConfig(EGLConfig *config, bool window = false, bool mutableRenderBuffer = false)
     {
         EGLint clientVersion = mMajorVersion == 3 ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT;
         EGLint attribs[]     = {
@@ -65,7 +76,7 @@ class EGLProtectedContentTest : public ANGLETest<>
             EGL_RENDERABLE_TYPE,
             clientVersion,
             EGL_SURFACE_TYPE,
-            EGL_WINDOW_BIT |
+            (window ? EGL_WINDOW_BIT : EGL_PBUFFER_BIT) |
                 (mutableRenderBuffer ? EGL_MUTABLE_RENDER_BUFFER_BIT_KHR : EGL_PBUFFER_BIT),
             EGL_BIND_TO_TEXTURE_RGBA,
             EGL_TRUE,
@@ -221,14 +232,14 @@ class EGLProtectedContentTest : public ANGLETest<>
 
     bool fillTexture(GLuint textureId, GLColor color)
     {
-        GLuint pixels[kWidth * kHeight];
+        std::array<GLuint, kWidth * kHeight> pixels;
         for (uint32_t i = 0; i < (kWidth * kHeight); i++)
         {
             pixels[i] = *(GLuint *)(color.data());
         }
         glBindTexture(GL_TEXTURE_2D, textureId);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE,
-                        (void *)pixels);
+                        (void *)pixels.data());
         EXPECT_GL_NO_ERROR();
         return true;
     }
@@ -330,13 +341,6 @@ class EGLProtectedContentTest : public ANGLETest<>
     }
 
     void pbufferTest(bool isProtectedContext, bool isProtectedSurface);
-    void windowTest(bool isProtectedContext,
-                    bool isProtectedSurface,
-                    bool mutableRenderBuffer = false);
-    void textureTest(bool isProtectedContext, bool isProtectedTexture);
-    void textureFromImageTest(bool isProtectedContext, bool isProtectedTexture);
-    void textureFromPbufferTest(bool isProtectedContext, bool isProtectedTexture);
-    void textureFromAndroidNativeBufferTest(bool isProtectedContext, bool isProtectedTexture);
 
     void checkSwapBuffersResult(const std::string color,
                                 bool isProtectedContext,
@@ -370,10 +374,36 @@ class EGLProtectedContentTest : public ANGLETest<>
         }
     }
 
+    OSWindow *mOSWindow         = nullptr;
     EGLDisplay mDisplay         = EGL_NO_DISPLAY;
     EGLint mMajorVersion        = 0;
     static const EGLint kWidth  = 16;
     static const EGLint kHeight = 16;
+};
+
+class EGLProtectedContentWindowTest : public EGLProtectedContentTest
+{
+  public:
+    bool chooseConfig(EGLConfig *config, bool mutableRenderBuffer = false)
+    {
+        return EGLProtectedContentTest::chooseConfig(config, true, mutableRenderBuffer);
+    }
+
+    void testSetUp() override
+    {
+        mOSWindow = OSWindow::New();
+        mOSWindow->initialize("ProtectedContentTest", kWidth, kHeight);
+
+        EGLProtectedContentTest::testSetUp();
+    }
+
+    void windowTest(bool isProtectedContext,
+                    bool isProtectedSurface,
+                    bool mutableRenderBuffer = false);
+    void textureTest(bool isProtectedContext, bool isProtectedTexture);
+    void textureFromImageTest(bool isProtectedContext, bool isProtectedTexture);
+    void textureFromPbufferTest(bool isProtectedContext, bool isProtectedTexture);
+    void textureFromAndroidNativeBufferTest(bool isProtectedContext, bool isProtectedTexture);
 };
 
 void EGLProtectedContentTest::pbufferTest(bool isProtectedContext, bool isProtectedSurface)
@@ -418,9 +448,9 @@ TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedPbufferSurface)
     pbufferTest(false, false);
 }
 
-void EGLProtectedContentTest::windowTest(bool isProtectedContext,
-                                         bool isProtectedSurface,
-                                         bool mutableRenderBuffer)
+void EGLProtectedContentWindowTest::windowTest(bool isProtectedContext,
+                                               bool isProtectedSurface,
+                                               bool mutableRenderBuffer)
 {
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_EXT_protected_content"));
     ANGLE_SKIP_TEST_IF(mutableRenderBuffer &&
@@ -434,11 +464,9 @@ void EGLProtectedContentTest::windowTest(bool isProtectedContext,
     EXPECT_TRUE(createContext(isProtectedContext, config, &context));
     ASSERT_EGL_SUCCESS() << "eglCreateContext failed.";
 
-    OSWindow *osWindow = OSWindow::New();
-    osWindow->initialize("ProtectedContentTest", kWidth, kHeight);
     EGLSurface windowSurface          = EGL_NO_SURFACE;
     EGLBoolean createWinSurfaceResult = createWindowSurface(
-        isProtectedSurface, config, osWindow->getNativeWindow(), &windowSurface);
+        isProtectedSurface, config, mOSWindow->getNativeWindow(), &windowSurface);
     EXPECT_TRUE(createWinSurfaceResult);
     ASSERT_EGL_SUCCESS() << "eglCreateWindowSurface failed.";
 
@@ -483,32 +511,30 @@ void EGLProtectedContentTest::windowTest(bool isProtectedContext,
 
     eglDestroySurface(mDisplay, windowSurface);
     windowSurface = EGL_NO_SURFACE;
-    osWindow->destroy();
-    OSWindow::Delete(&osWindow);
 
     eglDestroyContext(mDisplay, context);
     context = EGL_NO_CONTEXT;
 }
 
 // Unprotected context with Unprotected WindowSurface
-TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedWindowSurface)
+TEST_P(EGLProtectedContentWindowTest, UnprotectedContextWithUnprotectedWindowSurface)
 {
     windowTest(false, false);
 }
 
 // Protected context with Protected WindowSurface
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedWindowSurface)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedWindowSurface)
 {
     windowTest(true, true);
 }
 
 // Protected context with Protected Mutable Render Buffer WindowSurface.
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedMutableRenderBufferWindowSurface)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedMutableRenderBufferWindowSurface)
 {
     windowTest(true, true, true);
 }
 
-void EGLProtectedContentTest::textureTest(bool isProtectedContext, bool isProtectedTexture)
+void EGLProtectedContentWindowTest::textureTest(bool isProtectedContext, bool isProtectedTexture)
 {
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_EXT_protected_content"));
 
@@ -522,11 +548,9 @@ void EGLProtectedContentTest::textureTest(bool isProtectedContext, bool isProtec
     EXPECT_TRUE(createContext(isProtectedContext, config, &context));
     ASSERT_EGL_SUCCESS() << "eglCreateContext failed.";
 
-    OSWindow *osWindow = OSWindow::New();
-    osWindow->initialize("ProtectedContentTest", kWidth, kHeight);
     EGLSurface windowSurface          = EGL_NO_SURFACE;
     EGLBoolean createWinSurfaceResult = createWindowSurface(
-        isProtectedSurface, config, osWindow->getNativeWindow(), &windowSurface);
+        isProtectedSurface, config, mOSWindow->getNativeWindow(), &windowSurface);
     EXPECT_TRUE(createWinSurfaceResult);
     ASSERT_EGL_SUCCESS() << "eglCreateWindowSurface failed.";
     glViewport(0, 0, kWidth, kHeight);
@@ -568,26 +592,25 @@ void EGLProtectedContentTest::textureTest(bool isProtectedContext, bool isProtec
 
     eglDestroySurface(mDisplay, windowSurface);
     windowSurface = EGL_NO_SURFACE;
-    osWindow->destroy();
-    OSWindow::Delete(&osWindow);
 
     eglDestroyContext(mDisplay, context);
     context = EGL_NO_CONTEXT;
 }
 
 // Unprotected context with unprotected texture
-TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedTexture)
+TEST_P(EGLProtectedContentWindowTest, UnprotectedContextWithUnprotectedTexture)
 {
     textureTest(false, false);
 }
 
 // Protected context with protected texture
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedTexture)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedTexture)
 {
     textureTest(true, true);
 }
 
-void EGLProtectedContentTest::textureFromImageTest(bool isProtectedContext, bool isProtectedTexture)
+void EGLProtectedContentWindowTest::textureFromImageTest(bool isProtectedContext,
+                                                         bool isProtectedTexture)
 {
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_EXT_protected_content"));
 
@@ -601,11 +624,9 @@ void EGLProtectedContentTest::textureFromImageTest(bool isProtectedContext, bool
     EXPECT_TRUE(createContext(isProtectedContext, config, &context));
     ASSERT_EGL_SUCCESS() << "eglCreateContext failed.";
 
-    OSWindow *osWindow = OSWindow::New();
-    osWindow->initialize("ProtectedContentTest", kWidth, kHeight);
     EGLSurface windowSurface          = EGL_NO_SURFACE;
     EGLBoolean createWinSurfaceResult = createWindowSurface(
-        isProtectedSurface, config, osWindow->getNativeWindow(), &windowSurface);
+        isProtectedSurface, config, mOSWindow->getNativeWindow(), &windowSurface);
     EXPECT_TRUE(createWinSurfaceResult);
     ASSERT_EGL_SUCCESS() << "eglCreateWindowSurface failed.";
 
@@ -659,27 +680,25 @@ void EGLProtectedContentTest::textureFromImageTest(bool isProtectedContext, bool
 
     eglDestroySurface(mDisplay, windowSurface);
     windowSurface = EGL_NO_SURFACE;
-    osWindow->destroy();
-    OSWindow::Delete(&osWindow);
 
     eglDestroyContext(mDisplay, context);
     context = EGL_NO_CONTEXT;
 }
 
 // Unprotected context with unprotected texture from EGL image
-TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedTextureFromImage)
+TEST_P(EGLProtectedContentWindowTest, UnprotectedContextWithUnprotectedTextureFromImage)
 {
     textureFromImageTest(false, false);
 }
 
 // Protected context with protected texture from EGL image
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedTextureFromImage)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedTextureFromImage)
 {
     textureFromImageTest(true, true);
 }
 
-void EGLProtectedContentTest::textureFromPbufferTest(bool isProtectedContext,
-                                                     bool isProtectedTexture)
+void EGLProtectedContentWindowTest::textureFromPbufferTest(bool isProtectedContext,
+                                                           bool isProtectedTexture)
 {
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_EXT_protected_content"));
 
@@ -707,11 +726,9 @@ void EGLProtectedContentTest::textureFromPbufferTest(bool isProtectedContext,
     glFinish();
     ASSERT_GL_NO_ERROR() << "glFinish failed";
 
-    OSWindow *osWindow = OSWindow::New();
-    osWindow->initialize("ProtectedContentTest", kWidth, kHeight);
     EGLSurface windowSurface          = EGL_NO_SURFACE;
     EGLBoolean createWinSurfaceResult = createWindowSurface(
-        isProtectedSurface, config, osWindow->getNativeWindow(), &windowSurface);
+        isProtectedSurface, config, mOSWindow->getNativeWindow(), &windowSurface);
     EXPECT_TRUE(createWinSurfaceResult);
     ASSERT_EGL_SUCCESS() << "eglCreateWindowSurface failed.";
 
@@ -742,8 +759,6 @@ void EGLProtectedContentTest::textureFromPbufferTest(bool isProtectedContext,
 
     eglDestroySurface(mDisplay, windowSurface);
     windowSurface = EGL_NO_SURFACE;
-    osWindow->destroy();
-    OSWindow::Delete(&osWindow);
 
     eglDestroySurface(mDisplay, pBufferSurface);
     pBufferSurface = EGL_NO_SURFACE;
@@ -753,19 +768,19 @@ void EGLProtectedContentTest::textureFromPbufferTest(bool isProtectedContext,
 }
 
 // Unprotected context with unprotected texture from BindTex of PBufferSurface
-TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedTextureFromPBuffer)
+TEST_P(EGLProtectedContentWindowTest, UnprotectedContextWithUnprotectedTextureFromPBuffer)
 {
     textureFromPbufferTest(false, false);
 }
 
 // Protected context with protected texture from BindTex of PBufferSurface
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedTextureFromPbuffer)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedTextureFromPbuffer)
 {
     textureFromPbufferTest(true, true);
 }
 
-void EGLProtectedContentTest::textureFromAndroidNativeBufferTest(bool isProtectedContext,
-                                                                 bool isProtectedTexture)
+void EGLProtectedContentWindowTest::textureFromAndroidNativeBufferTest(bool isProtectedContext,
+                                                                       bool isProtectedTexture)
 {
     ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(mDisplay, "EGL_EXT_protected_content"));
     ANGLE_SKIP_TEST_IF(
@@ -782,11 +797,9 @@ void EGLProtectedContentTest::textureFromAndroidNativeBufferTest(bool isProtecte
     EXPECT_TRUE(createContext(isProtectedContext, config, &context));
     ASSERT_EGL_SUCCESS() << "eglCreateContext failed.";
 
-    OSWindow *osWindow = OSWindow::New();
-    osWindow->initialize("ProtectedContentTest", kWidth, kHeight);
     EGLSurface windowSurface          = EGL_NO_SURFACE;
     EGLBoolean createWinSurfaceResult = createWindowSurface(
-        isProtectedSurface, config, osWindow->getNativeWindow(), &windowSurface);
+        isProtectedSurface, config, mOSWindow->getNativeWindow(), &windowSurface);
     EXPECT_TRUE(createWinSurfaceResult);
     ASSERT_EGL_SUCCESS() << "eglCreateWindowSurface failed.";
 
@@ -837,21 +850,20 @@ void EGLProtectedContentTest::textureFromAndroidNativeBufferTest(bool isProtecte
 
     eglDestroySurface(mDisplay, windowSurface);
     windowSurface = EGL_NO_SURFACE;
-    osWindow->destroy();
-    OSWindow::Delete(&osWindow);
 
     eglDestroyContext(mDisplay, context);
     context = EGL_NO_CONTEXT;
 }
 
 // Unprotected context with unprotected texture from EGL image from Android native buffer
-TEST_P(EGLProtectedContentTest, UnprotectedContextWithUnprotectedTextureFromAndroidNativeBuffer)
+TEST_P(EGLProtectedContentWindowTest,
+       UnprotectedContextWithUnprotectedTextureFromAndroidNativeBuffer)
 {
     textureFromAndroidNativeBufferTest(false, false);
 }
 
 // Protected context with protected texture from EGL image from Android native buffer
-TEST_P(EGLProtectedContentTest, ProtectedContextWithProtectedTextureFromAndroidNativeBuffer)
+TEST_P(EGLProtectedContentWindowTest, ProtectedContextWithProtectedTextureFromAndroidNativeBuffer)
 {
     textureFromAndroidNativeBufferTest(true, true);
 }
@@ -877,7 +889,15 @@ TEST_P(EGLProtectedContentTest, QueryContext)
     EXPECT_EQ(value, 1);
 }
 
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(EGLProtectedContentTest);
 ANGLE_INSTANTIATE_TEST(EGLProtectedContentTest,
+                       WithNoFixture(ES2_OPENGLES()),
+                       WithNoFixture(ES3_OPENGLES()),
+                       WithNoFixture(ES2_VULKAN()),
+                       WithNoFixture(ES3_VULKAN()));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(EGLProtectedContentWindowTest);
+ANGLE_INSTANTIATE_TEST(EGLProtectedContentWindowTest,
                        WithNoFixture(ES2_OPENGLES()),
                        WithNoFixture(ES3_OPENGLES()),
                        WithNoFixture(ES2_VULKAN()),

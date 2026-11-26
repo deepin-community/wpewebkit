@@ -4,9 +4,15 @@
 // found in the LICENSE file.
 //
 // CLImage.cpp: Implements the cl::Image class.
+//
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
+#include "libANGLE/CLContext.h"
 #include "libANGLE/CLImage.h"
-
+#include "libANGLE/CLMemory.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/cl_utils.h"
 
 #include <cstring>
@@ -65,15 +71,15 @@ angle::Result Image::getInfo(ImageInfo name,
             copySize  = sizeof(mDesc.width);
             break;
         case ImageInfo::Height:
-            copyValue = &mDesc.height;
+            copyValue = Is1DImage(mDesc.type) ? &valSizeT : &mDesc.height;
             copySize  = sizeof(mDesc.height);
             break;
         case ImageInfo::Depth:
-            copyValue = &mDesc.depth;
+            copyValue = Is3DImage(mDesc.type) ? &mDesc.depth : &valSizeT;
             copySize  = sizeof(mDesc.depth);
             break;
         case ImageInfo::ArraySize:
-            copyValue = &mDesc.arraySize;
+            copyValue = IsArrayType(mDesc.type) ? &mDesc.arraySize : &valSizeT;
             copySize  = sizeof(mDesc.arraySize);
             break;
         case ImageInfo::Buffer:
@@ -103,7 +109,7 @@ angle::Result Image::getInfo(ImageInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -113,25 +119,149 @@ angle::Result Image::getInfo(ImageInfo name,
     return angle::Result::Continue;
 }
 
+PixelColor Image::packPixels(const void *fillColor) const
+{
+    PixelColor packedColor;
+    const cl_image_format &fmt = getFormat();
+    const size_t channelCount  = GetChannelCount(fmt.image_channel_order);
+    ChannelMapping swizzle     = GetChannelOrderMapping(fmt.image_channel_order);
+
+    switch (fmt.image_channel_data_type)
+    {
+        case CL_UNORM_INT8:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.u8[i]) = gl::floatToNormalized<uint8_t>(
+                    gl::clamp(ANGLE_UNSAFE_TODO(src[swizzle[i]]), 0.0f, 1.0f));
+            }
+            break;
+        }
+        case CL_UNORM_INT16:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.u16[i]) = gl::floatToNormalized<uint16_t>(
+                    gl::clamp(ANGLE_UNSAFE_TODO(src[swizzle[i]]), 0.0f, 1.0f));
+            }
+            break;
+        }
+        case CL_SNORM_INT8:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.s8[i]) = gl::floatToNormalized<int8_t>(
+                    gl::clamp(ANGLE_UNSAFE_TODO(src[swizzle[i]]), -1.0f, 1.0f));
+            }
+            break;
+        }
+        case CL_SNORM_INT16:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.s16[i]) = gl::floatToNormalized<int16_t>(
+                    gl::clamp(ANGLE_UNSAFE_TODO(src[swizzle[i]]), -1.0f, 1.0f));
+            }
+            break;
+        }
+        case CL_SIGNED_INT8:
+        case CL_SIGNED_INT16:
+        case CL_SIGNED_INT32:
+        {
+            const int *src = static_cast<const int *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                if (fmt.image_channel_data_type == CL_SIGNED_INT8)
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.s8[i] = gl::clampCast<int8_t>(src[swizzle[i]]));
+                }
+                else if (fmt.image_channel_data_type == CL_SIGNED_INT16)
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.s16[i] = gl::clampCast<int16_t>(src[swizzle[i]]));
+                }
+                else
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.s32[i] = src[swizzle[i]]);
+                }
+            }
+            break;
+        }
+        case CL_UNSIGNED_INT8:
+        case CL_UNSIGNED_INT16:
+        case CL_UNSIGNED_INT32:
+        {
+            const unsigned *src = static_cast<const unsigned *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                if (fmt.image_channel_data_type == CL_UNSIGNED_INT8)
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.u8[i] = gl::clampCast<uint8_t>(src[swizzle[i]]));
+                }
+                else if (fmt.image_channel_data_type == CL_UNSIGNED_INT16)
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.u16[i] =
+                                          gl::clampCast<uint16_t>(src[swizzle[i]]));
+                }
+                else
+                {
+                    ANGLE_UNSAFE_TODO(packedColor.u32[i] = src[swizzle[i]]);
+                }
+            }
+            break;
+        }
+        case CL_HALF_FLOAT:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.fp16[i] =
+                                      cl_half_from_float(src[swizzle[i]], CL_HALF_RTE));
+            }
+            break;
+        }
+        case CL_FLOAT:
+        {
+            const float *src = static_cast<const float *>(fillColor);
+            for (size_t i = 0; i < channelCount; ++i)
+            {
+                ANGLE_UNSAFE_TODO(packedColor.fp32[i] = src[swizzle[i]]);
+            }
+            break;
+        }
+        default:
+            UNIMPLEMENTED();
+            break;
+    }
+    return packedColor;
+}
+
 Image::~Image() = default;
 
-bool Image::isRegionValid(const cl::MemOffsets &origin, const cl::Coordinate &region) const
+bool Image::isRegionValid(const cl::Offset &origin, const cl::Extents &region) const
 {
     switch (getType())
     {
         case MemObjectType::Image1D:
         case MemObjectType::Image1D_Buffer:
-            return origin.x + region.x <= mDesc.width;
+            return origin.x + region.width <= mDesc.width;
         case MemObjectType::Image2D:
-            return origin.x + region.x <= mDesc.width && origin.y + region.y <= mDesc.height;
+            return origin.x + region.width <= mDesc.width &&
+                   origin.y + region.height <= mDesc.height;
         case MemObjectType::Image3D:
-            return origin.x + region.x <= mDesc.width && origin.y + region.y <= mDesc.height &&
-                   origin.z + region.z <= mDesc.depth;
+            return origin.x + region.width <= mDesc.width &&
+                   origin.y + region.height <= mDesc.height &&
+                   origin.z + region.depth <= mDesc.depth;
         case MemObjectType::Image1D_Array:
-            return origin.x + region.x <= mDesc.width && origin.y + region.y <= mDesc.arraySize;
+            return origin.x + region.width <= mDesc.width &&
+                   origin.y + region.height <= mDesc.arraySize;
         case MemObjectType::Image2D_Array:
-            return origin.x + region.x <= mDesc.width && origin.y + region.y <= mDesc.height &&
-                   origin.z + region.z <= mDesc.arraySize;
+            return origin.x + region.width <= mDesc.width &&
+                   origin.y + region.height <= mDesc.height &&
+                   origin.z + region.depth <= mDesc.arraySize;
         default:
             ASSERT(false);
             break;
@@ -146,9 +276,10 @@ Image::Image(Context &context,
              const ImageDescriptor &desc,
              Memory *parent,
              void *hostPtr)
-    : Memory(*this, context, std::move(properties), flags, format, desc, parent, hostPtr),
-      mFormat(format),
-      mDesc(desc)
-{}
+    : Memory(context, std::move(properties), flags, parent, hostPtr), mFormat(format), mDesc(desc)
+{
+    mSize = getSliceSize() * getDepth() * getArraySize();
+    ANGLE_CL_IMPL_TRY(context.getImpl().createImage(*this, hostPtr, &mImpl));
+}
 
 }  // namespace cl

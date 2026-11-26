@@ -57,9 +57,9 @@ void MediaSourceRegistry::registerURL(const ScriptExecutionContext& context, con
     auto& urlString = url.string();
     m_urlsPerContext.add(context.identifier(), HashSet<String>()).iterator->value.add(urlString);
 
-    MediaSource& source = static_cast<MediaSource&>(registrable);
-    source.addedToRegistry();
-    m_mediaSources.add(urlString, std::pair { RefPtr { &source }, context.identifier() });
+    Ref source = downcast<MediaSource>(registrable);
+    source->addedToRegistry();
+    m_mediaSources.add(urlString, std::pair { WTF::move(source), context.identifier() });
 }
 
 void MediaSourceRegistry::unregisterURL(const URL& url, const SecurityOriginData&)
@@ -101,7 +101,7 @@ URLRegistrable* MediaSourceRegistry::lookup(const String& url) const
 {
     ASSERT(isMainThread());
     if (auto it = m_mediaSources.find(url); it != m_mediaSources.end())
-        return it->value.first.get();
+        return it->value.first.ptr();
     return nullptr;
 }
 

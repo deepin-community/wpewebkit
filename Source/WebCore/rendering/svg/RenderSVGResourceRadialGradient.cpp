@@ -22,6 +22,7 @@
 #include "config.h"
 #include "RenderSVGResourceRadialGradient.h"
 
+#include "RenderObjectNode.h"
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourceRadialGradientInlines.h"
 #include "RenderSVGShape.h"
@@ -30,10 +31,10 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderSVGResourceRadialGradient);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceRadialGradient);
 
-RenderSVGResourceRadialGradient::RenderSVGResourceRadialGradient(SVGRadialGradientElement& element, RenderStyle&& style)
-    : RenderSVGResourceGradient(Type::SVGResourceRadialGradient, element, WTFMove(style))
+RenderSVGResourceRadialGradient::RenderSVGResourceRadialGradient(SVGRadialGradientElement& element, Style::ComputedStyle&& style)
+    : RenderSVGResourceGradient(Type::SVGResourceRadialGradient, element, WTF::move(style))
 {
 }
 
@@ -49,10 +50,10 @@ void RenderSVGResourceRadialGradient::collectGradientAttributesIfNeeded()
 
     auto attributes = RadialGradientAttributes { };
     if (radialGradientElement->collectGradientAttributes(attributes))
-        m_attributes = WTFMove(attributes);
+        m_attributes = WTF::move(attributes);
 }
 
-RefPtr<Gradient> RenderSVGResourceRadialGradient::createGradient(const RenderStyle& style)
+RefPtr<Gradient> RenderSVGResourceRadialGradient::createGradient(const Style::ComputedStyle& style)
 {
     if (!m_attributes)
         return nullptr;
@@ -66,11 +67,10 @@ RefPtr<Gradient> RenderSVGResourceRadialGradient::createGradient(const RenderSty
 
     return Gradient::create(
         Gradient::RadialData { focalPoint, centerPoint, focalRadius, radius, 1 },
-        { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied },
+        gradientColorInterpolationMethod(),
         platformSpreadMethodFromSVGType(m_attributes->spreadMethod()),
         stopsByApplyingColorFilter(m_attributes->stops(), style),
-        RenderingResourceIdentifier::generate()
-    );
+        false);
 }
 
 }

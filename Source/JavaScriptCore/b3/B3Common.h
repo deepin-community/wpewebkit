@@ -25,29 +25,33 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(B3_JIT)
 
-#include "CPU.h"
-#include "GPRInfo.h"
-#include "JSExportMacros.h"
-#include "Options.h"
+#include <JavaScriptCore/CPU.h>
+#include <JavaScriptCore/GPRInfo.h>
+#include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/Options.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace B3 {
 
 class Procedure;
 
-extern const char* const tierName;
+inline constexpr ASCIILiteral tierName { "b3  "_s };
 
 enum B3CompilationMode {
     B3Mode,
     AirMode
 };
 
-JS_EXPORT_PRIVATE bool shouldDumpIR(Procedure&, B3CompilationMode);
-bool shouldDumpIRAtEachPhase(B3CompilationMode);
-bool shouldValidateIR();
-bool shouldValidateIRAtEachPhase();
-bool shouldSaveIRBeforePhase();
+JS_EXPORT_PRIVATE bool NODELETE shouldDumpIR(Procedure&, B3CompilationMode);
+bool NODELETE shouldDumpIRAtEachPhase(B3CompilationMode);
+bool NODELETE shouldValidateIR();
+bool NODELETE shouldValidateIRAtEachPhase();
+bool NODELETE shouldSaveIRBeforePhase();
 
 template<typename IntType>
 static IntType chillDiv(IntType numerator, IntType denominator)
@@ -72,9 +76,8 @@ static IntType chillMod(IntType numerator, IntType denominator)
 template<typename IntType>
 static IntType chillUDiv(IntType numerator, IntType denominator)
 {
-    typedef typename std::make_unsigned<IntType>::type UnsignedIntType;
-    UnsignedIntType unsignedNumerator = static_cast<UnsignedIntType>(numerator);
-    UnsignedIntType unsignedDenominator = static_cast<UnsignedIntType>(denominator);
+    auto unsignedNumerator = unsignedCast(numerator);
+    auto unsignedDenominator = unsignedCast(denominator);
     if (!unsignedDenominator)
         return 0;
     return unsignedNumerator / unsignedDenominator;
@@ -83,9 +86,8 @@ static IntType chillUDiv(IntType numerator, IntType denominator)
 template<typename IntType>
 static IntType chillUMod(IntType numerator, IntType denominator)
 {
-    typedef typename std::make_unsigned<IntType>::type UnsignedIntType;
-    UnsignedIntType unsignedNumerator = static_cast<UnsignedIntType>(numerator);
-    UnsignedIntType unsignedDenominator = static_cast<UnsignedIntType>(denominator);
+    auto unsignedNumerator = unsignedCast(numerator);
+    auto unsignedDenominator = unsignedCast(denominator);
     if (!unsignedDenominator)
         return 0;
     return unsignedNumerator % unsignedDenominator;
@@ -94,8 +96,7 @@ static IntType chillUMod(IntType numerator, IntType denominator)
 template<typename IntType>
 static IntType rotateRight(IntType value, int32_t shift)
 {
-    typedef typename std::make_unsigned<IntType>::type UnsignedIntType;
-    UnsignedIntType uValue = static_cast<UnsignedIntType>(value);
+    auto uValue = unsignedCast(value);
     int32_t bits = sizeof(IntType) * 8;
     int32_t mask = bits - 1;
     shift &= mask;
@@ -105,8 +106,7 @@ static IntType rotateRight(IntType value, int32_t shift)
 template<typename IntType>
 static IntType rotateLeft(IntType value, int32_t shift)
 {
-    typedef typename std::make_unsigned<IntType>::type UnsignedIntType;
-    UnsignedIntType uValue = static_cast<UnsignedIntType>(value);
+    auto uValue = unsignedCast(value);
     int32_t bits = sizeof(IntType) * 8;
     int32_t mask = bits - 1;
     shift &= mask;
@@ -120,7 +120,7 @@ inline unsigned defaultOptLevel()
     return Options::defaultB3OptLevel();
 }
 
-GPRReg extendedOffsetAddrRegister();
+GPRReg NODELETE extendedOffsetAddrRegister();
 
 } } // namespace JSC::B3
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,37 +27,91 @@
 
 #if ENABLE(WEB_AUTHN)
 
-#include "CredentialRequestCoordinatorClient.h"
-#include "IDLTypes.h"
-#include <wtf/CompletionHandler.h>
+#include "ActiveDOMObject.h"
+#include "DigitalCredentialsProtocols.h"
+#include "ExceptionOr.h"
+#include "JSDOMPromiseDeferredForward.h"
+#include "UnvalidatedDigitalCredentialRequest.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <optional>
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 
 namespace WebCore {
-
 class AbortSignal;
 class BasicCredential;
 class CredentialRequestCoordinatorClient;
 class Document;
-struct CredentialRequestOptions;
-
-template<typename IDLType> class DOMPromiseDeferred;
+class LocalFrame;
+class Page;
+struct DigitalCredentialsResponseData;
+struct ExceptionData;
 
 using CredentialPromise = DOMPromiseDeferred<IDLNullable<IDLInterface<BasicCredential>>>;
 
-class CredentialRequestCoordinator final {
-    WTF_MAKE_FAST_ALLOCATED;
+class CredentialRequestCoordinator final : public RefCounted<CredentialRequestCoordinator>, public ActiveDOMObject {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(CredentialRequestCoordinator, WEBCORE_EXPORT);
     WTF_MAKE_NONCOPYABLE(CredentialRequestCoordinator);
 
 public:
-    WEBCORE_EXPORT explicit CredentialRequestCoordinator(std::unique_ptr<CredentialRequestCoordinatorClient>&&);
-    void discoverFromExternalSource(const Document&, CredentialRequestOptions&&, CredentialPromise&&);
+    static Ref<CredentialRequestCoordinator> create(Ref<CredentialRequestCoordinatorClient>&&, Page&);
+    WEBCORE_EXPORT void prepareCredentialRequests(const Document&, CredentialPromise&&, Vector<UnvalidatedDigitalCredentialRequest>&&, RefPtr<AbortSignal>);
+    WEBCORE_EXPORT void abortTheCredentialRequest(ExceptionOr<JSC::JSValue>&&);
+    ~CredentialRequestCoordinator();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    void contextDestroyed() final;
 
 private:
-    CredentialRequestCoordinator() = default;
+    void settleTheCredentialRequest(ExceptionOr<RefPtr<BasicCredential>>&&);
+    void rejectTheCredentialRequestWith(Exception&&);
+    void clearAbortAlgorithm();
 
-    std::unique_ptr<CredentialRequestCoordinatorClient> m_client;
-    bool m_isCancelling = false;
-    CompletionHandler<void()> m_queuedRequest;
+    class InteractionStateGuard final {
+    public:
+        explicit InteractionStateGuard(CredentialRequestCoordinator&);
+        InteractionStateGuard(const InteractionStateGuard&) = delete;
+        InteractionStateGuard& operator=(const InteractionStateGuard&) = delete;
+        void deactivate() { m_active = false; }
+
+        InteractionStateGuard(InteractionStateGuard&&) noexcept = delete;
+        InteractionStateGuard& operator=(InteractionStateGuard&&) noexcept = delete;
+
+        ~InteractionStateGuard();
+
+    private:
+        WeakRef<CredentialRequestCoordinator> m_coordinator;
+        bool m_active { true };
+    }; // class InteractionStateGuard
+
+    enum class InteractionState : uint8_t {
+        Idle,
+        Requesting,
+        Aborting
+    }; // enum class InteractionState
+
+    bool NODELETE canTransitionTo(InteractionState) const;
+    InteractionState NODELETE interactionState() const;
+    void NODELETE setInteractionState(InteractionState);
+    bool hasCurrentPromise() const { return !!m_currentPromise; }
+    void setCurrentPromise(CredentialPromise&&);
+    CredentialPromise* NODELETE currentPromise();
+
+    ExceptionOr<JSC::JSObject*> parseDigitalCredentialsResponseData(const String&) const;
+    void initiateTheCredentialRequest(const Document&, Vector<ValidatedDigitalCredentialRequest>&&, Vector<UnvalidatedDigitalCredentialRequest>&&, RefPtr<AbortSignal>);
+    void processCredentialChooserResponse(Expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, RefPtr<AbortSignal>);
+
+    explicit CredentialRequestCoordinator(Ref<CredentialRequestCoordinatorClient>&&, Page&);
+    const Ref<CredentialRequestCoordinatorClient> m_client;
+    InteractionState m_interactionState { InteractionState::Idle };
+    RefPtr<AbortSignal> m_abortSignal;
+    std::unique_ptr<CredentialPromise> m_currentPromise;
+    std::optional<uint32_t> m_abortAlgorithmIdentifier;
+    WeakPtr<Page> m_page;
 };
 
 } // namespace WebCore

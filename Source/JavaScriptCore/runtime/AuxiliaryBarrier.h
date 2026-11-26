@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "WriteBarrier.h"
+#include <JavaScriptCore/WriteBarrier.h>
 
 namespace JSC {
 
@@ -58,7 +58,7 @@ public:
     
     const T& get() const { return m_value; }
     
-    T* slot() { return &m_value; }
+    T* slot() LIFETIME_BOUND { return &m_value; }
     
     explicit operator bool() const { return !!m_value; }
     

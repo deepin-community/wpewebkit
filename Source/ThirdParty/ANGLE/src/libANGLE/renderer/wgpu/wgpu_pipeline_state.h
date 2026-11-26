@@ -7,12 +7,15 @@
 #ifndef LIBANGLE_RENDERER_WGPU_PIPELINE_STATE_H_
 #define LIBANGLE_RENDERER_WGPU_PIPELINE_STATE_H_
 
-#include <dawn/webgpu_cpp.h>
 #include <stdint.h>
+#include <webgpu/webgpu.h>
+#include <array>
 #include <limits>
 
 #include "libANGLE/Constants.h"
 #include "libANGLE/Error.h"
+#include "libANGLE/angletypes.h"
+#include "libANGLE/renderer/wgpu/wgpu_utils.h"
 
 #include "common/PackedEnums.h"
 
@@ -105,17 +108,23 @@ constexpr uint32_t kVertexFormatBitCount = 5;
 // next highest values to meet native drivers are 16 bits or 32 bits.
 constexpr uint32_t kAttributeOffsetMaxBits = 15;
 
+// In WebGPU, the maxVertexBufferArrayStride will be at least 2048.
+constexpr uint32_t kVertexAttributeStrideBits = 16;
+
 struct PackedVertexAttribute final
 {
+    PackedVertexAttribute();
+
     uint16_t offset : kAttributeOffsetMaxBits;
-    uint16_t pad0 : 1;
+    uint16_t enabled : 1;
     uint8_t format : kVertexFormatBitCount;
     uint8_t pad1 : 3;
     uint8_t shaderLocation;
+    uint16_t stride : kVertexAttributeStrideBits;
 };
 
 constexpr size_t kPackedVertexAttributeSize = sizeof(PackedVertexAttribute);
-static_assert(kPackedVertexAttributeSize == 4, "Size mismatch");
+static_assert(kPackedVertexAttributeSize == 6, "Size mismatch");
 
 class RenderPipelineDesc final
 {
@@ -131,19 +140,29 @@ class RenderPipelineDesc final
 
     void setFrontFace(GLenum frontFace);
     void setCullMode(gl::CullFaceMode cullMode, bool cullFaceEnabled);
-    void setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a);
+    bool setColorWriteMask(size_t colorIndex, bool r, bool g, bool b, bool a);
 
-    bool setColorAttachmentFormat(size_t colorIndex, wgpu::TextureFormat format);
-    bool setDepthStencilAttachmentFormat(wgpu::TextureFormat format);
-    bool setDepthFunc(wgpu::CompareFunction compareFunc);
-    bool setStencilFrontFunc(wgpu::CompareFunction compareFunc);
-    bool setStencilFrontOps(wgpu::StencilOperation failOp,
-                            wgpu::StencilOperation depthFailOp,
-                            wgpu::StencilOperation passOp);
-    bool setStencilBackFunc(wgpu::CompareFunction compareFunc);
-    bool setStencilBackOps(wgpu::StencilOperation failOp,
-                           wgpu::StencilOperation depthFailOp,
-                           wgpu::StencilOperation passOp);
+    bool setBlendEnabled(size_t colorIndex, bool enabled);
+    bool setBlendFuncs(size_t colorIndex,
+                       WGPUBlendFactor srcRGB,
+                       WGPUBlendFactor dstRGB,
+                       WGPUBlendFactor srcAlpha,
+                       WGPUBlendFactor dstAlpha);
+    bool setBlendEquations(size_t colorIndex, WGPUBlendOperation rgb, WGPUBlendOperation alpha);
+
+    bool setVertexAttribute(size_t attribIndex, PackedVertexAttribute &newAttrib);
+    bool setColorAttachmentFormat(size_t colorIndex, WGPUTextureFormat format);
+    bool setDepthStencilAttachmentFormat(WGPUTextureFormat format);
+    bool setDepthFunc(WGPUCompareFunction compareFunc);
+    bool setDepthWriteEnabled(bool enabled);
+    bool setStencilFrontFunc(WGPUCompareFunction compareFunc);
+    bool setStencilFrontOps(WGPUStencilOperation failOp,
+                            WGPUStencilOperation depthFailOp,
+                            WGPUStencilOperation passOp);
+    bool setStencilBackFunc(WGPUCompareFunction compareFunc);
+    bool setStencilBackOps(WGPUStencilOperation failOp,
+                           WGPUStencilOperation depthFailOp,
+                           WGPUStencilOperation passOp);
 
     bool setStencilReadMask(uint8_t readeMask);
     bool setStencilWriteMask(uint8_t writeMask);
@@ -151,13 +170,13 @@ class RenderPipelineDesc final
     size_t hash() const;
 
     angle::Result createPipeline(ContextWgpu *context,
-                                 const wgpu::PipelineLayout &pipelineLayout,
-                                 const gl::ShaderMap<wgpu::ShaderModule> &shaders,
-                                 wgpu::RenderPipeline *pipelineOut) const;
+                                 const PipelineLayoutHandle &pipelineLayout,
+                                 const gl::ShaderMap<ShaderModuleHandle> &shaders,
+                                 RenderPipelineHandle *pipelineOut) const;
 
   private:
-    PackedVertexAttribute mVertexAttributes[gl::MAX_VERTEX_ATTRIBS];
-    PackedColorTargetState mColorTargetStates[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS];
+    std::array<PackedVertexAttribute, gl::MAX_VERTEX_ATTRIBS> mVertexAttributes;
+    std::array<PackedColorTargetState, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS> mColorTargetStates;
     PackedDepthStencilState mDepthStencilState;
     PackedPrimitiveState mPrimitiveState;
     uint8_t mPad0[3];
@@ -197,12 +216,12 @@ class PipelineCache final
 
     angle::Result getRenderPipeline(ContextWgpu *context,
                                     const RenderPipelineDesc &desc,
-                                    const wgpu::PipelineLayout &pipelineLayout,
-                                    const gl::ShaderMap<wgpu::ShaderModule> &shaders,
-                                    wgpu::RenderPipeline *pipelineOut);
+                                    const PipelineLayoutHandle &pipelineLayout,
+                                    const gl::ShaderMap<ShaderModuleHandle> &shaders,
+                                    RenderPipelineHandle *pipelineOut);
 
   private:
-    std::unordered_map<RenderPipelineDesc, wgpu::RenderPipeline> mRenderPipelines;
+    std::unordered_map<RenderPipelineDesc, RenderPipelineHandle> mRenderPipelines;
 };
 
 }  // namespace webgpu

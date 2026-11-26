@@ -76,11 +76,20 @@ typedef enum
   WPE_INPUT_PURPOSE_PASSWORD,
   WPE_INPUT_PURPOSE_PIN,
   WPE_INPUT_PURPOSE_TERMINAL,
+
+  /**
+   * WPE_INPUT_PURPOSE_SEARCH:
+   *
+   * Edited field contents will be used for searching data.
+   *
+   * Since: 2.54
+   */
+  WPE_INPUT_PURPOSE_SEARCH,
 } WPEInputPurpose;
 
 /**
  * WPEInputHints:
- * @WPE_INPUT_HINT_NONE: No special behaviour suggested
+ * @WPE_INPUT_HINT_NONE: No special behavior suggested
  * @WPE_INPUT_HINT_SPELLCHECK: Suggest checking for typos
  * @WPE_INPUT_HINT_NO_SPELLCHECK: Suggest not checking for typos
  * @WPE_INPUT_HINT_WORD_COMPLETION: Suggest word completion
@@ -91,7 +100,7 @@ typedef enum
  * @WPE_INPUT_HINT_UPPERCASE_SENTENCES: Suggest to capitalize the
  *   first word of each sentence
  * @WPE_INPUT_HINT_INHIBIT_OSK: Suggest to not show an onscreen keyboard
- *   (e.g for a calculator that already has all the keys).
+ *   (e.g. for a calculator that already has all the keys).
  * @WPE_INPUT_HINT_VERTICAL_WRITING: The text is vertical
  * @WPE_INPUT_HINT_EMOJI: Suggest offering Emoji support
  * @WPE_INPUT_HINT_NO_EMOJI: Suggest not offering Emoji support
@@ -101,7 +110,7 @@ typedef enum
  * Describes hints that might be taken into account by input methods
  * or applications.
  *
- * Note that input methods may already tailor their behaviour according
+ * Note that input methods may already tailor their behavior according
  * to the [enum@InputPurpose] of the entry.
  *
  * Some common sense is expected when using these flags - mixing
@@ -135,7 +144,7 @@ struct _WPEInputMethodContextClass
                                      GList                 **underlines,
                                      guint                 *cursor_offset);
     gboolean (* filter_key_event)   (WPEInputMethodContext *context,
-			                         WPEEvent              *event);
+                                     WPEEvent              *event);
     void     (* focus_in)           (WPEInputMethodContext *context);
     void     (* focus_out)          (WPEInputMethodContext *context);
     void     (* set_cursor_area)    (WPEInputMethodContext *context,
@@ -150,12 +159,18 @@ struct _WPEInputMethodContextClass
                                      guint                  selection_index);
     void     (* reset)              (WPEInputMethodContext *context);
 
-    gpointer padding[32];
+    gpointer padding[8];
 };
 
 WPE_API WPEInputMethodContext   *wpe_input_method_context_new                (WPEView                 *view);
 WPE_API WPEView                 *wpe_input_method_context_get_view           (WPEInputMethodContext   *context);
 WPE_API WPEDisplay              *wpe_input_method_context_get_display        (WPEInputMethodContext   *context);
+WPE_API WPEInputPurpose          wpe_input_method_context_get_input_purpose  (WPEInputMethodContext   *context);
+WPE_API void                     wpe_input_method_context_set_input_purpose  (WPEInputMethodContext   *context,
+                                                                              WPEInputPurpose          purpose);
+WPE_API WPEInputHints            wpe_input_method_context_get_input_hints    (WPEInputMethodContext   *context);
+WPE_API void                     wpe_input_method_context_set_input_hints    (WPEInputMethodContext   *context,
+                                                                              WPEInputHints            hints);
 WPE_API void                     wpe_input_method_context_get_preedit_string (WPEInputMethodContext   *context,
                                                                               char                    **text,
                                                                               GList                   **underlines,

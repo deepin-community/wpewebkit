@@ -20,31 +20,53 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
 
-#include "ArrayStorageInlines.h"
-#include "Butterfly.h"
-#include "JSObject.h"
-#include "Structure.h"
-#include "VM.h"
+#include <JavaScriptCore/ArrayStorageInlines.h>
+#include <JavaScriptCore/Butterfly.h>
+#include <JavaScriptCore/ButterflyInlinesLight.h>
+#include <JavaScriptCore/GCMemoryOperations.h>
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/VM.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-template<typename T>
-const typename ContiguousData<T>::Data ContiguousData<T>::at(const JSCell* owner, size_t index) const
+inline size_t NODELETE nextLength(size_t length)
 {
-    ASSERT(index < m_length);
-    return Data(m_data[index], owner->indexingMode());
+    return length + length / 2;
 }
 
-template<typename T>
-typename ContiguousData<T>::Data ContiguousData<T>::at(const JSCell* owner, size_t index)
+inline size_t Butterfly::preCapacity(Structure* structure)
 {
-    ASSERT(index < m_length);
-    return Data(m_data[index], owner->indexingMode());
+    if (!hasAnyArrayStorage(structure->indexingType())) [[likely]]
+        return 0;
+
+    return IndexingHeader::from(this)->arrayStorage()->m_indexBias;
+}
+
+inline size_t Butterfly::indexingPayloadSizeInBytes(Structure* structure)
+{
+    switch (structure->indexingType()) {
+    case ALL_UNDECIDED_INDEXING_TYPES:
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_DOUBLE_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES:
+        return IndexingHeader::from(this)->vectorLength() * sizeof(EncodedJSValue);
+
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES:
+        return ArrayStorage::sizeFor(IndexingHeader::from(this)->arrayStorage()->vectorLength());
+
+    default:
+        ASSERT(!hasIndexedProperties(structure->indexingType()));
+        return 0;
+    }
 }
 
 ALWAYS_INLINE unsigned Butterfly::availableContiguousVectorLength(size_t propertyCapacity, unsigned vectorLength)
@@ -78,7 +100,7 @@ inline Butterfly* Butterfly::tryCreateUninitialized(VM& vm, JSObject*, size_t pr
 {
     size_t size = totalSize(preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
     void* base = vm.auxiliarySpace().allocate(vm, size, deferralContext, AllocationFailureMode::ReturnNull);
-    if (UNLIKELY(!base))
+    if (!base) [[unlikely]]
         return nullptr;
 
     Butterfly* result = fromBase(base, preCapacity, propertyCapacity);
@@ -126,7 +148,7 @@ inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, Structure* 
 
 inline void* Butterfly::base(Structure* structure)
 {
-    return base(indexingHeader()->preCapacity(structure), structure->outOfLineCapacity());
+    return base(preCapacity(structure), structure->outOfLineCapacity());
 }
 
 inline Butterfly* Butterfly::createOrGrowPropertyStorage(
@@ -136,8 +158,8 @@ inline Butterfly* Butterfly::createOrGrowPropertyStorage(
     if (!oldButterfly)
         return create(vm, intendedOwner, 0, newPropertyCapacity, false, IndexingHeader(), 0);
 
-    size_t preCapacity = oldButterfly->indexingHeader()->preCapacity(structure);
-    size_t indexingPayloadSizeInBytes = oldButterfly->indexingHeader()->indexingPayloadSizeInBytes(structure);
+    size_t preCapacity = oldButterfly->preCapacity(structure);
+    size_t indexingPayloadSizeInBytes = oldButterfly->indexingPayloadSizeInBytes(structure);
     bool hasIndexingHeader = structure->hasIndexingHeader(intendedOwner);
     Butterfly* result = createUninitialized(vm, intendedOwner, preCapacity, newPropertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
     // Use memcpy since this butterfly is not tied to any object yet.
@@ -169,7 +191,7 @@ inline Butterfly* Butterfly::growArrayRight(
     bool hadIndexingHeader, size_t oldIndexingPayloadSizeInBytes,
     size_t newIndexingPayloadSizeInBytes)
 {
-    ASSERT_UNUSED(oldStructure, !indexingHeader()->preCapacity(oldStructure));
+    ASSERT_UNUSED(oldStructure, !preCapacity(oldStructure));
     ASSERT_UNUSED(intendedOwner, hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
     void* theBase = base(0, propertyCapacity);
     size_t oldSize = totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes);
@@ -188,8 +210,8 @@ inline Butterfly* Butterfly::growArrayRight(
 {
     return growArrayRight(
         vm, intendedOwner, oldStructure, oldStructure->outOfLineCapacity(),
-        oldStructure->hasIndexingHeader(intendedOwner), 
-        indexingHeader()->indexingPayloadSizeInBytes(oldStructure),
+        oldStructure->hasIndexingHeader(intendedOwner),
+        indexingPayloadSizeInBytes(oldStructure),
         newIndexingPayloadSizeInBytes);
 }
 
@@ -198,7 +220,7 @@ inline Butterfly* Butterfly::reallocArrayRightIfPossible(
     bool hadIndexingHeader, size_t oldIndexingPayloadSizeInBytes,
     size_t newIndexingPayloadSizeInBytes)
 {
-    ASSERT_UNUSED(oldStructure, !indexingHeader()->preCapacity(oldStructure));
+    ASSERT_UNUSED(oldStructure, !preCapacity(oldStructure));
     ASSERT_UNUSED(intendedOwner, hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
 
     void* theBase = base(0, propertyCapacity);
@@ -209,9 +231,9 @@ inline Butterfly* Butterfly::reallocArrayRightIfPossible(
     // We can eagerly destroy butterfly backed by PreciseAllocation if (1) concurrent collector is not active and (2) the butterfly does not contain any property storage.
     // This is because during deallocation concurrent collector can access butterfly and DFG concurrent compilers accesses properties.
     // Objects with no properties are common in arrays, and we are focusing on very large array crafted by repeating Array#push, so... that's fine!
-    bool canRealloc = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && bitwise_cast<HeapCell*>(theBase)->isPreciseAllocation();
+    bool canRealloc = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation();
     if (canRealloc) {
-        void* newBase = vm.auxiliarySpace().reallocatePreciseAllocationNonVirtual(vm, bitwise_cast<HeapCell*>(theBase), newSize, &deferralContext, AllocationFailureMode::ReturnNull);
+        void* newBase = vm.auxiliarySpace().reallocatePreciseAllocationNonVirtual(vm, std::bit_cast<HeapCell*>(theBase), newSize, &deferralContext, AllocationFailureMode::ReturnNull);
         if (!newBase)
             return nullptr;
         return fromBase(newBase, 0, propertyCapacity);
@@ -250,14 +272,14 @@ inline Butterfly* Butterfly::resizeArray(
     bool hasIndexingHeader = structure->hasIndexingHeader(intendedOwner);
     return resizeArray(
         vm, intendedOwner, structure->outOfLineCapacity(), hasIndexingHeader,
-        indexingHeader()->indexingPayloadSizeInBytes(structure), newPreCapacity,
+        indexingPayloadSizeInBytes(structure), newPreCapacity,
         hasIndexingHeader, newIndexingPayloadSizeInBytes);
 }
 
 inline Butterfly* Butterfly::unshift(Structure* structure, size_t numberOfSlots)
 {
     ASSERT(hasAnyArrayStorage(structure->indexingType()));
-    ASSERT(numberOfSlots <= indexingHeader()->preCapacity(structure));
+    ASSERT(numberOfSlots <= preCapacity(structure));
     unsigned propertyCapacity = structure->outOfLineCapacity();
     // FIXME: It would probably be wise to rewrite this as a loop since (1) we know in which
     // direction we're moving memory so we don't need the extra check of memmove and (2) we're
@@ -285,4 +307,32 @@ inline Butterfly* Butterfly::shift(Structure* structure, size_t numberOfSlots)
     return IndexingHeader::fromEndOf(propertyStorage() + numberOfSlots)->butterfly();
 }
 
+ALWAYS_INLINE void Butterfly::clearRange(IndexingType indexingType, Butterfly* butterfly, unsigned start, unsigned end)
+{
+    ASSERT(end >= start);
+
+    if (size_t remaining = end - start) {
+        // 32-bit, non-Darwin builds don't use `remaining`.
+        UNUSED_VARIABLE(remaining);
+        if (hasDouble(indexingType)) {
+#if OS(DARWIN)
+            constexpr double pattern = PNaN;
+            memset_pattern8(static_cast<void*>(butterfly->contiguous().data() + start), &pattern, sizeof(double) * remaining);
+#else
+            for (unsigned i = start; i < end; ++i)
+                butterfly->contiguousDouble().atUnsafe(i) = PNaN;
+#endif
+        } else {
+#if USE(JSVALUE64)
+            memset(static_cast<void*>(butterfly->contiguous().data() + start), 0, sizeof(JSValue) * remaining);
+#else
+            for (unsigned i = start; i < end; ++i)
+                butterfly->contiguous().atUnsafe(i).clear();
+#endif
+        }
+    }
+}
+
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

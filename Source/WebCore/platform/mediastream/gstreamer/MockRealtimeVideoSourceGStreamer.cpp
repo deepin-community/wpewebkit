@@ -27,6 +27,7 @@
 #include "MockRealtimeVideoSourceGStreamer.h"
 
 #include "GStreamerCaptureDeviceManager.h"
+#include "IntSize.h"
 #include "MockRealtimeMediaSourceCenter.h"
 #include "PixelBuffer.h"
 #include "VideoFrameGStreamer.h"
@@ -34,7 +35,7 @@
 
 namespace WebCore {
 
-CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, AtomString&& name, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
+CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, AtomString&& name, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
 {
 #ifndef NDEBUG
     auto device = MockRealtimeMediaSourceCenter::mockDeviceWithPersistentID(deviceID);
@@ -43,7 +44,7 @@ CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, AtomStri
         return CaptureSourceOrError({ "No mock camera device"_s , MediaAccessDenialReason::PermissionDenied });
 #endif
 
-    Ref<RealtimeMediaSource> source = adoptRef(*new MockRealtimeVideoSourceGStreamer(WTFMove(deviceID), WTFMove(name), WTFMove(hashSalts), pageIdentifier));
+    Ref<RealtimeMediaSource> source = MockRealtimeVideoSourceGStreamer::create(WTF::move(deviceID), WTF::move(name), WTF::move(hashSalts), pageIdentifier);
     if (constraints) {
         if (auto error = source->applyConstraints(*constraints))
             return CaptureSourceOrError(CaptureSourceError { error->invalidConstraint });
@@ -52,8 +53,8 @@ CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, AtomStri
     return source;
 }
 
-MockRealtimeVideoSourceGStreamer::MockRealtimeVideoSourceGStreamer(String&& deviceID, AtomString&& name, MediaDeviceHashSalts&& hashSalts, PageIdentifier pageIdentifier)
-    : MockRealtimeVideoSource(WTFMove(deviceID), WTFMove(name), WTFMove(hashSalts), pageIdentifier)
+MockRealtimeVideoSourceGStreamer::MockRealtimeVideoSourceGStreamer(String&& deviceID, AtomString&& name, MediaDeviceHashSalts&& hashSalts, std::optional<PageIdentifier> pageIdentifier)
+    : MockRealtimeVideoSource(WTF::move(deviceID), WTF::move(name), WTF::move(hashSalts), pageIdentifier)
 {
     ensureGStreamerInitialized();
     auto& singleton = GStreamerVideoCaptureDeviceManager::singleton();
@@ -63,13 +64,13 @@ MockRealtimeVideoSourceGStreamer::MockRealtimeVideoSourceGStreamer(String&& devi
         return;
 
     device->setIsMockDevice(true);
-    m_capturer = adoptRef(*new GStreamerVideoCapturer(WTFMove(*device)));
+    m_capturer = adoptRef(*new GStreamerVideoCapturer(WTF::move(*device)));
     m_capturer->addObserver(*this);
     m_capturer->setupPipeline();
     m_capturer->setSinkVideoFrameCallback([this](auto&& videoFrame) {
         if (!isProducingData() || muted())
             return;
-        dispatchVideoFrameToObservers(WTFMove(videoFrame), { });
+        dispatchVideoFrameToObservers(WTF::move(videoFrame), { });
     });
     singleton.registerCapturer(m_capturer);
 }
@@ -85,9 +86,6 @@ MockRealtimeVideoSourceGStreamer::~MockRealtimeVideoSourceGStreamer()
 
 void MockRealtimeVideoSourceGStreamer::startProducingData()
 {
-    if (deviceType() == CaptureDevice::DeviceType::Camera)
-        m_capturer->setSize(size());
-
     m_capturer->setFrameRate(frameRate());
     m_capturer->start();
     MockRealtimeVideoSource::startProducingData();
@@ -106,26 +104,54 @@ void MockRealtimeVideoSourceGStreamer::captureEnded()
     // devices removal.
 }
 
+std::pair<GstClockTime, GstClockTime> MockRealtimeVideoSourceGStreamer::queryCaptureLatency() const
+{
+    if (!m_capturer)
+        return { GST_CLOCK_TIME_NONE, GST_CLOCK_TIME_NONE };
+
+    return m_capturer->queryLatency();
+}
+
 void MockRealtimeVideoSourceGStreamer::updateSampleBuffer()
 {
     RefPtr imageBuffer = this->imageBufferInternal();
     if (!imageBuffer)
         return;
 
-    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Premultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
+    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
     if (!pixelBuffer)
         return;
 
+    int frameRateNumerator, frameRateDenominator;
+    gst_util_double_to_fraction(settings().frameRate(), &frameRateNumerator, &frameRateDenominator);
+
     VideoFrameTimeMetadata metadata;
     metadata.captureTime = MonotonicTime::now().secondsSinceEpoch();
-    auto presentationTime = MediaTime::createWithDouble((elapsedTime()).seconds());
-    auto videoFrame = VideoFrameGStreamer::createFromPixelBuffer(pixelBuffer.releaseNonNull(), VideoFrameGStreamer::CanvasContentType::Canvas2D, videoFrameRotation(), presentationTime, m_capturer->size(), frameRate(), false, WTFMove(metadata));
+
+    VideoFrameGStreamer::CreateOptions options;
+    options.presentationTime = fromGstClockTime(gst_util_uint64_scale(m_frameNumber, frameRateDenominator * GST_SECOND, frameRateNumerator));
+    options.rotation = videoFrameRotation();
+    options.timeMetadata = WTF::move(metadata);
+    options.presentationSize = size();
+
+    PlatformVideoColorSpace colorSpace;
+    colorSpace.matrix = PlatformVideoMatrixCoefficients::Bt709;
+    colorSpace.primaries = PlatformVideoColorPrimaries::Bt709;
+    colorSpace.transfer = PlatformVideoTransferCharacteristics::Bt709;
+    colorSpace.fullRange = false;
+    auto videoFrame = VideoFrameGStreamer::createFromPixelBuffer(pixelBuffer.releaseNonNull(), m_capturer->size(), frameRate(), options, WTF::move(colorSpace));
     if (!videoFrame)
         return;
 
     // Mock GstDevice is an appsrc, see webkitMockDeviceCreateElement().
-    ASSERT(GST_IS_APP_SRC(m_capturer->source()));
-    gst_app_src_push_sample(GST_APP_SRC_CAST(m_capturer->source()), videoFrame->sample());
+    auto appSrc = m_capturer->source();
+    if (!appSrc || !GST_IS_APP_SRC(appSrc.get())) {
+        GST_WARNING("AppSrc not available, capture source may have changed");
+        return;
+    }
+
+    const auto& sample = videoFrame->sample();
+    gst_app_src_push_sample(GST_APP_SRC_CAST(appSrc.get()), sample.get());
 }
 
 void MockRealtimeVideoSourceGStreamer::setSizeFrameRateAndZoom(const VideoPresetConstraints& constraints)

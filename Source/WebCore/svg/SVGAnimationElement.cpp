@@ -39,6 +39,7 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
+#include "SVGPropertyOwnerRegistry.h"
 #include "SVGStringList.h"
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
@@ -49,7 +50,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGAnimationElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAnimationElement);
 
 SVGAnimationElement::SVGAnimationElement(const QualifiedName& tagName, Document& document)
     : SVGSMILElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
@@ -63,7 +64,7 @@ static Vector<float> parseKeyTimes(StringView value, bool verifyOrder)
     Vector<float> result;
 
     for (auto keyTime : keyTimes) {
-        keyTime = keyTime.trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        keyTime = keyTime.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
 
         bool ok;
         float time = keyTime.toFloat(ok);
@@ -75,6 +76,11 @@ static Vector<float> parseKeyTimes(StringView value, bool verifyOrder)
             return { };
 
         result.append(time);
+    }
+
+    if (verifyOrder && !result.isEmpty() && !result.last()) {
+        ASSERT(!std::accumulate(result.begin(), result.end(), 0.0f));
+        return { };
     }
 
     return result;
@@ -90,9 +96,7 @@ static std::optional<Vector<UnitBezier>> parseKeySplines(StringView string)
 
         Vector<UnitBezier> result;
 
-        bool delimParsed = false;
         while (buffer.hasCharactersRemaining()) {
-            delimParsed = false;
             auto posA = parseNumber(buffer);
             if (!posA || !isInRange<float>(*posA, 0, 1))
                 return std::nullopt;
@@ -111,16 +115,12 @@ static std::optional<Vector<UnitBezier>> parseKeySplines(StringView string)
 
             skipOptionalSVGSpaces(buffer);
 
-            if (skipExactly(buffer, ';'))
-                delimParsed = true;
+            skipExactly(buffer, ';');
 
             skipOptionalSVGSpaces(buffer);
 
             result.append(UnitBezier { *posA, *posB, *posC, *posD });
         }
-
-        if (!(buffer.atEnd() && !delimParsed))
-            return std::nullopt;
 
         return result;
     });
@@ -150,11 +150,11 @@ bool SVGAnimationElement::isSupportedAttribute(const QualifiedName& attrName)
 bool SVGAnimationElement::attributeContainsJavaScriptURL(const Attribute& attribute) const
 {
     if (attribute.name() == SVGNames::fromAttr || attribute.name() == SVGNames::toAttr)
-        return WTF::protocolIsJavaScript(attribute.value());
+        return WTF::isValidJavaScriptURL(attribute.value());
 
     if (attribute.name() == SVGNames::valuesAttr) {
         for (auto innerValue : StringView(attribute.value()).split(';')) {
-            if (WTF::protocolIsJavaScript(innerValue))
+            if (WTF::isValidJavaScriptURL(innerValue))
                 return true;
         }
         return false;
@@ -164,15 +164,21 @@ bool SVGAnimationElement::attributeContainsJavaScriptURL(const Attribute& attrib
 
 void SVGAnimationElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
+    auto parseError = SVGParsingError::ParsingFailed;
+
     switch (name.nodeName()) {
     case AttributeNames::valuesAttr:
         // Per the SMIL specification, leading and trailing white space,
         // and white space before and after semicolon separators, is allowed and will be ignored.
         // http://www.w3.org/TR/SVG11/animate.html#ValuesAttribute
         m_values.clear();
-        newValue.string().split(';', [this](StringView innerValue) {
-            m_values.append(innerValue.trim(isASCIIWhitespace<UChar>).toString());
+        newValue.string().splitAllowingEmptyEntries(';', [this](StringView innerValue) {
+            m_values.append(innerValue.trim(isASCIIWhitespace<char16_t>).toString());
         });
+        // Per the SMIL specification, if the last semicolon separator is followed by
+        // just white space or no more characters, ignore the trailing empty value.
+        if (!m_values.isEmpty() && m_values.last().isEmpty())
+            m_values.removeLast();
         updateAnimationMode();
         break;
     case AttributeNames::keyTimesAttr:
@@ -187,9 +193,11 @@ void SVGAnimationElement::attributeChanged(const QualifiedName& name, const Atom
         break;
     case AttributeNames::keySplinesAttr:
         if (auto keySplines = parseKeySplines(newValue))
-            m_keySplines = WTFMove(*keySplines);
-        else
+            m_keySplines = WTF::move(*keySplines);
+        else {
             m_keySplines.clear();
+            reportAttributeParsingError(parseError, name, newValue);
+        }
         break;
     case AttributeNames::attributeTypeAttr:
         setAttributeType(newValue);
@@ -374,10 +382,10 @@ void SVGAnimationElement::calculateKeyTimesForCalcModePaced()
         keyTimesForPaced[n] = keyTimesForPaced[n - 1] + keyTimesForPaced[n] / totalDistance;
     keyTimesForPaced[keyTimesForPaced.size() - 1] = 1;
 
-    m_keyTimesForPaced = WTFMove(keyTimesForPaced);
+    m_keyTimesForPaced = WTF::move(keyTimesForPaced);
 }
 
-static inline double solveEpsilon(double duration) { return 1 / (200 * duration); }
+static inline double NODELETE solveEpsilon(double duration) { return 1 / (200 * duration); }
 
 const Vector<float>& SVGAnimationElement::keyTimes() const
 {
@@ -544,7 +552,8 @@ void SVGAnimationElement::startedActiveInterval()
         if (!splinesCount
             || (hasAttributeWithoutSynchronization(SVGNames::keyPointsAttr) && m_keyPoints.size() - 1 != splinesCount)
             || (animationMode == AnimationMode::Values && m_values.size() - 1 != splinesCount)
-            || (hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && keyTimes.size() - 1 != splinesCount))
+            || (hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && keyTimes.size() - 1 != splinesCount)
+            || (!keyTimes.isEmpty() && keyTimes.last() != 1))
             return;
     }
 
@@ -554,7 +563,7 @@ void SVGAnimationElement::startedActiveInterval()
     if (animationMode == AnimationMode::None)
         return;
     if ((animationMode == AnimationMode::FromTo || animationMode == AnimationMode::FromBy || animationMode == AnimationMode::To || animationMode == AnimationMode::By)
-        && (hasAttributeWithoutSynchronization(SVGNames::keyPointsAttr) && hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && (keyTimes.size() < 2 || keyTimes.size() != m_keyPoints.size())))
+        && (hasAttributeWithoutSynchronization(SVGNames::keyPointsAttr) && hasAttributeWithoutSynchronization(SVGNames::keyTimesAttr) && (keyTimes.size() < 2 || keyTimes.last() != 1 || keyTimes.size() != m_keyPoints.size())))
         return;
     if (animationMode == AnimationMode::FromTo)
         m_animationValid = setFromAndToValues(from, to);
@@ -581,7 +590,7 @@ void SVGAnimationElement::startedActiveInterval()
 }
 
 void SVGAnimationElement::updateAnimation(float percent, unsigned repeatCount)
-{    
+{
     if (!m_animationValid)
         return;
 

@@ -29,6 +29,8 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MachineThreads);
@@ -50,23 +52,31 @@ void MachineThreads::gatherFromCurrentThread(ConservativeRoots& conservativeRoot
     conservativeRoots.add(currentThreadState.stackTop, currentThreadState.stackOrigin, jitStubRoutines, codeBlocks);
 }
 
-static inline int osRedZoneAdjustment()
+static inline int NODELETE osRedZoneAdjustment()
 {
     int redZoneAdjustment = 0;
 #if CPU(X86_64)
     // See http://people.freebsd.org/~obrien/amd64-elf-abi.pdf Section 3.2.2.
     redZoneAdjustment = -128;
 #elif CPU(ARM64)
+#if OS(DARWIN)
     // See https://developer.apple.com/library/ios/documentation/Xcode/Conceptual/iPhoneOSABIReference/Articles/ARM64FunctionCallingConventions.html#//apple_ref/doc/uid/TP40013702-SW7
     redZoneAdjustment = -128;
+#elif OS(WINDOWS)
+    // https://devblogs.microsoft.com/oldnewthing/20220726-00/?p=106898
+    redZoneAdjustment = -16;
+#else
+    // There is no red zone.
+    // https://stackoverflow.com/questions/77908878/aarch64-is-there-a-red-zone-on-linux-if-so-16-or-128-bytes
+#endif
 #endif
     return redZoneAdjustment;
 }
 
-static std::pair<void*, size_t> captureStack(Thread& thread, void* stackTop)
+static std::pair<void*, size_t> NODELETE captureStack(Thread& thread, void* stackTop)
 {
     char* begin = reinterpret_cast_ptr<char*>(thread.stack().origin());
-    char* end = bitwise_cast<char*>(WTF::roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(stackTop)));
+    char* end = std::bit_cast<char*>(WTF::roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(stackTop)));
     ASSERT(begin >= end);
 
     char* endWithRedZone = end + osRedZoneAdjustment();
@@ -80,7 +90,7 @@ static std::pair<void*, size_t> captureStack(Thread& thread, void* stackTop)
 }
 
 SUPPRESS_ASAN
-static void copyMemory(void* dst, const void* src, size_t size)
+static void NODELETE copyMemory(void* dst, const void* src, size_t size)
 {
     size_t dstAsSize = reinterpret_cast<size_t>(dst);
     size_t srcAsSize = reinterpret_cast<size_t>(src);
@@ -114,7 +124,7 @@ void MachineThreads::tryCopyOtherThreadStack(const ThreadSuspendLocker& locker, 
     // This is a workaround for <rdar://problem/27607384>. libdispatch recycles work
     // queue threads without running pthread exit destructors. This can cause us to scan a
     // thread during work queue initialization, when the stack pointer is null.
-    if (UNLIKELY(!MachineContext::stackPointer(registers))) {
+    if (!MachineContext::stackPointer(registers)) [[unlikely]] {
         *size = 0;
         return;
     }
@@ -141,7 +151,7 @@ bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void
 
     *size = 0;
 
-    Thread& currentThread = Thread::current();
+    auto& currentThread = Thread::currentSingleton();
     const ListHashSet<Ref<Thread>>& threads = m_threadGroup->threads(locker);
     BitVector isSuspended(threads.size());
 
@@ -227,3 +237,5 @@ NEVER_INLINE int callWithCurrentThreadState(const ScopedLambda<void(CurrentThrea
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

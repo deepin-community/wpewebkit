@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
- * Copyright (C) 2014-2021 Apple, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
+ * Copyright (C) 2014-2021 Apple, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,9 +26,10 @@
 
 #pragma once
 
-#include "HTTPHeaderMap.h"
+#include <WebCore/HTTPHeaderMap.h>
 #include <wtf/Box.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/Platform.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -61,12 +62,12 @@ constexpr MonotonicTime reusedTLSConnectionSentinel { MonotonicTime::fromRawSeco
 struct AdditionalNetworkLoadMetricsForWebInspector;
 
 class NetworkLoadMetrics {
-    WTF_MAKE_FAST_ALLOCATED(NetworkLoadMetrics);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NetworkLoadMetrics);
 public:
     WEBCORE_EXPORT NetworkLoadMetrics();
-    WEBCORE_EXPORT NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicTime&& fetchStart, MonotonicTime&& domainLookupStart, MonotonicTime&& domainLookupEnd, MonotonicTime&& connectStart, MonotonicTime&& secureConnectionStart, MonotonicTime&& connectEnd, MonotonicTime&& requestStart, MonotonicTime&& responseStart, MonotonicTime&& responseEnd, MonotonicTime&& workerStart, String&& protocol, uint16_t redirectCount, bool complete, bool cellular, bool expensive, bool constrained, bool multipath, bool isReusedConnection, bool failsTAOCheck, bool hasCrossOriginRedirect, PrivacyStance, uint64_t responseBodyBytesReceived, uint64_t responseBodyDecodedSize, RefPtr<AdditionalNetworkLoadMetricsForWebInspector>&&);
+    WEBCORE_EXPORT NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicTime&& fetchStart, MonotonicTime&& domainLookupStart, MonotonicTime&& domainLookupEnd, MonotonicTime&& connectStart, MonotonicTime&& secureConnectionStart, MonotonicTime&& connectEnd, MonotonicTime&& requestStart, MonotonicTime&& responseStart, MonotonicTime&& responseEnd, MonotonicTime&& workerStart, MonotonicTime&& firstInterimResponseStart, String&& protocol, uint16_t redirectCount, bool complete, bool cellular, bool expensive, bool constrained, bool multipath, bool isReusedConnection, bool failsTAOCheck, bool hasCrossOriginRedirect, bool fromPrefetch, bool fromCache, PrivacyStance, uint64_t responseBodyBytesReceived, uint64_t responseBodyDecodedSize, RefPtr<AdditionalNetworkLoadMetricsForWebInspector>&&);
 
-    WEBCORE_EXPORT static const NetworkLoadMetrics& emptyMetrics();
+    WEBCORE_EXPORT static const NetworkLoadMetrics& NODELETE emptyMetrics();
 
     WEBCORE_EXPORT NetworkLoadMetrics isolatedCopy() const;
 
@@ -94,6 +95,14 @@ public:
     MonotonicTime responseStart;
     MonotonicTime responseEnd;
     MonotonicTime workerStart;
+    MonotonicTime workerRouterEvaluationStart;
+    MonotonicTime workerCacheLookupStart;
+    String workerMatchedRouterSource;
+    String workerFinalRouterSource;
+
+    // https://github.com/w3c/resource-timing/pull/408
+    // Timing for interim (1xx) vs final (2xx/3xx/4xx/5xx) responses
+    MonotonicTime firstInterimResponseStart; // When first 1xx response arrived (if any)
 
     // ALPN Protocol ID: https://w3c.github.io/resource-timing/#bib-RFC7301
     String protocol;
@@ -108,6 +117,8 @@ public:
     bool isReusedConnection : 1 { false };
     bool failsTAOCheck : 1 { false };
     bool hasCrossOriginRedirect : 1 { false };
+    bool fromPrefetch : 1 { false };
+    bool fromCache : 1 { false };
 
     PrivacyStance privacyStance { PrivacyStance::Unknown };
 

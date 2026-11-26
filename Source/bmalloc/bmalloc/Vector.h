@@ -25,10 +25,13 @@
 
 #pragma once
 
+#ifdef __cplusplus
+
 #include "BInline.h"
 #include "VMAllocate.h"
 #include <cstddef>
 #include <cstring>
+#include <limits>
 
 namespace bmalloc {
 
@@ -232,3 +235,5 @@ void Vector<T>::shrinkToFit()
 }
 
 } // namespace bmalloc
+
+#endif // __cplusplus

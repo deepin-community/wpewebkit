@@ -54,37 +54,27 @@ class ObjectHeap;
 class RemoteTextDetector : public IPC::StreamMessageReceiver {
 public:
     WTF_MAKE_TZONE_ALLOCATED(RemoteTextDetector);
+    WTF_MAKE_NONCOPYABLE(RemoteTextDetector);
 public:
-    static Ref<RemoteTextDetector> create(Ref<WebCore::ShapeDetection::TextDetector>&& textDetector, ShapeDetection::ObjectHeap& objectHeap, RemoteRenderingBackend& backend, ShapeDetectionIdentifier identifier, WebCore::ProcessIdentifier webProcessIdentifier)
+    static Ref<RemoteTextDetector> create(Ref<WebCore::ShapeDetection::TextDetector>&& textDetector, RemoteRenderingBackend& renderingBackend, ShapeDetectionIdentifier identifier)
     {
-        return adoptRef(*new RemoteTextDetector(WTFMove(textDetector), objectHeap, backend, identifier, webProcessIdentifier));
+        return adoptRef(*new RemoteTextDetector(WTF::move(textDetector), renderingBackend, identifier));
     }
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     virtual ~RemoteTextDetector();
 
 private:
-    RemoteTextDetector(Ref<WebCore::ShapeDetection::TextDetector>&&, ShapeDetection::ObjectHeap&, RemoteRenderingBackend&, ShapeDetectionIdentifier, WebCore::ProcessIdentifier);
-
-    RemoteTextDetector(const RemoteTextDetector&) = delete;
-    RemoteTextDetector(RemoteTextDetector&&) = delete;
-    RemoteTextDetector& operator=(const RemoteTextDetector&) = delete;
-    RemoteTextDetector& operator=(RemoteTextDetector&&) = delete;
-
-    WebCore::ShapeDetection::TextDetector& backing() { return m_backing; }
-    Ref<WebCore::ShapeDetection::TextDetector> protectedBacking();
-    Ref<RemoteRenderingBackend> protectedBackend();
+    RemoteTextDetector(Ref<WebCore::ShapeDetection::TextDetector>&&, RemoteRenderingBackend&, ShapeDetectionIdentifier);
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void detect(WebCore::RenderingResourceIdentifier, CompletionHandler<void(Vector<WebCore::ShapeDetection::DetectedText>&&)>&&);
 
-    Ref<WebCore::ShapeDetection::TextDetector> m_backing;
-    WeakRef<ShapeDetection::ObjectHeap> m_objectHeap;
-    WeakRef<RemoteRenderingBackend> m_backend;
+    const Ref<WebCore::ShapeDetection::TextDetector> m_backing;
+    const WeakRef<RemoteRenderingBackend> m_renderingBackend;
     const ShapeDetectionIdentifier m_identifier;
-    const WebCore::ProcessIdentifier m_webProcessIdentifier;
 };
 
 } // namespace WebKit

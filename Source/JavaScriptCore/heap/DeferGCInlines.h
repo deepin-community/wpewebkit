@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "DeferGC.h"
-#include "VM.h"
+#include <JavaScriptCore/DeferGC.h>
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/VM.h>
 
 namespace JSC {
 

@@ -26,7 +26,9 @@
 #pragma once
 
 #include "WPEDisplay.h"
+#include "WPEView.h"
 
 WPEView* wpeDisplayCreateView(WPEDisplay*);
 bool wpeDisplayCheckEGLExtension(WPEDisplay*, const char*);
-WPEInputMethodContext* wpeDisplayCreateInputMethodContext(WPEDisplay*);
+void wpeDisplayTerminateEGL(WPEDisplay*);
+WPEInputMethodContext* wpeDisplayCreateInputMethodContext(WPEDisplay*, WPEView*);

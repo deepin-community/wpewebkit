@@ -27,19 +27,21 @@
 #include "config.h"
 #include "PlatformSpeechSynthesizer.h"
 
-#if ENABLE(SPEECH_SYNTHESIS) && USE(GSTREAMER)
+#if USE(FLITE) && USE(GSTREAMER)
 
 #include "GStreamerCommon.h"
 #include "PlatformSpeechSynthesisUtterance.h"
 #include "PlatformSpeechSynthesisVoice.h"
 #include "WebKitAudioSinkGStreamer.h"
 #include "WebKitFliteSourceGStreamer.h"
+#include <wtf/MediaTime.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
 class GstSpeechSynthesisWrapper {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(GstSpeechSynthesisWrapper);
     WTF_MAKE_NONCOPYABLE(GstSpeechSynthesisWrapper);
 public:
     explicit GstSpeechSynthesisWrapper(const PlatformSpeechSynthesizer&);
@@ -99,13 +101,13 @@ GstSpeechSynthesisWrapper::GstSpeechSynthesisWrapper(const PlatformSpeechSynthes
         }
     }
 
-    m_volumeElement = makeGStreamerElement("volume", nullptr);
-    m_pitchElement = makeGStreamerElement("pitch", nullptr);
+    m_volumeElement = makeGStreamerElement("volume"_s);
+    m_pitchElement = makeGStreamerElement("pitch"_s);
     if (!m_pitchElement)
         WTFLogAlways("The pitch GStreamer plugin is unavailable. The pitch property of Speech Synthesis is ignored.");
 
-    GRefPtr<GstElement> audioConvert = makeGStreamerElement("audioconvert", nullptr);
-    GRefPtr<GstElement> audioResample = makeGStreamerElement("audioresample", nullptr);
+    GRefPtr<GstElement> audioConvert = makeGStreamerElement("audioconvert"_s);
+    GRefPtr<GstElement> audioResample = makeGStreamerElement("audioresample"_s);
     if (m_pitchElement)
         gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), m_volumeElement.get(), audioConvert.get(), audioResample.get(), m_pitchElement.get(), audioSink.get(), nullptr);
     else
@@ -136,7 +138,8 @@ void GstSpeechSynthesisWrapper::pause()
     webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_PAUSED, [this](GstMessage* message) -> bool {
         return handleMessage(message);
     });
-    m_platformSynthesizer.client().didPauseSpeaking(*m_utterance);
+    if (RefPtr client = m_platformSynthesizer.client())
+        client->didPauseSpeaking(*m_utterance);
 }
 
 void GstSpeechSynthesisWrapper::resume()
@@ -147,7 +150,8 @@ void GstSpeechSynthesisWrapper::resume()
     webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_PLAYING, [this](GstMessage* message) -> bool {
         return handleMessage(message);
     });
-    m_platformSynthesizer.client().didResumeSpeaking(*m_utterance);
+    if (RefPtr client = m_platformSynthesizer.client())
+        client->didResumeSpeaking(*m_utterance);
 }
 
 void GstSpeechSynthesisWrapper::speakUtterance(RefPtr<PlatformSpeechSynthesisUtterance>&& utterance)
@@ -157,7 +161,7 @@ void GstSpeechSynthesisWrapper::speakUtterance(RefPtr<PlatformSpeechSynthesisUtt
     if (!utterance)
         return;
 
-    m_utterance = WTFMove(utterance);
+    m_utterance = WTF::move(utterance);
     webKitFliteSrcSetUtterance(WEBKIT_FLITE_SRC(m_src.get()), m_utterance->voice(), m_utterance->text());
 
     // The pitch element does not handle the rate bigger than 1.0. We control
@@ -174,7 +178,8 @@ void GstSpeechSynthesisWrapper::speakUtterance(RefPtr<PlatformSpeechSynthesisUtt
         return handleMessage(message);
     });
 
-    m_platformSynthesizer.client().didStartSpeaking(*m_utterance);
+    if (RefPtr client = m_platformSynthesizer.client())
+        client->didStartSpeaking(*m_utterance);
 }
 
 void GstSpeechSynthesisWrapper::cancel()
@@ -185,7 +190,8 @@ void GstSpeechSynthesisWrapper::cancel()
     webkitGstSetElementStateSynchronously(m_pipeline.get(), GST_STATE_READY, [this](GstMessage* message) -> bool {
         return handleMessage(message);
     });
-    m_platformSynthesizer.client().didFinishSpeaking(*m_utterance);
+    if (RefPtr client = m_platformSynthesizer.client())
+        client->didFinishSpeaking(*m_utterance);
 }
 
 void GstSpeechSynthesisWrapper::resetState()
@@ -245,7 +251,7 @@ void PlatformSpeechSynthesizer::speak(RefPtr<PlatformSpeechSynthesisUtterance>&&
     if (!m_platformSpeechWrapper)
         m_platformSpeechWrapper = makeUnique<GstSpeechSynthesisWrapper>(*this);
 
-    m_platformSpeechWrapper->speakUtterance(WTFMove(utterance));
+    m_platformSpeechWrapper->speakUtterance(WTF::move(utterance));
 }
 
 void PlatformSpeechSynthesizer::cancel()
@@ -264,4 +270,4 @@ void PlatformSpeechSynthesizer::resetState()
 
 } // namespace WebCore
 
-#endif // ENABLE(SPEECH_SYNTHESIS) && USE(GSTREAMER)
+#endif // USE(FLITE) && USE(GSTREAMER)

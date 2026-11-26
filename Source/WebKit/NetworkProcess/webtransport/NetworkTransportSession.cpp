@@ -28,121 +28,250 @@
 
 #include "MessageSenderInlines.h"
 #include "NetworkConnectionToWebProcess.h"
-#include "NetworkTransportBidirectionalStream.h"
-#include "NetworkTransportReceiveStream.h"
-#include "NetworkTransportSendStream.h"
+#include "NetworkTransportStream.h"
 #include "WebTransportSessionMessages.h"
+#include <WebCore/Exception.h>
+#include <WebCore/ExceptionCode.h>
+#include <WebCore/WebTransportConnectionStats.h>
+#include <WebCore/WebTransportReceiveStreamStats.h>
+#include <WebCore/WebTransportSendStreamStats.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkTransportSession);
 
-void NetworkTransportSession::initialize(NetworkConnectionToWebProcess& connection, URL&&, CompletionHandler<void(std::unique_ptr<NetworkTransportSession>&&)>&& completionHandler)
+NetworkTransportSession::~NetworkTransportSession()
 {
-    completionHandler(makeUnique<NetworkTransportSession>(connection));
+    for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+        statsRequest(std::nullopt);
 }
-
-NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& connection)
-    : m_connection(connection)
-{
-}
-
-NetworkTransportSession::~NetworkTransportSession() = default;
 
 IPC::Connection* NetworkTransportSession::messageSenderConnection() const
 {
-    return m_connection ? &m_connection->connection() : nullptr;
+    return m_connectionToWebProcess ? &m_connectionToWebProcess->connection() : nullptr;
 }
 
 uint64_t NetworkTransportSession::messageSenderDestinationID() const
 {
-    return identifier().toUInt64();
+    return m_identifier.toUInt64();
 }
 
-void NetworkTransportSession::sendDatagram(std::span<const uint8_t>, CompletionHandler<void()>&& completionHandler)
+void NetworkTransportSession::streamSendBytes(WebCore::WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&& completionHandler)
 {
-    // FIXME: Implement.
-    completionHandler();
+    if (RefPtr stream = m_streams.get(identifier))
+        stream->sendBytes(bytes, withFin, WTF::move(completionHandler));
+    else
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
 }
 
-void NetworkTransportSession::sendStreamSendBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin, CompletionHandler<void()>&& completionHandler)
+void NetworkTransportSession::receiveDatagram(std::span<const uint8_t> datagram, bool withFin, std::optional<WebCore::Exception>&& exception)
 {
-    if (auto* stream = m_sendStreams.get(identifier))
-        stream->sendBytes(bytes, withFin);
-    completionHandler();
+    m_datagramBytesReceived += datagram.size();
+    send(Messages::WebTransportSession::ReceiveDatagram(datagram, withFin, WTF::move(exception)));
 }
 
-void NetworkTransportSession::streamSendBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin, CompletionHandler<void()>&& completionHandler)
+void NetworkTransportSession::streamReceiveBytes(WebCore::WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin, std::optional<WebCore::Exception>&& exception)
 {
-    if (auto* stream = m_bidirectionalStreams.get(identifier))
-        stream->sendBytes(bytes, withFin);
-    else if (auto* stream = m_sendStreams.get(identifier))
-        stream->sendBytes(bytes, withFin);
-    completionHandler();
+    send(Messages::WebTransportSession::StreamReceiveBytes(identifier, bytes, withFin, WTF::move(exception)));
 }
 
-void NetworkTransportSession::createOutgoingUnidirectionalStream(CompletionHandler<void(std::optional<WebTransportStreamIdentifier>)>&& completionHandler)
+void NetworkTransportSession::streamReceiveError(WebCore::WebTransportStreamIdentifier identifier, uint64_t errorCode)
 {
-    auto identifier = WebTransportStreamIdentifier::generate();
-    ASSERT(!m_sendStreams.contains(identifier));
-    m_sendStreams.set(identifier, makeUniqueRef<NetworkTransportSendStream>());
-    completionHandler(identifier);
+    send(Messages::WebTransportSession::StreamReceiveError(identifier, errorCode));
 }
 
-void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(std::optional<WebTransportStreamIdentifier>)>&& completionHandler)
+void NetworkTransportSession::streamSendError(WebCore::WebTransportStreamIdentifier identifier, uint64_t errorCode)
 {
-    auto identifier = WebTransportStreamIdentifier::generate();
-    ASSERT(!m_bidirectionalStreams.contains(identifier));
-    m_bidirectionalStreams.set(identifier, makeUniqueRef<NetworkTransportBidirectionalStream>(*this));
-    completionHandler(identifier);
+    send(Messages::WebTransportSession::StreamSendError(identifier, errorCode));
 }
 
-void NetworkTransportSession::destroyOutgoingUnidirectionalStream(WebTransportStreamIdentifier identifier)
+void NetworkTransportSession::receiveIncomingUnidirectionalStream(WebCore::WebTransportStreamIdentifier identifier)
 {
-    ASSERT(m_sendStreams.contains(identifier));
-    m_sendStreams.remove(identifier);
-}
-
-void NetworkTransportSession::destroyBidirectionalStream(WebTransportStreamIdentifier identifier)
-{
-    ASSERT(m_bidirectionalStreams.contains(identifier));
-    m_bidirectionalStreams.remove(identifier);
-}
-
-void NetworkTransportSession::terminate(uint32_t, CString&&)
-{
-    // FIXME: Implement.
-}
-
-void NetworkTransportSession::receiveDatagram(std::span<const uint8_t> datagram)
-{
-    // FIXME: Implement something that calls this.
-    send(Messages::WebTransportSession::ReceiveDatagram(datagram));
-}
-
-void NetworkTransportSession::streamReceiveBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin)
-{
-    // FIXME: Implement something that calls this.
-    send(Messages::WebTransportSession::StreamReceiveBytes(identifier, bytes, withFin));
-}
-
-void NetworkTransportSession::receiveIncomingUnidirectionalStream()
-{
-    // FIXME: Implement something that calls this.
-    auto identifier = WebTransportStreamIdentifier::generate();
-    ASSERT(!m_receiveStreams.contains(identifier));
-    m_receiveStreams.set(identifier, makeUniqueRef<NetworkTransportReceiveStream>(*this));
     send(Messages::WebTransportSession::ReceiveIncomingUnidirectionalStream(identifier));
 }
 
-void NetworkTransportSession::receiveBidirectionalStream()
+void NetworkTransportSession::receiveBidirectionalStream(WebCore::WebTransportStreamIdentifier identifier)
 {
-    // FIXME: Implement something that calls this.
-    auto identifier = WebTransportStreamIdentifier::generate();
-    ASSERT(!m_bidirectionalStreams.contains(identifier));
-    m_bidirectionalStreams.set(identifier, makeUniqueRef<NetworkTransportBidirectionalStream>(*this));
     send(Messages::WebTransportSession::ReceiveBidirectionalStream(identifier));
 }
+
+void NetworkTransportSession::cancelReceiveStream(WebCore::WebTransportStreamIdentifier identifier, std::optional<WebCore::WebTransportStreamErrorCode> errorCode)
+{
+    if (RefPtr stream = m_streams.get(identifier))
+        stream->cancelReceive(errorCode);
+}
+
+void NetworkTransportSession::cancelSendStream(WebCore::WebTransportStreamIdentifier identifier, std::optional<WebCore::WebTransportStreamErrorCode> errorCode)
+{
+    if (RefPtr stream = m_streams.get(identifier))
+        stream->cancelSend(errorCode);
+}
+
+void NetworkTransportSession::destroyStream(WebCore::WebTransportStreamIdentifier identifier, std::optional<WebCore::WebTransportStreamErrorCode> errorCode)
+{
+    if (RefPtr stream = m_streams.take(identifier)) {
+        stream->cancel(errorCode);
+        m_bytesSentOnClosedStreams += stream->bytesSent();
+        m_bytesReceivedOnClosedStreams += stream->bytesReceived();
+    }
+}
+
+std::optional<SharedPreferencesForWebProcess> NetworkTransportSession::sharedPreferencesForWebProcess() const
+{
+    if (auto connectionToWebProcess = m_connectionToWebProcess.get())
+        return connectionToWebProcess->sharedPreferencesForWebProcess();
+
+    return std::nullopt;
+}
+
+void NetworkTransportSession::getSendStreamStats(WebCore::WebTransportStreamIdentifier identifier, CompletionHandler<void(std::optional<WebCore::WebTransportSendStreamStats>&&)>&& completionHandler)
+{
+    if (RefPtr stream = m_streams.get(identifier))
+        completionHandler(stream->getSendStreamStats());
+    else
+        completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::getReceiveStreamStats(WebCore::WebTransportStreamIdentifier identifier, CompletionHandler<void(std::optional<WebCore::WebTransportReceiveStreamStats>&&)>&& completionHandler)
+{
+    if (RefPtr stream = m_streams.get(identifier))
+        completionHandler(stream->getReceiveStreamStats());
+    else
+        completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::getSendGroupStats(WebCore::WebTransportSendGroupIdentifier identifier, CompletionHandler<void(std::optional<WebCore::WebTransportSendStreamStats>&&)>&& completionHandler)
+{
+    // FIXME: Get better data from the stream.
+    uint64_t bytesSent = m_datagramBytesSent.get(identifier);
+    completionHandler(WebCore::WebTransportSendStreamStats {
+        bytesSent,
+        bytesSent,
+        bytesSent
+    });
+}
+
+void NetworkTransportSession::datagramIncomingMaxAgeUpdated(std::optional<double>)
+{
+    // FIXME: Use this value.
+}
+
+void NetworkTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<double>)
+{
+    // FIXME: Use this value.
+}
+
+void NetworkTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t)
+{
+    // FIXME: Use this value.
+}
+
+void NetworkTransportSession::outgoingMaxBufferedDatagramsUpdated(uint32_t)
+{
+    // FIXME: Use this value.
+}
+
+void NetworkTransportSession::getStats(CompletionHandler<void(std::optional<WebCore::WebTransportConnectionStats>&&)>&& completionHandler)
+{
+    switch (m_initializationState) {
+    case InitializationState::Waiting:
+        m_statsRequestsBeforeInitialization.append(WTF::move(completionHandler));
+        return;
+    case InitializationState::Failed:
+        return completionHandler(std::nullopt);
+    case InitializationState::Succeeded:
+        break;
+    }
+
+    // FIXME: Get better stats from the network implementation.
+    uint64_t bytesSent = m_bytesSentOnClosedStreams;
+    uint64_t bytesReceived = m_bytesReceivedOnClosedStreams;
+    for (Ref stream : m_streams.values()) {
+        bytesSent += stream->bytesSent();
+        bytesReceived += stream->bytesReceived();
+    }
+    for (uint64_t datagramBytesSent : m_datagramBytesSent.values())
+        bytesSent += datagramBytesSent;
+    bytesReceived += m_datagramBytesReceived;
+
+    // https://www.w3.org/TR/hr-time-3/#dfn-coarsen-time
+    auto roundTo100Microseconds = [] (Seconds time) {
+        return ReducedResolutionSeconds::reduce(time, 100_us).milliseconds();
+    };
+
+    completionHandler(WebCore::WebTransportConnectionStats {
+        bytesSent,
+        0, /* packetsSent */
+        0, /* bytesLost */
+        0, /* packetsLost */
+        bytesReceived,
+        0, /* packetsReceived */
+        roundTo100Microseconds(m_initializationTime), /* smoothedRtt */
+        0, /* rttVariation */
+        roundTo100Microseconds(m_initializationTime), /* minRtt */
+        WebCore::WebTransportDatagramStats { },
+        std::nullopt, /* estimatedSendRate */
+        false /* atSendCapacity */
+    });
+}
+
+void NetworkTransportSession::completeStatsRequestsAfterInitialization(std::optional<Seconds> initializationTime)
+{
+    ASSERT(!m_initializationTime);
+    ASSERT(m_initializationState == InitializationState::Waiting);
+    if (!initializationTime) {
+        m_initializationState = InitializationState::Failed;
+        for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+            statsRequest(std::nullopt);
+        return;
+    }
+    m_initializationState = InitializationState::Succeeded;
+    m_initializationTime = *initializationTime;
+    for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+        getStats(WTF::move(statsRequest));
+}
+
+#if !PLATFORM(COCOA)
+RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess&, WebTransportSessionIdentifier, URL&&, WebCore::WebTransportOptions&&, WebKit::WebPageProxyIdentifier&&, WebCore::ClientOrigin&&)
+{
+    return nullptr;
+}
+
+void NetworkTransportSession::initialize(CompletionHandler<void(std::optional<WebCore::WebTransportConnectionInfo>&&)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
+}
+
+NetworkTransportSession::NetworkTransportSession()
+    : m_identifier(WebTransportSessionIdentifier::generate())
+{
+}
+
+void NetworkTransportSession::sendDatagram(std::optional<WebCore::WebTransportSendGroupIdentifier>, std::span<const uint8_t>, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::createOutgoingUnidirectionalStream(CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::terminate(WebCore::WebTransportSessionErrorCode, CString&&)
+{
+}
+
+bool NetworkTransportSession::isSessionClosed() const
+{
+    return false;
+}
+#endif
 
 }

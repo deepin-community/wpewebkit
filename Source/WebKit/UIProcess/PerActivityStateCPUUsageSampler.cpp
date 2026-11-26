@@ -43,14 +43,22 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PerActivityStateCPUUsageSampler);
 
 PerActivityStateCPUUsageSampler::PerActivityStateCPUUsageSampler(WebProcessPool& processPool)
     : m_processPool(processPool)
-    , m_loggingTimer(RunLoop::main(), this, &PerActivityStateCPUUsageSampler::loggingTimerFired)
+    , m_loggingTimer(RunLoop::mainSingleton(), "PerActivityStateCPUUsageSampler::LoggingTimer"_s, this, &PerActivityStateCPUUsageSampler::loggingTimerFired)
 {
     m_lastCPUTime = MonotonicTime::now();
     m_loggingTimer.startRepeating(loggingInterval);
 }
 
-PerActivityStateCPUUsageSampler::~PerActivityStateCPUUsageSampler()
+PerActivityStateCPUUsageSampler::~PerActivityStateCPUUsageSampler() = default;
+
+void PerActivityStateCPUUsageSampler::ref() const
 {
+    m_processPool->ref();
+}
+
+void PerActivityStateCPUUsageSampler::deref() const
+{
+    m_processPool->deref();
 }
 
 void PerActivityStateCPUUsageSampler::reportWebContentCPUTime(Seconds cpuTime, ActivityStateForCPUSampling activityState)
@@ -96,7 +104,8 @@ void PerActivityStateCPUUsageSampler::loggingTimerFired()
 
 RefPtr<WebPageProxy> PerActivityStateCPUUsageSampler::pageForLogging() const
 {
-    for (Ref webProcess : m_processPool.processes()) {
+    Ref processPool = m_processPool;
+    for (Ref webProcess : processPool->processes()) {
         if (!webProcess->pageCount())
             continue;
         return webProcess->pages()[0].ptr();

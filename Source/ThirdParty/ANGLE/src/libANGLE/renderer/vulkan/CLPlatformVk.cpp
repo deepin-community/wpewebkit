@@ -5,19 +5,19 @@
 //
 // CLPlatformVk.cpp: Implements the class methods for CLPlatformVk.
 
-#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
+#include "anglebase/no_destructor.h"
+#include "common/angle_version_info.h"
 #include "common/vulkan/vulkan_icd.h"
-#include "libANGLE/angletypes.h"
+
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLDeviceVk.h"
+#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
+#include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include "libANGLE/CLPlatform.h"
 #include "libANGLE/cl_utils.h"
 
-#include "anglebase/no_destructor.h"
-#include "common/angle_version_info.h"
-#include "libANGLE/renderer/vulkan/vk_utils.h"
 #include "vulkan/vulkan_core.h"
 
 namespace rx
@@ -31,30 +31,24 @@ constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::YesIfAvailabl
 constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::No;
 #endif
 
-std::string CreateExtensionString(const NameVersionVector &extList)
-{
-    std::string extensions;
-    for (const cl_name_version &ext : extList)
-    {
-        extensions += ext.name;
-        extensions += ' ';
-    }
-    if (!extensions.empty())
-    {
-        extensions.pop_back();
-    }
-    return extensions;
-}
-
 }  // namespace
 
 angle::Result CLPlatformVk::initBackendRenderer()
 {
     ASSERT(mRenderer != nullptr);
 
-    ANGLE_TRY(mRenderer->initialize(this, this, angle::vk::ICD::Default, 0, 0, kUseDebugLayers,
-                                    getWSIExtension(), getWSILayer(), getWindowSystem(),
-                                    angle::FeatureOverrides{}));
+    angle::FeatureOverrides featureOverrides;
+
+    // In memory |SizedMRUCache| does not require dual slots, supports zero sized values, and evicts
+    // minumum number of old items when storing a new item.
+    featureOverrides.disabled.push_back("useDualPipelineBlobCacheSlots");
+    featureOverrides.enabled.push_back("useEmptyBlobsToEraseOldPipelineCacheFromBlobCache");
+    featureOverrides.enabled.push_back("hasBlobCacheThatEvictsOldItemsFirst");
+    featureOverrides.disabled.push_back("verifyPipelineCacheInBlobCache");
+
+    ANGLE_TRY(mRenderer->initialize(this, this, angle::vk::ICD::Default, 0, 0, nullptr, nullptr,
+                                    static_cast<VkDriverId>(0), kUseDebugLayers, getWSIExtension(),
+                                    getWSILayer(), getWindowSystem(), featureOverrides));
 
     return angle::Result::Continue;
 }
@@ -69,17 +63,64 @@ CLPlatformVk::~CLPlatformVk()
 CLPlatformImpl::Info CLPlatformVk::createInfo() const
 {
     NameVersionVector extList = {
-        cl_name_version{CL_MAKE_VERSION(3, 0, 0), "cl_khr_icd"},
-        cl_name_version{CL_MAKE_VERSION(3, 0, 0), "cl_khr_extended_versioning"}};
+        cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_icd"},
+        cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_extended_versioning"}};
 
     Info info;
     info.name.assign("ANGLE Vulkan");
     info.profile.assign("FULL_PROFILE");
     info.versionStr.assign(GetVersionString());
-    info.hostTimerRes          = 0u;
-    info.extensionsWithVersion = std::move(extList);
-    info.version               = GetVersion();
-    info.initializeExtensions(CreateExtensionString(extList));
+    info.hostTimerRes = 0u;
+    info.version      = GetVersion();
+
+    // check all devices to see which device-extensions can be promoted to platform-extensions
+    bool platformSupportsBaseInt64Atomics     = true;
+    bool platformSupportsExtendedInt64Atomics = true;
+    bool platformSupportsDepthImages          = true;
+    CLExtensions::ExternalMemoryHandleBitset supportedHandles;
+    supportedHandles.set();  // set support for all types initially
+    for (const cl::DevicePtr &platformDevice : mPlatform.getDevices())
+    {
+        platformSupportsBaseInt64Atomics &= platformDevice->getInfo().khrInt64BaseAtomics;
+        platformSupportsExtendedInt64Atomics &= platformDevice->getInfo().khrInt64ExtendedAtomics;
+        platformSupportsDepthImages &= platformDevice->getInfo().khrDepthImages;
+        supportedHandles &= platformDevice->getInfo().externalMemoryHandleSupport;
+    }
+
+    if (info.populateSupportedExternalMemoryHandleTypes(supportedHandles))
+    {
+        extList.push_back(cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_external_memory"});
+
+        // cl_arm_import_memory is layered on top of cl_arm_import_memory
+        bool reportBaseArmImportMemString = false;
+        if (supportedHandles.test(cl::ExternalMemoryHandle::DmaBuf))
+        {
+            extList.push_back(
+                cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_arm_import_memory_dma_buf"});
+            reportBaseArmImportMemString = true;
+        }
+        if (reportBaseArmImportMemString)
+        {
+            extList.push_back(cl_name_version{CL_MAKE_VERSION(1, 11, 0), "cl_arm_import_memory"});
+        }
+    }
+    if (platformSupportsBaseInt64Atomics)
+    {
+        extList.push_back(cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_int64_base_atomics"});
+    }
+    if (platformSupportsExtendedInt64Atomics)
+    {
+        extList.push_back(
+            cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_int64_extended_atomics"});
+    }
+    if (platformSupportsDepthImages)
+    {
+        extList.push_back(
+            cl_name_version{.version = CL_MAKE_VERSION(1, 0, 0), .name = "cl_khr_depth_images"});
+    }
+
+    info.initializeVersionedExtensions(std::move(extList));
+
     return info;
 }
 
@@ -88,7 +129,7 @@ CLDeviceImpl::CreateDatas CLPlatformVk::createDevices() const
     CLDeviceImpl::CreateDatas createDatas;
 
     // Convert Vk device type to CL equivalent
-    cl_device_type type = CL_DEVICE_TYPE_DEFAULT;
+    cl_device_type type = 0;
     switch (mRenderer->getPhysicalDeviceProperties().deviceType)
     {
         case VK_PHYSICAL_DEVICE_TYPE_CPU:
@@ -131,37 +172,30 @@ angle::Result CLPlatformVk::createContextFromType(cl::Context &context,
                                                   bool userSync,
                                                   CLContextImpl::Ptr *contextOut)
 {
-    const VkPhysicalDeviceType &vkPhysicalDeviceType =
-        getRenderer()->getPhysicalDeviceProperties().deviceType;
+    cl::DevicePtrs devices;
+    const bool requestForAll     = deviceType.intersects(CL_DEVICE_TYPE_ALL);
+    const bool requestForDefault = deviceType.intersects(CL_DEVICE_TYPE_DEFAULT);
 
-    if (deviceType.isSet(CL_DEVICE_TYPE_CPU) && vkPhysicalDeviceType != VK_PHYSICAL_DEVICE_TYPE_CPU)
+    if (requestForAll)
     {
-        ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
+        devices = mPlatform.getDevices();
     }
-    else if (deviceType.isSet(CL_DEVICE_TYPE_GPU))
+    else if (requestForDefault)
     {
-        switch (vkPhysicalDeviceType)
+        if (!mPlatform.getDevices().empty())
         {
-            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-                break;
-            default:
-                ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
+            devices.push_back(mPlatform.getDevices().front());
         }
     }
     else
     {
-        ANGLE_CL_RETURN_ERROR(CL_DEVICE_NOT_FOUND);
-    }
-
-    cl::DevicePtrs devices;
-    for (const auto &platformDevice : mPlatform.getDevices())
-    {
-        const auto &platformDeviceInfo = platformDevice->getInfo();
-        if (platformDeviceInfo.type.isSet(deviceType))
+        for (const auto &platformDevice : mPlatform.getDevices())
         {
-            devices.push_back(platformDevice);
+            const auto &platformDeviceInfo = platformDevice->getInfo();
+            if (platformDeviceInfo.type.intersects(deviceType))
+            {
+                devices.push_back(platformDevice);
+            }
         }
     }
 
@@ -200,7 +234,7 @@ const std::string &CLPlatformVk::GetVersionString()
 }
 
 CLPlatformVk::CLPlatformVk(const cl::Platform &platform)
-    : CLPlatformImpl(platform), vk::Context(new vk::Renderer()), mBlobCache(1024 * 1024)
+    : CLPlatformImpl(platform), vk::ErrorContext(new vk::Renderer()), mBlobCache(1024 * 1024)
 {}
 
 void CLPlatformVk::handleError(VkResult result,
@@ -224,27 +258,8 @@ void CLPlatformVk::handleError(VkResult result,
 
 angle::NativeWindowSystem CLPlatformVk::getWindowSystem()
 {
-#if defined(ANGLE_ENABLE_VULKAN)
-#    if defined(ANGLE_PLATFORM_LINUX)
-#        if defined(ANGLE_USE_GBM)
-    return angle::NativeWindowSystem::Gbm;
-#        elif defined(ANGLE_USE_X11)
-    return angle::NativeWindowSystem::X11;
-#        elif defined(ANGLE_USE_WAYLAND)
-    return angle::NativeWindowSystem::Wayland;
-#        else
-    handleError(VK_ERROR_INCOMPATIBLE_DRIVER, __FILE__, __func__, __LINE__);
-    return angle::NativeWindowSystem::Other;
-#        endif
-#    elif defined(ANGLE_PLATFORM_ANDROID)
-    return angle::NativeWindowSystem::Other;
-#    else
-    handleError(VK_ERROR_INCOMPATIBLE_DRIVER, __FILE__, __func__, __LINE__);
-    return angle::NativeWindowSystem::Other;
-#    endif
-#elif
-    UNREACHABLE();
-#endif
+    // This is an indicator that renderer will be used for OpenCL
+    return angle::NativeWindowSystem::NullCompute;
 }
 
 const char *CLPlatformVk::getWSIExtension()

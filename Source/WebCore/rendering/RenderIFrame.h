@@ -25,26 +25,23 @@
 
 #pragma once
 
-#include "RenderFrameBase.h"
+#include <WebCore/RenderFrameBase.h>
 
 namespace WebCore {
 
 class RenderView;
 
 class RenderIFrame final : public RenderFrameBase {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderIFrame);
+    WTF_MAKE_TZONE_ALLOCATED(RenderIFrame);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderIFrame);
 public:
-    RenderIFrame(HTMLIFrameElement&, RenderStyle&&);
+    RenderIFrame(HTMLIFrameElement&, Style::ComputedStyle&&);
     virtual ~RenderIFrame();
 
-    HTMLIFrameElement& iframeElement() const;
+    HTMLIFrameElement& NODELETE iframeElement() const;
 
 private:
     void frameOwnerElement() const = delete;
-
-    bool shouldComputeSizeAsReplaced() const override;
-    bool isInlineBlockOrInlineTable() const override;
 
     void layout() override;
 
@@ -52,7 +49,7 @@ private:
 
     bool requiresLayer() const override;
 
-    bool isFullScreenIFrame() const;
+    bool NODELETE isFullScreenIFrame() const;
 };
 
 } // namespace WebCore

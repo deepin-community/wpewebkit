@@ -27,32 +27,47 @@
 #pragma once
 
 #include <wtf/CompactRefPtrTuple.h>
+#include <wtf/Forward.h>
 #include <wtf/Packed.h>
+#include <wtf/RefPtr.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/WeakRef.h>
 
 namespace WTF {
+
+#define USING_CAN_MAKE_WEAKPTR(BASE) \
+    using BASE::weakImpl; \
+    using BASE::weakCount; \
+    using BASE::WeakValueType; \
+    using BASE::WeakPtrImplType;
 
 // Note: you probably want to inherit from CanMakeWeakPtr rather than use this directly.
 template<typename T, typename WeakPtrImpl = DefaultWeakPtrImpl>
 class WeakPtrFactory {
     WTF_MAKE_NONCOPYABLE(WeakPtrFactory);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakPtrFactory);
 public:
     using ObjectType = T;
     using WeakPtrImplType = WeakPtrImpl;
 
     WeakPtrFactory()
-#if ASSERT_ENABLED
-        : m_wasConstructedOnMainThread(isMainThread())
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        : m_thread(currentThreadLike)
 #endif
     {
     }
 
+    void prepareForUseOnlyOnMainThread()
+    {
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = mainThreadLike;
+#endif
+    }
+
     void prepareForUseOnlyOnNonMainThread()
     {
-#if ASSERT_ENABLED
-        ASSERT(m_wasConstructedOnMainThread);
-        m_wasConstructedOnMainThread = false;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
 #endif
     }
 
@@ -60,19 +75,24 @@ public:
     {
         if (m_impl)
             m_impl->clear();
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
     }
 
-    WeakPtrImpl* impl() const
+    WeakPtrImpl* impl() const LIFETIME_BOUND
     {
         return m_impl.get();
     }
 
-    void initializeIfNeeded(const T& object) const
+    SUPPRESS_NODELETE void NODELETE initializeIfNeeded(const T& object) const
     {
         if (m_impl)
             return;
 
-        ASSERT(m_wasConstructedOnMainThread == isMainThread());
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        assertIsCurrent(m_thread);
+#endif
 
         static_assert(std::is_final_v<WeakPtrImpl>);
         m_impl = adoptRef(*new WeakPtrImpl(const_cast<T*>(&object)));
@@ -102,15 +122,12 @@ public:
 #endif
 
 private:
-    template<typename, typename, EnableWeakPtrThreadingAssertions> friend class WeakHashSet;
-    template<typename, typename, EnableWeakPtrThreadingAssertions> friend class WeakListHashSet;
-    template<typename, typename, typename> friend class WeakHashMap;
     template<typename, typename, typename> friend class WeakPtr;
     template<typename, typename> friend class WeakRef;
 
     mutable RefPtr<WeakPtrImpl> m_impl;
-#if ASSERT_ENABLED
-    bool m_wasConstructedOnMainThread;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    NO_UNIQUE_ADDRESS ThreadLikeAssertion m_thread;
 #endif
 };
 
@@ -118,14 +135,14 @@ private:
 template<typename T, typename WeakPtrImpl = DefaultWeakPtrImpl>
 class WeakPtrFactoryWithBitField {
     WTF_MAKE_NONCOPYABLE(WeakPtrFactoryWithBitField);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakPtrFactoryWithBitField);
 public:
     using ObjectType = T;
     using WeakPtrImplType = WeakPtrImpl;
 
     WeakPtrFactoryWithBitField()
-#if ASSERT_ENABLED
-        : m_wasConstructedOnMainThread(isMainThread())
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        : m_thread(currentThreadLike)
 #endif
     {
     }
@@ -134,19 +151,24 @@ public:
     {
         if (auto* pointer = m_impl.pointer())
             pointer->clear();
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        m_thread = anyThreadLike;
+#endif
     }
 
-    WeakPtrImpl* impl() const
+    WeakPtrImpl* impl() const LIFETIME_BOUND
     {
         return m_impl.pointer();
     }
 
-    void initializeIfNeeded(const T& object) const
+    SUPPRESS_NODELETE void NODELETE initializeIfNeeded(const T& object) const
     {
         if (m_impl.pointer())
             return;
 
-        ASSERT(m_wasConstructedOnMainThread == isMainThread());
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+        assertIsCurrent(m_thread);
+#endif
 
         static_assert(std::is_final_v<WeakPtrImpl>);
         m_impl.setPointer(adoptRef(*new WeakPtrImpl(const_cast<T*>(&object))));
@@ -183,15 +205,12 @@ public:
     void setBitfield(uint16_t value) const { return m_impl.setType(value); }
 
 private:
-    template<typename, typename, EnableWeakPtrThreadingAssertions> friend class WeakHashSet;
-    template<typename, typename, EnableWeakPtrThreadingAssertions> friend class WeakListHashSet;
-    template<typename, typename, typename> friend class WeakHashMap;
     template<typename, typename, typename> friend class WeakPtr;
     template<typename, typename> friend class WeakRef;
 
     mutable CompactRefPtrTuple<WeakPtrImpl, uint16_t> m_impl;
-#if ASSERT_ENABLED
-    bool m_wasConstructedOnMainThread;
+#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
+    NO_UNIQUE_ADDRESS ThreadLikeAssertion m_thread;
 #endif
 };
 

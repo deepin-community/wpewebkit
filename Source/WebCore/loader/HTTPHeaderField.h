@@ -33,13 +33,13 @@ class WEBCORE_EXPORT HTTPHeaderField {
 public:
     static std::optional<HTTPHeaderField> create(String&& name, String&& value);
 
-    const String& name() const { return m_name; }
-    const String& value() const { return m_value; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    const String& value() const LIFETIME_BOUND { return m_value; }
 
 private:
     HTTPHeaderField(String&& name, String&& value)
-        : m_name(WTFMove(name))
-        , m_value(WTFMove(value))
+        : m_name(WTF::move(name))
+        , m_value(WTF::move(value))
     { }
     String m_name;
     String m_value;

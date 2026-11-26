@@ -69,15 +69,17 @@ If-Modified-Since
 If-None-Match
 If-Range
 If-Unmodified-Since
+Integrity-Policy
+Integrity-Policy-Report-Only
 Keep-Alive
 Last-Event-ID
 Last-Modified
 Link
 Location
 Origin
+Origin-Agent-Cluster
 Ping-From
 Ping-To
-Purpose
 Pragma
 Proxy-Authorization
 Range
@@ -89,6 +91,10 @@ Reporting-Endpoints
 Sec-Fetch-Dest
 Sec-Fetch-Mode
 Sec-Fetch-Site
+Sec-GPC
+Sec-Purpose
+Sec-Speculation-Tags
+Speculation-Rules
 Sec-WebSocket-Accept
 Sec-WebSocket-Extensions
 Sec-WebSocket-Key
@@ -111,7 +117,6 @@ User-Agent
 Vary
 Via
 X-Content-Type-Options
-X-DNS-Prefetch-Control
 X-Frame-Options
 X-SourceMap
 X-XSS-Protection

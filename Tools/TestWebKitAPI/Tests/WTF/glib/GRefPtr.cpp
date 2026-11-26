@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <glib-object.h>
 #include <wtf/glib/GRefPtr.h>
 
@@ -117,7 +117,7 @@ TEST(WTF_GRefPtr, Basic)
         obj = G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr));
         GWeakPtr weak(reinterpret_cast<gpointer*>(&obj));
         GRefPtr<GObject> o1 = obj;
-        GRefPtr<GObject> o2(WTFMove(o1));
+        GRefPtr<GObject> o2(WTF::move(o1));
         EXPECT_NULL(o1.get());
         EXPECT_EQ(obj, o2.get());
         EXPECT_EQ(obj->ref_count, 2);
@@ -130,7 +130,7 @@ TEST(WTF_GRefPtr, Basic)
         obj = G_OBJECT(g_object_new(G_TYPE_OBJECT, nullptr));
         GWeakPtr weak(reinterpret_cast<gpointer*>(&obj));
         GRefPtr<GObject> o1 = obj;
-        GRefPtr<GObject> o2 = WTFMove(o1);
+        GRefPtr<GObject> o2 = WTF::move(o1);
         EXPECT_NULL(o1.get());
         EXPECT_EQ(obj, o2.get());
         EXPECT_EQ(obj->ref_count, 2);
@@ -183,19 +183,6 @@ TEST(WTF_GRefPtr, Floating)
         GRefPtr<GObject> o = obj;
         EXPECT_FALSE(g_object_is_floating(obj));
         EXPECT_EQ(obj, o.get());
-        EXPECT_EQ(obj->ref_count, 1);
-    }
-    EXPECT_NULL(obj);
-
-    {
-        obj = G_OBJECT(g_object_new(G_TYPE_INITIALLY_UNOWNED, nullptr));
-        EXPECT_TRUE(g_object_is_floating(obj));
-        GWeakPtr weak(reinterpret_cast<gpointer*>(&obj));
-        GRefPtr<GObject> o = adoptGRef(obj);
-        EXPECT_TRUE(g_object_is_floating(obj));
-        EXPECT_EQ(obj, o.get());
-        EXPECT_EQ(obj->ref_count, 1);
-        g_object_ref_sink(obj);
         EXPECT_EQ(obj->ref_count, 1);
     }
     EXPECT_NULL(obj);

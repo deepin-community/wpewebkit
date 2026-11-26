@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include "ImageDecoder.h"
 #include "Logging.h"
 #include <wtf/SystemTracing.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -58,13 +59,13 @@ void ImageFrameWorkQueue::start()
     if (m_workQueue)
         return;
 
-    RefPtr decoder = protectedSource()->decoder();
+    RefPtr decoder = m_source.get()->decoder();
     if (!decoder)
         return;
 
     m_workQueue = WorkQueue::create("org.webkit.ImageDecoder"_s, WorkQueue::QOS::Default);
 
-    m_workQueue->dispatch([protectedThis = Ref { *this }, protectedWorkQueue = Ref { *m_workQueue }, protectedSource = this->protectedSource(), protectedDecoder = Ref { *decoder }, protectedRequestQueue = Ref { requestQueue() }] () mutable {
+    protect(m_workQueue)->dispatch([protectedThis = Ref { *this }, protectedWorkQueue = Ref { *m_workQueue }, protectedSource = m_source.get(), protectedDecoder = Ref { *decoder }, protectedRequestQueue = Ref { requestQueue() }] () mutable {
         Request request;
         while (protectedRequestQueue->dequeue(request)) {
             TraceScope tracingScope(AsyncImageDecodeStart, AsyncImageDecodeEnd);
@@ -75,8 +76,15 @@ void ImageFrameWorkQueue::start()
             if (minimumDecodingDuration > 0_s)
                 startingTime = MonotonicTime::now();
 
-            PlatformImagePtr platformImage = protectedDecoder->createFrameImageAtIndex(request.index, request.subsamplingLevel, request.options);
-            RefPtr nativeImage = NativeImage::create(WTFMove(platformImage));
+            RefPtr<NativeImage> nativeImage;
+            DecodingDestination decodingDestination = request.options.decodingDestination();
+
+            if (auto result = protectedDecoder->createNativeImageAtIndex(request.index, request.subsamplingLevel, request.options)) {
+                nativeImage = WTF::move(std::get<Ref<NativeImage>>(*result));
+                decodingDestination = std::get<DecodingDestination>(*result);
+            }
+
+            request.options = { request.options.decodingMode(), decodingDestination, request.options.sizeForDrawing() };
 
             // Pretend as if decoding the frame took minimumDecodingDuration.
             if (minimumDecodingDuration > 0_s) {
@@ -86,26 +94,28 @@ void ImageFrameWorkQueue::start()
             }
 
             // Even if we fail to decode the frame, it is important to sync the main thread with this result.
-            callOnMainThread([protectedThis, protectedWorkQueue, protectedSource, request, nativeImage = WTFMove(nativeImage)] () mutable {
+            callOnMainThread([protectedThis, protectedWorkQueue, protectedSource, request, nativeImage = WTF::move(nativeImage)] () mutable {
                 // The WorkQueue may have been recreated before the frame was decoded.
-                if (protectedWorkQueue.ptr() != protectedThis->m_workQueue || protectedSource.ptr() != protectedThis->m_source.get()) {
-                    LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. WorkQueue was recreated at index = %d.", __FUNCTION__, protectedThis.ptr(), protectedSource->sourceUTF8(), request.index);
+                if (protectedWorkQueue.ptr() != protectedThis->m_workQueue || protectedSource.ptr() != protectedThis->m_source.get().ptr()) {
+                    LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. WorkQueue was recreated at index = %d.", __FUNCTION__, protectedThis.ptr(), protectedSource->sourceUTF8().data(), request.index);
                     return;
                 }
 
                 // The DecodeQueue may have been cleared before the frame was decoded.
-                if (protectedThis->decodeQueue().isEmpty() || protectedThis->decodeQueue().first() != request) {
-                    LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. DecodeQueue was cleared at index = %d.", __FUNCTION__, protectedThis.ptr(), protectedSource->sourceUTF8(), request.index);
+                if (protectedThis->decodeQueue().isEmpty() || !request.isCompatibleWith(protectedThis->decodeQueue().first())) {
+                    LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. DecodeQueue was cleared at index = %d.", __FUNCTION__, protectedThis.ptr(), protectedSource->sourceUTF8().data(), request.index);
                     return;
                 }
 
                 protectedThis->decodeQueue().removeFirst();
-                protectedSource->imageFrameDecodeAtIndexHasFinished(request.index, request.subsamplingLevel, request.animatingState, request.options, WTFMove(nativeImage));
+                protectedSource->imageFrameDecodeAtIndexHasFinished(request.index, request.subsamplingLevel, request.animatingState, request.options, WTF::move(nativeImage));
             });
         }
 
         // Ensure destruction happens on creation thread.
-        callOnMainThread([protectedThis = WTFMove(protectedThis), protectedWorkQueue = WTFMove(protectedWorkQueue), protectedSource = WTFMove(protectedSource)] () mutable { });
+        callOnMainThread([protectedThis = WTF::move(protectedThis), protectedWorkQueue = WTF::move(protectedWorkQueue), protectedSource = WTF::move(protectedSource)
+            , protectedDecoder = WTF::move(protectedDecoder)
+            ] () mutable { });
     });
 }
 
@@ -113,7 +123,7 @@ void ImageFrameWorkQueue::dispatch(const Request& request)
 {
     ASSERT(isMainThread());
 
-    requestQueue().enqueue(request);
+    protect(requestQueue())->enqueue(request);
     decodeQueue().append(request);
 
     start();
@@ -123,15 +133,15 @@ void ImageFrameWorkQueue::stop()
 {
     ASSERT(isMainThread());
 
-    Ref source = protectedSource();
+    Ref source = m_source.get();
 
     for (auto& request : m_decodeQueue) {
-        LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. Decoding was cancelled for frame at index = %d.", __FUNCTION__, this, source->sourceUTF8(), request.index);
+        LOG(Images, "ImageFrameWorkQueue::%s - %p - url: %s. Decoding was cancelled for frame at index = %d.", __FUNCTION__, this, source->sourceUTF8().data(), request.index);
         source->destroyNativeImageAtIndex(request.index);
     }
 
     if (m_requestQueue) {
-        m_requestQueue->close();
+        protect(m_requestQueue)->close();
         m_requestQueue = nullptr;
     }
 
@@ -154,7 +164,7 @@ void ImageFrameWorkQueue::dump(TextStream& ts) const
     if (isIdle())
         return;
 
-    ts.dumpProperty("pending-for-decoding", m_decodeQueue.size());
+    ts.dumpProperty("pending-for-decoding"_s, m_decodeQueue.size());
 }
 
 } // namespace WebCore

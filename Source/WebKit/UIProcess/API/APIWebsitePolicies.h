@@ -27,10 +27,12 @@
 
 #include "APIObject.h"
 #include "WebsitePoliciesData.h"
+#include <WebCore/ResourceRequest.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebKit {
 class LockdownModeObserver;
+class WebProcessProxy;
 class WebUserContentControllerProxy;
 class WebsiteDataStore;
 struct WebsitePoliciesData;
@@ -46,13 +48,13 @@ public:
 
     Ref<WebsitePolicies> copy() const;
 
-    WebKit::WebsitePoliciesData data();
+    WebKit::WebsitePoliciesData dataForProcess(WebKit::WebProcessProxy&) const;
 
-    const WebCore::ContentExtensionEnablement& contentExtensionEnablement() const { return m_data.contentExtensionEnablement; }
-    void setContentExtensionEnablement(WebCore::ContentExtensionEnablement&& enablement) { m_data.contentExtensionEnablement = WTFMove(enablement); }
+    const WebCore::ContentExtensionEnablement& contentExtensionEnablement() const LIFETIME_BOUND { return m_data.contentExtensionEnablement; }
+    void setContentExtensionEnablement(WebCore::ContentExtensionEnablement&& enablement) { m_data.contentExtensionEnablement = WTF::move(enablement); }
 
-    void setActiveContentRuleListActionPatterns(HashMap<WTF::String, Vector<WTF::String>>&& patterns) { m_data.activeContentRuleListActionPatterns = WTFMove(patterns); }
-    const HashMap<WTF::String, Vector<WTF::String>>& activeContentRuleListActionPatterns() const { return m_data.activeContentRuleListActionPatterns; }
+    void setActiveContentRuleListActionPatterns(HashMap<WTF::String, Vector<WTF::String>>&& patterns) { m_data.activeContentRuleListActionPatterns = WTF::move(patterns); }
+    const HashMap<WTF::String, Vector<WTF::String>>& activeContentRuleListActionPatterns() const LIFETIME_BOUND { return m_data.activeContentRuleListActionPatterns; }
     
     OptionSet<WebKit::WebsiteAutoplayQuirk> allowedAutoplayQuirks() const { return m_data.allowedAutoplayQuirks; }
     void setAllowedAutoplayQuirks(OptionSet<WebKit::WebsiteAutoplayQuirk> quirks) { m_data.allowedAutoplayQuirks = quirks; }
@@ -61,12 +63,12 @@ public:
     void setAutoplayPolicy(WebKit::WebsiteAutoplayPolicy policy) { m_data.autoplayPolicy = policy; }
 
 #if ENABLE(DEVICE_ORIENTATION)
-    WebCore::DeviceOrientationOrMotionPermissionState deviceOrientationAndMotionAccessState() const { return m_data.deviceOrientationAndMotionAccessState; }
+    std::optional<WebCore::DeviceOrientationOrMotionPermissionState> deviceOrientationAndMotionAccessState() const { return m_data.deviceOrientationAndMotionAccessState; }
     void setDeviceOrientationAndMotionAccessState(WebCore::DeviceOrientationOrMotionPermissionState state) { m_data.deviceOrientationAndMotionAccessState = state; }
 #endif
 
-    const Vector<WebCore::CustomHeaderFields>& customHeaderFields() const { return m_data.customHeaderFields; }
-    void setCustomHeaderFields(Vector<WebCore::CustomHeaderFields>&& fields) { m_data.customHeaderFields = WTFMove(fields); }
+    const Vector<WebCore::CustomHeaderFields>& customHeaderFields() const LIFETIME_BOUND { return m_data.customHeaderFields; }
+    void setCustomHeaderFields(Vector<WebCore::CustomHeaderFields>&& fields) { m_data.customHeaderFields = WTF::move(fields); }
 
     WebKit::WebsitePopUpPolicy popUpPolicy() const { return m_data.popUpPolicy; }
     void setPopUpPolicy(WebKit::WebsitePopUpPolicy policy) { m_data.popUpPolicy = policy; }
@@ -77,14 +79,14 @@ public:
     WebKit::WebUserContentControllerProxy* userContentController() const { return m_userContentController.get(); }
     void setUserContentController(RefPtr<WebKit::WebUserContentControllerProxy>&&);
 
-    void setCustomUserAgent(const WTF::String& customUserAgent) { m_data.customUserAgent = customUserAgent; }
-    const WTF::String& customUserAgent() const { return m_data.customUserAgent; }
+    void setCustomUserAgent(WTF::String&& customUserAgent) { m_data.customUserAgent = WTF::move(customUserAgent); }
+    const WTF::String& customUserAgent() const LIFETIME_BOUND { return m_data.customUserAgent; }
 
-    void setCustomUserAgentAsSiteSpecificQuirks(const WTF::String& customUserAgent) { m_data.customUserAgentAsSiteSpecificQuirks = customUserAgent; }
-    const WTF::String& customUserAgentAsSiteSpecificQuirks() const { return m_data.customUserAgentAsSiteSpecificQuirks; }
+    void setCustomUserAgentAsSiteSpecificQuirks(WTF::String&& customUserAgent) { m_data.customUserAgentAsSiteSpecificQuirks = WTF::move(customUserAgent); }
+    const WTF::String& customUserAgentAsSiteSpecificQuirks() const LIFETIME_BOUND { return m_data.customUserAgentAsSiteSpecificQuirks; }
 
-    void setCustomNavigatorPlatform(const WTF::String& customNavigatorPlatform) { m_data.customNavigatorPlatform = customNavigatorPlatform; }
-    const WTF::String& customNavigatorPlatform() const { return m_data.customNavigatorPlatform; }
+    void setCustomNavigatorPlatform(WTF::String&& customNavigatorPlatform) { m_data.customNavigatorPlatform = WTF::move(customNavigatorPlatform); }
+    const WTF::String& customNavigatorPlatform() const LIFETIME_BOUND { return m_data.customNavigatorPlatform; }
 
     WebKit::WebContentMode preferredContentMode() const { return m_data.preferredContentMode; }
     void setPreferredContentMode(WebKit::WebContentMode mode) { m_data.preferredContentMode = mode; }
@@ -110,6 +112,10 @@ public:
     WebCore::AllowsContentJavaScript allowsContentJavaScript() const { return m_data.allowsContentJavaScript; }
     void setAllowsContentJavaScript(WebCore::AllowsContentJavaScript allows) { m_data.allowsContentJavaScript = allows; }
 
+    bool isEnhancedSecurityEnabled() const { return m_isEnhancedSecurityEnabled.value_or(false); }
+    void setIsEnhancedSecurityEnabled(std::optional<bool> isEnabled) { m_isEnhancedSecurityEnabled = isEnabled; }
+    bool isEnhancedSecurityExplicitlySet() const { return !!m_isEnhancedSecurityEnabled; }
+
     bool lockdownModeEnabled() const;
     void setLockdownModeEnabled(std::optional<bool> enabled) { m_lockdownModeEnabled = enabled; }
     bool isLockdownModeExplicitlySet() const { return !!m_lockdownModeEnabled; }
@@ -132,20 +138,50 @@ public:
     bool allowPrivacyProxy() const { return m_data.allowPrivacyProxy; }
     void setAllowPrivacyProxy(bool allow) { m_data.allowPrivacyProxy = allow; }
 
+    std::optional<bool> globalPrivacyControlEnabled() const { return m_data.globalPrivacyControlEnabled; }
+    void setGlobalPrivacyControlEnabled(std::optional<bool> enabled) { m_data.globalPrivacyControlEnabled = enabled; }
+
     WebCore::HTTPSByDefaultMode httpsByDefaultMode() const { return m_data.httpsByDefaultMode; }
     void setHTTPSByDefault(WebCore::HTTPSByDefaultMode mode) { m_data.httpsByDefaultMode = mode; }
+    bool isUpgradeWithUserMediatedFallbackEnabled() { return advancedPrivacyProtections().contains(WebCore::AdvancedPrivacyProtections::HTTPSOnly) || httpsByDefaultMode() == WebCore::HTTPSByDefaultMode::UpgradeWithUserMediatedFallback; }
+    bool isUpgradeWithAutomaticFallbackEnabled() { return advancedPrivacyProtections().contains(WebCore::AdvancedPrivacyProtections::HTTPSFirst) || httpsByDefaultMode() == WebCore::HTTPSByDefaultMode::UpgradeWithAutomaticFallback; }
 
-    const Vector<Vector<HashSet<WTF::String>>>& visibilityAdjustmentSelectors() const { return m_data.visibilityAdjustmentSelectors; }
-    void setVisibilityAdjustmentSelectors(Vector<Vector<HashSet<WTF::String>>>&& selectors) { m_data.visibilityAdjustmentSelectors = WTFMove(selectors); }
+    const Vector<Vector<HashSet<WTF::String>>>& visibilityAdjustmentSelectors() const LIFETIME_BOUND { return m_data.visibilityAdjustmentSelectors; }
+    void setVisibilityAdjustmentSelectors(Vector<Vector<HashSet<WTF::String>>>&& selectors) { m_data.visibilityAdjustmentSelectors = WTF::move(selectors); }
+
+    WebKit::WebsitePushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy() const { return m_data.pushAndNotificationsEnabledPolicy; }
+    void setPushAndNotificationsEnabledPolicy(WebKit::WebsitePushAndNotificationsEnabledPolicy policy) { m_data.pushAndNotificationsEnabledPolicy = policy; }
+
+#if ENABLE(TOUCH_EVENTS)
+    void setOverrideTouchEventDOMAttributesEnabled(bool value) { m_data.overrideTouchEventDOMAttributesEnabled = value; }
+#endif
+
+    WebKit::WebsiteInlineMediaPlaybackPolicy inlineMediaPlaybackPolicy() const { return m_data.inlineMediaPlaybackPolicy; }
+    void setInlineMediaPlaybackPolicy(WebKit::WebsiteInlineMediaPlaybackPolicy policy) { m_data.inlineMediaPlaybackPolicy = policy; }
+
+    bool allowSharedProcess() const { return m_data.allowSharedProcess; }
+    void setAllowSharedProcess(bool allowSharedProcess) { m_data.allowSharedProcess = allowSharedProcess; }
+
+    const WebCore::ResourceRequest& NODELETE alternateRequest() const LIFETIME_BOUND;
+    void setAlternateRequest(WebCore::ResourceRequest&&);
+
+    bool allowsJSHandleCreationInPageWorld() const { return m_data.allowsJSHandleCreationInPageWorld; }
+    void setAllowsJSHandleCreationInPageWorld(bool allows) { m_data.allowsJSHandleCreationInPageWorld = allows; }
+
+    void setOverrideReferrerForAllRequests(WTF::String&& referrer) { m_data.overrideReferrerForAllRequests = WTF::move(referrer); }
+    const WTF::String& overrideReferrerForAllRequests() const LIFETIME_BOUND { return m_data.overrideReferrerForAllRequests; }
 
 private:
     WebKit::WebsitePoliciesData m_data;
     RefPtr<WebKit::WebsiteDataStore> m_websiteDataStore;
     RefPtr<WebKit::WebUserContentControllerProxy> m_userContentController;
     std::optional<bool> m_lockdownModeEnabled;
+    std::optional<bool> m_isEnhancedSecurityEnabled;
 #if PLATFORM(COCOA)
-    std::unique_ptr<WebKit::LockdownModeObserver> m_lockdownModeObserver;
+    const std::unique_ptr<WebKit::LockdownModeObserver> m_lockdownModeObserver;
 #endif
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(WebsitePolicies);

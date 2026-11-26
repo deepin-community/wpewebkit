@@ -33,6 +33,9 @@
         "AtomString": {
             "contextsAllowed": ["type"]
         },
+        "BypassDocumentFullyActiveCheck": {
+            "contextsAllowed": ["type"]
+        },
         "CEReactions": {
             "contextsAllowed": ["attribute", "operation"],
             "values": ["Needed", "NotNeeded"],
@@ -64,6 +67,12 @@
         "CheckSecurityForNode": {
             "contextsAllowed": ["attribute", "operation"]
         },
+        "CheckSecurityForNodeWithFrameOwner": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
+        "CheckSecurityForNodeWithDOMWindow": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
         "Clamp": {
             "contextsAllowed": ["type"],
             "standard": {
@@ -90,7 +99,7 @@
             "values": ["*"]
         },
         "ConstantsEnum": {
-            "contextsAllowed": ["interface"],
+            "contextsAllowed": ["interface", "constant"],
             "values": ["*"]
         },
         "ContextAllowsMediaDevices": {
@@ -104,6 +113,10 @@
         },
         "CustomDeleteProperty": {
             "contextsAllowed": ["interface"]
+        },
+        "CustomEnabledBy": {
+            "contextsAllowed": ["attribute", "operation"],
+            "values": ["*"]
         },
         "CustomGetCallData": {
             "contextsAllowed": ["interface"]
@@ -158,7 +171,7 @@
             "supportsConjunction": true
         },
         "DoNotCheckConstants": {
-            "contextsAllowed": ["interface"]
+            "contextsAllowed": ["interface", "constant"]
         },
         "DoNotCheckSecurity": {
             "contextsAllowed": ["attribute", "operation"]
@@ -184,11 +197,19 @@
             "values": ["*"],
             "supportsConjunction": true
         },
+        "EnabledConditionallyReadWriteBySetting": {
+            "contextsAllowed": ["attribute"],
+            "values": ["*"],
+            "supportsConjunction": true
+        },
         "EnabledForContext": {
             "contextsAllowed": ["attribute", "interface"]
         },
+        "EnabledForGlobalObject": {
+            "contextsAllowed": ["attribute", "operation", "interface"]
+        },
         "EnabledForWorld": {
-            "contextsAllowed": ["attribute", "operation"],
+            "contextsAllowed": ["attribute", "operation", "interface", "dictionary-member"],
             "values": ["*"],
             "supportsConjunction": true
         },
@@ -196,6 +217,14 @@
             "contextsAllowed": ["type"],
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#EnforceRange"
+            }
+        },
+        "Enumerated": {
+            "contextsAllowed": ["attribute"],
+            "values": ["*"],
+            "notes": "Specifies that an attribute is limited to known values, e.g., [Reflect, Enumerated=AttributeValues] where AttributeValues is an enum",
+            "standard": {
+                "url": "https://html.spec.whatwg.org/#keywords-and-enumerated-attributes"
             }
         },
         "Exception": {
@@ -211,12 +240,20 @@
         "ExportToWrappedFunction": {
             "contextsAllowed": ["interface"]
         },
+        "EmbedderArrayLike": {
+            "contextsAllowed": ["interface"]
+        },
         "Exposed": {
             "contextsAllowed": ["interface", "namespace", "attribute", "operation", "constant"],
             "values": ["*"],
             "standard": {
                 "url": "https://webidl.spec.whatwg.org/#Exposed"
             }
+        },
+        "ExposedEnabledBySetting": {
+            "contextsAllowed": ["interface"],
+            "values": ["*"],
+            "note": "Gates exposure in a specific context behind a runtime setting. Value is Context|SettingName, e.g., ExposedEnabledBySetting=SharedWorker|WorkerInSharedWorkerEnabled"
         },
         "GenerateAddOpaqueRoot": {
             "contextsAllowed": ["interface"],
@@ -248,6 +285,14 @@
             },
             "unsupported": true
         },
+        "IgnoreSubclassesWhenGeneratingToJSObject": {
+            "contextsAllowed": ["interface"]
+        },
+        "ImplementationDefaultValue": {
+            "contextsAllowed": ["dictionary-member", "argument"],
+            "values": ["*"],
+            "notes" : "Allows specifying a default value to use for optional dictionary member and operation arguments when the specification doesn't specify one but using one is unobservable." 
+        },
         "ImplementedAs": {
             "contextsAllowed": ["interface", "dictionary", "dictionary-member", "enum", "attribute", "operation", "constant"],
             "values": ["*"]
@@ -256,9 +301,24 @@
             "contextsAllowed": ["interface", "namespace", "dictionary", "dictionary-member", "attribute", "operation", "constant"],
             "values": ["*"]
         },
+        "ImplementationRequired": {
+            "contextsAllowed": ["dictionary-member"],
+            "notes": "Allows treating the dictionary member as required when the specification doesn't specify the required keyword but using it is unobservable."
+        },
+        "InlineCapacity": {
+            "contextsAllowed": ["type"],
+            "values": ["*"]
+        },
         "InterfaceName": {
             "contextsAllowed": ["interface", "namespace"],
             "values": ["*"]
+        },
+        "InvalidValueDefault": {
+            "contextsAllowed": ["enum"],
+            "values": ["*"],
+            "standard": {
+                "url": "https://html.spec.whatwg.org/#keywords-and-enumerated-attributes"
+            }
         },
         "IsImmutablePrototypeExoticObject": {
             "contextsAllowed": ["interface"]
@@ -282,7 +342,7 @@
             "contextsAllowed": ["interface"]
         },
         "JSGenerateToJSObject": {
-            "contextsAllowed": ["interface", "dictionary", "callback-function"]
+            "contextsAllowed": ["dictionary"]
         },
         "JSGenerateToNativeObject": {
             "contextsAllowed": ["interface", "dictionary"]
@@ -374,6 +434,13 @@
         "MasqueradesAsUndefined": {
             "contextsAllowed": ["interface"]
         },
+        "MissingValueDefault": {
+            "contextsAllowed": ["enum"],
+            "values": ["*"],
+            "standard": {
+                "url": "https://html.spec.whatwg.org/#keywords-and-enumerated-attributes"
+            }
+        },
         "NewImpurePropertyFiresWatchpoints": {
             "contextsAllowed": ["interface"]
         },
@@ -386,16 +453,20 @@
         "NotEnumerable": {
             "contextsAllowed": ["attribute", "operation"]
         },
+        "OptimizedUnionSetterUsingOverloads": {
+            "contextsAllowed": ["attribute"]
+        },
         "OverrideIDLType": {
             "contextsAllowed": ["type"],
             "values": ["*"]
         },
-        "BypassDocumentFullyActiveCheck": {
-            "contextsAllowed": ["type"]
-        },
         "Plugin": {
             "contextsAllowed": ["interface"],
             "notes" : "Should only be used by elements that forward to Netscape plug-ins"
+        },
+        "PermissiveInvalidValue": {
+            "contextsAllowed": ["dictionary-member"],
+            "notes": "For optional enum dictionary members, return nullopt instead of throwing TypeError on invalid enum values. Non-standard extension for forward-compatibility."
         },
         "PrivateIdentifier": {
             "contextsAllowed": ["interface", "attribute", "operation"]
@@ -419,7 +490,25 @@
         },
         "Reflect": {
             "contextsAllowed": ["attribute"],
-            "values": ["*"]
+            "values": ["*"],
+            "standard": {
+                "url": "https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#xattr-reflect"
+            }
+        },
+        "ReflectURL": {
+            "contextsAllowed": ["attribute"],
+            "values": ["*"],
+            "standard": {
+                "url": "https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#xattr-reflecturl"
+            }
+        },
+        "ReflectSetter": {
+            "contextsAllowed": ["attribute"],
+            "values": ["*"],
+            "notes": "Variant of Reflect that relies on C++ implementation for the getter, but automatically generates the setter",
+            "standard": {
+                "url": "https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#xattr-reflectsetter"
+            }
         },
         "Replaceable": {
             "contextsAllowed": ["attribute"],
@@ -435,9 +524,6 @@
         },
         "RequiresExistingAtomString": {
             "contextsAllowed": ["type"]
-        },
-        "RethrowException": {
-            "contextsAllowed": ["operation", "callback-function"]
         },
         "ReturnsOwnPromise": {
             "contextsAllowed": ["operation"]
@@ -473,15 +559,13 @@
             "values": ["CurrentScriptExecutionContext", "CurrentGlobalObject", "ActiveWindow", "FirstWindow", "PropertyName"],
             "supportsConjunction": true
         },
-        "EnabledConditionallyReadWriteBySetting": {
-            "contextsAllowed": ["attribute"],
-            "values": ["*"],
-            "supportsConjunction": true
-        },
         "SkipCallbackInvokeCheck": {
             "contextsAllowed": ["operation", "callback-function"]
         },
         "SkipVTableValidation": {
+            "contextsAllowed": ["interface"]
+        },
+        "StandaloneConstructorAttributes": {
             "contextsAllowed": ["interface"]
         },
         "SuppressToJSObject": {

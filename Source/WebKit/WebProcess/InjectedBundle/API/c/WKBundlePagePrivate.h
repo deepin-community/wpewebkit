@@ -48,15 +48,13 @@ enum RenderTreeExternalRepresentationFlags {
 typedef uint32_t RenderTreeExternalRepresentationBehavior;
 
 WK_EXPORT void WKBundlePageSetDefersLoading(WKBundlePageRef page, bool defersLoading) WK_C_API_DEPRECATED;
-WK_EXPORT void WKBundlePageClearMainFrameName(WKBundlePageRef page);
 WK_EXPORT void WKBundlePageClose(WKBundlePageRef page);
+WK_EXPORT bool WKBundlePageIsClosed(WKBundlePageRef page);
 WK_EXPORT WKStringRef WKBundlePageCopyRenderTreeExternalRepresentation(WKBundlePageRef page, RenderTreeExternalRepresentationBehavior);
 WK_EXPORT WKStringRef WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(WKBundlePageRef page);
 
 WK_EXPORT double WKBundlePageGetTextZoomFactor(WKBundlePageRef page);
 WK_EXPORT double WKBundlePageGetPageZoomFactor(WKBundlePageRef page);
-
-WK_EXPORT void WKBundlePageSetScaleAtOrigin(WKBundlePageRef page, double scale, WKPoint origin);
 
 WK_EXPORT void WKBundlePageForceRepaint(WKBundlePageRef page);
 WK_EXPORT void WKBundlePageFlushPendingEditorStateUpdate(WKBundlePageRef page);
@@ -69,9 +67,7 @@ WK_EXPORT void WKBundlePageCopyRenderLayerTree(WKBundlePageRef page);
 // We should remove it as soon as we can.
 WK_EXPORT void WKBundlePageSetPaintedObjectsCounterThreshold(WKBundlePageRef page, uint64_t threshold);
 
-WK_EXPORT void WKBundlePageSetTracksRepaints(WKBundlePageRef page, bool trackRepaints);
 WK_EXPORT bool WKBundlePageIsTrackingRepaints(WKBundlePageRef page);
-WK_EXPORT void WKBundlePageResetTrackedRepaints(WKBundlePageRef page);
 WK_EXPORT WKArrayRef WKBundlePageCopyTrackedRepaintRects(WKBundlePageRef page);
 
 WK_EXPORT void WKBundlePageSetComposition(WKBundlePageRef page, WKStringRef text, int from, int length, bool suppressUnderline, WKArrayRef highlightData, WKArrayRef annotationData);
@@ -95,6 +91,8 @@ WK_EXPORT void WKAccessibilityEnableEnhancedAccessibility(bool);
 WK_EXPORT bool WKAccessibilityEnhancedAccessibilityEnabled();
 WK_EXPORT void WKAccessibilitySetForceInitialFrameCaching(bool);
 
+WK_EXPORT void WKBundlePageSetEditable(WKBundlePageRef page, bool isEditable);
+
 WK_EXPORT void WKBundlePageClickMenuItem(WKBundlePageRef, WKContextMenuItemRef);
 WK_EXPORT WKArrayRef WKBundlePageCopyContextMenuItems(WKBundlePageRef);
 WK_EXPORT WKArrayRef WKBundlePageCopyContextMenuAtPointInWindow(WKBundlePageRef, WKPoint);
@@ -102,11 +100,6 @@ WK_EXPORT WKArrayRef WKBundlePageCopyContextMenuAtPointInWindow(WKBundlePageRef,
 WK_EXPORT void WKBundlePageInsertNewlineInQuotedContent(WKBundlePageRef page);
 
 WK_EXPORT bool WKBundlePageIsSuspended(WKBundlePageRef page);
-
-// This only works if the SuppressesIncrementalRendering preference is set as well.
-typedef unsigned WKRenderingSuppressionToken;
-WK_EXPORT WKRenderingSuppressionToken WKBundlePageExtendIncrementalRenderingSuppression(WKBundlePageRef);
-WK_EXPORT void WKBundlePageStopExtendingIncrementalRenderingSuppression(WKBundlePageRef, WKRenderingSuppressionToken);
 
 // UserContent API (compatible with Modern API, for WKTR)
 WK_EXPORT void WKBundlePageAddUserScript(WKBundlePageRef page, WKStringRef source, _WKUserScriptInjectionTime injectionTime, WKUserContentInjectedFrames injectedFrames);
@@ -123,9 +116,6 @@ enum {
 };
 
 typedef uint32_t WKEventThrottlingBehavior;
-
-// Passing null in the second parameter clears the override.
-WK_EXPORT void WKBundlePageSetEventThrottlingBehaviorOverride(WKBundlePageRef, WKEventThrottlingBehavior*);
 
 #if TARGET_OS_IPHONE
 WK_EXPORT void WKBundlePageSetUseTestingViewportConfiguration(WKBundlePageRef, bool);

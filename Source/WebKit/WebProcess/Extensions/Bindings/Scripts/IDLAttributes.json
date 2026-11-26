@@ -79,10 +79,22 @@
         "NeedsFrameWithCallbackHandler": {
             "contextsAllowed": ["interface"]
         },
+        "NeedsFrameIdentifier": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
+        "NeedsFrameIdentifierWithCallbackHandler": {
+            "contextsAllowed": ["interface"]
+        },
         "NeedsPage": {
             "contextsAllowed": ["attribute", "operation"]
         },
         "NeedsPageWithCallbackHandler": {
+            "contextsAllowed": ["interface"]
+        },
+        "NeedsPageIdentifier": {
+            "contextsAllowed": ["attribute", "operation"]
+        },
+        "NeedsPageIdentifierWithCallbackHandler": {
             "contextsAllowed": ["interface"]
         },
         "NeedsScriptContext": {
@@ -92,6 +104,9 @@
             "contextsAllowed": ["attribute", "operation"]
         },
         "NSArray": {
+            "contextsAllowed": ["argument", "attribute", "operation"]
+        },
+        "Vector": {
             "contextsAllowed": ["argument", "attribute", "operation"]
         },
         "NSDictionary": {
@@ -109,8 +124,14 @@
         "RaisesException": {
             "contextsAllowed": ["operation"]
         },
+        "RaisesStringException": {
+            "contextsAllowed": ["operation"]
+        },
         "ReturnsPromiseWhenCallbackIsOmitted": {
             "contextsAllowed": ["interface", "operation"]
+        },
+        "UseCPPAPI": {
+            "contextsAllowed": ["interface"]
         },
         "Serialization": {
             "contextsAllowed": ["argument"],
@@ -118,6 +139,9 @@
         },
         "SetProperty": {
             "contextsAllowed": ["operation"]
+        },
+        "String": {
+            "contextsAllowed": ["argument"]
         },
         "URL": {
             "contextsAllowed": ["argument", "attribute", "operation"]

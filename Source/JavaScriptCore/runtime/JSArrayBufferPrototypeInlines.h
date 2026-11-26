@@ -28,6 +28,7 @@
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferPrototype.h"
 #include "JSGlobalObject.h"
+#include "JSGlobalObjectInlines.h"
 
 namespace JSC  {
 
@@ -37,7 +38,7 @@ static constexpr bool verbose = false;
 
 ALWAYS_INLINE bool speciesWatchpointIsValid(JSObject* thisObject, ArrayBufferSharingMode mode)
 {
-    JSGlobalObject* globalObject = thisObject->globalObject();
+    JSGlobalObject* globalObject = thisObject->realm();
     auto* prototype = globalObject->arrayBufferPrototype(mode);
 
     if (globalObject->arrayBufferSpeciesWatchpointSet(mode).state() == ClearWatchpoint) {
@@ -58,7 +59,7 @@ ALWAYS_INLINE std::optional<JSValue> arrayBufferSpeciesConstructor(JSGlobalObjec
 
     bool isValid = speciesWatchpointIsValid(thisObject, mode);
     scope.assertNoException();
-    if (LIKELY(isValid))
+    if (isValid) [[likely]]
         return std::nullopt;
 
     RELEASE_AND_RETURN(scope, arrayBufferSpeciesConstructorSlow(globalObject, thisObject, mode));

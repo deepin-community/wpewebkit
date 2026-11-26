@@ -25,12 +25,13 @@
 
 #pragma once
 
-#include "DisabledAdaptations.h"
-#include "FloatSize.h"
-#include "IntSize.h"
-#include "ViewportArguments.h"
+#include <WebCore/DisabledAdaptations.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/IntSize.h>
+#include <WebCore/ViewportArguments.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WTF {
 class TextStream;
@@ -39,7 +40,8 @@ class TextStream;
 namespace WebCore {
 
 class ViewportConfiguration {
-    WTF_MAKE_NONCOPYABLE(ViewportConfiguration); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ViewportConfiguration);
+    WTF_MAKE_NONCOPYABLE(ViewportConfiguration);
 public:
     // FIXME: unify with ViewportArguments.
     struct Parameters {
@@ -59,26 +61,31 @@ public:
 
         bool ignoreInitialScaleForLayoutWidth { false };
 
+        bool shouldHonorMinimumEffectiveDeviceWidthFromClient { true };
+        bool minimumScaleDoesNotAdaptToContent { false };
+
         friend bool operator==(const Parameters&, const Parameters&) = default;
     };
 
+    static constexpr double minimumShrinkToFitWidthWhenPreferringHorizontalScrolling = 820;
+
     WEBCORE_EXPORT ViewportConfiguration();
 
-    const Parameters& defaultConfiguration() const { return m_defaultConfiguration; }
+    const Parameters& defaultConfiguration() const LIFETIME_BOUND { return m_defaultConfiguration; }
     WEBCORE_EXPORT void setDefaultConfiguration(const Parameters&);
 
-    const IntSize& contentsSize() const { return m_contentSize; }
+    const IntSize& contentsSize() const LIFETIME_BOUND { return m_contentSize; }
     WEBCORE_EXPORT bool setContentsSize(const IntSize&);
 
-    const FloatSize& viewLayoutSize() const { return m_viewLayoutSize; }
+    const FloatSize& viewLayoutSize() const LIFETIME_BOUND { return m_viewLayoutSize; }
 
-    const FloatSize& minimumLayoutSize() const { return m_minimumLayoutSize; }
+    const FloatSize& minimumLayoutSize() const LIFETIME_BOUND { return m_minimumLayoutSize; }
     WEBCORE_EXPORT bool setViewLayoutSize(const FloatSize&, std::optional<double>&& scaleFactor = std::nullopt, std::optional<double>&& effectiveWidth = std::nullopt);
 
-    const OptionSet<DisabledAdaptations>& disabledAdaptations() const { return m_disabledAdaptations; }
+    const OptionSet<DisabledAdaptations>& disabledAdaptations() const LIFETIME_BOUND { return m_disabledAdaptations; }
     WEBCORE_EXPORT bool setDisabledAdaptations(const OptionSet<DisabledAdaptations>&);
 
-    const ViewportArguments& viewportArguments() const { return m_viewportArguments; }
+    const ViewportArguments& viewportArguments() const LIFETIME_BOUND { return m_viewportArguments; }
     WEBCORE_EXPORT bool setViewportArguments(const ViewportArguments&);
 
     WEBCORE_EXPORT bool setCanIgnoreScalingConstraints(bool);
@@ -126,6 +133,7 @@ public:
 
     void setPrefersHorizontalScrollingBelowDesktopViewportWidths(bool value) { m_prefersHorizontalScrollingBelowDesktopViewportWidths = value; }
     void setCanIgnoreViewportArgumentsToAvoidExcessiveZoom(bool value) { m_canIgnoreViewportArgumentsToAvoidExcessiveZoom = value; }
+    void setCanIgnoreViewportArgumentsToAvoidEnlargedView(bool value) { m_canIgnoreViewportArgumentsToAvoidEnlargedView = value; }
 
     WEBCORE_EXPORT IntSize layoutSize() const;
     WEBCORE_EXPORT int layoutWidth() const;
@@ -140,14 +148,17 @@ public:
     bool avoidsUnsafeArea() const { return m_configuration.avoidsUnsafeArea; }
 
     // Matches a width=device-width, initial-scale=1 viewport.
-    WEBCORE_EXPORT Parameters nativeWebpageParameters();
-    static Parameters nativeWebpageParametersWithoutShrinkToFit();
-    static Parameters nativeWebpageParametersWithShrinkToFit();
-    WEBCORE_EXPORT static Parameters webpageParameters();
-    WEBCORE_EXPORT static Parameters textDocumentParameters();
-    WEBCORE_EXPORT static Parameters imageDocumentParameters();
-    WEBCORE_EXPORT static Parameters xhtmlMobileParameters();
-    WEBCORE_EXPORT static Parameters testingParameters();
+    WEBCORE_EXPORT Parameters NODELETE nativeWebpageParameters();
+    static Parameters NODELETE nativeWebpageParametersWithoutShrinkToFit();
+    static Parameters NODELETE nativeWebpageParametersWithShrinkToFit();
+#if ENABLE(PDF_PLUGIN)
+    WEBCORE_EXPORT static Parameters pluginDocumentParameters();
+#endif
+    WEBCORE_EXPORT static Parameters NODELETE webpageParameters();
+    WEBCORE_EXPORT static Parameters NODELETE textDocumentParameters();
+    WEBCORE_EXPORT static Parameters NODELETE imageDocumentParameters();
+    WEBCORE_EXPORT static Parameters NODELETE xhtmlMobileParameters();
+    WEBCORE_EXPORT static Parameters NODELETE testingParameters();
 
     String description() const;
 #if !LOG_DISABLED
@@ -156,16 +167,16 @@ public:
 
 private:
     void updateConfiguration();
-    double viewportArgumentsLength(double length) const;
+    double NODELETE viewportArgumentsLength(double length) const;
     double initialScaleFromSize(double width, double height, bool shouldIgnoreScalingConstraints) const;
 
-    bool shouldOverrideDeviceWidthAndShrinkToFit() const;
-    bool shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
+    bool NODELETE shouldOverrideDeviceWidthAndShrinkToFit() const;
+    bool NODELETE shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
     bool shouldIgnoreScalingConstraints() const;
     bool shouldIgnoreVerticalScalingConstraints() const;
     bool shouldIgnoreHorizontalScalingConstraints() const;
-    void updateDefaultConfiguration();
-    bool canOverrideConfigurationParameters() const;
+    void NODELETE updateDefaultConfiguration();
+    bool NODELETE canOverrideConfigurationParameters() const;
 
     constexpr bool layoutSizeIsExplicitlyScaled() const
     {
@@ -175,13 +186,13 @@ private:
     constexpr double forceAlwaysUserScalableMaximumScale() const
     {
         const double forceAlwaysUserScalableMaximumScaleIgnoringLayoutScaleFactor = 5;
-        return forceAlwaysUserScalableMaximumScaleIgnoringLayoutScaleFactor * effectiveLayoutSizeScaleFactor();
+        return std::max(m_configuration.maximumScale, forceAlwaysUserScalableMaximumScaleIgnoringLayoutScaleFactor) * effectiveLayoutSizeScaleFactor();
     }
 
     constexpr double forceAlwaysUserScalableMinimumScale() const
     {
         const double forceAlwaysUserScalableMinimumScaleIgnoringLayoutScaleFactor = 1;
-        return forceAlwaysUserScalableMinimumScaleIgnoringLayoutScaleFactor * effectiveLayoutSizeScaleFactor();
+        return std::min(m_configuration.minimumScale, forceAlwaysUserScalableMinimumScaleIgnoringLayoutScaleFactor) * effectiveLayoutSizeScaleFactor();
     }
 
     constexpr double effectiveLayoutSizeScaleFactor() const
@@ -210,6 +221,8 @@ private:
     bool m_isKnownToLayOutWiderThanViewport { false };
     bool m_prefersHorizontalScrollingBelowDesktopViewportWidths { false };
     bool m_canIgnoreViewportArgumentsToAvoidExcessiveZoom { false };
+    bool m_canIgnoreViewportArgumentsToAvoidEnlargedView { false };
+    bool m_minimumEffectiveDeviceWidthWasSetByClient { false };
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ViewportConfiguration::Parameters&);

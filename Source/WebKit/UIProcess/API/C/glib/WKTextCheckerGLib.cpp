@@ -30,13 +30,9 @@
 #include "WKAPICast.h"
 #include "WebPageProxy.h"
 
-#if PLATFORM(GTK)
 #include "WebTextChecker.h"
-#endif
 
 using namespace WebKit;
-
-#if PLATFORM(GTK)
 
 void WKTextCheckerSetClient(const WKTextCheckerClientBase* wkClient)
 {
@@ -65,17 +61,15 @@ void WKTextCheckerChangeSpellingToWord(WKPageRef page, WKStringRef word)
     WebTextChecker::singleton()->changeSpellingToWord(toImpl(page), toWTFString(word));
 }
 
-void WKTextCheckerSetSpellCheckingLanguages(const char* const* languages)
+void WKTextCheckerSetSpellCheckingLanguages(const char* const* languages, const size_t length)
 {
 #if ENABLE(SPELLCHECK)
     Vector<String> spellCheckingLanguages;
-    for (size_t i = 0; languages[i]; ++i)
-        spellCheckingLanguages.append(String::fromUTF8(languages[i]));
+    for (auto language : unsafeMakeSpan(languages, length))
+        spellCheckingLanguages.append(String::fromUTF8(language));
     WebKit::TextChecker::setSpellCheckingLanguages(spellCheckingLanguages);
 #endif
 }
-
-#endif // PLATFORM(GTK)
 
 void WKTextCheckerSetContinuousSpellCheckingEnabled(bool enabled)
 {

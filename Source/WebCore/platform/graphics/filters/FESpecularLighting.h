@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,11 +22,13 @@
 
 #pragma once
 
-#include "FELighting.h"
+#include <WebCore/FELighting.h>
 
 namespace WebCore {
 
-class FESpecularLighting : public FELighting {
+class FESpecularLighting final : public FELighting {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FESpecularLighting);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FESpecularLighting);
 public:
     WEBCORE_EXPORT static Ref<FESpecularLighting> create(const Color& lightingColor, float surfaceScale, float specularConstant, float specularExponent, float kernelUnitLengthX, float kernelUnitLengthY, Ref<LightSource>&&, DestinationColorSpace = DestinationColorSpace::SRGB());
 
@@ -36,7 +38,7 @@ public:
     bool setSpecularConstant(float);
 
     float specularExponent() const { return m_specularExponent; }
-    bool setSpecularExponent(float);
+    bool NODELETE setSpecularExponent(float);
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;
 

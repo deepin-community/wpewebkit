@@ -29,8 +29,18 @@
 
 #include "MessageReceiver.h"
 #include "WebProcessSupplement.h"
+#include <WebCore/RealtimeMediaSourceCenter.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMalloc.h>
+
+namespace IPC {
+class Encoder;
+template<> struct ArgumentCoder<WebCore::RealtimeMediaSourceCenter::ValidDevices> {
+    static void encode(Encoder&, const WebCore::RealtimeMediaSourceCenter::ValidDevices&);
+    static std::optional<WebCore::RealtimeMediaSourceCenter::ValidDevices> decode(Decoder&);
+};
+}
 
 namespace WebCore {
 class CaptureDevice;
@@ -52,6 +62,9 @@ public:
     explicit UserMediaCaptureManager(WebProcess&);
     ~UserMediaCaptureManager();
 
+    void ref() const final;
+    void deref() const final;
+
     static ASCIILiteral supplementName() { return "UserMediaCaptureManager"_s; }
 
 private:
@@ -59,12 +72,12 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     // Messages::UserMediaCaptureManager
-    using ValidateUserMediaRequestConstraintsCallback = CompletionHandler<void(std::optional<WebCore::MediaConstraintType> invalidConstraint, Vector<WebCore::CaptureDevice>& audioDevices, Vector<WebCore::CaptureDevice>& videoDevices)>;
-    void validateUserMediaRequestConstraints(WebCore::MediaStreamRequest, WebCore::MediaDeviceHashSalts&&, ValidateUserMediaRequestConstraintsCallback&&);
-    ValidateUserMediaRequestConstraintsCallback m_validateUserMediaRequestConstraintsCallback;
+    void validateUserMediaRequestConstraints(const WebCore::MediaStreamRequest&, WebCore::MediaDeviceHashSalts&&, WebCore::RealtimeMediaSourceCenter::ValidateHandler&&);
 
     using GetMediaStreamDevicesCallback = CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>;
     void getMediaStreamDevices(bool revealIdsAndLabels, GetMediaStreamDevicesCallback&&);
+
+    const CheckedRef<WebProcess> m_process;
 };
 
 } // namespace WebKit

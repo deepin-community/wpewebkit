@@ -31,14 +31,13 @@
 
 #pragma once
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
-
 #include "DateTimeChooser.h"
 #include "DateTimeChooserClient.h"
 #include "DateTimeEditElement.h"
 #include "DateTimeFormat.h"
 #include "InputType.h"
 #include <wtf/OptionSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -47,12 +46,17 @@ class DateComponents;
 struct DateTimeChooserParameters;
 
 // A super class of date, datetime, datetime-local, month, time, and week types.
-class BaseDateAndTimeInputType : public InputType, private DateTimeChooserClient, private DateTimeEditElementEditControlOwner {
+class BaseDateAndTimeInputType : public InputType, public DateTimeChooserClient, private DateTimeEditElementEditControlOwner {
+    WTF_MAKE_TZONE_ALLOCATED(BaseDateAndTimeInputType);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(BaseDateAndTimeInputType);
 public:
-    bool typeMismatchFor(const String&) const final;
-    bool valueMissing(const String&) const final;
+    bool typeMismatchFor(StringView) const final;
+    bool valueMissing(StringView) const final;
     bool typeMismatch() const final;
     bool hasBadInput() const final;
+
+    void ref() const final { InputType::ref(); }
+    void deref() const final { InputType::deref(); }
 
 protected:
     enum class DateTimeFormatValidationResults : uint8_t {
@@ -74,7 +78,7 @@ protected:
 
     ~BaseDateAndTimeInputType();
 
-    Decimal parseToNumber(const String&, const Decimal&) const override;
+    Decimal parseToNumber(StringView, const Decimal&) const override;
     String serialize(const Decimal&) const final;
     String serializeWithComponents(const DateComponents&) const;
 
@@ -86,8 +90,8 @@ private:
     public:
         DateTimeFormatValidator() { }
 
-        void visitField(DateTimeFormat::FieldType, int);
-        void visitLiteral(String&&) { }
+        void NODELETE visitField(DateTimeFormat::FieldType, int);
+        void visitLiteral(const String&) { }
 
         bool validateFormat(const String& format, const BaseDateAndTimeInputType&);
 
@@ -103,7 +107,7 @@ private:
 
     // InputType functions:
     String visibleValue() const final;
-    String sanitizeValue(const String&) const override;
+    ValueOrReference<String> sanitizeValue(const String& value LIFETIME_BOUND) const override;
     void setValue(const String&, bool valueChanged, TextFieldEventBehavior, TextControlSetValueSelection) final;
     WallTime valueAsDate() const override;
     ExceptionOr<void> setValueAsDate(WallTime) const override;
@@ -112,18 +116,19 @@ private:
     ExceptionOr<void> setValueAsDecimal(const Decimal&, TextFieldEventBehavior) const final;
     Decimal defaultValueForStepUp() const override;
     String localizeValue(const String&) const final;
-    bool supportsReadOnly() const final;
-    bool shouldRespectListAttribute() final;
-    bool isKeyboardFocusable(KeyboardEvent*) const final;
+    bool supportsReadOnly() const final { return true; }
+    bool shouldRespectListAttribute() final { return false; }
+    bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isMouseFocusable() const final;
 
     void handleDOMActivateEvent(Event&) override;
+    void handleAccessibilityActivation() final;
     void createShadowSubtree() final;
     void removeShadowSubtree() final;
     void updateInnerTextValue() final;
-    bool hasCustomFocusLogic() const final;
+    bool NODELETE hasCustomFocusLogic() const final;
     void attributeChanged(const QualifiedName&) final;
-    bool isPresentingAttachedView() const final;
+    bool isPresentingAttachedView() const final { return m_popupIsVisible; }
     void elementDidBlur() final;
     void detach() final;
 
@@ -136,8 +141,11 @@ private:
     // DateTimeEditElementEditControlOwner functions:
     void didBlurFromControl() final;
     void didChangeValueFromControl() final;
+    void didReceiveSpaceKeyFromControl() final;
     bool isEditControlOwnerDisabled() const final;
     bool isEditControlOwnerReadOnly() const final;
+    bool didEditControlOwnerTransferFocusToPicker() final { return m_didTransferFocusToPicker; }
+    void didSuppressBlurDueToPickerFocusTransfer() final { m_didTransferFocusToPicker = false; }
     AtomString localeIdentifier() const final;
 
     // DateTimeChooserClient functions:
@@ -145,14 +153,18 @@ private:
     void didEndChooser() final;
 
     bool setupDateTimeChooserParameters(DateTimeChooserParameters&);
+    void showDateTimeChooser(const DateTimeChooserParameters&);
+    void setPopupIsVisible(bool);
     void closeDateTimeChooser();
 
     void showPicker() override;
 
-    std::unique_ptr<DateTimeChooser> m_dateTimeChooser;
+    RefPtr<DateTimeChooser> m_dateTimeChooser;
     RefPtr<DateTimeEditElement> m_dateTimeEditElement;
+
+    bool m_popupIsVisible { false };
+    bool m_didTransferFocusToPicker { false };
+    bool m_pickerWasActivatedByKeyboard { false };
 };
 
 } // namespace WebCore
-
-#endif

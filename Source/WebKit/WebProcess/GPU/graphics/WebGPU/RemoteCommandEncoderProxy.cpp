@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,10 +39,10 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteCommandEncoderProxy);
 
-RemoteCommandEncoderProxy::RemoteCommandEncoderProxy(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+RemoteCommandEncoderProxy::RemoteCommandEncoderProxy(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     : m_backing(identifier)
     , m_convertToBackingContext(convertToBackingContext)
-    , m_parent(parent)
+    , m_root(root)
 {
 }
 
@@ -55,6 +55,7 @@ RemoteCommandEncoderProxy::~RemoteCommandEncoderProxy()
 RefPtr<WebCore::WebGPU::RenderPassEncoder> RemoteCommandEncoderProxy::beginRenderPass(const WebCore::WebGPU::RenderPassDescriptor& descriptor)
 {
     auto convertedDescriptor = m_convertToBackingContext->convertToBacking(descriptor);
+
     if (!convertedDescriptor)
         return nullptr;
 
@@ -64,13 +65,15 @@ RefPtr<WebCore::WebGPU::RenderPassEncoder> RemoteCommandEncoderProxy::beginRende
         return nullptr;
 
     auto result = RemoteRenderPassEncoderProxy::create(*this, m_convertToBackingContext, identifier);
-    result->setLabel(WTFMove(convertedDescriptor->label));
+    if (convertedDescriptor)
+        result->setLabel(WTF::move(convertedDescriptor->label));
     return result;
 }
 
 RefPtr<WebCore::WebGPU::ComputePassEncoder> RemoteCommandEncoderProxy::beginComputePass(const std::optional<WebCore::WebGPU::ComputePassDescriptor>& descriptor)
 {
     std::optional<WebKit::WebGPU::ComputePassDescriptor> convertedDescriptor;
+
     if (descriptor) {
         convertedDescriptor = m_convertToBackingContext->convertToBacking(*descriptor);
         if (!convertedDescriptor)
@@ -83,7 +86,8 @@ RefPtr<WebCore::WebGPU::ComputePassEncoder> RemoteCommandEncoderProxy::beginComp
         return nullptr;
 
     auto result = RemoteComputePassEncoderProxy::create(*this, m_convertToBackingContext, identifier);
-    result->setLabel(WTFMove(convertedDescriptor->label));
+    if (convertedDescriptor)
+        result->setLabel(WTF::move(convertedDescriptor->label));
     return result;
 }
 
@@ -95,11 +99,7 @@ void RemoteCommandEncoderProxy::copyBufferToBuffer(
     WebCore::WebGPU::Size64 size)
 {
     auto convertedSource = m_convertToBackingContext->convertToBacking(source);
-    ASSERT(convertedSource);
     auto convertedDestination = m_convertToBackingContext->convertToBacking(destination);
-    ASSERT(convertedDestination);
-    if (!convertedSource || !convertedDestination)
-        return;
 
     auto sendResult = send(Messages::RemoteCommandEncoder::CopyBufferToBuffer(convertedSource, sourceOffset, convertedDestination, destinationOffset, size));
     UNUSED_VARIABLE(sendResult);
@@ -165,9 +165,6 @@ void RemoteCommandEncoderProxy::clearBuffer(
     std::optional<WebCore::WebGPU::Size64> size)
 {
     auto convertedBuffer = m_convertToBackingContext->convertToBacking(buffer);
-    ASSERT(convertedBuffer);
-    if (!convertedBuffer)
-        return;
 
     auto sendResult = send(Messages::RemoteCommandEncoder::ClearBuffer(convertedBuffer, offset, size));
     UNUSED_VARIABLE(sendResult);
@@ -175,7 +172,7 @@ void RemoteCommandEncoderProxy::clearBuffer(
 
 void RemoteCommandEncoderProxy::pushDebugGroup(String&& groupLabel)
 {
-    auto sendResult = send(Messages::RemoteCommandEncoder::PushDebugGroup(WTFMove(groupLabel)));
+    auto sendResult = send(Messages::RemoteCommandEncoder::PushDebugGroup(WTF::move(groupLabel)));
     UNUSED_VARIABLE(sendResult);
 }
 
@@ -187,16 +184,13 @@ void RemoteCommandEncoderProxy::popDebugGroup()
 
 void RemoteCommandEncoderProxy::insertDebugMarker(String&& markerLabel)
 {
-    auto sendResult = send(Messages::RemoteCommandEncoder::InsertDebugMarker(WTFMove(markerLabel)));
+    auto sendResult = send(Messages::RemoteCommandEncoder::InsertDebugMarker(WTF::move(markerLabel)));
     UNUSED_VARIABLE(sendResult);
 }
 
 void RemoteCommandEncoderProxy::writeTimestamp(const WebCore::WebGPU::QuerySet& querySet, WebCore::WebGPU::Size32 queryIndex)
 {
     auto convertedQuerySet = m_convertToBackingContext->convertToBacking(querySet);
-    ASSERT(convertedQuerySet);
-    if (!convertedQuerySet)
-        return;
 
     auto sendResult = send(Messages::RemoteCommandEncoder::WriteTimestamp(convertedQuerySet, queryIndex));
     UNUSED_VARIABLE(sendResult);
@@ -210,11 +204,7 @@ void RemoteCommandEncoderProxy::resolveQuerySet(
     WebCore::WebGPU::Size64 destinationOffset)
 {
     auto convertedQuerySet = m_convertToBackingContext->convertToBacking(querySet);
-    ASSERT(convertedQuerySet);
     auto convertedDestination = m_convertToBackingContext->convertToBacking(destination);
-    ASSERT(convertedDestination);
-    if (!convertedQuerySet || !convertedDestination)
-        return;
 
     auto sendResult = send(Messages::RemoteCommandEncoder::ResolveQuerySet(convertedQuerySet, firstQuery, queryCount, convertedDestination, destinationOffset));
     UNUSED_VARIABLE(sendResult);
@@ -223,6 +213,7 @@ void RemoteCommandEncoderProxy::resolveQuerySet(
 RefPtr<WebCore::WebGPU::CommandBuffer> RemoteCommandEncoderProxy::finish(const WebCore::WebGPU::CommandBufferDescriptor& descriptor)
 {
     auto convertedDescriptor = m_convertToBackingContext->convertToBacking(descriptor);
+
     if (!convertedDescriptor)
         return nullptr;
 
@@ -231,8 +222,8 @@ RefPtr<WebCore::WebGPU::CommandBuffer> RemoteCommandEncoderProxy::finish(const W
     if (sendResult != IPC::Error::NoError)
         return nullptr;
 
-    auto result = RemoteCommandBufferProxy::create(m_parent, m_convertToBackingContext, identifier);
-    result->setLabel(WTFMove(convertedDescriptor->label));
+    auto result = RemoteCommandBufferProxy::create(m_root, m_convertToBackingContext, identifier);
+    result->setLabel(WTF::move(convertedDescriptor->label));
     return result;
 }
 

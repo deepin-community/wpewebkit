@@ -38,9 +38,12 @@
 #include "B3Width.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/IteratorRange.h>
+#include <wtf/SequesteredMalloc.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TriState.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 {
 
@@ -51,9 +54,21 @@ class SIMDValue;
 class PhiChildren;
 class Procedure;
 
+// B3 purposefully only represents signed 32-bit offsets because that's what x86 can encode, and
+// ARM64 cannot encode anything bigger. The IsLegalOffset concept is then used on B3 Value
+// methods to prevent implicit conversions by C++ from invalid offset types: these cause compilation
+// to fail, instead of causing implementation-defined behavior (which often turns to exploit).
+// OffsetType isn't sufficient to determine offset validity! Each Value opcode further has an
+// isLegalOffset runtime method used to determine value legality at runtime. This is exposed to users
+// of B3 to force them to reason about the target's offset.
+template<typename Int>
+concept IsLegalOffset = std::signed_integral<Int> && sizeof(Int) <= sizeof(int32_t);
+
 class JS_EXPORT_PRIVATE Value {
-    WTF_MAKE_TZONE_ALLOCATED(Value);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(Value);
 public:
+    using OffsetType = int32_t;
+
     static const char* const dumpPrefix;
 
     static bool accepts(Kind) { return true; }
@@ -77,7 +92,6 @@ public:
     // instead of value->kind().isBlah().
     bool isChill() const { return kind().isChill(); }
     bool traps() const { return kind().traps(); }
-    bool isSensitiveToNaN() const { return kind().isSensitiveToNaN(); }
 
     Origin origin() const { return m_origin; }
     void setOrigin(Origin origin) { m_origin = origin; }
@@ -206,12 +220,15 @@ public:
 
     bool isConstant() const;
     bool isInteger() const;
+    bool isFP() const;
     
     virtual Value* negConstant(Procedure&) const;
     virtual Value* addConstant(Procedure&, int32_t other) const;
     virtual Value* addConstant(Procedure&, const Value* other) const;
     virtual Value* subConstant(Procedure&, const Value* other) const;
     virtual Value* mulConstant(Procedure&, const Value* other) const;
+    virtual Value* mulHighConstant(Procedure&, const Value* other) const;
+    virtual Value* uMulHighConstant(Procedure&, const Value* other) const;
     virtual Value* checkAddConstant(Procedure&, const Value* other) const;
     virtual Value* checkSubConstant(Procedure&, const Value* other) const;
     virtual Value* checkMulConstant(Procedure&, const Value* other) const;
@@ -238,7 +255,9 @@ public:
     virtual Value* absConstant(Procedure&) const;
     virtual Value* ceilConstant(Procedure&) const;
     virtual Value* floorConstant(Procedure&) const;
+    virtual Value* fTruncConstant(Procedure&) const;
     virtual Value* sqrtConstant(Procedure&) const;
+    virtual Value* purifyNaNConstant(Procedure&) const;
 
     virtual Value* vectorAndConstant(Procedure&, const Value* other) const;
     virtual Value* vectorOrConstant(Procedure&, const Value* other) const;
@@ -295,37 +314,39 @@ public:
 
     // Booleans in B3 are Const32(0) or Const32(1). So this is true if the type is Int32 and the only
     // possible return values are 0 or 1. It's OK for this method to conservatively return false.
-    bool returnsBool() const;
+    bool NODELETE returnsBool() const;
 
     bool isNegativeZero() const;
 
     bool isRounded() const;
 
-    TriState asTriState() const;
+    TriState NODELETE asTriState() const;
     bool isLikeZero() const { return asTriState() == TriState::False; }
     bool isLikeNonZero() const { return asTriState() == TriState::True; }
 
     bool isSIMDValue() const;
     SIMDValue* asSIMDValue();
 
-    Effects effects() const;
+    inline Effects effects() const;
+
+    inline bool mustExecute() const;
 
     // This returns a ValueKey that describes that this Value returns when it executes. Returns an
     // empty ValueKey if this Value is impure. Note that an operation that returns Void could still
     // have a non-empty ValueKey. This happens for example with Check operations.
     ValueKey key() const;
     
-    Value* foldIdentity() const;
+    Value* NODELETE foldIdentity() const;
 
     // Makes sure that none of the children are Identity's. If a child points to Identity, this will
     // repoint it at the Identity's child. For simplicity, this will follow arbitrarily long chains
     // of Identity's.
-    bool performSubstitution();
+    bool NODELETE performSubstitution();
     
     // Free values are those whose presence is guaranteed not to hurt code. We consider constants,
     // Identities, and Nops to be free. Constants are free because we hoist them to an optimal place.
     // Identities and Nops are free because we remove them.
-    bool isFree() const;
+    bool NODELETE isFree() const;
 
     // Walk the ancestors of this value (i.e. the graph of things it transitively uses). This
     // either walks phis or not, depending on whether PhiChildren is null. Your callback gets
@@ -340,22 +361,9 @@ public:
     template<typename Functor>
     void walk(const Functor& functor, PhiChildren* = nullptr);
 
-    // B3 purposefully only represents signed 32-bit offsets because that's what x86 can encode, and
-    // ARM64 cannot encode anything bigger. The IsLegalOffset type trait is then used on B3 Value
-    // methods to prevent implicit conversions by C++ from invalid offset types: these cause compilation
-    // to fail, instead of causing implementation-defined behavior (which often turns to exploit).
-    // OffsetType isn't sufficient to determine offset validity! Each Value opcode further has an
-    // isLegalOffset runtime method used to determine value legality at runtime. This is exposed to users
-    // of B3 to force them to reason about the target's offset.
-    typedef int32_t OffsetType;
-    template<typename Int>
-    struct IsLegalOffset {
-        static constexpr bool value = std::is_integral<Int>::value
-            && std::is_signed<Int>::value
-            && sizeof(Int) <= sizeof(OffsetType);
-    };
-
 protected:
+    Effects effectsSlow() const;
+
     Value* cloneImpl() const;
 
     void replaceWith(Kind, Type, BasicBlock*);
@@ -365,29 +373,29 @@ protected:
     virtual void dumpMeta(CommaPrinter&, PrintStream&) const;
 
     // The specific value of VarArgs does not matter, but the value of the others is assumed to match their meaning.
-    enum NumChildren : uint8_t { Zero = 0, One = 1, Two = 2, Three = 3, VarArgs = 4};
+    enum NumChildren : uint8_t { Zero = 0, One = 1, Two = 2, Three = 3, Four = 4, VarArgs = 5 };
 
-    char* childrenAlloc() { return bitwise_cast<char*>(this) + m_adjacencyListOffset; }
-    const char* childrenAlloc() const { return bitwise_cast<const char*>(this) + m_adjacencyListOffset; }
+    char* childrenAlloc() { return std::bit_cast<char*>(this) + m_adjacencyListOffset; }
+    const char* childrenAlloc() const { return std::bit_cast<const char*>(this) + m_adjacencyListOffset; }
     Vector<Value*, 3>& childrenVector()
     {
         ASSERT(m_numChildren == VarArgs);
-        return *bitwise_cast<Vector<Value*, 3>*>(childrenAlloc());
+        return *std::bit_cast<Vector<Value*, 3>*>(childrenAlloc());
     }
     const Vector<Value*, 3>& childrenVector() const
     {
         ASSERT(m_numChildren == VarArgs);
-        return *bitwise_cast<Vector<Value*, 3> const*>(childrenAlloc());
+        return *std::bit_cast<Vector<Value*, 3> const*>(childrenAlloc());
     }
     Value** childrenArray()
     {
         ASSERT(m_numChildren != VarArgs);
-        return bitwise_cast<Value**>(childrenAlloc());
+        return std::bit_cast<Value**>(childrenAlloc());
     }
     Value* const* childrenArray() const
     {
         ASSERT(m_numChildren != VarArgs);
-        return bitwise_cast<Value* const*>(childrenAlloc());
+        return std::bit_cast<Value* const*>(childrenAlloc());
     }
 
     template<typename... Arguments>
@@ -416,10 +424,12 @@ protected:
         case Identity:
         case Opaque:
         case Neg:
+        case PurifyNaN:
         case Clz:
         case Abs:
         case Ceil:
         case Floor:
+        case FTrunc:
         case Sqrt:
         case SExt8:
         case SExt16:
@@ -447,6 +457,8 @@ protected:
         case Set:
         case WasmAddress:
         case WasmBoundsCheck:
+        case WasmStructGet:
+        case WasmArrayLength:
         case VectorExtractLane:
         case VectorSplat:
         case VectorNot:
@@ -471,10 +483,13 @@ protected:
         case VectorAllTrue:
         case VectorExtaddPairwise:
         case VectorDupElement:
+        case VectorReverse:
             return sizeof(Value*);
         case Add:
         case Sub:
         case Mul:
+        case MulHigh:
+        case UMulHigh:
         case Div:
         case UDiv:
         case Mod:
@@ -509,6 +524,11 @@ protected:
         case Store8:
         case Store16:
         case Store:
+        case WasmArrayGet:
+        case WasmStructSet:
+        case WasmStructNew:
+        case WasmRefCast:
+        case WasmRefTest:
         case VectorReplaceLane:
         case VectorEqual:
         case VectorNotEqual:
@@ -525,6 +545,8 @@ protected:
         case VectorAddSat:
         case VectorSubSat:
         case VectorMul:
+        case VectorMulHigh:
+        case VectorMulLow:
         case VectorDotProduct:
         case VectorDiv:
         case VectorMin:
@@ -541,17 +563,34 @@ protected:
         case VectorMulSat:
         case VectorAvgRound:
         case VectorMulByElement:
-        case VectorShiftByVector:
         case VectorRelaxedSwizzle:
+        case VectorUnzipEven:
+        case VectorUnzipOdd:
+        case VectorZipLower:
+        case VectorZipHigher:
+        case VectorTransposeEven:
+        case VectorTransposeOdd:
+        case VectorExtractPair:
         case Stitch:
+        case VectorRelaxedMin:
+        case VectorRelaxedMax:
+        case VectorRelaxedQ15Mulr:
+        case VectorRelaxedDotI8x16I7x16:
             return 2 * sizeof(Value*);
+        case WasmArraySet:
         case Select:
         case AtomicWeakCAS:
         case AtomicStrongCAS:
         case VectorBitwiseSelect:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
+        case VectorRelaxedLaneSelect:
+        case MemoryFill:
+        case MemoryCopy:
+        case VectorRelaxedDotI8x16I7x16Add:
             return 3 * sizeof(Value*);
+        case WasmArrayNew:
+            return 4 * sizeof(Value*);
         case CCall:
         case Check:
         case CheckAdd:
@@ -576,7 +615,7 @@ private:
         // We must allocate enough space that replaceWithIdentity can work without buffer overflow.
         size_t allocIdentitySize = sizeof(Value) + sizeof(Value*);
         size_t allocSize = std::max(size + adjacencyListSpace, allocIdentitySize);
-        return static_cast<char*>(WTF::fastMalloc(allocSize));
+        return static_cast<char*>(SequesteredArenaMalloc::malloc(allocSize));
     }
 
 protected:
@@ -629,16 +668,19 @@ private:
 
         switch (valueToClone.m_numChildren) {
         case VarArgs:
-            new (bitwise_cast<char*>(this) + offset) Vector<Value*, 3> (valueToClone.childrenVector());
+            new (std::bit_cast<char*>(this) + offset) Vector<Value*, 3> (valueToClone.childrenVector());
             break;
+        case Four:
+            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[3] = valueToClone.childrenArray()[3];
+            [[fallthrough]];
         case Three:
-            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[2] = valueToClone.childrenArray()[2];
-            FALLTHROUGH;
+            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[2] = valueToClone.childrenArray()[2];
+            [[fallthrough]];
         case Two:
-            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[1] = valueToClone.childrenArray()[1];
-            FALLTHROUGH;
+            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[1] = valueToClone.childrenArray()[1];
+            [[fallthrough]];
         case One:
-            bitwise_cast<Value**>(bitwise_cast<char*>(this) + offset)[0] = valueToClone.childrenArray()[0];
+            std::bit_cast<Value**>(std::bit_cast<char*>(this) + offset)[0] = valueToClone.childrenArray()[0];
             break;
         case Zero:
             break;
@@ -655,20 +697,22 @@ private:
         case Jump:
         case Oops:
         case EntrySwitch:
-            if (UNLIKELY(numArgs))
+            if (numArgs) [[unlikely]]
                 badKind(kind, numArgs);
             return Zero;
         case Return:
-            if (UNLIKELY(numArgs > 1))
+            if (numArgs > 1) [[unlikely]]
                 badKind(kind, numArgs);
             return numArgs ? One : Zero;
         case Identity:
         case Opaque:
         case Neg:
+        case PurifyNaN:
         case Clz:
         case Abs:
         case Ceil:
         case Floor:
+        case FTrunc:
         case Sqrt:
         case SExt8:
         case SExt16:
@@ -708,13 +752,17 @@ private:
         case VectorAllTrue:
         case VectorExtaddPairwise:
         case VectorDupElement:
+        case VectorReverse:
         case VectorRelaxedTruncSat:
-            if (UNLIKELY(numArgs != 1))
+        case WasmArrayLength:
+            if (numArgs != 1) [[unlikely]]
                 badKind(kind, numArgs);
             return One;
         case Add:
         case Sub:
         case Mul:
+        case MulHigh:
+        case UMulHigh:
         case Div:
         case UDiv:
         case Mod:
@@ -756,6 +804,8 @@ private:
         case VectorAddSat:
         case VectorSubSat:
         case VectorMul:
+        case VectorMulHigh:
+        case VectorMulLow:
         case VectorDotProduct:
         case VectorDiv:
         case VectorMin:
@@ -772,17 +822,31 @@ private:
         case VectorMulSat:
         case VectorAvgRound:
         case VectorMulByElement:
-        case VectorShiftByVector:
         case VectorRelaxedSwizzle:
+        case VectorUnzipEven:
+        case VectorUnzipOdd:
+        case VectorZipLower:
+        case VectorZipHigher:
+        case VectorTransposeEven:
+        case VectorTransposeOdd:
+        case VectorExtractPair:
+        case VectorRelaxedQ15Mulr:
+        case VectorRelaxedMin:
+        case VectorRelaxedMax:
+        case VectorRelaxedDotI8x16I7x16:
         case Stitch:
-            if (UNLIKELY(numArgs != 2))
+            if (numArgs != 2) [[unlikely]]
                 badKind(kind, numArgs);
             return Two;
         case Select:
         case VectorBitwiseSelect:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
-            if (UNLIKELY(numArgs != 3))
+        case VectorRelaxedLaneSelect:
+        case VectorRelaxedDotI8x16I7x16Add:
+        case MemoryCopy:
+        case MemoryFill:
+            if (numArgs != 3) [[unlikely]]
                 badKind(kind, numArgs);
             return Three;
         default:
@@ -867,9 +931,8 @@ protected:
 private:
     friend class CheckValue; // CheckValue::convertToAdd() modifies m_kind.
 
-    static Type typeFor(Kind, Value* firstChild, Value* secondChild = nullptr);
+    static Type NODELETE typeFor(Kind, Value* firstChild, Value* secondChild = nullptr);
 
-    // m_index to m_numChildren are arranged to fit in 64 bits.
 protected:
     unsigned m_index { UINT_MAX };
 private:
@@ -1017,11 +1080,11 @@ public: \
 private: \
     Value** childrenArray() \
     { \
-        return bitwise_cast<Value**>(bitwise_cast<char*>(this) + sizeof(*this)); \
+        return std::bit_cast<Value**>(std::bit_cast<char*>(this) + sizeof(*this)); \
     } \
     Value* const* childrenArray() const \
     { \
-        return bitwise_cast<Value* const*>(bitwise_cast<char const*>(this) + sizeof(*this)); \
+        return std::bit_cast<Value* const*>(std::bit_cast<char const*>(this) + sizeof(*this)); \
     }
 
 // Only use this for classes with no subclass that add new fields (as it uses sizeof(*this))
@@ -1029,13 +1092,15 @@ private: \
 private: \
     Vector<Value*, 3>& childrenVector() \
     { \
-        return *bitwise_cast<Vector<Value*, 3>*>(bitwise_cast<char*>(this) + sizeof(*this)); \
+        return *std::bit_cast<Vector<Value*, 3>*>(std::bit_cast<char*>(this) + sizeof(*this)); \
     } \
     const Vector<Value*, 3>& childrenVector() const \
     { \
-        return *bitwise_cast<Vector<Value*, 3> const*>(bitwise_cast<char const*>(this) + sizeof(*this)); \
+        return *std::bit_cast<Vector<Value*, 3> const*>(std::bit_cast<char const*>(this) + sizeof(*this)); \
     } \
 
 } } // namespace JSC::B3
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)

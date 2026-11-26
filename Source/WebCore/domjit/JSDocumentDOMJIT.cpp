@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2024 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,8 @@
 #include "JSDOMWrapper.h"
 #include "JSElement.h"
 #include "JSHTMLElement.h"
+#include <JavaScriptCore/DOMJITCallDOMGetterSnippet.h>
+#include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/Snippet.h>
 #include <JavaScriptCore/SnippetParams.h>
 
@@ -109,9 +111,9 @@ Ref<JSC::DOMJIT::CallDOMGetterSnippet> compileDocumentBodyAttribute()
         loadLocalName(jit, scratch1, scratch2);
         nullCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch2, CCallHelpers::TrustedImmPtr(HTMLNames::htmlTag->localName().impl())));
 
-        RELEASE_ASSERT(!CAST_OFFSET(Node*, ContainerNode*));
-        RELEASE_ASSERT(!CAST_OFFSET(Node*, Element*));
-        RELEASE_ASSERT(!CAST_OFFSET(Node*, HTMLElement*));
+        RELEASE_ASSERT_NOT_CAST_OFFSET(Node*, ContainerNode*);
+        RELEASE_ASSERT_NOT_CAST_OFFSET(Node*, Element*);
+        RELEASE_ASSERT_NOT_CAST_OFFSET(Node*, HTMLElement*);
 
         // Node* node = current.firstChild();
         // while (node && !is<HTMLElement>(*node))

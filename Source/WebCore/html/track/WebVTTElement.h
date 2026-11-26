@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,26 +32,26 @@
 
 namespace WebCore {
 
-enum WebVTTNodeType {
-    WebVTTNodeTypeNone = 0,
-    WebVTTNodeTypeClass,
-    WebVTTNodeTypeItalic,
-    WebVTTNodeTypeLanguage,
-    WebVTTNodeTypeBold,
-    WebVTTNodeTypeUnderline,
-    WebVTTNodeTypeRuby,
-    WebVTTNodeTypeRubyText,
-    WebVTTNodeTypeVoice
+enum class WebVTTNodeType : uint8_t {
+    None = 0,
+    Class,
+    Italic,
+    Language,
+    Bold,
+    Underline,
+    Ruby,
+    RubyText,
+    Voice
 };
 
 class WebVTTElement final : public Element {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebVTTElement);
+    WTF_MAKE_TZONE_ALLOCATED(WebVTTElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebVTTElement);
 public:
     static Ref<Element> create(const WebVTTNodeType, AtomString language, Document&);
     Ref<HTMLElement> createEquivalentHTMLElement(Document&);
 
-    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&);
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const;
 
     void setWebVTTNodeType(WebVTTNodeType type) { m_webVTTNodeType = type; }
     WebVTTNodeType webVTTNodeType() const { return m_webVTTNodeType; }
@@ -70,8 +70,8 @@ public:
 
     static const QualifiedName& langAttributeName()
     {
-        static NeverDestroyed<QualifiedName> voiceAttr(nullAtom(), "lang"_s, nullAtom());
-        return voiceAttr;
+        static NeverDestroyed<QualifiedName> langAttr(nullAtom(), "lang"_s, nullAtom());
+        return langAttr;
     }
 
 protected:

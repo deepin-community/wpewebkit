@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
- * Copyright (C) 2011 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2011 Google, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +29,9 @@
 
 #include "ActiveDOMObject.h"
 #include "Document.h"
+#include <wtf/Platform.h>
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeRefCounted.h>
-
-#if PLATFORM(IOS_FAMILY)
-#include <wtf/Threading.h>
-#endif
 
 namespace WebCore {
 
@@ -65,7 +62,7 @@ public:
     bool allowDatabaseAccess() const;
     void databaseExceededQuota(const String& name, DatabaseDetails);
 
-    Document* document() const { return downcast<Document>(ActiveDOMObject::scriptExecutionContext()); }
+    Document* NODELETE document() const;
     const SecurityOriginData& securityOrigin() const;
 
     bool isContextThread() const;
@@ -80,7 +77,7 @@ private:
     // ActiveDOMObject.
     void stop() override;
 
-    RefPtr<DatabaseThread> m_databaseThread;
+    const RefPtr<DatabaseThread> m_databaseThread;
     bool m_hasOpenDatabases { false }; // This never changes back to false, even after the database thread is closed.
     bool m_hasRequestedTermination { false };
 

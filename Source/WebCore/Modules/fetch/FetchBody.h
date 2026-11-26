@@ -30,12 +30,10 @@
 #pragma once
 
 #include "DOMFormData.h"
-#include "ExceptionOr.h"
 #include "FetchBodyConsumer.h"
 #include "FormData.h"
 #include "ReadableStream.h"
 #include "URLSearchParams.h"
-#include <variant>
 
 namespace WebCore {
 
@@ -43,6 +41,8 @@ class DeferredPromise;
 class FetchBodyOwner;
 class FetchBodySource;
 class ScriptExecutionContext;
+
+template<typename> class ExceptionOr;
 
 class FetchBody {
 public:
@@ -55,7 +55,7 @@ public:
 
     void consumeAsStream(FetchBodyOwner&, FetchBodySource&);
 
-    using Init = std::variant<RefPtr<Blob>, RefPtr<ArrayBufferView>, RefPtr<ArrayBuffer>, RefPtr<DOMFormData>, RefPtr<URLSearchParams>, RefPtr<ReadableStream>, String>;
+    using Init = Variant<Ref<Blob>, Ref<ArrayBufferView>, Ref<ArrayBuffer>, Ref<DOMFormData>, Ref<URLSearchParams>, Ref<ReadableStream>, String>;
     static ExceptionOr<FetchBody> extract(Init&&, String&);
     FetchBody() = default;
     FetchBody(FetchBody&&) = default;
@@ -63,7 +63,7 @@ public:
     FetchBody& operator=(FetchBody&&) = default;
 
     explicit FetchBody(String&& data)
-        : m_data(WTFMove(data))
+        : m_data(WTF::move(data))
     {
     }
 
@@ -74,16 +74,25 @@ public:
 
     RefPtr<FormData> bodyAsFormData() const;
 
-    using TakenData = std::variant<std::nullptr_t, Ref<FormData>, Ref<SharedBuffer>>;
+    using TakenData = Variant<std::nullptr_t, Ref<FormData>, Ref<SharedBuffer>>;
     TakenData take();
 
-    void setAsFormData(Ref<FormData>&& data) { m_data = WTFMove(data); }
-    FetchBodyConsumer& consumer() { return m_consumer; }
+    void setAsFormData(Ref<FormData>&& data) { m_data = WTF::move(data); }
+    FetchBodyConsumer& consumer() LIFETIME_BOUND;
 
     void consumeOnceLoadingFinished(FetchBodyConsumer::Type, Ref<DeferredPromise>&&);
-    void cleanConsumer() { m_consumer.clean(); }
 
-    FetchBody clone();
+    void cleanConsumer()
+    {
+        if (CheckedPtr consumer = m_consumer.get())
+            consumer->clean();
+    }
+
+    // Can't create a CheckedPtr since this function can be called in a GC thread.
+    bool hasConsumerPendingActivity() const { SUPPRESS_UNCHECKED_ARG return m_consumer && m_consumer->hasPendingActivity(); }
+
+    FetchBody clone(JSDOMGlobalObject&);
+    FetchBody createProxy(JSDOMGlobalObject&);
 
     bool hasReadableStream() const { return !!m_readableStream; }
     const ReadableStream* readableStream() const { return m_readableStream.get(); }
@@ -91,21 +100,23 @@ public:
     void setReadableStream(Ref<ReadableStream>&& stream)
     {
         ASSERT(!m_readableStream);
-        m_readableStream = WTFMove(stream);
+        m_readableStream = WTF::move(stream);
     }
 
-    bool isBlob() const { return std::holds_alternative<Ref<const Blob>>(m_data); }
+    void convertReadableStreamToArrayBuffer(FetchBodyOwner&, CompletionHandler<void(std::optional<Exception>&&)>&&);
+
+    bool isBlob() const { return std::holds_alternative<Ref<Blob>>(m_data); }
     bool isFormData() const { return std::holds_alternative<Ref<FormData>>(m_data); }
     bool isReadableStream() const { return std::holds_alternative<Ref<ReadableStream>>(m_data); }
 
 private:
-    explicit FetchBody(Ref<const Blob>&& data) : m_data(WTFMove(data)) { }
-    explicit FetchBody(Ref<const ArrayBuffer>&& data) : m_data(WTFMove(data)) { }
-    explicit FetchBody(Ref<const ArrayBufferView>&& data) : m_data(WTFMove(data)) { }
-    explicit FetchBody(Ref<FormData>&& data) : m_data(WTFMove(data)) { }
-    explicit FetchBody(Ref<const URLSearchParams>&& data) : m_data(WTFMove(data)) { }
-    explicit FetchBody(Ref<ReadableStream>&& stream) : m_data(stream), m_readableStream(WTFMove(stream)) { }
-    explicit FetchBody(FetchBodyConsumer&& consumer) : m_consumer(WTFMove(consumer)) { }
+    explicit FetchBody(Ref<Blob>&& data) : m_data(WTF::move(data)) { }
+    explicit FetchBody(Ref<ArrayBuffer>&& data) : m_data(WTF::move(data)) { }
+    explicit FetchBody(Ref<ArrayBufferView>&& data) : m_data(WTF::move(data)) { }
+    explicit FetchBody(Ref<FormData>&& data) : m_data(WTF::move(data)) { }
+    explicit FetchBody(Ref<URLSearchParams>&& data) : m_data(WTF::move(data)) { }
+    explicit FetchBody(Ref<ReadableStream>&& stream) : m_data(stream), m_readableStream(WTF::move(stream)) { }
+    explicit FetchBody(UniqueRef<FetchBodyConsumer>&& consumer) : m_consumer(consumer.moveToUniquePtr()) { }
 
     void consume(FetchBodyOwner&, Ref<DeferredPromise>&&);
 
@@ -115,24 +126,23 @@ private:
     void consumeBlob(FetchBodyOwner&, Ref<DeferredPromise>&&);
     void consumeFormData(FetchBodyOwner&, Ref<DeferredPromise>&&);
 
-    bool isArrayBuffer() const { return std::holds_alternative<Ref<const ArrayBuffer>>(m_data); }
-    bool isArrayBufferView() const { return std::holds_alternative<Ref<const ArrayBufferView>>(m_data); }
-    bool isURLSearchParams() const { return std::holds_alternative<Ref<const URLSearchParams>>(m_data); }
+    bool isArrayBuffer() const { return std::holds_alternative<Ref<ArrayBuffer>>(m_data); }
+    bool isArrayBufferView() const { return std::holds_alternative<Ref<ArrayBufferView>>(m_data); }
+    bool isURLSearchParams() const { return std::holds_alternative<Ref<URLSearchParams>>(m_data); }
     bool isText() const { return std::holds_alternative<String>(m_data); }
 
-    const Blob& blobBody() const { return std::get<Ref<const Blob>>(m_data).get(); }
-    FormData& formDataBody() { return std::get<Ref<FormData>>(m_data).get(); }
-    const FormData& formDataBody() const { return std::get<Ref<FormData>>(m_data).get(); }
-    const ArrayBuffer& arrayBufferBody() const { return std::get<Ref<const ArrayBuffer>>(m_data).get(); }
-    const ArrayBufferView& arrayBufferViewBody() const { return std::get<Ref<const ArrayBufferView>>(m_data).get(); }
-    String& textBody() { return std::get<String>(m_data); }
-    const String& textBody() const { return std::get<String>(m_data); }
-    const URLSearchParams& urlSearchParamsBody() const { return std::get<Ref<const URLSearchParams>>(m_data).get(); }
+    Blob& blobBody() const { return std::get<Ref<Blob>>(m_data).get(); }
+    FormData& formDataBody() const { return std::get<Ref<FormData>>(m_data).get(); }
+    ArrayBuffer& arrayBufferBody() const { return std::get<Ref<ArrayBuffer>>(m_data).get(); }
+    ArrayBufferView& arrayBufferViewBody() const { return std::get<Ref<ArrayBufferView>>(m_data).get(); }
+    String& textBody() LIFETIME_BOUND { return std::get<String>(m_data); }
+    const String& textBody() const LIFETIME_BOUND { return std::get<String>(m_data); }
+    URLSearchParams& urlSearchParamsBody() const { return std::get<Ref<URLSearchParams>>(m_data).get(); }
 
-    using Data = std::variant<std::nullptr_t, Ref<const Blob>, Ref<FormData>, Ref<const ArrayBuffer>, Ref<const ArrayBufferView>, Ref<const URLSearchParams>, String, Ref<ReadableStream>>;
+    using Data = Variant<std::nullptr_t, Ref<Blob>, Ref<FormData>, Ref<ArrayBuffer>, Ref<ArrayBufferView>, Ref<URLSearchParams>, String, Ref<ReadableStream>>;
     Data m_data { nullptr };
 
-    FetchBodyConsumer m_consumer { FetchBodyConsumer::Type::None };
+    std::unique_ptr<FetchBodyConsumer> m_consumer;
     RefPtr<ReadableStream> m_readableStream;
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,11 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemotePageDrawingAreaProxy);
 
+Ref<RemotePageDrawingAreaProxy> RemotePageDrawingAreaProxy::create(DrawingAreaProxy& drawingArea, WebProcessProxy& process)
+{
+    return adoptRef(*new RemotePageDrawingAreaProxy(drawingArea, process));
+}
+
 RemotePageDrawingAreaProxy::RemotePageDrawingAreaProxy(DrawingAreaProxy& drawingArea, WebProcessProxy& process)
     : m_drawingArea(drawingArea)
     , m_identifier(drawingArea.identifier())
@@ -50,22 +55,14 @@ RemotePageDrawingAreaProxy::~RemotePageDrawingAreaProxy()
 {
     for (auto& name : m_names)
         m_process->removeMessageReceiver(name, m_identifier);
-    if (m_drawingArea)
-        m_drawingArea->removeRemotePageDrawingAreaProxy(*this);
+    if (RefPtr drawingArea = m_drawingArea.get())
+        drawingArea->removeRemotePageDrawingAreaProxy(*this);
 }
 
 void RemotePageDrawingAreaProxy::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    if (m_drawingArea)
-        m_drawingArea->didReceiveMessage(connection, decoder);
-}
-
-bool RemotePageDrawingAreaProxy::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
-{
-    if (m_drawingArea)
-        return m_drawingArea->didReceiveSyncMessage(connection, decoder, encoder);
-    ASSERT_NOT_REACHED();
-    return false;
+    if (RefPtr drawingArea = m_drawingArea.get())
+        drawingArea->didReceiveMessage(connection, decoder);
 }
 
 }

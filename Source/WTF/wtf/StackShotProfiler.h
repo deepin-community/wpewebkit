@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc.  All rights reserved.
+ * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,10 +34,12 @@
 #include <wtf/Threading.h>
 #include <wtf/WordLock.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 class StackShotProfiler {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StackShotProfiler);
 public:
     StackShotProfiler(unsigned numFrames, unsigned framesToSkip, unsigned stacksToReport)
         : m_numFrames(numFrames)
@@ -56,7 +58,7 @@ public:
     }
     
 private:
-    NO_RETURN void run()
+    [[noreturn]] void run()
     {
         for (;;) {
             sleep(1_s);
@@ -92,3 +94,4 @@ private:
 
 } // namespace WTF
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

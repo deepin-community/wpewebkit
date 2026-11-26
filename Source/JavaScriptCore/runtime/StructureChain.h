@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "JSCast.h"
-#include "JSObject.h"
-#include "Structure.h"
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/Structure.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/UniqueArray.h>
 
@@ -50,7 +50,7 @@ public:
     }
 
     static StructureChain* create(VM&, JSObject*);
-    StructureID* head() { return m_vector.get(); }
+    StructureID* head() LIFETIME_BOUND { return m_vector.get(); }
     DECLARE_VISIT_CHILDREN;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

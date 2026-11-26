@@ -25,30 +25,34 @@
 
 #pragma once
 
-#include "GlyphDisplayListCacheRemoval.h"
-#include "InlineRect.h"
-#include "LayoutBox.h"
-#include "TextFlags.h"
+#include <WebCore/GlyphDisplayListCacheRemoval.h>
+#include <WebCore/InlineRect.h>
+#include <WebCore/LayoutBox.h>
+#include <WebCore/TextFlags.h>
 #include <unicode/ubidi.h>
-#include <wtf/OptionSet.h>
+#include <wtf/EnumSet.h>
 
 namespace WebCore {
 namespace InlineDisplay {
 
 struct Box {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Box);
 
 #pragma pack(push, 4)
     struct Text {
     public:
         Text() = default;
-        Text(size_t position, size_t length, const String& originalContent, String adjustedContentToRender = String(), bool hasHyphen = false);
+        enum ShapingBoundary : uint8_t { Start, Inside, End, NotApplicable };
+        Text(size_t position, size_t length, const String& originalContent, String adjustedContentToRender = String(), bool hasHyphen = false, ShapingBoundary = ShapingBoundary::NotApplicable);
 
         size_t start() const { return m_start; }
         size_t end() const { return start() + length(); }
         size_t length() const { return m_length; }
         StringView originalContent() const { return StringView(m_originalContent).substring(m_start, m_length); }
         StringView renderedContent() const { return m_adjustedContentToRender.isNull() ? originalContent() : m_adjustedContentToRender; }
+        bool isAtShapingBoundaryStart() const { return m_shapingBoundary == ShapingBoundary::Start; }
+        bool isAtShapingBoundaryEnd() const { return m_shapingBoundary == ShapingBoundary::End; }
+        bool isInsideShapingBoundary() const { return m_shapingBoundary == ShapingBoundary::Inside; }
         bool hasHyphen() const { return m_hasHyphen; }
         std::optional<size_t> partiallyVisibleContentLength() const;
         void setPartiallyVisibleContentLength(size_t truncatedLength);
@@ -61,6 +65,7 @@ struct Box {
 
         unsigned m_start { 0 };
         unsigned m_length { 0 };
+        ShapingBoundary m_shapingBoundary { ShapingBoundary::NotApplicable };
         unsigned m_partiallyVisibleContentLength : 30 { };
         bool m_hasPartiallyVisibleContentLength : 1 { false };
         bool m_hasHyphen : 1 { false };
@@ -76,14 +81,15 @@ struct Box {
         AtomicInlineBox,
         NonRootInlineBox,
         RootInlineBox,
-        GenericInlineLevelBox
+        GenericInlineLevelBox,
+        BlockLevelBox,
     };
     struct Expansion;
-    enum class PositionWithinInlineLevelBox : uint8_t {
-        First = 1 << 0,
-        Last  = 1 << 1
+    enum class PositionWithinInlineLevelBox : bool {
+        First,
+        Last
     };
-    Box(size_t lineIndex, Type, const Layout::Box&, UBiDiLevel, const FloatRect&, const FloatRect& inkOverflow, Expansion, std::optional<Text> = std::nullopt, bool hasContent = true, bool isFullyTruncated = false, OptionSet<PositionWithinInlineLevelBox> = { });
+    Box(size_t lineIndex, Type, const Layout::Box&, UBiDiLevel, const FloatRect&, const FloatRect& inkOverflow, bool isFirstFormattedLine, Expansion, std::optional<Text> = std::nullopt, bool hasContent = true, bool isFullyTruncated = false, EnumSet<PositionWithinInlineLevelBox> = { });
     ~Box();
 
     bool isText() const { return m_type == Type::Text || isWordSeparator(); }
@@ -97,8 +103,10 @@ struct Box {
     bool isInlineBox() const { return isNonRootInlineBox() || isRootInlineBox(); }
     bool isNonRootInlineBox() const { return m_type == Type::NonRootInlineBox; }
     bool isRootInlineBox() const { return m_type == Type::RootInlineBox; }
+    bool isRubyBase() const { return isNonRootInlineBox() && layoutBox().isRubyBase(); }
     bool isGenericInlineLevelBox() const { return m_type == Type::GenericInlineLevelBox; }
     bool isInlineLevelBox() const { return isAtomicInlineBox() || isLineBreakBox() || isInlineBox() || isGenericInlineLevelBox(); }
+    bool isBlockLevelBox() const { return m_type == Type::BlockLevelBox; }
     bool isNonRootInlineLevelBox() const { return isInlineLevelBox() && !isRootInlineBox(); }
 
     UBiDiLevel bidiLevel() const { return m_bidiLevel; }
@@ -106,13 +114,14 @@ struct Box {
     inline bool isHorizontal() const;
 
     bool hasContent() const { return m_hasContent; }
-    bool isVisible() const { return !isFullyTruncated() && style().usedVisibility() == Visibility::Visible; }
-    bool isVisibleIgnoringUsedVisibility() const { return !isFullyTruncated() && style().visibility() == Visibility::Visible; }
+    inline bool isVisible() const;
+    // Inline boxes around blocks are visible to hit testing but don't paint.
+    inline bool isVisibleIgnoringUsedVisibility() const; // Defined in InlineDisplayBoxInlines.h
     bool isFullyTruncated() const { return m_isFullyTruncated; } 
 
-    const FloatRect& visualRectIgnoringBlockDirection() const { return m_unflippedVisualRect; }
+    const FloatRect& visualRectIgnoringBlockDirection() const LIFETIME_BOUND { return m_unflippedVisualRect; }
     static FloatRect visibleRectIgnoringBlockDirection(const Box&, const FloatRect& visibleLineRect);
-    const FloatRect& inkOverflow() const { return m_inkOverflow; }
+    const FloatRect& inkOverflow() const LIFETIME_BOUND { return m_inkOverflow; }
 
     float top() const { return visualRectIgnoringBlockDirection().y(); }
     float bottom() const { return visualRectIgnoringBlockDirection().maxY(); }
@@ -136,8 +145,8 @@ struct Box {
     void setHasContent() { m_hasContent = true; }
     void setIsFullyTruncated() { m_isFullyTruncated = true; }
 
-    Text& text() { ASSERT(isTextOrSoftLineBreak()); return m_text; }
-    const Text& text() const { ASSERT(isTextOrSoftLineBreak()); return m_text; }
+    Text& text() LIFETIME_BOUND { ASSERT(isTextOrSoftLineBreak()); return m_text; }
+    const Text& text() const LIFETIME_BOUND { ASSERT(isTextOrSoftLineBreak()); return m_text; }
 
     struct Expansion {
         ExpansionBehavior behavior { ExpansionBehavior::defaultBehavior() };
@@ -146,25 +155,28 @@ struct Box {
     void setExpansion(Expansion);
     Expansion expansion() const { return { m_expansionBehavior, m_horizontalExpansion }; }
 
-    const Layout::Box& layoutBox() const { return m_layoutBox; }
-    const RenderStyle& style() const { return !lineIndex() ? layoutBox().firstLineStyle() : layoutBox().style(); }
+    const Layout::Box& layoutBox() const { return *m_layoutBox; }
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return isFirstFormattedLine() ? layoutBox().firstLineStyle() : layoutBox().style(); }
+    WritingMode writingMode() const { return style().writingMode(); }
 
     void moveToLine(unsigned lineIndex) { m_lineIndex = lineIndex; }
     size_t lineIndex() const { return m_lineIndex; }
+    bool isFirstFormattedLine() const { return m_isFirstFormattedLine; }
     // These functions tell you whether this display box is the first/last for the associated inline level box (Layout::Box) and not whether it's the first/last box on the line.
     // (e.g. always true for atomic boxes, but inline boxes spanning over multiple lines can produce individual first/last boxes).
     bool isFirstForLayoutBox() const { return m_isFirstForLayoutBox; }
     bool isLastForLayoutBox() const { return m_isLastForLayoutBox; }
 
-    void setIsFirstForLayoutBox(bool isFirstBox) { m_isFirstForLayoutBox = isFirstBox; }
-    void setIsLastForLayoutBox(bool isLastBox) { m_isLastForLayoutBox = isLastBox; }
+    void setIsFirstForLayoutBox() { m_isFirstForLayoutBox = true; }
+    void setIsLastForLayoutBox() { m_isLastForLayoutBox = true; }
 
     bool isInGlyphDisplayListCache() const { return m_isInGlyphDisplayListCache; }
     void setIsInGlyphDisplayListCache() { m_isInGlyphDisplayListCache = true; }
     void removeFromGlyphDisplayListCache();
+    void detachLayoutBox() { m_layoutBox = nullptr; }
 
 private:
-    CheckedRef<const Layout::Box> m_layoutBox;
+    CheckedPtr<const Layout::Box> m_layoutBox;
     FloatRect m_unflippedVisualRect;
     FloatRect m_inkOverflow;
 
@@ -181,12 +193,13 @@ private:
     bool m_isLastForLayoutBox : 1 { false };
     bool m_isFullyTruncated : 1 { false };
     bool m_isInGlyphDisplayListCache : 1 { false };
+    bool m_isFirstFormattedLine : 1 { false };
 
     Text m_text;
 };
 
-inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDiLevel bidiLevel, const FloatRect& physicalRect, const FloatRect& inkOverflow, Expansion expansion, std::optional<Text> text, bool hasContent, bool isFullyTruncated, OptionSet<PositionWithinInlineLevelBox> positionWithinInlineLevelBox)
-    : m_layoutBox(layoutBox)
+inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDiLevel bidiLevel, const FloatRect& physicalRect, const FloatRect& inkOverflow, bool isFirstFormattedLine, Expansion expansion, std::optional<Text> text, bool hasContent, bool isFullyTruncated, EnumSet<PositionWithinInlineLevelBox> positionWithinInlineLevelBox)
+    : m_layoutBox(&layoutBox)
     , m_unflippedVisualRect(physicalRect)
     , m_inkOverflow(inkOverflow)
     , m_lineIndex(lineIndex)
@@ -198,7 +211,8 @@ inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDi
     , m_isFirstForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::First))
     , m_isLastForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
     , m_isFullyTruncated(isFullyTruncated)
-    , m_text(text ? WTFMove(*text) : Text { })
+    , m_isFirstFormattedLine(isFirstFormattedLine)
+    , m_text(text ? WTF::move(*text) : Text { })
 {
 }
 
@@ -208,11 +222,12 @@ inline Box::~Box()
         removeBoxFromGlyphDisplayListCache(*this);
 }
 
-inline Box::Text::Text(size_t start, size_t length, const String& originalContent, String adjustedContentToRender, bool hasHyphen)
+inline Box::Text::Text(size_t start, size_t length, const String& originalContent, String adjustedContentToRender, bool hasHyphen, ShapingBoundary shapingBoundary)
     : m_originalContent(originalContent)
     , m_adjustedContentToRender(adjustedContentToRender)
     , m_start(start)
     , m_length(length)
+    , m_shapingBoundary(shapingBoundary)
     , m_hasHyphen(hasHyphen)
 {
 }
@@ -329,6 +344,7 @@ inline bool operator==(const Box& a, const Box& b)
         && a.bidiLevel() == b.bidiLevel()
         && a.visualRectIgnoringBlockDirection() == b.visualRectIgnoringBlockDirection()
         && a.inkOverflow() == b.inkOverflow()
+        && a.isFullyTruncated() == b.isFullyTruncated()
         && (!a.isTextOrSoftLineBreak() || (a.text() == b.text()));
 }
 

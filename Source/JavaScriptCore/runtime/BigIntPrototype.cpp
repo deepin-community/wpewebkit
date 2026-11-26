@@ -70,6 +70,7 @@ void BigIntPrototype::finishCreation(VM& vm, JSGlobalObject*)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    structure()->setMayBePrototype(true);
 }
 
 // ------------------------------ Functions ---------------------------
@@ -86,10 +87,10 @@ static ALWAYS_INLINE JSBigInt* toThisBigIntValue(JSGlobalObject* globalObject, J
 #endif
 
     if (thisValue.isCell()) {
-        if (JSBigInt* bigInt = jsDynamicCast<JSBigInt*>(thisValue.asCell()))
+        if (JSBigInt* bigInt = dynamicDowncast<JSBigInt>(thisValue.asCell()))
             return bigInt;
 
-        if (BigIntObject* bigIntObject = jsDynamicCast<BigIntObject*>(thisValue.asCell())) {
+        if (BigIntObject* bigIntObject = dynamicDowncast<BigIntObject>(thisValue.asCell())) {
             JSValue bigInt = bigIntObject->internalValue();
 #if USE(BIGINT32)
             if (bigInt.isBigInt32())
@@ -145,7 +146,7 @@ JSC_DEFINE_HOST_FUNCTION(bigIntProtoFuncToLocaleString, (JSGlobalObject* globalO
     if (auto number = value.tryGetDouble())
         RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->format(globalObject, number.value())));
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->format(globalObject, WTFMove(value))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->format(globalObject, WTF::move(value))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(bigIntProtoFuncValueOf, (JSGlobalObject* globalObject, CallFrame* callFrame))

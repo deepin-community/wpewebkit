@@ -29,8 +29,8 @@
 
 namespace WebKit {
 
-enum class RetrieveRecordResponseBodyCallbackIdentifierType { };
-using RetrieveRecordResponseBodyCallbackIdentifier = LegacyNullableObjectIdentifier<RetrieveRecordResponseBodyCallbackIdentifierType>;
+struct RetrieveRecordResponseBodyCallbackIdentifierType;
+using RetrieveRecordResponseBodyCallbackIdentifier = ObjectIdentifier<RetrieveRecordResponseBodyCallbackIdentifierType>;
 
 } // namespace WebKit
 

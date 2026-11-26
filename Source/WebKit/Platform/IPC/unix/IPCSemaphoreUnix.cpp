@@ -28,7 +28,6 @@
 
 #include "Decoder.h"
 #include "Encoder.h"
-#include "WebCoreArgumentCoders.h"
 #include <wtf/UniStdExtras.h>
 
 #if OS(LINUX)
@@ -46,7 +45,7 @@ Semaphore::Semaphore()
 }
 
 Semaphore::Semaphore(UnixFileDescriptor&& fd)
-    : m_fd(WTFMove(fd))
+    : m_fd(WTF::move(fd))
 { }
 
 Semaphore::Semaphore(Semaphore&&) = default;
@@ -66,7 +65,7 @@ void Semaphore::signal()
     uint64_t value = 1;
     while (true) {
         int ret = write(m_fd.value(), &value, sizeof(uint64_t));
-        if (LIKELY(ret != -1 || errno != EINTR))
+        if (ret != -1 || errno != EINTR) [[likely]]
             break;
     }
 #endif
@@ -81,7 +80,7 @@ static bool waitImpl(int fd, int timeout)
     // Iterate on polling while interrupts are thrown, otherwise bail out of the loop immediately.
     while (true) {
         ret = poll(&pollfdValue, 1, timeout);
-        if (LIKELY(ret != -1 || errno != EINTR))
+        if (ret != -1 || errno != EINTR) [[likely]]
             break;
     }
 

@@ -8,9 +8,10 @@
 #ifndef skgpu_graphite_MtlCommandBuffer_DEFINED
 #define skgpu_graphite_MtlCommandBuffer_DEFINED
 
+#include "include/private/SkLog.h"
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/DrawPass.h"
-#include "src/gpu/graphite/Log.h"
+#include "src/gpu/graphite/mtl/MtlResourceProvider.h"
 
 #include <memory>
 
@@ -23,8 +24,8 @@ namespace skgpu::graphite {
 class ComputePipeline;
 class MtlBlitCommandEncoder;
 class MtlComputeCommandEncoder;
+class MtlGraphicsPipeline;
 class MtlRenderCommandEncoder;
-class MtlResourceProvider;
 class MtlSharedContext;
 struct WorkgroupSize;
 
@@ -54,7 +55,7 @@ public:
             [(*fCommandBuffer) waitUntilCompleted];
         }
         if (!this->isFinished()) {
-            SKGPU_LOG_E("Unfinished command buffer status: %d",
+            SKIA_LOG_E("Unfinished command buffer status: %d",
                         (int)(*fCommandBuffer).status);
             SkASSERT(false);
         }
@@ -66,16 +67,18 @@ private:
                      const MtlSharedContext* sharedContext,
                      MtlResourceProvider* resourceProvider);
 
+    ResourceProvider* resourceProvider() const override { return fResourceProvider; }
+
     bool createNewMTLCommandBuffer();
 
     void onResetCommandBuffer() override;
 
     bool onAddRenderPass(const RenderPassDesc&,
-                         SkIRect renderPassBounds,
                          const Texture* colorTexture,
                          const Texture* resolveTexture,
                          const Texture* depthStencilTexture,
-                         SkRect viewport,
+                         SkIPoint resolveOffset,
+                         SkIRect viewport,
                          const DrawPassList&) override;
     bool onAddComputePass(DispatchGroupSpan) override;
 
@@ -86,25 +89,21 @@ private:
                          const Texture* depthStencilTexture);
     void endRenderPass();
 
-    void addDrawPass(const DrawPass*);
+    [[nodiscard]] bool addDrawPass(DrawPass*);
+
+    void updateIntrinsicUniforms(SkIRect viewport);
 
     void bindGraphicsPipeline(const GraphicsPipeline*);
-    void setBlendConstants(float* blendConstants);
+    void setBlendConstants(std::array<float, 4> blendConstants);
 
     void bindUniformBuffer(const BindBufferInfo& info, UniformSlot);
-    void bindDrawBuffers(const BindBufferInfo& vertices,
-                         const BindBufferInfo& instances,
-                         const BindBufferInfo& indices,
-                         const BindBufferInfo& indirect);
-    void bindVertexBuffers(const Buffer* vertexBuffer, size_t vertexOffset,
-                           const Buffer* instanceBuffer, size_t instanceOffset);
+    void bindInputBuffer(const Buffer* buffer, size_t offset, uint32_t bindingIndex);
     void bindIndexBuffer(const Buffer* indexBuffer, size_t offset);
     void bindIndirectBuffer(const Buffer* indirectBuffer, size_t offset);
 
     void bindTextureAndSampler(const Texture*, const Sampler*, unsigned int bindIndex);
 
-    void setScissor(unsigned int left, unsigned int top,
-                    unsigned int width, unsigned int height);
+    void setScissor(const Scissor&);
     void setViewport(float x, float y, float width, float height,
                      float minDepth, float maxDepth);
 
@@ -158,10 +157,16 @@ private:
     MtlBlitCommandEncoder* getBlitCommandEncoder();
     void endBlitCommandEncoder();
 
+    void bindUniformBuffers();
+
     sk_cfp<id<MTLCommandBuffer>> fCommandBuffer;
     sk_sp<MtlRenderCommandEncoder> fActiveRenderCommandEncoder;
     sk_sp<MtlComputeCommandEncoder> fActiveComputeCommandEncoder;
     sk_sp<MtlBlitCommandEncoder> fActiveBlitCommandEncoder;
+    const MtlGraphicsPipeline* fActiveGraphicsPipeline = nullptr;
+
+    std::array<BindBufferInfo, 5> fBoundUniformBuffers;
+    bool fBoundUniformBuffersDirty = false;
 
     id<MTLBuffer> fCurrentIndexBuffer;
     id<MTLBuffer> fCurrentIndirectBuffer;

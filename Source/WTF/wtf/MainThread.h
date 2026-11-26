@@ -44,7 +44,7 @@ class Thread;
 WTF_EXPORT_PRIVATE void initializeMainThread();
 
 WTF_EXPORT_PRIVATE void callOnMainThread(Function<void()>&&);
-WTF_EXPORT_PRIVATE void callOnMainThreadAndWait(Function<void()>&&);
+WTF_EXPORT_PRIVATE void callOnMainThreadAndWait(NOESCAPE Function<void()>&&);
 WTF_EXPORT_PRIVATE void ensureOnMainThread(Function<void()>&&); // Sync if called on main thread, async otherwise.
 
 #if PLATFORM(COCOA)
@@ -52,13 +52,14 @@ WTF_EXPORT_PRIVATE void dispatchAsyncOnMainThreadWithWebThreadLockIfNeeded(void 
 WTF_EXPORT_PRIVATE void callOnWebThreadOrDispatchAsyncOnMainThread(void (^block)());
 #endif
 
-WTF_EXPORT_PRIVATE bool isMainThread();
+WTF_EXPORT_PRIVATE bool NODELETE isMainThread();
 
 WTF_EXPORT_PRIVATE bool canCurrentThreadAccessThreadLocalData(Thread&);
+WTF_EXPORT_PRIVATE bool canCurrentThreadIDAccessThreadLocalData(uint32_t);
 
 WTF_EXPORT_PRIVATE bool isMainRunLoop();
 WTF_EXPORT_PRIVATE void callOnMainRunLoop(Function<void()>&&);
-WTF_EXPORT_PRIVATE void callOnMainRunLoopAndWait(Function<void()>&&);
+WTF_EXPORT_PRIVATE void callOnMainRunLoopAndWait(NOESCAPE Function<void()>&&);
 WTF_EXPORT_PRIVATE void ensureOnMainRunLoop(Function<void()>&&); // Sync if called on main run loop, async otherwise.
 
 #if USE(WEB_THREAD)
@@ -71,7 +72,7 @@ inline bool isWebThread() { return isMainThread(); }
 inline bool isUIThread() { return isMainThread(); }
 #endif // USE(WEB_THREAD)
 
-WTF_EXPORT_PRIVATE bool isMainThreadOrGCThread();
+WTF_EXPORT_PRIVATE bool NODELETE isMainThreadOrGCThread();
 
 // NOTE: these functions are internal to the callOnMainThread implementation.
 void initializeMainThreadPlatform();
@@ -95,6 +96,7 @@ using WTF::callOnMainRunLoopAndWait;
 using WTF::callOnMainThread;
 using WTF::callOnMainThreadAndWait;
 using WTF::canCurrentThreadAccessThreadLocalData;
+using WTF::canCurrentThreadIDAccessThreadLocalData;
 using WTF::ensureOnMainRunLoop;
 using WTF::ensureOnMainThread;
 using WTF::isMainRunLoop;

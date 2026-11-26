@@ -100,7 +100,7 @@ public:
     
     static Ref<PlatformTextTrack> create(PlatformTextTrackData&& data)
     {
-        return adoptRef(*new PlatformTextTrack(WTFMove(data)));
+        return adoptRef(*new PlatformTextTrack(WTF::move(data)));
     }
 
     virtual ~PlatformTextTrack() = default;
@@ -108,9 +108,9 @@ public:
     PlatformTextTrackData::TrackType type() const { return m_trackData.m_type; }
     PlatformTextTrackData::TrackKind kind() const { return m_trackData.m_kind; }
     PlatformTextTrackData::TrackMode mode() const { return m_trackData.m_mode; }
-    const String& label() const { return m_trackData.m_label; }
-    const String& language() const { return m_trackData.m_language; }
-    const String& url() const { return m_trackData.m_url; }
+    const String& label() const LIFETIME_BOUND { return m_trackData.m_label; }
+    const String& language() const LIFETIME_BOUND { return m_trackData.m_language; }
+    const String& url() const LIFETIME_BOUND { return m_trackData.m_url; }
     int uniqueId() const { return m_trackData.m_uniqueId; }
     bool isDefault() const { return m_trackData.m_isDefault; }
     PlatformTextTrackClient* client() const { return m_client; }
@@ -134,7 +134,7 @@ protected:
     }
     
     PlatformTextTrack(PlatformTextTrackData&& data)
-        : m_trackData(WTFMove(data))
+        : m_trackData(WTF::move(data))
     {
     }
 

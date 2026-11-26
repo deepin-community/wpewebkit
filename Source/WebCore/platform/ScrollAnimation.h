@@ -26,10 +26,11 @@
 
 #pragma once
 
-#include "FloatPoint.h"
-#include "ScrollTypes.h"
-#include <wtf/FastMalloc.h>
+#include <WebCore/FloatPoint.h>
+#include <WebCore/ScrollTypes.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -49,8 +50,9 @@ public:
     virtual FloatPoint scrollOffset(ScrollAnimation&) = 0;
 };
 
-class ScrollAnimation {
-    WTF_MAKE_FAST_ALLOCATED;
+class ScrollAnimation : public CanMakeThreadSafeCheckedPtr<ScrollAnimation> {
+    WTF_MAKE_TZONE_ALLOCATED(ScrollAnimation);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ScrollAnimation);
 public:
     enum class Type {
         Smooth,
@@ -82,6 +84,7 @@ public:
     
     FloatPoint currentOffset() const { return m_currentOffset; }
     virtual std::optional<FloatPoint> destinationOffset() const { return std::nullopt; }
+    MonotonicTime startTime() const { return m_startTime; }
 
     virtual void serviceAnimation(MonotonicTime) = 0;
 

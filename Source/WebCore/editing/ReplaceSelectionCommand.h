@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -49,7 +49,7 @@ public:
 
     static Ref<ReplaceSelectionCommand> create(Ref<Document>&& document, RefPtr<DocumentFragment>&& fragment, OptionSet<CommandOption> options, EditAction editingAction = EditAction::Insert)
     {
-        return adoptRef(*new ReplaceSelectionCommand(WTFMove(document), WTFMove(fragment), options, editingAction));
+        return adoptRef(*new ReplaceSelectionCommand(WTF::move(document), WTF::move(fragment), options, editingAction));
     }
 
     virtual ~ReplaceSelectionCommand();
@@ -75,15 +75,13 @@ private:
         void willRemoveNode(Node*);
         void didReplaceNode(Node*, Node* newNode);
 
-        bool isEmpty() { return !m_firstNodeInserted; }
+        bool NODELETE isEmpty() { return !m_firstNodeInserted; }
         Node* firstNodeInserted() const { return m_firstNodeInserted.get(); }
-        RefPtr<Node> protectedFirstNodeInserted() const { return m_firstNodeInserted; }
         Node* lastLeafInserted() const
         {
             ASSERT(m_lastNodeInserted);
             return m_lastNodeInserted->lastDescendant();
         }
-        RefPtr<Node> protectedLastLeafInserted() const { return lastLeafInserted(); }
         Node* pastLastLeaf() const
         {
             ASSERT(m_lastNodeInserted);
@@ -118,7 +116,7 @@ private:
     VisiblePosition positionAtEndOfInsertedContent() const;
 
     bool shouldPerformSmartReplace() const;
-    bool shouldPerformSmartParagraphReplace() const;
+    bool NODELETE shouldPerformSmartParagraphReplace() const;
     void addSpacesForSmartReplace();
     void addNewLinesForSmartReplace();
     void completeHTMLReplacement(const Position& lastPositionToSelect);
@@ -127,7 +125,9 @@ private:
     ReplacementFragment* ensureReplacementFragment();
     bool performTrivialReplace(const ReplacementFragment&);
 
-    RefPtr<DocumentFragment> protectedDocumentFragment() const { return m_documentFragment; }
+    void updateDirectionForStartOfInsertedContentIfNeeded(const InsertedNodes&);
+
+    void removeForegroundColorsInDarkModeIfNeeded(const InsertedNodes&);
 
     VisibleSelection m_visibleSelectionForInsertedText;
     Position m_startOfInsertedContent;
@@ -136,7 +136,7 @@ private:
     bool m_selectReplacement;
     bool m_smartReplace;
     bool m_matchStyle;
-    RefPtr<DocumentFragment> m_documentFragment;
+    const RefPtr<DocumentFragment> m_documentFragment;
     std::unique_ptr<ReplacementFragment> m_replacementFragment;
     String m_documentFragmentHTMLMarkup;
     String m_documentFragmentPlainText;

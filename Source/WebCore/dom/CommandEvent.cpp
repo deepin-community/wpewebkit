@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,29 +26,31 @@
 #include "config.h"
 #include "CommandEvent.h"
 
+#include "Document.h"
 #include "Element.h"
+#include "TreeScope.h"
 
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CommandEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CommandEvent);
 
 CommandEvent::CommandEvent()
     : Event(EventInterfaceType::CommandEvent)
 {
 }
 
-CommandEvent::CommandEvent(const AtomString& type, const CommandEvent::Init& initializer, IsTrusted isTrusted)
-    : Event(EventInterfaceType::CommandEvent, type, initializer, isTrusted)
-    , m_invoker(initializer.invoker)
-    , m_command(initializer.command)
+CommandEvent::CommandEvent(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
+    : Event(EventInterfaceType::CommandEvent, type, WTF::move(initializer), isTrusted)
+    , m_source(WTF::move(initializer.source))
+    , m_command(WTF::move(initializer.command))
 {
 }
 
-Ref<CommandEvent> CommandEvent::create(const AtomString& eventType, const CommandEvent::Init& init, IsTrusted isTrusted)
+Ref<CommandEvent> CommandEvent::create(const AtomString& eventType, Init&& initializer, IsTrusted isTrusted)
 {
-    return adoptRef(*new CommandEvent(eventType, init, isTrusted));
+    return adoptRef(*new CommandEvent(eventType, WTF::move(initializer), isTrusted));
 }
 
 Ref<CommandEvent> CommandEvent::createForBindings()
@@ -56,23 +58,15 @@ Ref<CommandEvent> CommandEvent::createForBindings()
     return adoptRef(*new CommandEvent);
 }
 
-bool CommandEvent::isCommandEvent() const
+RefPtr<Element> CommandEvent::source() const
 {
-    return true;
-}
-
-RefPtr<Element> CommandEvent::invoker() const
-{
-    auto* invoker = m_invoker.get();
-    if (!invoker)
+    if (!m_source)
         return nullptr;
 
-    if (RefPtr target = dynamicDowncast<Node>(currentTarget())) {
-        auto& treeScope = target->treeScope();
-        auto node = treeScope.retargetToScope(*invoker);
-        return &downcast<Element>(node).get();
-    }
-    return invoker;
+    if (RefPtr target = dynamicDowncast<Node>(currentTarget()))
+        return downcast<Element>(target->treeScope().retargetToScope(*m_source));
+
+    return downcast<Element>(m_source->treeScope().documentScope().retargetToScope(*m_source));
 }
 
 } // namespace WebCore

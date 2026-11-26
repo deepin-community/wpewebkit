@@ -106,7 +106,7 @@ void WebsiteDataRecord::addResourceLoadStatisticsRegistrableDomain(const WebCore
     resourceLoadStatisticsRegistrableDomains.add(domain);
 }
 
-static inline bool hostIsInDomain(StringView host, StringView domain)
+static inline bool NODELETE hostIsInDomain(StringView host, StringView domain)
 {
     if (!host.endsWithIgnoringASCIICase(domain))
         return false;
@@ -165,14 +165,14 @@ WebsiteDataRecord WebsiteDataRecord::isolatedCopy() const &
 WebsiteDataRecord WebsiteDataRecord::isolatedCopy() &&
 {
     return WebsiteDataRecord {
-        crossThreadCopy(WTFMove(displayName)),
+        crossThreadCopy(WTF::move(displayName)),
         types,
         size,
-        crossThreadCopy(WTFMove(origins)),
-        crossThreadCopy(WTFMove(cookieHostNames)),
-        crossThreadCopy(WTFMove(HSTSCacheHostNames)),
-        crossThreadCopy(WTFMove(alternativeServicesHostNames)),
-        crossThreadCopy(WTFMove(resourceLoadStatisticsRegistrableDomains)),
+        crossThreadCopy(WTF::move(origins)),
+        crossThreadCopy(WTF::move(cookieHostNames)),
+        crossThreadCopy(WTF::move(HSTSCacheHostNames)),
+        crossThreadCopy(WTF::move(alternativeServicesHostNames)),
+        crossThreadCopy(WTF::move(resourceLoadStatisticsRegistrableDomains)),
     };
 }
 

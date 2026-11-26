@@ -31,12 +31,12 @@
 namespace WebCore {
 
 class YouTubeEmbedShadowElement final : public HTMLDivElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(YouTubeEmbedShadowElement);
+    WTF_MAKE_TZONE_ALLOCATED(YouTubeEmbedShadowElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(YouTubeEmbedShadowElement);
 public:
     static Ref<YouTubeEmbedShadowElement> create(Document&);
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
 
 private:
     explicit YouTubeEmbedShadowElement(Document&);

@@ -57,16 +57,16 @@ public:
 
     WebExtensionAPIObject(WebExtensionContentWorldType contentWorldType, WebExtensionAPIRuntimeBase& runtime, WebExtensionContextProxy& context)
         : m_contentWorldType(contentWorldType)
-        , m_runtime(&runtime)
         , m_extensionContext(&context)
     {
+        lazyInitialize(m_runtime, Ref { runtime });
     }
 
     WebExtensionAPIObject(const WebExtensionAPIObject& parentObject)
         : m_contentWorldType(parentObject.contentWorldType())
-        , m_runtime(&parentObject.runtime())
         , m_extensionContext(parentObject.m_extensionContext) // Using parentObject.extensionContext() is not safe for APIWebPage objects.
     {
+        lazyInitialize(m_runtime, Ref { parentObject.runtime() });
     }
 
     virtual ~WebExtensionAPIObject() = default;
@@ -79,7 +79,7 @@ public:
     WebExtensionContextProxy& extensionContext() const { return *m_extensionContext; }
     bool hasExtensionContext() const { return !!m_extensionContext; }
 
-    const String& propertyPath() const { return m_propertyPath; }
+    const String& propertyPath() const LIFETIME_BOUND { return m_propertyPath; }
     void setPropertyPath(const String& propertyName, const WebExtensionAPIObject* parentObject = nullptr)
     {
         ASSERT(!propertyName.isEmpty());
@@ -92,7 +92,7 @@ public:
 
 private:
     WebExtensionContentWorldType m_contentWorldType { WebExtensionContentWorldType::Main };
-    RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
+    const RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
     RefPtr<WebExtensionContextProxy> m_extensionContext;
     String m_propertyPath;
 };
@@ -132,7 +132,7 @@ private: \
         setPropertyPath(#PropertyName##_s, &parentObject); \
     } \
 \
-    JSClassRef wrapperClass() final { return JS##ImplClass::ScriptClass##Class(); } \
+    JSClassRef wrapperClass() const final { return JS##ImplClass::ScriptClass##ClassSingleton(); } \
 \
     using __thisIsHereToForceASemicolonAfterThisMacro UNUSED_TYPE_ALIAS = int
 

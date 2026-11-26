@@ -27,31 +27,39 @@
 #include "config.h"
 #include "TextUtil.h"
 
-#include "BreakLines.h"
-#include "FontCascade.h"
+#include "BreakablePositions.h"
+#include "ComplexTextController.h"
+#include "FontCascadeFonts.h"
+#include "FontCascadeInlines.h"
+#include "FontInlines.h"
 #include "InlineLineTypes.h"
 #include "InlineTextItem.h"
 #include "Latin1TextIterator.h"
 #include "LayoutInlineTextBox.h"
 #include "RenderBox.h"
-#include "RenderStyleInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "SurrogatePairAwareTextIterator.h"
 #include "TextRun.h"
+#include "TextSpacing.h"
+#include "UnicodeHelpers.h"
 #include "WidthIterator.h"
-#include <unicode/ubidi.h>
+#include <numeric>
+#include <wtf/text/CharacterProperties.h>
+#include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/TextBreakIterator.h>
 
 namespace WebCore {
 namespace Layout {
 
-static inline InlineLayoutUnit spaceWidth(const FontCascade& fontCascade, bool canUseSimplifiedContentMeasuring)
+InlineLayoutUnit TextUtil::singleSpaceWidth(const FontCascade& fontCascade, bool canUseSimplifiedContentMeasuring)
 {
-    if (canUseSimplifiedContentMeasuring)
-        return fontCascade.primaryFont().spaceWidth();
-    return fontCascade.widthOfSpaceString();
+    auto width = canUseSimplifiedContentMeasuring ? fontCascade.primaryFont().spaceWidth() : fontCascade.widthOfSpaceString();
+    if (std::isnan(width) || std::isinf(width)) [[unlikely]]
+        return std::isnan(width) ? 0.0f : maxInlineLayoutUnit();
+    return width;
 }
 
-InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontCascade& fontCascade, unsigned from, unsigned to, InlineLayoutUnit contentLogicalLeft, UseTrailingWhitespaceMeasuringOptimization useTrailingWhitespaceMeasuringOptimization)
+InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontCascade& fontCascade, unsigned from, unsigned to, InlineLayoutUnit contentLogicalLeft, UseTrailingWhitespaceMeasuringOptimization useTrailingWhitespaceMeasuringOptimization, TextSpacing::SpacingState spacingState, GlyphOverflow* glyphOverflow)
 {
     if (from == to)
         return 0;
@@ -59,7 +67,7 @@ InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontC
     if (inlineTextBox.isCombined())
         return fontCascade.size();
 
-    auto text = inlineTextBox.content();
+    auto& text = inlineTextBox.content();
     ASSERT(to <= text.length());
     auto hasKerningOrLigatures = fontCascade.enableKerning() || fontCascade.requiresShaping();
     // The "non-whitespace" + "whitespace" pattern is very common for inline content and since most of the "non-whitespace" runs end up with
@@ -77,18 +85,20 @@ InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontC
         else
             width = fontCascade.widthForTextUsingSimplifiedMeasuring(view);
     } else {
-        auto& style = inlineTextBox.style();
-        auto directionalOverride = style.unicodeBidi() == UnicodeBidi::Override;
-        auto run = WebCore::TextRun { StringView(text).substring(from, to - from), contentLogicalLeft, { }, ExpansionBehavior::defaultBehavior(), directionalOverride ? style.direction() : TextDirection::LTR, directionalOverride };
-        if (!style.collapseWhiteSpace() && style.tabSize())
-            run.setTabSize(true, style.tabSize());
-        width = fontCascade.width(run);
+        CheckedRef style = inlineTextBox.style();
+        auto directionalOverride = isOverride(style->unicodeBidi());
+        auto run = WebCore::TextRun { StringView(text).substring(from, to - from), contentLogicalLeft, { }, ExpansionBehavior::defaultBehavior(), directionalOverride ? style->writingMode().bidiDirection() : TextDirection::LTR, directionalOverride };
+        if (!style->collapseWhiteSpace() && !style->tabSize().isZero())
+            run.setTabSize(true, Style::toPlatform(style->tabSize(), style->usedZoomForLength()));
+        // FIXME: consider moving this to TextRun ctor
+        run.setTextSpacingState(spacingState);
+        width = fontCascade.width(run, { }, glyphOverflow);
     }
 
     if (extendedMeasuring)
-        width -= (spaceWidth(fontCascade, useSimplifiedContentMeasuring) + fontCascade.wordSpacing());
+        width -= (singleSpaceWidth(fontCascade, useSimplifiedContentMeasuring) + fontCascade.wordSpacing());
 
-    if (UNLIKELY(std::isnan(width) || std::isinf(width)))
+    if (std::isnan(width) || std::isinf(width)) [[unlikely]]
         return std::isnan(width) ? 0.0f : maxInlineLayoutUnit();
     return std::max(0.f, width);
 }
@@ -98,32 +108,23 @@ InlineLayoutUnit TextUtil::width(const InlineTextItem& inlineTextItem, const Fon
     return TextUtil::width(inlineTextItem, fontCascade, inlineTextItem.start(), inlineTextItem.end(), contentLogicalLeft);
 }
 
-InlineLayoutUnit TextUtil::width(const InlineTextItem& inlineTextItem, const FontCascade& fontCascade, unsigned from, unsigned to, InlineLayoutUnit contentLogicalLeft, UseTrailingWhitespaceMeasuringOptimization useTrailingWhitespaceMeasuringOptimization)
+InlineLayoutUnit TextUtil::width(const InlineTextItem& inlineTextItem, const FontCascade& fontCascade, unsigned from, unsigned to, InlineLayoutUnit contentLogicalLeft, UseTrailingWhitespaceMeasuringOptimization useTrailingWhitespaceMeasuringOptimization, TextSpacing::SpacingState spacingState, GlyphOverflow* glyphOverflow)
 {
     RELEASE_ASSERT(from >= inlineTextItem.start());
     RELEASE_ASSERT(to <= inlineTextItem.end());
 
     if (inlineTextItem.isWhitespace()) {
-        auto& inlineTextBox = inlineTextItem.inlineTextBox();
-        auto useSimplifiedContentMeasuring = inlineTextBox.canUseSimplifiedContentMeasuring();
-        auto length = from - to;
-        auto singleWhiteSpace = length == 1 || !TextUtil::shouldPreserveSpacesAndTabs(inlineTextBox);
-
-        if (singleWhiteSpace) {
-            auto width = spaceWidth(fontCascade, useSimplifiedContentMeasuring);
-            if (UNLIKELY(std::isnan(width) || std::isinf(width)))
-                return std::isnan(width) ? 0.0f : maxInlineLayoutUnit();
-            return std::max(0.f, width);
-        }
+        CheckedRef inlineTextBox = inlineTextItem.inlineTextBox();
+        if (!TextUtil::shouldPreserveSpacesAndTabs(inlineTextBox) || (to - from == 1 && inlineTextBox->content()[from] == space))
+            return std::max(0.f, singleSpaceWidth(fontCascade, inlineTextBox->canUseSimplifiedContentMeasuring()));
     }
-    return width(inlineTextItem.inlineTextBox(), fontCascade, from, to, contentLogicalLeft, useTrailingWhitespaceMeasuringOptimization);
+    return width(protect(inlineTextItem.inlineTextBox()), fontCascade, from, to, contentLogicalLeft, useTrailingWhitespaceMeasuringOptimization, spacingState, glyphOverflow);
 }
 
 InlineLayoutUnit TextUtil::trailingWhitespaceWidth(const InlineTextBox& inlineTextBox, const FontCascade& fontCascade, size_t startPosition, size_t endPosition)
 {
-    auto text = inlineTextBox.content();
     ASSERT(endPosition > startPosition + 1);
-    ASSERT(text[endPosition - 1] == space);
+    ASSERT(inlineTextBox.content()[endPosition - 1] == space);
     return width(inlineTextBox, fontCascade, startPosition, endPosition, { }, UseTrailingWhitespaceMeasuringOptimization::Yes) - 
         width(inlineTextBox, fontCascade, startPosition, endPosition - 1, { }, UseTrailingWhitespaceMeasuringOptimization::No);
 }
@@ -133,7 +134,7 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
 {
     auto isRTL = run.rtl();
     auto isSmallCaps = fontCascade.isSmallCaps();
-    auto& primaryFont = fontCascade.primaryFont();
+    Ref primaryFont = fontCascade.primaryFont();
 
     char32_t currentCharacter = 0;
     unsigned clusterLength = 0;
@@ -144,7 +145,7 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
                 character = u_toupper(character);
 
             auto glyphData = fontCascade.glyphDataForCharacter(character, isRTL);
-            if (glyphData.glyph && glyphData.font && glyphData.font != &primaryFont) {
+            if (glyphData.glyph && glyphData.font && glyphData.font != primaryFont.ptr()) {
                 auto isNonSpacingMark = U_MASK(u_charType(character)) & U_GC_MN_MASK;
 
                 // https://drafts.csswg.org/css-text-3/#white-space-processing
@@ -162,11 +163,11 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
     }
 }
 
-TextUtil::FallbackFontList TextUtil::fallbackFontsForText(StringView textContent, const RenderStyle& style, IncludeHyphen includeHyphen)
+TextUtil::FallbackFontList TextUtil::fallbackFontsForText(StringView textContent, const Style::ComputedStyle& style, IncludeHyphen includeHyphen)
 {
     TextUtil::FallbackFontList fallbackFonts;
 
-    auto collectFallbackFonts = [&](const auto& textRun) {
+    auto collectFallbackFonts = [&](auto&& textRun) {
         if (textRun.text().isEmpty())
             return;
 
@@ -180,8 +181,8 @@ TextUtil::FallbackFontList TextUtil::fallbackFontsForText(StringView textContent
     };
 
     if (includeHyphen == IncludeHyphen::Yes)
-        collectFallbackFonts(TextRun { StringView(style.hyphenString().string()), { }, { }, ExpansionBehavior::defaultBehavior(), style.direction() });
-    collectFallbackFonts(TextRun { textContent, { }, { }, ExpansionBehavior::defaultBehavior(), style.direction() });
+        collectFallbackFonts(TextRun { StringView(style.hyphenString()), { }, { }, ExpansionBehavior::defaultBehavior(), style.writingMode().bidiDirection() });
+    collectFallbackFonts(TextRun { textContent, { }, { }, ExpansionBehavior::defaultBehavior(), style.writingMode().bidiDirection() });
     return fallbackFonts;
 }
 
@@ -191,7 +192,7 @@ static TextUtil::EnclosingAscentDescent enclosingGlyphBoundsForRunWithIterator(c
     auto enclosingAscent = std::optional<InlineLayoutUnit> { };
     auto enclosingDescent = std::optional<InlineLayoutUnit> { };
     auto isSmallCaps = fontCascade.isSmallCaps();
-    auto& primaryFont = fontCascade.primaryFont();
+    Ref primaryFont = fontCascade.primaryFont();
 
     char32_t currentCharacter = 0;
     unsigned clusterLength = 0;
@@ -202,9 +203,8 @@ static TextUtil::EnclosingAscentDescent enclosingGlyphBoundsForRunWithIterator(c
                 character = u_toupper(character);
 
             auto glyphData = fontCascade.glyphDataForCharacter(character, isRTL);
-            auto& font = glyphData.font ? *glyphData.font : primaryFont;
-            // FIXME: This may need some adjustment for ComplexTextController. See glyphOrigin.
-            auto bounds = font.boundsForGlyph(glyphData.glyph);
+            Ref font = glyphData.font ? Ref { *glyphData.font } : primaryFont;
+            auto bounds = font->boundsForGlyph(glyphData.glyph);
 
             enclosingAscent = std::min(enclosingAscent.value_or(bounds.y()), bounds.y());
             enclosingDescent = std::max(enclosingDescent.value_or(bounds.maxY()), bounds.maxY());
@@ -215,31 +215,37 @@ static TextUtil::EnclosingAscentDescent enclosingGlyphBoundsForRunWithIterator(c
     return { enclosingAscent.value_or(0.f), enclosingDescent.value_or(0.f) };
 }
 
-TextUtil::EnclosingAscentDescent TextUtil::enclosingGlyphBoundsForText(StringView textContent, const RenderStyle& style)
+TextUtil::EnclosingAscentDescent TextUtil::enclosingGlyphBoundsForText(StringView textContent, const Style::ComputedStyle& style, ShouldUseSimpleGlyphOverflowCodePath shouldUseSimpleGlyphOverflowCodePath)
 {
     if (textContent.isEmpty())
         return { };
 
+    if (shouldUseSimpleGlyphOverflowCodePath == ShouldUseSimpleGlyphOverflowCodePath::No) {
+        auto overflow = ComplexTextController::enclosingGlyphBoundsForTextRun(protect(style.fontCascade()), TextRun { textContent });
+        return { overflow.first, overflow.second };
+    }
+
     if (textContent.is8Bit()) {
         Latin1TextIterator textIterator { textContent.span8(), 0, textContent.length() };
-        return enclosingGlyphBoundsForRunWithIterator(style.fontCascade(), !style.isLeftToRightDirection(), textIterator);
+        return enclosingGlyphBoundsForRunWithIterator(protect(style.fontCascade()), style.writingMode().isBidiRTL(), textIterator);
     }
+
     SurrogatePairAwareTextIterator textIterator { textContent.span16(), 0, textContent.length() };
-    return enclosingGlyphBoundsForRunWithIterator(style.fontCascade(), !style.isLeftToRightDirection(), textIterator);
+    return enclosingGlyphBoundsForRunWithIterator(protect(style.fontCascade()), style.writingMode().isBidiRTL(), textIterator);
 }
 
 TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextItem& inlineTextItem, const FontCascade& fontCascade, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft)
 {
-    return breakWord(inlineTextItem.inlineTextBox(), inlineTextItem.start(), inlineTextItem.length(), textWidth, availableWidth, contentLogicalLeft, fontCascade);
+    return breakWord(protect(inlineTextItem.inlineTextBox()), inlineTextItem.start(), inlineTextItem.length(), textWidth, availableWidth, contentLogicalLeft, fontCascade);
 }
 
 TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, size_t startPosition, size_t length, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft, const FontCascade& fontCascade)
 {
     ASSERT(availableWidth >= 0);
     ASSERT(length);
-    auto text = inlineTextBox.content();
+    auto& text = inlineTextBox.content();
 
-    if (UNLIKELY(!textWidth)) {
+    if (!textWidth) [[unlikely]] {
         ASSERT_NOT_REACHED();
         return { };
     }
@@ -254,13 +260,6 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
                 U16_SET_CP_START(text, startPosition, alignedStartIndex);
                 ASSERT(alignedStartIndex >= startPosition);
                 return alignedStartIndex;
-            };
-
-            auto nextUserPerceivedCharacterIndex = [&] (auto index) -> size_t {
-                if (text.is8Bit())
-                    return index + 1;
-                U16_FWD_1(text, index, startPosition + length);
-                return index;
             };
 
             auto trySimplifiedBreakingPosition = [&] (auto start) -> std::optional<WordBreakLeft> {
@@ -282,6 +281,44 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
             if (auto leftSide = trySimplifiedBreakingPosition(startPosition))
                 return *leftSide;
 
+            auto tryEstimateBreakingPosition = [&] (auto start) -> std::optional<WordBreakLeft> {
+                // Determine if the breaking position can be found within the range of [-1, 1] by using the average width of the characters.
+                auto averageCharacterWidth = InlineLayoutUnit { textWidth / length };
+                size_t candidateLength = availableWidth / averageCharacterWidth;
+                auto candidateEnd = userPerceivedCharacterBoundaryAlignedIndex(start + candidateLength);
+                if (candidateEnd <= start || candidateEnd >= start + length)
+                    return { };
+                auto contentWidthAtCandidatePosition = TextUtil::width(inlineTextBox, fontCascade, start, candidateEnd, contentLogicalLeft);
+                if (contentWidthAtCandidatePosition == availableWidth)
+                    return { WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
+
+                if (contentWidthAtCandidatePosition > availableWidth) {
+                    // Overshot.
+                    if (auto adjustedCandidateEnd = userPerceivedCharacterBoundaryAlignedIndex(candidateEnd - 1); adjustedCandidateEnd > start) {
+                        auto adjustedContentWidth = TextUtil::width(inlineTextBox, fontCascade, start, adjustedCandidateEnd, contentLogicalLeft);
+                        if (adjustedContentWidth <= availableWidth)
+                            return { WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
+                    }
+                } else if (auto adjustedCandidateEnd = userPerceivedCharacterBoundaryAlignedIndex(candidateEnd + 1); adjustedCandidateEnd < start + length) {
+                    // Undershot.
+                    auto adjustedContentWidth = TextUtil::width(inlineTextBox, fontCascade, start, adjustedCandidateEnd, contentLogicalLeft);
+                    if (adjustedContentWidth > availableWidth)
+                        return { WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
+                    if (adjustedContentWidth == availableWidth)
+                        return { WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
+                }
+                return { };
+            };
+            if (auto leftSide = tryEstimateBreakingPosition(startPosition))
+                return *leftSide;
+
+            auto nextUserPerceivedCharacterIndex = [&] (auto index) -> size_t {
+                if (text.is8Bit())
+                    return index + 1;
+                U16_FWD_1(text, index, startPosition + length);
+                return index;
+            };
+
             auto left = startPosition;
             auto right = left + length - 1;
             // Pathological case of (extremely)long string and narrow lines.
@@ -293,7 +330,7 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
             // Preserve the left width for the final split position so that we don't need to remeasure the left side again.
             auto leftSideWidth = InlineLayoutUnit { 0 };
             while (left < right) {
-                auto middle = userPerceivedCharacterBoundaryAlignedIndex((left + right) / 2);
+                auto middle = userPerceivedCharacterBoundaryAlignedIndex(std::midpoint(left, right));
                 ASSERT(middle >= left && middle < right);
                 auto endOfMiddleCharacter = nextUserPerceivedCharacterIndex(middle);
                 auto width = TextUtil::width(inlineTextBox, fontCascade, startPosition, endOfMiddleCharacter, contentLogicalLeft);
@@ -331,9 +368,15 @@ bool TextUtil::mayBreakInBetween(const InlineTextItem& previousInlineItem, const
 {
     // Check if these 2 adjacent non-whitespace inline items are connected at a breakable position.
     ASSERT(!previousInlineItem.isWhitespace() && !nextInlineItem.isWhitespace());
+    // Only the next item's leading edge decides breakability here, so when it starts at the beginning of
+    // its text box we can pass the box content directly. Only when leading content was dropped (e.g.
+    // white-space-trim moves start() past 0) do we take the item's substring and pay for the allocation.
+    String nextContent = nextInlineItem.start() ? nextInlineItem.content() : nextInlineItem.inlineTextBox().content();
+    return mayBreakInBetween(previousInlineItem.inlineTextBox().content(), protect(previousInlineItem.style()), nextContent, protect(nextInlineItem.style()));
+}
 
-    auto previousContent = previousInlineItem.inlineTextBox().content();
-    auto nextContent = nextInlineItem.inlineTextBox().content();
+bool TextUtil::mayBreakInBetween(String previousContent, const Style::ComputedStyle& previousContentStyle, String nextContent, const Style::ComputedStyle& nextContentStyle)
+{
     // Now we need to collect at least 3 adjacent characters to be able to make a decision whether the previous text item ends with breaking opportunity.
     // [ex-][ample] <- second to last[x] last[-] current[a]
     // We need at least 1 character in the current inline text item and 2 more from previous inline items.
@@ -342,15 +385,13 @@ bool TextUtil::mayBreakInBetween(const InlineTextItem& previousInlineItem, const
         // See the templated CharacterType in nextBreakablePosition for last and lastlast characters.
         nextContent.convertTo16Bit();
     }
-    auto& previousContentStyle = previousInlineItem.style();
-    auto& nextContentStyle = nextInlineItem.style();
-    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, nextContentStyle.computedLocale(), TextUtil::lineBreakIteratorMode(nextContentStyle.lineBreak()), TextUtil::contentAnalysis(nextContentStyle.wordBreak()) };
+    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, Style::toPlatform(nextContentStyle.computedLocale()), TextUtil::lineBreakIteratorMode(nextContentStyle.lineBreak()), TextUtil::contentAnalysis(nextContentStyle.wordBreak()) };
     auto previousContentLength = previousContent.length();
     // FIXME: We should look into the entire uncommitted content for more text context.
-    UChar lastCharacter = previousContentLength ? previousContent[previousContentLength - 1] : 0;
+    char16_t lastCharacter = previousContentLength ? previousContent[previousContentLength - 1] : 0;
     if (lastCharacter == softHyphen && previousContentStyle.hyphens() == Hyphens::None)
         return false;
-    UChar secondToLastCharacter = previousContentLength > 1 ? previousContent[previousContentLength - 2] : 0;
+    char16_t secondToLastCharacter = previousContentLength > 1 ? previousContent[previousContentLength - 2] : 0;
     lineBreakIteratorFactory.priorContext().set({ secondToLastCharacter, lastCharacter });
     // Now check if we can break right at the inline item boundary.
     // With the [ex-ample], findNextBreakablePosition should return the startPosition (0).
@@ -358,30 +399,30 @@ bool TextUtil::mayBreakInBetween(const InlineTextItem& previousInlineItem, const
     return !findNextBreakablePosition(lineBreakIteratorFactory, 0, nextContentStyle);
 }
 
-unsigned TextUtil::findNextBreakablePosition(CachedLineBreakIteratorFactory& lineBreakIteratorFactory, unsigned startPosition, const RenderStyle& style)
+unsigned TextUtil::findNextBreakablePosition(CachedLineBreakIteratorFactory& lineBreakIteratorFactory, unsigned startPosition, const Style::ComputedStyle& style)
 {
     auto wordBreak = style.wordBreak();
-    auto breakNBSP = style.autoWrap() && style.nbspMode() == NBSPMode::Space;
+    auto breakNBSP = style.textWrapMode() != TextWrapMode::NoWrap && style.nbspMode() == NBSPMode::Space;
 
     if (wordBreak == WordBreak::KeepAll) {
         if (breakNBSP)
-            return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Special, BreakLines::WordBreakBehavior::KeepAll, BreakLines::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
-        return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Special, BreakLines::WordBreakBehavior::KeepAll, BreakLines::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
+            return BreakablePositions::next<BreakablePositions::LineBreakRules::Special, BreakablePositions::WordBreakBehavior::KeepAll, BreakablePositions::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
+        return BreakablePositions::next<BreakablePositions::LineBreakRules::Special, BreakablePositions::WordBreakBehavior::KeepAll, BreakablePositions::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
     }
 
     if (wordBreak == WordBreak::AutoPhrase)
-        return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Special, BreakLines::WordBreakBehavior::AutoPhrase, BreakLines::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
+        return BreakablePositions::next<BreakablePositions::LineBreakRules::Special, BreakablePositions::WordBreakBehavior::AutoPhrase, BreakablePositions::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
 
     if (lineBreakIteratorFactory.mode() == TextBreakIterator::LineMode::Behavior::Default) {
         if (breakNBSP)
-            return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Normal, BreakLines::WordBreakBehavior::Normal, BreakLines::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
-        return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Normal, BreakLines::WordBreakBehavior::Normal, BreakLines::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
+            return BreakablePositions::next<BreakablePositions::LineBreakRules::Normal, BreakablePositions::WordBreakBehavior::Normal, BreakablePositions::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
+        return BreakablePositions::next<BreakablePositions::LineBreakRules::Normal, BreakablePositions::WordBreakBehavior::Normal, BreakablePositions::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
     }
 
     if (breakNBSP)
-        return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Special, BreakLines::WordBreakBehavior::Normal, BreakLines::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
+        return BreakablePositions::next<BreakablePositions::LineBreakRules::Special, BreakablePositions::WordBreakBehavior::Normal, BreakablePositions::NoBreakSpaceBehavior::Break>(lineBreakIteratorFactory, startPosition);
 
-    return BreakLines::nextBreakablePosition<BreakLines::LineBreakRules::Special, BreakLines::WordBreakBehavior::Normal, BreakLines::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
+    return BreakablePositions::next<BreakablePositions::LineBreakRules::Special, BreakablePositions::WordBreakBehavior::Normal, BreakablePositions::NoBreakSpaceBehavior::Normal>(lineBreakIteratorFactory, startPosition);
 }
 
 bool TextUtil::shouldPreserveSpacesAndTabs(const Box& layoutBox)
@@ -398,13 +439,13 @@ bool TextUtil::shouldPreserveNewline(const Box& layoutBox)
     return whitespaceCollapse == WhiteSpaceCollapse::Preserve || whitespaceCollapse == WhiteSpaceCollapse::PreserveBreaks || whitespaceCollapse == WhiteSpaceCollapse::BreakSpaces;
 }
 
-bool TextUtil::isWrappingAllowed(const RenderStyle& style)
+bool TextUtil::isWrappingAllowed(const Style::ComputedStyle& style)
 {
     // https://www.w3.org/TR/css-text-4/#text-wrap
     return style.textWrapMode() != TextWrapMode::NoWrap;
 }
 
-bool TextUtil::shouldTrailingWhitespaceHang(const RenderStyle& style)
+bool TextUtil::shouldTrailingWhitespaceHang(const Style::ComputedStyle& style)
 {
     // https://www.w3.org/TR/css-text-4/#white-space-phase-2
     return style.whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve && style.textWrapMode() != TextWrapMode::NoWrap;
@@ -446,7 +487,7 @@ TextBreakIterator::ContentAnalysis TextUtil::contentAnalysis(WordBreak wordBreak
 // `Bidi_Class` of `ch` isn't `R`, `AL`, nor Bidi controls.
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5B%5B%3Abc%3DR%3A%5D%5B%3Abc%3DAL%3A%5D%5D&g=bc
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:Bidi_C:]
-static ALWAYS_INLINE bool mayBeBidiRTL(char32_t ch)
+static ALWAYS_INLINE bool NODELETE mayBeBidiRTL(char32_t ch)
 {
     if (ch < 0x0590)
         return false;
@@ -491,16 +532,14 @@ bool TextUtil::containsStrongDirectionalityText(StringView text)
         using UnsignedType = std::make_unsigned_t<typename decltype(span)::value_type>;
         constexpr size_t stride = SIMD::stride<UnsignedType>;
         if (span.size() >= stride) {
-            auto* cursor = span.data();
-            auto* end = cursor + span.size();
             constexpr auto c0590 = SIMD::splat<UnsignedType>(0x0590);
             constexpr auto c2010 = SIMD::splat<UnsignedType>(0x2010);
             constexpr auto c2029 = SIMD::splat<UnsignedType>(0x2029);
             constexpr auto c206A = SIMD::splat<UnsignedType>(0x206A);
             constexpr auto cD7FF = SIMD::splat<UnsignedType>(0xD7FF);
             constexpr auto cFF00 = SIMD::splat<UnsignedType>(0xFF00);
-            auto maybeBidiRTL = [&](auto* cursor) ALWAYS_INLINE_LAMBDA {
-                auto input = SIMD::load(bitwise_cast<const UnsignedType*>(cursor));
+            auto maybeBidiRTL = [&](auto span) ALWAYS_INLINE_LAMBDA {
+                auto input = SIMD::load(std::bit_cast<const UnsignedType*>(span.data()));
                 // ch < 0x0590
                 auto cond0 = SIMD::lessThan(input, c0590);
                 // General Punctuation such as curly quotes.
@@ -515,11 +554,12 @@ bool TextUtil::containsStrongDirectionalityText(StringView text)
                 return SIMD::bitNot(SIMD::bitOr(cond0, cond1, cond2, cond3));
             };
 
+            auto finalStride = span.last(stride);
             auto result = SIMD::splat<UnsignedType>(0);
-            for (; cursor + (stride - 1) < end; cursor += stride)
-                result = SIMD::bitOr(result, maybeBidiRTL(cursor));
-            if (cursor < end)
-                result = SIMD::bitOr(result, maybeBidiRTL(end - stride));
+            for (; stride < span.size(); skip(span, stride))
+                result = SIMD::bitOr(result, maybeBidiRTL(span));
+            if (!span.empty())
+                result = SIMD::bitOr(result, maybeBidiRTL(finalStride));
             return SIMD::isNonZero(result);
         }
 
@@ -541,7 +581,7 @@ bool TextUtil::containsStrongDirectionalityText(StringView text)
 
 size_t TextUtil::firstUserPerceivedCharacterLength(const InlineTextBox& inlineTextBox, size_t startPosition, size_t length)
 {
-    auto textContent = inlineTextBox.content();
+    auto& textContent = inlineTextBox.content();
     RELEASE_ASSERT(!textContent.isEmpty());
 
     if (textContent.is8Bit())
@@ -563,65 +603,88 @@ size_t TextUtil::firstUserPerceivedCharacterLength(const InlineTextBox& inlineTe
 
 size_t TextUtil::firstUserPerceivedCharacterLength(const InlineTextItem& inlineTextItem)
 {
-    auto length = firstUserPerceivedCharacterLength(inlineTextItem.inlineTextBox(), inlineTextItem.start(), inlineTextItem.length());
+    auto length = firstUserPerceivedCharacterLength(protect(inlineTextItem.inlineTextBox()), inlineTextItem.start(), inlineTextItem.length());
     return std::min<size_t>(inlineTextItem.length(), length);
 }
 
 TextDirection TextUtil::directionForTextContent(StringView content)
 {
-    if (content.is8Bit())
-        return TextDirection::LTR;
-    auto characters = content.span16();
-    return ubidi_getBaseDirection(characters.data(), characters.size()) == UBIDI_RTL ? TextDirection::RTL : TextDirection::LTR;
+    return baseTextDirection(content).value_or(TextDirection::LTR);
 }
 
-TextRun TextUtil::ellipsisTextRun(bool isHorizontal)
+AtomString TextUtil::ellipsisTextInInlineDirection(bool isHorizontal)
 {
     if (isHorizontal) {
         static MainThreadNeverDestroyed<const AtomString> horizontalEllipsisStr(span(horizontalEllipsis));
-        return TextRun { horizontalEllipsisStr->string() };
+        return horizontalEllipsisStr;
     }
     static MainThreadNeverDestroyed<const AtomString> verticalEllipsisStr(span(verticalEllipsis));
-    return TextRun { verticalEllipsisStr->string() };
+    return verticalEllipsisStr;
 }
 
-bool TextUtil::hasHangablePunctuationStart(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+InlineLayoutUnit TextUtil::hyphenWidth(const Style::ComputedStyle& style)
 {
-    if (!inlineTextItem.length() || !style.hangingPunctuation().contains(HangingPunctuation::First))
+    return std::max(0.f, protect(style.fontCascade())->width(StringView { style.hyphenString() }));
+}
+
+static bool NODELETE isASCIIHangableQuote(char32_t character)
+{
+    return character == quotationMark || character == apostrophe;
+}
+
+static bool isHangableOpenPunctuation(char32_t character)
+{
+    // https://drafts.csswg.org/css-text-3/#hanging-punctuation-property
+    if (isASCIIHangableQuote(character) || character == ideographicSpace)
+        return true;
+    return U_GET_GC_MASK(character) & (U_GC_PS_MASK | U_GC_PI_MASK | U_GC_PF_MASK);
+}
+
+static bool isHangableClosePunctuation(char32_t character)
+{
+    // https://drafts.csswg.org/css-text-3/#hanging-punctuation-property
+    if (isASCIIHangableQuote(character))
+        return true;
+    return U_GET_GC_MASK(character) & (U_GC_PE_MASK | U_GC_PI_MASK | U_GC_PF_MASK);
+}
+
+bool TextUtil::hasHangablePunctuationStart(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
+{
+    if (!inlineTextItem.length() || !style.hangingPunctuation().contains(Style::HangingPunctuationValue::First))
         return false;
     auto leadingCharacter = inlineTextItem.inlineTextBox().content()[inlineTextItem.start()];
-    return U_GET_GC_MASK(leadingCharacter) & (U_GC_PS_MASK | U_GC_PI_MASK | U_GC_PF_MASK);
+    return isHangableOpenPunctuation(leadingCharacter);
 }
 
-float TextUtil::hangablePunctuationStartWidth(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+float TextUtil::hangablePunctuationStartWidth(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
 {
     if (!hasHangablePunctuationStart(inlineTextItem, style))
         return { };
     ASSERT(inlineTextItem.length());
     auto leadingPosition = inlineTextItem.start();
-    return width(inlineTextItem, style.fontCascade(), leadingPosition, leadingPosition + 1, { });
+    return width(inlineTextItem, protect(style.fontCascade()), leadingPosition, leadingPosition + 1, { });
 }
 
-bool TextUtil::hasHangablePunctuationEnd(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+bool TextUtil::hasHangablePunctuationEnd(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
 {
-    if (!inlineTextItem.length() || !style.hangingPunctuation().contains(HangingPunctuation::Last))
+    if (!inlineTextItem.length() || !style.hangingPunctuation().contains(Style::HangingPunctuationValue::Last))
         return false;
     auto trailingCharacter = inlineTextItem.inlineTextBox().content()[inlineTextItem.end() - 1];
-    return U_GET_GC_MASK(trailingCharacter) & (U_GC_PE_MASK | U_GC_PI_MASK | U_GC_PF_MASK);
+    return isHangableClosePunctuation(trailingCharacter);
 }
 
-float TextUtil::hangablePunctuationEndWidth(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+float TextUtil::hangablePunctuationEndWidth(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
 {
     if (!hasHangablePunctuationEnd(inlineTextItem, style))
         return { };
     ASSERT(inlineTextItem.length());
     auto trailingPosition = inlineTextItem.end() - 1;
-    return width(inlineTextItem, style.fontCascade(), trailingPosition, trailingPosition + 1, { });
+    return width(inlineTextItem, protect(style.fontCascade()), trailingPosition, trailingPosition + 1, { });
 }
 
-bool TextUtil::hasHangableStopOrCommaEnd(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+bool TextUtil::hasHangableStopOrCommaEnd(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
 {
-    if (!inlineTextItem.length() || !style.hangingPunctuation().containsAny({ HangingPunctuation::AllowEnd, HangingPunctuation::ForceEnd }))
+    if (!inlineTextItem.length() || !style.hangingPunctuation().containsAny({ Style::HangingPunctuationValue::AllowEnd, Style::HangingPunctuationValue::ForceEnd }))
         return false;
     auto trailingPosition = inlineTextItem.end() - 1;
     auto trailingCharacter = inlineTextItem.inlineTextBox().content()[trailingPosition];
@@ -635,33 +698,37 @@ bool TextUtil::hasHangableStopOrCommaEnd(const InlineTextItem& inlineTextItem, c
     return isHangableStopOrComma;
 }
 
-float TextUtil::hangableStopOrCommaEndWidth(const InlineTextItem& inlineTextItem, const RenderStyle& style)
+float TextUtil::hangableStopOrCommaEndWidth(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)
 {
     if (!hasHangableStopOrCommaEnd(inlineTextItem, style))
         return { };
     ASSERT(inlineTextItem.length());
     auto trailingPosition = inlineTextItem.end() - 1;
-    return width(inlineTextItem, style.fontCascade(), trailingPosition, trailingPosition + 1, { });
+    return width(inlineTextItem, protect(style.fontCascade()), trailingPosition, trailingPosition + 1, { });
 }
 
 template<typename CharacterType>
 static bool canUseSimplifiedTextMeasuringForCharacters(std::span<const CharacterType> characters, const FontCascade& fontCascade, const Font& primaryFont, bool whitespaceIsCollapsed)
 {
-    auto* rawCharacters = characters.data();
-    for (unsigned i = 0; i < characters.size(); ++i) {
-        auto character = rawCharacters[i]; // Not using characters[i] to bypass the bounds check.
-        if (!fontCascade.canUseSimplifiedTextMeasuring(character, AutoVariant, whitespaceIsCollapsed, primaryFont))
+    for (auto character : characters) {
+        if (!fontCascade.canUseSimplifiedTextMeasuring(character, FontVariant::Auto, whitespaceIsCollapsed, primaryFont))
             return false;
     }
     return true;
 }
 
-bool TextUtil::canUseSimplifiedTextMeasuring(StringView textContent, const FontCascade& fontCascade, bool whitespaceIsCollapsed, const RenderStyle* firstLineStyle)
+bool TextUtil::canUseSimplifiedTextMeasuring(StringView textContent, const FontCascade& fontCascade, bool whitespaceIsCollapsed, const Style::ComputedStyle* firstLineStyle)
 {
     ASSERT(textContent.is8Bit() || FontCascade::characterRangeCodePath(textContent.span16()) == FontCascade::CodePath::Simple);
     // FIXME: All these checks should be more fine-grained at the inline item level.
     if (fontCascade.wordSpacing() || fontCascade.letterSpacing())
         return false;
+
+#if USE(FONT_VARIANT_VIA_FEATURES)
+    auto fontVariantCaps = fontCascade.fontDescription().variantCaps();
+    if (fontVariantCaps == FontVariantCaps::Small || fontVariantCaps == FontVariantCaps::AllSmall || fontVariantCaps ==  FontVariantCaps::Petite || fontVariantCaps == FontVariantCaps::AllPetite)
+        return false;
+#endif
 
     // Additional check on the font codepath.
     auto run = TextRun { textContent };
@@ -672,8 +739,8 @@ bool TextUtil::canUseSimplifiedTextMeasuring(StringView textContent, const FontC
     if (firstLineStyle && fontCascade != firstLineStyle->fontCascade())
         return false;
 
-    auto& primaryFont = fontCascade.primaryFont();
-    if (primaryFont.syntheticBoldOffset())
+    Ref primaryFont = fontCascade.primaryFont();
+    if (primaryFont->syntheticBoldOffset())
         return false;
 
     if (textContent.is8Bit())
@@ -684,8 +751,17 @@ bool TextUtil::canUseSimplifiedTextMeasuring(StringView textContent, const FontC
 bool TextUtil::hasPositionDependentContentWidth(StringView textContent)
 {
     if (textContent.is8Bit())
-        return charactersContain<LChar, tabCharacter>(textContent.span8());
-    return charactersContain<UChar, tabCharacter>(textContent.span16());
+        return charactersContain<Latin1Character, tabCharacter>(textContent.span8());
+    return charactersContain<char16_t, tabCharacter>(textContent.span16());
+}
+
+SUPPRESS_NODELETE char32_t TextUtil::lastBaseCharacterFromText(StringView string)
+{
+    for (auto codePoint : string.codePoints() | std::views::reverse) {
+        if (!isCombiningMark(codePoint))
+            return codePoint;
+    }
+    return 0;
 }
 
 }

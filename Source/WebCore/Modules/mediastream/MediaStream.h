@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011 Google Inc. All rights reserved.
  * Copyright (C) 2011, 2015 Ericsson AB. All rights reserved.
- * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Nokia Corporation and/or its subsidiary(-ies).
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "MediaCanStartListener.h"
 #include "MediaProducer.h"
 #include "MediaStreamPrivate.h"
@@ -38,6 +39,7 @@
 #include "ScriptWrappable.h"
 #include "Timer.h"
 #include "URLRegistry.h"
+#include <algorithm>
 #include <wtf/LoggerHelper.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RobinHoodHashMap.h>
@@ -45,6 +47,7 @@
 namespace WebCore {
 
 class Document;
+class MediaSessionManagerInterface;
 
 class MediaStream final
     : public EventTarget
@@ -55,12 +58,18 @@ class MediaStream final
     , private LoggerHelper
 #endif
     , public RefCounted<MediaStream> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(MediaStream, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(MediaStream, WEBCORE_EXPORT);
 public:
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     static Ref<MediaStream> create(Document&);
     static Ref<MediaStream> create(Document&, MediaStream&);
-    static Ref<MediaStream> create(Document&, const Vector<Ref<MediaStreamTrack>>&);
-    static Ref<MediaStream> create(Document&, Ref<MediaStreamPrivate>&&);
+    enum class CheckDuplicate : bool { No, Yes };
+    static Ref<MediaStream> create(Document&, Vector<Ref<MediaStreamTrack>>&&, CheckDuplicate = CheckDuplicate::Yes);
+
+    enum class AllowEventTracks : bool { No, Yes };
+    static Ref<MediaStream> create(Document&, Ref<MediaStreamPrivate>&&, AllowEventTracks = AllowEventTracks::No);
     WEBCORE_EXPORT virtual ~MediaStream();
 
     String id() const { return m_private->id(); }
@@ -69,8 +78,8 @@ public:
     void removeTrack(MediaStreamTrack&);
     MediaStreamTrack* getTrackById(String);
 
-    MediaStreamTrack* getFirstAudioTrack() const;
-    MediaStreamTrack* getFirstVideoTrack() const;
+    MediaStreamTrack* NODELETE getFirstAudioTrack() const;
+    MediaStreamTrack* NODELETE getFirstVideoTrack() const;
 
     MediaStreamTrackVector getAudioTracks() const;
     MediaStreamTrackVector getVideoTracks() const;
@@ -78,42 +87,38 @@ public:
 
     RefPtr<MediaStream> clone();
 
-    using MediaStreamPrivateObserver::weakPtrFactory;
-    using MediaStreamPrivateObserver::WeakValueType;
-    using MediaStreamPrivateObserver::WeakPtrImplType;
+    USING_CAN_MAKE_WEAKPTR(MediaStreamPrivateObserver);
 
     bool active() const { return m_isActive; }
     bool muted() const { return m_private->muted(); }
 
-    template<typename Function> bool hasMatchingTrack(Function&& function) const { return anyOf(m_trackMap.values(), std::forward<Function>(function)); }
+    template<typename Function> bool hasMatchingTrack(Function&& function) const { return std::ranges::any_of(m_tracks, std::forward<Function>(function)); }
 
     MediaStreamPrivate& privateStream() { return m_private.get(); }
-    Ref<MediaStreamPrivate> protectedPrivateStream();
 
     void startProducingData();
     void stopProducingData();
+    void NODELETE inactivate();
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MediaStream; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
-
-    // ActiveDOMObject.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     void addTrackFromPlatform(Ref<MediaStreamTrack>&&);
 
 #if !RELEASE_LOG_DISABLED
-    const void* logIdentifier() const final { return m_private->logIdentifier(); }
+    uint64_t logIdentifier() const final { return m_private->logIdentifier(); }
 #endif
 
+    void allowEventTracksForTesting() { m_allowEventTracks = AllowEventTracks::Yes; }
+
 protected:
-    MediaStream(Document&, const Vector<Ref<MediaStreamTrack>>&);
-    MediaStream(Document&, Ref<MediaStreamPrivate>&&);
+    MediaStream(Document&, Vector<Ref<MediaStreamTrack>>&&);
+    MediaStream(Document&, Ref<MediaStreamPrivate>&&, AllowEventTracks = AllowEventTracks::No);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_private->logger(); }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
     ASCIILiteral logClassName() const final { return "MediaStream"_s; }
 #endif
 
@@ -137,29 +142,31 @@ private:
     void mediaCanStart(Document&) final;
 
     // ActiveDOMObject.
-    void stop() final;
-    bool virtualHasPendingActivity() const final;
+    void stop() final { inactivate(); }
+    bool NODELETE virtualHasPendingActivity() const final;
 
     void updateActiveState();
     void activityEventTimerFired();
     void setIsActive(bool);
     void statusDidChange();
 
-    MediaStreamTrackVector filteredTracks(const Function<bool(const MediaStreamTrack&)>&) const;
+    Document* NODELETE document() const;
+    RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
 
-    Document* document() const;
+    const Ref<MediaStreamPrivate> m_private;
 
-    Ref<MediaStreamPrivate> m_private;
-
-    MemoryCompactRobinHoodHashMap<String, Ref<MediaStreamTrack>> m_trackMap;
+    Vector<Ref<MediaStreamTrack>> m_tracks;
 
     MediaProducerMediaStateFlags m_state;
 
+    AllowEventTracks m_allowEventTracks { AllowEventTracks::No };
     bool m_isActive { false };
     bool m_isProducingData { false };
     bool m_isWaitingUntilMediaCanStart { false };
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(MediaStream)
 
 #endif // ENABLE(MEDIA_STREAM)

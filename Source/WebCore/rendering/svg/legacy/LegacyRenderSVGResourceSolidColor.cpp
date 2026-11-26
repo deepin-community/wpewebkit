@@ -24,44 +24,48 @@
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "RenderElement.h"
-#include "RenderStyle.h"
+#include "RenderObjectDocument.h"
 #include "RenderView.h"
-#include "SVGRenderStyle.h"
 #include "SVGRenderSupport.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceSolidColor);
 
 LegacyRenderSVGResourceSolidColor::LegacyRenderSVGResourceSolidColor() = default;
 
 LegacyRenderSVGResourceSolidColor::~LegacyRenderSVGResourceSolidColor() = default;
 
-auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const RenderStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
+auto LegacyRenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const Style::ComputedStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode) -> OptionSet<ApplyResult>
 {
     ASSERT(context);
     ASSERT(!resourceMode.isEmpty());
 
-    const SVGRenderStyle& svgStyle = style.svgStyle();
-
     bool isRenderingMask = renderer.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask);
+
+    Style::ColorResolver colorResolver { style };
 
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
         if (!isRenderingMask)
-            context->setAlpha(svgStyle.fillOpacity());
+            context->setAlpha(Style::evaluate<float>(style.fillOpacity()));
         else
             context->setAlpha(1);
-        context->setFillColor(style.colorByApplyingColorFilter(m_color));
+        context->setFillColor(colorResolver.colorApplyingColorFilter(m_color));
         if (isRenderingMask)
-            context->setFillRule(svgStyle.clipRule());
+            context->setFillRule(style.clipRule());
         else
-            context->setFillRule(svgStyle.fillRule());
+            context->setFillRule(style.fillRule());
 
         if (resourceMode.contains(RenderSVGResourceMode::ApplyToText))
             context->setTextDrawingMode(TextDrawingMode::Fill);
     } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
         // When rendering the mask for a LegacyRenderSVGResourceClipper, the stroke code path is never hit.
         ASSERT(!isRenderingMask);
-        context->setAlpha(svgStyle.strokeOpacity());
-        context->setStrokeColor(style.colorByApplyingColorFilter(m_color));
+        context->setAlpha(Style::evaluate<float>(style.strokeOpacity()));
+        context->setStrokeColor(colorResolver.colorApplyingColorFilter(m_color));
 
         SVGRenderSupport::applyStrokeStyleToContext(*context, style, renderer);
 

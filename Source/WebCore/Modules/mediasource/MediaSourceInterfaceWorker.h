@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,27 +35,30 @@ class MediaSourceHandle;
 
 class MediaSourceInterfaceWorker : public MediaSourceInterfaceProxy {
 public:
-    static Ref<MediaSourceInterfaceWorker> create(Ref<MediaSourceHandle>&& handle) { return adoptRef(*new MediaSourceInterfaceWorker(WTFMove(handle))); }
+    static Ref<MediaSourceInterfaceWorker> create(Ref<MediaSourceHandle>&& handle) { return adoptRef(*new MediaSourceInterfaceWorker(WTF::move(handle))); }
 
 private:
-    RefPtr<MediaSourcePrivateClient> client() const final;
+    RefPtr<MediaSourcePrivateClient> NODELETE client() const final;
     void monitorSourceBuffers() final;
     bool isClosed() const final;
+    bool isEnded() const final;
     MediaTime duration() const final;
     PlatformTimeRanges buffered() const final;
-    Ref<TimeRanges> seekable() const final;
+    PlatformTimeRanges seekable() const final;
     bool isStreamingContent() const final;
     bool attachToElement(WeakPtr<HTMLMediaElement>&&) final;
     void detachFromElement() final;
     void elementIsShuttingDown() final;
     void openIfDeferredOpen() final;
-    bool isManaged() const final;
+    bool NODELETE isManaged() const final;
     void setAsSrcObject(bool) final;
     void memoryPressure() final;
+    bool NODELETE detachable() const final;
+    void setLogIdentifier(uint64_t) final;
 
     explicit MediaSourceInterfaceWorker(Ref<MediaSourceHandle>&&);
 
-    Ref<MediaSourceHandle> m_handle;
+    const Ref<MediaSourceHandle> m_handle;
     RefPtr<MediaSourcePrivateClient> m_client;
 };
 

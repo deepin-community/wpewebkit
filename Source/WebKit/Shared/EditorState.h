@@ -25,18 +25,21 @@
 
 #pragma once
 
-#include "ArgumentCoders.h"
 #include "IdentifierTypes.h"
 #include <WebCore/Color.h>
 #include <WebCore/ElementContext.h>
 #include <WebCore/FontAttributes.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntRect.h>
-#include <WebCore/WritingDirection.h>
-#include <wtf/text/WTFString.h>
-
-#if PLATFORM(IOS_FAMILY)
+#include <WebCore/PlatformLayerIdentifier.h>
+#include <WebCore/ScrollTypes.h>
 #include <WebCore/SelectionGeometry.h>
-#endif
+#include <WebCore/SelectionType.h>
+#include <WebCore/WritingDirection.h>
+#include <optional>
+#include <wtf/Markable.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 #if USE(DICTATION_ALTERNATIVES)
 #include <WebCore/DictationContext.h>
@@ -70,20 +73,23 @@ enum class ListType : uint8_t {
 };
 
 struct EditorState {
+    void move(float x, float y);
+
     EditorStateIdentifier identifier;
+    WebCore::SelectionType selectionType { WebCore::SelectionType::None };
     bool shouldIgnoreSelectionChanges { false };
-    bool selectionIsNone { true }; // This will be false when there is a caret selection.
-    bool selectionIsRange { false };
     bool selectionIsRangeInsideImageOverlay { false };
     bool selectionIsRangeInAutoFilledAndViewableField { false };
     bool isContentEditable { false };
     bool isContentRichlyEditable { false };
     bool isInPasswordField { false };
-    bool isInPlugin { false };
     bool hasComposition { false };
     bool triggeredByAccessibilitySelectionChange { false };
+    bool isInPlugin { false };
 #if PLATFORM(MAC)
     bool canEnableAutomaticSpellingCorrection { true };
+    bool inputMethodUsesCorrectKeyEventOrder { false };
+    bool inputMethodMustUseCompositionEvents { false };
 #endif
 
     struct PostLayoutData {
@@ -94,8 +100,9 @@ struct EditorState {
         WebCore::Color textColor { WebCore::Color::black }; // FIXME: Maybe this should be on VisualData?
         ListType enclosingListType { ListType::None };
         WebCore::WritingDirection baseWritingDirection { WebCore::WritingDirection::Natural };
-        bool editableRootIsTransparentOrFullyClipped { false };
+        bool selectionIsTransparentOrFullyClipped { false };
         bool canEnableWritingSuggestions { false };
+        bool insideFixedPosition { false };
 #endif
 #if PLATFORM(IOS_FAMILY)
         String markedText;
@@ -109,7 +116,6 @@ struct EditorState {
         bool isReplaceAllowed { false };
         bool hasContent { false };
         bool isStableStateUpdate { false };
-        bool insideFixedPosition { false };
         bool hasPlainText { false };
         WebCore::Color caretColor; // FIXME: Maybe this should be on VisualData?
         bool hasCaretColorAuto { false };
@@ -131,28 +137,41 @@ struct EditorState {
         uint64_t surroundingContextSelectionPosition { 0 };
 #endif
 
-        std::optional<WebCore::FontAttributes> fontAttributes;
-
         bool canCut { false };
         bool canCopy { false };
         bool canPaste { false };
     };
 
+    bool NODELETE isEditableOrRanged() const;
     bool hasPostLayoutData() const { return !!postLayoutData; }
 
     // Visual data is only updated in sync with rendering updates.
     struct VisualData {
-#if PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || PLATFORM(WPE)
+        // Local root frame the rects below are relative to, so the UIProcess can map them to
+        // main-frame coordinates when the selection is in a cross-origin subframe.
+        Markable<WebCore::FrameIdentifier> rootFrameID;
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
         WebCore::IntRect caretRectAtStart;
+#endif
+#if PLATFORM(COCOA)
+        Vector<WebCore::SelectionGeometry> selectionGeometries;
+        Vector<WebCore::PlatformLayerIdentifier> intersectingLayerIDs;
+        WebCore::IntRect caretRectAtEnd;
 #endif
 #if PLATFORM(IOS_FAMILY)
         WebCore::IntRect selectionClipRect;
-        WebCore::IntRect caretRectAtEnd;
-        Vector<WebCore::SelectionGeometry> selectionGeometries;
+        WebCore::IntRect editableRootBounds;
         Vector<WebCore::SelectionGeometry> markedTextRects;
         WebCore::IntRect markedTextCaretRectAtStart;
         WebCore::IntRect markedTextCaretRectAtEnd;
-#endif
+        std::optional<WebCore::PlatformLayerIdentifier> enclosingLayerID;
+        std::optional<WebCore::ScrollingNodeID> enclosingScrollingNodeID;
+        std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtStart;
+        std::optional<WebCore::ScrollingNodeID> scrollingNodeIDAtEnd;
+        WebCore::ScrollOffset enclosingScrollOffset;
+        bool enclosingLayerUsesContentsLayer { false };
+        bool needsHideSelectionDuringOverflowScrollQuirk { false };
+#endif // PLATFORM(IOS_FAMILY)
     };
 
     bool hasVisualData() const { return !!visualData; }

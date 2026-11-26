@@ -27,13 +27,16 @@
 
 #if ENABLE(ASYNC_SCROLLING)
 
-#include "ScrollingTreeNode.h"
+#include <WebCore/ScrollingTreeNode.h>
+#include <wtf/HashSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class ScrollingTree;
 
 class ScrollingTreeFrameHostingNode : public ScrollingTreeNode {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingTreeFrameHostingNode, WEBCORE_EXPORT);
 public:
     WEBCORE_EXPORT static Ref<ScrollingTreeFrameHostingNode> create(ScrollingTree&, ScrollingNodeID);
     virtual ~ScrollingTreeFrameHostingNode();
@@ -43,20 +46,20 @@ public:
     bool isRootOfHostedSubtree() const final { return (bool)m_hostingContext; }
 
     void willBeDestroyed() override;
-    void addHostedChild(RefPtr<ScrollingTreeNode> node) { m_hostedChildren.add(node); }
+    void addHostedChild(Ref<ScrollingTreeNode>&& node) { m_hostedChildren.add(WTF::move(node)); }
     void removeHostedChildren();
-    void removeHostedChild(RefPtr<ScrollingTreeNode>);
+    void removeHostedChild(ScrollingTreeNode&);
 
 private:
     ScrollingTreeFrameHostingNode(ScrollingTree&, ScrollingNodeID);
 
     bool commitStateBeforeChildren(const ScrollingStateNode&) final;
-    void applyLayerPositions() final;
+    void NODELETE applyLayerPositions() final;
 
     WEBCORE_EXPORT void dumpProperties(WTF::TextStream&, OptionSet<ScrollingStateTreeAsTextBehavior>) const override;
 
     std::optional<LayerHostingContextIdentifier> m_hostingContext;
-    HashSet<RefPtr<ScrollingTreeNode>> m_hostedChildren;
+    HashSet<Ref<ScrollingTreeNode>> m_hostedChildren;
 };
 
 } // namespace WebCore

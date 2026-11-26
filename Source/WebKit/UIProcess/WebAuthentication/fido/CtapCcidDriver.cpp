@@ -27,7 +27,7 @@
 #include "CtapCcidDriver.h"
 
 #if ENABLE(WEB_AUTHN)
-
+#include "Logging.h"
 #include <WebCore/ApduCommand.h>
 #include <WebCore/ApduResponse.h>
 #include <wtf/RunLoop.h>
@@ -36,9 +36,14 @@ namespace WebKit {
 using namespace apdu;
 using namespace fido;
 
+Ref<CtapCcidDriver> CtapCcidDriver::create(Ref<CcidConnection>&& connection, WebCore::AuthenticatorTransport transport)
+{
+    return adoptRef(*new CtapCcidDriver(WTF::move(connection), transport));
+}
+
 CtapCcidDriver::CtapCcidDriver(Ref<CcidConnection>&& connection, WebCore::AuthenticatorTransport transport)
     : CtapDriver(transport)
-    , m_connection(WTFMove(connection))
+    , m_connection(WTF::move(connection))
 {
 }
 
@@ -46,45 +51,48 @@ void CtapCcidDriver::transact(Vector<uint8_t>&& data, ResponseCallback&& callbac
 {
     // For CTAP2, commands follow:
     // https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html#nfc-command-framing
-    if (protocol() == ProtocolVersion::kCtap) {
+    if (isCtap2Protocol()) {
+
+        if (!isValidSize(data.size()))
+            RELEASE_LOG(WebAuthn, "CtapCcidDriver::transact Sending data larger than maxSize. msgSize=%ld", data.size());
         ApduCommand command;
         command.setCla(kCtapNfcApduCla);
         command.setIns(kCtapNfcApduIns);
-        command.setData(WTFMove(data));
+        command.setData(WTF::move(data));
         command.setResponseLength(ApduCommand::kApduMaxResponseLength);
-        auto ncallback = [callback = WTFMove(callback), this](Vector<uint8_t>&& resp) mutable {
-            auto apduResponse = ApduResponse::createFromMessage(resp);
+        auto ncallback = [callback = WTF::move(callback), this, protectedThis = Ref { *this }](Vector<uint8_t>&& resp) mutable {
+            auto apduResponse = ApduResponse::createFromMessage(WTF::move(resp));
             if (!apduResponse) {
-                respondAsync(WTFMove(callback), { });
+                respondAsync(WTF::move(callback), { });
                 return;
             }
             if (apduResponse->status() == ApduResponse::Status::SW_INS_NOT_SUPPORTED) {
                 // Return kCtap1ErrInvalidCommand instead of an empty response to signal FidoService to create a U2F authenticator
                 // for the getInfo stage.
-                respondAsync(WTFMove(callback), { static_cast<uint8_t>(CtapDeviceResponseCode::kCtap1ErrInvalidCommand) });
+                respondAsync(WTF::move(callback), { static_cast<uint8_t>(CtapDeviceResponseCode::kCtap1ErrInvalidCommand) });
                 return;
             }
             if (apduResponse->status() != ApduResponse::Status::SW_NO_ERROR) {
-                respondAsync(WTFMove(callback), { });
+                respondAsync(WTF::move(callback), { });
                 return;
             }
 
-            respondAsync(WTFMove(callback), WTFMove(apduResponse->data()));
+            respondAsync(WTF::move(callback), WTF::move(apduResponse->data()));
             return;
         };
-        m_connection->transact(command.getEncodedCommand(), WTFMove(ncallback));
+        m_connection->transact(command.getEncodedCommand(), WTF::move(ncallback));
         return;
     }
 
     // For U2F, U2fAuthenticator would handle the APDU encoding.
     // https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-nfc-protocol-v1.2-ps-20170411.html#framing
-    m_connection->transact(WTFMove(data), WTFMove(callback));
+    m_connection->transact(WTF::move(data), WTF::move(callback));
 }
 
 void CtapCcidDriver::respondAsync(ResponseCallback&& callback, Vector<uint8_t>&& response) const
 {
-    RunLoop::main().dispatch([callback = WTFMove(callback), response = WTFMove(response)] () mutable {
-        callback(WTFMove(response));
+    RunLoop::mainSingleton().dispatch([callback = WTF::move(callback), response = WTF::move(response)] () mutable {
+        callback(WTF::move(response));
     });
 }
 

@@ -27,7 +27,6 @@
 #include "UserMessage.h"
 
 #include "ArgumentCodersGLib.h"
-#include "WebCoreArgumentCoders.h"
 
 namespace WebKit {
 
@@ -49,7 +48,7 @@ UserMessage::IPCData UserMessage::toIPCData() const
 
 UserMessage UserMessage::fromIPCData(UserMessage::IPCData&& ipcData)
 {
-    return WTF::switchOn(WTFMove(ipcData),
+    return WTF::switchOn(WTF::move(ipcData),
         [&] (NullMessage&&) {
             return UserMessage { };
         },

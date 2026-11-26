@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,6 +57,7 @@ class FrameHandle;
 class FrameInfo;
 class HTTPCookieStore;
 class HitTestResult;
+class JSHandle;
 class MessageListener;
 class Navigation;
 class NavigationAction;
@@ -65,6 +66,7 @@ class NavigationResponse;
 class OpenPanelParameters;
 class PageConfiguration;
 class ProcessPoolConfiguration;
+class ScriptMessage;
 class SessionState;
 class UserScript;
 class WebsitePolicies;
@@ -80,10 +82,13 @@ class GeolocationPermissionRequest;
 class MediaKeySystemPermissionCallback;
 class NotificationPermissionRequest;
 class QueryPermissionResultCallback;
-class SpeechRecognitionPermissionCallback;
-class UserMediaPermissionCheckProxy;
 class UserMediaPermissionRequestProxy;
+#if ENABLE(BACK_FORWARD_LIST_SWIFT)
+class WebBackForwardListWrapper;
+#else
 class WebBackForwardList;
+using WebBackForwardListWrapper = WebBackForwardList;
+#endif
 class WebBackForwardListItem;
 class WebColorPickerResultListenerProxy;
 class WebContextMenuListenerProxy;
@@ -114,7 +119,7 @@ class WebsiteDataStoreConfiguration;
 WK_ADD_API_MAPPING(WKAuthenticationChallengeRef, AuthenticationChallengeProxy)
 WK_ADD_API_MAPPING(WKAuthenticationDecisionListenerRef, AuthenticationDecisionListener)
 WK_ADD_API_MAPPING(WKBackForwardListItemRef, WebBackForwardListItem)
-WK_ADD_API_MAPPING(WKBackForwardListRef, WebBackForwardList)
+WK_ADD_API_MAPPING(WKBackForwardListRef, WebBackForwardListWrapper)
 WK_ADD_API_MAPPING(WKBundleHitTestResultMediaType, BundleHitTestResultMediaType)
 WK_ADD_API_MAPPING(WKCaptionUserPreferencesTestingModeTokenRef, API::CaptionUserPreferencesTestingModeToken)
 WK_ADD_API_MAPPING(WKColorPickerResultListenerRef, WebColorPickerResultListenerProxy)
@@ -136,6 +141,7 @@ WK_ADD_API_MAPPING(WKHTTPCookieStoreRef, API::HTTPCookieStore)
 WK_ADD_API_MAPPING(WKHitTestResultRef, API::HitTestResult)
 WK_ADD_API_MAPPING(WKIconDatabaseRef, WebIconDatabase)
 WK_ADD_API_MAPPING(WKInspectorRef, WebInspectorUIProxy)
+WK_ADD_API_MAPPING(WKJSHandleRef, API::JSHandle);
 WK_ADD_API_MAPPING(WKMediaKeySystemPermissionCallbackRef, MediaKeySystemPermissionCallback)
 WK_ADD_API_MAPPING(WKQueryPermissionResultCallbackRef, QueryPermissionResultCallback)
 WK_ADD_API_MAPPING(WKMessageListenerRef, API::MessageListener)
@@ -155,13 +161,12 @@ WK_ADD_API_MAPPING(WKPageRef, WebPageProxy)
 WK_ADD_API_MAPPING(WKPreferencesRef, WebPreferences)
 WK_ADD_API_MAPPING(WKProtectionSpaceRef, WebProtectionSpace)
 WK_ADD_API_MAPPING(WKResourceLoadStatisticsManagerRef, WebResourceLoadStatisticsManager)
+WK_ADD_API_MAPPING(WKScriptMessageRef, API::ScriptMessage)
 WK_ADD_API_MAPPING(WKSessionStateRef, API::SessionState)
-WK_ADD_API_MAPPING(WKSpeechRecognitionPermissionCallbackRef, SpeechRecognitionPermissionCallback)
 WK_ADD_API_MAPPING(WKTextCheckerRef, WebTextChecker)
 WK_ADD_API_MAPPING(WKUserContentControllerRef, WebUserContentControllerProxy)
 WK_ADD_API_MAPPING(WKUserContentExtensionStoreRef, API::ContentRuleListStore)
 WK_ADD_API_MAPPING(WKUserContentFilterRef, API::ContentRuleList)
-WK_ADD_API_MAPPING(WKUserMediaPermissionCheckRef, UserMediaPermissionCheckProxy)
 WK_ADD_API_MAPPING(WKUserMediaPermissionRequestRef, UserMediaPermissionRequestProxy)
 WK_ADD_API_MAPPING(WKUserScriptRef, API::UserScript)
 WK_ADD_API_MAPPING(WKViewportAttributesRef, WebViewportAttributes)
@@ -242,7 +247,7 @@ inline WKProcessTerminationReason toAPI(ProcessTerminationReason reason)
     case ProcessTerminationReason::NavigationSwap:
         // We probably shouldn't bother coming up with a new C-API type for process-swapping.
         // "Requested by client" seems like the best match for existing types.
-        FALLTHROUGH;
+        [[fallthrough]];
     case ProcessTerminationReason::RequestedByClient:
         return kWKProcessTerminationReasonRequestedByClient;
     case ProcessTerminationReason::ExceededProcessCountLimit:
@@ -253,6 +258,7 @@ inline WKProcessTerminationReason toAPI(ProcessTerminationReason reason)
     case ProcessTerminationReason::Crash:
     case ProcessTerminationReason::GPUProcessCrashedTooManyTimes:
     case ProcessTerminationReason::ModelProcessCrashedTooManyTimes:
+    case ProcessTerminationReason::NonMainFrameWebContentProcessCrash:
         return kWKProcessTerminationReasonCrash;
     }
 

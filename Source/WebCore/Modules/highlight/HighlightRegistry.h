@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "Highlight.h"
-#include "HighlightVisibility.h"
+#include <WebCore/Highlight.h>
+#include <WebCore/HighlightVisibility.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/AtomStringHash.h>
@@ -54,8 +54,8 @@ public:
 #endif
     
     WEBCORE_EXPORT void addAnnotationHighlightWithRange(Ref<StaticRange>&&);
-    const HashMap<AtomString, Ref<Highlight>>& map() const { return m_map; }
-    const Vector<AtomString>& highlightNames() const { return m_highlightNames; }
+    const HashMap<AtomString, Ref<Highlight>>& map() const LIFETIME_BOUND { return m_map; }
+    const Vector<AtomString>& highlightNames() const LIFETIME_BOUND { return m_highlightNames; }
     
 private:
     HighlightRegistry() = default;

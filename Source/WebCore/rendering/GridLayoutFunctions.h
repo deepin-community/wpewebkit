@@ -25,20 +25,27 @@
 
 #pragma once
 
-#include "GridPositionsResolver.h"
 #include "LayoutUnit.h"
 #include "RenderBox.h"
 
 namespace WebCore {
 
-enum class ItemPosition : uint8_t;
+namespace Style {
+enum class GridTrackSizingDirection : bool;
+class GridTrackBreadth;
+struct GridTrackFitContentLength;
+struct GridTrackSize;
+}
+
+class GridSpan;
 class RenderElement;
 class RenderGrid;
 
-enum class GridAxis : uint8_t {
-    GridRowAxis = 1 << 0,
-    GridColumnAxis = 1 << 1
-};
+enum class ItemPosition : uint8_t;
+
+namespace Style {
+class ComputedStyle;
+}
 
 struct ExtraMarginsFromSubgrids {
     inline LayoutUnit extraTrackStartMargin() const { return m_extraMargins.first; }
@@ -60,26 +67,42 @@ struct ExtraMarginsFromSubgrids {
 
 namespace GridLayoutFunctions {
 
-LayoutUnit computeMarginLogicalSizeForGridItem(const RenderGrid&, GridTrackSizingDirection, const RenderBox&);
-LayoutUnit marginLogicalSizeForGridItem(const RenderGrid&, GridTrackSizingDirection, const RenderBox&);
-void setOverridingContentSizeForGridItem(const RenderGrid&, RenderBox& gridItem, LayoutUnit, GridTrackSizingDirection);
-void clearOverridingContentSizeForGridItem(const RenderGrid&, RenderBox& gridItem, GridTrackSizingDirection);
-bool isOrthogonalGridItem(const RenderGrid&, const RenderBox&);
+LayoutUnit computeMarginLogicalSizeForGridItem(const RenderGrid&, Style::GridTrackSizingDirection, const RenderBox&);
+LayoutUnit marginLogicalSizeForGridItem(const RenderGrid&, Style::GridTrackSizingDirection, const RenderBox&);
+void setOverridingContentSizeForGridItem(const RenderGrid&, RenderBox& gridItem, LayoutUnit, Style::GridTrackSizingDirection);
+void clearOverridingContentSizeForGridItem(const RenderGrid&, RenderBox& gridItem, Style::GridTrackSizingDirection);
+bool NODELETE isOrthogonalGridItem(const RenderGrid&, const RenderBox&);
 bool isGridItemInlineSizeDependentOnBlockConstraints(const RenderBox& gridItem, const RenderGrid& parentGrid, ItemPosition gridItemAlignSelf);
-bool isOrthogonalParent(const RenderGrid&, const RenderElement& parent);
+bool NODELETE isOrthogonalParent(const RenderGrid&, const RenderElement& parent);
 bool isAspectRatioBlockSizeDependentGridItem(const RenderBox&);
-GridTrackSizingDirection flowAwareDirectionForGridItem(const RenderGrid&, const RenderBox&, GridTrackSizingDirection);
-GridTrackSizingDirection flowAwareDirectionForParent(const RenderGrid&, const RenderElement& parent, GridTrackSizingDirection);
-std::optional<RenderBox::ContainingBlockOverrideValue> overridingContainingBlockContentSizeForGridItem(const RenderBox&, GridTrackSizingDirection);
-bool hasRelativeOrIntrinsicSizeForGridItem(const RenderBox& gridItem, GridTrackSizingDirection);
+Style::GridTrackSizingDirection NODELETE flowAwareDirectionForGridItem(const RenderGrid&, const RenderBox&, Style::GridTrackSizingDirection);
+Style::GridTrackSizingDirection NODELETE flowAwareDirectionForParent(const RenderGrid&, const RenderElement& parent, Style::GridTrackSizingDirection);
+std::optional<RenderBox::GridAreaSize> NODELETE overridingContainingBlockContentSizeForGridItem(const RenderBox&, Style::GridTrackSizingDirection);
+bool NODELETE hasRelativeOrKeywordOrAutoSizeForGridItem(const RenderBox& gridItem, Style::GridTrackSizingDirection);
 
-bool isFlippedDirection(const RenderGrid&, GridTrackSizingDirection);
-bool isSubgridReversedDirection(const RenderGrid&, GridTrackSizingDirection outerDirection, const RenderGrid& subgrid);
-ExtraMarginsFromSubgrids extraMarginForSubgridAncestors(GridTrackSizingDirection, const RenderBox& gridItem);
+bool NODELETE isFlippedDirection(const RenderGrid&, Style::GridTrackSizingDirection);
+bool NODELETE isSubgridReversedDirection(const RenderGrid&, Style::GridTrackSizingDirection outerDirection, const RenderGrid& subgrid);
+ExtraMarginsFromSubgrids extraMarginForSubgridAncestors(Style::GridTrackSizingDirection, const RenderBox& gridItem);
 
-unsigned alignmentContextForBaselineAlignment(const GridSpan&, const ItemPosition& alignment);
+unsigned NODELETE alignmentContextForBaselineAlignment(const GridSpan&, const ItemPosition& alignment);
 
-}
+bool NODELETE hasAutoMarginsInColumnAxis(const RenderBox&, WritingMode parentWritingMode);
+bool NODELETE hasAutoMarginsInRowAxis(const RenderBox&, WritingMode parentWritingMode);
+
+bool hasStretchableSizeInColumnAxis(const RenderBox&, const RenderGrid& gridContainer);
+bool hasStretchableSizeInRowAxis(const RenderBox&, const RenderGrid& gridContainer);
+
+LayoutUnit availableAlignmentSpaceForGridItemBeforeStretching(const RenderGrid&, LayoutUnit gridAreaBreadthForGridItem, const RenderBox&, Style::GridTrackSizingDirection);
+
+void updateAutoMarginsIfNeeded(RenderBox&, WritingMode);
+void updateAutoMarginsInRowAxisIfNeeded(RenderBox&, WritingMode);
+void updateAutoMarginsInColumnAxisIfNeeded(RenderBox&, WritingMode);
+
+bool NODELETE isRelativeGridTrackBreadthAsAuto(const Style::GridTrackFitContentLength&, std::optional<LayoutUnit> availableSpace);
+bool NODELETE isRelativeGridTrackBreadthAsAuto(const Style::GridTrackBreadth&, std::optional<LayoutUnit> availableSpace);
+
+const Style::GridTrackSize& NODELETE rawGridTrackSize(const Style::ComputedStyle&, Style::GridTrackSizingDirection, unsigned translatedIndex, unsigned autoRepeatTracksCount, unsigned explicitGridStart);
+
+} // namespace GridLayoutFunctions
 
 } // namespace WebCore
-

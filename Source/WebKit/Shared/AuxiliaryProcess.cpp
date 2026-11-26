@@ -27,10 +27,12 @@
 #include "AuxiliaryProcess.h"
 
 #include "AuxiliaryProcessCreationParameters.h"
+#include "Connection.h"
 #include "ContentWorldShared.h"
 #include "LogInitialization.h"
 #include "Logging.h"
 #include "SandboxInitializationParameters.h"
+#include "StreamClientConnection.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/LogInitialization.h>
 #include <pal/SessionID.h>
@@ -44,6 +46,9 @@
 
 #if OS(LINUX)
 #include <wtf/MemoryPressureHandler.h>
+#if USE(GLIB)
+#include <wtf/glib/Sandbox.h>
+#endif
 #endif
 
 #if PLATFORM(COCOA)
@@ -61,14 +66,14 @@ AuxiliaryProcess::AuxiliaryProcess()
 
 AuxiliaryProcess::~AuxiliaryProcess()
 {
-    if (m_connection)
-        m_connection->invalidate();
+    if (RefPtr connection = m_connection)
+        connection->invalidate();
 }
 
 void AuxiliaryProcess::didClose(IPC::Connection&)
 {
-// Stop the run loop for GTK and WPE to ensure a normal exit, since we need
-// atexit handlers to be called to cleanup resources like EGL displays.
+// Stop the run loop for GTK and WPE to ensure a normal exit, since stopRunLoop()
+// releases resources like EGL displays before the process exits.
 #if PLATFORM(GTK) || PLATFORM(WPE)
     stopRunLoop();
 #else
@@ -76,11 +81,18 @@ void AuxiliaryProcess::didClose(IPC::Connection&)
 #endif
 }
 
-void AuxiliaryProcess::initialize(const AuxiliaryProcessInitializationParameters& parameters)
+void AuxiliaryProcess::initialize(AuxiliaryProcessInitializationParameters&& parameters)
 {
-    WTF::RefCountedBase::enableThreadingChecksGlobally();
+    TraceScope traceScope(ProcessInitializeStart, ProcessInitializeEnd);
 
+    WTF::RefCountDebuggerBase::enableThreadingChecksGlobally();
+
+#if PLATFORM(COCOA)
+    // On Cocoa platforms, setAuxiliaryProcessType() is called in XPCServiceInitializer().
+    ASSERT(processType() == parameters.processType);
+#else
     setAuxiliaryProcessType(parameters.processType);
+#endif
 
     RELEASE_ASSERT_WITH_MESSAGE(parameters.processIdentifier, "Unable to initialize child process without a WebCore process identifier");
     Process::setIdentifier(*parameters.processIdentifier);
@@ -102,12 +114,12 @@ void AuxiliaryProcess::initialize(const AuxiliaryProcessInitializationParameters
 
     // In WebKit2, only the UI process should ever be generating certain identifiers.
     PAL::SessionID::enableGenerationProtection();
-    ContentWorldIdentifier::enableGenerationProtection();
     WebPageProxyIdentifier::enableGenerationProtection();
 
-    m_connection = IPC::Connection::createClientConnection(parameters.connectionIdentifier);
-    initializeConnection(m_connection.get());
-    m_connection->open(*this);
+    Ref connection = IPC::Connection::createClientConnection(WTF::move(parameters.connectionIdentifier));
+    lazyInitialize(m_connection, connection.copyRef());
+    initializeConnection(connection.ptr());
+    connection->open(*this);
 }
 
 void AuxiliaryProcess::setProcessSuppressionEnabled(bool enabled)
@@ -126,8 +138,34 @@ void AuxiliaryProcess::initializeProcessName(const AuxiliaryProcessInitializatio
 {
 }
 
-void AuxiliaryProcess::initializeConnection(IPC::Connection*)
+void AuxiliaryProcess::initializeConnection(IPC::Connection* connection)
 {
+#if OS(LINUX) && USE(GLIB)
+    // When bubblewrap sandbox is used isInsideFlatpak() also returns true in the web process.
+    if (isInsideFlatpak())
+        connection->sendCredentials();
+#else
+    UNUSED_PARAM(connection);
+#endif
+}
+
+bool AuxiliaryProcess::dispatchMessage(IPC::Connection& connection, IPC::Decoder& decoder)
+{
+    if (m_messageReceiverMap.dispatchMessage(connection, decoder))
+        return true;
+    // Note: because WebProcess receives messages to non-existing IDs, we have to filter the messages there to avoid asserts.
+    // Once these stop, this should be removed.
+    return filterUnhandledMessage(connection, decoder);
+}
+
+bool AuxiliaryProcess::filterUnhandledMessage(IPC::Connection&, IPC::Decoder&)
+{
+    return false;
+}
+
+bool AuxiliaryProcess::dispatchSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)
+{
+    return m_messageReceiverMap.dispatchSyncMessage(connection, decoder, replyEncoder);
 }
 
 void AuxiliaryProcess::addMessageReceiver(IPC::ReceiverName messageReceiverName, IPC::MessageReceiver& messageReceiver)
@@ -195,13 +233,13 @@ void AuxiliaryProcess::stopRunLoop()
 #if !PLATFORM(COCOA)
 void AuxiliaryProcess::platformStopRunLoop()
 {
-    RunLoop::main().stop();
+    RunLoop::mainSingleton().stop();
 }
 #endif
 
 void AuxiliaryProcess::terminate()
 {
-    m_connection->invalidate();
+    protect(parentProcessConnection())->invalidate();
 
     stopRunLoop();
 }
@@ -212,7 +250,7 @@ void AuxiliaryProcess::shutDown()
     terminate();
 }
 
-void AuxiliaryProcess::applyProcessCreationParameters(const AuxiliaryProcessCreationParameters& parameters)
+void AuxiliaryProcess::applyProcessCreationParameters(AuxiliaryProcessCreationParameters&& parameters)
 {
 #if !LOG_DISABLED || !RELEASE_LOG_DISABLED
     WTF::logChannels().initializeLogChannelsIfNecessary(parameters.wtfLoggingChannels);
@@ -220,8 +258,24 @@ void AuxiliaryProcess::applyProcessCreationParameters(const AuxiliaryProcessCrea
     WebKit::logChannels().initializeLogChannelsIfNecessary(parameters.webKitLoggingChannels);
 #endif
 #if PLATFORM(COCOA)
-    SecureCoding::applyProcessCreationParameters(parameters);
+    SecureCoding::applyProcessCreationParameters(WTF::move(parameters));
 #endif
+#if ENABLE(CORE_IPC_SIGNPOSTS)
+    if (parameters.shouldEnableIPCSignposts)
+        IPC::Connection::forceEnableSignposts();
+    if (parameters.shouldEnableStreamingIPCSignposts)
+        IPC::StreamClientConnection::forceEnableSignposts();
+#endif
+}
+
+void AuxiliaryProcess::grantAccessToContainerTempDirectory(const SandboxExtension::Handle& handle)
+{
+    SandboxExtension::consumePermanently(handle);
+#if ENABLE(LLVM_PROFILE_GENERATION) && PLATFORM(IOS_FAMILY)
+    WebKit::initializeLLVMProfiling();
+    WebCore::initializeLLVMProfiling();
+    JSC::initializeLLVMProfiling();
+#endif // ENABLE(LLVM_PROFILE_GENERATION) && PLATFORM(IOS_FAMILY)
 }
 
 #if !PLATFORM(IOS_FAMILY) || PLATFORM(MACCATALYST)
@@ -232,23 +286,17 @@ void AuxiliaryProcess::populateMobileGestaltCache(std::optional<SandboxExtension
 
 #if !PLATFORM(COCOA)
 
-#if !OS(UNIX)
-void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationParameters&)
-{
-}
-#endif
-
 void AuxiliaryProcess::initializeSandbox(const AuxiliaryProcessInitializationParameters&, SandboxInitializationParameters&)
 {
 }
 
-void AuxiliaryProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, int32_t)
+void AuxiliaryProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, const Vector<uint32_t>&)
 {
     WTFLogAlways("Received invalid message: '%s'", description(messageName).characters());
     CRASH();
 }
 
-#if OS(LINUX)
+#if OS(LINUX) && !OS(ANDROID)
 void AuxiliaryProcess::didReceiveMemoryPressureEvent(bool isCritical)
 {
     MemoryPressureHandler::singleton().triggerMemoryPressureEvent(isCritical);

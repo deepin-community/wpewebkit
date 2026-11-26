@@ -31,11 +31,15 @@
 #include "WebPageProxyIdentifier.h"
 #include "WebPreferencesStore.h"
 #include <WebCore/PageIdentifier.h>
-#include <WebCore/RegistrableDomain.h>
 #include <WebCore/SharedWorkerContextManager.h>
 #include <WebCore/SharedWorkerIdentifier.h>
+#include <WebCore/Site.h>
+#include <wtf/RefCounted.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
+enum class CrossOriginEmbedderPolicyValue : bool;
+
 struct ClientOrigin;
 struct WorkerFetchResult;
 struct WorkerInitializationData;
@@ -47,10 +51,14 @@ namespace WebKit {
 class WebUserContentController;
 struct RemoteWorkerInitializationData;
 
-class WebSharedWorkerContextManagerConnection final : public WebCore::SharedWorkerContextManager::Connection, public IPC::MessageReceiver {
+class WebSharedWorkerContextManagerConnection final : public WebCore::SharedWorkerContextManager::Connection, public IPC::MessageReceiver, public RefCounted<WebSharedWorkerContextManagerConnection> {
+    WTF_MAKE_TZONE_ALLOCATED(WebSharedWorkerContextManagerConnection);
 public:
-    WebSharedWorkerContextManagerConnection(Ref<IPC::Connection>&&, WebCore::RegistrableDomain&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&);
+    static Ref<WebSharedWorkerContextManagerConnection> create(Ref<IPC::Connection>&&, WebCore::Site&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&, WebCore::CrossOriginEmbedderPolicyValue);
     ~WebSharedWorkerContextManagerConnection();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     void establishConnection(CompletionHandler<void()>&&) final;
     void postErrorToWorkerObject(WebCore::SharedWorkerIdentifier, const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, bool isErrorEvent) final;
@@ -59,20 +67,28 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
 private:
+    WebSharedWorkerContextManagerConnection(Ref<IPC::Connection>&&, WebCore::Site&&, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&, WebCore::CrossOriginEmbedderPolicyValue);
+
     // IPC Messages.
     void launchSharedWorker(WebCore::ClientOrigin&&, WebCore::SharedWorkerIdentifier, WebCore::WorkerOptions&&, WebCore::WorkerFetchResult&&, WebCore::WorkerInitializationData&&);
     void updatePreferencesStore(const WebPreferencesStore&);
-    void setUserAgent(String&& userAgent) { m_userAgent = WTFMove(userAgent); }
+    void setUserAgent(String&& userAgent) { m_userAgent = WTF::move(userAgent); }
     void close();
 
-    Ref<IPC::Connection> m_connectionToNetworkProcess;
-    WebCore::RegistrableDomain m_registrableDomain;
+    const Ref<IPC::Connection> m_connectionToNetworkProcess;
+    const WebCore::Site m_site;
     PageGroupIdentifier m_pageGroupID;
     WebPageProxyIdentifier m_webPageProxyID;
     WebCore::PageIdentifier m_pageID;
     String m_userAgent;
-    Ref<WebUserContentController> m_userContentController;
+    const Ref<WebUserContentController> m_userContentController;
     std::optional<WebPreferencesStore> m_preferencesStore;
+    WebCore::CrossOriginEmbedderPolicyValue m_crossOriginEmbedderPolicyValue;
+    bool isWebSharedWorkerContextManagerConnection() const final { return true; }
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebSharedWorkerContextManagerConnection) \
+    static bool isType(const WebCore::SharedWorkerContextManager::Connection& connection) { return connection.isWebSharedWorkerContextManagerConnection(); } \
+SPECIALIZE_TYPE_TRAITS_END()

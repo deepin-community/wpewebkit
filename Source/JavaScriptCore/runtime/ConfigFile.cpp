@@ -42,6 +42,8 @@
 #include <unistd.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 static const size_t s_processNameMax = 128;
@@ -69,12 +71,12 @@ public:
         return true;
     }
 
-    unsigned lineNumber()
+    unsigned NODELETE lineNumber()
     {
         return m_lineNumber;
     }
 
-    const char* currentBuffer()
+    const char* NODELETE currentBuffer()
     {
         if (!m_srcPtr || m_srcPtr == m_bufferEnd)
             return "";
@@ -529,3 +531,5 @@ void processConfigFile(const char* configFilename, const char* processName, cons
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

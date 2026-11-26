@@ -27,7 +27,7 @@
 
 #include "IPCEvent.h"
 #include "IPCTestUtilities.h"
-#include "Test.h"
+#include "Helpers/Test.h"
 
 namespace TestWebKitAPI {
 
@@ -35,13 +35,19 @@ struct MockTestMessageWithSignal {
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
-    static constexpr IPC::MessageName name()  { return static_cast<IPC::MessageName>(123); }
-    auto&& arguments() { return WTFMove(m_arguments); }
+    static constexpr IPC::MessageName name()  { return IPC::MessageName::IPCTester_EmptyMessage; }
     MockTestMessageWithSignal(IPC::Signal&& signal)
-        : m_arguments(WTFMove(signal))
+        : m_signal(WTF::move(signal))
     {
     }
-    std::tuple<IPC::Signal&&> m_arguments;
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        encoder << WTF::move(m_signal);
+    }
+private:
+    IPC::Signal&& m_signal;
 };
 
 class EventTestABBA : public testing::TestWithParam<std::tuple<ConnectionTestDirection>>, protected ConnectionTestBase {
@@ -82,7 +88,7 @@ TEST_P(EventTestABBA, SerializeAndSignal)
     runLoop->dispatch([&] {
         ASSERT_TRUE(openB());
 
-        bClient().setAsyncMessageHandler([&] (IPC::Decoder& decoder) -> bool {
+        bClient().setAsyncMessageHandler([&] (IPC::Connection&, IPC::Decoder& decoder) -> bool {
             auto signal = decoder.decode<IPC::Signal>();
             signal->signal();
 
@@ -93,7 +99,7 @@ TEST_P(EventTestABBA, SerializeAndSignal)
 
     auto pair = IPC::createEventSignalPair();
     ASSERT_TRUE(pair);
-    a()->send(MockTestMessageWithSignal { WTFMove(pair->signal) }, 77);
+    a()->send(MockTestMessageWithSignal { WTF::move(pair->signal) }, 77);
 
     pair->event.wait();
 }
@@ -106,7 +112,7 @@ TEST_P(EventTestABBA, InterruptOnDestruct)
     runLoop->dispatch([&] {
         ASSERT_TRUE(openB());
 
-        bClient().setAsyncMessageHandler([&] (IPC::Decoder& decoder) -> bool {
+        bClient().setAsyncMessageHandler([&] (IPC::Connection&, IPC::Decoder& decoder) -> bool {
             {
                 auto signal = decoder.decode<IPC::Signal>();
             }
@@ -118,7 +124,7 @@ TEST_P(EventTestABBA, InterruptOnDestruct)
 
     auto pair = IPC::createEventSignalPair();
     ASSERT_TRUE(pair);
-    a()->send(MockTestMessageWithSignal { WTFMove(pair->signal) }, 77);
+    a()->send(MockTestMessageWithSignal { WTF::move(pair->signal) }, 77);
 
     pair->event.wait();
 }

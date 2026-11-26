@@ -28,6 +28,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/RefCounted.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -42,7 +43,7 @@ enum class ElementRuntimeCharacteristics : uint8_t {
 };
 
 class GStreamerQuirkBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerQuirkBase);
 
 public:
     GStreamerQuirkBase() = default;
@@ -52,7 +53,7 @@ public:
 
     // Interface of classes supplied to MediaPlayerPrivateGStreamer to store values that the quirks will need for their job.
     class GStreamerQuirkState {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GStreamerQuirkState);
         // Prevent accidental https://en.wikipedia.org/wiki/Object_slicing.
         WTF_MAKE_NONCOPYABLE(GStreamerQuirkState);
         WTF_MAKE_NONMOVABLE(GStreamerQuirkState);
@@ -65,12 +66,12 @@ public:
 };
 
 class GStreamerQuirk : public GStreamerQuirkBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerQuirk);
 public:
     GStreamerQuirk() = default;
     virtual ~GStreamerQuirk() = default;
 
-    virtual bool isPlatformSupported() const { return true; }
+    virtual bool isPlatformSupported() const = 0;
     virtual GstElement* createAudioSink() { return nullptr; }
     virtual GstElement* createWebAudioSink() { return nullptr; }
     virtual void configureElement(GstElement*, const OptionSet<ElementRuntimeCharacteristics>&) { }
@@ -78,7 +79,6 @@ public:
     virtual std::optional<GstElementFactoryListType> audioVideoDecoderFactoryListType() const { return std::nullopt; }
     virtual Vector<String> disallowedWebAudioDecoders() const { return { }; }
     virtual unsigned getAdditionalPlaybinFlags() const { return 0; }
-    virtual bool shouldParseIncomingLibWebRTCBitStream() const { return true; }
 
     virtual bool needsBufferingPercentageCorrection() const { return false; }
     // Returns name of the queried GstElement, or nullptr if no element was queried.
@@ -86,10 +86,26 @@ public:
     virtual int correctBufferingPercentage(MediaPlayerPrivateGStreamer*, int originalBufferingPercentage, GstBufferingMode) const { return originalBufferingPercentage; }
     virtual void resetBufferingPercentage(MediaPlayerPrivateGStreamer*, int) const { };
     virtual void setupBufferingPercentageCorrection(MediaPlayerPrivateGStreamer*, GstState, GstState, GRefPtr<GstElement>&&) const { }
+    virtual bool needsCustomInstantRateChange() const { return false; }
+    // Note: Change these pairs and single return types as needed, or even use a struct, if more return fields
+    // have to be added in the future.
+    // Returning processed and didInstantRateChange.
+    virtual std::pair<bool, bool> applyCustomInstantRateChange(
+        bool isPipelinePlaying, bool isPipelineWaitingPreroll, float playbackRate, bool mute, GstElement* pipeline) const;
+    // Returning forwardToAllPads.
+    virtual bool analyzeWebKitMediaSrcCustomEvent(GRefPtr<GstEvent>) const;
+    // Returning rate.
+    virtual std::optional<double> processWebKitMediaSrcCustomEvent(GRefPtr<GstEvent>, bool handledByAnyStream, bool handledByAllTheStreams) const;
+
+    [[nodiscard]] virtual GRefPtr<GstCaps> videoSinkGLCapsFormat() const { return nullptr; }
+    virtual bool isVideoCapsGLCompatible(const GRefPtr<GstCaps>&) const { return true; }
+
+    virtual std::optional<GstState> eosMediaPlayerState() const { return { }; }
+
 };
 
 class GStreamerHolePunchQuirk : public GStreamerQuirkBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerHolePunchQuirk);
 public:
     GStreamerHolePunchQuirk() = default;
     virtual ~GStreamerHolePunchQuirk() = default;
@@ -101,7 +117,7 @@ public:
 
 class GStreamerQuirksManager : public RefCounted<GStreamerQuirksManager> {
     friend NeverDestroyed<GStreamerQuirksManager>;
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerQuirksManager);
 
 public:
     static GStreamerQuirksManager& singleton();
@@ -120,6 +136,11 @@ public:
     GstElementFactoryListType audioVideoDecoderFactoryListType() const;
     Vector<String> disallowedWebAudioDecoders() const;
 
+    [[nodiscard]] GRefPtr<GstCaps> videoSinkGLCapsFormat() const;
+    bool isVideoCapsGLCompatible(const GRefPtr<GstCaps>&) const;
+
+    GstState eosMediaPlayerState() const;
+
     bool supportsVideoHolePunchRendering() const;
     GstElement* createHolePunchVideoSink(bool isLegacyPlaybin, const MediaPlayer*);
     void setHolePunchVideoRectangle(GstElement*, const IntRect&);
@@ -129,14 +150,22 @@ public:
 
     unsigned getAdditionalPlaybinFlags() const;
 
-    bool shouldParseIncomingLibWebRTCBitStream() const;
-
     bool needsBufferingPercentageCorrection() const;
     // Returns name of the queried GstElement, or nullptr if no element was queried.
     ASCIILiteral queryBufferingPercentage(MediaPlayerPrivateGStreamer*, const GRefPtr<GstQuery>&) const;
     int correctBufferingPercentage(MediaPlayerPrivateGStreamer*, int originalBufferingPercentage, GstBufferingMode) const;
     void resetBufferingPercentage(MediaPlayerPrivateGStreamer*, int bufferingPercentage) const;
     void setupBufferingPercentageCorrection(MediaPlayerPrivateGStreamer*, GstState currentState, GstState newState, GRefPtr<GstElement>&&) const;
+
+    bool needsCustomInstantRateChange() const;
+    // Returning processed and didInstantRateChange.
+    std::pair<bool, bool> applyCustomInstantRateChange(
+        bool isPipelinePlaying, bool isPipelineWaitingPreroll, float playbackRate, bool mute, GstElement* pipeline) const;
+    bool processCustomInstantRateChangeEvent() const;
+    // Returning forwardToAllPads.
+    bool analyzeWebKitMediaSrcCustomEvent(GRefPtr<GstEvent>) const;
+    // Returning rate.
+    std::optional<double> processWebKitMediaSrcCustomEvent(GRefPtr<GstEvent>, bool handledByAnyStream, bool handledByAllStreams) const;
 
 private:
     GStreamerQuirksManager(bool, bool);

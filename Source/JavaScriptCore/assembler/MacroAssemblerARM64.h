@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,14 +25,20 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(ASSEMBLER) && CPU(ARM64)
 
-#include "ARM64Assembler.h"
-#include "AbstractMacroAssembler.h"
-#include "JITOperationValidation.h"
+#include <JavaScriptCore/ARM64Assembler.h>
+#include <JavaScriptCore/ARM64EAssembler.h>
+#include <JavaScriptCore/AbstractMacroAssembler.h>
+#include <JavaScriptCore/JITOperationValidation.h>
+#include <JavaScriptCore/TargetAssemblerDefinitions.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -40,7 +46,7 @@ using Assembler = TARGET_ASSEMBLER;
 class Reg;
 
 class MacroAssemblerARM64 : public AbstractMacroAssembler<Assembler> {
-    WTF_MAKE_TZONE_ALLOCATED(MacroAssemblerARM64);
+    WTF_MAKE_TZONE_NON_HEAP_ALLOCATABLE(MacroAssemblerARM64);
 public:
     static constexpr unsigned numGPRs = 32;
     static constexpr unsigned numFPRs = 32;
@@ -51,6 +57,7 @@ public:
     static constexpr RegisterID memoryTempRegister = ARM64Registers::ip1;
 
     static constexpr RegisterID InvalidGPRReg = ARM64Registers::InvalidGPRReg;
+    static constexpr FPRegisterID InvalidFPRReg = ARM64Registers::InvalidFPRReg;
 
     static constexpr ARM64Registers::FPRegisterID fpTempRegister = ARM64Registers::q31;
 
@@ -87,13 +94,13 @@ public:
     static constexpr Assembler::Condition DefaultCondition = Assembler::ConditionInvalid;
     static constexpr Assembler::JumpType DefaultJump = Assembler::JumpNoConditionFixedSize;
 
-    Vector<LinkRecord, 0, UnsafeVectorOverflow>& jumpsToLink() { return m_assembler.jumpsToLink(); }
+    Vector<LinkRecord, 0, UnsafeVectorOverflow>& jumpsToLink() LIFETIME_BOUND { return m_assembler.jumpsToLink(); }
     static bool canCompact(JumpType jumpType) { return Assembler::canCompact(jumpType); }
     static JumpLinkType computeJumpType(LinkRecord& record, const uint8_t* from, const uint8_t* to) { return Assembler::computeJumpType(record, from, to); }
     static int jumpSizeDelta(JumpType jumpType, JumpLinkType jumpLinkType) { return Assembler::jumpSizeDelta(jumpType, jumpLinkType); }
 
-    template<MachineCodeCopyMode copy>
-    ALWAYS_INLINE static void link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction, uint8_t* to) { return Assembler::link<copy>(record, from, fromInstruction, to); }
+    template<RepatchingInfo repatch>
+    ALWAYS_INLINE static void link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction, uint8_t* to) { return Assembler::link<repatch>(record, from, fromInstruction, to); }
 
     static bool isCompactPtrAlignedAddressOffset(ptrdiff_t value)
     {
@@ -176,6 +183,11 @@ public:
         add32(imm, dest, dest);
     }
 
+    void add32AndSetFlags(TrustedImm32 imm, RegisterID dest)
+    {
+        add32AndSetFlags(imm, dest, dest);
+    }
+
     void add32(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
         auto immediate = imm.m_value;
@@ -195,6 +207,22 @@ public:
             move(imm, getCachedDataTempRegisterIDAndInvalidate());
             m_assembler.add<32>(dest, src, dataTempRegister);
         }
+    }
+
+    void add32AndSetFlags(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        auto immediate = imm.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.add<32, S>(dest, src, u12, shift);
+            else
+                m_assembler.sub<32, S>(dest, src, u12, shift);
+            return;
+        }
+
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.add<32, S>(dest, src, dataTempRegister);
     }
 
     void add32(TrustedImm32 imm, Address address)
@@ -266,9 +294,29 @@ public:
         add64(imm, dest, dest);
     }
 
+    void add64AndSetFlags(TrustedImm32 imm, RegisterID dest)
+    {
+        add64AndSetFlags(imm, dest, dest);
+    }
+
+    void add64AndSetFlags(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.add<64, S>(dest, a, b);
+    }
+
+    void addCarry64(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.adc<64>(dest, a, b);
+    }
+
     void add64(TrustedImm64 imm, RegisterID dest)
     {
         add64(imm, dest, dest);
+    }
+
+    void add64AndSetFlags(TrustedImm64 imm, RegisterID dest)
+    {
+        add64AndSetFlags(imm, dest, dest);
     }
 
     void add64(TrustedImm32 imm, RegisterID src, RegisterID dest)
@@ -286,6 +334,21 @@ public:
         }
     }
 
+    void add64AndSetFlags(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        auto immediate = imm.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.add<64, S>(dest, src, u12, shift);
+            else
+                m_assembler.sub<64, S>(dest, src, u12, shift);
+        } else {
+            signExtend32ToPtr(imm, getCachedDataTempRegisterIDAndInvalidate());
+            m_assembler.add<64, S>(dest, src, dataTempRegister);
+        }
+    }
+
     void add64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
         auto immediate = imm.m_value;
@@ -298,6 +361,21 @@ public:
         } else {
             move(imm, getCachedDataTempRegisterIDAndInvalidate());
             m_assembler.add<64>(dest, src, dataTempRegister);
+        }
+    }
+
+    void add64AndSetFlags(TrustedImm64 imm, RegisterID src, RegisterID dest)
+    {
+        auto immediate = imm.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.add<64, S>(dest, src, u12, shift);
+            else
+                m_assembler.sub<64, S>(dest, src, u12, shift);
+        } else {
+            move(imm, getCachedDataTempRegisterIDAndInvalidate());
+            m_assembler.add<64, S>(dest, src, dataTempRegister);
         }
     }
 
@@ -385,9 +463,19 @@ public:
         and32(dest, src, dest);
     }
 
+    void and32AndSetFlags(RegisterID src, RegisterID dest)
+    {
+        and32AndSetFlags(dest, src, dest);
+    }
+
     void and32(RegisterID op1, RegisterID op2, RegisterID dest)
     {
         m_assembler.and_<32>(dest, op1, op2);
+    }
+
+    void and32AndSetFlags(RegisterID op1, RegisterID op2, RegisterID dest)
+    {
+        m_assembler.and_<32, S>(dest, op1, op2);
     }
 
     void and32(TrustedImm32 imm, RegisterID dest)
@@ -395,8 +483,16 @@ public:
         and32(imm, dest, dest);
     }
 
+    void and32AndSetFlags(TrustedImm32 imm, RegisterID dest)
+    {
+        and32AndSetFlags(imm, dest, dest);
+    }
+
     void and32(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
+        if (imm.m_value == -1)
+            return zeroExtend32ToWord(src, dest);
+
         LogicalImmediate logicalImm = LogicalImmediate::create32(imm.m_value);
 
         if (logicalImm.isValid()) {
@@ -406,6 +502,19 @@ public:
 
         move(imm, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.and_<32>(dest, src, dataTempRegister);
+    }
+
+    void and32AndSetFlags(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        LogicalImmediate logicalImm = LogicalImmediate::create32(imm.m_value);
+
+        if (logicalImm.isValid()) {
+            m_assembler.and_<32, S>(dest, src, logicalImm);
+            return;
+        }
+
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.and_<32, S>(dest, src, dataTempRegister);
     }
 
     void and32(Address src, RegisterID dest)
@@ -427,6 +536,9 @@ public:
 
     void and64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
+        if (imm.m_value == -1)
+            return move(src, dest);
+
         LogicalImmediate logicalImm = LogicalImmediate::create64(imm.m_value);
 
         if (logicalImm.isValid()) {
@@ -445,6 +557,9 @@ public:
 
     void and64(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
+        if (imm.m_value == -1)
+            return move(src, dest);
+
         LogicalImmediate logicalImm = LogicalImmediate::create64(static_cast<intptr_t>(static_cast<int64_t>(imm.m_value)));
 
         if (logicalImm.isValid()) {
@@ -472,7 +587,10 @@ public:
 
     void and64(TrustedImm64 imm, RegisterID dest)
     {
-        LogicalImmediate logicalImm = LogicalImmediate::create64(bitwise_cast<uint64_t>(imm.m_value));
+        if (imm.m_value == -1)
+            return;
+
+        LogicalImmediate logicalImm = LogicalImmediate::create64(std::bit_cast<uint64_t>(imm.m_value));
 
         if (logicalImm.isValid()) {
             m_assembler.and_<64>(dest, dest, logicalImm);
@@ -913,6 +1031,12 @@ public:
         m_assembler.lsl<32>(dest, src, imm.m_value & 0x1f);
     }
 
+    void lshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.lsl<32>(dest, dataTempRegister, shiftAmount);
+    }
+
     void lshift32(RegisterID shiftAmount, RegisterID dest)
     {
         lshift32(dest, shiftAmount, dest);
@@ -936,9 +1060,15 @@ public:
 
     void lshift64(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (UNLIKELY(!imm.m_value))
+        if (!imm.m_value) [[unlikely]]
             return move(src, dest);
         m_assembler.lsl<64>(dest, src, imm.m_value & 0x3f);
+    }
+
+    void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.lsl<64>(dest, dataTempRegister, shiftAmount);
     }
 
     void lshift64(RegisterID shiftAmount, RegisterID dest)
@@ -1053,6 +1183,28 @@ public:
         m_assembler.umull(dest, left, right);
     }
 
+    void mulHigh32(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.smull(dest, left, right);
+        m_assembler.asr<64>(dest, dest, 32);
+    }
+
+    void mulHigh64(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.smulh(dest, left, right);
+    }
+
+    void uMulHigh32(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.umull(dest, left, right);
+        m_assembler.lsr<64>(dest, dest, 32);
+    }
+
+    void uMulHigh64(RegisterID left, RegisterID right, RegisterID dest)
+    {
+        m_assembler.umulh(dest, left, right);
+    }
+
     void div32(RegisterID dividend, RegisterID divisor, RegisterID dest)
     {
         m_assembler.sdiv<32>(dest, dividend, divisor);
@@ -1148,6 +1300,13 @@ public:
         load32(address.m_ptr, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.orr<32>(dataTempRegister, dataTempRegister, src);
         store32(dataTempRegister, address.m_ptr);
+    }
+
+    void or32(RegisterID src, Address dest)
+    {
+        load32(dest, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.orr<32>(dataTempRegister, dataTempRegister, src);
+        store32(dataTempRegister, dest);
     }
 
     void or32(TrustedImm32 imm, AbsoluteAddress address)
@@ -1263,7 +1422,7 @@ public:
 
     void rotateRight64(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (UNLIKELY(!imm.m_value))
+        if (!imm.m_value) [[unlikely]]
             return move(src, dest);
         m_assembler.ror<64>(dest, src, imm.m_value & 63);
     }
@@ -1288,6 +1447,12 @@ public:
         m_assembler.asr<32>(dest, src, imm.m_value & 0x1f);
     }
 
+    void rshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.asr<32>(dest, dataTempRegister, shiftAmount);
+    }
+
     void rshift32(RegisterID shiftAmount, RegisterID dest)
     {
         rshift32(dest, shiftAmount, dest);
@@ -1305,7 +1470,7 @@ public:
     
     void rshift64(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (UNLIKELY(!imm.m_value))
+        if (!imm.m_value) [[unlikely]]
             return move(src, dest);
         m_assembler.asr<64>(dest, src, imm.m_value & 0x3f);
     }
@@ -1442,6 +1607,16 @@ public:
         }
     }
 
+    void sub64AndSetFlags(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.sub<64, S>(dest, a, b);
+    }
+
+    void subBorrow64(RegisterID a, RegisterID b, RegisterID dest)
+    {
+        m_assembler.sbc<64>(dest, a, b);
+    }
+
     void urshift32(RegisterID src, RegisterID shiftAmount, RegisterID dest)
     {
         m_assembler.lsr<32>(dest, src, shiftAmount);
@@ -1450,6 +1625,12 @@ public:
     void urshift32(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
         m_assembler.lsr<32>(dest, src, imm.m_value & 0x1f);
+    }
+
+    void urshift32(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
+    {
+        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        m_assembler.lsr<32>(dest, dataTempRegister, shiftAmount);
     }
 
     void urshift32(RegisterID shiftAmount, RegisterID dest)
@@ -1469,7 +1650,7 @@ public:
     
     void urshift64(RegisterID src, TrustedImm32 imm, RegisterID dest)
     {
-        if (UNLIKELY(!imm.m_value))
+        if (!imm.m_value) [[unlikely]]
             return move(src, dest);
         m_assembler.lsr<64>(dest, src, imm.m_value & 0x3f);
     }
@@ -1920,7 +2101,7 @@ public:
 
     void load16SignedExtendTo32(Address address, RegisterID dest)
     {
-        if (tryLoadSignedWithOffset<16>(dest, address.base, address.offset))
+        if (tryLoadSignedWithOffset<32, 16>(dest, address.base, address.offset))
             return;
 
         signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
@@ -1945,6 +2126,68 @@ public:
     {
         moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
         m_assembler.ldrsh<32>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
+    void load16SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 16>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsh<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load16SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne || address.scale == TimesTwo) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsh<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsh<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load16SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsh<64>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
+    void load32SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 32>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsw<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load32SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne || address.scale == TimesFour) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsw<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsw<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load32SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsw<64>(dest, memoryTempRegister, ARM64Registers::zr);
         if (dest == memoryTempRegister)
             cachedMemoryTempRegister().invalidate();
     }
@@ -2007,7 +2250,7 @@ public:
 
     void load8SignedExtendTo32(Address address, RegisterID dest)
     {
-        if (tryLoadSignedWithOffset<8>(dest, address.base, address.offset))
+        if (tryLoadSignedWithOffset<32, 8>(dest, address.base, address.offset))
             return;
 
         signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
@@ -2032,6 +2275,37 @@ public:
     {
         moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
         m_assembler.ldrsb<32>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
+    void load8SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 8>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsb<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load8SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsb<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsb<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load8SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsb<64>(dest, memoryTempRegister, ARM64Registers::zr);
         if (dest == memoryTempRegister)
             cachedMemoryTempRegister().invalidate();
     }
@@ -2132,6 +2406,11 @@ public:
         store64(dataTempRegister, address);
     }
 
+    void store64(TrustedImm32 imm, BaseIndex address)
+    {
+        store64(TrustedImm64(imm.m_value), address);
+    }
+
     void store64(TrustedImm64 imm, BaseIndex address)
     {
         if (!imm.m_value) {
@@ -2143,82 +2422,84 @@ public:
         store64(dataTempRegister, address);
     }
 
-    void transfer32(Address src, Address dest)
+    // FIXME: This could be a shared implementation with a size template but there's no equivalently templated load/store functions to use.
+    template<typename SrcType, typename DestType>
+    void transfer8(SrcType src, DestType dest)
     {
-        if (src == dest)
-            return;
+        if constexpr (std::equality_comparable_with<SrcType, DestType>) {
+            if (src == dest)
+                return;
+        }
+
+        load8(src, getCachedDataTempRegisterIDAndInvalidate());
+        store8(getCachedDataTempRegisterIDAndInvalidate(), dest);
+    }
+
+    template<typename SrcType, typename DestType>
+    void transfer16(SrcType src, DestType dest)
+    {
+        if constexpr (std::equality_comparable_with<SrcType, DestType>) {
+            if (src == dest)
+                return;
+        }
+
+        load16(src, getCachedDataTempRegisterIDAndInvalidate());
+        store16(getCachedDataTempRegisterIDAndInvalidate(), dest);
+    }
+
+    template<typename SrcType, typename DestType>
+    void transfer32(SrcType src, DestType dest)
+    {
+        if constexpr (std::equality_comparable_with<SrcType, DestType>) {
+            if (src == dest)
+                return;
+        }
+
         load32(src, getCachedDataTempRegisterIDAndInvalidate());
         store32(getCachedDataTempRegisterIDAndInvalidate(), dest);
     }
 
-    void transfer64(Address src, Address dest)
+    template<typename SrcType, typename DestType>
+    void transfer64(SrcType src, DestType dest)
     {
-        if (src == dest)
-            return;
+        if constexpr (std::equality_comparable_with<SrcType, DestType>) {
+            if (src == dest)
+                return;
+        }
+
         load64(src, getCachedDataTempRegisterIDAndInvalidate());
         store64(getCachedDataTempRegisterIDAndInvalidate(), dest);
     }
 
-    void transferFloat(Address src, Address dest)
+    void transfer64(PostIndexAddress src, PostIndexAddress dest)
     {
-        transfer32(src, dest);
+        auto temp = getCachedDataTempRegisterIDAndInvalidate();
+        load64(src, temp);
+        store64(temp, dest);
     }
 
-    void transferDouble(Address src, Address dest)
+    void transferPair64(PostIndexAddress src, PostIndexAddress dest)
     {
-        transfer64(src, dest);
+        auto temp1 = getCachedDataTempRegisterIDAndInvalidate();
+        auto temp2 = getCachedMemoryTempRegisterIDAndInvalidate();
+        loadPair64(src, temp1, temp2);
+        storePair64(temp1, temp2, dest);
     }
 
-    void transferVector(Address src, Address dest)
+    void transferPtr(auto src, auto dest) { transfer64(src, dest); }
+    void transferFloat(auto src, auto dest) { transfer32(src, dest); }
+    void transferDouble(auto src, auto dest) { transfer64(src, dest); }
+
+    template<typename SrcType, typename DestType>
+    void transferVector(SrcType src, DestType dest)
     {
-        if (src == dest)
-            return;
+        if constexpr (std::equality_comparable_with<SrcType, DestType>) {
+            if (src == dest)
+                return;
+        }
+
         loadVector(src, fpTempRegister);
         storeVector(fpTempRegister, dest);
-    }
-
-    void transferPtr(Address src, Address dest)
-    {
-        transfer64(src, dest);
-    }
-
-    void transfer32(BaseIndex src, BaseIndex dest)
-    {
-        if (src == dest)
-            return;
-        load32(src, getCachedDataTempRegisterIDAndInvalidate());
-        store32(getCachedDataTempRegisterIDAndInvalidate(), dest);
-    }
-
-    void transfer64(BaseIndex src, BaseIndex dest)
-    {
-        if (src == dest)
-            return;
-        load64(src, getCachedDataTempRegisterIDAndInvalidate());
-        store64(getCachedDataTempRegisterIDAndInvalidate(), dest);
-    }
-
-    void transferFloat(BaseIndex src, BaseIndex dest)
-    {
-        transfer32(src, dest);
-    }
-
-    void transferDouble(BaseIndex src, BaseIndex dest)
-    {
-        transfer64(src, dest);
-    }
-
-    void transferVector(BaseIndex src, BaseIndex dest)
-    {
-        if (src == dest)
-            return;
-        loadVector(src, fpTempRegister);
-        storeVector(fpTempRegister, dest);
-    }
-
-    void transferPtr(BaseIndex src, BaseIndex dest)
-    {
-        transfer64(src, dest);
     }
 
     DataLabel32 store64WithAddressOffsetPatch(RegisterID src, Address address)
@@ -2552,10 +2833,6 @@ public:
 
     // Floating-point operations:
 
-    static bool supportsFloatingPoint() { return true; }
-    static bool supportsFloatingPointTruncate() { return true; }
-    static bool supportsFloatingPointSqrt() { return true; }
-    static bool supportsFloatingPointAbs() { return true; }
     static bool supportsFloatingPointRounding() { return true; }
     static bool supportsCountPopulation() { return true; }
 
@@ -2618,6 +2895,16 @@ public:
         m_assembler.frintm<32>(dest, src);
     }
 
+    void truncDouble(FPRegisterID src, FPRegisterID dst)
+    {
+        roundTowardZeroDouble(src, dst);
+    }
+
+    void truncFloat(FPRegisterID src, FPRegisterID dst)
+    {
+        roundTowardZeroFloat(src, dst);
+    }
+
     void roundTowardNearestIntDouble(FPRegisterID src, FPRegisterID dest)
     {
         m_assembler.frintn<64>(dest, src);
@@ -2638,6 +2925,29 @@ public:
         m_assembler.frintz<32>(dest, src);
     }
 
+    void roundTowardZeroInt32Double(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsRoundFloatToIntegerFloat());
+        m_assembler.frint32z<64>(dest, src);
+    }
+
+    void roundTowardZeroInt32Float(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsRoundFloatToIntegerFloat());
+        m_assembler.frint32z<32>(dest, src);
+    }
+
+    void roundTowardZeroInt64Double(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsRoundFloatToIntegerFloat());
+        m_assembler.frint64z<64>(dest, src);
+    }
+
+    void roundTowardZeroInt64Float(FPRegisterID src, FPRegisterID dest)
+    {
+        ASSERT(supportsRoundFloatToIntegerFloat());
+        m_assembler.frint64z<32>(dest, src);
+    }
 
     // Convert 'src' to an integer, and places the resulting 'dest'.
     // If the result is not representable as a 32 bit value, branch.
@@ -2646,9 +2956,12 @@ public:
     void branchConvertDoubleToInt32(FPRegisterID src, RegisterID dest, JumpList& failureCases, FPRegisterID, bool negZeroCheck = true)
     {
         m_assembler.fcvtns<32, 64>(dest, src);
-
-        // Convert the integer result back to float & compare to the original value - if not equal or unordered (NaN) then jump.
-        m_assembler.scvtf<64, 32>(fpTempRegister, dest);
+        if (supportsRoundFloatToIntegerFloat())
+            m_assembler.frint32z<64>(fpTempRegister, src);
+        else {
+            // Convert the integer result back to float & compare to the original value - if not equal or unordered (NaN) then jump.
+            m_assembler.scvtf<64, 32>(fpTempRegister, dest);
+        }
         failureCases.append(branchDouble(DoubleNotEqualOrUnordered, src, fpTempRegister));
 
         // Test for negative zero.
@@ -2791,7 +3104,17 @@ public:
     {
         m_assembler.scvtf<32, 32>(dest, src);
     }
-    
+
+    void convertUInt32ToDouble(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.ucvtf<64, 32>(dest, src);
+    }
+
+    void convertUInt32ToFloat(RegisterID src, FPRegisterID dest)
+    {
+        m_assembler.ucvtf<32, 32>(dest, src);
+    }
+
     void convertInt64ToDouble(RegisterID src, FPRegisterID dest)
     {
         m_assembler.scvtf<64, 64>(dest, src);
@@ -2846,7 +3169,7 @@ public:
         }
 
         signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
-        m_assembler.add<128>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
         m_assembler.ldr<128>(dest, address.base, memoryTempRegister);
     }
     
@@ -2945,20 +3268,150 @@ public:
 
     void moveDouble(FPRegisterID src, FPRegisterID dest)
     {
-        m_assembler.fmov<64>(dest, src);
+        if (src != dest)
+            m_assembler.fmov<64>(dest, src);
     }
 
     void moveVector(FPRegisterID src, FPRegisterID dest)
     {
-        m_assembler.vorr<128>(dest, src, src);
+        if (src != dest)
+            m_assembler.vorr<128>(dest, src, src);
     }
 
-    void materializeVector(v128_t value, FPRegisterID dest)
+    void move128ToVector(v128_t value, FPRegisterID dest)
     {
+        // Check for all zeros
         if (bitEquals(value, vectorAllZeros())) {
             moveZeroToVector(dest);
             return;
         }
+
+        // Check if upper and lower 64-bit halves are equal
+        bool sameUInt64Elements = false;
+        if (value.u64x2[0] == value.u64x2[1]) {
+            sameUInt64Elements = true;
+            uint64_t repeatedValue = value.u64x2[0];
+
+            // Try FP immediate encoding - use vector FMOV to load both lanes at once
+            if (ARM64Assembler::canEncodeFPImm<64>(repeatedValue)) {
+                m_assembler.fmov_v<128, 64>(dest, repeatedValue);
+                return;
+            }
+
+            // Try byte-mask pattern
+            auto fpImm = ARM64FPImmediate::create64(repeatedValue);
+            if (fpImm.isValid()) {
+                m_assembler.movi<128, 64>(dest, fpImm.value());
+                return;
+            }
+        }
+
+        // Check if all four 32-bit lanes are equal
+        // This allows using movi<128> which replicates the pattern across all lanes
+        bool sameUInt32Elements = false;
+        if (value.u32x4[0] == value.u32x4[1] && value.u32x4[0] == value.u32x4[2] && value.u32x4[0] == value.u32x4[3]) {
+            sameUInt32Elements = true;
+            uint32_t repeatedValue = value.u32x4[0];
+
+            // Try FP immediate encoding - use vector FMOV to load all four lanes at once
+            if (ARM64Assembler::canEncodeFPImm<32>(repeatedValue)) {
+                m_assembler.fmov_v<128, 32>(dest, repeatedValue);
+                return;
+            }
+
+            // Try LSL shifted immediate
+            auto shiftedImm = ARM64ShiftedImmediate32::create(repeatedValue);
+            if (shiftedImm.isValid()) {
+                m_assembler.movi<128, 32>(dest, shiftedImm.immediate(), shiftedImm.shift());
+                return;
+            }
+
+            // Try inverted LSL shifted immediate
+            auto shiftedImmInverted = ARM64ShiftedImmediate32::create(~repeatedValue);
+            if (shiftedImmInverted.isValid()) {
+                m_assembler.mvni<128, 32>(dest, shiftedImmInverted.immediate(), shiftedImmInverted.shift());
+                return;
+            }
+
+            // Try MSL patterns
+            auto mslImm = ARM64ShiftedImmediateMSL32::create(repeatedValue);
+            if (mslImm.isValid()) {
+                m_assembler.movi<128, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImm.immediate(), mslImm.shift());
+                return;
+            }
+
+            // Try inverted MSL patterns
+            auto mslImmInverted = ARM64ShiftedImmediateMSL32::create(~repeatedValue);
+            if (mslImmInverted.isValid()) {
+                m_assembler.mvni<128, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImmInverted.immediate(), mslImmInverted.shift());
+                return;
+            }
+        }
+
+        // Check if all eight 16-bit lanes are equal
+        // Example: value.u16x8 all equal to 0x1200 → movi Vd.8H, #0x12, lsl #8
+        bool sameUInt16Elements = false;
+        if (value.u16x8[0] == value.u16x8[1] && value.u16x8[0] == value.u16x8[2] && value.u16x8[0] == value.u16x8[3] &&
+            value.u16x8[0] == value.u16x8[4] && value.u16x8[0] == value.u16x8[5] && value.u16x8[0] == value.u16x8[6] && value.u16x8[0] == value.u16x8[7]) {
+            sameUInt16Elements = true;
+            uint16_t repeatedValue = value.u16x8[0];
+
+            // Try FP immediate encoding - use vector FMOV to load all four lanes at once
+            if (supportsFloat16() && ARM64Assembler::canEncodeFPImm<16>(repeatedValue)) {
+                m_assembler.fmov_v<128, 16>(dest, repeatedValue);
+                return;
+            }
+
+            // Try 16-bit LSL shifted immediate
+            auto shiftedImm16 = ARM64ShiftedImmediate16::create(repeatedValue);
+            if (shiftedImm16.isValid()) {
+                m_assembler.movi<128, 16>(dest, shiftedImm16.immediate(), shiftedImm16.shift());
+                return;
+            }
+
+            // Try inverted 16-bit LSL shifted immediate
+            auto shiftedImm16Inverted = ARM64ShiftedImmediate16::create(static_cast<uint16_t>(~repeatedValue));
+            if (shiftedImm16Inverted.isValid()) {
+                m_assembler.mvni<128, 16>(dest, shiftedImm16Inverted.immediate(), shiftedImm16Inverted.shift());
+                return;
+            }
+        }
+
+        // Check if all 16 bytes are the same (8-bit scalar replication)
+        // Example: all value.u8x16 equal to 0x42 → movi v0.16B, #0x42
+        uint8_t byte0 = value.u8x16[0];
+        bool allBytesEqual = true;
+        for (int i = 1; i < 16; ++i) {
+            if (value.u8x16[i] != byte0) {
+                allBytesEqual = false;
+                break;
+            }
+        }
+        if (allBytesEqual) {
+            m_assembler.movi<128, 8>(dest, byte0);
+            return;
+        }
+
+        // Now, try dup patterns.
+        if (sameUInt16Elements) {
+            move(TrustedImm32(value.u16x8[0]), scratchRegister());
+            vectorSplatInt16(scratchRegister(), dest);
+            return;
+        }
+
+        if (sameUInt32Elements) {
+            move(TrustedImm32(value.u32x4[0]), scratchRegister());
+            vectorSplatInt32(scratchRegister(), dest);
+            return;
+        }
+
+        if (sameUInt64Elements) {
+            move(TrustedImm64(value.u64x2[0]), scratchRegister());
+            vectorSplatInt64(scratchRegister(), dest);
+            return;
+        }
+
+        // Fallback: Load two 64-bit halves via GPR and vector lane insertion
         move(TrustedImm64(value.u64x2[0]), scratchRegister());
         vectorSplatInt64(scratchRegister(), dest);
         move(TrustedImm64(value.u64x2[1]), scratchRegister());
@@ -2968,19 +3421,19 @@ public:
     void moveZeroToDouble(FPRegisterID reg)
     {
         // Intentionally use 128bit width here to clear all part of this register with zero.
-        m_assembler.movi<128>(reg, 0);
+        m_assembler.movi<128, 8>(reg, 0);
     }
 
     void moveZeroToFloat(FPRegisterID reg)
     {
         // Intentionally use 128bit width here to clear all part of this register with zero.
-        m_assembler.movi<128>(reg, 0);
+        m_assembler.movi<128, 8>(reg, 0);
     }
 
     void moveZeroToFloat16(FPRegisterID reg)
     {
         // Intentionally use 128bit width here to clear all part of this register with zero.
-        m_assembler.movi<128>(reg, 0);
+        m_assembler.movi<128, 8>(reg, 0);
     }
 
     void moveDoubleTo64(FPRegisterID src, RegisterID dest)
@@ -3004,8 +3457,131 @@ public:
         m_assembler.fmov<64>(dest, src);
     }
 
+    // Move a 64-bit immediate into a double register (D register).
+    // This function tries multiple ARM64 SIMD immediate encoding schemes in order of preference:
+    //
+    // 1. Zero: Use movi<128> to clear the entire register (handled by moveZeroToDouble)
+    // 2. FP immediate: Use fmov if the value matches ARM64's 8-bit FP immediate format
+    // 3. Byte mask: Use movi<64> for patterns where each byte is 0x00 or 0xFF
+    // 4. Inverted byte mask: Use mvni<64> for patterns where ~value is a byte mask
+    // 5. Repeated 32-bit: If top and bottom 32 bits are equal, use move32ToFloat logic
+    // 6. Fallback: Load immediate to GPR, then use fmov to transfer to FP register
+    //
+    // The recursive 32-bit check (step 5) allows us to use all the 32-bit optimizations
+    // (LSL shifts, MSL patterns, etc.) for 64-bit values with repeated halves.
+    //
+    // Examples:
+    //   0x8000000080000000 → Use move32ToFloat logic for 0x80000000
+    //   0xFF00FF00FF00FF00 → Byte mask pattern
+    //   0x00FF00FF00FF00FF → Inverted byte mask of 0xFF00FF00FF00FF00
     void move64ToDouble(TrustedImm64 imm, FPRegisterID dest)
     {
+        if (!imm.m_value) {
+            moveZeroToDouble(dest);
+            return;
+        }
+
+        if (ARM64Assembler::canEncodeFPImm<64>(imm.m_value)) {
+            m_assembler.fmov<64>(dest, imm.m_value);
+            return;
+        }
+
+        uint64_t value = static_cast<uint64_t>(imm.m_value);
+
+        // Check for byte-mask pattern where each byte is 0x00 or 0xFF
+        auto fpImm = ARM64FPImmediate::create64(value);
+        if (fpImm.isValid()) {
+            m_assembler.movi<64, 64>(dest, fpImm.value());
+            return;
+        }
+
+        // Check if top and bottom 32 bits are equal - if so, we can use all
+        // the 32-bit immediate patterns (LSL, MSL, byte mask) on the repeated value
+        {
+            uint32_t low32 = static_cast<uint32_t>(value);
+            uint32_t high32 = static_cast<uint32_t>(value >> 32);
+            if (low32 == high32) {
+                // Try FP immediate encoding - use vector FMOV to load both lanes
+                if (ARM64Assembler::canEncodeFPImm<32>(low32)) {
+                    m_assembler.fmov_v<64, 32>(dest, low32);
+                    return;
+                }
+
+                // Try 32-bit shifted immediate (LSL)
+                auto shiftedImm = ARM64ShiftedImmediate32::create(low32);
+                if (shiftedImm.isValid()) {
+                    m_assembler.movi<64, 32>(dest, shiftedImm.immediate(), shiftedImm.shift());
+                    return;
+                }
+
+                // Try inverted 32-bit shifted immediate (LSL)
+                auto shiftedImmInverted = ARM64ShiftedImmediate32::create(~low32);
+                if (shiftedImmInverted.isValid()) {
+                    m_assembler.mvni<64, 32>(dest, shiftedImmInverted.immediate(), shiftedImmInverted.shift());
+                    return;
+                }
+
+                // Try MSL (Mask Shift Left) patterns
+                auto mslImm = ARM64ShiftedImmediateMSL32::create(low32);
+                if (mslImm.isValid()) {
+                    m_assembler.movi<64, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImm.immediate(), mslImm.shift());
+                    return;
+                }
+
+                // Try inverted MSL patterns
+                auto mslImmInverted = ARM64ShiftedImmediateMSL32::create(~low32);
+                if (mslImmInverted.isValid()) {
+                    m_assembler.mvni<64, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImmInverted.immediate(), mslImmInverted.shift());
+                    return;
+                }
+            }
+        }
+
+        // Check if all four 16-bit values are equal
+        // Example: 0x1200120012001200 can be encoded as movi Vd.4H, #0x12, lsl #8
+        {
+            uint16_t lane0 = static_cast<uint16_t>(value);
+            uint16_t lane1 = static_cast<uint16_t>(value >> 16);
+            uint16_t lane2 = static_cast<uint16_t>(value >> 32);
+            uint16_t lane3 = static_cast<uint16_t>(value >> 48);
+            if (lane0 == lane1 && lane0 == lane2 && lane0 == lane3) {
+                // Try FP immediate encoding - use vector FMOV to load both lanes
+                if (supportsFloat16() && ARM64Assembler::canEncodeFPImm<16>(lane0)) {
+                    m_assembler.fmov_v<64, 16>(dest, lane0);
+                    return;
+                }
+
+                // Try 16-bit LSL shifted immediate
+                auto shiftedImm16 = ARM64ShiftedImmediate16::create(lane0);
+                if (shiftedImm16.isValid()) {
+                    m_assembler.movi<64, 16>(dest, shiftedImm16.immediate(), shiftedImm16.shift());
+                    return;
+                }
+
+                // Try inverted 16-bit LSL shifted immediate
+                auto shiftedImm16Inverted = ARM64ShiftedImmediate16::create(static_cast<uint16_t>(~lane0));
+                if (shiftedImm16Inverted.isValid()) {
+                    m_assembler.mvni<64, 16>(dest, shiftedImm16Inverted.immediate(), shiftedImm16Inverted.shift());
+                    return;
+                }
+            }
+        }
+
+        // Check if all 8 bytes are the same (8-bit scalar replication)
+        // Example: 0x4242424242424242 → movi v0.8B, #0x42
+        uint8_t byte0 = static_cast<uint8_t>(value);
+        bool allBytesEqual = true;
+        for (int i = 1; i < 8; ++i) {
+            if (static_cast<uint8_t>(value >> (i * 8)) != byte0) {
+                allBytesEqual = false;
+                break;
+            }
+        }
+        if (allBytesEqual) {
+            m_assembler.movi<64, 8>(dest, byte0);
+            return;
+        }
+
         move(imm, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.fmov<64>(dest, dataTempRegister);
     }
@@ -3015,8 +3591,119 @@ public:
         m_assembler.fmov<32>(dest, src);
     }
 
+    // Move a 32-bit immediate into a float register (S register).
+    // This function tries multiple ARM64 SIMD immediate encoding schemes in order of preference:
+    //
+    // 1. Zero: Use movi<128> to clear the entire register (handled by moveZeroToFloat)
+    // 2. FP immediate: Use fmov if the value matches ARM64's 8-bit FP immediate format
+    // 3. Shifted immediate (LSL): Use movi Vd.2S, #imm8, lsl #shift for patterns like 0x80000000
+    // 4. Inverted shifted (LSL): Use mvni Vd.2S, #imm8, lsl #shift for patterns like 0x7FFFFFFF
+    // 5. MSL patterns: Use movi/mvni Vd.2S, #imm8, MSL #shift for masks with ones (e.g., 0x0042FFFF)
+    // 6. Byte mask: Use movi<64> for patterns where each byte is 0x00 or 0xFF
+    // 7. Fallback: Load immediate to GPR, then use fmov to transfer to FP register
+    //
+    // Encodings 3-6 provide single-instruction materialization (vs 2-instruction fallback),
+    // which reduces code size by 50% and potentially improves performance.
+    //
+    // Common patterns optimized:
+    //   0x80000000 → movi v0.2S, #0x80, lsl #24  (sign bit, used in abs/negate)
+    //   0x7FFFFFFF → mvni v0.2S, #0x80, lsl #24  (INT32_MAX, used in range checking)
+    //   0x000000FF → movi v0.2S, #0xFF, lsl #0   (byte mask)
+    //   0x0042FFFF → movi v0.2S, #0x42, MSL #16  (mask with specific byte)
+    //   0xFFBD0000 → mvni v0.2S, #0x42, MSL #16  (inverted mask)
     void move32ToFloat(TrustedImm32 imm, FPRegisterID dest)
     {
+        if (!imm.m_value) {
+            moveZeroToFloat(dest);
+            return;
+        }
+
+        if (ARM64Assembler::canEncodeFPImm<32>(imm.m_value)) {
+            m_assembler.fmov<32>(dest, imm.m_value);
+            return;
+        }
+
+        // Check for 32-bit shifted immediate (single byte at shift 0, 8, 16, or 24)
+        // Example: 0x80000000 → imm=0x80, shift=24
+        auto shiftedImm = ARM64ShiftedImmediate32::create(static_cast<uint32_t>(imm.m_value));
+        if (shiftedImm.isValid()) {
+            m_assembler.movi<64, 32>(dest, shiftedImm.immediate(), shiftedImm.shift());
+            return;
+        }
+
+        // Check for inverted 32-bit shifted immediate
+        // Example: 0x7FFFFFFF → ~0x80000000 → imm=0x80, shift=24
+        auto shiftedImmInverted = ARM64ShiftedImmediate32::create(static_cast<uint32_t>(~imm.m_value));
+        if (shiftedImmInverted.isValid()) {
+            m_assembler.mvni<64, 32>(dest, shiftedImmInverted.immediate(), shiftedImmInverted.shift());
+            return;
+        }
+
+        // Check for MSL (Mask Shift Left) patterns
+        // Example: 0x0042FFFF → imm=0x42, shift=16, MSL
+        auto mslImm = ARM64ShiftedImmediateMSL32::create(static_cast<uint32_t>(imm.m_value));
+        if (mslImm.isValid()) {
+            m_assembler.movi<64, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImm.immediate(), mslImm.shift());
+            return;
+        }
+
+        // Check for inverted MSL patterns
+        // Example: 0xFFBD0000 → ~0x0042FFFF → imm=0x42, shift=16, MSL
+        auto mslImmInverted = ARM64ShiftedImmediateMSL32::create(static_cast<uint32_t>(~imm.m_value));
+        if (mslImmInverted.isValid()) {
+            m_assembler.mvni<64, 32, ARM64Assembler::ShiftMode::MSL>(dest, mslImmInverted.immediate(), mslImmInverted.shift());
+            return;
+        }
+
+        // Check for byte-mask pattern where each byte is 0x00 or 0xFF
+        // Example: 0xFF00FF00 → each byte is independently 0x00 or 0xFF
+        // Generate 64bit movi pattern and use movi<64>.
+        auto fpImm = ARM64FPImmediate::create64(static_cast<uint32_t>(imm.m_value));
+        if (fpImm.isValid()) {
+            m_assembler.movi<64, 64>(dest, fpImm.value());
+            return;
+        }
+
+        // Check if the 32-bit value consists of two repeated 16-bit halves
+        // Example: 0x12001200 can be encoded as movi Vd.4H, #0x12, lsl #8
+        {
+            uint16_t low16 = static_cast<uint16_t>(imm.m_value);
+            uint16_t high16 = static_cast<uint16_t>(imm.m_value >> 16);
+            if (low16 == high16) {
+                // Try FP immediate encoding - use vector FMOV to load both lanes
+                if (supportsFloat16() && ARM64Assembler::canEncodeFPImm<16>(low16)) {
+                    m_assembler.fmov_v<64, 16>(dest, low16);
+                    return;
+                }
+
+                // Try 16-bit LSL shifted immediate
+                auto shiftedImm16 = ARM64ShiftedImmediate16::create(low16);
+                if (shiftedImm16.isValid()) {
+                    m_assembler.movi<64, 16>(dest, shiftedImm16.immediate(), shiftedImm16.shift());
+                    return;
+                }
+
+                // Try inverted 16-bit LSL shifted immediate
+                auto shiftedImm16Inverted = ARM64ShiftedImmediate16::create(static_cast<uint16_t>(~low16));
+                if (shiftedImm16Inverted.isValid()) {
+                    m_assembler.mvni<64, 16>(dest, shiftedImm16Inverted.immediate(), shiftedImm16Inverted.shift());
+                    return;
+                }
+            }
+        }
+
+        // Check if all 4 bytes are the same (8-bit scalar replication)
+        // Example: 0x42424242 → movi v0.8B, #0x42
+        uint8_t byte0 = static_cast<uint8_t>(imm.m_value);
+        uint8_t byte1 = static_cast<uint8_t>(imm.m_value >> 8);
+        uint8_t byte2 = static_cast<uint8_t>(imm.m_value >> 16);
+        uint8_t byte3 = static_cast<uint8_t>(imm.m_value >> 24);
+        if (byte0 == byte1 && byte0 == byte2 && byte0 == byte3) {
+            m_assembler.movi<64, 8>(dest, byte0);
+            return;
+        }
+
+        // Fallback: Two-instruction sequence (GPR load + fmov)
         move(imm, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.fmov<32>(dest, dataTempRegister);
     }
@@ -3030,6 +3717,41 @@ public:
     void move16ToFloat16(TrustedImm32 imm, FPRegisterID dest)
     {
         ASSERT(supportsFloat16());
+        uint16_t value = static_cast<uint16_t>(imm.m_value);
+
+        if (!value) {
+            moveZeroToFloat(dest);
+            return;
+        }
+
+        if (ARM64Assembler::canEncodeFPImm<16>(value)) {
+            m_assembler.fmov<16>(dest, value);
+            return;
+        }
+
+        // Try 16-bit LSL shifted immediate
+        auto shiftedImm16 = ARM64ShiftedImmediate16::create(value);
+        if (shiftedImm16.isValid()) {
+            m_assembler.movi<64, 16>(dest, shiftedImm16.immediate(), shiftedImm16.shift());
+            return;
+        }
+
+        // Try inverted 16-bit LSL shifted immediate
+        auto shiftedImm16Inverted = ARM64ShiftedImmediate16::create(static_cast<uint16_t>(~value));
+        if (shiftedImm16Inverted.isValid()) {
+            m_assembler.mvni<64, 16>(dest, shiftedImm16Inverted.immediate(), shiftedImm16Inverted.shift());
+            return;
+        }
+
+        // Check if all 4 bytes are the same (8-bit scalar replication)
+        // Example: 0x42424242 → movi v0.8B, #0x42
+        uint8_t byte0 = static_cast<uint8_t>(value);
+        uint8_t byte1 = static_cast<uint8_t>(value >> 8);
+        if (byte0 == byte1) {
+            m_assembler.movi<64, 8>(dest, byte0);
+            return;
+        }
+
         move(imm, getCachedDataTempRegisterIDAndInvalidate());
         m_assembler.fmov<16>(dest, dataTempRegister);
     }
@@ -3153,7 +3875,7 @@ public:
                 m_assembler.fcsel<datasize>(thenCase, elseCase, thenCase, Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionNE);
             } else {
-                m_assembler.fmov<64>(dest, elseCase);
+                moveDouble(elseCase, dest);
                 Jump unordered = makeBranch(Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionNE);
                 unordered.link(this);
@@ -3169,7 +3891,7 @@ public:
                 m_assembler.fcsel<datasize>(elseCase, thenCase, elseCase, Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionEQ);
             } else {
-                m_assembler.fmov<64>(dest, thenCase);
+                moveDouble(thenCase, dest);
                 Jump unordered = makeBranch(Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionEQ);
                 unordered.link(this);
@@ -3222,6 +3944,16 @@ public:
     void mulFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         m_assembler.fmul<32>(dest, op1, op2);
+    }
+
+    void multiplyNegDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        m_assembler.fnmul<64>(dest, op1, op2);
+    }
+
+    void multiplyNegFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        m_assembler.fnmul<32>(dest, op1, op2);
     }
 
     void andDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
@@ -3622,7 +4354,10 @@ public:
 
     void zeroExtend32ToWord(RegisterID src, RegisterID dest)
     {
-        and64(TrustedImm64(0xffffffffU), src, dest);
+        if (src == ARM64Registers::zr && dest != ARM64Registers::sp)
+            m_assembler.movz<32>(dest, 0);
+        else
+            m_assembler.mov<32>(dest, src);
     }
 
     void zeroExtend48ToWord(RegisterID src, RegisterID dest)
@@ -3663,6 +4398,32 @@ public:
             m_assembler.cmp<32>(left, dataTempRegister);
         }
         m_assembler.csel<64>(dest, thenCase, elseCase, ARM64Condition(cond));
+    }
+
+    void moveConditionally32(RelationalCondition cond, RegisterID left, TrustedImm32 right, TrustedImm32 thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        auto immediate = right.m_value;
+        if (!immediate) {
+            if (auto resultCondition = commuteCompareToZeroIntoTest(cond)) {
+                moveConditionallyTest32(*resultCondition, left, left, thenCase, elseCase, dest);
+                return;
+            }
+        }
+
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.cmp<32>(left, u12, shift);
+            else
+                m_assembler.cmn<32>(left, u12, shift);
+            moveToCachedReg(thenCase, dataMemoryTempRegister());
+            m_assembler.csel<64>(dest, dataTempRegister, elseCase, ARM64Condition(cond));
+        } else {
+            moveToCachedReg(right, dataMemoryTempRegister());
+            m_assembler.cmp<32>(left, dataTempRegister);
+            moveToCachedReg(thenCase, dataMemoryTempRegister());
+            m_assembler.csel<64>(dest, dataTempRegister, elseCase, ARM64Condition(cond));
+        }
     }
 
     void moveConditionally64(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID src, RegisterID dest)
@@ -3741,10 +4502,24 @@ public:
         m_assembler.csel<64>(dest, thenCase, elseCase, ARM64Condition(cond));
     }
 
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, RegisterID right, TrustedImm32 thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        m_assembler.tst<32>(left, right);
+        moveToCachedReg(thenCase, dataMemoryTempRegister());
+        m_assembler.csel<64>(dest, dataTempRegister, elseCase, ARM64Condition(cond));
+    }
+
     void moveConditionallyTest32(ResultCondition cond, RegisterID left, TrustedImm32 right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
     {
         test32(left, right);
         m_assembler.csel<64>(dest, thenCase, elseCase, ARM64Condition(cond));
+    }
+
+    void moveConditionallyTest32(ResultCondition cond, RegisterID left, TrustedImm32 right, TrustedImm32 thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        test32(left, right);
+        moveToCachedReg(thenCase, dataMemoryTempRegister());
+        m_assembler.csel<64>(dest, dataTempRegister, elseCase, ARM64Condition(cond));
     }
 
     void moveConditionallyTest64(ResultCondition cond, RegisterID testReg, RegisterID mask, RegisterID src, RegisterID dest)
@@ -3862,6 +4637,10 @@ public:
     Jump branch32(RelationalCondition cond, RegisterID left, TrustedImm32 right)
     {
         auto immediate = right.m_value;
+
+        if (auto result = attemptToFoldToBitTest32(cond, left, immediate))
+            return result.value();
+
         if (!immediate) {
             if (auto resultCondition = commuteCompareToZeroIntoTest(cond))
                 return branchTest32(*resultCondition, left, left);
@@ -3935,6 +4714,10 @@ public:
     Jump branch64(RelationalCondition cond, RegisterID left, TrustedImm32 right)
     {
         auto immediate = right.m_value;
+
+        if (auto result = attemptToFoldToBitTest64(cond, left, immediate))
+            return result.value();
+
         if (!immediate) {
             if (auto resultCondition = commuteCompareToZeroIntoTest(cond))
                 return branchTest64(*resultCondition, left, left);
@@ -3956,6 +4739,10 @@ public:
     Jump branch64(RelationalCondition cond, RegisterID left, TrustedImm64 right)
     {
         auto immediate = right.m_value;
+
+        if (auto result = attemptToFoldToBitTest64(cond, left, immediate))
+            return result.value();
+
         if (!immediate) {
             if (auto resultCondition = commuteCompareToZeroIntoTest(cond))
                 return branchTest64(*resultCondition, left, left);
@@ -4235,9 +5022,9 @@ public:
         move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), getCachedMemoryTempRegisterIDAndInvalidate());
 
         if (MacroAssemblerHelpers::isUnsigned<MacroAssemblerARM64>(cond))
-            m_assembler.ldrb(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrb(memoryTempRegister, memoryTempRegister, address.base);
         else
-            m_assembler.ldrsb<32>(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrsb<32>(memoryTempRegister, memoryTempRegister, address.base);
 
         return branchTest32(cond, memoryTempRegister, mask8);
     }
@@ -4269,9 +5056,9 @@ public:
         move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), getCachedMemoryTempRegisterIDAndInvalidate());
 
         if (MacroAssemblerHelpers::isUnsigned<MacroAssemblerARM64>(cond))
-            m_assembler.ldrh(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrh(memoryTempRegister, memoryTempRegister, address.base);
         else
-            m_assembler.ldrsh<32>(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrsh<32>(memoryTempRegister, memoryTempRegister, address.base);
 
         return branchTest32(cond, memoryTempRegister, mask16);
     }
@@ -4788,6 +5575,117 @@ public:
         compare32(cond, memoryTempRegister, dataTempRegister, dest);
     }
 
+    // ARM64 compare instructions that only set flags (for use with ccmp chains)
+    // These emit cmp/fcmp instructions that set NZCV flags without storing result
+    void compareOnFlags32(RegisterID left, RegisterID right)
+    {
+        m_assembler.cmp<32>(left, right);
+    }
+
+    void compareOnFlags32(RegisterID left, TrustedImm32 right)
+    {
+        auto immediate = right.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.cmp<32>(left, u12, shift);
+            else
+                m_assembler.cmn<32>(left, u12, shift);
+        } else {
+            moveToCachedReg(right, dataMemoryTempRegister());
+            m_assembler.cmp<32>(left, dataTempRegister);
+        }
+    }
+
+    void compareOnFlags64(RegisterID left, RegisterID right)
+    {
+        m_assembler.cmp<64>(left, right);
+    }
+
+    void compareOnFlags64(RegisterID left, TrustedImm32 right)
+    {
+        auto immediate = right.m_value;
+        if (auto tuple = tryExtractShiftedImm(immediate)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.cmp<64>(left, u12, shift);
+            else
+                m_assembler.cmn<64>(left, u12, shift);
+        } else {
+            moveToCachedReg(TrustedImm64(static_cast<int64_t>(right.m_value)), dataMemoryTempRegister());
+            m_assembler.cmp<64>(left, dataTempRegister);
+        }
+    }
+
+    void compareOnFlagsFloat(FPRegisterID left, FPRegisterID right)
+    {
+        m_assembler.fcmp<32>(left, right);
+    }
+
+    void compareOnFlagsDouble(FPRegisterID left, FPRegisterID right)
+    {
+        m_assembler.fcmp<64>(left, right);
+    }
+
+    // ARM64 conditional compare (ccmp) instructions
+    // These conditionally update flags based on a condition
+    void compareConditionallyOnFlags32(RegisterID left, RegisterID right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        m_assembler.ccmp<32>(left, right, nzcv.m_value, ARM64Condition(cond));
+    }
+
+    void compareConditionallyOnFlags32(RegisterID left, TrustedImm32 right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        // ccmp supports 5-bit immediates (0-31), ccmn supports negative immediates (-31 to -1)
+        if (-31 <= right.m_value && right.m_value <= 31) {
+            if (right.m_value < 0)
+                m_assembler.ccmn<32>(left, UInt5(-right.m_value), nzcv.m_value, ARM64Condition(cond));
+            else
+                m_assembler.ccmp<32>(left, UInt5(right.m_value), nzcv.m_value, ARM64Condition(cond));
+            return;
+        }
+
+        moveToCachedReg(right, dataMemoryTempRegister());
+        compareConditionallyOnFlags32(left, dataTempRegister, nzcv, cond);
+    }
+
+    void compareConditionallyOnFlags64(RegisterID left, RegisterID right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        m_assembler.ccmp<64>(left, right, nzcv.m_value, ARM64Condition(cond));
+    }
+
+    void compareConditionallyOnFlags64(RegisterID left, TrustedImm32 right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        // ccmp supports 5-bit immediates (0-31), ccmn supports negative immediates (-31 to -1)
+        if (-31 <= right.m_value && right.m_value <= 31) {
+            if (right.m_value < 0)
+                m_assembler.ccmn<64>(left, UInt5(-right.m_value), nzcv.m_value, ARM64Condition(cond));
+            else
+                m_assembler.ccmp<64>(left, UInt5(right.m_value), nzcv.m_value, ARM64Condition(cond));
+            return;
+        }
+        moveToCachedReg(TrustedImm64(static_cast<int64_t>(right.m_value)), dataMemoryTempRegister());
+        compareConditionallyOnFlags64(left, dataTempRegister, nzcv, cond);
+    }
+
+    void compareConditionallyOnFlagsFloat(FPRegisterID left, FPRegisterID right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        m_assembler.fccmp<32>(left, right, nzcv.m_value, ARM64Condition(cond));
+    }
+
+    void compareConditionallyOnFlagsDouble(FPRegisterID left, FPRegisterID right, TrustedImm32 nzcv, RelationalCondition cond)
+    {
+        m_assembler.fccmp<64>(left, right, nzcv.m_value, ARM64Condition(cond));
+    }
+
+    // Branch on already-set condition flags (for use after ccmp)
+    // This emits a conditional branch without any comparison instruction.
+    // The flags must have been set by a previous instruction (e.g., ccmp).
+    Jump branchOnFlags(RelationalCondition cond)
+    {
+        return Jump(makeBranch(cond));
+    }
+
     void test32(ResultCondition cond, RegisterID src, RegisterID mask, RegisterID dest)
     {
         m_assembler.tst<32>(src, mask);
@@ -4980,7 +5878,7 @@ public:
 
     static void reemitInitialMoveWithPatch(void* address, void* value)
     {
-        Assembler::setPointer(static_cast<int*>(address), value, dataTempRegister, true);
+        Assembler::setPointer<jitMemcpyRepatchFlush>(static_cast<int*>(address), value, dataTempRegister);
     }
 
     // Miscellaneous operations:
@@ -5017,32 +5915,44 @@ public:
     {
         m_assembler.dmbISH();
     }
-    
+
     void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
     {
-        m_assembler.ldar<8>(dest, extractSimpleAddress(address));
+        loadAcq8(address, dest);
+        signExtend8To32(dest, dest);
     }
-    
+
+    void loadAcq8SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq8(address, dest);
+        signExtend8To64(dest, dest);
+    }
+
     void loadAcq8(Address address, RegisterID dest)
     {
-        loadAcq8SignedExtendTo32(address, dest);
-        and32(TrustedImm32(0xff), dest);
+        m_assembler.ldar<8>(dest, extractSimpleAddress(address));
     }
     
     void storeRel8(RegisterID src, Address address)
     {
         m_assembler.stlr<8>(src, extractSimpleAddress(address));
     }
-    
+
     void loadAcq16SignedExtendTo32(Address address, RegisterID dest)
     {
-        m_assembler.ldar<16>(dest, extractSimpleAddress(address));
+        loadAcq16(address, dest);
+        signExtend16To32(dest, dest);
     }
-    
+
+    void loadAcq16SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq16(address, dest);
+        signExtend16To64(dest, dest);
+    }
+
     void loadAcq16(Address address, RegisterID dest)
     {
-        loadAcq16SignedExtendTo32(address, dest);
-        and32(TrustedImm32(0xffff), dest);
+        m_assembler.ldar<16>(dest, extractSimpleAddress(address));
     }
     
     void storeRel16(RegisterID src, Address address)
@@ -5054,7 +5964,13 @@ public:
     {
         m_assembler.ldar<32>(dest, extractSimpleAddress(address));
     }
-    
+
+    void loadAcq32SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq32(address, dest);
+        signExtend32To64(dest, dest);
+    }
+
     void loadAcq64(Address address, RegisterID dest)
     {
         m_assembler.ldar<64>(dest, extractSimpleAddress(address));
@@ -5422,6 +6338,14 @@ public:
 #endif
     }
 
+    ALWAYS_INLINE static bool supportsDotProd()
+    {
+        if (s_dotProdCheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+
+        return s_dotProdCheckState == CPUIDCheckState::Set;
+    }
+
     ALWAYS_INLINE static bool supportsLSE()
     {
 #if HAVE(LSE_INSTRUCTION)
@@ -5443,6 +6367,30 @@ public:
             collectCPUFeatures();
 
         return s_jscvtCheckState == CPUIDCheckState::Set;
+#endif
+    }
+
+    ALWAYS_INLINE static bool supportsRoundFloatToIntegerFloat()
+    {
+#if HAVE(FRINT_INSTRUCTION)
+        return true;
+#else
+        if (s_frintCheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+
+        return s_frintCheckState == CPUIDCheckState::Set;
+#endif
+    }
+
+    ALWAYS_INLINE static bool supportsSHA3()
+    {
+#if HAVE(SHA3_INSTRUCTION)
+        return true;
+#else
+        if (s_sha3CheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+
+        return s_sha3CheckState == CPUIDCheckState::Set;
 #endif
     }
 
@@ -5639,6 +6587,16 @@ public:
         }
     }
 
+    void add64(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        m_assembler.add(dest, left, right);
+    }
+
+    void sub64(FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        m_assembler.sub(dest, left, right);
+    }
+
     void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         if (scalarTypeIsFloatingPoint(simdInfo.lane))
@@ -5673,6 +6631,46 @@ public:
         m_assembler.vectorFmulByElement(dest, left, right, SIMDLane::f64x2, lane.m_value);
     }
 
+    void vectorMulHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = InvalidFPRReg)
+    {
+        ASSERT(!scalarTypeIsFloatingPoint(simdInfo.lane));
+        ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.smull2v(dest, left, right, narrowedLane(simdInfo.lane));
+        else
+            m_assembler.umull2v(dest, left, right, narrowedLane(simdInfo.lane));
+    }
+
+    void vectorMulLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest, FPRegisterID = InvalidFPRReg)
+    {
+        ASSERT(!scalarTypeIsFloatingPoint(simdInfo.lane));
+        ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.smullv(dest, left, right, narrowedLane(simdInfo.lane));
+        else
+            m_assembler.umullv(dest, left, right, narrowedLane(simdInfo.lane));
+    }
+
+    void vectorMulAddLow(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID srcDest)
+    {
+        ASSERT(!scalarTypeIsFloatingPoint(simdInfo.lane));
+        ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.smlalv(srcDest, left, right, narrowedLane(simdInfo.lane));
+        else
+            m_assembler.umlalv(srcDest, left, right, narrowedLane(simdInfo.lane));
+    }
+
+    void vectorMulAddHigh(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID srcDest)
+    {
+        ASSERT(!scalarTypeIsFloatingPoint(simdInfo.lane));
+        ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (simdInfo.signMode == SIMDSignMode::Signed)
+            m_assembler.smlal2v(srcDest, left, right, narrowedLane(simdInfo.lane));
+        else
+            m_assembler.umlal2v(srcDest, left, right, narrowedLane(simdInfo.lane));
+    }
+
     void vectorFusedMulAdd(SIMDInfo simdInfo, FPRegisterID mul1, FPRegisterID mul2, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch)
     {
         ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
@@ -5687,6 +6685,80 @@ public:
         moveVector(addend, scratch);
         m_assembler.vectorFmls(scratch, mul1, mul2, simdInfo.lane);
         moveVector(scratch, dest);
+    }
+
+    void vectorRelaxedMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        // Relaxed min allows implementation-defined NaN behavior
+        // ARM64 fmin returns the non-NaN operand if one is NaN, or NaN if both are NaN
+        ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
+        m_assembler.vectorFmin(dest, left, right, simdInfo.lane);
+    }
+
+    void vectorRelaxedMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+    {
+        // Relaxed max allows implementation-defined NaN behavior
+        // ARM64 fmax returns the non-NaN operand if one is NaN, or NaN if both are NaN
+        ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
+        m_assembler.vectorFmax(dest, left, right, simdInfo.lane);
+    }
+
+    void vectorRelaxedQ15Mulr(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        // Same as vectorMulSat - saturating rounding Q15 multiply
+        m_assembler.sqrdmulhv(dest, a, b, SIMDLane::i16x8);
+    }
+
+    void vectorRelaxedDotI8x16I7x16(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch)
+    {
+        // Dot product of i8x16 vectors producing i16x8
+        // Each pair of i8 values from a and b are multiplied and added
+        ASSERT(scratch != dest);
+        ASSERT(scratch != a);
+        ASSERT(scratch != b);
+        // smull: multiply low halves (lanes 0-7) -> 8 i16 values
+        m_assembler.smullv(scratch, a, b, SIMDLane::i8x16);
+        // smull2: multiply high halves (lanes 8-15) -> 8 i16 values
+        m_assembler.smull2v(dest, a, b, SIMDLane::i8x16);
+        // addp: add adjacent pairs
+        m_assembler.addpv(dest, scratch, dest, SIMDLane::i16x8);
+    }
+
+    void vectorRelaxedDotI8x16I7x16Add(FPRegisterID a, FPRegisterID b, FPRegisterID addend, FPRegisterID dest, FPRegisterID scratch1, FPRegisterID scratch2)
+    {
+        if (supportsDotProd()) {
+            // SDOT Vd.4S, Vn.16B, Vm.16B: for each i32 lane, accumulate sum of 4 signed 8-bit products.
+            // SDOT accumulates into Vd, so we need addend in dest before the instruction.
+            // Handle cases where dest overlaps with a or b to avoid clobbering inputs.
+            if (dest == a) {
+                moveVector(a, scratch1);
+                moveVector(addend, dest);
+                m_assembler.sdotv(dest, scratch1, b);
+            } else if (dest == b) {
+                moveVector(b, scratch1);
+                moveVector(addend, dest);
+                m_assembler.sdotv(dest, a, scratch1);
+            } else {
+                moveVector(addend, dest);
+                m_assembler.sdotv(dest, a, b);
+            }
+        } else {
+            // Fallback: 5-instruction sequence for base ARMv8 without DotProd
+            ASSERT(scratch1 != scratch2);
+            ASSERT(scratch1 != a);
+            ASSERT(scratch1 != b);
+            ASSERT(scratch1 != addend);
+            ASSERT(scratch1 != dest);
+            ASSERT(scratch2 != a);
+            ASSERT(scratch2 != b);
+            ASSERT(scratch2 != addend);
+            ASSERT(scratch2 != dest);
+            m_assembler.smullv(scratch1, a, b, SIMDLane::i8x16);
+            m_assembler.smull2v(scratch2, a, b, SIMDLane::i8x16);
+            m_assembler.addpv(scratch1, scratch1, scratch2, SIMDLane::i16x8);
+            m_assembler.vectorSaddlp(scratch1, scratch1, SIMDLane::i16x8);
+            m_assembler.vectorAdd(dest, scratch1, addend, SIMDLane::i32x4);
+        }
     }
 
     void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
@@ -5783,9 +6855,22 @@ public:
         m_assembler.vectorEor(dest, left, right);
     }
 
+    void vectorXorRotateRight64(FPRegisterID a, FPRegisterID b, TrustedImm32 rotate, FPRegisterID dest)
+    {
+        ASSERT(supportsSHA3());
+        ASSERT(rotate.m_value >= 0 && rotate.m_value < 64);
+        m_assembler.xar(dest, a, b, static_cast<uint8_t>(rotate.m_value));
+    }
+
+    void vectorXor3(FPRegisterID a, FPRegisterID b, FPRegisterID c, FPRegisterID dest)
+    {
+        ASSERT(supportsSHA3());
+        m_assembler.eor3(dest, a, b, c);
+    }
+
     void moveZeroToVector(FPRegisterID dest)
     {
-        m_assembler.movi<128>(dest, 0);
+        m_assembler.movi<128, 8>(dest, 0);
     }
 
     void vectorAbs(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
@@ -5944,6 +7029,18 @@ public:
         m_assembler.sshr_vi(dest, input, shift.m_value, simdInfo.lane);
     }
 
+    void vectorUshr8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.ushr_vi(dest, input, shift.m_value, simdInfo.lane);
+    }
+
+    void vectorShl8(SIMDInfo simdInfo, FPRegisterID input, TrustedImm32 shift, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.shl_vi(dest, input, shift.m_value, simdInfo.lane);
+    }
+
     void vectorHorizontalAdd(SIMDInfo simdInfo, FPRegisterID input, FPRegisterID dest)
     {
         RELEASE_ASSERT(scalarTypeIsIntegral(simdInfo.lane));
@@ -5951,16 +7048,58 @@ public:
         m_assembler.addv(dest, input, simdInfo.lane);
     }
 
-    void vectorZipUpper(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    void vectorZipLower(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
     {
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
         m_assembler.zip1(dest, n, m, simdInfo.lane);
+    }
+
+    void vectorZipHigher(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.zip2(dest, n, m, simdInfo.lane);
     }
 
     void vectorUnzipEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
     {
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
         m_assembler.uzip1(dest, n, m, simdInfo.lane);
+    }
+
+    void vectorUnzipOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.uzip2(dest, n, m, simdInfo.lane);
+    }
+
+    void vectorTransposeEven(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.trn1(dest, n, m, simdInfo.lane);
+    }
+
+    void vectorTransposeOdd(SIMDInfo simdInfo, FPRegisterID n, FPRegisterID m, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        m_assembler.trn2(dest, n, m, simdInfo.lane);
+    }
+
+    void vectorReverse(SIMDInfo simdInfo, TrustedImm32 groupSize, FPRegisterID input, FPRegisterID dest)
+    {
+        ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        switch (groupSize.m_value) {
+        case 2:
+            m_assembler.rev16(dest, input, simdInfo.lane);
+            break;
+        case 4:
+            m_assembler.rev32(dest, input, simdInfo.lane);
+            break;
+        case 8:
+            m_assembler.rev64(dest, input, simdInfo.lane);
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
     }
 
     void reverseBits64(RegisterID src, RegisterID dest)
@@ -6136,6 +7275,21 @@ public:
         m_assembler.tbl2(dest, a, b, control);
     }
 
+    void vectorUshrInt8(FPRegisterID src, uint8_t shift, FPRegisterID dest)
+    {
+        m_assembler.ushr_vi(dest, src, shift, SIMDLane::i8x16);
+    }
+
+    void vectorTest(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest)
+    {
+        m_assembler.cmtst(dest, a, b, simdInfo.lane);
+    }
+
+    void vectorShrnInt8(FPRegisterID src, uint8_t shift, FPRegisterID dest)
+    {
+        m_assembler.template shrn<SIMDLane::i8x16>(dest, src, shift);
+    }
+
     // Misc helper functions.
 
     // Invert a relational condition, e.g. == becomes !=, < becomes >=, etc.
@@ -6159,6 +7313,107 @@ public:
         default:
             return std::nullopt;
         }
+    }
+
+    std::optional<Jump> attemptToFoldToBitTest32(RelationalCondition cond, RegisterID left, int32_t immediate)
+    {
+        int32_t signbit = static_cast<int32_t>(1U << (32 - 1));
+        switch (cond) {
+        case LessThan:
+            // left < 0
+            if (!immediate)
+                return branchTest32(NonZero, left, TrustedImm32(signbit));
+            break;
+        case LessThanOrEqual:
+            // left <= -1
+            if (immediate == -1)
+                return branchTest32(NonZero, left, TrustedImm32(signbit));
+            break;
+        case GreaterThan:
+            // left > -1
+            if (immediate == -1)
+                return branchTest32(Zero, left, TrustedImm32(signbit));
+            break;
+        case GreaterThanOrEqual:
+            // left >= 0
+            if (!immediate)
+                return branchTest32(Zero, left, TrustedImm32(signbit));
+            break;
+
+        case Below:
+            // left < signbit
+            if (immediate == signbit)
+                return branchTest32(Zero, left, TrustedImm32(signbit));
+            break;
+        case BelowOrEqual:
+            // left <= (signbit - 1)
+            if (immediate == (signbit - 1))
+                return branchTest32(Zero, left, TrustedImm32(signbit));
+            break;
+        case Above:
+            // left > (signbit - 1)
+            if (immediate == (signbit - 1))
+                return branchTest32(NonZero, left, TrustedImm32(signbit));
+            break;
+        case AboveOrEqual:
+            // left >= signbit
+            if (immediate == signbit)
+                return branchTest32(NonZero, left, TrustedImm32(signbit));
+            break;
+        default:
+            break;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<Jump> attemptToFoldToBitTest64(RelationalCondition cond, RegisterID left, int64_t immediate)
+    {
+        int64_t signbit = static_cast<int64_t>(1ULL << (64 - 1));
+        switch (cond) {
+        case LessThan:
+            // left < 0
+            if (!immediate)
+                return branchTest64(NonZero, left, TrustedImm64(signbit));
+            break;
+        case LessThanOrEqual:
+            // left <= -1
+            if (immediate == -1)
+                return branchTest64(NonZero, left, TrustedImm64(signbit));
+            break;
+        case GreaterThan:
+            // left > -1
+            if (immediate == -1)
+                return branchTest64(Zero, left, TrustedImm64(signbit));
+            break;
+        case GreaterThanOrEqual:
+            // left >= 0
+            if (!immediate)
+                return branchTest64(Zero, left, TrustedImm64(signbit));
+            break;
+        case Below:
+            // left < signbit
+            if (immediate == signbit)
+                return branchTest64(Zero, left, TrustedImm64(signbit));
+            break;
+        case BelowOrEqual:
+            // left <= (signbit - 1)
+            if (immediate == (signbit - 1))
+                return branchTest64(Zero, left, TrustedImm64(signbit));
+            break;
+        case Above:
+            // left > (signbit - 1)
+            if (immediate == (signbit - 1))
+                return branchTest64(NonZero, left, TrustedImm64(signbit));
+            break;
+        case AboveOrEqual:
+            // left >= signbit
+            if (immediate == signbit)
+                return branchTest64(NonZero, left, TrustedImm64(signbit));
+            break;
+        default:
+            break;
+        }
+        return std::nullopt;
     }
 
     template<PtrTag resultTag, PtrTag locationTag>
@@ -6342,7 +7597,7 @@ protected:
     {
         const int dataSize = sizeof(rawType) * 8;
         const int numberHalfWords = dataSize / 16;
-        rawType value = bitwise_cast<rawType>(imm.m_value);
+        rawType value = std::bit_cast<rawType>(imm.m_value);
         uint16_t halfword[numberHalfWords];
 
         // Handle 0 and ~0 here to simplify code below
@@ -6408,16 +7663,36 @@ protected:
         m_assembler.ldur<datasize>(rt, rn, simm);
     }
 
-    template<int datasize>
+    template<int datasize, int loadSize>
     ALWAYS_INLINE void loadSignedAddressedByUnsignedImmediate(RegisterID rt, RegisterID rn, unsigned pimm)
     {
-        loadUnsignedImmediate<datasize>(rt, rn, pimm);
+        static_assert(datasize >= loadSize);
+        if constexpr (datasize == loadSize)
+            loadUnsignedImmediate<datasize>(rt, rn, pimm);
+        else if constexpr (loadSize == 8)
+            m_assembler.ldrsb<datasize>(rt, rn, pimm);
+        else if constexpr (loadSize == 16)
+            m_assembler.ldrsh<datasize>(rt, rn, pimm);
+        else if constexpr (loadSize == 32)
+            m_assembler.ldrsw<datasize>(rt, rn, pimm);
+        else
+            RELEASE_ASSERT_NOT_REACHED();
     }
 
-    template<int datasize>
+    template<int datasize, int loadSize>
     ALWAYS_INLINE void loadSignedAddressedByUnscaledImmediate(RegisterID rt, RegisterID rn, int simm)
     {
-        loadUnscaledImmediate<datasize>(rt, rn, simm);
+        static_assert(datasize >= loadSize);
+        if constexpr (datasize == loadSize)
+            loadUnscaledImmediate<datasize>(rt, rn, simm);
+        else if constexpr (loadSize == 8)
+            m_assembler.ldursb<datasize>(rt, rn, simm);
+        else if constexpr (loadSize == 16)
+            m_assembler.ldursh<datasize>(rt, rn, simm);
+        else if constexpr (loadSize == 32)
+            m_assembler.ldursw<datasize>(rt, rn, simm);
+        else
+            RELEASE_ASSERT_NOT_REACHED();
     }
 
     template<int datasize>
@@ -6549,6 +7824,11 @@ protected:
     template <int dataSize>
     ALWAYS_INLINE bool tryMoveUsingCacheRegisterContents(intptr_t immediate, CachedTempRegister& dest)
     {
+        // 32-bit moves zero-extend to 64 bits on ARM64, so normalize the immediate
+        // to the zero-extended form to match what the hardware register will contain.
+        if constexpr (dataSize == 32)
+            immediate = static_cast<intptr_t>(static_cast<uint32_t>(immediate));
+
         intptr_t currentRegisterContents;
         if (dest.value(currentRegisterContents)) {
             if (currentRegisterContents == immediate)
@@ -6583,7 +7863,7 @@ protected:
             return;
 
         moveInternal<TrustedImm32, int32_t>(imm, dest.registerIDNoInvalidate());
-        dest.setValue(imm.m_value);
+        dest.setValue(static_cast<intptr_t>(static_cast<uint32_t>(imm.m_value)));
     }
 
     void moveToCachedReg(TrustedImmPtr imm, CachedTempRegister& dest)
@@ -6618,15 +7898,15 @@ protected:
         return false;
     }
 
-    template<int datasize>
+    template<int datasize, int loadSize>
     ALWAYS_INLINE bool tryLoadSignedWithOffset(RegisterID rt, RegisterID rn, int32_t offset)
     {
         if (Assembler::canEncodeSImmOffset(offset)) {
-            loadSignedAddressedByUnscaledImmediate<datasize>(rt, rn, offset);
+            loadSignedAddressedByUnscaledImmediate<datasize, loadSize>(rt, rn, offset);
             return true;
         }
-        if (Assembler::canEncodePImmOffset<datasize>(offset)) {
-            loadSignedAddressedByUnsignedImmediate<datasize>(rt, rn, static_cast<unsigned>(offset));
+        if (Assembler::canEncodePImmOffset<loadSize>(offset)) {
+            loadSignedAddressedByUnsignedImmediate<datasize, loadSize>(rt, rn, static_cast<unsigned>(offset));
             return true;
         }
         return false;
@@ -6967,6 +8247,9 @@ protected:
     JS_EXPORT_PRIVATE static CPUIDCheckState s_lseCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_jscvtCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_float16CheckState;
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_frintCheckState;
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_sha3CheckState;
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_dotProdCheckState;
 
     CachedTempRegister m_dataMemoryTempRegister;
     CachedTempRegister m_cachedMemoryTempRegister;
@@ -6987,18 +8270,6 @@ ALWAYS_INLINE void MacroAssemblerARM64::loadUnsignedImmediate<16>(RegisterID rt,
 }
 
 template<>
-ALWAYS_INLINE void MacroAssemblerARM64::loadSignedAddressedByUnsignedImmediate<8>(RegisterID rt, RegisterID rn, unsigned pimm)
-{
-    m_assembler.ldrsb<64>(rt, rn, pimm);
-}
-
-template<>
-ALWAYS_INLINE void MacroAssemblerARM64::loadSignedAddressedByUnsignedImmediate<16>(RegisterID rt, RegisterID rn, unsigned pimm)
-{
-    m_assembler.ldrsh<64>(rt, rn, pimm);
-}
-
-template<>
 ALWAYS_INLINE void MacroAssemblerARM64::loadUnscaledImmediate<8>(RegisterID rt, RegisterID rn, int simm)
 {
     m_assembler.ldurb(rt, rn, simm);
@@ -7008,18 +8279,6 @@ template<>
 ALWAYS_INLINE void MacroAssemblerARM64::loadUnscaledImmediate<16>(RegisterID rt, RegisterID rn, int simm)
 {
     m_assembler.ldurh(rt, rn, simm);
-}
-
-template<>
-ALWAYS_INLINE void MacroAssemblerARM64::loadSignedAddressedByUnscaledImmediate<8>(RegisterID rt, RegisterID rn, int simm)
-{
-    m_assembler.ldursb<64>(rt, rn, simm);
-}
-
-template<>
-ALWAYS_INLINE void MacroAssemblerARM64::loadSignedAddressedByUnscaledImmediate<16>(RegisterID rt, RegisterID rn, int simm)
-{
-    m_assembler.ldursh<64>(rt, rn, simm);
 }
 
 template<>
@@ -7053,5 +8312,7 @@ inline MacroAssemblerARM64::Jump MacroAssemblerARM64::branch<64>(RelationalCondi
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(ASSEMBLER) && CPU(ARM64)

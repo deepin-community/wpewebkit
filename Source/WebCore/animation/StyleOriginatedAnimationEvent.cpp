@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,13 +27,14 @@
 #include "StyleOriginatedAnimationEvent.h"
 
 #include "Node.h"
+#include "NodeDocument.h"
 #include "WebAnimationUtilities.h"
 
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(StyleOriginatedAnimationEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(StyleOriginatedAnimationEvent);
 
 StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterfaceType eventInterface, const AtomString& type, WebAnimation* animation, std::optional<Seconds> scheduledTime, double elapsedTime, const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier)
     : AnimationEventBase(eventInterface, type, animation, scheduledTime)
@@ -42,13 +43,13 @@ StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterface
 {
 }
 
-StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterfaceType eventInterface, const AtomString& type, const EventInit& init, IsTrusted isTrusted, double elapsedTime, const String& pseudoElement)
-    : AnimationEventBase(eventInterface, type, init, isTrusted)
+StyleOriginatedAnimationEvent::StyleOriginatedAnimationEvent(enum EventInterfaceType eventInterface, const AtomString& type, EventInit&& init, IsTrusted isTrusted, double elapsedTime, String&& pseudoElement, RefPtr<WebAnimation>&& animation)
+    : AnimationEventBase(eventInterface, type, WTF::move(init), isTrusted, WTF::move(animation))
     , m_elapsedTime(elapsedTime)
-    , m_pseudoElement(pseudoElement)
+    , m_pseudoElement(WTF::move(pseudoElement))
 {
-    auto* node = dynamicDowncast<Node>(target());
-    auto [parsed, pseudoElementIdentifier] = pseudoElementIdentifierFromString(m_pseudoElement, node ? &node->document() : nullptr);
+    RefPtr node = dynamicDowncast<Node>(target());
+    auto [parsed, pseudoElementIdentifier] = pseudoElementIdentifierFromString(m_pseudoElement, node ? protect(node->document()).ptr() : nullptr);
     m_pseudoElementIdentifier = parsed ? pseudoElementIdentifier : std::nullopt;
 }
 

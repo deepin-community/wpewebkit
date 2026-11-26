@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,21 +25,29 @@
 
 #pragma once
 
-#include "ImageBuffer.h"
-#include "NativeImage.h"
-#include "RenderingResourceIdentifier.h"
+#include <WebCore/IntSize.h>
+#include <WebCore/RenderingResourceIdentifier.h>
 
 namespace WebCore {
 
+class ImageBuffer;
+class NativeImage;
+
 class WEBCORE_EXPORT SourceImage {
 public:
-    using ImageVariant = std::variant<
+    using ImageVariant = Variant<
         Ref<NativeImage>,
         Ref<ImageBuffer>,
         RenderingResourceIdentifier
     >;
 
     SourceImage(ImageVariant&&);
+
+    SourceImage(const SourceImage&);
+    SourceImage(SourceImage&&);
+    SourceImage& operator=(const SourceImage&);
+    SourceImage& operator=(SourceImage&&);
+    ~SourceImage();
 
     bool operator==(const SourceImage&) const;
 

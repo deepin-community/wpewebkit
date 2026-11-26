@@ -41,8 +41,6 @@ enum class CacheGetResult
 class BlobCache final : angle::NonCopyable
 {
   public:
-    // 160-bit SHA-1 hash key used for hasing a program.  BlobCache opts in using fixed keys for
-    // simplicity and efficiency.
     static constexpr size_t kKeyLength = angle::kBlobCacheKeyLength;
     using Key                          = angle::BlobCacheKey;
     using Value                        = angle::BlobCacheValue;
@@ -57,16 +55,19 @@ class BlobCache final : angle::NonCopyable
 
     // Store a key-blob pair in the cache.  If application callbacks are set, the application cache
     // will be used.  Otherwise the value is cached in this object.
-    void put(const BlobCache::Key &key, angle::MemoryBuffer &&value);
+    void put(const gl::Context *context, const BlobCache::Key &key, angle::MemoryBuffer &&value);
 
     // Store a key-blob pair in the cache, but compress the blob before insertion. Returns false if
     // compression fails, returns true otherwise.
-    bool compressAndPut(const BlobCache::Key &key,
+    bool compressAndPut(const gl::Context *context,
+                        const BlobCache::Key &key,
                         angle::MemoryBuffer &&uncompressedValue,
                         size_t *compressedSize);
 
     // Store a key-blob pair in the application cache, only if application callbacks are set.
-    void putApplication(const BlobCache::Key &key, const angle::MemoryBuffer &value);
+    void putApplication(const gl::Context *context,
+                        const BlobCache::Key &key,
+                        const angle::MemoryBuffer &value);
 
     // Store a key-blob pair in the cache without making callbacks to the application.  This is used
     // to repopulate this object's cache on startup without generating callback calls.
@@ -76,7 +77,8 @@ class BlobCache final : angle::NonCopyable
 
     // Check if the cache contains the blob corresponding to this key.  If application callbacks are
     // set, those will be used.  Otherwise they key is looked up in this object's cache.
-    [[nodiscard]] bool get(angle::ScratchBuffer *scratchBuffer,
+    [[nodiscard]] bool get(const gl::Context *context,
+                           angle::ScratchBuffer *scratchBuffer,
                            const BlobCache::Key &key,
                            BlobCache::Value *valueOut);
 
@@ -92,6 +94,7 @@ class BlobCache final : angle::NonCopyable
         DecompressFailure,
     };
     [[nodiscard]] GetAndDecompressResult getAndDecompress(
+        const gl::Context *context,
         angle::ScratchBuffer *scratchBuffer,
         const BlobCache::Key &key,
         size_t maxUncompressedDataSize,
@@ -101,35 +104,69 @@ class BlobCache final : angle::NonCopyable
     void remove(const BlobCache::Key &key);
 
     // Empty the cache.
-    void clear() { mBlobCache.clear(); }
+    void clear()
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        mBlobCache.clear();
+    }
 
-    // Resize the cache. Discards current contents.
-    void resize(size_t maxCacheSizeBytes) { mBlobCache.resize(maxCacheSizeBytes); }
+    // Resize the cache. Discards current contents. Returns previous cache size.
+    size_t resize(size_t maxCacheSizeBytes)
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.resize(maxCacheSizeBytes);
+    }
 
     // Returns the number of entries in the cache.
-    size_t entryCount() const { return mBlobCache.entryCount(); }
+    size_t entryCount() const
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.entryCount();
+    }
 
     // Reduces the current cache size and returns the number of bytes freed.
-    size_t trim(size_t limit) { return mBlobCache.shrinkToSize(limit); }
+    size_t trim(size_t limit)
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.shrinkToSize(limit);
+    }
 
     // Returns the current cache size in bytes.
-    size_t size() const { return mBlobCache.size(); }
+    size_t size() const
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.size();
+    }
 
     // Returns whether the cache is empty
-    bool empty() const { return mBlobCache.empty(); }
+    bool empty() const
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.empty();
+    }
 
     // Returns the maximum cache size in bytes.
-    size_t maxSize() const { return mBlobCache.maxSize(); }
+    size_t maxSize() const
+    {
+        std::scoped_lock<angle::SimpleMutex> lock(mBlobCacheMutex);
+        return mBlobCache.maxSize();
+    }
 
     void setBlobCacheFuncs(EGLSetBlobFuncANDROID set, EGLGetBlobFuncANDROID get);
 
     bool areBlobCacheFuncsSet() const;
 
-    bool isCachingEnabled() const { return areBlobCacheFuncsSet() || maxSize() > 0; }
+    bool isCachingEnabled(const gl::Context *context) const;
 
     angle::SimpleMutex &getMutex() { return mBlobCacheMutex; }
 
   private:
+    size_t callBlobGetCallback(const gl::Context *context,
+                               const void *key,
+                               size_t keySize,
+                               void *value,
+                               size_t valueSize);
+
     // This internal cache is used only if the application is not providing caching callbacks
     using CacheEntry = std::pair<angle::MemoryBuffer, CacheSource>;
 

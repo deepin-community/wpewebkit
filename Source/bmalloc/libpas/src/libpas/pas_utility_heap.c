@@ -30,8 +30,6 @@
 #include "pas_utility_heap.h"
 
 #include "pas_allocation_callbacks.h"
-#include "pas_deallocate.h"
-#include "pas_get_allocation_size.h"
 #include "pas_local_allocator_inlines.h"
 #include "pas_utility_heap_config.h"
 
@@ -42,7 +40,6 @@ pas_heap_runtime_config pas_utility_heap_runtime_config = {
     .sharing_mode = pas_share_pages,
     .statically_allocated = true,
     .is_part_of_heap = false,
-    .directory_size_bound_for_partial_views = PAS_UTILITY_BOUND_FOR_PARTIAL_VIEWS,
     .directory_size_bound_for_baseline_allocators = PAS_UTILITY_BOUND_FOR_BASELINE_ALLOCATORS,
     .directory_size_bound_for_no_view_cache = PAS_UTILITY_BOUND_FOR_NO_VIEW_CACHE,
     .max_segregated_object_size = PAS_UTILITY_MAX_SEGREGATED_OBJECT_SIZE,
@@ -52,6 +49,7 @@ pas_heap_runtime_config pas_utility_heap_runtime_config = {
 
 pas_segregated_heap pas_utility_segregated_heap = {
     .runtime_config = &pas_utility_heap_runtime_config,
+    .parent_heap = NULL,
     .basic_size_directory_and_head = PAS_COMPACT_ATOMIC_PTR_INITIALIZER,
     .index_to_small_size_directory = pas_utility_heap_support_instance.index_to_size_directory,
     .rare_data = PAS_COMPACT_ATOMIC_PTR_INITIALIZER,
@@ -121,7 +119,7 @@ void* pas_utility_heap_try_allocate_with_alignment(
         allocator,
         aligned_size,
         alignment,
-        pas_compact_allocation_mode,
+        pas_always_compact_allocation_mode,
         PAS_UTILITY_HEAP_CONFIG,
         &pas_utility_allocator_counts,
         pas_allocation_result_identity).begin;
@@ -168,7 +166,7 @@ void pas_utility_heap_deallocate(void* ptr)
 
     pas_segregated_page_deallocate(
         begin, NULL, pas_segregated_deallocation_direct_mode, NULL,
-        PAS_UTILITY_HEAP_CONFIG.small_segregated_config, pas_segregated_page_exclusive_role);
+        PAS_UTILITY_HEAP_CONFIG.small_segregated_config);
 }
 
 size_t pas_utility_heap_get_num_free_bytes(void)

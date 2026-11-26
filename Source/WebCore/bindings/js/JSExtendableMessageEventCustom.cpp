@@ -32,6 +32,7 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSMessagePort.h"
+#include "JSValueInWrappedObjectInlines.h"
 
 namespace WebCore {
 
@@ -42,15 +43,15 @@ JSC::EncodedJSValue constructJSExtendableMessageEvent(JSC::JSGlobalObject* lexic
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame.argumentCount() < 1))
+    if (callFrame.argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, callFrame.uncheckedArgument(0));
-    if (UNLIKELY(type.hasException(throwScope)))
+    if (type.hasException(throwScope)) [[unlikely]]
         return encodedJSValue();
 
     auto eventInitDict = convert<IDLDictionary<ExtendableMessageEvent::Init>>(*lexicalGlobalObject, callFrame.argument(1));
-    if (UNLIKELY(eventInitDict.hasException(throwScope)))
+    if (eventInitDict.hasException(throwScope)) [[unlikely]]
         return encodedJSValue();
 
     auto object = ExtendableMessageEvent::create(*lexicalGlobalObject, type.releaseReturnValue(), eventInitDict.releaseReturnValue());
@@ -63,17 +64,17 @@ JSC::JSValue JSExtendableMessageEvent::ports(JSC::JSGlobalObject& lexicalGlobalO
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedPorts(), [&](JSC::ThrowScope& throwScope) {
-        return toJS<IDLFrozenArray<IDLInterface<MessagePort>>>(lexicalGlobalObject, *globalObject(), throwScope, wrapped().ports());
+        return toJS<IDLFrozenArray<IDLInterface<MessagePort>>>(lexicalGlobalObject, *realm(), throwScope, wrapped().ports());
     });
 }
 
 template<typename Visitor>
-void JSExtendableMessageEvent::visitAdditionalChildren(Visitor& visitor)
+void JSExtendableMessageEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().data().visit(visitor);
-    wrapped().cachedPorts().visit(visitor);
+    wrapped().data().visitInGCThread(visitor);
+    wrapped().cachedPorts().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExtendableMessageEvent);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSExtendableMessageEvent);
 
 }

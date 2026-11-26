@@ -1,5 +1,6 @@
 /*
  * Copyright (C) Research In Motion Limited 2009-2010. All rights reserved.
+ * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -53,38 +54,42 @@ class LegacyRenderSVGResourceSolidColor;
 class Path;
 class RenderElement;
 class RenderObject;
-class RenderStyle;
+
+namespace Style {
+class ComputedStyle;
+}
 
 class LegacyRenderSVGResource {
 public:
     LegacyRenderSVGResource() = default;
     virtual ~LegacyRenderSVGResource() = default;
 
-    void removeAllClientsFromCache(bool markForInvalidation = true);
-    virtual void removeAllClientsFromCacheIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers) = 0;
-    virtual void removeClientFromCache(RenderElement&, bool markForInvalidation = true) = 0;
+    void removeAllClientsFromCacheAndMarkForInvalidation(bool markForInvalidation = true);
+    virtual void removeAllClientsFromCache() = 0;
+    virtual void removeAllClientsFromCacheAndMarkForInvalidationIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers) = 0;
+    virtual void removeClientFromCache(RenderElement&) = 0;
+    virtual void removeClientFromCacheAndMarkForInvalidation(RenderElement&, bool markForInvalidation = true) = 0;
 
     enum class ApplyResult : uint8_t {
         ResourceApplied = 1 << 0,
         ClipContainsRendererContent = 1 << 1
     };
 
-    virtual OptionSet<ApplyResult> applyResource(RenderElement&, const RenderStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) = 0;
+    virtual OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) = 0;
     virtual void postApplyResource(RenderElement&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement* /* shape */) { }
     virtual FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) = 0;
 
     virtual RenderSVGResourceType resourceType() const = 0;
 
     // Helper utilities used in the render tree to access resources used for painting shapes/text (gradients & patterns & solid colors only)
-    static LegacyRenderSVGResource* fillPaintingResource(RenderElement&, const RenderStyle&, Color& fallbackColor);
-    static LegacyRenderSVGResource* strokePaintingResource(RenderElement&, const RenderStyle&, Color& fallbackColor);
+    static LegacyRenderSVGResource* fillPaintingResource(RenderElement&, const Style::ComputedStyle&, Color& fallbackColor);
+    static LegacyRenderSVGResource* strokePaintingResource(RenderElement&, const Style::ComputedStyle&, Color& fallbackColor);
     static LegacyRenderSVGResourceSolidColor* sharedSolidPaintingResource();
 
     static void markForLayoutAndParentResourceInvalidation(RenderObject&, bool needsLayout = true);
     static void markForLayoutAndParentResourceInvalidationIfNeeded(RenderObject&, bool needsLayout, SingleThreadWeakHashSet<RenderObject>* visitedRenderers);
 
-protected:
-    void fillAndStrokePathOrShape(GraphicsContext&, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement* shape) const;
+    static void fillAndStrokePathOrShape(GraphicsContext&, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement* shape);
 };
 
 constexpr bool resourceWasApplied(OptionSet<LegacyRenderSVGResource::ApplyResult> result)

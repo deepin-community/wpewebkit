@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 #include "BitmapImageDescriptor.h"
 #include "ImageFrameWorkQueue.h"
 #include "ImageSource.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/Expected.h>
 #include <wtf/WeakPtr.h>
 
@@ -38,7 +39,9 @@ class ImageDecoder;
 class ImageFrameAnimator;
 class ImageObserver;
 
-class BitmapImageSource : public ImageSource {
+class BitmapImageSource final : public ImageSource, public CanMakeCheckedPtr<BitmapImageSource> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BitmapImageSource);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(BitmapImageSource);
 public:
     static Ref<BitmapImageSource> create(BitmapImage&, AlphaOption, GammaAndColorProfileOption);
 
@@ -51,6 +54,8 @@ public:
     // Encoded and decoded data
     void destroyDecodedData(bool destroyAll) final;
     void resetData();
+    bool canReplaceData() const { return true; }
+    void dataReplaced(FragmentedSharedBuffer*) final;
     unsigned decodedSize() const { return m_decodedSize; }
     void didDecodeProperties(unsigned decodedPropertiesSize);
 
@@ -59,19 +64,20 @@ public:
 
     // Decoding & animation
     bool isPendingDecodingAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&) const;
-    void destroyNativeImageAtIndex(unsigned index);
+    void destroyNativeImageAtIndex(unsigned index, std::optional<DecodingDestination> = std::nullopt);
     void imageFrameAtIndexAvailable(unsigned index, ImageAnimatingState, DecodingStatus);
     void imageFrameDecodeAtIndexHasFinished(unsigned index, SubsamplingLevel, ImageAnimatingState, const DecodingOptions&, RefPtr<NativeImage>&&);
 
     // ImageFrame
     unsigned primaryFrameIndex() const final { return m_descriptor.primaryFrameIndex(); }
 
-    const Vector<ImageFrame>& frames() const { return m_frames; }
+    const Vector<ImageFrame>& frames() const LIFETIME_BOUND { return m_frames; }
     const ImageFrame& primaryImageFrame(const std::optional<SubsamplingLevel>& subsamplingLevel = std::nullopt) final { return frameAtIndexCacheIfNeeded(primaryFrameIndex(), subsamplingLevel); }
 
     // NativeImage
-    DecodingStatus requestNativeImageAtIndexIfNeeded(unsigned index, SubsamplingLevel, ImageAnimatingState, const DecodingOptions&);
+    Expected<DecodingDestination, DecodingStatus> requestNativeImageAtIndexIfNeeded(unsigned index, SubsamplingLevel, ImageAnimatingState, const DecodingOptions&);
 
+    RefPtr<NativeImage> primaryNativeImageIfExists() { return frameAtIndex(primaryFrameIndex()).nativeImage(std::nullopt); }
     RefPtr<NativeImage> primaryNativeImage() final { return nativeImageAtIndex(primaryFrameIndex()); }
 
     // Image Metadata
@@ -84,7 +90,7 @@ public:
     DecodingStatus frameDecodingStatusAtIndex(unsigned index) const final;
 
     // Testing support
-    const char* sourceUTF8() const;
+    CString sourceUTF8() const;
 
 private:
     BitmapImageSource(BitmapImage&, AlphaOption, GammaAndColorProfileOption);
@@ -103,6 +109,7 @@ private:
     void decodedSizeDecreased(unsigned decodedSize);
     void decodedSizeReset(unsigned decodedSize);
     bool canDestroyDecodedData() const;
+    void destroyDecodedFrames(bool destroyAll);
 
     void clearFrameBufferCache();
 
@@ -116,9 +123,10 @@ private:
     bool hasEverAnimated() const final;
 
     // Decoding
+    DecodingDestination preferredDecodingDestination(GraphicsContext&, ImagePaintingOptions) const final;
+    std::optional<DecodingDestination> compatibleDecodingDestinationWithOptionsAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&) const;
     bool isLargeForDecoding() const final;
-    bool isDecodingWorkQueueIdle() const;
-    bool isCompatibleWithOptionsAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&) const;
+    bool NODELETE isDecodingWorkQueueIdle() const;
     void stopDecodingWorkQueue() final;
     void decode(Function<void(DecodingStatus)>&& decodeCallback) final;
     void callDecodeCallbacks(DecodingStatus);
@@ -152,11 +160,14 @@ private:
     EncodedDataStatus encodedDataStatus() const { return m_descriptor.encodedDataStatus(); }
     IntSize size(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const final { return m_descriptor.size(orientation); }
     IntSize sourceSize(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const final { return m_descriptor.sourceSize(orientation); }
+    FloatSize density() const final { return m_descriptor.density(); }
     std::optional<IntSize> densityCorrectedSize() const { return m_descriptor.densityCorrectedSize(); }
     bool hasDensityCorrectedSize() const final { return densityCorrectedSize().has_value(); }
     ImageOrientation orientation() const final { return m_descriptor.orientation(); }
     DestinationColorSpace colorSpace() const final { return m_descriptor.colorSpace(); }
     std::optional<Color> singlePixelSolidColor() const final { return m_descriptor.singlePixelSolidColor(); }
+    bool hasHDRGainMap() const final { return m_descriptor.hasHDRGainMap(); }
+    bool hasHDRContent() const final { return m_descriptor.hasHDRGainMap() || m_descriptor.hasHDRColorSpace() || hasHDRContentForTesting(); }
 
     String uti() const final { return m_descriptor.uti(); }
     String filenameExtension() const final { return m_descriptor.filenameExtension(); }
@@ -166,11 +177,18 @@ private:
     SubsamplingLevel subsamplingLevelForScaleFactor(GraphicsContext& context, const FloatSize& scaleFactor, AllowImageSubsampling allowImageSubsampling) final { return m_descriptor.subsamplingLevelForScaleFactor(context, scaleFactor, allowImageSubsampling); }
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-    bool shouldUseQuickLookForFullscreen() const final { return m_descriptor.shouldUseQuickLookForFullscreen(); }
+    bool isPanorama() const final { return m_descriptor.isPanorama(); }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     bool isSpatial() const final { return m_descriptor.isSpatial(); }
+    std::optional<unsigned> spatialLeftEyeFrameIndex() const final;
+    std::optional<unsigned> spatialRightEyeFrameIndex() const final;
+    std::optional<SpatialImageEyeProperties> spatialEyePropertiesAtIndex(unsigned) const final;
+#endif
+
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    bool isMaybePanoramic() const final { return m_descriptor.isMaybePanoramic(); }
 #endif
 
     // ImageFrame metadata
@@ -188,6 +206,8 @@ private:
     void setClearDecoderAfterAsyncFrameRequestForTesting(bool enabled) final { m_clearDecoderAfterAsyncFrameRequestForTesting = enabled; }
     void setAsyncDecodingEnabledForTesting(bool enabled) final { m_isAsyncDecodingEnabledForTesting = enabled; }
     bool isAsyncDecodingEnabledForTesting() const final { return m_isAsyncDecodingEnabledForTesting; }
+    void setHasHDRContentForTesting() final;
+    bool hasHDRContentForTesting() const final { return m_hasHDRContentForTesting; }
 
     void dump(TextStream&) const final;
 
@@ -199,7 +219,7 @@ private:
 
     BitmapImageDescriptor m_descriptor;
     mutable RefPtr<ImageDecoder> m_decoder;
-    mutable std::unique_ptr<ImageFrameAnimator> m_frameAnimator;
+    const std::unique_ptr<ImageFrameAnimator> m_frameAnimator;
     mutable RefPtr<ImageFrameWorkQueue> m_workQueue;
     Vector<Function<void(DecodingStatus)>> m_decodeCallbacks;
 
@@ -213,6 +233,7 @@ private:
     unsigned m_blankDrawCountForTesting { 0 };
     bool m_isAsyncDecodingEnabledForTesting { false };
     bool m_clearDecoderAfterAsyncFrameRequestForTesting { false };
+    bool m_hasHDRContentForTesting { false };
 };
 
 } // namespace WebCore

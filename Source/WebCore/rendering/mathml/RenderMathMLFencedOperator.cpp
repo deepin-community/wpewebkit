@@ -32,17 +32,17 @@
 #include "MathMLOperatorElement.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderStyleInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 using namespace MathMLOperatorDictionary;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderMathMLFencedOperator);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLFencedOperator);
 
-RenderMathMLFencedOperator::RenderMathMLFencedOperator(Document& document, RenderStyle&& style, const String& operatorString, MathMLOperatorDictionary::Form form, unsigned short flags)
-    : RenderMathMLOperator(Type::MathMLFencedOperator, document, WTFMove(style))
+RenderMathMLFencedOperator::RenderMathMLFencedOperator(Document& document, Style::ComputedStyle&& style, const String& operatorString, MathMLOperatorDictionary::Form form, unsigned short flags)
+    : RenderMathMLOperator(Type::MathMLFencedOperator, document, WTF::move(style))
     , m_operatorForm(form)
     , m_operatorFlags(flags)
 {
@@ -69,6 +69,12 @@ void RenderMathMLFencedOperator::updateOperatorContent(const String& operatorStr
     }
 
     updateMathOperator();
+}
+
+// minsize always has the default value "1em".
+LayoutUnit RenderMathMLFencedOperator::minSize() const
+{
+    return LayoutUnit(style().fontCascade().size());
 }
 
 LayoutUnit RenderMathMLFencedOperator::leadingSpace() const

@@ -24,11 +24,10 @@
 
 #pragma once
 
-#include "CSSValue.h"
-#include "ExceptionOr.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Vector.h>
 
 namespace WTF {
 class TextStream;
@@ -36,7 +35,7 @@ class TextStream;
 
 namespace WebCore {
 
-class TimingFunction : public RefCounted<TimingFunction> {
+class TimingFunction : public ThreadSafeRefCounted<TimingFunction> {
 public:
     virtual Ref<TimingFunction> clone() const = 0;
 
@@ -52,10 +51,9 @@ public:
 
     virtual bool operator==(const TimingFunction&) const = 0;
 
-    static ExceptionOr<RefPtr<TimingFunction>> createFromCSSText(const String&);
-    static RefPtr<TimingFunction> createFromCSSValue(const CSSValue&);
-    double transformProgress(double progress, double duration, bool before = false) const;
-    String cssText() const;
+    enum class Before : bool { No, Yes };
+    double transformProgress(double progress, double duration, Before = Before::No) const;
+    WEBCORE_EXPORT String cssText() const;
 };
 
 class LinearTimingFunction final : public TimingFunction {
@@ -86,7 +84,7 @@ public:
         return otherLinear && m_points == otherLinear->m_points;
     }
 
-    const Vector<Point>& points() const { return m_points; }
+    const Vector<Point>& points() const LIFETIME_BOUND { return m_points; }
 
     static const LinearTimingFunction& identity()
     {
@@ -117,6 +115,11 @@ public:
     static Ref<CubicBezierTimingFunction> create()
     {
         return create(TimingFunctionPreset::Ease, 0.25, 0.1, 0.25, 1.0);
+    }
+
+    static Ref<CubicBezierTimingFunction> create(double x1, double y1, double x2, double y2)
+    {
+        return adoptRef(*new CubicBezierTimingFunction(TimingFunctionPreset::Custom, x1, y1, x2, y2));
     }
 
     static Ref<CubicBezierTimingFunction> create(TimingFunctionPreset preset, double x1, double y1, double x2, double y2)

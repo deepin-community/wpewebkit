@@ -23,11 +23,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef WebDiagnosticLoggingClient_h
-#define WebDiagnosticLoggingClient_h
+#pragma once
 
 #include <WebCore/DiagnosticLoggingClient.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebKit {
 
@@ -48,9 +48,7 @@ private:
     void logDiagnosticMessageWithValueDictionary(const String& message, const String& description, const ValueDictionary&, WebCore::ShouldSample) override;
     void logDiagnosticMessageWithDomain(const String& message, WebCore::DiagnosticLoggingDomain) override;
 
-    WebPage& m_page;
+    WeakPtr<WebPage> m_page;
 };
 
 }
-
-#endif

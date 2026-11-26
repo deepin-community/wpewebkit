@@ -36,7 +36,6 @@
 #include "RemoteSampleBufferDisplayLayerMessages.h"
 #include "RemoteVideoFrameProxy.h"
 #include "SampleBufferDisplayLayerManager.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 
 namespace WebKit {
@@ -60,18 +59,19 @@ SampleBufferDisplayLayer::SampleBufferDisplayLayer(SampleBufferDisplayLayerManag
 
 void SampleBufferDisplayLayer::initialize(bool hideRootLayer, IntSize size, bool shouldMaintainAspectRatio, CompletionHandler<void(bool)>&& callback)
 {
-    m_connection->sendWithAsyncReply(Messages::RemoteSampleBufferDisplayLayerManager::CreateLayer { identifier(), hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked() }, [this, weakThis = WeakPtr { *this }, callback = WTFMove(callback)](auto contextId) mutable {
-        if (!weakThis)
+    m_connection->sendWithAsyncReply(Messages::RemoteSampleBufferDisplayLayerManager::CreateLayer { identifier(), hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked() }, [weakThis = WeakPtr { *this }, callback = WTF::move(callback)](auto context) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return callback(false);
-        m_hostingContextID = contextId;
-        callback(!!contextId);
+        protectedThis->m_hostingContext = context;
+        callback(!!context.contextID);
     });
 }
 
 #if !RELEASE_LOG_DISABLED
-void SampleBufferDisplayLayer::setLogIdentifier(String&& logIdentifier)
+void SampleBufferDisplayLayer::setLogIdentifier(uint64_t logIdentifier)
 {
-    ASSERT(m_hostingContextID);
+    ASSERT(m_hostingContext->contextID);
     m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetLogIdentifier { logIdentifier }, identifier());
 }
 #endif
@@ -79,8 +79,8 @@ void SampleBufferDisplayLayer::setLogIdentifier(String&& logIdentifier)
 SampleBufferDisplayLayer::~SampleBufferDisplayLayer()
 {
     m_connection->send(Messages::RemoteSampleBufferDisplayLayerManager::ReleaseLayer { identifier() }, 0);
-    if (m_manager)
-        m_manager->removeLayer(*this);
+    if (RefPtr manager = m_manager.get())
+        manager->removeLayer(*this);
 }
 
 bool SampleBufferDisplayLayer::didFail() const
@@ -93,9 +93,9 @@ void SampleBufferDisplayLayer::updateDisplayMode(bool hideDisplayLayer, bool hid
     m_connection->send(Messages::RemoteSampleBufferDisplayLayer::UpdateDisplayMode { hideDisplayLayer, hideRootLayer }, identifier());
 }
 
-void SampleBufferDisplayLayer::updateBoundsAndPosition(CGRect bounds, std::optional<WTF::MachSendRight>&& fence)
+void SampleBufferDisplayLayer::updateBoundsAndPosition(CGRect bounds, std::optional<WTF::MachSendRightAnnotated>&& fence)
 {
-    m_connection->send(Messages::GPUConnectionToWebProcess::UpdateSampleBufferDisplayLayerBoundsAndPosition { identifier(), bounds, WTFMove(fence) }, identifier());
+    m_connection->send(Messages::GPUConnectionToWebProcess::UpdateSampleBufferDisplayLayerBoundsAndPosition { identifier(), bounds, WTF::move(fence) }, identifier());
 }
 
 void SampleBufferDisplayLayer::flush()
@@ -124,8 +124,8 @@ void SampleBufferDisplayLayer::enqueueBlackFrameFrom(const VideoFrame& videoFram
 {
     auto size = videoFrame.presentationSize();
     WebCore::IntSize blackFrameSize { static_cast<int>(size.width()), static_cast<int>(size.height()) };
-    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), blackFrameSize };
-    m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTFMove(sharedVideoFrame) }, identifier());
+    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), { }, blackFrameSize };
+    m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTF::move(sharedVideoFrame) }, identifier());
 }
 
 void SampleBufferDisplayLayer::enqueueVideoFrame(VideoFrame& videoFrame)
@@ -135,12 +135,12 @@ void SampleBufferDisplayLayer::enqueueVideoFrame(VideoFrame& videoFrame)
 
     auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame,
         [this](auto& semaphore) { m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetSharedVideoFrameSemaphore { semaphore }, identifier()); },
-        [this](SharedMemory::Handle&& handle) { m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetSharedVideoFrameMemory { WTFMove(handle) }, identifier()); }
+        [this](SharedMemory::Handle&& handle) { m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetSharedVideoFrameMemory { WTF::move(handle) }, identifier()); }
     );
     if (!sharedVideoFrame)
         return;
 
-    m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTFMove(*sharedVideoFrame) }, identifier());
+    m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTF::move(*sharedVideoFrame) }, identifier());
 }
 
 void SampleBufferDisplayLayer::clearVideoFrames()
@@ -150,8 +150,8 @@ void SampleBufferDisplayLayer::clearVideoFrames()
 
 PlatformLayer* SampleBufferDisplayLayer::rootLayer()
 {
-    if (!m_videoLayer && m_hostingContextID)
-        m_videoLayer = LayerHostingContext::createPlatformLayerForHostingContext(*m_hostingContextID);
+    if (!m_videoLayer && m_hostingContext)
+        m_videoLayer = LayerHostingContext::createPlatformLayerForHostingContext(m_hostingContext->contextID);
     return m_videoLayer.get();
 }
 
@@ -161,6 +161,12 @@ void SampleBufferDisplayLayer::setDidFail(bool value)
     RefPtr client = m_client.get();
     if (client && m_didFail)
         client->sampleBufferDisplayLayerStatusDidFail();
+}
+
+void SampleBufferDisplayLayer::updateVideoFrameCounters(uint64_t totalVideoFrames, uint64_t droppedVideoFrames)
+{
+    if (RefPtr client = m_client.get())
+        client->updateVideoFrameCounters(totalVideoFrames, droppedVideoFrames);
 }
 
 void SampleBufferDisplayLayer::gpuProcessConnectionDidClose(GPUProcessConnection&)

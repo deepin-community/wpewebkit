@@ -29,13 +29,13 @@
 
 #include "pas_local_allocator.h"
 
-#include "pas_heap_for_config.h"
 #include "pas_local_allocator_inlines.h"
 #include "pas_race_test_hooks.h"
 #include "pas_segregated_page.h"
 #include "pas_segregated_size_directory.h"
 #include "pas_segregated_view.h"
 #include "pas_utility_heap.h"
+#include "pas_zero_memory.h"
 
 #if PAS_LOCAL_ALLOCATOR_MEASURE_REFILL_EFFICIENCY
 double pas_local_allocator_refill_efficiency_sum = 0.;
@@ -46,7 +46,7 @@ PAS_DEFINE_LOCK(pas_local_allocator_refill_efficiency);
 void pas_local_allocator_construct(pas_local_allocator* allocator,
                                    pas_segregated_size_directory* directory)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_OTHER);
 
     pas_local_allocator_scavenger_data_construct(
         &allocator->scavenger_data, pas_local_allocator_allocator_kind);
@@ -114,8 +114,6 @@ void pas_local_allocator_move(pas_local_allocator* dst,
 {
     size_t size;
     pas_segregated_size_directory* directory;
-    pas_segregated_partial_view* partial_view;
-    pas_segregated_shared_view* shared_view;
 
     pas_heap_lock_assert_held(); /* Needed to modify a lenient_compact_ptr. */
 
@@ -127,21 +125,6 @@ void pas_local_allocator_move(pas_local_allocator* dst,
     size = pas_segregated_size_directory_local_allocator_size(directory);
     
     memcpy(dst, src, size);
-
-    if (!pas_local_allocator_config_kind_is_primordial_partial(dst->config_kind))
-        return;
-
-    partial_view = pas_segregated_view_get_partial(dst->view);
-    shared_view = pas_compact_segregated_shared_view_ptr_load(&partial_view->shared_view);
-
-    /* Holding the ownership lock during this time ensures that
-       pas_segregated_view_for_each_live_object works. We grab that lock here because that function
-       is the only client of partial_view->alloc_bits being right during primordial mode, and it
-       happens to hold the ownership lock. */
-    pas_lock_lock(&shared_view->ownership_lock);
-    if (pas_lenient_compact_unsigned_ptr_load(&partial_view->alloc_bits) == (unsigned*)src->bits)
-        pas_lenient_compact_unsigned_ptr_store(&partial_view->alloc_bits, (unsigned*)dst->bits);
-    pas_lock_unlock(&shared_view->ownership_lock);
 }
 
 static bool stop_impl(
@@ -149,7 +132,7 @@ static bool stop_impl(
     pas_lock_lock_mode page_lock_mode,
     pas_lock_hold_mode heap_lock_hold_mode)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_OTHER);
     
     pas_segregated_view view;
     pas_segregated_page* page;
@@ -181,11 +164,9 @@ static bool stop_impl(
                                                 allocator, page_config),
                                             page_config);
     
-    if (pas_segregated_view_is_size_directory(view)) {
-        view = page->owner;
-        PAS_ASSERT(pas_segregated_view_is_some_exclusive(view));
-    } else
-        PAS_ASSERT(pas_segregated_view_is_partial(view));
+    PAS_ASSERT(pas_segregated_view_is_size_directory(view));
+    view = page->owner;
+    PAS_ASSERT(pas_segregated_view_is_some_exclusive(view));
     
     if (!pas_segregated_page_switch_lock_with_mode(page, &held_lock, page_lock_mode, page_config))
         return false;
@@ -214,7 +195,7 @@ bool pas_local_allocator_stop(
     pas_lock_lock_mode page_lock_mode,
     pas_lock_hold_mode heap_lock_hold_mode)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_OTHER);
     
     bool result;
     bool is_in_use;
@@ -228,7 +209,7 @@ bool pas_local_allocator_stop(
                 allocator->scavenger_data.is_in_use ? "yes" : "no");
         pas_log("at time of assert: allocator->scavenger_data.is_in_use = %s\n",
                 is_in_use ? "yes" : "no");
-        PAS_ASSERT(!"Should not be reached");
+        PAS_ASSERT_NOT_REACHED();
     }
 
     /* Doing this check before setting is_in_use guards against situations where calling stop would

@@ -28,6 +28,8 @@
 
 #include "JSCInlines.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
     
 const ClassInfo StructureChain::s_info = { "StructureChain"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(StructureChain) };
@@ -70,7 +72,7 @@ void StructureChain::finishCreation(VM& vm, JSObject* head)
 template<typename Visitor>
 void StructureChain::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    StructureChain* thisObject = jsCast<StructureChain*>(cell);
+    StructureChain* thisObject = uncheckedDowncast<StructureChain>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.markAuxiliary(thisObject->m_vector.get());
@@ -84,3 +86,5 @@ void StructureChain::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(StructureChain);
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

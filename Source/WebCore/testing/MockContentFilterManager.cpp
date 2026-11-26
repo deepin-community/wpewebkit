@@ -26,6 +26,8 @@
 #include "config.h"
 #include "MockContentFilterManager.h"
 
+#include <wtf/NeverDestroyed.h>
+
 namespace WebCore {
 
 MockContentFilterManager& MockContentFilterManager::singleton()
@@ -41,8 +43,8 @@ void MockContentFilterManager::setClient(RefPtr<MockContentFilterSettingsClient>
     
 void MockContentFilterManager::notifySettingsChanged(WebCore::MockContentFilterSettings& settings) const
 {
-    if (m_client)
-        m_client->mockContentFilterSettingsChanged(settings);
+    if (RefPtr client = m_client)
+        client->mockContentFilterSettingsChanged(settings);
 }
 
 };

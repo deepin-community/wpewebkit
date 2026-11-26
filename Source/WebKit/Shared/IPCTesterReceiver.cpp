@@ -26,9 +26,18 @@
 #include "config.h"
 #include "IPCTesterReceiver.h"
 
-#if ENABLE(IPC_TESTING_API)
+#include <wtf/CompletionHandler.h>
+
+#if ENABLE(IPC_TESTING_API) && !ENABLE(IPC_TESTING_SWIFT)
+
+#include <wtf/CompletionHandler.h>
 
 namespace WebKit {
+
+Ref<IPCTesterReceiver> IPCTesterReceiver::create()
+{
+    return adoptRef(*new IPCTesterReceiver);
+}
 
 void IPCTesterReceiver::asyncMessage(uint32_t arg0, CompletionHandler<void(uint32_t)>&& completionHandler)
 {

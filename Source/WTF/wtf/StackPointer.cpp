@@ -24,9 +24,9 @@
  */
 
 #include "config.h"
-#include "StackPointer.h"
+#include <wtf/StackPointer.h>
 
-#include "InlineASM.h"
+#include <wtf/InlineASM.h>
 
 namespace WTF {
 
@@ -43,7 +43,7 @@ extern "C" __declspec(naked) void currentStackPointer()
 }
 
 #elif CPU(X86)
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -55,10 +55,7 @@ asm (
 
 #elif CPU(X86_64) && OS(WINDOWS)
 
-// The Win64 port will use a hack where we define currentStackPointer in
-// LowLevelInterpreter.asm.
-
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -72,7 +69,7 @@ asm (
 );
 
 #elif CPU(X86_64)
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -84,7 +81,7 @@ asm (
 );
 
 #elif CPU(ARM64E)
-asm (
+__asm__(
     ".text" "\n"
     ".balign 16" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
@@ -96,8 +93,22 @@ asm (
     ".previous" "\n"
 );
 
+#elif CPU(ARM64) && OS(WINDOWS)
+__asm__(
+    ".text" "\n"
+    ".align 4" "\n"
+    ".globl " SYMBOL_STRING(currentStackPointer) "\n"
+    SYMBOL_STRING(currentStackPointer) ":" "\n"
+
+    "mov x0, sp" "\n"
+    "ret" "\n"
+
+    ".section .drectve" "\n"
+    ".ascii \"-export:currentStackPointer\"" "\n"
+);
+
 #elif CPU(ARM64)
-asm (
+__asm__(
     ".text" "\n"
     ".balign 16" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
@@ -109,7 +120,7 @@ asm (
 );
 
 #elif CPU(ARM_THUMB2)
-asm (
+__asm__(
     ".text" "\n"
     ".align 2" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
@@ -123,7 +134,7 @@ asm (
 );
 
 #elif CPU(MIPS)
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -139,7 +150,7 @@ asm (
 );
 
 #elif CPU(RISCV64)
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -150,7 +161,7 @@ asm (
 );
 
 #elif CPU(LOONGARCH64)
-asm (
+__asm__(
     ".text" "\n"
     ".globl " SYMBOL_STRING(currentStackPointer) "\n"
     SYMBOL_STRING(currentStackPointer) ":" "\n"
@@ -167,11 +178,15 @@ asm (
 #elif USE(GENERIC_CURRENT_STACK_POINTER)
 constexpr size_t sizeOfFrameHeader = 2 * sizeof(void*);
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 SUPPRESS_ASAN NEVER_INLINE
 void* currentStackPointer()
 {
     return reinterpret_cast<uint8_t*>(__builtin_frame_address(0)) + sizeOfFrameHeader;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // USE(GENERIC_CURRENT_STACK_POINTER)
 
 } // namespace WTF

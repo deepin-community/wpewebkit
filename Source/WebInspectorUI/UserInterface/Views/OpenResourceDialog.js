@@ -55,7 +55,12 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
         this._treeOutline.addEventListener(WI.TreeOutline.Event.SelectionDidChange, this._treeSelectionDidChange, this);
         this._treeOutline.element.addEventListener("focus", () => { this._inputElement.focus(); });
 
-        this.element.appendChild(this._treeOutline.element);
+        let scrollContainer = this.element.appendChild(document.createElement("div"));
+        scrollContainer.className = "scroll-container";
+        scrollContainer.appendChild(this._treeOutline.element);
+
+        const treeItemHeight = 44;
+        this._treeOutline.registerScrollVirtualizer(scrollContainer, treeItemHeight);
 
         this._updateFilterThrottler = new Throttler(() => {
             this._updateFilter();
@@ -125,11 +130,10 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
             return treeElement;
         }
 
+        console.assert(!this._treeOutline.children.length, this._treeOutline);
+
         for (let result of this._filteredResults) {
             let resource = result.resource;
-            if (this._treeOutline.findTreeElement(resource))
-                continue;
-
             let treeElement = createTreeElement(resource);
             if (!treeElement)
                 continue;
@@ -191,8 +195,11 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
         this._addScriptsForTarget(WI.mainTarget);
 
         for (let target of WI.targets) {
-            if (target !== WI.mainTarget)
-                this._addResourcesForTarget(target);
+            if (target !== WI.mainTarget) {
+                // FIXME <https://webkit.org/b/298909> Add Debugger support for frame targets.
+                if (!(target instanceof WI.FrameTarget))
+                    this._addResourcesForTarget(target);
+            }
         }
 
         this._addLocalResourceOverrides();
@@ -212,8 +219,6 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
 
         for (let consoleSnippet of WI.consoleManager.snippets)
             this._addResource(consoleSnippet);
-
-        this._updateFilterThrottler.force();
 
         this._inputElement.focus();
         this._clear();
@@ -337,10 +342,13 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
 
     _addResource(resource, suppressFilterUpdate)
     {
+        // FIXME <https://webkit.org/b/298909> Remove this null-check after implementing the Debugger domain for frame targets.
+        if (!resource)
+            return;
+
         if (!this.representedObjectIsValid(resource))
             return;
 
-        // Recurse on source maps if any exist.
         for (let sourceMap of resource.sourceMaps) {
             for (let sourceMapResource of sourceMap.resources)
                 this._addResource(sourceMapResource, suppressFilterUpdate);
@@ -395,7 +403,7 @@ WI.OpenResourceDialog = class OpenResourceDialog extends WI.Dialog
         const suppressFilterUpdate = true;
 
         let targetData = WI.debuggerManager.dataForTarget(target);
-        for (let script of targetData.scripts) {
+        for (let script of targetData?.scripts || []) {
             if (script.anonymous || script.resource || script.dynamicallyAddedScriptElement)
                 continue;
             if (!WI.settings.debugShowConsoleEvaluations.value && isWebInspectorConsoleEvaluationScript(script.sourceURL))

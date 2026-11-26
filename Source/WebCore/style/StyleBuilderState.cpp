@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  * Copyright (C) 2004-2005 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2006, 2007 Nicholas Shanks (webkit@nickshanks.com)
- * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Alexey Proskuryakov <ap@webkit.org>
  * Copyright (C) 2007, 2008 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
@@ -29,8 +29,12 @@
 
 #include "config.h"
 #include "StyleBuilderState.h"
+#include "StyleBuilderStateInlines.h"
 
+#include "CSSCalcRandomCachingKey.h"
 #include "CSSCanvasValue.h"
+#include "CSSColorImageValue.h"
+#include "CSSColorValue.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
 #include "CSSFilterImageValue.h"
@@ -39,17 +43,17 @@
 #include "CSSGradientValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
+#include "CSSLightDarkImageValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSPaintImageValue.h"
-#include "CSSShadowValue.h"
-#include "ColorFromPrimitiveValue.h"
-#include "Document.h"
 #include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
-#include "FilterOperationsBuilder.h"
+#include "ElementTraversal.h"
 #include "FontCache.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLElement.h"
-#include "RenderStyleSetters.h"
+#include "LocalFrame.h"
 #include "RenderTheme.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
@@ -57,36 +61,59 @@
 #include "StyleBuilder.h"
 #include "StyleCachedImage.h"
 #include "StyleCanvasImage.h"
+#include "StyleColor.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleCrossfadeImage.h"
 #include "StyleCursorImage.h"
+#include "StyleCustomPropertyRegistry.h"
 #include "StyleFilterImage.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleGeneratedImage.h"
 #include "StyleGradientImage.h"
 #include "StyleImageSet.h"
+#include "StyleLocalPropertyRegistry.h"
 #include "StyleNamedImage.h"
 #include "StylePaintImage.h"
-#include "TransformFunctions.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "StyleScope.h"
 
 namespace WebCore {
 namespace Style {
 
-BuilderState::BuilderState(Builder& builder, RenderStyle& style, BuilderContext&& context)
-    : m_builder(builder)
-    , m_styleMap(*this)
-    , m_style(style)
-    , m_context(WTFMove(context))
-    , m_cssToLengthConversionData(style, m_context)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BuilderState);
+
+BuilderState::BuilderState(ComputedStyle& style, BuilderContext&& context)
+    : m_style(style)
+    , m_context(WTF::move(context))
+    , m_cssToLengthConversionData(style, *this)
 {
 }
 
+const CSSRegisteredCustomProperty* BuilderState::registeredProperty(const AtomString& name) const
+{
+    if (m_context.localPropertyRegistry)
+        return m_context.localPropertyRegistry->get(name);
+    return document().customPropertyRegistry().get(name);
+}
+
+float BuilderState::zoomWithTextZoomFactor()
+{
+    if (auto* frame = document().frame()) {
+        float textZoomFactor = style().textZoom() != TextZoom::Reset ? frame->textZoomFactor() : 1.0f;
+        float usedZoom = evaluationTimeZoomEnabled(*this) ? 1.0f : style().usedZoom();
+        return usedZoom * textZoomFactor;
+    }
+    return cssToLengthConversionData().zoom();
+}
+
 // SVG handles zooming in a different way compared to CSS. The whole document is scaled instead
-// of each individual length value in the render style / tree. CSSPrimitiveValue::computeLength*()
+// of each individual length value in the render style / tree. CSSPrimitiveValue::resolveAsLength*()
 // multiplies each resolved length with the zoom multiplier - so for SVG we need to disable that.
 // Though all CSS values that can be applied to outermost <svg> elements (width/height/border/padding...)
 // need to respect the scaling. RenderBox (the parent class of LegacyRenderSVGRoot) grabs values like
-// width/height/border/padding/... from the RenderStyle -> for SVG these values would never scale,
-// if we'd pass a 1.0 zoom factor everyhwere. So we only pass a zoom factor of 1.0 for specific
+// width/height/border/padding/... from the ComputedStyle -> for SVG these values would never scale,
+// if we'd pass a 1.0 zoom factor everywhere. So we only pass a zoom factor of 1.0 for specific
 // properties that are NOT allowed to scale within a zoomed SVG document (letter/word-spacing/font-size).
 bool BuilderState::useSVGZoomRules() const
 {
@@ -98,7 +125,7 @@ bool BuilderState::useSVGZoomRulesForLength() const
     return is<SVGElement>(element()) && !(is<SVGSVGElement>(*element()) && element()->parentNode());
 }
 
-RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value)
+RefPtr<Image> BuilderState::createStyleImage(const CSSValue& value) const
 {
     if (auto* imageValue = dynamicDowncast<CSSImageValue>(value))
         return imageValue->createStyleImage(*this);
@@ -114,69 +141,38 @@ RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value)
         return crossfadeValue->createStyleImage(*this);
     if (auto* filterImageValue = dynamicDowncast<CSSFilterImageValue>(value))
         return filterImageValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSPrefixedLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSDeprecatedLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSPrefixedRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSDeprecatedRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto conicGradientValue = dynamicDowncast<CSSConicGradientValue>(value))
-        return conicGradientValue->createStyleImage(*this);
+    if (auto* gradientValue = dynamicDowncast<CSSGradientValue>(value))
+        return gradientValue->createStyleImage(*this);
+    if (auto* colorImageValue = dynamicDowncast<CSSColorImageValue>(value))
+        return colorImageValue->createStyleImage(*this);
+    if (auto* lightDarkImageValue = dynamicDowncast<CSSLightDarkImageValue>(value))
+        return lightDarkImageValue->createStyleImage(*this);
     if (auto* paintImageValue = dynamicDowncast<CSSPaintImageValue>(value))
         return paintImageValue->createStyleImage(*this);
     return nullptr;
 }
 
-std::optional<FilterOperations> BuilderState::createFilterOperations(const CSSValue& inValue)
+void BuilderState::registerSubstitutionAttribute(const AtomString& attributeLocalName, const Scope* targetScope)
 {
-    return WebCore::Style::createFilterOperations(document(), m_style, m_cssToLengthConversionData, inValue);
-}
-
-bool BuilderState::isColorFromPrimitiveValueDerivedFromElement(const CSSPrimitiveValue& value)
-{
-    return StyleColor::containsCurrentColor(value) || StyleColor::containsColorSchemeDependentColor(value);
-}
-
-StyleColor BuilderState::colorFromPrimitiveValue(const CSSPrimitiveValue& value, ForVisitedLink forVisitedLink) const
-{
-    if (!element() || !element()->isLink())
-        forVisitedLink = ForVisitedLink::No;
-    return { WebCore::Style::colorFromPrimitiveValue(document(), m_style, value, forVisitedLink) };
-}
-
-void BuilderState::registerContentAttribute(const AtomString& attributeLocalName)
-{
-    if (style().pseudoElementType() == PseudoId::Before || style().pseudoElementType() == PseudoId::After)
-        m_registeredContentAttributes.append(attributeLocalName);
+    m_registeredSubstitutionAttributes.append({ attributeLocalName, targetScope });
 }
 
 void BuilderState::adjustStyleForInterCharacterRuby()
 {
-    if (m_style.rubyPosition() != RubyPosition::InterCharacter || !element() || !element()->hasTagName(HTMLNames::rtTag))
+    if (!m_style.isInterCharacterRubyPosition() || !element() || !element()->hasTagName(HTMLNames::rtTag))
         return;
 
-    m_style.setTextAlign(TextAlignMode::Center);
-    if (m_style.isHorizontalWritingMode())
-        m_style.setWritingMode(WritingMode::VerticalLr);
+    m_style.setTextAlign(TextAlign::Center);
+    if (!m_style.writingMode().isVerticalTypographic())
+        m_style.setWritingMode(StyleWritingMode::VerticalLr);
 }
 
 void BuilderState::updateFont()
 {
-    auto& fontSelector = const_cast<Document&>(document()).fontSelector();
+    Ref fontSelector = const_cast<Document&>(document()).fontSelector();
 
     auto needsUpdate = [&] {
-        if (m_fontDirty)
-            return true;
-        auto* fonts = m_style.fontCascade().fonts();
-        if (!fonts)
-            return true;
-        return false;
+        return m_fontDirty || !m_style.fontCascade().fonts();
     };
 
     if (!needsUpdate())
@@ -188,8 +184,9 @@ void BuilderState::updateFont()
     updateFontForGenericFamilyChange();
     updateFontForZoomChange();
     updateFontForOrientationChange();
+    updateFontForSizeChange();
 
-    m_style.fontCascade().update(&fontSelector);
+    m_style.fontCascade().update(fontSelector.ptr());
 
     m_fontDirty = false;
 }
@@ -205,12 +202,16 @@ void BuilderState::updateFontForTextSizeAdjust()
         return;
 
     auto newFontDescription = m_style.fontDescription();
+    auto baseSize = newFontDescription.specifiedSize();
     if (!m_style.textSizeAdjust().isNone())
-        newFontDescription.setComputedSize(newFontDescription.specifiedSize() * m_style.textSizeAdjust().multiplier());
-    else
-        newFontDescription.setComputedSize(newFontDescription.specifiedSize());
+        baseSize *= m_style.textSizeAdjust().multiplier();
 
-    m_style.setFontDescription(WTFMove(newFontDescription));
+    float zoomFactor = m_style.usedZoom();
+    if (auto* frame = document().frame(); frame && m_style.textZoom() != TextZoom::Reset)
+        zoomFactor *= frame->textZoomFactor();
+    newFontDescription.setComputedSize(baseSize * zoomFactor, zoomFactor);
+
+    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
 }
 #endif
 
@@ -219,11 +220,20 @@ void BuilderState::updateFontForZoomChange()
     if (m_style.usedZoom() == parentStyle().usedZoom() && m_style.textZoom() == parentStyle().textZoom())
         return;
 
-    const auto& childFont = m_style.fontDescription();
-    auto newFontDescription = childFont;
-    setFontSize(newFontDescription, childFont.specifiedSize());
+#if ENABLE(TEXT_AUTOSIZING)
+    // When text-size-adjust has an active percentage, updateFontForTextSizeAdjust() has already
+    // computed the correct size (incorporating both the multiplier and the current zoom factor).
+    // Skip recalculation here to avoid overwriting that result, which would lose the
+    // text-size-adjust multiplier.
+    if (document().settings().textAutosizingEnabled()
+        && !m_style.textSizeAdjust().isAuto()
+        && !m_style.textSizeAdjust().isNone()
+        && (!document().settings().textAutosizingUsesIdempotentMode()
+            || document().settings().idempotentModeAutosizingOnlyHonorsPercentages()))
+        return;
+#endif
 
-    m_style.setFontDescription(WTFMove(newFontDescription));
+    setFontDescriptionFontSize(m_style.fontDescription().specifiedSize());
 }
 
 void BuilderState::updateFontForGenericFamilyChange()
@@ -253,7 +263,7 @@ void BuilderState::updateFontForGenericFamilyChange()
 
     auto newFontDescription = childFont;
     setFontSize(newFontDescription, size);
-    m_style.setFontDescription(WTFMove(newFontDescription));
+    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
 }
 
 void BuilderState::updateFontForOrientationChange()
@@ -267,20 +277,125 @@ void BuilderState::updateFontForOrientationChange()
     auto newFontDescription = fontDescription;
     newFontDescription.setNonCJKGlyphOrientation(glyphOrientation);
     newFontDescription.setOrientation(fontOrientation);
-    m_style.setFontDescription(WTFMove(newFontDescription));
+    m_style.setFontDescriptionWithoutUpdate(WTF::move(newFontDescription));
+}
+
+void BuilderState::updateFontForSizeChange()
+{
+    m_style.synchronizeLetterSpacingWithFontCascadeWithoutUpdate();
+    m_style.synchronizeWordSpacingWithFontCascadeWithoutUpdate();
 }
 
 void BuilderState::setFontSize(FontCascadeDescription& fontDescription, float size)
 {
     fontDescription.setSpecifiedSize(size);
-    fontDescription.setComputedSize(Style::computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules(), &style(), document()));
+    auto computedFontSize = Style::computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules(), style(), document());
+    fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
 }
 
 CSSPropertyID BuilderState::cssPropertyID() const
 {
-    ASSERT(m_currentProperty);
-    return m_currentProperty->id;
+    return m_currentProperty ? m_currentProperty->id : CSSPropertyInvalid;
 }
 
+bool BuilderState::isCurrentPropertyInvalidAtComputedValueTime() const
+{
+    return m_invalidAtComputedValueTimeProperties.get(cssPropertyID());
 }
+
+void BuilderState::setCurrentPropertyInvalidAtComputedValueTime()
+{
+    m_invalidAtComputedValueTimeProperties.set(cssPropertyID());
 }
+
+void BuilderState::setUsesViewportUnits()
+{
+    m_style.setUsesViewportUnits();
+}
+
+void BuilderState::setIsContainerDependent()
+{
+    m_style.setIsContainerDependent();
+}
+
+double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& key, std::optional<CSS::Keyword::ElementScoped> elementScoped) const
+{
+    if (elementScoped)
+        return protect(element())->lookupCSSRandomBaseValue(style().pseudoElementIdentifier(), key);
+
+    return document().lookupCSSRandomBaseValue(key);
+}
+
+// MARK: - Tree Counting Functions
+
+unsigned BuilderState::siblingCount()
+{
+    // https://drafts.csswg.org/css-values-5/#funcdef-sibling-count
+
+    ASSERT(element());
+
+    // https://drafts.csswg.org/css-shadow-1/#tree-scoped-name-loosely-matched
+    // "loosely-matched tree-scoped references" return 0 for cross-tree styling.
+    if (m_currentProperty && m_currentProperty->styleScopeOrdinal <= ScopeOrdinal::ContainingHost)
+        return 0;
+
+    auto* parent = element()->parentElement();
+    if (!parent)
+        return 1;
+
+    m_style.setUsesTreeCountingFunctions();
+    parent->setChildrenAffectedByBackwardPositionalRules();
+    parent->setChildrenAffectedByForwardPositionalRules();
+
+    unsigned count = 1;
+    for (const auto* sibling = ElementTraversal::previousSibling(*element()); sibling; sibling = ElementTraversal::previousSibling(*sibling))
+        ++count;
+    for (const auto* sibling = ElementTraversal::nextSibling(*element()); sibling; sibling = ElementTraversal::nextSibling(*sibling))
+        ++count;
+    return count;
+}
+
+unsigned BuilderState::siblingIndex()
+{
+    // https://drafts.csswg.org/css-values-5/#funcdef-sibling-index
+
+    ASSERT(element());
+
+    // https://drafts.csswg.org/css-shadow-1/#tree-scoped-name-loosely-matched
+    // "loosely-matched tree-scoped references" return 0 for cross-tree styling.
+    if (m_currentProperty && m_currentProperty->styleScopeOrdinal <= ScopeOrdinal::ContainingHost)
+        return 0;
+
+    auto* parent = element()->parentElement();
+    if (!parent)
+        return 1;
+
+    m_style.setUsesTreeCountingFunctions();
+    parent->setChildrenAffectedByBackwardPositionalRules();
+    parent->setChildrenAffectedByForwardPositionalRules();
+
+    unsigned count = 1;
+    for (const auto* sibling = ElementTraversal::previousSibling(*element()); sibling; sibling = ElementTraversal::previousSibling(*sibling))
+        ++count;
+    return count;
+}
+
+void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, PropertyCascade::Origin origin)
+{
+    auto shouldDisable = [&] {
+        if (origin != PropertyCascade::Origin::Author)
+            return false;
+        if (!CSSProperty::disablesNativeAppearance(propertyID))
+            return false;
+        if (!applyPropertyToRegularStyle())
+            return false;
+        SUPPRESS_UNCOUNTED_ARG return element()->isDevolvableWidget() || RenderTheme::hasAppearanceForElementTypeFromUAStyle(*element());
+    };
+
+    if (shouldDisable())
+        style().setNativeAppearanceDisabled(true);
+}
+
+
+} // namespace Style
+} // namespace WebCore

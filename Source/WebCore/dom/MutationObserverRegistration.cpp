@@ -34,10 +34,19 @@
 
 #include "Document.h"
 #include "JSNodeCustom.h"
+#include "NodeDocument.h"
 #include "QualifiedName.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MutationObserverRegistration);
+
+Ref<MutationObserverRegistration> MutationObserverRegistration::create(MutationObserver& observer, Node& node, MutationObserverOptions options, const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& attributeFilter)
+{
+    return adoptRef(*new MutationObserverRegistration(observer, node, options, attributeFilter));
+}
 
 MutationObserverRegistration::MutationObserverRegistration(MutationObserver& observer, Node& node, MutationObserverOptions options, const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& attributeFilter)
     : m_observer(observer)
@@ -45,13 +54,13 @@ MutationObserverRegistration::MutationObserverRegistration(MutationObserver& obs
     , m_options(options)
     , m_attributeFilter(attributeFilter)
 {
-    protectedObserver()->observationStarted(*this);
+    m_observer->observationStarted(*this);
 }
 
 MutationObserverRegistration::~MutationObserverRegistration()
 {
     takeTransientRegistrations();
-    protectedObserver()->observationEnded(*this);
+    m_observer->observationEnded(*this);
 }
 
 void MutationObserverRegistration::resetObservation(MutationObserverOptions options, const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& attributeFilter)
@@ -67,7 +76,7 @@ void MutationObserverRegistration::observedSubtreeNodeWillDetach(Node& node)
         return;
 
     node.registerTransientMutationObserver(*this);
-    m_observer->setHasTransientRegistration(node.protectedDocument());
+    m_observer->setHasTransientRegistration(protect(node.document()));
 
     if (m_transientRegistrationNodes.isEmpty()) {
         ASSERT(!m_nodeKeptAlive);
@@ -84,7 +93,7 @@ HashSet<GCReachableRef<Node>> MutationObserverRegistration::takeTransientRegistr
     }
 
     for (auto& node : m_transientRegistrationNodes)
-        node->unregisterTransientMutationObserver(*this);
+        protect(node.get())->unregisterTransientMutationObserver(*this);
 
     auto returnValue = std::exchange(m_transientRegistrationNodes, { });
 

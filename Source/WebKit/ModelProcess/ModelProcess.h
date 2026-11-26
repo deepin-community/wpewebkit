@@ -29,13 +29,21 @@
 
 #include "AuxiliaryProcess.h"
 #include "SandboxExtension.h"
-#include "WebPageProxyIdentifier.h"
+#include "SharedPreferencesForWebProcess.h"
+#include <WebCore/ProcessIdentifier.h>
 #include <WebCore/Timer.h>
 #include <pal/SessionID.h>
 #include <wtf/Function.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
+
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS)
+namespace IPC {
+class SharedFileHandle;
+}
+#endif
 
 namespace WebKit {
 
@@ -43,12 +51,18 @@ class ModelConnectionToWebProcess;
 struct ModelProcessConnectionParameters;
 struct ModelProcessCreationParameters;
 
-class ModelProcess : public AuxiliaryProcess, public ThreadSafeRefCounted<ModelProcess> {
+class ModelProcess final : public AuxiliaryProcess, public ThreadSafeRefCounted<ModelProcess> {
     WTF_MAKE_NONCOPYABLE(ModelProcess);
+    WTF_MAKE_TZONE_ALLOCATED(ModelProcess);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ModelProcess);
 public:
-    explicit ModelProcess(AuxiliaryProcessInitializationParameters&&);
+    static Ref<ModelProcess> create(AuxiliaryProcessInitializationParameters&&);
     ~ModelProcess();
-    static constexpr WebCore::AuxiliaryProcessType processType = WebCore::AuxiliaryProcessType::Model;
+
+    static constexpr WTF::AuxiliaryProcessType processType = WTF::AuxiliaryProcessType::Model;
+
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
     void removeModelConnectionToWebProcess(ModelConnectionToWebProcess&);
 
@@ -62,11 +76,20 @@ public:
 
     void tryExitIfUnusedAndUnderMemoryPressure();
 
-    const String& applicationVisibleName() const { return m_applicationVisibleName; }
+    const String& applicationVisibleName() const LIFETIME_BOUND { return m_applicationVisibleName; }
+
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && HAVE(CORE_RE)
+    void requestSharedSimulationConnection(WebCore::ProcessIdentifier, CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&&);
+#endif
+    std::optional<int> debugEntityMemoryLimit() const { return m_debugEntityMemoryLimit; }
+    std::optional<int> debugImmersiveEntityMemoryLimit() const { return m_debugImmersiveEntityMemoryLimit; }
 
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
+    void modelPlayerCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
 private:
+    explicit ModelProcess(AuxiliaryProcessInitializationParameters&&);
+
     void lowMemoryHandler(Critical, Synchronous);
 
     // AuxiliaryProcess
@@ -80,11 +103,11 @@ private:
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
-    void didReceiveModelProcessMessage(IPC::Connection&, IPC::Decoder&);
 
     // Message Handlers
     void initializeModelProcess(ModelProcessCreationParameters&&, CompletionHandler<void()>&&);
-    void createModelConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&, CompletionHandler<void()>&&);
+    void createModelConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&, const std::optional<String>& attributionTaskID, CompletionHandler<void()>&&);
+    void sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
     void addSession(PAL::SessionID);
     void removeSession(PAL::SessionID);
 
@@ -100,6 +123,8 @@ private:
 
     WebCore::Timer m_idleExitTimer;
     String m_applicationVisibleName;
+    std::optional<int> m_debugEntityMemoryLimit;
+    std::optional<int> m_debugImmersiveEntityMemoryLimit;
 };
 
 } // namespace WebKit

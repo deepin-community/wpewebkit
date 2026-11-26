@@ -27,8 +27,8 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-#include "ContentExtensionActions.h"
-#include "ResourceLoadInfo.h"
+#include <WebCore/ContentExtensionActions.h>
+#include <WebCore/ResourceLoadInfo.h>
 #include <wtf/Hasher.h>
 #include <wtf/text/WTFString.h>
 
@@ -57,7 +57,7 @@ struct Trigger {
         if (topURLFilterIsCaseSensitive)
             ASSERT(actionCondition == ActionCondition::IfTopURL || actionCondition == ActionCondition::UnlessTopURL);
         if (frameURLFilterIsCaseSensitive)
-            ASSERT(actionCondition == ActionCondition::IfFrameURL);
+            ASSERT(actionCondition == ActionCondition::IfFrameURL || actionCondition == ActionCondition::UnlessFrameURL);
     }
 
     bool isEmpty() const
@@ -77,18 +77,6 @@ inline void add(Hasher& hasher, const Trigger& trigger)
 {
     add(hasher, trigger.urlFilterIsCaseSensitive, trigger.urlFilter, trigger.flags, trigger.conditions);
 }
-
-struct TriggerHash {
-    static unsigned hash(const Trigger& trigger)
-    {
-        return computeHash(trigger);
-    }
-    static bool equal(const Trigger& a, const Trigger& b)
-    {
-        return a == b;
-    }
-    static const bool safeToCompareToEmptyOrDeleted = false;
-};
 
 struct TriggerHashTraits : public WTF::CustomHashTraits<Trigger> {
     static constexpr bool emptyValueIsZero = false;
@@ -117,11 +105,11 @@ struct TriggerHashTraits : public WTF::CustomHashTraits<Trigger> {
 
 struct Action {
     Action(ActionData&& data)
-        : m_data(WTFMove(data)) { }
+        : m_data(WTF::move(data)) { }
 
     friend bool operator==(const Action&, const Action&) = default;
 
-    const ActionData& data() const { return m_data; }
+    const ActionData& data() const LIFETIME_BOUND { return m_data; }
 
     WEBCORE_EXPORT Action isolatedCopy() const &;
     WEBCORE_EXPORT Action isolatedCopy() &&;
@@ -132,13 +120,13 @@ private:
 
 struct DeserializedAction : public Action {
     static DeserializedAction deserialize(std::span<const uint8_t>, uint32_t location);
-    static size_t serializedLength(std::span<const uint8_t>, uint32_t location);
+    static size_t NODELETE serializedLength(std::span<const uint8_t>, uint32_t location);
 
     uint32_t actionID() const { return m_actionID; }
 
 private:
     DeserializedAction(uint32_t actionID, ActionData&& data)
-        : Action(WTFMove(data))
+        : Action(WTF::move(data))
         , m_actionID(actionID) { }
 
     const uint32_t m_actionID;
@@ -148,11 +136,12 @@ class ContentExtensionRule {
 public:
     WEBCORE_EXPORT ContentExtensionRule(Trigger&&, Action&&);
 
-    const Trigger& trigger() const { return m_trigger; }
-    const Action& action() const { return m_action; }
-
     ContentExtensionRule isolatedCopy() const & { return { m_trigger.isolatedCopy(), m_action.isolatedCopy() }; }
-    ContentExtensionRule isolatedCopy() && { return { WTFMove(m_trigger).isolatedCopy(), WTFMove(m_action).isolatedCopy() }; }
+    ContentExtensionRule isolatedCopy() && { return { WTF::move(m_trigger).isolatedCopy(), WTF::move(m_action).isolatedCopy() }; }
+
+    const Trigger& trigger() const LIFETIME_BOUND { return m_trigger; }
+    const Action& action() const LIFETIME_BOUND { return m_action; }
+
     friend bool operator==(const ContentExtensionRule&, const ContentExtensionRule&) = default;
 
 private:

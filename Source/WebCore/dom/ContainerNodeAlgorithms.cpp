@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ContainerNodeAlgorithms.h"
 
+#include "AsyncNodeDeletionQueueInlines.h"
 #include "ElementChildIteratorInlines.h"
 #include "ElementRareData.h"
 #include "HTMLFrameOwnerElement.h"
@@ -48,9 +49,9 @@ static void notifyNodeInsertedIntoDocument(ContainerNode& parentOfInsertedTree, 
     ASSERT(parentOfInsertedTree.isConnected());
     ASSERT(!node.isConnected());
 
-    for (RefPtr currentNode = &node; currentNode; currentNode = NodeTraversal::next(*currentNode, &node)) {
-        auto result = currentNode->insertedIntoAncestor(Node::InsertionType { /* connectedToDocument */ true, treeScopeChange == TreeScopeChange::Changed }, parentOfInsertedTree);
-        if (result == Node::InsertedIntoAncestorResult::NeedsPostInsertionCallback)
+    for (RefPtr currentNode = node; currentNode; currentNode = NodeTraversal::next(*currentNode, &node)) {
+        auto result = currentNode->insertionSteps(Node::InsertionType { /* connectedToDocument */ true, treeScopeChange == TreeScopeChange::Changed }, parentOfInsertedTree);
+        if (result == Node::NeedsPostConnectionSteps::Yes)
             postInsertionNotificationTargets.append(*currentNode);
         if (RefPtr root = currentNode->shadowRoot())
             notifyNodeInsertedIntoDocument(parentOfInsertedTree, *root, TreeScopeChange::DidNotChange, postInsertionNotificationTargets);
@@ -62,9 +63,9 @@ static void notifyNodeInsertedIntoTree(ContainerNode& parentOfInsertedTree, Node
     ASSERT(!parentOfInsertedTree.isConnected());
     ASSERT(!node.isConnected());
 
-    for (RefPtr currentNode = &node; currentNode; currentNode = NodeTraversal::next(*currentNode, &node)) {
-        auto result = currentNode->insertedIntoAncestor(Node::InsertionType { /* connectedToDocument */ false, treeScopeChange == TreeScopeChange::Changed }, parentOfInsertedTree);
-        ASSERT_UNUSED(result, result == Node::InsertedIntoAncestorResult::Done);
+    for (RefPtr currentNode = node; currentNode; currentNode = NodeTraversal::next(*currentNode, &node)) {
+        auto result = currentNode->insertionSteps(Node::InsertionType { /* connectedToDocument */ false, treeScopeChange == TreeScopeChange::Changed }, parentOfInsertedTree);
+        UNUSED_PARAM(result);
         if (RefPtr root = currentNode->shadowRoot())
             notifyNodeInsertedIntoTree(parentOfInsertedTree, *root, TreeScopeChange::DidNotChange);
     }
@@ -76,10 +77,10 @@ void notifyChildNodeInserted(ContainerNode& parentOfInsertedTree, Node& node, No
 {
     ASSERT(ScriptDisallowedScope::InMainThread::hasDisallowedScope());
 
-    InspectorInstrumentation::didInsertDOMNode(node.document(), node);
-
-    Ref protectDocument { node.document() };
+    Ref document { node.document() };
     Ref protectNode { node };
+
+    InspectorInstrumentation::didInsertDOMNode(document, node);
 
     // Tree scope has changed if the container node into which "node" is inserted is in a document or a shadow root.
     auto treeScopeChange = parentOfInsertedTree.isInTreeScope() ? TreeScopeChange::Changed : TreeScopeChange::DidNotChange;
@@ -89,50 +90,75 @@ void notifyChildNodeInserted(ContainerNode& parentOfInsertedTree, Node& node, No
         notifyNodeInsertedIntoTree(parentOfInsertedTree, node, treeScopeChange);
 }
 
-inline RemovedSubtreeObservability observabilityOfRemovedNode(Node& node)
+inline RemovedSubtreeObservability NODELETE observabilityOfRemovedNode(Node& node)
 {
     bool isRootOfRemovedTree = !node.parentNode();
     return node.refCount() > 1 && !isRootOfRemovedTree ? RemovedSubtreeObservability::MaybeObservableByRefPtr : RemovedSubtreeObservability::NotObservable;
 }
 
-inline void updateObservability(RemovedSubtreeObservability& currentObservability, RemovedSubtreeObservability newStatus)
+inline RemovedSubtreeObservability NODELETE observabilityOfRemovedShadowRoot(ShadowRoot& shadowRoot)
+{
+    constexpr unsigned referenceCountHeldByThisRemoval = 2;
+    ASSERT(!shadowRoot.parentNode());
+    ASSERT_WITH_SECURITY_IMPLICATION(shadowRoot.refCount() >= referenceCountHeldByThisRemoval);
+    return shadowRoot.refCount() > referenceCountHeldByThisRemoval ? RemovedSubtreeObservability::MaybeObservableByRefPtr : RemovedSubtreeObservability::NotObservable;
+}
+
+inline void NODELETE updateObservability(RemovedSubtreeObservability& currentObservability, RemovedSubtreeObservability newStatus)
 {
     if (newStatus == RemovedSubtreeObservability::MaybeObservableByRefPtr)
         currentObservability = newStatus;
 }
 
-static RemovedSubtreeObservability notifyNodeRemovedFromDocument(ContainerNode& oldParentOfRemovedTree, TreeScopeChange treeScopeChange, Node& node)
+static RemovedSubtreeResult notifyNodeRemovedFromDocument(ContainerNode& oldParentOfRemovedTree, TreeScopeChange treeScopeChange, Node& node)
 {
     ASSERT(!node.parentNode());
     ASSERT(oldParentOfRemovedTree.isConnected());
     ASSERT(node.isConnected());
 
     RemovedSubtreeObservability observability = RemovedSubtreeObservability::NotObservable;
-    for (RefPtr currentNode = &node; currentNode; currentNode = NodeTraversal::next(*currentNode)) {
-        currentNode->removedFromAncestor(Node::RemovalType { /* disconnectedFromDocument */ true, treeScopeChange == TreeScopeChange::Changed }, oldParentOfRemovedTree);
+    auto canDelayNodeDeletion = ContainerNode::CanDelayNodeDeletion::Yes;
+    unsigned subTreeSize = 0;
+    for (RefPtr currentNode = node; currentNode; currentNode = NodeTraversal::next(*currentNode)) {
+        ++subTreeSize;
+        currentNode->removingSteps(Node::RemovalType { /* disconnectedFromDocument */ true, treeScopeChange == TreeScopeChange::Changed }, oldParentOfRemovedTree);
+        updateCanDelayNodeDeletion(canDelayNodeDeletion, AsyncNodeDeletionQueue::canNodeBeDeletedAsync(*currentNode));
         updateObservability(observability, observabilityOfRemovedNode(*currentNode));
-        if (RefPtr root = currentNode->shadowRoot())
-            updateObservability(observability, notifyNodeRemovedFromDocument(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root));
+        if (RefPtr root = currentNode->shadowRoot()) {
+            updateObservability(observability, observabilityOfRemovedShadowRoot(*root));
+            auto [shadowTreeSize, newObservability, canBeDelayed] = notifyNodeRemovedFromDocument(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root);
+            subTreeSize += shadowTreeSize;
+            updateCanDelayNodeDeletion(canDelayNodeDeletion, canBeDelayed);
+            updateObservability(observability, newObservability);
+        }
     }
-    return observability;
+    return { subTreeSize, observability, canDelayNodeDeletion };
 }
 
-static RemovedSubtreeObservability notifyNodeRemovedFromTree(ContainerNode& oldParentOfRemovedTree, TreeScopeChange treeScopeChange, Node& node)
+static RemovedSubtreeResult notifyNodeRemovedFromTree(ContainerNode& oldParentOfRemovedTree, TreeScopeChange treeScopeChange, Node& node)
 {
     ASSERT(!node.parentNode());
     ASSERT(!oldParentOfRemovedTree.isConnected());
-
+    unsigned subTreeSize = 0;
+    auto canDelayNodeDeletion = ContainerNode::CanDelayNodeDeletion::Yes;
     RemovedSubtreeObservability observability = RemovedSubtreeObservability::NotObservable;
-    for (RefPtr currentNode = &node; currentNode; currentNode = NodeTraversal::next(*currentNode)) {
-        currentNode->removedFromAncestor(Node::RemovalType { /* disconnectedFromDocument */ false, treeScopeChange == TreeScopeChange::Changed }, oldParentOfRemovedTree);
+    for (RefPtr currentNode = node; currentNode; currentNode = NodeTraversal::next(*currentNode)) {
+        ++subTreeSize;
+        currentNode->removingSteps(Node::RemovalType { /* disconnectedFromDocument */ false, treeScopeChange == TreeScopeChange::Changed }, oldParentOfRemovedTree);
+        updateCanDelayNodeDeletion(canDelayNodeDeletion, AsyncNodeDeletionQueue::canNodeBeDeletedAsync(*currentNode));
         updateObservability(observability, observabilityOfRemovedNode(*currentNode));
-        if (RefPtr root = currentNode->shadowRoot())
-            updateObservability(observability, notifyNodeRemovedFromTree(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root));
+        if (RefPtr root = currentNode->shadowRoot()) {
+            updateObservability(observability, observabilityOfRemovedShadowRoot(*root));
+            auto [shadowTreeSize, newObservability, canBeDelayed] = notifyNodeRemovedFromTree(oldParentOfRemovedTree, TreeScopeChange::DidNotChange, *root);
+            subTreeSize += shadowTreeSize;
+            updateCanDelayNodeDeletion(canDelayNodeDeletion, canBeDelayed);
+            updateObservability(observability, newObservability);
+        }
     }
-    return observability;
+    return { subTreeSize, observability, canDelayNodeDeletion };
 }
 
-RemovedSubtreeObservability notifyChildNodeRemoved(ContainerNode& oldParentOfRemovedTree, Node& child)
+RemovedSubtreeResult notifyChildNodeRemoved(ContainerNode& oldParentOfRemovedTree, Node& child)
 {
     // Assert that the caller of this function has an instance of ScriptDisallowedScope.
     ASSERT(!isMainThread() || ScriptDisallowedScope::InMainThread::hasDisallowedScope());
@@ -150,19 +176,22 @@ void removeDetachedChildrenInContainer(ContainerNode& container)
     container.setLastChild(nullptr);
 
     RefPtr<Node> next;
-    for (RefPtr node = container.firstChild(); node; node = WTFMove(next)) {
+    for (RefPtr node = container.firstChild(); node; node = WTF::move(next)) {
         ASSERT(!node->deletionHasBegun());
 
         next = node->nextSibling();
         node->setNextSibling(nullptr);
         node->setParentNode(nullptr);
+        node->resetShadowIncludingRoot();
         container.setFirstChild(next.get());
         if (next)
             next->setPreviousSibling(nullptr);
 
-        node->setTreeScopeRecursively(RefAllowingPartiallyDestroyed<Document> { container.document() });
+        node->setTreeScopeRecursively(Ref<Document> { container.document() });
         if (node->isInTreeScope())
             notifyChildNodeRemoved(container, *node);
+        else if (node->refCount() > 1)
+            node->updateShadowIncludingRootForSubtree();
         ASSERT_WITH_SECURITY_IMPLICATION(!node->isInTreeScope());
     }
 }
@@ -203,16 +232,16 @@ static void collectFrameOwners(Vector<Ref<HTMLFrameOwnerElement>>& frameOwners, 
     auto it = elementDescendants.begin();
     auto end = elementDescendants.end();
     while (it != end) {
-        Element& element = *it;
-        if (!element.connectedSubframeCount()) {
+        Ref element = *it;
+        if (!element->connectedSubframeCount()) {
             it.traverseNextSkippingChildren();
             continue;
         }
 
-        if (RefPtr frameOwnerElement = dynamicDowncast<HTMLFrameOwnerElement>(element))
+        if (RefPtr frameOwnerElement = dynamicDowncast<HTMLFrameOwnerElement>(element.get()))
             frameOwners.append(frameOwnerElement.releaseNonNull());
 
-        if (RefPtr shadowRoot = element.shadowRoot())
+        if (RefPtr shadowRoot = element->shadowRoot())
             collectFrameOwners(frameOwners, *shadowRoot);
         ++it;
     }
@@ -245,7 +274,7 @@ void disconnectSubframes(ContainerNode& root, SubframeDisconnectPolicy policy)
     for (auto& owner : frameOwners) {
         // Don't need to traverse up the tree for the first owner since no
         // script could have moved it.
-        if (isFirst || root.containsIncludingShadowDOM(&owner.get()))
+        if (isFirst || root.isShadowIncludingInclusiveAncestorOf(&owner.get()))
             owner.get().disconnectContentFrame();
         isFirst = false;
     }

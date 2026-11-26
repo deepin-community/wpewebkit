@@ -45,6 +45,7 @@ std::string VendorName(VendorID vendor)
         case kVendorID_NVIDIA:
             return "NVIDIA";
         case kVendorID_Qualcomm:
+        case kVendorID_Qualcomm_DXGI:
             return "Qualcomm";
         case kVendorID_VeriSilicon:
             return "VeriSilicon";
@@ -164,7 +165,12 @@ bool IsNVIDIA(VendorID vendorId)
 
 bool IsQualcomm(VendorID vendorId)
 {
-    return vendorId == kVendorID_Qualcomm;
+    return vendorId == kVendorID_Qualcomm || vendorId == kVendorID_Qualcomm_DXGI;
+}
+
+bool IsSamsung(VendorID vendorId)
+{
+    return vendorId == kVendorID_Samsung;
 }
 
 bool IsGoogle(VendorID vendorId)
@@ -241,19 +247,6 @@ bool ParseAMDCatalystDriverVersion(const std::string &content, std::string *vers
         }
     }
     return false;
-}
-
-bool CMDeviceIDToDeviceAndVendorID(const std::string &id, uint32_t *vendorId, uint32_t *deviceId)
-{
-    unsigned int vendor = 0;
-    unsigned int device = 0;
-
-    bool success = id.length() >= 21 && HexStringToUInt(id.substr(8, 4), &vendor) &&
-                   HexStringToUInt(id.substr(17, 4), &device);
-
-    *vendorId = vendor;
-    *deviceId = device;
-    return success;
 }
 
 void GetDualGPUInfo(SystemInfo *info)
@@ -347,27 +340,6 @@ void PrintSystemInfo(const SystemInfo &info)
         std::cout << "Machine Model Version: " << info.machineModelVersion << "\n";
     }
     std::cout << std::endl;
-}
-
-VersionInfo ParseNvidiaDriverVersion(uint32_t version)
-{
-    return {
-        version >> 22,         // major
-        version >> 14 & 0xff,  // minor
-        version >> 6 & 0xff,   // subMinor
-        version & 0x3f         // patch
-    };
-}
-
-VersionInfo ParseMesaDriverVersion(uint32_t version)
-{
-    // Mesa uses VK_MAKE_VERSION
-    return {
-        version >> 22 & 0x7F,
-        version >> 12 & 0x3FF,
-        version & 0xFFF,
-        0,
-    };
 }
 
 uint64_t GetSystemDeviceIdFromParts(uint32_t highPart, uint32_t lowPart)

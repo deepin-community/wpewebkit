@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "ServiceWorkerIdentifier.h"
+#include <WebCore/ServiceWorkerIdentifier.h>
 
 namespace WebCore {
 
@@ -37,8 +37,8 @@ class WEBCORE_EXPORT ServiceWorkerProvider {
 public:
     virtual ~ServiceWorkerProvider();
 
-    static ServiceWorkerProvider& singleton();
-    static void setSharedProvider(ServiceWorkerProvider&);
+    static ServiceWorkerProvider& NODELETE singleton();
+    static void NODELETE setSharedProvider(ServiceWorkerProvider&);
 
     virtual SWClientConnection& serviceWorkerConnection() = 0;
     virtual SWClientConnection* existingServiceWorkerConnection() = 0;

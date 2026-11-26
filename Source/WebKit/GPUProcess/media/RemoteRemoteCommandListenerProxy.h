@@ -43,21 +43,27 @@ class Connection;
 namespace WebKit {
 
 class GPUConnectionToWebProcess;
+struct SharedPreferencesForWebProcess;
 
 class RemoteRemoteCommandListenerProxy : public RefCounted<RemoteRemoteCommandListenerProxy>, private IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteRemoteCommandListenerProxy);
 public:
     static Ref<RemoteRemoteCommandListenerProxy> create(GPUConnectionToWebProcess& process, RemoteRemoteCommandListenerIdentifier&& identifier)
     {
-        return adoptRef(*new RemoteRemoteCommandListenerProxy(process, WTFMove(identifier)));
+        return adoptRef(*new RemoteRemoteCommandListenerProxy(process, WTF::move(identifier)));
     }
 
     virtual ~RemoteRemoteCommandListenerProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     bool supportsSeeking() const { return m_supportsSeeking; }
-    const WebCore::RemoteCommandListener::RemoteCommandsSet& supportedCommands() const { return m_supportedCommands; }
+    const WebCore::RemoteCommandListener::RemoteCommandsSet& supportedCommands() const LIFETIME_BOUND { return m_supportedCommands; }
 
     RemoteRemoteCommandListenerIdentifier identifier() const { return m_identifier; }
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;

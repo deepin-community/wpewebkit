@@ -23,33 +23,34 @@
 
 #include "SVGGeometryElement.h"
 #include "SVGNames.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class SVGPolyElement : public SVGGeometryElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGPolyElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGPolyElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGPolyElement);
 public:
     const SVGPointList& points() const { return m_points->currentValue(); }
 
     SVGPointList& points() { return m_points->baseVal(); }
-    SVGPointList& animatedPoints() { return *m_points->animVal(); }
+    SVGPointList& animatedPoints() { return m_points->animVal(); }
 
     size_t approximateMemoryCost() const override;
+
+    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGPolyElement, SVGGeometryElement>;
 
 protected:
     SVGPolyElement(const QualifiedName&, Document&);
 
 private:
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGPolyElement, SVGGeometryElement>;
-
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
     bool isValid() const override { return SVGTests::isValid(); }
     bool supportsMarkers() const override { return true; }
 
-    Ref<SVGAnimatedPointList> m_points { SVGAnimatedPointList::create(this) };
+    const Ref<SVGAnimatedPointList> m_points { SVGAnimatedPointList::create(this) };
 };
 
 } // namespace WebCore

@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "CallFrame.h"
-#include "JSCJSValue.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC {
@@ -76,6 +76,11 @@ constexpr unsigned argumentCountForStackSize(unsigned sizeInBytes)
 inline unsigned logStackAlignmentRegisters()
 {
     return WTF::fastLog2(stackAlignmentRegisters());
+}
+
+inline bool isStackAligned(const void* pointer)
+{
+    return !(reinterpret_cast<uintptr_t>(pointer) & (stackAlignmentBytes() - 1));
 }
 
 } // namespace JSC

@@ -88,7 +88,10 @@ class FramebufferVk : public FramebufferImpl
     angle::Result getSamplePosition(const gl::Context *context,
                                     size_t index,
                                     GLfloat *xy) const override;
-    RenderTargetVk *getDepthStencilRenderTarget() const;
+    RenderTargetVk *getDepthStencilRenderTarget() const
+    {
+        return mRenderTargetCache.getDepthStencil();
+    }
 
     // Internal helper function for readPixels operations.
     angle::Result readPixelsImpl(ContextVk *contextVk,
@@ -99,12 +102,19 @@ class FramebufferVk : public FramebufferImpl
                                  void *pixels);
 
     gl::Extents getReadImageExtents() const;
-    gl::Rectangle getNonRotatedCompleteRenderArea() const;
+    // Return the framebuffer's non-rotated render area.  This is a gl::Rectangle that is based on
+    // the dimensions of the framebuffer, IS NOT rotated, and IS NOT y-flipped
+    gl::Rectangle getNonRotatedCompleteRenderArea() const
+    {
+        const gl::Box &dimensions = mState.getDimensions();
+        return gl::Rectangle(0, 0, dimensions.width, dimensions.height);
+    }
     gl::Rectangle getRotatedCompleteRenderArea(ContextVk *contextVk) const;
     gl::Rectangle getRotatedScissoredRenderArea(ContextVk *contextVk) const;
     // Returns render area with deferred clears in consideration. When deferred clear is used
     // in the render pass, the render area must cover the whole framebuffer.
     gl::Rectangle getRenderArea(ContextVk *contextVk) const;
+    uint32_t getLayerCount() const { return mCurrentFramebufferDesc.getLayerCount(); }
 
     const gl::DrawBufferMask &getEmulatedAlphaAttachmentMask() const;
     RenderTargetVk *getColorDrawRenderTarget(size_t colorIndexGL) const;
@@ -115,16 +125,24 @@ class FramebufferVk : public FramebufferImpl
                                      vk::RenderPassCommandBuffer **commandBufferOut,
                                      bool *renderPassDescChangedOut);
 
-    GLint getSamples() const;
+    GLint getSamples() const
+    {
+        ASSERT(mRasterizationSamples > 0);
+        return mRasterizationSamples;
+    }
 
     const vk::RenderPassDesc &getRenderPassDesc() const { return mRenderPassDesc; }
 
     angle::Result getFramebuffer(ContextVk *contextVk, vk::RenderPassFramebuffer *framebufferOut);
 
     bool hasDeferredClears() const { return !mDeferredClears.empty(); }
-    angle::Result flushDeferredClears(ContextVk *contextVk);
+    bool hasDeferredDepthClear() const { return mDeferredClears.testDepth(); }
+    bool hasDeferredStencilClear() const { return mDeferredClears.testStencil(); }
+    angle::Result flushDepthStencilDeferredClear(ContextVk *contextVk,
+                                                 VkImageAspectFlagBits aspect);
+    void restageDeferredClearsAfterNoopDraw(ContextVk *contextVk);
 
-    void switchToFramebufferFetchMode(ContextVk *contextVk, bool hasFramebufferFetch);
+    void switchToColorFramebufferFetchMode(ContextVk *contextVk, bool hasColorFramebufferFetch);
 
     bool updateLegacyDither(ContextVk *contextVk);
 
@@ -143,6 +161,16 @@ class FramebufferVk : public FramebufferImpl
     }
 
     bool isFoveationEnabled() { return mFoveationState.isFoveated(); }
+
+    const vk::ImageHelper *getImageWithTileMemory() const;
+    void onTileMemoryFallback(ContextVk *contextVk)
+    {
+        // Invalidate cached objects associated with depth/stencil attachment. They will gets
+        // recreated from Framebuffer::startNewRenderPass.
+        mCachedAttachmentsInfo.clear();
+        releaseCurrentFramebuffer(contextVk);
+        updateDepthStencilAttachmentSerial(contextVk);
+    }
 
   private:
     enum class ClearWithCommand
@@ -169,23 +197,28 @@ class FramebufferVk : public FramebufferImpl
         RenderTargetImage renderTargetImage;
     };
 
+    struct CachedAttachmentsInfo
+    {
+        void clear()
+        {
+            unpackedAttachments.clear();
+            packedRenderTargetsInfo.clear();
+        }
+        vk::FramebufferAttachmentsVector<VkImageView> unpackedAttachments;
+        vk::FramebufferAttachmentsVector<RenderTargetInfo> packedRenderTargetsInfo;
+    };
+
     // Returns the attachments to be used to create a framebuffer.  The views returned in
     // |unpackedAttachments| are not necessarily packed, but the render targets in
     // |packedRenderTargetsInfoOut| are.  In particular, the resolve attachment views need to stay
     // sparse to be placed in |RenderPassFramebuffer|, but the calling function will have to pack
     // them to match the render buffers before creating a framebuffer.
-    angle::Result getAttachmentsAndRenderTargets(
-        vk::Context *context,
-        vk::FramebufferAttachmentsVector<VkImageView> *unpackedAttachments,
-        vk::FramebufferAttachmentsVector<RenderTargetInfo> *packedRenderTargetsInfoOut);
+    angle::Result updateAttachmentsAndRenderTargets(ContextVk *contextVk);
 
-    angle::Result createNewFramebuffer(
-        ContextVk *contextVk,
-        uint32_t framebufferWidth,
-        const uint32_t framebufferHeight,
-        const uint32_t framebufferLayers,
-        const vk::FramebufferAttachmentsVector<VkImageView> &unpackedAttachments,
-        const vk::FramebufferAttachmentsVector<RenderTargetInfo> &renderTargetsInfo);
+    angle::Result createNewFramebuffer(ContextVk *contextVk,
+                                       uint32_t framebufferWidth,
+                                       const uint32_t framebufferHeight,
+                                       const uint32_t framebufferLayers);
 
     // The 'in' rectangles must be clipped to the scissor and FBO. The clipping is done in 'blit'.
     angle::Result blitWithCommand(ContextVk *contextVk,
@@ -239,14 +272,19 @@ class FramebufferVk : public FramebufferImpl
     void restageDeferredClears(ContextVk *contextVk);
     void restageDeferredClearsForReadFramebuffer(ContextVk *contextVk);
     void restageDeferredClearsImpl(ContextVk *contextVk);
+    angle::Result flushDeferredClears(ContextVk *contextVk);
     void clearWithCommand(ContextVk *contextVk,
+                          const bool scissoredClear,
                           const gl::Rectangle &scissoredRenderArea,
                           ClearWithCommand behavior,
                           vk::ClearValuesArray *clears);
     void clearWithLoadOp(ContextVk *contextVk);
     void updateActiveColorMasks(size_t colorIndex, bool r, bool g, bool b, bool a);
     void updateRenderPassDesc(ContextVk *contextVk);
-    angle::Result updateColorAttachment(const gl::Context *context, uint32_t colorIndex);
+    angle::Result updateColorAttachment(const gl::Context *context,
+                                        uint32_t colorIndex,
+                                        bool *readColorTargetUpdatedOut);
+    void updateColorAttachmentColorspace(gl::SrgbWriteControlMode srgbWriteControlMode);
     angle::Result updateDepthStencilAttachment(const gl::Context *context);
     void updateDepthStencilAttachmentSerial(ContextVk *contextVk);
     angle::Result flushColorAttachmentUpdates(const gl::Context *context,
@@ -295,10 +333,11 @@ class FramebufferVk : public FramebufferImpl
     angle::Result updateFoveationState(ContextVk *contextVk,
                                        const gl::FoveationState &newFoveationState,
                                        const gl::Extents &foveatedAttachmentSize);
+    GLint getSamplesImpl() const;
 
     void insertCache(ContextVk *contextVk,
                      const vk::FramebufferDesc &desc,
-                     vk::FramebufferHelper &&newFramebuffer);
+                     vk::Framebuffer &&newFramebuffer);
 
     WindowSurfaceVk *mBackbuffer;
 
@@ -314,6 +353,9 @@ class FramebufferVk : public FramebufferImpl
     // the framebuffer does not, we need to mask out the alpha channel. This DrawBufferMask will
     // contain the mask to apply to the alpha channel when drawing.
     gl::DrawBufferMask mEmulatedAlphaAttachmentMask;
+
+    // The attachment bit is set if it has color space override
+    gl::DrawBufferMask mAttachmentWithColorSpaceOverrideMask;
 
     // mCurrentFramebufferDesc is used to detect framebuffer changes using its serials. Therefore,
     // it must be maintained even when using the imageless framebuffer extension.
@@ -340,6 +382,12 @@ class FramebufferVk : public FramebufferImpl
 
     // Serial of the render pass this framebuffer has opened, if any.
     QueueSerial mLastRenderPassQueueSerial;
+
+    // Cached value of rasterization samples
+    GLint mRasterizationSamples;
+
+    // Cached values of unpacked attachments and render target info for the framebuffer.
+    CachedAttachmentsInfo mCachedAttachmentsInfo;
 };
 }  // namespace rx
 

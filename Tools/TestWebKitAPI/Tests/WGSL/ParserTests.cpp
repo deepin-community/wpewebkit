@@ -81,7 +81,7 @@ inline Expected<WGSL::ShaderModule, WGSL::FailedCheck> parse(const String& wgsl)
     auto maybeError = WGSL::parse(shaderModule);
     if (maybeError.has_value())
         return makeUnexpected(*maybeError);
-    return { WTFMove(shaderModule) };
+    return { WTF::move(shaderModule) };
 }
 
 struct StructAttributeTest {
@@ -121,7 +121,6 @@ static void testStruct(ASCIILiteral program, const Vector<String>& fieldNames, c
     EXPECT_TRUE(is<WGSL::AST::Structure>(shader->declarations()[0]));
     auto& str = downcast<WGSL::AST::Structure>(shader->declarations()[0]);
     EXPECT_EQ(str.name(), "B"_s);
-    EXPECT_TRUE(str.attributes().isEmpty());
 
     EXPECT_EQ(str.members().size(), fieldNames.size());
     for (unsigned i = 0; i < fieldNames.size(); ++i) {

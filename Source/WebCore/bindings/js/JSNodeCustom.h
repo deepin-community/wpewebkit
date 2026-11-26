@@ -26,9 +26,11 @@
 
 #pragma once
 
-#include "JSDOMBinding.h"
-#include "JSNode.h"
-#include "WebCoreOpaqueRoot.h"
+#include <WebCore/JSDOMBinding.h>
+#include <WebCore/JSNode.h>
+#include <WebCore/NodeInlines.h>
+#include <WebCore/ScriptWrappableInlines.h>
+#include <WebCore/WebCoreOpaqueRoot.h>
 
 namespace JSC {
 namespace JSCastingHelpers {
@@ -52,9 +54,11 @@ namespace WebCore {
 WEBCORE_EXPORT JSC::JSValue createWrapper(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Node>&&);
 WEBCORE_EXPORT JSC::JSObject* getOutOfLineCachedWrapper(JSDOMGlobalObject*, Node&);
 
+WEBCORE_EXPORT JSDOMGlobalObject* globalObjectForNode(Node&, JSDOMGlobalObject*);
+
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Node& node)
 {
-    if (LIKELY(globalObject->worldIsNormal())) {
+    if (globalObject->worldIsNormal()) [[likely]] {
         if (auto* wrapper = node.wrapper())
             return wrapper;
     } else {
@@ -69,11 +73,25 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalOb
 // root. In the JavaScript DOM, a node tree survives as long as there is a
 // reference to any node in the tree. To model the JavaScript DOM on top of
 // the C++ DOM, we ensure that the root of every tree has a JavaScript wrapper.
-void willCreatePossiblyOrphanedTreeByRemovalSlowCase(Node& root);
+//
+// The wrapper is created in the given document's realm, bypassing the usual
+// globalObjectForNode() remap: the caller has already determined the correct
+// document (e.g., the node's tree scope may have moved on during adoption).
+void createNodeWrapperInDocumentRealmSlowCase(Node&, Document&);
+
 inline void willCreatePossiblyOrphanedTreeByRemoval(Node& root)
 {
-    if (!root.wrapper() && root.hasChildNodes())
-        willCreatePossiblyOrphanedTreeByRemovalSlowCase(root);
+    if (!root.wrapper() && (root.hasChildNodes() || root.shadowRoot()))
+        createNodeWrapperInDocumentRealmSlowCase(root, protect(root.document()));
+}
+
+inline void ensureWrapperForAdoptedNodeWithForeignGlobalObjectIfNeeded(Node& node, Document& oldDocument, Document& newDocument)
+{
+    if (node.wrapper())
+        return;
+    if (&oldDocument.contextDocument() == &newDocument.contextDocument())
+        return;
+    createNodeWrapperInDocumentRealmSlowCase(node, oldDocument);
 }
 
 inline WebCoreOpaqueRoot root(Node&);

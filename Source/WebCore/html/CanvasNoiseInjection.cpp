@@ -26,10 +26,11 @@
 #include "config.h"
 #include "CanvasNoiseInjection.h"
 
-#include "ByteArrayPixelBuffer.h"
 #include "FloatRect.h"
 #include "ImageBuffer.h"
 #include "PixelBuffer.h"
+#include "TypedArrayPixelBuffer.h"
+#include <algorithm>
 
 namespace WebCore {
 
@@ -43,7 +44,7 @@ void CanvasNoiseInjection::clearDirtyRect()
     m_postProcessDirtyRect = { };
 }
 
-static inline bool isIndexInBounds(int size, int index)
+static inline bool NODELETE isIndexInBounds(int size, int index)
 {
     ASSERT(index <= size);
     return index < size;
@@ -145,7 +146,7 @@ static std::pair<std::array<int, 4>, std::array<int, 4>> boundingNeighbors(int i
     const auto compareColorsAndSetBounds = [&areColorsRelated](const auto& bytes, auto& tightestBoundingColors, auto& tightestBoundingDiff, auto colorIndex, auto neighborIndex1, auto neighborIndex2) {
         if (areColorsRelated(neighborIndex1, colorIndex, neighborIndex2)) {
             if (setTightnessBounds(bytes, tightestBoundingDiff, neighborIndex1, colorIndex, neighborIndex2)) {
-                if (WTF::allOf(tightestBoundingDiff, [](auto& item) { return !item; })) {
+                if (std::ranges::all_of(tightestBoundingDiff, [](auto& item) { return !item; })) {
                     tightestBoundingColors = {
                         { bytes[colorIndex], bytes[colorIndex + 1], bytes[colorIndex + 2], bytes[colorIndex + 3] },
                         { bytes[colorIndex], bytes[colorIndex + 1], bytes[colorIndex + 2], bytes[colorIndex + 3] }
@@ -207,7 +208,7 @@ void CanvasNoiseInjection::postProcessDirtyCanvasBuffer(ImageBuffer* imageBuffer
     }
 }
 
-static std::pair<int, int> lowerAndUpperBound(int component1, int component2, int component3)
+static std::pair<int, int> NODELETE lowerAndUpperBound(int component1, int component2, int component3)
 {
     if (component1 <= component3) {
         if (component1 == component2 || component2 == component3)
@@ -229,7 +230,7 @@ static std::pair<int, int> lowerAndUpperBound(int component1, int component2, in
     return { component2, component2 };
 }
 
-static void adjustNeighborColorBounds(std::array<int, 4>& neighborColor1, const std::array<int, 4>& color, std::array<int, 4>& neighborColor2)
+static void NODELETE adjustNeighborColorBounds(std::array<int, 4>& neighborColor1, const std::array<int, 4>& color, std::array<int, 4>& neighborColor2)
 {
     auto [redLowerBound, redUpperBound] = lowerAndUpperBound(neighborColor1[0], color[0], neighborColor2[0]);
     auto [greenLowerBound, greenUpperBound] = lowerAndUpperBound(neighborColor1[1], color[1], neighborColor2[1]);

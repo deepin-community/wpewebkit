@@ -27,6 +27,7 @@
 
 #include "APIObject.h"
 #include "NetworkCacheData.h"
+#include <WebCore/ContentExtensionParser.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebKit {
@@ -40,17 +41,17 @@ public:
 #if ENABLE(CONTENT_EXTENSIONS)
     static Ref<ContentRuleList> create(Ref<WebKit::WebCompiledContentRuleList>&& contentRuleList, WebKit::NetworkCache::Data&& mappedFile)
     {
-        return adoptRef(*new ContentRuleList(WTFMove(contentRuleList), WTFMove(mappedFile)));
+        return adoptRef(*new ContentRuleList(WTF::move(contentRuleList), WTF::move(mappedFile)));
     }
 
     ContentRuleList(Ref<WebKit::WebCompiledContentRuleList>&&, WebKit::NetworkCache::Data&&);
     virtual ~ContentRuleList();
 
-    const WTF::String& name() const;
+    const WTF::String& NODELETE name() const LIFETIME_BOUND;
     const WebKit::WebCompiledContentRuleList& compiledRuleList() const { return m_compiledRuleList.get(); }
     
     static bool supportsRegularExpression(const WTF::String&);
-    static std::error_code parseRuleList(const WTF::String&);
+    static std::error_code parseRuleList(const WTF::String&, WebCore::ContentExtensions::CSSSelectorsAllowed);
 
 private:
     Ref<WebKit::WebCompiledContentRuleList> m_compiledRuleList;
@@ -59,3 +60,5 @@ private:
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(ContentRuleList);

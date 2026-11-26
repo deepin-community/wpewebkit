@@ -37,10 +37,11 @@
 #include "StreamServerConnection.h"
 #include "WebGPUComputePassDescriptor.h"
 #include "WebGPUObjectHeap.h"
+#include <WebCore/WebGPUBuffer.h>
 #include <WebCore/WebGPUCommandEncoder.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, connection())
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_streamConnection)
 
 namespace WebKit {
 
@@ -49,58 +50,52 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteCommandEncoder);
 RemoteCommandEncoder::RemoteCommandEncoder(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::CommandEncoder& commandEncoder, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     : m_backing(commandEncoder)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_identifier(identifier)
     , m_gpuConnectionToWebProcess(gpuConnectionToWebProcess)
     , m_gpu(gpu)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteCommandEncoder::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteCommandEncoder::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteCommandEncoder::~RemoteCommandEncoder() = default;
 
-RefPtr<IPC::Connection> RemoteCommandEncoder::connection() const
-{
-    RefPtr connection = m_gpuConnectionToWebProcess.get();
-    if (!connection)
-        return nullptr;
-    return &connection->connection();
-}
-
 void RemoteCommandEncoder::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteCommandEncoder::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteCommandEncoder::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteCommandEncoder::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteCommandEncoder::beginRenderPass(const WebGPU::RenderPassDescriptor& descriptor, WebGPUIdentifier identifier)
 {
-    auto convertedDescriptor = m_objectHeap->convertFromBacking(descriptor);
+    Ref objectHeap = m_objectHeap.get();
+    auto convertedDescriptor = objectHeap->convertFromBacking(descriptor);
     MESSAGE_CHECK(convertedDescriptor);
 
-    auto renderPassEncoder = m_backing->beginRenderPass(*convertedDescriptor);
+    auto renderPassEncoder = protect(m_backing)->beginRenderPass(*convertedDescriptor);
     MESSAGE_CHECK(renderPassEncoder);
-    auto remoteRenderPassEncoder = RemoteRenderPassEncoder::create(*renderPassEncoder, m_objectHeap, m_streamConnection.copyRef(), m_gpu, identifier);
-    m_objectHeap->addObject(identifier, remoteRenderPassEncoder);
+    auto remoteRenderPassEncoder = RemoteRenderPassEncoder::create(*renderPassEncoder, objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
+    objectHeap->addObject(identifier, remoteRenderPassEncoder);
 }
 
 void RemoteCommandEncoder::beginComputePass(const std::optional<WebGPU::ComputePassDescriptor>& descriptor, WebGPUIdentifier identifier)
 {
+    Ref objectHeap = m_objectHeap.get();
     std::optional<WebCore::WebGPU::ComputePassDescriptor> convertedDescriptor;
     if (descriptor) {
-        auto resultDescriptor = m_objectHeap->convertFromBacking(*descriptor);
+        auto resultDescriptor = objectHeap->convertFromBacking(*descriptor);
         MESSAGE_CHECK(resultDescriptor);
-        convertedDescriptor = WTFMove(resultDescriptor);
+        convertedDescriptor = WTF::move(resultDescriptor);
     }
 
-    auto computePassEncoder = m_backing->beginComputePass(convertedDescriptor);
+    auto computePassEncoder = protect(m_backing)->beginComputePass(convertedDescriptor);
     MESSAGE_CHECK(computePassEncoder);
-    auto computeRenderPassEncoder = RemoteComputePassEncoder::create(*computePassEncoder, m_objectHeap, m_streamConnection.copyRef(), m_gpu, identifier);
-    m_objectHeap->addObject(identifier, computeRenderPassEncoder);
+    auto computeRenderPassEncoder = RemoteComputePassEncoder::create(*computePassEncoder, objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
+    objectHeap->addObject(identifier, computeRenderPassEncoder);
 }
 
 void RemoteCommandEncoder::copyBufferToBuffer(
@@ -110,14 +105,15 @@ void RemoteCommandEncoder::copyBufferToBuffer(
     WebCore::WebGPU::Size64 destinationOffset,
     WebCore::WebGPU::Size64 size)
 {
-    auto convertedSource = m_objectHeap->convertBufferFromBacking(source);
+    Ref objectHeap = m_objectHeap.get();
+    auto convertedSource = objectHeap->convertBufferFromBacking(source);
     ASSERT(convertedSource);
-    auto convertedDestination = m_objectHeap->convertBufferFromBacking(destination);
+    auto convertedDestination = objectHeap->convertBufferFromBacking(destination);
     ASSERT(convertedDestination);
     if (!convertedSource || !convertedDestination)
         return;
 
-    m_backing->copyBufferToBuffer(*convertedSource, sourceOffset, *convertedDestination, destinationOffset, size);
+    protect(m_backing)->copyBufferToBuffer(*convertedSource, sourceOffset, *convertedDestination, destinationOffset, size);
 }
 
 void RemoteCommandEncoder::copyBufferToTexture(
@@ -134,7 +130,7 @@ void RemoteCommandEncoder::copyBufferToTexture(
     if (!convertedSource || !convertedDestination || !convertedCopySize)
         return;
 
-    m_backing->copyBufferToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
+    protect(m_backing)->copyBufferToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
 }
 
 void RemoteCommandEncoder::copyTextureToBuffer(
@@ -151,7 +147,7 @@ void RemoteCommandEncoder::copyTextureToBuffer(
     if (!convertedSource || !convertedDestination || !convertedCopySize)
         return;
 
-    m_backing->copyTextureToBuffer(*convertedSource, *convertedDestination, *convertedCopySize);
+    protect(m_backing)->copyTextureToBuffer(*convertedSource, *convertedDestination, *convertedCopySize);
 }
 
 void RemoteCommandEncoder::copyTextureToTexture(
@@ -168,7 +164,7 @@ void RemoteCommandEncoder::copyTextureToTexture(
     if (!convertedSource || !convertedDestination || !convertedCopySize)
         return;
 
-    m_backing->copyTextureToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
+    protect(m_backing)->copyTextureToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
 }
 
 void RemoteCommandEncoder::clearBuffer(
@@ -176,37 +172,37 @@ void RemoteCommandEncoder::clearBuffer(
     WebCore::WebGPU::Size64 offset,
     std::optional<WebCore::WebGPU::Size64> size)
 {
-    auto convertedBuffer = m_objectHeap->convertBufferFromBacking(buffer);
+    auto convertedBuffer = protect(m_objectHeap)->convertBufferFromBacking(buffer);
     ASSERT(convertedBuffer);
     if (!convertedBuffer)
         return;
 
-    m_backing->clearBuffer(*convertedBuffer, offset, size);
+    protect(m_backing)->clearBuffer(*convertedBuffer, offset, size);
 }
 
 void RemoteCommandEncoder::pushDebugGroup(String&& groupLabel)
 {
-    m_backing->pushDebugGroup(WTFMove(groupLabel));
+    protect(m_backing)->pushDebugGroup(WTF::move(groupLabel));
 }
 
 void RemoteCommandEncoder::popDebugGroup()
 {
-    m_backing->popDebugGroup();
+    protect(m_backing)->popDebugGroup();
 }
 
 void RemoteCommandEncoder::insertDebugMarker(String&& markerLabel)
 {
-    m_backing->insertDebugMarker(WTFMove(markerLabel));
+    protect(m_backing)->insertDebugMarker(WTF::move(markerLabel));
 }
 
 void RemoteCommandEncoder::writeTimestamp(WebGPUIdentifier querySet, WebCore::WebGPU::Size32 queryIndex)
 {
-    auto convertedQuerySet = m_objectHeap->convertQuerySetFromBacking(querySet);
+    auto convertedQuerySet = protect(m_objectHeap)->convertQuerySetFromBacking(querySet);
     ASSERT(convertedQuerySet);
     if (!convertedQuerySet)
         return;
 
-    m_backing->writeTimestamp(*convertedQuerySet, queryIndex);
+    protect(m_backing)->writeTimestamp(*convertedQuerySet, queryIndex);
 }
 
 void RemoteCommandEncoder::resolveQuerySet(
@@ -216,30 +212,32 @@ void RemoteCommandEncoder::resolveQuerySet(
     WebGPUIdentifier destination,
     WebCore::WebGPU::Size64 destinationOffset)
 {
-    auto convertedQuerySet = m_objectHeap->convertQuerySetFromBacking(querySet);
+    Ref objectHeap = m_objectHeap.get();
+    auto convertedQuerySet = objectHeap->convertQuerySetFromBacking(querySet);
     ASSERT(convertedQuerySet);
-    auto convertedDestination = m_objectHeap->convertBufferFromBacking(destination);
+    auto convertedDestination = objectHeap->convertBufferFromBacking(destination);
     ASSERT(convertedDestination);
     if (!convertedQuerySet || !convertedDestination)
         return;
 
-    m_backing->resolveQuerySet(*convertedQuerySet, firstQuery, queryCount, *convertedDestination, destinationOffset);
+    protect(m_backing)->resolveQuerySet(*convertedQuerySet, firstQuery, queryCount, *convertedDestination, destinationOffset);
 }
 
 void RemoteCommandEncoder::finish(const WebGPU::CommandBufferDescriptor& descriptor, WebGPUIdentifier identifier)
 {
-    auto convertedDescriptor = m_objectHeap->convertFromBacking(descriptor);
+    Ref objectHeap = m_objectHeap.get();
+    auto convertedDescriptor = objectHeap->convertFromBacking(descriptor);
     MESSAGE_CHECK(convertedDescriptor);
 
-    auto commandBuffer = m_backing->finish(*convertedDescriptor);
+    auto commandBuffer = protect(m_backing)->finish(*convertedDescriptor);
     MESSAGE_CHECK(commandBuffer);
-    auto remoteCommandBuffer = RemoteCommandBuffer::create(*commandBuffer, m_objectHeap, m_streamConnection.copyRef(), m_gpu, identifier);
-    m_objectHeap->addObject(identifier, remoteCommandBuffer);
+    auto remoteCommandBuffer = RemoteCommandBuffer::create(*commandBuffer, objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
+    objectHeap->addObject(identifier, remoteCommandBuffer);
 }
 
 void RemoteCommandEncoder::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

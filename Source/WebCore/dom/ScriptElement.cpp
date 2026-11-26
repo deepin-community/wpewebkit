@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Nikolas Zimmermann <zimmermann@kde.org>
  *
  * This library is free software; you can redistribute it and/or
@@ -31,24 +31,32 @@
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginAccessControl.h"
 #include "CurrentScriptIncrementer.h"
+#include "DOMWrapperWorld.h"
+#include "DocumentEventLoop.h"
 #include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "DocumentPrefetcher.h"
+#include "DocumentResourceLoader.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
+#include "HTMLAnchorElement.h"
+#include "HTMLCollection.h"
 #include "HTMLNames.h"
 #include "HTMLScriptElement.h"
 #include "IgnoreDestructiveWriteCountIncrementer.h"
 #include "InlineClassicScript.h"
 #include "LoadableClassicScript.h"
-#include "LoadableImportMap.h"
 #include "LoadableModuleScript.h"
+#include "LoadableScriptError.h"
 #include "LocalFrame.h"
 #include "MIMETypeRegistry.h"
+#include "MemoryCache.h"
 #include "ModuleFetchParameters.h"
 #include "PendingScript.h"
-#include "RuntimeApplicationChecks.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGScriptElement.h"
 #include "ScriptController.h"
@@ -57,9 +65,16 @@
 #include "ScriptSourceCode.h"
 #include "ScriptableDocumentParser.h"
 #include "Settings.h"
+#include "SpeculationRules.h"
 #include "TextNodeTraversal.h"
 #include "TrustedType.h"
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ImportMap.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSLock.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/Scope.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/text/MakeString.h>
@@ -69,7 +84,8 @@ namespace WebCore {
 static const auto maxUserGesturePropagationTime = 1_s;
 
 ScriptElement::ScriptElement(Element& element, bool parserInserted, bool alreadyStarted)
-    : m_element(element)
+    : ActiveDOMObject(element.document())
+    , m_element(element)
     , m_parserInserted(parserInserted ? ParserInserted::Yes : ParserInserted::No)
     , m_alreadyStarted(alreadyStarted)
     , m_forceAsync(!parserInserted)
@@ -81,11 +97,11 @@ ScriptElement::ScriptElement(Element& element, bool parserInserted, bool already
     if (parserInserted) {
         Ref document = element.document();
         if (RefPtr parser = document->scriptableDocumentParser(); parser && !document->isInDocumentWrite())
-            m_startLineNumber = parser->textPosition().m_line;
+            m_startPosition = parser->textPosition();
     }
 }
 
-void ScriptElement::didFinishInsertingNode()
+void ScriptElement::postConnectionSteps()
 {
     if (m_parserInserted == ParserInserted::No)
         prepareScript(); // FIXME: Provide a real starting line number here.
@@ -121,12 +137,38 @@ void ScriptElement::handleAsyncAttribute()
 
 void ScriptElement::dispatchErrorEvent()
 {
-    protectedElement()->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    // Keep the JS wrapper alive until the end of this method.
+    Ref wrapperProtector = makePendingActivity(*this);
+
+    protect(element())->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
-// https://html.spec.whatwg.org/multipage/scripting.html#prepare-a-script
-std::optional<ScriptType> ScriptElement::determineScriptType(const String& type, const String& language, bool isHTMLDocument)
+static void reportSpeculationRulesError(LocalFrame& frame, const String& errorMessage)
 {
+    // https://html.spec.whatwg.org/C#report-an-exception
+    auto& world = mainThreadNormalWorldSingleton();
+    JSC::VM& vm = world.vm();
+    JSC::JSLockHolder lock(vm);
+
+    if (auto* jsGlobalObject = protect(frame.script())->globalObject(world)) {
+        auto* error = JSC::createTypeError(jsGlobalObject, errorMessage);
+        LoadableScript::Error scriptError {
+            LoadableScriptErrorType::Script,
+            std::nullopt,
+            JSC::Strong<JSC::Unknown>(vm, error)
+        };
+        protect(frame.script())->reportExceptionFromScriptError(scriptError, false);
+    }
+}
+
+// https://html.spec.whatwg.org/C#prepare-the-script-element (Steps 8-12)
+std::optional<ScriptType> ScriptElement::determineScriptType(const String& type, const String& language, bool isHTMLDocument, bool speculationRulesPrefetchEnabled)
+{
+    // Step 8. If any of the following are true:
+    //  - el has a type attribute whose value is the empty string;
+    //  - el has no type attribute but it has a language attribute and that attribute's value is the empty string; or
+    //  - el has neither a type attribute nor a language attribute,
+    // then let the script block's type string for this script element be "text/javascript".
     if (type.isNull()) {
         if (language.isEmpty())
             return ScriptType::Classic;
@@ -137,7 +179,8 @@ std::optional<ScriptType> ScriptElement::determineScriptType(const String& type,
     if (type.isEmpty())
         return ScriptType::Classic; // Assume text/javascript.
 
-    if (MIMETypeRegistry::isSupportedJavaScriptMIMEType(type.trim(isASCIIWhitespace)))
+    // Step 9. If the script block's type string is a JavaScript MIME type essence match, then set el's type to "classic".
+    if (MIMETypeRegistry::isSupportedJavaScriptMIMEType(StringView(type).trim(isASCIIWhitespace)))
         return ScriptType::Classic;
 
     // FIXME: XHTML spec defines "defer" attribute. But WebKit does not implement it for a long time.
@@ -147,22 +190,24 @@ std::optional<ScriptType> ScriptElement::determineScriptType(const String& type,
     if (!isHTMLDocument)
         return std::nullopt;
 
-    // https://html.spec.whatwg.org/multipage/scripting.html#attr-script-type
-    // Setting the attribute to an ASCII case-insensitive match for the string "module" means that the script is a module script.
+    // Step 10. Otherwise, if the script block's type string is an ASCII case-insensitive match for the string "module", then set el's type to "module".
     if (equalLettersIgnoringASCIICase(type, "module"_s))
         return ScriptType::Module;
 
-    // https://wicg.github.io/import-maps/#integration-prepare-a-script
-    // If the script block’s type string is an ASCII case-insensitive match for the string "importmap", the script’s type is "importmap".
+    // Step 11. Otherwise, if the script block's type string is an ASCII case-insensitive match for the string "importmap", then set el's type to "importmap".
     if (equalLettersIgnoringASCIICase(type, "importmap"_s))
         return ScriptType::ImportMap;
+
+    // Step 12. Otherwise, if the script block's type string is an ASCII case-insensitive match for the string "speculationrules", then set el's type to "speculationrules".
+    if (speculationRulesPrefetchEnabled && equalLettersIgnoringASCIICase(type, "speculationrules"_s))
+        return ScriptType::SpeculationRules;
 
     return std::nullopt;
 }
 
 std::optional<ScriptType> ScriptElement::determineScriptType() const
 {
-    return determineScriptType(typeAttributeValue(), languageAttributeValue(), element().document().isHTMLDocument());
+    return determineScriptType(typeAttributeValue(), languageAttributeValue(), element().document().isHTMLDocument(), element().document().settings().speculationRulesPrefetchEnabled());
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#prepare-the-script-element
@@ -182,9 +227,16 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
         m_forceAsync = true;
 
     String sourceText = scriptContent();
-    Ref context = *element().scriptExecutionContext();
+    Ref element = this->element();
+    Ref context = *element->scriptExecutionContext();
+
+    // Use the script start position captured when tree building (rather than the start line number)
+    // to match other browsers.
+    if (m_startPosition.m_line > OrdinalNumber::beforeFirst() && scriptStartPosition.m_line > OrdinalNumber::beforeFirst())
+        m_startPosition.m_line = scriptStartPosition.m_line;
+
     if (context->settingsValues().trustedTypesEnabled && sourceText != m_trustedScriptText) {
-        auto trustedText = trustedTypeCompliantString(TrustedType::TrustedScript, context, sourceText, is<HTMLScriptElement>(element()) ? "HTMLScriptElement text"_s : "SVGScriptElement text"_s);
+        auto trustedText = trustedTypeCompliantString(TrustedType::TrustedScript, context, sourceText, is<HTMLScriptElement>(element) ? "HTMLScriptElement text"_s : "SVGScriptElement text"_s);
         if (trustedText.hasException())
             return false;
         sourceText = trustedText.releaseReturnValue();
@@ -193,7 +245,7 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     if (!hasSourceAttribute() && sourceText.isEmpty())
         return false;
 
-    if (!element().isConnected())
+    if (!element->isConnected())
         return false;
 
     ScriptType scriptType = ScriptType::Classic;
@@ -210,7 +262,6 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
 
     m_alreadyStarted = true;
 
-    auto element = protectedElement();
     // FIXME: If script is parser inserted, verify it's still in the original document.
     Ref document = element->document();
 
@@ -234,8 +285,8 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     // According to the spec, the module tag ignores the "charset" attribute as the same to the worker's
     // importScript. But WebKit supports the "charset" for importScript intentionally. So to be consistent,
     // even for the module tags, we handle the "charset" attribute.
-    if (!charsetAttributeValue().isEmpty())
-        m_characterEncoding = charsetAttributeValue();
+    if (auto attributeValue = charsetAttributeValue(); !attributeValue.isEmpty())
+        m_characterEncoding = WTF::move(attributeValue);
     else
         m_characterEncoding = document->charset();
 
@@ -249,30 +300,25 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
         break;
     }
     case ScriptType::Module: {
-        if (!requestModuleScript(scriptStartPosition))
+        if (!requestModuleScript(sourceText, scriptStartPosition))
             return false;
         potentiallyBlockRendering();
         break;
     }
-    case ScriptType::ImportMap: {
-        // If the element’s node document's acquiring import maps is false, then queue a task to fire an event named error at the element, and return.
-        RefPtr frame { element->document().frame() };
-        if (!frame || !frame->script().isAcquiringImportMaps()) {
-            element->document().eventLoop().queueTask(TaskSource::DOMManipulation, [this, element] {
-                dispatchErrorEvent();
+    case ScriptType::ImportMap:
+    case ScriptType::SpeculationRules: {
+        // If the element has a source attribute, queue a task to fire an event named error at the element, and return.
+        if (hasSourceAttribute()) {
+            queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [](auto& element) {
+                element.dispatchErrorEvent();
             });
             return false;
         }
-        frame->script().setAcquiringImportMaps();
-        if (hasSourceAttribute()) {
-            if (!requestImportMap(*frame, sourceAttributeValue()))
-                return false;
-            potentiallyBlockRendering();
-        } else
-            frame->script().setPendingImportMaps();
         break;
     }
     }
+
+    updateTaintedOriginFromSourceURL();
 
     // All the inlined module script is handled by requestModuleScript. It produces LoadableModuleScript and inlined module script
     // is handled as the same to the external module script.
@@ -289,45 +335,63 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
     } else if ((isClassicExternalScript || scriptType == ScriptType::Module) && !hasAsyncAttribute() && !m_forceAsync) {
         m_willExecuteInOrder = true;
         ASSERT(m_loadableScript);
-        document->checkedScriptRunner()->queueScriptForExecution(*this, *m_loadableScript, ScriptRunner::IN_ORDER_EXECUTION);
+        protect(document->scriptRunner())->queueScriptForExecution(*this, *protect(loadableScript()), ScriptRunner::ExecutionType::InOrder);
     } else if (hasSourceAttribute() || scriptType == ScriptType::Module) {
         ASSERT(m_loadableScript);
         ASSERT(hasAsyncAttribute() || m_forceAsync);
-        document->checkedScriptRunner()->queueScriptForExecution(*this, *m_loadableScript, ScriptRunner::ASYNC_EXECUTION);
+        protect(document->scriptRunner())->queueScriptForExecution(*this, *protect(loadableScript()), ScriptRunner::ExecutionType::Async);
     } else if (!hasSourceAttribute() && m_parserInserted == ParserInserted::Yes && !document->haveStylesheetsLoaded()) {
-        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap);
+        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap || scriptType == ScriptType::SpeculationRules);
         m_willBeParserExecuted = true;
         m_readyToBeParserExecuted = true;
     } else {
-        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap);
+        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap || scriptType == ScriptType::SpeculationRules);
         TextPosition position = document->isInDocumentWrite() ? TextPosition() : scriptStartPosition;
         if (scriptType == ScriptType::Classic)
             executeClassicScript(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Program, InlineClassicScript::create(*this)));
-        else
+        else if (scriptType == ScriptType::ImportMap)
             registerImportMap(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::ImportMap));
+        else
+            registerSpeculationRules(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Program));
     }
 
     return true;
 }
 
+void ScriptElement::updateTaintedOriginFromSourceURL()
+{
+    if (m_taintedOrigin == JSC::SourceTaintedOrigin::KnownTainted)
+        return;
+
+    Ref document = element().document();
+    RefPtr page = document->page();
+    if (!page)
+        return;
+
+    if (!page->requiresScriptTrackingPrivacyProtections(hasSourceAttribute() ? document->encodingParseURL(sourceAttributeValue()) : document->url()))
+        return;
+
+    m_taintedOrigin = JSC::SourceTaintedOrigin::KnownTainted;
+}
+
 bool ScriptElement::requestClassicScript(const String& sourceURL)
 {
-    auto element = protectedElement();
+    Ref element = this->element();
     ASSERT(element->isConnected());
     ASSERT(!m_loadableScript);
     Ref document = element->document();
-    if (!StringView(sourceURL).containsOnly<isASCIIWhitespace<UChar>>()) {
-        auto script = LoadableClassicScript::create(element->nonce(), element->attributeWithoutSynchronization(HTMLNames::integrityAttr), referrerPolicy(), fetchPriorityHint(),
+    if (!StringView(sourceURL).containsOnly<isASCIIWhitespace<char16_t>>()) {
+        auto script = LoadableClassicScript::create(element->nonce(), element->attributeWithoutSynchronization(HTMLNames::integrityAttr), referrerPolicy(), fetchPriority(),
             element->attributeWithoutSynchronization(HTMLNames::crossoriginAttr), scriptCharset(), element->localName(), element->isInUserAgentShadowTree(), hasAsyncAttribute());
 
-        auto scriptURL = document->completeURL(sourceURL);
+        auto scriptURL = document->encodingParseURL(sourceURL);
         document->willLoadScriptElement(scriptURL);
 
-        if (!document->checkedContentSecurityPolicy()->allowNonParserInsertedScripts(scriptURL, URL(), m_startLineNumber, element->nonce(), String(), m_parserInserted))
+        if (!protect(document->contentSecurityPolicy())->allowScriptForStrictDynamic(scriptURL, URL(), m_startPosition.m_line, element->nonce(), script->integrity(), String(), m_parserInserted))
             return false;
 
         if (script->load(document, scriptURL)) {
-            m_loadableScript = WTFMove(script);
+            m_loadableScript = WTF::move(script);
             m_isExternalScript = true;
         }
     }
@@ -335,13 +399,24 @@ bool ScriptElement::requestClassicScript(const String& sourceURL)
     if (m_loadableScript)
         return true;
 
-    document->eventLoop().queueTask(TaskSource::DOMManipulation, [this, element = protectedElement()] {
-        dispatchErrorEvent();
+    queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [](auto& element) {
+        element.dispatchErrorEvent();
     });
     return false;
 }
 
-bool ScriptElement::requestModuleScript(const TextPosition& scriptStartPosition)
+ParserInserted ScriptElement::effectiveParserInsertedForModule(Document& document, const URL& moduleURL) const
+{
+    // A parser-inserted module script that reuses a <link rel=modulepreload> is not a new parser-inserted load.
+    if (m_parserInserted == ParserInserted::No)
+        return ParserInserted::No;
+
+    RefPtr resource = protect(document.cachedResourceLoader())->cachedResource(MemoryCache::removeFragmentIdentifierIfNeeded(moduleURL));
+    bool reusesModulePreload = (resource && resource->isLinkModulePreload());
+    return reusesModulePreload ? ParserInserted::No : ParserInserted::Yes;
+}
+
+bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosition& scriptStartPosition)
 {
     // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#cors-settings-attributes
     // Module is always CORS request. If attribute is not given, it should be same-origin credential.
@@ -356,12 +431,12 @@ bool ScriptElement::requestModuleScript(const TextPosition& scriptStartPosition)
         ASSERT(element->isConnected());
 
         String sourceURL = sourceAttributeValue();
-        if (StringView(sourceURL).containsOnly<isASCIIWhitespace<UChar>>()) {
+        if (StringView(sourceURL).containsOnly<isASCIIWhitespace<char16_t>>()) {
             dispatchErrorEvent();
             return false;
         }
 
-        auto moduleScriptRootURL = document->completeURL(sourceURL);
+        auto moduleScriptRootURL = document->encodingParseURL(sourceURL);
         if (!moduleScriptRootURL.isValid()) {
             dispatchErrorEvent();
             return false;
@@ -371,66 +446,38 @@ bool ScriptElement::requestModuleScript(const TextPosition& scriptStartPosition)
         AtomString integrity = element->attributeWithoutSynchronization(HTMLNames::integrityAttr);
         if (integrity.isNull())
             integrity = AtomString { document->globalObject()->importMap().integrityForURL(moduleScriptRootURL) };
-        Ref script = LoadableModuleScript::create(nonce, integrity, referrerPolicy(), fetchPriorityHint(), crossOriginMode,
+        Ref script = LoadableModuleScript::create(LoadableModuleScript::IsInline::No, nonce, integrity, referrerPolicy(), fetchPriority(), crossOriginMode,
             scriptCharset(), element->localName(), element->isInUserAgentShadowTree());
+
+        auto effectiveParserInserted = effectiveParserInsertedForModule(document, moduleScriptRootURL);
+        if (!protect(document->contentSecurityPolicy())->allowScriptForStrictDynamic(moduleScriptRootURL, URL(), m_startPosition.m_line, nonce, String(integrity), String(), effectiveParserInserted))
+            return false;
+
         m_loadableScript = script.copyRef();
         if (RefPtr frame = element->document().frame())
-            frame->checkedScript()->loadModuleScript(script, moduleScriptRootURL, script->parameters());
+            protect(frame->script())->loadModuleScript(script, moduleScriptRootURL, script->parameters());
         return true;
     }
 
-    Ref script = LoadableModuleScript::create(nonce, emptyAtom(), referrerPolicy(), fetchPriorityHint(), crossOriginMode, scriptCharset(), element->localName(), element->isInUserAgentShadowTree());
+    Ref script = LoadableModuleScript::create(LoadableModuleScript::IsInline::Yes, nonce, emptyAtom(), referrerPolicy(), fetchPriority(), crossOriginMode, scriptCharset(), element->localName(), element->isInUserAgentShadowTree());
 
     TextPosition position = document->isInDocumentWrite() ? TextPosition() : scriptStartPosition;
-    ScriptSourceCode sourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Module, script.copyRef());
+    ScriptSourceCode sourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Module, script.copyRef());
 
     ASSERT(document->contentSecurityPolicy());
     {
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), script->parameters().integrity(), sourceCode.source(), m_parserInserted))
             return false;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, nonce, element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, nonce, element->isInUserAgentShadowTree()))
             return false;
     }
 
     m_loadableScript = script.copyRef();
     if (RefPtr frame = document->frame())
-        frame->checkedScript()->loadModuleScript(script, sourceCode);
+        protect(frame->script())->loadModuleScript(script, sourceCode);
     return true;
-}
-
-bool ScriptElement::requestImportMap(LocalFrame& frame, const String& sourceURL)
-{
-    Ref element = this->element();
-    Ref document = element->document();
-
-    ASSERT(element->isConnected());
-    ASSERT(!m_loadableScript);
-    if (!StringView(sourceURL).containsOnly<isASCIIWhitespace<UChar>>()) {
-        Ref script = LoadableImportMap::create(element->nonce(), element->attributeWithoutSynchronization(HTMLNames::integrityAttr), referrerPolicy(),
-            element->attributeWithoutSynchronization(HTMLNames::crossoriginAttr), element->localName(), element->isInUserAgentShadowTree(), hasAsyncAttribute());
-
-        auto scriptURL = document->completeURL(sourceURL);
-        document->willLoadScriptElement(scriptURL);
-
-        if (!document->checkedContentSecurityPolicy()->allowNonParserInsertedScripts(scriptURL, URL(), m_startLineNumber, element->nonce(), String(), m_parserInserted))
-            return false;
-
-        frame.checkedScript()->setPendingImportMaps();
-        if (script->load(document, scriptURL)) {
-            m_loadableScript = WTFMove(script);
-            m_isExternalScript = true;
-        }
-    }
-
-    if (m_loadableScript)
-        return true;
-
-    document->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [this, element] {
-        dispatchErrorEvent();
-    });
-    return false;
 }
 
 void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
@@ -446,10 +493,10 @@ void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
     if (!m_isExternalScript) {
         ASSERT(document->contentSecurityPolicy());
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
             return;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
             return;
     }
 
@@ -461,13 +508,13 @@ void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
     CurrentScriptIncrementer currentScriptIncrementer(document, *this);
 
     WTFBeginSignpost(this, ExecuteScriptElement, "executing classic script from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8().data() : "inline", hasAsyncAttribute(), hasDeferAttribute());
-    frame->checkedScript()->evaluateIgnoringException(sourceCode);
+    protect(frame->script())->evaluateIgnoringException(sourceCode);
     WTFEndSignpost(this, ExecuteScriptElement);
 }
 
 void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
 {
-    // https://wicg.github.io/import-maps/#integration-register-an-import-map
+    // https://html.spec.whatwg.org/#register-an-import-map
 
     ASSERT(m_alreadyStarted);
     ASSERT(scriptType() == ScriptType::ImportMap);
@@ -475,11 +522,6 @@ void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
     Ref element = this->element();
     Ref document = element->document();
     RefPtr frame = document->frame();
-
-    auto scopedExit = WTF::makeScopeExit([&] {
-        if (frame)
-            frame->checkedScript()->clearPendingImportMaps();
-    });
 
     if (sourceCode.isEmpty()) {
         dispatchErrorEvent();
@@ -489,10 +531,10 @@ void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
     if (!m_isExternalScript) {
         ASSERT(document->contentSecurityPolicy());
         CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), sourceCode.source(), m_parserInserted))
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
             return;
 
-        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
             return;
     }
 
@@ -500,7 +542,7 @@ void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
         return;
 
     WTFBeginSignpost(this, RegisterImportMap, "registering import-map from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8().data() : "inline", hasAsyncAttribute(), hasDeferAttribute());
-    frame->checkedScript()->registerImportMap(sourceCode, document->baseURL());
+    protect(frame->script())->registerImportMap(sourceCode, document->baseURL());
     WTFEndSignpost(this, RegisterImportMap);
 }
 
@@ -553,7 +595,7 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
             // When the script is "null" due to a fetch error, an error event
             // should be dispatched for the script element.
             if (std::optional<LoadableScript::ConsoleMessage> message = error->consoleMessage)
-                element().document().addConsoleMessage(message->source, message->level, message->message);
+                protect(element().document())->addConsoleMessage(message->source, message->level, message->message);
             dispatchErrorEvent();
             break;
         }
@@ -561,8 +603,9 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
         // Parse error
         case LoadableScript::ErrorType::Resolve: {
             if (RefPtr frame = element().document().frame())
-                frame->checkedScript()->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
-            dispatchLoadEventRespectingUserGestureIndicator();
+                protect(frame->script())->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
+            if (!loadableScript.isInlineModule())
+                dispatchLoadEventRespectingUserGestureIndicator();
             break;
         }
 
@@ -573,44 +616,38 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
             // not triggered during fetching. In this case, we need to report
             // the exception to the global object.
             if (RefPtr frame = element().document().frame())
-                frame->checkedScript()->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
+                protect(frame->script())->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
             break;
         }
         }
     } else if (!loadableScript.wasCanceled()) {
         loadableScript.execute(*this);
-        dispatchLoadEventRespectingUserGestureIndicator();
+        if (!loadableScript.isInlineModule())
+            dispatchLoadEventRespectingUserGestureIndicator();
     }
 }
 
 void ScriptElement::executePendingScript(PendingScript& pendingScript)
 {
     unblockRendering();
-    auto* loadableScript = pendingScript.loadableScript();
-    RefPtr<Document> document { &element().document() };
+    RefPtr loadableScript = pendingScript.loadableScript();
+    Ref document = element().document();
     if (document->identifier() != m_preparationTimeDocumentIdentifier) {
         document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, "Not executing script because it moved between documents during fetching"_s);
-        if (loadableScript) {
-            if (auto* loadableImportMap = dynamicDowncast<LoadableImportMap>(loadableScript))
-                document = loadableImportMap->document();
-        }
     } else {
         if (loadableScript)
             executeScriptAndDispatchEvent(*loadableScript);
         else {
             ASSERT(!pendingScript.hasError());
-            ASSERT_WITH_MESSAGE(scriptType() == ScriptType::Classic || scriptType() == ScriptType::ImportMap, "Module script always have a loadableScript pointer.");
+            ASSERT_WITH_MESSAGE(scriptType() == ScriptType::Classic || scriptType() == ScriptType::ImportMap || (scriptType() == ScriptType::SpeculationRules && document->settings().speculationRulesPrefetchEnabled()), "Module script always have a loadableScript pointer.");
             if (scriptType() == ScriptType::Classic)
-                executeClassicScript(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(element().document().url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program, InlineClassicScript::create(*this)));
+                executeClassicScript(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program, InlineClassicScript::create(*this)));
+            else if (scriptType() == ScriptType::ImportMap)
+                registerImportMap(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::ImportMap));
             else
-                registerImportMap(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(element().document().url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::ImportMap));
+                registerSpeculationRules(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program));
             dispatchLoadEventRespectingUserGestureIndicator();
         }
-    }
-
-    if (scriptType() == ScriptType::ImportMap && document) {
-        if (RefPtr frame = document->frame())
-            frame->checkedScript()->clearPendingImportMaps();
     }
 }
 
@@ -621,7 +658,7 @@ bool ScriptElement::ignoresLoadRequest() const
 
 String ScriptElement::scriptContent() const
 {
-    return TextNodeTraversal::childTextContent(protectedElement());
+    return TextNodeTraversal::childTextContent(protect(element()));
 }
 
 void ScriptElement::setTrustedScriptText(const String& text)
@@ -629,19 +666,9 @@ void ScriptElement::setTrustedScriptText(const String& text)
     m_trustedScriptText = text;
 }
 
-void ScriptElement::ref() const
+bool isScriptElement(Node& node)
 {
-    element().ref();
-}
-
-void ScriptElement::deref() const
-{
-    element().deref();
-}
-
-bool isScriptElement(Element& element)
-{
-    return is<HTMLScriptElement>(element) || is<SVGScriptElement>(element);
+    return isAnyOf<HTMLScriptElement, SVGScriptElement>(node);
 }
 
 ScriptElement* dynamicDowncastScriptElement(Element& element)
@@ -649,6 +676,83 @@ ScriptElement* dynamicDowncastScriptElement(Element& element)
     if (auto* htmlElement = dynamicDowncast<HTMLScriptElement>(element))
         return htmlElement;
     return dynamicDowncast<SVGScriptElement>(element);
+}
+
+// https://html.spec.whatwg.org/C#register-speculation-rules
+void ScriptElement::registerSpeculationRules(const ScriptSourceCode& sourceCode)
+{
+    ASSERT(m_alreadyStarted);
+    ASSERT(scriptType() == ScriptType::SpeculationRules);
+
+    Ref element = this->element();
+    Ref document = element->document();
+
+    if (!document->settings().speculationRulesPrefetchEnabled())
+        return;
+
+    RefPtr frame = document->frame();
+
+    if (sourceCode.isEmpty()) {
+        dispatchErrorEvent();
+        if (frame)
+            reportSpeculationRulesError(*frame, "Speculation rules script has empty content"_s);
+        return;
+    }
+
+    if (!m_isExternalScript) {
+        CheckedPtr contentSecurityPolicy = document->contentSecurityPolicy();
+        if (!contentSecurityPolicy)
+            return;
+
+        if (!contentSecurityPolicy->allowScriptForStrictDynamic(URL(), document->url(), m_startPosition.m_line, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
+            return;
+
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startPosition, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+            return;
+    }
+
+    if (!frame)
+        return;
+
+    if (protect(frame->script())->registerSpeculationRules(element.get(), sourceCode, document->baseURL()))
+        document->considerSpeculationRules();
+    else {
+        dispatchErrorEvent();
+        reportSpeculationRulesError(*frame, "Failed to register speculation rules"_s);
+    }
+}
+
+// https://html.spec.whatwg.org/multipage/webappapis.html#unregister-speculation-rules
+void ScriptElement::unregisterSpeculationRules()
+{
+    if (scriptType() != ScriptType::SpeculationRules)
+        return;
+
+    Ref element = this->element();
+    Ref document = element->document();
+
+    if (!document->settings().speculationRulesPrefetchEnabled())
+        return;
+
+    auto removedURLs = protect(document->speculationRules())->unregisterSpeculationRules(element);
+
+    // Remove prefetched resources that were initiated by the removed rules.
+    if (RefPtr frame = document->frame()) {
+        Ref prefetcher = frame->loader().documentPrefetcher();
+        for (const auto& url : removedURLs)
+            prefetcher->removePrefetch(url);
+    }
+
+    document->considerSpeculationRules();
+}
+
+bool ScriptElement::virtualHasPendingActivity() const
+{
+    if (!m_hasRelevantLoadEventsListener)
+        return false;
+    if (!loadableScript())
+        return false;
+    return !haveFiredLoadEvent();
 }
 
 }

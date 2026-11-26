@@ -27,7 +27,10 @@
 #include "CSSCounterStyleRule.h"
 
 #include "CSSCounterStyleDescriptors.h"
+#include "CSSKeywordValue.h"
+#include "CSSMarkup.h"
 #include "CSSPropertyParser.h"
+#include "CSSPropertyParserConsumer+CounterStyles.h"
 #include "CSSStyleSheet.h"
 #include "CSSTokenizer.h"
 #include "CSSValuePair.h"
@@ -42,13 +45,13 @@ namespace WebCore {
 StyleRuleCounterStyle::StyleRuleCounterStyle(const AtomString& name, CSSCounterStyleDescriptors&& descriptors)
     : StyleRuleBase(StyleRuleType::CounterStyle)
     , m_name(name)
-    , m_descriptors(WTFMove(descriptors))
+    , m_descriptors(WTF::move(descriptors))
 {
 }
 
 Ref<StyleRuleCounterStyle> StyleRuleCounterStyle::create(const AtomString& name, CSSCounterStyleDescriptors&& descriptors)
 {
-    return adoptRef(*new StyleRuleCounterStyle(name, WTFMove(descriptors)));
+    return adoptRef(*new StyleRuleCounterStyle(name, WTF::move(descriptors)));
 }
 
 CSSCounterStyleDescriptors::System toCounterStyleSystemEnum(const CSSValue* system)
@@ -56,13 +59,15 @@ CSSCounterStyleDescriptors::System toCounterStyleSystemEnum(const CSSValue* syst
     if (!system)
         return CSSCounterStyleDescriptors::System::Symbolic;
 
-    ASSERT(system->isValueID() || system->isPair());
+    ASSERT(system->isKeywordValue() || system->isPair());
     CSSValueID systemKeyword = CSSValueInvalid;
-    if (system->isValueID())
-        systemKeyword = system->valueID();
+    if (RefPtr systemIdent = dynamicDowncast<CSSKeywordValue>(system))
+        systemKeyword = systemIdent->valueID();
     else if (system->isPair()) {
-        // This value must be `fixed` or `extends`, both of which can or must have an additional component.
-        systemKeyword = system->first().valueID();
+        if (RefPtr systemIdent = dynamicDowncast<CSSKeywordValue>(system->first())) {
+            // This value must be `fixed` or `extends`, both of which can or must have an additional component.
+            systemKeyword = systemIdent->valueID();
+        }
     }
     switch (systemKeyword) {
     case CSSValueCyclic:
@@ -156,7 +161,12 @@ String CSSCounterStyleRule::cssText() const
     const auto speakAsPrefix = speakAsText.isEmpty() ? ""_s : " speak-as: "_s;
     const auto speakAsSuffix = speakAsText.isEmpty() ? ""_s : ";"_s;
 
-    return makeString("@counter-style "_s, name(), " {"_s,
+    StringBuilder builder;
+
+    builder.append("@counter-style "_s);
+    serializeIdentifier(builder, name());
+
+    builder.append(" {"_s,
         systemPrefix, systemText, systemSuffix,
         symbolsPrefix, symbolsText, symbolsSuffix,
         additiveSymbolsPrefix, additiveSymbolsText, additiveSymbolsSuffix,
@@ -168,6 +178,8 @@ String CSSCounterStyleRule::cssText() const
         fallbackPrefix, fallbackText, fallbackSuffix,
         speakAsPrefix, speakAsText, speakAsSuffix,
     " }"_s);
+
+    return builder.toString();
 }
 
 void CSSCounterStyleRule::reattach(StyleRuleBase& rule)
@@ -175,11 +187,9 @@ void CSSCounterStyleRule::reattach(StyleRuleBase& rule)
     m_counterStyleRule = downcast<StyleRuleCounterStyle>(rule);
 }
 
-RefPtr<CSSValue> CSSCounterStyleRule::cssValueFromText(CSSPropertyID propertyID, const String& valueText)
+RefPtr<CSSValue> CSSCounterStyleRule::cssValueFromText(CSSPropertyID propertyID, const String& string)
 {
-    auto tokenizer = CSSTokenizer(valueText);
-    auto tokenRange = tokenizer.tokenRange();
-    return CSSPropertyParser::parseCounterStyleDescriptor(propertyID, tokenRange, parserContext());
+    return CSSPropertyParser::parseCounterStyleDescriptor(propertyID, string, parserContext());
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#dom-csscounterstylerule-name
@@ -191,7 +201,7 @@ void CSSCounterStyleRule::setName(const String& text)
     if (!name)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
-    mutableDescriptors().setName(WTFMove(name));
+    mutableDescriptors().setName(WTF::move(name));
 }
 
 void CSSCounterStyleRule::setSystem(const String& text)
@@ -204,9 +214,9 @@ void CSSCounterStyleRule::setSystem(const String& text)
     // and abort these steps.
     // (It's okay to change an aspect of the algorithm, like the first symbol value of a `fixed` system.)
     // https://www.w3.org/TR/css-counter-styles-3/#the-csscounterstylerule-interface
-    auto systemData = extractSystemDataFromCSSValue(WTFMove(systemValue), system);
+    auto systemData = extractSystemDataFromCSSValue(WTF::move(systemValue), system);
     CSSStyleSheet::RuleMutationScope mutationScope(this);
-    mutableDescriptors().setSystemData(WTFMove(systemData));
+    mutableDescriptors().setSystemData(WTF::move(systemData));
 }
 
 void CSSCounterStyleRule::setNegative(const String& text)
@@ -224,7 +234,7 @@ void CSSCounterStyleRule::setPrefix(const String& text)
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
-    mutableDescriptors().setPrefix(symbolFromCSSValue(WTFMove(newValue)));
+    mutableDescriptors().setPrefix(symbolFromCSSValue(WTF::move(newValue)));
 }
 
 void CSSCounterStyleRule::setSuffix(const String& text)
@@ -233,7 +243,7 @@ void CSSCounterStyleRule::setSuffix(const String& text)
     if (!newValue)
         return;
     CSSStyleSheet::RuleMutationScope mutationScope(this);
-    mutableDescriptors().setSuffix(symbolFromCSSValue(WTFMove(newValue)));
+    mutableDescriptors().setSuffix(symbolFromCSSValue(WTF::move(newValue)));
 }
 
 void CSSCounterStyleRule::setRange(const String& text)

@@ -43,36 +43,37 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteComputePipeline);
 RemoteComputePipeline::RemoteComputePipeline(WebCore::WebGPU::ComputePipeline& computePipeline, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(computePipeline)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteComputePipeline::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteComputePipeline::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteComputePipeline::~RemoteComputePipeline() = default;
 
 void RemoteComputePipeline::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteComputePipeline::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteComputePipeline::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteComputePipeline::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteComputePipeline::getBindGroupLayout(uint32_t index, WebGPUIdentifier identifier)
 {
     // "A new GPUBindGroupLayout wrapper is returned each time"
-    auto bindGroupLayout = m_backing->getBindGroupLayout(index);
-    auto remoteBindGroupLayout = RemoteBindGroupLayout::create(bindGroupLayout, m_objectHeap, m_streamConnection.copyRef(), m_gpu, identifier);
-    m_objectHeap->addObject(identifier, remoteBindGroupLayout);
+    Ref objectHeap = m_objectHeap.get();
+    auto bindGroupLayout = protect(m_backing)->getBindGroupLayout(index);
+    auto remoteBindGroupLayout = RemoteBindGroupLayout::create(bindGroupLayout, objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
+    objectHeap->addObject(identifier, remoteBindGroupLayout);
 }
 
 void RemoteComputePipeline::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

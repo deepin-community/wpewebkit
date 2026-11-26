@@ -64,11 +64,12 @@ void WrapperMap::unwrap(JSValueRef jsValue)
     m_cachedGObjectWrappers.remove(jsValue);
 }
 
-void WrapperMap::registerClass(JSCClass* jscClass)
+JSCClass* WrapperMap::registerClass(GRefPtr<JSCClass>&& jscClass)
 {
-    RefPtr jsClass = jscClassGetJSClass(jscClass);
-    ASSERT(!m_classMap.contains(jsClass.get()));
-    m_classMap.set(jsClass.get(), jscClass);
+    RefPtr jsClass = jscClassGetJSClass(jscClass.get());
+    auto result = m_classMap.set(jsClass.get(), jscClass);
+    ASSERT(result.isNewEntry);
+    return result.iterator->value.get();
 }
 
 JSCClass* WrapperMap::registeredClass(JSClassRef jsClass) const
@@ -126,11 +127,11 @@ gpointer WrapperMap::wrappedObject(JSGlobalContextRef jsContext, JSObjectRef jsO
     JSLockHolder locker(toJS(jsContext));
     auto* object = toJS(jsObject);
     if (object->inherits<JSC::JSCallbackObject<JSC::JSAPIWrapperObject>>()) {
-        if (auto* wrapper = JSC::jsCast<JSC::JSAPIWrapperObject*>(object)->wrappedObject())
+        if (auto* wrapper = uncheckedDowncast<JSC::JSAPIWrapperObject>(object)->wrappedObject())
             return static_cast<JSC::JSCGLibWrapperObject*>(wrapper)->object();
     }
     if (object->inherits<JSC::JSCallbackObject<JSC::JSAPIWrapperGlobalObject>>()) {
-        if (auto* wrapper = JSC::jsCast<JSC::JSAPIWrapperGlobalObject*>(object)->wrappedObject())
+        if (auto* wrapper = uncheckedDowncast<JSC::JSAPIWrapperGlobalObject>(object)->wrappedObject())
             return wrapper->object();
     }
     return nullptr;

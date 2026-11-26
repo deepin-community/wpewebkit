@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,23 +29,26 @@
 
 #include "Namespace.h"
 #include "NodeName.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(QualifiedNameCache);
+
 struct QNameComponentsTranslator {
-    static unsigned hash(const QualifiedNameComponents& components)
+    static unsigned NODELETE hash(const QualifiedNameComponents& components)
     {
         return computeHash(components);
     }
 
-    static bool equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
+    static bool NODELETE equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
     {
         return c.m_prefix == name->m_prefix.impl() && c.m_localName == name->m_localName.impl() && c.m_namespaceURI == name->m_namespaceURI.impl();
     }
 
     static void translate(QualifiedName::QualifiedNameImpl*& location, const QualifiedNameComponents& components, unsigned)
     {
-        location = &QualifiedName::QualifiedNameImpl::create(components.m_prefix, components.m_localName, components.m_namespaceURI).leakRef();
+        location = &QualifiedName::QualifiedNameImpl::create(components.m_prefix.get(), components.m_localName.get(), components.m_namespaceURI.get()).leakRef();
     }
 };
 
@@ -60,29 +63,29 @@ static void updateImplWithNamespaceAndElementName(QualifiedName::QualifiedNameIm
 Ref<QualifiedName::QualifiedNameImpl> QualifiedNameCache::getOrCreate(const QualifiedNameComponents& components)
 {
     auto addResult = m_cache.add<QNameComponentsTranslator>(components);
-    auto& impl = **addResult.iterator;
+    Ref impl = **addResult.iterator;
 
     if (addResult.isNewEntry) {
-        auto nodeNamespace = findNamespace(components.m_namespaceURI);
-        auto nodeName = findNodeName(nodeNamespace, components.m_localName);
-        updateImplWithNamespaceAndElementName(impl, nodeNamespace, nodeName);
-        return adoptRef(impl);
+        auto nodeNamespace = findNamespace(components.m_namespaceURI.get());
+        auto nodeName = findNodeName(nodeNamespace, components.m_localName.get());
+        updateImplWithNamespaceAndElementName(impl.get(), nodeNamespace, nodeName);
+        return adoptRef(impl.get());
     }
 
-    return Ref { impl };
+    return Ref { impl.get() };
 }
 
 Ref<QualifiedName::QualifiedNameImpl> QualifiedNameCache::getOrCreate(const QualifiedNameComponents& components, Namespace nodeNamespace, NodeName nodeName)
 {
     auto addResult = m_cache.add<QNameComponentsTranslator>(components);
-    auto& impl = **addResult.iterator;
+    Ref impl = **addResult.iterator;
 
     if (addResult.isNewEntry) {
-        updateImplWithNamespaceAndElementName(impl, nodeNamespace, nodeName);
-        return adoptRef(impl);
+        updateImplWithNamespaceAndElementName(impl.get(), nodeNamespace, nodeName);
+        return adoptRef(impl.get());
     }
 
-    return Ref { impl };
+    return Ref { impl.get() };
 }
 
 void QualifiedNameCache::remove(QualifiedName::QualifiedNameImpl& impl)

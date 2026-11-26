@@ -51,18 +51,18 @@ void CacheStorageMemoryStore::readAllRecordInfos(ReadAllRecordInfosCallback&& ca
 void CacheStorageMemoryStore::readRecords(const Vector<CacheStorageRecordInformation>& recordInfos, ReadRecordsCallback&& callback)
 {
     auto result = WTF::map(recordInfos, [&](auto& recordInfo) -> std::optional<CacheStorageRecord> {
-        auto iterator = m_records.find(recordInfo.identifier);
+        auto iterator = m_records.find(recordInfo.identifier());
         if (iterator == m_records.end())
             return std::nullopt;
         return copyCacheStorageRecord(*iterator->value);
     });
-    return callback(WTFMove(result));
+    return callback(WTF::move(result));
 }
 
 void CacheStorageMemoryStore::deleteRecords(const Vector<CacheStorageRecordInformation>& recordInfos, WriteRecordsCallback&& callback)
 {
     for (auto& recordInfo : recordInfos)
-        m_records.remove(recordInfo.identifier);
+        m_records.remove(recordInfo.identifier());
 
     callback(true);
 }
@@ -70,7 +70,7 @@ void CacheStorageMemoryStore::deleteRecords(const Vector<CacheStorageRecordInfor
 void CacheStorageMemoryStore::writeRecords(Vector<CacheStorageRecord>&& records, WriteRecordsCallback&& callback)
 {
     for (auto&& record : records)
-        m_records.set(record.info.identifier, makeUnique<CacheStorageRecord>(WTFMove(record)));
+        m_records.set(record.info.identifier(), makeUnique<CacheStorageRecord>(WTF::move(record)));
 
     callback(true);
 }

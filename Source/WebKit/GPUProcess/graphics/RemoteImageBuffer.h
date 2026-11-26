@@ -28,6 +28,8 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "IPCEvent.h"
+#include "RemoteGraphicsContextIdentifier.h"
+#include "ScopedActiveMessageReceiveQueue.h"
 #include "ScopedRenderingResourcesRequest.h"
 #include "StreamMessageReceiver.h"
 #include <WebCore/ImageBuffer.h>
@@ -44,19 +46,20 @@ class StreamConnectionWorkQueue;
 
 namespace WebKit {
 
+class RemoteImageBufferGraphicsContext;
 class RemoteRenderingBackend;
 
 class RemoteImageBuffer : public IPC::StreamMessageReceiver {
 public:
-    static Ref<RemoteImageBuffer> create(Ref<WebCore::ImageBuffer>, RemoteRenderingBackend&);
+    static Ref<RemoteImageBuffer> create(Ref<WebCore::ImageBuffer>&&, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     ~RemoteImageBuffer();
     void stopListeningForIPC();
-    WebCore::RenderingResourceIdentifier identifier() const { return m_imageBuffer->renderingResourceIdentifier(); }
     Ref<WebCore::ImageBuffer> imageBuffer() const { return m_imageBuffer; }
+    static Ref<WebCore::ImageBuffer> sinkIntoImageBuffer(Ref<RemoteImageBuffer>&&);
 private:
-    RemoteImageBuffer(Ref<WebCore::ImageBuffer>, RemoteRenderingBackend&);
+    RemoteImageBuffer(Ref<WebCore::ImageBuffer>&&, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     void startListeningForIPC();
-    IPC::StreamConnectionWorkQueue& workQueue() const;
+    IPC::StreamConnectionWorkQueue& NODELETE workQueue() const;
 
     // IPC::StreamMessageReceiver
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
@@ -65,11 +68,12 @@ private:
     // This is using location and size as opposed to rect because invalid rect object gets restricted by IPC rect object decoder and triggers timeout in WebContent process.
     void getPixelBuffer(WebCore::PixelBufferFormat, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, CompletionHandler<void()>&&);
     void getPixelBufferWithNewMemory(WebCore::SharedMemory::Handle&&, WebCore::PixelBufferFormat, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, CompletionHandler<void()>&&);
-    void putPixelBuffer(Ref<WebCore::PixelBuffer>, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, WebCore::IntPoint destPoint, WebCore::AlphaPremultiplication destFormat);
-    void getShareableBitmap(WebCore::PreserveResolution, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+    void putPixelBuffer(const WebCore::PixelBufferSourceView&, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, WebCore::IntPoint destPoint, WebCore::AlphaPremultiplication destFormat);
+    void copyNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier);
     void filteredNativeImage(Ref<WebCore::Filter>, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
     void convertToLuminanceMask();
     void transformToColorSpace(const WebCore::DestinationColorSpace&);
+    void setFlushSignal(IPC::Signal&&);
     void flushContext();
     void flushContextSync(CompletionHandler<void()>&&);
 
@@ -77,9 +81,12 @@ private:
     void dynamicContentScalingDisplayList(CompletionHandler<void(std::optional<WebCore::DynamicContentScalingDisplayList>&&)>&&);
 #endif
 
-    RefPtr<RemoteRenderingBackend> m_backend;
-    Ref<WebCore::ImageBuffer> m_imageBuffer;
+    const Ref<WebCore::ImageBuffer> m_imageBuffer;
+    const WebCore::RenderingResourceIdentifier m_identifier;
+    const Ref<RemoteRenderingBackend> m_renderingBackend;
+    IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferGraphicsContext> m_context;
     ScopedRenderingResourcesRequest m_renderingResourcesRequest { ScopedRenderingResourcesRequest::acquire() };
+    std::optional<IPC::Signal> m_flushSignal;
 };
 
 } // namespace WebKit

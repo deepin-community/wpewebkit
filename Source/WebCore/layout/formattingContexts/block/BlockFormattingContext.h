@@ -45,7 +45,7 @@ class FloatingContext;
 // This class implements the layout logic for block formatting contexts.
 // https://www.w3.org/TR/CSS22/visuren.html#block-formatting
 class BlockFormattingContext : public FormattingContext {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(BlockFormattingContext);
+    WTF_MAKE_TZONE_ALLOCATED(BlockFormattingContext);
 public:
     BlockFormattingContext(const ElementBox& formattingContextRoot, BlockFormattingState&);
 
@@ -53,9 +53,9 @@ public:
     void layoutOutOfFlowContent(const ConstraintsForOutOfFlowContent&);
     LayoutUnit usedContentHeight() const override;
 
-    const BlockFormattingState& formattingState() const { return m_blockFormattingState; }
-    const BlockFormattingGeometry& formattingGeometry() const { return m_blockFormattingGeometry; }
-    const BlockFormattingQuirks& formattingQuirks() const { return m_blockFormattingQuirks; }
+    const BlockFormattingState& formattingState() const LIFETIME_BOUND { return m_blockFormattingState; }
+    const BlockFormattingGeometry& formattingGeometry() const LIFETIME_BOUND { return m_blockFormattingGeometry; }
+    const BlockFormattingQuirks& formattingQuirks() const LIFETIME_BOUND { return m_blockFormattingQuirks; }
 
 protected:
     struct ConstraintsPair {
@@ -86,18 +86,18 @@ protected:
     void computeOutOfFlowHorizontalGeometry(const Box&, const ConstraintsForOutOfFlowContent&);
     void computeBorderAndPadding(const Box&, const HorizontalConstraints&);
 
-    BlockFormattingState& formattingState() { return m_blockFormattingState; }
+    BlockFormattingState& formattingState() LIFETIME_BOUND { return m_blockFormattingState; }
     BlockMarginCollapse marginCollapse() const;
 
 #if ASSERT_ENABLED
-    void setPrecomputedMarginBefore(const ElementBox& layoutBox, const PrecomputedMarginBefore& precomputedMarginBefore) { m_precomputedMarginBeforeList.set(&layoutBox, precomputedMarginBefore); }
-    PrecomputedMarginBefore precomputedMarginBefore(const ElementBox& layoutBox) const { return m_precomputedMarginBeforeList.get(&layoutBox); }
-    bool hasPrecomputedMarginBefore(const ElementBox& layoutBox) const { return m_precomputedMarginBeforeList.contains(&layoutBox); }
+    void setPrecomputedMarginBefore(const ElementBox& layoutBox, const PrecomputedMarginBefore& precomputedMarginBefore) { m_precomputedMarginBeforeList.set(layoutBox, precomputedMarginBefore); }
+    PrecomputedMarginBefore precomputedMarginBefore(const ElementBox& layoutBox) const { return m_precomputedMarginBeforeList.get(layoutBox); }
+    bool hasPrecomputedMarginBefore(const ElementBox& layoutBox) const { return m_precomputedMarginBeforeList.contains(layoutBox); }
 #endif
 
 private:
 #if ASSERT_ENABLED
-    HashMap<const ElementBox*, PrecomputedMarginBefore> m_precomputedMarginBeforeList;
+    HashMap<CheckedRef<const ElementBox>, PrecomputedMarginBefore> m_precomputedMarginBeforeList;
 #endif
     BlockFormattingState& m_blockFormattingState;
     const BlockFormattingGeometry m_blockFormattingGeometry;

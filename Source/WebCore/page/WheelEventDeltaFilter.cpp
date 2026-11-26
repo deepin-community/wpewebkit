@@ -29,6 +29,7 @@
 #include "FloatSize.h"
 #include "Logging.h"
 #include "PlatformWheelEvent.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 #if PLATFORM(MAC)
@@ -37,6 +38,8 @@
 
 namespace WebCore {
     
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BasicWheelEventDeltaFilter);
+
 WheelEventDeltaFilter::WheelEventDeltaFilter() = default;
 
 WheelEventDeltaFilter::~WheelEventDeltaFilter() = default;
@@ -110,6 +113,7 @@ void BasicWheelEventDeltaFilter::updateFromEvent(const PlatformWheelEvent& event
         break;
 
     case PlatformWheelEventPhase::None:
+    case PlatformWheelEventPhase::WillBegin:
         break;
 
     case PlatformWheelEventPhase::Began:
@@ -149,7 +153,7 @@ void BasicWheelEventDeltaFilter::reset()
     m_currentFilteredVelocity = { };
 }
 
-static inline bool deltaIsPredominantlyVertical(const FloatSize& delta)
+static inline bool NODELETE deltaIsPredominantlyVertical(const FloatSize& delta)
 {
     return std::abs(delta.height()) > std::abs(delta.width());
 }

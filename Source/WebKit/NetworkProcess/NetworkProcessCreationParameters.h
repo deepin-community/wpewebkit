@@ -31,6 +31,7 @@
 #include <WebCore/Cookie.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RegistrableDomain.h>
+#include <wtf/Markable.h>
 #include <wtf/ProcessID.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -62,6 +63,10 @@ struct NetworkProcessCreationParameters {
     bool isParentProcessFullWebBrowserOrRunningTest { false };
 #endif
 
+#if PLATFORM(IOS_FAMILY)
+    String containerTemporaryDirectory;
+#endif
+
 #if USE(SOUP)
     WebCore::HTTPCookieAcceptPolicy cookieAcceptPolicy { WebCore::HTTPCookieAcceptPolicy::AlwaysAccept };
     Vector<String> languages;
@@ -75,14 +80,18 @@ struct NetworkProcessCreationParameters {
 
     bool enablePrivateClickMeasurement { true };
     bool ftpEnabled { false };
-#if ENABLE(WEB_PUSH_NOTIFICATIONS)
-    bool builtInNotificationsEnabled { false };
+#if PLATFORM(COCOA)
+    bool enableModernDownloadProgress { false };
 #endif
-
+#if HAVE(ENHANCED_SECURITY_LINKS)
+    bool enableEnhancedSecurityLinks { false };
+#endif
     Vector<WebsiteDataStoreParameters> websiteDataStoreParameters;
-    Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> allowedFirstPartiesForCookies;
+    HashMap<WebCore::ProcessIdentifier, Vector<String>> allowedFilePaths;
     HashSet<String> localhostAliasesForTesting;
     Vector<WebCore::OrganizationStorageAccessPromptQuirk> storageAccessPromptQuirksData;
+
+    Markable<double> defaultRequestTimeoutInterval;
 };
 
 } // namespace WebKit

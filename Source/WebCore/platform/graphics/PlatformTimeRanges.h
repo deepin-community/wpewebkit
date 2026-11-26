@@ -28,7 +28,11 @@
 #include <algorithm>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/MediaTime.h>
+#include <wtf/Platform.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+
+OBJC_CLASS NSArray;
 
 namespace WTF {
 class PrintStream;
@@ -42,7 +46,7 @@ enum class AddTimeRangeOption : uint8_t {
 };
 
 class WEBCORE_EXPORT PlatformTimeRanges final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(PlatformTimeRanges, WEBCORE_EXPORT);
 public:
     PlatformTimeRanges();
     PlatformTimeRanges(const MediaTime& start, const MediaTime& end);
@@ -50,15 +54,15 @@ public:
     PlatformTimeRanges copyWithEpsilon(const MediaTime&) const;
 
     static const PlatformTimeRanges& emptyRanges();
-    static MediaTime timeFudgeFactor();
+    static MediaTime NODELETE timeFudgeFactor();
 
-    MediaTime start(unsigned index) const;
+    MediaTime NODELETE start(unsigned index) const;
     MediaTime start(unsigned index, bool& valid) const;
-    MediaTime end(unsigned index) const;
+    MediaTime NODELETE end(unsigned index) const;
     MediaTime end(unsigned index, bool& valid) const;
     MediaTime duration(unsigned index) const;
-    MediaTime maximumBufferedTime() const;
-    MediaTime minimumBufferedTime() const;
+    MediaTime NODELETE maximumBufferedTime() const;
+    MediaTime NODELETE minimumBufferedTime() const;
 
     void invert();
     void intersectWith(const PlatformTimeRanges&);
@@ -72,10 +76,18 @@ public:
     void clear();
     
     bool contain(const MediaTime&) const;
+    bool containWithEpsilon(const MediaTime&, const MediaTime& epsilon) const;
+    bool containWithEpsilon(const PlatformTimeRanges&, const MediaTime& epsilon) const;
+    // Variable-epsilon overloads: `epsilonAtTime(t)` is consulted at every
+    // boundary / gap location (rangeMin, rangeMax, and between adjacent
+    // sub-ranges). Used by the MSE gap-skipping policy where the
+    // tolerance varies by stream position.
+    bool containWithEpsilon(const MediaTime&, NOESCAPE const Function<MediaTime(const MediaTime&)>& epsilonAtTime) const;
+    bool containWithEpsilon(const PlatformTimeRanges&, NOESCAPE const Function<MediaTime(const MediaTime&)>& epsilonAtTime) const;
 
     size_t find(const MediaTime&) const;
-    size_t findWithEpsilon(const MediaTime&, const MediaTime& epsilon);
-    
+    size_t findWithEpsilon(const MediaTime&, const MediaTime& epsilon) const;
+
     MediaTime nearest(const MediaTime&) const;
 
     MediaTime totalDuration() const;
@@ -126,10 +138,12 @@ public:
         friend bool operator==(const Range&, const Range&) = default;
     };
 
+    std::span<const Range> span() const LIFETIME_BOUND { return m_ranges.span(); }
+
     friend bool operator==(const PlatformTimeRanges&, const PlatformTimeRanges&) = default;
 
 private:
-    friend struct IPC::ArgumentCoder<PlatformTimeRanges, void>;
+    friend struct IPC::ArgumentCoder<PlatformTimeRanges>;
 
     PlatformTimeRanges(Vector<Range>&&);
     PlatformTimeRanges& operator-=(const Range&);
@@ -138,6 +152,12 @@ private:
 
     Vector<Range> m_ranges;
 };
+
+#if PLATFORM(COCOA)
+WEBCORE_EXPORT RetainPtr<NSArray> makeNSArray(const PlatformTimeRanges&);
+#endif
+
+inline String toString(const PlatformTimeRanges& platformTimeRanges) { return platformTimeRanges.toString(); }
 
 } // namespace WebCore
 

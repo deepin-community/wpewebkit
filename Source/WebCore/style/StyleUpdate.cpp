@@ -27,15 +27,20 @@
 #include "StyleUpdate.h"
 
 #include "ComposedTreeAncestorIterator.h"
+#include "ContainerNodeInlines.h"
 #include "Document.h"
 #include "Element.h"
 #include "NodeRenderStyle.h"
 #include "RenderElement.h"
 #include "SVGElement.h"
+#include "SlotAssignment.h"
 #include "Text.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Style {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Update);
 
 Update::Update(Document& document)
     : m_document(document)
@@ -68,24 +73,18 @@ const TextUpdate* Update::textUpdate(const Text& text) const
     return &it->value;
 }
 
-const RenderStyle* Update::elementStyle(const Element& element) const
+const Style::ComputedStyle* Update::elementStyle(const Element& element) const
 {
     if (auto* update = elementUpdate(element))
         return update->style.get();
-    auto* renderer = element.renderer();
-    if (!renderer)
-        return nullptr;
-    return &renderer->style();
+    return element.renderOrDisplayContentsStyle();
 }
 
-RenderStyle* Update::elementStyle(const Element& element)
+Style::ComputedStyle* Update::elementStyle(const Element& element)
 {
     if (auto* update = elementUpdate(element))
         return update->style.get();
-    auto* renderer = element.renderer();
-    if (!renderer)
-        return nullptr;
-    return &renderer->mutableStyle();
+    return const_cast<Style::ComputedStyle*>(element.renderOrDisplayContentsStyle());
 }
 
 void Update::addElement(Element& element, Element* parent, ElementUpdate&& elementUpdate)
@@ -93,13 +92,13 @@ void Update::addElement(Element& element, Element* parent, ElementUpdate&& eleme
     ASSERT(composedTreeAncestors(element).first() == parent);
     ASSERT(!m_elements.contains(&element));
 
-    m_roots.remove(&element);
+    m_roots.remove(element);
     addPossibleRoot(parent);
 
     if (elementUpdate.mayNeedRebuildRoot)
         addPossibleRebuildRoot(element, parent);
 
-    m_elements.add(&element, WTFMove(elementUpdate));
+    m_elements.add(element, WTF::move(elementUpdate));
 }
 
 void Update::addText(Text& text, Element* parent, TextUpdate&& textUpdate)
@@ -108,7 +107,7 @@ void Update::addText(Text& text, Element* parent, TextUpdate&& textUpdate)
 
     addPossibleRoot(parent);
 
-    auto result = m_texts.add(&text, WTFMove(textUpdate));
+    auto result = m_texts.add(text, WTF::move(textUpdate));
 
     if (!result.isNewEntry) {
         auto& entry = result.iterator->value;
@@ -119,45 +118,45 @@ void Update::addText(Text& text, Element* parent, TextUpdate&& textUpdate)
         
         ASSERT(!entry.inheritedDisplayContentsStyle || !textUpdate.inheritedDisplayContentsStyle);
         if (!entry.inheritedDisplayContentsStyle)
-            entry.inheritedDisplayContentsStyle = WTFMove(textUpdate.inheritedDisplayContentsStyle);
+            entry.inheritedDisplayContentsStyle = WTF::move(textUpdate.inheritedDisplayContentsStyle);
     }
 }
 
 void Update::addText(Text& text, TextUpdate&& textUpdate)
 {
-    addText(text, composedTreeAncestors(text).first(), WTFMove(textUpdate));
+    addText(text, protect(composedTreeAncestors(text).first()), WTF::move(textUpdate));
 }
 
 void Update::addSVGRendererUpdate(SVGElement& element)
 {
-    auto parent = composedTreeAncestors(element).first();
-    m_roots.remove(&element);
-    addPossibleRoot(parent);
+    RefPtr parent = composedTreeAncestors(element).first();
+    m_roots.remove(element);
+    addPossibleRoot(parent.get());
     element.setNeedsSVGRendererUpdate(true);
 }
 
-void Update::addInitialContainingBlockUpdate(std::unique_ptr<RenderStyle> style)
+void Update::addInitialContainingBlockUpdate(std::unique_ptr<Style::ComputedStyle> style)
 {
-    m_initialContainingBlockUpdate = WTFMove(style);
+    m_initialContainingBlockUpdate = WTF::move(style);
 }
 
 void Update::addPossibleRoot(Element* element)
 {
     if (!element) {
-        m_roots.add(m_document.ptr());
+        m_roots.add(m_document);
         return;
     }
     if (element->needsSVGRendererUpdate() || m_elements.contains(element))
         return;
-    m_roots.add(element);
+    m_roots.add(*element);
 }
 
 void Update::addPossibleRebuildRoot(Element& element, Element* parent)
 {
-    if (parent && m_rebuildRoots.contains(parent))
+    if (parent && m_rebuildRoots.contains(*parent))
         return;
 
-    m_rebuildRoots.add(&element);
+    m_rebuildRoots.add(element);
 }
 
 }

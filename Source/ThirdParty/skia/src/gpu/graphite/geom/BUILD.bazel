@@ -15,12 +15,13 @@ CORE_FILES = [
     "Geometry.h",
     "IntersectionTree.cpp",
     "IntersectionTree.h",
+    "NonMSAAClip.h",
     "Rect.h",
     "Shape.cpp",
     "Shape.h",
     "SubRunData.h",
     "Transform.cpp",
-    "Transform_graphite.h",
+    "Transform.h",
 ]
 
 split_srcs_and_hdrs(

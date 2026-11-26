@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 
 #include "PendingScript.h"
 #include <wtf/Deque.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/TextPosition.h>
 
@@ -40,7 +41,7 @@ class ScriptSourceCode;
 class WeakPtrImplWithEventTargetData;
 
 class HTMLScriptRunner {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(HTMLScriptRunner);
 public:
     HTMLScriptRunner(Document&, HTMLScriptRunnerHost&);
     ~HTMLScriptRunner();
@@ -55,7 +56,7 @@ public:
     void executeScriptsWaitingForStylesheets();
     bool executeScriptsWaitingForParsing();
 
-    bool hasParserBlockingScript() const;
+    bool NODELETE hasParserBlockingScript() const;
     bool isExecutingScript() const { return !!m_scriptNestingLevel; }
 
 private:

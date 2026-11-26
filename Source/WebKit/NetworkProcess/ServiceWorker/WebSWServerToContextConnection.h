@@ -40,6 +40,7 @@ namespace WebCore {
 struct FetchOptions;
 struct MessageWithMessagePorts;
 class ResourceRequest;
+class Site;
 }
 
 namespace IPC {
@@ -59,17 +60,18 @@ class WebSWServerConnection;
 
 class WebSWServerToContextConnection final: public WebCore::SWServerToContextConnection, public IPC::MessageSender, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(WebSWServerToContextConnection);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebSWServerToContextConnection);
 public:
-    using WebCore::SWServerToContextConnection::weakPtrFactory;
-    using WebCore::SWServerToContextConnection::WeakValueType;
-    using WebCore::SWServerToContextConnection::WeakPtrImplType;
+    USING_CAN_MAKE_WEAKPTR(WebCore::SWServerToContextConnection);
 
-    WebSWServerToContextConnection(NetworkConnectionToWebProcess&, WebPageProxyIdentifier, WebCore::RegistrableDomain&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, WebCore::SWServer&);
+    static Ref<WebSWServerToContextConnection> create(NetworkConnectionToWebProcess&, WebPageProxyIdentifier, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier>, WebCore::SWServer&, WebCore::CrossOriginEmbedderPolicyValue);
     ~WebSWServerToContextConnection();
 
-    Ref<IPC::Connection> protectedIPCConnection() const;
-    IPC::Connection& ipcConnection() const;
+    void ref() const final { WebCore::SWServerToContextConnection::ref(); }
+    void deref() const final { WebCore::SWServerToContextConnection::deref(); }
+
+    void stop();
+
+    IPC::Connection* NODELETE ipcConnection() const;
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -87,18 +89,35 @@ public:
     void registerDownload(ServiceWorkerDownloadTask&);
     void unregisterDownload(ServiceWorkerDownloadTask&);
 
-    WebCore::ProcessIdentifier webProcessIdentifier() const final;
-    NetworkProcess& networkProcess();
+    WebCore::ProcessIdentifier webProcessIdentifier() const final { return m_webProcessIdentifier; }
+    NetworkProcess* NODELETE networkProcess();
+
     void didFinishInstall(const std::optional<WebCore::ServiceWorkerJobDataIdentifier>&, WebCore::ServiceWorkerIdentifier, bool wasSuccessful);
     void didFinishActivation(WebCore::ServiceWorkerIdentifier);
 
+    void terminateIdleServiceWorkers();
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    void reportNetworkUsageToWorkerClient(const WebCore::ScriptExecutionContextIdentifier, uint64_t bytesTransferredOverNetworkDelta) final;
+#endif
+
+    std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
 private:
+    WebSWServerToContextConnection(NetworkConnectionToWebProcess&, WebPageProxyIdentifier, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier>, WebCore::SWServer&);
+
+    template<typename T> void sendToParentProcess(T&&);
+    template<typename T, typename C> void sendWithAsyncReplyToParentProcess(T&&, C&&);
+
     // IPC::MessageSender
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
-    void postMessageToServiceWorkerClient(const WebCore::ScriptExecutionContextIdentifier& destinationIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceIdentifier, const String& sourceOrigin);
-    void skipWaiting(uint64_t requestIdentifier, WebCore::ServiceWorkerIdentifier);
+    void postMessageToServiceWorkerClient(const WebCore::ScriptExecutionContextIdentifier& destinationIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceIdentifier, const WebCore::SecurityOriginData& sourceOrigin);
+    void skipWaiting(WebCore::ServiceWorkerIdentifier, CompletionHandler<void()>&&);
+
+    // Messages back from the SW host process
+    void setAsInspected(WebCore::ServiceWorkerIdentifier, bool);
+    void workerTerminated(WebCore::ServiceWorkerIdentifier);
 
     // Messages to the SW host WebProcess
     void installServiceWorkerContext(const WebCore::ServiceWorkerContextData&, const WebCore::ServiceWorkerData&, const String& userAgent, WebCore::WorkerThreadMode, OptionSet<WebCore::AdvancedPrivacyProtections>) final;
@@ -107,25 +126,26 @@ private:
     void fireActivateEvent(WebCore::ServiceWorkerIdentifier) final;
     void terminateWorker(WebCore::ServiceWorkerIdentifier) final;
     void didSaveScriptsToDisk(WebCore::ServiceWorkerIdentifier, const WebCore::ScriptBuffer&, const MemoryCompactRobinHoodHashMap<URL, WebCore::ScriptBuffer>& importedScripts) final;
-    void matchAllCompleted(uint64_t requestIdentifier, const Vector<WebCore::ServiceWorkerClientData>&) final;
     void firePushEvent(WebCore::ServiceWorkerIdentifier, const std::optional<Vector<uint8_t>>&, std::optional<WebCore::NotificationPayload>&&, CompletionHandler<void(bool, std::optional<WebCore::NotificationPayload>&&)>&&) final;
     void fireNotificationEvent(WebCore::ServiceWorkerIdentifier, const WebCore::NotificationData&, WebCore::NotificationEventType, CompletionHandler<void(bool)>&&) final;
     void fireBackgroundFetchEvent(WebCore::ServiceWorkerIdentifier, const WebCore::BackgroundFetchInformation&, CompletionHandler<void(bool)>&&) final;
     void fireBackgroundFetchClickEvent(WebCore::ServiceWorkerIdentifier, const WebCore::BackgroundFetchInformation&, CompletionHandler<void(bool)>&&) final;
-    void close() final;
     void focus(WebCore::ScriptExecutionContextIdentifier, CompletionHandler<void(std::optional<WebCore::ServiceWorkerClientData>&&)>&&);
     void navigate(WebCore::ScriptExecutionContextIdentifier, WebCore::ServiceWorkerIdentifier, const URL&, CompletionHandler<void(Expected<std::optional<WebCore::ServiceWorkerClientData>, WebCore::ExceptionData>&&)>&&);
 
     void connectionIsNoLongerNeeded() final;
     void terminateDueToUnresponsiveness() final;
     void openWindow(WebCore::ServiceWorkerIdentifier, const URL&, OpenWindowCallback&&) final;
-    void reportConsoleMessage(WebCore::ServiceWorkerIdentifier, MessageSource, MessageLevel, const String& message, unsigned long requestIdentifier);
+    void reportConsoleMessage(WebCore::ServiceWorkerIdentifier, MessageSource, MessageLevel, const String& message, uint64_t requestIdentifier);
 
     void connectionClosed();
 
     void setInspectable(WebCore::ServiceWorkerIsInspectable) final;
 
-    WeakRef<NetworkConnectionToWebProcess> m_connection;
+    bool isWebSWServerToContextConnection() const final { return true; }
+
+    WebCore::ProcessIdentifier m_webProcessIdentifier;
+    WeakPtr<NetworkConnectionToWebProcess> m_connection;
     HashMap<WebCore::FetchIdentifier, WeakPtr<ServiceWorkerFetchTask>> m_ongoingFetches;
     HashMap<WebCore::FetchIdentifier, ThreadSafeWeakPtr<ServiceWorkerDownloadTask>> m_ongoingDownloads;
     bool m_isThrottleable { true };
@@ -135,3 +155,7 @@ private:
 }; // class WebSWServerToContextConnection
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebSWServerToContextConnection)
+    static bool isType(const WebCore::SWServerToContextConnection& connection) { return connection.isWebSWServerToContextConnection(); }
+SPECIALIZE_TYPE_TRAITS_END()

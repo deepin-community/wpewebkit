@@ -31,11 +31,9 @@
 
 #include "config.h"
 
-#include <type_traits>
-#include <utility>
-#include <wtf/Assertions.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -43,11 +41,10 @@ namespace WTF {
 #if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
 struct SameSizeAsRefCounted {
     int a;
-    bool b;
+    ThreadLikeAssertion b;
     bool c;
     bool d;
-    unsigned e;
-    bool f;
+    bool e;
     // The debug version may get bigger.
 };
 #else
@@ -81,9 +78,7 @@ template<typename T, unsigned inlineCapacity>
 struct SameSizeAsVectorWithInlineCapacity : SameSizeAsVectorWithInlineCapacityBase<T> {
     WTF_MAKE_NONCOPYABLE(SameSizeAsVectorWithInlineCapacity);
 public:
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    typename std::aligned_storage<sizeof(T), std::alignment_of<T>::value>::type inlineBuffer[inlineCapacity];
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    AlignedStorage<T> inlineBuffer[inlineCapacity];
 };
 
 static_assert(sizeof(Vector<int>) == sizeof(SameSizeAsVectorWithInlineCapacity<int>), "Vector should stay small!");

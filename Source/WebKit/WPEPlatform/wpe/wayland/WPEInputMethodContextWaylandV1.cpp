@@ -26,16 +26,16 @@
 #include "config.h"
 #include "WPEInputMethodContextWaylandV1.h"
 
+#include "GRefPtrWPE.h"
 #include "WPEDisplayWaylandPrivate.h"
 #include "WPEViewWayland.h"
-
 #include "text-input-unstable-v1-client-protocol.h"
-
 #include <algorithm>
 #include <cstdlib>
 #include <wayland-client-protocol.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/text/StringView.h>
 #include <xkbcommon/xkbcommon.h>
 
 typedef struct _TextInputV1Global TextInputV1Global;
@@ -126,6 +126,7 @@ static uint32_t toTextInputV1Purpose(WPEInputPurpose purpose)
 {
     switch (purpose) {
     case WPE_INPUT_PURPOSE_FREE_FORM:
+    case WPE_INPUT_PURPOSE_SEARCH:
         return ZWP_TEXT_INPUT_V1_CONTENT_PURPOSE_NORMAL;
     case WPE_INPUT_PURPOSE_ALPHA:
         return ZWP_TEXT_INPUT_V1_CONTENT_PURPOSE_ALPHA;
@@ -280,14 +281,12 @@ static void textInputV1UpdateState(WPEIMContextWaylandV1* context)
 static xkb_mod_mask_t keysymModifiersGetMask(struct wl_array *map, const char *name)
 {
     xkb_mod_index_t index = 0;
-    const char* p = static_cast<const char *>(map->data);
+    auto entries = StringView(unsafeMakeSpan(static_cast<const char*>(map->data), map->size));
 
-    while (p < static_cast<const char *>(p + map->size)) {
-        if (!strcmp (p, name))
+    for (auto entry : entries.split('\0')) {
+        if (entry == StringView::fromLatin1(name))
             return 1 << index;
-
         index++;
-        p += strlen(p) + 1;
     }
 
     return XKB_MOD_INVALID;
@@ -456,10 +455,9 @@ static const struct zwp_text_input_v1_listener textInputListenerV1 = {
         if (modifiers & priv->modifiers.controlMask)
             wpe_modifiers |= WPE_MODIFIER_KEYBOARD_CONTROL;
 
-        auto* event = wpe_event_keyboard_new(state ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, view,
-            WPE_INPUT_SOURCE_KEYBOARD, time, static_cast<WPEModifiers>(wpe_modifiers), 0, sym);
-        wpe_view_event(view, event);
-        wpe_event_unref(event);
+        GRefPtr<WPEEvent> event = adoptGRef(wpe_event_keyboard_new(state ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, view,
+            WPE_INPUT_SOURCE_KEYBOARD, time, static_cast<WPEModifiers>(wpe_modifiers), 0, sym));
+        wpe_view_event(view, event.get());
     },
     // language
     [](void* /*data*/, struct zwp_text_input_v1* /*text_input*/, uint32_t /*serial*/, const char* /*language*/)
@@ -557,8 +555,7 @@ static void wpeIMContextWaylandV1FocusIn(WPEInputMethodContext* context)
     if (global->textInput == nullptr)
         return;
 
-    WPEInputHints hints;
-    g_object_get(context, "input-hints", &hints, nullptr);
+    WPEInputHints hints = wpe_input_method_context_get_input_hints(context);
     if (!(hints & WPE_INPUT_HINT_INHIBIT_OSK)) {
         zwp_text_input_v1_show_input_panel(global->textInput);
         zwp_text_input_v1_activate(global->textInput,
@@ -645,10 +642,11 @@ static void wpe_im_context_wayland_v1_class_init(WPEIMContextWaylandV1Class* kla
     imContextClass->reset = wpeIMContextWaylandV1Reset;
 }
 
-WPEInputMethodContext* wpe_im_context_wayland_v1_new(WPEDisplayWayland* display)
+WPEInputMethodContext* wpe_im_context_wayland_v1_new(WPEDisplayWayland* display, WPEView* view)
 {
     g_return_val_if_fail(WPE_IS_DISPLAY_WAYLAND(display), nullptr);
+    g_return_val_if_fail(WPE_IS_VIEW_WAYLAND(view), nullptr);
 
     textInputV1GetGlobalByDisplay(display); // ensure creation of listener
-    return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V1, nullptr));
+    return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V1, "view", view, nullptr));
 }

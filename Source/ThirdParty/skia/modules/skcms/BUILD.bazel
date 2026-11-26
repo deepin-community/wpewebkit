@@ -1,5 +1,5 @@
-load("//bazel:skia_rules.bzl", "skia_cc_library", "skia_filegroup")
 load("@skia_user_config//:copts.bzl", "DEFAULT_COPTS")
+load("//bazel:skia_rules.bzl", "skia_cc_library", "skia_filegroup")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -43,7 +43,8 @@ skia_cc_library(
     hdrs = [
         "skcms.h",
     ],
-    visibility = ["//:__subpackages__"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         ":skcms_TransformBaseline",
         ":skcms_TransformHsw",

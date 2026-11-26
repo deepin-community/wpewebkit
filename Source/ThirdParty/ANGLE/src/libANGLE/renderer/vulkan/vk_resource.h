@@ -97,7 +97,7 @@ class ResourceUse final
         return false;
     }
 
-    // Returns true if it contains a serial that is greater than
+    // Compare the recorded serial with the parameter
     bool operator>(const QueueSerial &queuSerial) const
     {
         return mSerials.size() > queuSerial.getIndex() &&
@@ -236,7 +236,7 @@ class SharedGarbageList final : angle::NonCopyable
     void resetDestroyedGarbageSize() { mTotalGarbageDestroyed = 0; }
 
     // Number of bytes destroyed is returned.
-    void cleanupSubmittedGarbage(Renderer *renderer)
+    VkDeviceSize cleanupSubmittedGarbage(Renderer *renderer)
     {
         std::unique_lock<angle::SimpleMutex> lock(mSubmittedQueueDequeueMutex);
         VkDeviceSize bytesDestroyed = 0;
@@ -253,6 +253,7 @@ class SharedGarbageList final : angle::NonCopyable
         }
         mTotalSubmittedGarbageBytes -= bytesDestroyed;
         mTotalGarbageDestroyed += bytesDestroyed;
+        return bytesDestroyed;
     }
 
     // Check if pending garbage is still pending submission. If not, move them to the garbage list.
@@ -326,7 +327,7 @@ class Resource : angle::NonCopyable
     // Complete all recorded and in-flight commands involving this resource
     angle::Result waitForIdle(ContextVk *contextVk,
                               const char *debugMessage,
-                              RenderPassClosureReason reason);
+                              QueueSubmitReason reason);
 
     void setSerial(SerialIndex index, Serial serial) { mUse.setSerial(index, serial); }
 
@@ -368,7 +369,7 @@ class ReadWriteResource : public Resource
     // Complete all recorded and in-flight commands involving this resource
     angle::Result waitForIdle(ContextVk *contextVk,
                               const char *debugMessage,
-                              RenderPassClosureReason reason)
+                              QueueSubmitReason reason)
     {
         return Resource::waitForIdle(contextVk, debugMessage, reason);
     }

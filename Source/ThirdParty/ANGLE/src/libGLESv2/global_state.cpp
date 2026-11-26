@@ -86,9 +86,8 @@ Thread *AllocateCurrentThread()
 }  // anonymous namespace
 
 #if defined(ANGLE_PLATFORM_APPLE)
-// TODO(angleproject:6479): Due to a bug in Apple's dyld loader, `thread_local` will cause
-// excessive memory use. Temporarily avoid it by using pthread's thread
-// local storage instead.
+// TODO(http://anglebug.com/42264979): Due to a bug in Apple's dyld loader, `thread_local` will
+// cause excessive memory use. Temporarily avoid it by using pthread's thread local storage instead.
 // https://bugs.webkit.org/show_bug.cgi?id=228240
 
 static angle::TLSIndex GetCurrentThreadTLSIndex()
@@ -191,23 +190,19 @@ bool IsEGLValidationEnabled()
 
 namespace gl
 {
-void GenerateContextLostErrorOnContext(Context *context)
-{
-    if (context && context->isContextLost())
-    {
-        context->getMutableErrorSetForValidation()->validationError(
-            angle::EntryPoint::Invalid, GL_CONTEXT_LOST, err::kContextLost);
-    }
-}
-
-void GenerateContextLostErrorOnCurrentGlobalContext()
+void GenerateContextLostErrorOnCurrentGlobalContext(angle::EntryPoint entryPoint)
 {
     // If the client starts issuing GL calls before ANGLE has had a chance to initialize,
     // GenerateContextLostErrorOnCurrentGlobalContext can be called before AllocateCurrentThread has
     // had a chance to run. Calling GetCurrentThread() ensures that TLS thread state is set up.
     egl::GetCurrentThread();
 
-    GenerateContextLostErrorOnContext(GetGlobalContext());
+    Context *context = GetGlobalContext();
+    if (context != nullptr && context->isContextLost())
+    {
+        context->getMutableErrorSetForValidation()->validationError(entryPoint, GL_CONTEXT_LOST,
+                                                                    err::kContextLost);
+    }
 }
 }  // namespace gl
 
@@ -298,7 +293,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
     switch (reason)
     {
         case DLL_PROCESS_ATTACH:
-            if (angle::GetEnvironmentVar("ANGLE_WAIT_FOR_DEBUGGER") == "1")
+            if (angle::GetBoolEnvironmentVar("ANGLE_WAIT_FOR_DEBUGGER"))
             {
                 WaitForDebugger(instance);
             }

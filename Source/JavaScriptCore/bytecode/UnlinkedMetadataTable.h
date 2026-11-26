@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,12 +25,14 @@
 
 #pragma once
 
-#include "Opcode.h"
-#include "ValueProfile.h"
+#include <JavaScriptCore/Opcode.h>
+#include <JavaScriptCore/ValueProfile.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
 #include <wtf/SystemMalloc.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -57,7 +59,7 @@ struct MetadataStatistics {
 
 
 class UnlinkedMetadataTable : public ThreadSafeRefCounted<UnlinkedMetadataTable> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(UnlinkedMetadataTable);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(UnlinkedMetadataTable, UnlinkedMetadataTable);
     friend class LLIntOffsetsExtractor;
     friend class MetadataTable;
     friend class CachedMetadataTable;
@@ -79,7 +81,7 @@ public:
 
     size_t sizeInBytesForGC();
 
-    void finalize();
+    [[nodiscard]] bool finalize();
 
     RefPtr<MetadataTable> link();
 
@@ -150,17 +152,17 @@ private:
     static constexpr unsigned s_offset32TableSize = roundUpToMultipleOf<s_maxMetadataAlignment>(s_offsetTableEntries * sizeof(Offset32));
 
     void* buffer() const { return m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData); }
-    Offset32* preprocessBuffer() const { return bitwise_cast<Offset32*>(m_rawBuffer); }
+    Offset32* preprocessBuffer() const { return std::bit_cast<Offset32*>(m_rawBuffer); }
 
     Offset16* offsetTable16() const
     {
         ASSERT(!m_is32Bit);
-        return bitwise_cast<Offset16*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData));
+        return std::bit_cast<Offset16*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData));
     }
     Offset32* offsetTable32() const
     {
         ASSERT(m_is32Bit);
-        return bitwise_cast<Offset32*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) + s_offset16TableSize);
+        return std::bit_cast<Offset32*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) + s_offset16TableSize);
     }
 
     bool m_hasMetadata : 1;
@@ -173,3 +175,5 @@ private:
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

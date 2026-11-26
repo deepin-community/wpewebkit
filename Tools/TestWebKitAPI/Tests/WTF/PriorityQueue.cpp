@@ -27,17 +27,18 @@
 
 #include "MoveOnly.h"
 
+#include <ranges>
 #include <type_traits>
 #include <wtf/HashSet.h>
 #include <wtf/PriorityQueue.h>
 
-constexpr std::size_t operator "" _z ( unsigned long long n ) { return n; }
+constexpr std::size_t operator""_z(unsigned long long n) { return n; }
 
 template<typename T, bool (*isHigherPriority)(const T&, const T&)>
 static void enqueue(PriorityQueue<T, isHigherPriority>& queue, T element)
 {
     size_t sizeBefore = queue.size();
-    queue.enqueue(WTFMove(element));
+    queue.enqueue(WTF::move(element));
     EXPECT_EQ(sizeBefore + 1, queue.size());
     EXPECT_FALSE(queue.isEmpty());
 }
@@ -110,7 +111,7 @@ TEST(WTF_PriorityQueue, MoveOnly)
 
     Vector<unsigned> values = { 23, 54, 4, 8, 1, 2, 4, 0 };
     Vector<unsigned> sorted = values;
-    std::sort(sorted.begin(), sorted.end());
+    std::ranges::sort(sorted);
 
     for (auto value : values)
         queue.enqueue(MoveOnly(value));
@@ -128,7 +129,7 @@ TEST(WTF_PriorityQueue, DecreaseKey)
     Vector<unsigned> values = { 23, 54, 4, 8, 1, 2, 4, 0 };
     Vector<unsigned> sorted = values;
     sorted[3] = 12;
-    std::sort(sorted.begin(), sorted.end());
+    std::ranges::sort(sorted);
 
     for (auto value : values)
         queue.enqueue(MoveOnly(value));
@@ -154,7 +155,7 @@ TEST(WTF_PriorityQueue, IncreaseKey)
     Vector<unsigned> values = { 23, 54, 4, 8, 1, 2, 4, 0 };
     Vector<unsigned> sorted = values;
     sorted[3] = 12;
-    std::sort(sorted.begin(), sorted.end(), std::greater<unsigned>());
+    std::ranges::sort(sorted, std::greater<unsigned>());
 
     for (auto value : values)
         queue.enqueue(MoveOnly(value));
@@ -179,7 +180,7 @@ TEST(WTF_PriorityQueue, Iteration)
 
     Vector<unsigned> values = { 23, 54, 4, 8, 1, 2, 4, 0 };
     Vector<unsigned> sorted = values;
-    std::sort(sorted.begin(), sorted.end(), std::greater<unsigned>());
+    std::ranges::sort(sorted, std::greater<unsigned>());
 
     for (auto value : values)
         queue.enqueue(MoveOnly(value));
@@ -188,7 +189,7 @@ TEST(WTF_PriorityQueue, Iteration)
     for (auto& element : queue)
         values.append(element.value());
 
-    std::sort(values.begin(), values.end(), std::greater<unsigned>());
+    std::ranges::sort(values, std::greater<unsigned>());
     EXPECT_EQ(values.size(), sorted.size());
     if (values.size() == sorted.size()) {
         for (size_t i = 0; i < values.size(); ++i)
@@ -244,7 +245,7 @@ TEST(WTF_PriorityQueue, RandomActions)
                 continue;
 
             // Sort with greater so the last element should be the one we dequeue.
-            std::sort(values.begin(), values.end(), std::greater<uint64_t>());
+            std::ranges::sort(values, std::greater<uint64_t>());
             EXPECT_EQ(values.takeLast(), queue.dequeue());
 
             continue;

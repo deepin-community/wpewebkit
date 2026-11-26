@@ -31,21 +31,13 @@
 #include "WebAuthenticationRequestData.h"
 #include <WebCore/AuthenticatorResponse.h>
 #include <WebCore/ExceptionData.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/spi/cocoa/SecuritySPI.h>
 
 OBJC_CLASS LAContext;
-
-namespace WebKit {
-class AuthenticatorObserver;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::AuthenticatorObserver> : std::true_type { };
-}
 
 namespace WebCore {
 class AuthenticatorAssertionResponse;
@@ -54,24 +46,25 @@ class AuthenticatorAssertionResponse;
 namespace WebKit {
 
 class Authenticator;
-using AuthenticatorObserverRespond = std::variant<Ref<WebCore::AuthenticatorResponse>, WebCore::ExceptionData>;
+using AuthenticatorObserverRespond = Variant<Ref<WebCore::AuthenticatorResponse>, WebCore::ExceptionData>;
 
-class AuthenticatorObserver : public CanMakeWeakPtr<AuthenticatorObserver> {
+class AuthenticatorObserver : public AbstractRefCountedAndCanMakeWeakPtr<AuthenticatorObserver> {
 public:
     virtual ~AuthenticatorObserver() = default;
     virtual void respondReceived(AuthenticatorObserverRespond&&) = 0;
-    virtual void downgrade(Authenticator* id, Ref<Authenticator>&& downgradedAuthenticator) = 0;
+    virtual void downgrade(Authenticator& id, Ref<Authenticator>&& downgradedAuthenticator) = 0;
     virtual void authenticatorStatusUpdated(WebAuthenticationStatus) = 0;
     virtual void requestPin(uint64_t retries, CompletionHandler<void(const WTF::String&)>&&) = 0;
+    virtual void requestNewPin(uint64_t minLength, CompletionHandler<void(const WTF::String&)>&&) = 0;
     virtual void selectAssertionResponse(Vector<Ref<WebCore::AuthenticatorAssertionResponse>>&&, WebAuthenticationSource, CompletionHandler<void(WebCore::AuthenticatorAssertionResponse*)>&&) = 0;
     virtual void decidePolicyForLocalAuthenticator(CompletionHandler<void(LocalAuthenticatorPolicy)>&&) = 0;
     virtual void requestLAContextForUserVerification(CompletionHandler<void(LAContext *)>&&) = 0;
     virtual void cancelRequest() = 0;
 };
 
-class Authenticator : public RefCounted<Authenticator>, public CanMakeWeakPtr<Authenticator> {
+class Authenticator : public RefCountedAndCanMakeWeakPtr<Authenticator> {
 public:
-    virtual ~Authenticator() = default;
+    virtual ~Authenticator();
 
     void setObserver(AuthenticatorObserver& observer) { m_observer = observer; }
 
@@ -79,10 +72,10 @@ public:
     void handleRequest(const WebAuthenticationRequestData&);
 
 protected:
-    Authenticator() = default;
+    Authenticator();
 
     AuthenticatorObserver* observer() const { return m_observer.get(); }
-    const WebAuthenticationRequestData& requestData() const { return m_pendingRequestData; }
+    const WebAuthenticationRequestData& requestData() const LIFETIME_BOUND { return *m_pendingRequestData; }
 
     void receiveRespond(AuthenticatorObserverRespond&&) const;
 
@@ -91,7 +84,8 @@ private:
     virtual void getAssertion() = 0;
 
     WeakPtr<AuthenticatorObserver> m_observer;
-    WebAuthenticationRequestData m_pendingRequestData;
+    // FIXME: Is it ok for this to be optional?
+    std::optional<WebAuthenticationRequestData> m_pendingRequestData;
 };
 
 } // namespace WebKit

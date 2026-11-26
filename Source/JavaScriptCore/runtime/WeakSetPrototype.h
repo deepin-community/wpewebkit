@@ -25,11 +25,11 @@
 
 #pragma once
 
-#include "JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
 
-extern const ASCIILiteral WeakSetInvalidValueError;
+inline constexpr ASCIILiteral WeakSetInvalidValueError { "WeakSet values must be objects or non-registered symbols"_s };
 
 JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetAdd);
 

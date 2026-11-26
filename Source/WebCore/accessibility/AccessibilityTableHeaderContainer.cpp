@@ -29,52 +29,58 @@
 #include "config.h"
 #include "AccessibilityTableHeaderContainer.h"
 
+#include "AXLoggerBase.h"
 #include "AXObjectCache.h"
-#include "AccessibilityTable.h"
+#include "AccessibilityObjectInlines.h"
+#include "AccessibilityNodeObject.h"
 
 namespace WebCore {
 
-AccessibilityTableHeaderContainer::AccessibilityTableHeaderContainer() = default;
+AccessibilityTableHeaderContainer::AccessibilityTableHeaderContainer(AXID axID, AXObjectCache& cache)
+    : AccessibilityMockObject(axID, cache)
+{
+}
 
 AccessibilityTableHeaderContainer::~AccessibilityTableHeaderContainer() = default;
 
-Ref<AccessibilityTableHeaderContainer> AccessibilityTableHeaderContainer::create()
+Ref<AccessibilityTableHeaderContainer> AccessibilityTableHeaderContainer::create(AXID axID, AXObjectCache& cache)
 {
-    return adoptRef(*new AccessibilityTableHeaderContainer());
+    return adoptRef(*new AccessibilityTableHeaderContainer(axID, cache));
 }
-    
+
 LayoutRect AccessibilityTableHeaderContainer::elementRect() const
 {
     // this will be filled in when addChildren is called
     return m_headerRect;
 }
 
-bool AccessibilityTableHeaderContainer::computeAccessibilityIsIgnored() const
+bool AccessibilityTableHeaderContainer::computeIsIgnored() const
 {
-    if (!m_parent)
-        return true;
-    
 #if PLATFORM(IOS_FAMILY) || USE(ATSPI)
     return true;
+#else
+    return !m_parent || protect(m_parent)->isIgnored();
 #endif
-
-    return m_parent->accessibilityIsIgnored();
 }
 
 void AccessibilityTableHeaderContainer::addChildren()
 {
-    ASSERT(!m_childrenInitialized); 
-    
+    AX_ASSERT(!m_childrenInitialized);
+
     m_childrenInitialized = true;
-    RefPtr parentTable = dynamicDowncast<AccessibilityTable>(m_parent.get());
-    if (!parentTable || !parentTable->isExposable())
+    RefPtr parentTable = dynamicDowncast<AccessibilityNodeObject>(m_parent.get());
+    if (!parentTable || !parentTable->isExposableTable())
         return;
 
     for (auto& columnHeader : parentTable->columnHeaders())
-        addChild(columnHeader.get());
+        addChild(downcast<AccessibilityObject>(columnHeader.get()));
 
     for (const auto& child : m_children)
         m_headerRect.unite(child->elementRect());
+
+#if ASSERT_ENABLED
+    verifyChildrenIndexInParent();
+#endif
 }
 
 } // namespace WebCore

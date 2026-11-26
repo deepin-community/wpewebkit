@@ -27,11 +27,12 @@
 #include "JSNodeList.h"
 
 #include "ChildNodeList.h"
-#include "JSNode.h"
 #include "LiveNodeList.h"
-#include "Node.h"
 #include "NodeList.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/StructureInlines.h>
 #include <wtf/text/AtomString.h>
 
 
@@ -40,29 +41,32 @@ using namespace JSC;
 
 bool JSNodeListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    JSNodeList* jsNodeList = jsCast<JSNodeList*>(handle.slot()->asCell());
+    JSNodeList* jsNodeList = downcast<JSNodeList>(handle.slot()->asCell());
     if (!jsNodeList->hasCustomProperties())
         return false;
 
-    if (jsNodeList->wrapped().isLiveNodeList()) {
-        if (UNLIKELY(reason))
+    // Cannot ref the node list as this gets called from a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* liveNodeList = dynamicDowncast<LiveNodeList>(jsNodeList->wrapped())) {
+        if (reason) [[unlikely]]
             *reason = "LiveNodeList owner is opaque root"_s;
 
-        return containsWebCoreOpaqueRoot(visitor, static_cast<LiveNodeList&>(jsNodeList->wrapped()).ownerNode());
+        return containsWebCoreOpaqueRoot(visitor, liveNodeList->ownerNode());
     }
 
-    if (jsNodeList->wrapped().isChildNodeList()) {
-        if (UNLIKELY(reason))
+    // Cannot ref the node list as this gets called from a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* childNodeList = dynamicDowncast<ChildNodeList>(jsNodeList->wrapped())) {
+        if (reason) [[unlikely]]
             *reason = "ChildNodeList owner is opaque root"_s;
 
-        return containsWebCoreOpaqueRoot(visitor, static_cast<ChildNodeList&>(jsNodeList->wrapped()).ownerNode());
+        return containsWebCoreOpaqueRoot(visitor, childNodeList->ownerNode());
     }
 
-    if (jsNodeList->wrapped().isEmptyNodeList()) {
-        if (UNLIKELY(reason))
+    // Cannot ref the node list as this gets called from a GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* emptyNodeList = dynamicDowncast<EmptyNodeList>(jsNodeList->wrapped())) {
+        if (reason) [[unlikely]]
             *reason = "EmptyNodeList owner is opaque root"_s;
 
-        return containsWebCoreOpaqueRoot(visitor, static_cast<EmptyNodeList&>(jsNodeList->wrapped()).ownerNode());
+        return containsWebCoreOpaqueRoot(visitor, emptyNodeList->ownerNode());
     }
     return false;
 }
@@ -72,12 +76,12 @@ JSC::JSValue createWrapper(JSDOMGlobalObject& globalObject, Ref<NodeList>&& node
     // FIXME: Adopt reportExtraMemoryVisited, and switch to reportExtraMemoryAllocated.
     // https://bugs.webkit.org/show_bug.cgi?id=142595
     globalObject.vm().heap.deprecatedReportExtraMemory(nodeList->memoryCost());
-    return createWrapper<NodeList>(&globalObject, WTFMove(nodeList));
+    return createWrapper<NodeList>(&globalObject, WTF::move(nodeList));
 }
 
 JSC::JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<NodeList>&& nodeList)
 {
-    return createWrapper(*globalObject, WTFMove(nodeList));
+    return createWrapper(*globalObject, WTF::move(nodeList));
 }
 
 } // namespace WebCore

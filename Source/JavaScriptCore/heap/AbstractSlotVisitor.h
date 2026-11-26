@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
-#include "MarkStack.h"
-#include "RootMarkReason.h"
-#include "VisitRaceKey.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/MarkStack.h>
+#include <JavaScriptCore/RootMarkReason.h>
+#include <JavaScriptCore/VisitRaceKey.h>
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/SharedTask.h>
 #include <wtf/TZoneMalloc.h>
@@ -54,7 +54,7 @@ class WriteBarrierStructureID;
 
 class AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(AbstractSlotVisitor);
-    WTF_MAKE_TZONE_ALLOCATED(AbstractSlotVisitor);
+    WTF_MAKE_TZONE_NON_HEAP_ALLOCATABLE(AbstractSlotVisitor);
 public:
     enum OpaqueRootTag { OpaqueRoot };
 
@@ -131,12 +131,12 @@ public:
 
     virtual ~AbstractSlotVisitor() = default;
 
-    MarkStackArray& collectorMarkStack() { return m_collectorStack; }
-    MarkStackArray& mutatorMarkStack() { return m_mutatorStack; }
-    const MarkStackArray& collectorMarkStack() const { return m_collectorStack; }
-    const MarkStackArray& mutatorMarkStack() const { return m_mutatorStack; }
+    MarkStackArray& collectorMarkStack() LIFETIME_BOUND { return m_collectorStack; }
+    MarkStackArray& mutatorMarkStack() LIFETIME_BOUND { return m_mutatorStack; }
+    const MarkStackArray& collectorMarkStack() const LIFETIME_BOUND { return m_collectorStack; }
+    const MarkStackArray& mutatorMarkStack() const LIFETIME_BOUND { return m_mutatorStack; }
 
-    bool isEmpty() { return m_collectorStack.isEmpty() && m_mutatorStack.isEmpty(); }
+    inline bool isEmpty(); // Defined in AbstractSlotVisitorInlines.h
 
     VM& vm();
     const VM& vm() const;
@@ -210,7 +210,7 @@ public:
 
     virtual void visitAsConstraint(const JSCell*) = 0;
 
-    const char* codeName() const { return m_codeName.data(); }
+    const char* codeName() const LIFETIME_BOUND { return m_codeName.data(); }
 
 protected:
     inline AbstractSlotVisitor(Heap&, CString codeName, ConcurrentPtrHashSet&);
@@ -231,7 +231,7 @@ protected:
     CString m_codeName;
 
     MarkingConstraint* m_currentConstraint { nullptr };
-    MarkingConstraintSolver* m_currentSolver { nullptr };
+    SUPPRESS_FORWARD_DECL_MEMBER MarkingConstraintSolver* m_currentSolver { nullptr }; // MarkingConstraintSolver is not refcounted
     ConcurrentPtrHashSet& m_opaqueRoots;
 
     RootMarkReason m_rootMarkReason { RootMarkReason::None };

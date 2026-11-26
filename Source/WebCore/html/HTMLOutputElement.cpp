@@ -42,23 +42,23 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLOutputElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLOutputElement);
 
-inline HTMLOutputElement::HTMLOutputElement(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
-    : HTMLFormControlElement(tagName, document, form)
+inline HTMLOutputElement::HTMLOutputElement(const QualifiedName& tagName, Document& document)
+    : HTMLFormControlElement(tagName, document)
 {
 }
 
 HTMLOutputElement::~HTMLOutputElement() = default;
 
-Ref<HTMLOutputElement> HTMLOutputElement::create(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
+Ref<HTMLOutputElement> HTMLOutputElement::create(const QualifiedName& tagName, Document& document)
 {
-    return adoptRef(*new HTMLOutputElement(tagName, document, form));
+    return adoptRef(*new HTMLOutputElement(tagName, document));
 }
 
 Ref<HTMLOutputElement> HTMLOutputElement::create(Document& document)
 {
-    return create(HTMLNames::outputTag, document, nullptr);
+    return create(HTMLNames::outputTag, document);
 }
 
 const AtomString& HTMLOutputElement::formControlType() const
@@ -94,7 +94,7 @@ String HTMLOutputElement::value() const
 void HTMLOutputElement::setValue(String&& value)
 {
     m_defaultValueOverride = defaultValue();
-    stringReplaceAll(WTFMove(value));
+    stringReplaceAll(WTF::move(value));
 }
 
 String HTMLOutputElement::defaultValue() const
@@ -105,15 +105,15 @@ String HTMLOutputElement::defaultValue() const
 void HTMLOutputElement::setDefaultValue(String&& value)
 {
     if (m_defaultValueOverride.isNull())
-        stringReplaceAll(WTFMove(value));
+        stringReplaceAll(WTF::move(value));
     else
-        m_defaultValueOverride = WTFMove(value);
+        m_defaultValueOverride = WTF::move(value);
 }
 
 DOMTokenList& HTMLOutputElement::htmlFor()
 {
     if (!m_forTokens)
-        m_forTokens = makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, HTMLNames::forAttr);
+        lazyInitialize(m_forTokens, makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, HTMLNames::forAttr));
     return *m_forTokens;
 }
 

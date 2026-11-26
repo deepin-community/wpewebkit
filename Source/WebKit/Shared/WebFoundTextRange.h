@@ -26,37 +26,98 @@
 #pragma once
 
 #include "ArgumentCoders.h"
+#include <WebCore/MediaPlayerClientIdentifier.h>
 #include <wtf/HashTraits.h>
 #include <wtf/text/WTFString.h>
+
+namespace WTF {
+class TextStream;
+}
 
 namespace WebKit {
 
 struct WebFoundTextRange {
-    uint64_t location { 0 };
-    uint64_t length { 0 };
-    AtomString frameIdentifier;
+    struct DOMData {
+        uint64_t location { 0 };
+        uint64_t length { 0 };
+
+        bool operator==(const DOMData& other) const = default;
+    };
+
+    struct PDFData {
+        uint64_t startPage { 0 };
+        uint64_t startOffset { 0 };
+        uint64_t endPage { 0 };
+        uint64_t endOffset { 0 };
+
+        bool operator==(const PDFData& other) const = default;
+        unsigned NODELETE hash() const;
+        static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
+    };
+
+    struct CueData {
+        WebCore::MediaPlayerClientIdentifier mediaElementIdentifier;
+        uint64_t documentOffset { 0 };
+        uint64_t seekTimeMilliseconds { 0 };
+
+        bool operator==(const CueData& other) const = default;
+        unsigned NODELETE hash() const;
+    };
+
+    Variant<DOMData, PDFData, CueData> data { DOMData { } };
+    Vector<uint64_t> pathToFrame;
     uint64_t order { 0 };
+
+    unsigned hash() const;
 
     bool operator==(const WebFoundTextRange& other) const;
 };
+
+TextStream& operator<<(TextStream&, const WebFoundTextRange&);
+TextStream& operator<<(TextStream&, const WebFoundTextRange::DOMData&);
+TextStream& operator<<(TextStream&, const WebFoundTextRange::PDFData&);
+TextStream& operator<<(TextStream&, const WebFoundTextRange::CueData&);
 
 } // namespace WebKit
 
 namespace WTF {
 
-struct WebFoundTextRangeHash {
-    static unsigned hash(const WebKit::WebFoundTextRange& range) { return pairIntHash(range.location, range.length); }
-    static bool equal(const WebKit::WebFoundTextRange& a, const WebKit::WebFoundTextRange& b) { return a == b; }
-    static const bool safeToCompareToEmptyOrDeleted = true;
+template<> struct HashTraits<WebKit::WebFoundTextRange::PDFData> : GenericHashTraits<WebKit::WebFoundTextRange::PDFData> {
+    static constexpr bool emptyValueIsZero = false;
+    static constexpr bool needsDeletedValue = true;
+
+private:
+    static constexpr auto sentinelUnit { std::numeric_limits<uint64_t>::max() };
+    static constexpr WebKit::WebFoundTextRange::PDFData sentinel { sentinelUnit, sentinelUnit, sentinelUnit, sentinelUnit };
+
+    static constexpr auto deletedSentinelUnit { sentinelUnit - 1 };
+    static constexpr WebKit::WebFoundTextRange::PDFData deletedSentinel { deletedSentinelUnit, deletedSentinelUnit, deletedSentinelUnit, deletedSentinelUnit };
+
+public:
+    static WebKit::WebFoundTextRange::PDFData emptyValue()
+    {
+        return sentinel;
+    }
+    static bool isEmptyValue(const WebKit::WebFoundTextRange::PDFData& data)
+    {
+        return data == sentinel;
+    }
+    static void constructDeletedValue(WebKit::WebFoundTextRange::PDFData& slot)
+    {
+        slot = deletedSentinel;
+    }
+    static bool isDeletedValue(const WebKit::WebFoundTextRange::PDFData& data)
+    {
+        return data == deletedSentinel;
+    }
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 };
 
 template<> struct HashTraits<WebKit::WebFoundTextRange> : GenericHashTraits<WebKit::WebFoundTextRange> {
     static WebKit::WebFoundTextRange emptyValue() { return { }; }
 
-    static void constructDeletedValue(WebKit::WebFoundTextRange& slot) { new (NotNull, &slot.frameIdentifier) AtomString { HashTableDeletedValue }; }
-    static bool isDeletedValue(const WebKit::WebFoundTextRange& range) { return range.frameIdentifier.isHashTableDeletedValue(); }
+    static void constructDeletedValue(WebKit::WebFoundTextRange& slot) { slot.pathToFrame = Vector<uint64_t> { HashTableDeletedValue }; }
+    static bool isDeletedValue(const WebKit::WebFoundTextRange& range) { return range.pathToFrame.isHashTableDeletedValue(); }
 };
-
-template<> struct DefaultHash<WebKit::WebFoundTextRange> : WebFoundTextRangeHash { };
 
 }

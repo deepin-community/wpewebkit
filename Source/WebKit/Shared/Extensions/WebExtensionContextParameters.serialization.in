@@ -23,7 +23,8 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 struct WebKit::WebExtensionContextParameters {
-    WebKit::WebExtensionContextIdentifier identifier;
+    WebKit::WebExtensionContextIdentifier unprivilegedIdentifier;
+    Markable<WebKit::WebExtensionContextIdentifier> privilegedIdentifier;
 
     URL baseURL;
     String uniqueIdentifier;
@@ -31,11 +32,13 @@ struct WebKit::WebExtensionContextParameters {
 
     HashMap<String, WallTime> grantedPermissions;
 
-    Ref<API::Data> localizationJSON;
-    Ref<API::Data> manifestJSON;
+    RefPtr<API::Data> localizationJSON;
+    RefPtr<API::Data> manifestJSON;
 
     double manifestVersion;
     bool isSessionStorageAllowedInContentScripts;
+
+    PAL::SessionID defaultSessionID;
 
     std::optional<WebCore::PageIdentifier> backgroundPageIdentifier;
 #if ENABLE(INSPECTOR_EXTENSIONS)

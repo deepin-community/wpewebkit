@@ -28,8 +28,10 @@
 #if ENABLE(CONTEXT_MENUS)
 
 #include "ContextMenuContextData.h"
+#include "FrameInfoData.h"
 #include "UserData.h"
 #include "WebContextMenuListenerProxy.h"
+#include "WebPageProxy.h"
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
 
@@ -45,27 +47,33 @@ class WebContextMenuProxy : public RefCounted<WebContextMenuProxy>, public WebCo
 public:
     virtual ~WebContextMenuProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     virtual void show();
 
     WebPageProxy* page() const { return m_page.get(); }
+    const FrameInfoData& frameInfo() const LIFETIME_BOUND { return m_frameInfo; }
+    const WebCore::IntPoint& menuLocation() const LIFETIME_BOUND { return m_context.menuLocation(); }
 
 #if PLATFORM(COCOA)
     virtual NSMenu *platformMenu() const = 0;
-    virtual NSArray *platformData() const = 0;
+    virtual RetainPtr<NSArray> platformData() const = 0;
 #endif // PLATFORM(COCOA)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     virtual RetainPtr<CGImageRef> imageForCopySubject() const { return { }; }
 #endif
 
 protected:
-    WebContextMenuProxy(WebPageProxy&, ContextMenuContextData&&, const UserData&);
+    WebContextMenuProxy(WebPageProxy&, FrameInfoData&&, ContextMenuContextData&&, const UserData&);
 
     // WebContextMenuListenerProxyClient
     void useContextMenuItems(Vector<Ref<WebContextMenuItem>>&&) override;
 
     ContextMenuContextData m_context;
     const UserData m_userData;
+    const FrameInfoData m_frameInfo;
 
 private:
     virtual Vector<Ref<WebContextMenuItem>> proposedItems() const;

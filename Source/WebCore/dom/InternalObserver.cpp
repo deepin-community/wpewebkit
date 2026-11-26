@@ -28,14 +28,16 @@
 
 #include "ContextDestructionObserverInlines.h"
 #include "JSDOMExceptionHandling.h"
+#include "Subscriber.h"
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 
 namespace WebCore {
 
 void InternalObserver::error(JSC::JSValue value)
 {
-    auto* context = scriptExecutionContext();
+    RefPtr context = scriptExecutionContext();
     if (!context)
         return;
 

@@ -26,7 +26,7 @@
 namespace WebCore {
 
 class SVGDescElement final : public SVGElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGDescElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGDescElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGDescElement);
 public:
     static Ref<SVGDescElement> create(const QualifiedName&, Document&);
@@ -36,7 +36,7 @@ public:
 private:
     SVGDescElement(const QualifiedName&, Document&);
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
     bool supportsFocus() const final { return false; }
 };
 

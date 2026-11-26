@@ -46,7 +46,7 @@ class InjectedBundleScriptWorld;
 class WebFrame;
 class WebImage;
 
-class InjectedBundleNodeHandle : public API::ObjectImpl<API::Object::Type::BundleNodeHandle>, public WebCore::ActiveDOMObject, public CanMakeWeakPtr<InjectedBundleNodeHandle> {
+class InjectedBundleNodeHandle : public API::ObjectImpl<API::Object::Type::BundleNodeHandle>, public WebCore::ActiveDOMObject {
 public:
     static RefPtr<InjectedBundleNodeHandle> getOrCreate(JSContextRef, JSObjectRef);
     static RefPtr<InjectedBundleNodeHandle> getOrCreate(WebCore::Node*);
@@ -54,7 +54,7 @@ public:
 
     virtual ~InjectedBundleNodeHandle();
 
-    WebCore::Node* coreNode();
+    WebCore::Node* NODELETE coreNode();
 
     // Convenience DOM Operations
     RefPtr<InjectedBundleNodeHandle> document();
@@ -83,8 +83,8 @@ public:
     bool htmlInputElementLastChangeWasUserEdit();
     bool htmlTextAreaElementLastChangeWasUserEdit();
     bool isTextField() const;
-    bool isSelectElement() const;
-    bool isSelectableTextNode() const;
+    bool NODELETE isSelectElement() const;
+    bool NODELETE isSelectableTextNode() const;
     
     RefPtr<InjectedBundleNodeHandle> htmlTableCellElementCellAbove();
 
@@ -106,3 +106,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::InjectedBundleNodeHandle)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::BundleNodeHandle; }
+SPECIALIZE_TYPE_TRAITS_END()

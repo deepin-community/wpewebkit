@@ -25,8 +25,11 @@
 
 #pragma once
 
-#include "ConcurrentJSLock.h"
-#include "Structure.h"
+#include <JavaScriptCore/ConcurrentJSLock.h>
+#include <JavaScriptCore/Structure.h>
+#include <wtf/OptionSet.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -206,6 +209,7 @@ enum class ArrayProfileFlag : uint32_t {
     UsesNonOriginalArrayStructures = 1 << 4,
     MayBeResizableOrGrowableSharedTypedArray = 1 << 5,
     DidPerformFirstRunPruning = 1 << 6,
+    MayBeRegExpMatchesArray = 1 << 7,
 };
 
 class ArrayProfile {
@@ -214,28 +218,39 @@ class ArrayProfile {
 public:
     explicit ArrayProfile() = default;
 
+    void clear()
+    {
+        m_lastSeenStructureID = { };
+        m_speculationFailureStructureID = { };
+        m_arrayProfileFlags = { };
+        m_observedArrayModes = { };
+    }
+
     static constexpr uint64_t s_smallTypedArrayMaxLength = std::numeric_limits<int32_t>::max();
     void setMayBeLargeTypedArray() { m_arrayProfileFlags.add(ArrayProfileFlag::MayBeLargeTypedArray); }
     bool mayBeLargeTypedArray(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeLargeTypedArray); }
 
     bool mayBeResizableOrGrowableSharedTypedArray(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray); }
 
-    StructureID* addressOfLastSeenStructureID() { return &m_lastSeenStructureID; }
-    ArrayModes* addressOfArrayModes() { return &m_observedArrayModes; }
+    StructureID* addressOfSpeculationFailureStructureID() LIFETIME_BOUND { return &m_speculationFailureStructureID; }
+    ArrayModes* addressOfArrayModes() LIFETIME_BOUND { return &m_observedArrayModes; }
 
-    static constexpr ptrdiff_t offsetOfArrayProfileFlags() { return OBJECT_OFFSETOF(ArrayProfile, m_arrayProfileFlags); }
     static constexpr ptrdiff_t offsetOfLastSeenStructureID() { return OBJECT_OFFSETOF(ArrayProfile, m_lastSeenStructureID); }
+    static constexpr ptrdiff_t offsetOfSpeculationFailureStructureID() { return OBJECT_OFFSETOF(ArrayProfile, m_speculationFailureStructureID); }
+    static constexpr ptrdiff_t offsetOfArrayProfileFlags() { return OBJECT_OFFSETOF(ArrayProfile, m_arrayProfileFlags); }
+    static constexpr ptrdiff_t offsetOfArrayModes() { return OBJECT_OFFSETOF(ArrayProfile, m_observedArrayModes); }
 
     void setOutOfBounds() { m_arrayProfileFlags.add(ArrayProfileFlag::OutOfBounds); }
-    
+    void setMayStoreHole() { m_arrayProfileFlags.add(ArrayProfileFlag::MayStoreHole); }
+
     void observeStructureID(StructureID structureID) { m_lastSeenStructureID = structureID; }
     void observeStructure(Structure* structure) { m_lastSeenStructureID = structure->id(); }
 
-    void computeUpdatedPrediction(CodeBlock*);
+    void NODELETE computeUpdatedPrediction(CodeBlock*);
     void computeUpdatedPrediction(CodeBlock*, Structure* lastSeenStructure);
     
     void observeArrayMode(ArrayModes mode) { m_observedArrayModes |= mode; }
-    void observeIndexedRead(JSCell*, unsigned index);
+    void NODELETE observeIndexedRead(JSCell*, unsigned index);
 
     ArrayModes observedArrayModes(const ConcurrentJSLocker&) const { return m_observedArrayModes; }
     bool mayInterceptIndexedAccesses(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayInterceptIndexedAccesses);; }
@@ -244,6 +259,8 @@ public:
     bool outOfBounds(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::OutOfBounds); }
     
     bool usesOriginalArrayStructures(const ConcurrentJSLocker&) const { return !m_arrayProfileFlags.contains(ArrayProfileFlag::UsesNonOriginalArrayStructures); }
+
+    bool mayBeRegExpMatchesArray(const ConcurrentJSLocker&) const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeRegExpMatchesArray); }
 
     CString briefDescription(CodeBlock*);
     CString briefDescriptionWithoutUpdating();
@@ -254,10 +271,11 @@ private:
     static Structure* polymorphicStructure() { return static_cast<Structure*>(reinterpret_cast<void*>(1)); }
     
     StructureID m_lastSeenStructureID;
+    StructureID m_speculationFailureStructureID;
     OptionSet<ArrayProfileFlag> m_arrayProfileFlags;
     ArrayModes m_observedArrayModes { 0 };
 };
-static_assert(sizeof(ArrayProfile) == 12);
+static_assert(sizeof(ArrayProfile) == 16);
 
 class UnlinkedArrayProfile {
 public:
@@ -282,3 +300,5 @@ private:
 static_assert(sizeof(UnlinkedArrayProfile) <= 8);
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

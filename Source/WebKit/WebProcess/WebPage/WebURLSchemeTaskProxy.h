@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,7 @@
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/ResourceRequest.h>
 #include <wtf/Deque.h>
-#include <wtf/RefCounted.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 class ResourceError;
@@ -43,20 +42,20 @@ namespace WebKit {
 class WebFrame;
 class WebURLSchemeHandlerProxy;
 
-class WebURLSchemeTaskProxy : public RefCounted<WebURLSchemeTaskProxy>, public CanMakeWeakPtr<WebURLSchemeTaskProxy> {
+class WebURLSchemeTaskProxy : public RefCountedAndCanMakeWeakPtr<WebURLSchemeTaskProxy> {
 public:
     static Ref<WebURLSchemeTaskProxy> create(WebURLSchemeHandlerProxy& handler, WebCore::ResourceLoader& loader, WebFrame& webFrame)
     {
         return adoptRef(*new WebURLSchemeTaskProxy(handler, loader, webFrame));
     }
     
-    const WebCore::ResourceRequest& request() const { return m_request; }
+    const WebCore::ResourceRequest& request() const LIFETIME_BOUND { return m_request; }
 
     void startLoading();
     void stopLoading();
 
     void didPerformRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
-    void didReceiveResponse(const WebCore::ResourceResponse&);
+    void didReceiveResponse(WebCore::ResourceResponse&&);
     void didReceiveData(const WebCore::SharedBuffer&);
     void didComplete(const WebCore::ResourceError&);
 
@@ -64,12 +63,12 @@ public:
 
 private:
     WebURLSchemeTaskProxy(WebURLSchemeHandlerProxy&, WebCore::ResourceLoader&, WebFrame&);
-    bool hasLoader();
+    WebCore::ResourceLoader* coreLoader();
 
-    void queueTask(Function<void()>&& task) { m_queuedTasks.append(WTFMove(task)); }
+    void queueTask(Function<void()>&& task) { m_queuedTasks.append(WTF::move(task)); }
     void processNextPendingTask();
 
-    WebURLSchemeHandlerProxy& m_urlSchemeHandler;
+    WeakRef<WebURLSchemeHandlerProxy> m_urlSchemeHandler;
     RefPtr<WebCore::ResourceLoader> m_coreLoader;
     RefPtr<WebFrame> m_frame;
     WebCore::ResourceRequest m_request;

@@ -31,14 +31,11 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSSubscriber::visitAdditionalChildren(Visitor& visitor)
+void JSSubscriber::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    for (auto* teardown : wrapped().teardownCallbacksConcurrently())
-        teardown->visitJSFunction(visitor);
-
-    wrapped().observerConcurrently()->visitAdditionalChildren(visitor);
+    wrapped().visitAdditionalChildrenInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSSubscriber);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSSubscriber);
 
 } // namespace WebCore

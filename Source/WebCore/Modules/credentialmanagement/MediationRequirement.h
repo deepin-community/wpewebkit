@@ -33,5 +33,4 @@ enum class MediationRequirement : uint8_t { Silent, Optional, Required, Conditio
 
 } // namespace WebCore
 
-
 #endif // ENABLE(WEB_AUTHN)

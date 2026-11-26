@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2012-2023 Apple Inc.  All rights reserved.
- * Copyright (C) 2014 Google Inc.  All rights reserved.
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2014 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,19 +34,18 @@
 #include "RenderLayoutState.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
-#include "RenderStyleInlines.h"
 #include "RenderTreeBuilder.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "TransformState.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderMultiColumnFlow);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMultiColumnFlow);
 
-RenderMultiColumnFlow::RenderMultiColumnFlow(Document& document, RenderStyle&& style)
-    : RenderFragmentedFlow(Type::MultiColumnFlow, document, WTFMove(style))
-    , m_spannerMap(makeUnique<SpannerMap>())
+RenderMultiColumnFlow::RenderMultiColumnFlow(Document& document, Style::ComputedStyle&& style)
+    : RenderFragmentedFlow(Type::MultiColumnFlow, document, WTF::move(style))
 {
     setFragmentedFlowState(FragmentedFlowState::InsideFlow);
     ASSERT(isRenderMultiColumnFlow());
@@ -83,7 +82,7 @@ RenderBox* RenderMultiColumnFlow::firstColumnSetOrSpanner() const
 {
     if (RenderObject* sibling = nextSibling()) {
         ASSERT(is<RenderBox>(*sibling));
-        ASSERT(is<RenderMultiColumnSet>(*sibling) || findColumnSpannerPlaceholder(downcast<RenderBox>(sibling)));
+        ASSERT(is<RenderMultiColumnSet>(*sibling) || findColumnSpannerPlaceholder(downcast<RenderBox>(*sibling)));
         return downcast<RenderBox>(sibling);
     }
     return nullptr;
@@ -105,9 +104,9 @@ RenderBox* RenderMultiColumnFlow::previousColumnSetOrSpannerSiblingOf(const Rend
     return nullptr;
 }
 
-RenderMultiColumnSpannerPlaceholder* RenderMultiColumnFlow::findColumnSpannerPlaceholder(const RenderBox* spanner) const
+RenderMultiColumnSpannerPlaceholder* RenderMultiColumnFlow::findColumnSpannerPlaceholder(const RenderBox& spanner) const
 {
-    return m_spannerMap->get(spanner).get();
+    return m_spannerMap.get(spanner);
 }
 
 void RenderMultiColumnFlow::layout()
@@ -284,7 +283,7 @@ bool RenderMultiColumnFlow::addForcedFragmentBreak(const RenderBlock* block, Lay
     return false;
 }
 
-LayoutSize RenderMultiColumnFlow::offsetFromContainer(RenderElement& enclosingContainer, const LayoutPoint& physicalPoint, bool* offsetDependsOnPoint) const
+LayoutSize RenderMultiColumnFlow::offsetFromContainer(const RenderElement& enclosingContainer, const LayoutPoint& physicalPoint, bool* offsetDependsOnPoint) const
 {
     ASSERT(&enclosingContainer == container());
 
@@ -367,7 +366,7 @@ LayoutSize RenderMultiColumnFlow::physicalTranslationOffsetFromFlowToFragment(co
     
     // Now we know how we want the rect to be translated into the fragment. At this point we're converting
     // back to physical coordinates.
-    if (style().isFlippedBlocksWritingMode()) {
+    if (writingMode().isBlockFlipped()) {
         LayoutRect portionRect(columnSet->fragmentedFlowPortionRect());
         LayoutRect columnRect = columnSet->columnRectAt(0);
         LayoutUnit physicalDeltaFromPortionBottom = logicalHeight() - columnSet->logicalBottomInFragmentedFlow();
@@ -419,7 +418,7 @@ bool RenderMultiColumnFlow::nodeAtPoint(const HitTestRequest& request, HitTestRe
 {
     // You cannot be inside an in-flow RenderFragmentedFlow without a corresponding DOM node. It's better to
     // just let the ancestor figure out where we are instead.
-    if (hitTestAction == HitTestBlockBackground)
+    if (hitTestAction == HitTestAction::BlockBackground)
         return false;
     bool inside = RenderFragmentedFlow::nodeAtPoint(request, result, locationInContainer, accumulatedOffset, hitTestAction);
     if (inside && !result.innerNode())

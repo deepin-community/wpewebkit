@@ -21,13 +21,15 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
 #include "SVGPropertyTraits.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
+template<typename> class ExceptionOr;
+
 class SVGAngleValue {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(SVGAngleValue);
 public:
     enum Type {
         // FIXME: Change the casing style of the enum type or naming of the Angle Value (webkit.org/b/269429).
@@ -41,8 +43,8 @@ public:
 
     Type unitType() const { return m_unitType; }
 
-    void setValue(float);
-    float value() const;
+    void NODELETE setValue(float);
+    float NODELETE value() const;
 
     void setValueInSpecifiedUnits(float valueInSpecifiedUnits) { m_valueInSpecifiedUnits = valueInSpecifiedUnits; }
     float valueInSpecifiedUnits() const { return m_valueInSpecifiedUnits; }

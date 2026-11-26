@@ -21,35 +21,46 @@
 
 #if USE(TEXTURE_MAPPER)
 
-#include "BitmapTexturePool.h"
 #include "ClipStack.h"
 #include "Color.h"
+#include "Damage.h"
 #include "FilterOperation.h"
 #include "IntRect.h"
 #include "IntSize.h"
 #include "TextureMapperGLHeaders.h"
+#include "TextureMapperGPUBuffer.h"
 #include "TransformationMatrix.h"
 #include <array>
 #include <wtf/OptionSet.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 // TextureMapper is a mechanism that enables hardware acceleration of CSS animations (accelerated compositing) without
 // a need for a platform specific scene-graph library like CoreAnimation.
 
-namespace WebCore {
+typedef void *EGLImage;
 
+namespace WebCore {
+class BitmapTexture;
+class ClipPath;
 class TextureMapperGLData;
+class TextureMapperGPUBuffer;
 class TextureMapperShaderProgram;
 class FilterOperations;
 class FloatRoundedRect;
 enum class TextureMapperFlags : uint16_t;
 
 class TextureMapper {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(TextureMapper);
 public:
     enum class WrapMode : uint8_t {
         Stretch,
         Repeat
+    };
+
+    enum class TransferFunction : uint8_t {
+        Bt709,
+        Pq
     };
 
     WEBCORE_EXPORT static std::unique_ptr<TextureMapper> create();
@@ -64,11 +75,17 @@ public:
     void drawNumber(int number, const Color&, const FloatPoint&, const TransformationMatrix&);
 
     WEBCORE_EXPORT void drawTexture(const BitmapTexture&, const FloatRect& target, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0f, AllEdgesExposed = AllEdgesExposed::Yes);
+    void drawTextureWithPhysicalSize(const BitmapTexture&, const FloatRect& target, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0f, AllEdgesExposed = AllEdgesExposed::Yes);
+
+#if ENABLE(DAMAGE_TRACKING)
+    void drawTextureFragment(const BitmapTexture& sourceTexture, const FloatRect& sourceRect, const FloatRect& targetRect);
+#endif
     void drawTexture(GLuint texture, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, AllEdgesExposed = AllEdgesExposed::Yes);
-    void drawTexturePlanarYUV(const std::array<GLuint, 3>& textures, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, std::optional<GLuint> alphaPlane, AllEdgesExposed = AllEdgesExposed::Yes);
-    void drawTextureSemiPlanarYUV(const std::array<GLuint, 2>& textures, bool uvReversed, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, AllEdgesExposed = AllEdgesExposed::Yes);
-    void drawTexturePackedYUV(GLuint texture, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, AllEdgesExposed = AllEdgesExposed::Yes);
+    void drawTexturePlanarYUV(const std::array<GLuint, 3>& textures, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, std::optional<GLuint> alphaPlane, TransferFunction, AllEdgesExposed = AllEdgesExposed::Yes);
+    void drawTextureSemiPlanarYUV(const std::array<GLuint, 2>& textures, bool uvReversed, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, TransferFunction, AllEdgesExposed = AllEdgesExposed::Yes);
+    void drawTexturePackedYUV(GLuint texture, const std::array<GLfloat, 16>& yuvToRgbMatrix, OptionSet<TextureMapperFlags>, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity, TransferFunction, AllEdgesExposed = AllEdgesExposed::Yes);
     void drawTextureExternalOES(GLuint texture, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
+    void drawTextureExternalOESYUV(GLuint texture, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void drawSolidColor(const FloatRect&, const TransformationMatrix&, const Color&, bool);
     void clearColor(const Color&);
 
@@ -76,11 +93,14 @@ public:
     void bindSurface(BitmapTexture* surface);
     BitmapTexture* currentSurface();
     void beginClip(const TransformationMatrix&, const FloatRoundedRect&);
+    void beginClip(const TransformationMatrix&, const ClipPath&);
+    void beginClipWithoutApplying(const TransformationMatrix&, const FloatRect&);
     WEBCORE_EXPORT void beginPainting(FlipY = FlipY::No, BitmapTexture* = nullptr);
     WEBCORE_EXPORT void endPainting();
     void endClip();
+    void endClipWithoutApplying();
     IntRect clipBounds();
-    IntSize maxTextureSize() const { return IntSize(2000, 2000); }
+    IntSize maxTextureSize() const;
     void setDepthRange(double zNear, double zFar);
     std::pair<double, double> depthRange() const;
     void setMaskMode(bool m) { m_isMaskMode = m; }
@@ -89,15 +109,20 @@ public:
 
     RefPtr<BitmapTexture> applyFilters(RefPtr<BitmapTexture>&, const FilterOperations&, bool defersLastPass);
 
-    WEBCORE_EXPORT RefPtr<BitmapTexture> acquireTextureFromPool(const IntSize&, OptionSet<BitmapTexture::Flags>);
-
 #if USE(GRAPHICS_LAYER_WC)
     WEBCORE_EXPORT void releaseUnusedTexturesNow();
 #endif
 
+    Ref<TextureMapperGPUBuffer> acquireBufferFromPool(size_t, TextureMapperGPUBuffer::Type);
+
+#if ENABLE(DAMAGE_TRACKING)
+    void setDamage(const std::optional<Damage>& damage) { m_damage = damage; }
+    const std::optional<Damage>& damage() const LIFETIME_BOUND { return m_damage; }
+#endif
+
 private:
     bool isInMaskMode() const { return m_isMaskMode; }
-    const TransformationMatrix& patternTransform() const { return m_patternTransform; }
+    const TransformationMatrix& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
 
     enum class Direction { X, Y };
 
@@ -108,7 +133,6 @@ private:
 
     void drawTextureCopy(const BitmapTexture& sourceTexture, const FloatRect& sourceRect, const FloatRect& targetRect);
     void drawBlurred(const BitmapTexture& sourceTexture, const FloatRect&, float radius, Direction, bool alphaBlur = false);
-    void drawFilterPass(const BitmapTexture& sourceTexture, const BitmapTexture* contentTexture, const FilterOperation&, int pass);
     void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, uint32_t texture, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, const Vector<std::pair<GLuint, GLuint> >& texturesAndSamplers, OptionSet<TextureMapperFlags>, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void draw(const FloatRect&, const TransformationMatrix& modelViewMatrix, TextureMapperShaderProgram&, GLenum drawingMode, OptionSet<TextureMapperFlags>);
@@ -123,12 +147,16 @@ private:
 
     void updateProjectionMatrix();
 
-    BitmapTexturePool m_texturePool;
     bool m_isMaskMode { false };
     TransformationMatrix m_patternTransform;
     WrapMode m_wrapMode { WrapMode::Stretch };
+    std::optional<FloatSize> m_uvClampMax;
+    std::optional<FloatSize> m_uvClampTexelSize;
     TextureMapperGLData* m_data;
     ClipStack m_clipStack;
+#if ENABLE(DAMAGE_TRACKING)
+    std::optional<Damage> m_damage;
+#endif
 };
 
 } // namespace WebCore

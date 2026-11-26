@@ -39,18 +39,17 @@ public:
     SharedStringHashTableReadOnly();
     ~SharedStringHashTableReadOnly();
 
-    bool contains(WebCore::SharedStringHash) const;
+    bool NODELETE contains(WebCore::SharedStringHash) const;
 
     WebCore::SharedMemory* sharedMemory() const { return m_sharedMemory.get(); }
     void setSharedMemory(RefPtr<WebCore::SharedMemory>&&);
 
 protected:
-    WebCore::SharedStringHash* findSlot(WebCore::SharedStringHash) const;
+    WebCore::SharedStringHash* NODELETE findSlot(WebCore::SharedStringHash) const;
 
     RefPtr<WebCore::SharedMemory> m_sharedMemory;
-    unsigned m_tableSize { 0 };
     unsigned m_tableSizeMask { 0 };
-    WebCore::SharedStringHash* m_table { nullptr };
+    std::span<WebCore::SharedStringHash> m_table;
 };
 
 } // namespace WebKit

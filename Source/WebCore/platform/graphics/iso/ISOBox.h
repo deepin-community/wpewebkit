@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "FourCC.h"
+#include <WebCore/FourCC.h>
 #include <wtf/Forward.h>
 #include <wtf/StdIntExtras.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
 
 namespace JSC {
@@ -37,7 +38,7 @@ class DataView;
 namespace WebCore {
 
 class ISOBox {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ISOBox);
 public:
     WEBCORE_EXPORT ISOBox();
     WEBCORE_EXPORT ISOBox(const ISOBox&);
@@ -56,7 +57,7 @@ public:
 
     uint64_t size() const { return m_size; }
     FourCC boxType() const { return m_boxType; }
-    const Vector<uint8_t>& extendedType() const { return m_extendedType; }
+    const Vector<uint8_t>& extendedType() const LIFETIME_BOUND { return m_extendedType; }
 
 protected:
     virtual bool parse(JSC::DataView&, unsigned& offset);

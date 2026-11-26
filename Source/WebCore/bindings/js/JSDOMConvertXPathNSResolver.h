@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMConvertBase.h>
 
 #include "JSCustomXPathNSResolver.h"
 #include "JSXPathNSResolver.h"
@@ -51,11 +51,11 @@ template<> struct Converter<IDLInterface<XPathNSResolver>> : DefaultConverter<ID
             return Result::exception();
         }
 
-        auto object = asObject(value);
-        if (object->inherits<JSXPathNSResolver>())
-            return { JSC::jsCast<JSXPathNSResolver*>(object)->wrapped() };
+        auto* object = asObject(value);
+        if (auto* resolver = dynamicDowncast<JSXPathNSResolver>(*object))
+            return { resolver->wrapped() };
 
-        return { JSCustomXPathNSResolver::create(object, JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)) };
+        return { JSCustomXPathNSResolver::create(object, downcast<JSDOMGlobalObject>(&lexicalGlobalObject)) };
     }
 };
 

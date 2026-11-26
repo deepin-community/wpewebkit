@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,44 +43,54 @@ class ConvertToBackingContext;
 class RemoteTextureProxy final : public WebCore::WebGPU::Texture {
     WTF_MAKE_TZONE_ALLOCATED(RemoteTextureProxy);
 public:
-    static Ref<RemoteTextureProxy> create(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteTextureProxy> create(Ref<RemoteGPUProxy>&& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, bool isCanvasBacking = false)
     {
-        return adoptRef(*new RemoteTextureProxy(root, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteTextureProxy(WTF::move(root), convertToBackingContext, identifier, isCanvasBacking));
     }
 
     virtual ~RemoteTextureProxy();
 
-    RemoteGPUProxy& root() { return m_root; }
+    RemoteGPUProxy& root() const { return m_root; }
+    void undestroy() final;
 
 private:
     friend class DowncastConvertToBackingContext;
 
-    RemoteTextureProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteTextureProxy(Ref<RemoteGPUProxy>&&, ConvertToBackingContext&, WebGPUIdentifier, bool isCanvasBacking);
 
     RemoteTextureProxy(const RemoteTextureProxy&) = delete;
     RemoteTextureProxy(RemoteTextureProxy&&) = delete;
     RemoteTextureProxy& operator=(const RemoteTextureProxy&) = delete;
     RemoteTextureProxy& operator=(RemoteTextureProxy&&) = delete;
 
+    bool isRemoteTextureProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
     
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
 
     RefPtr<WebCore::WebGPU::TextureView> createView(const std::optional<WebCore::WebGPU::TextureViewDescriptor>&) final;
 
     void destroy() final;
-
     void setLabelInternal(const String&) final;
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_root;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteGPUProxy> m_root;
+
+    RefPtr<WebCore::WebGPU::TextureView> m_lastCreatedView;
+    std::optional<WebCore::WebGPU::TextureViewDescriptor> m_lastCreatedViewDescriptor;
+    bool m_isCanvasBacking { false };
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteTextureProxy)
+    static bool isType(const WebCore::WebGPU::Texture& texture) { return texture.isRemoteTextureProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

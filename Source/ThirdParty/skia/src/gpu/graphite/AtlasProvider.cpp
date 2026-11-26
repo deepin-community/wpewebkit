@@ -4,45 +4,58 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
 #include "src/gpu/graphite/AtlasProvider.h"
 
+#include "include/core/SkSize.h"
+#include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/Recorder.h"
+#include "include/gpu/graphite/TextureInfo.h"
+#include "include/private/SkLog.h"
+#include "src/gpu/graphite/Caps.h"
+#include "src/gpu/graphite/ClipAtlasManager.h"
 #include "src/gpu/graphite/ComputePathAtlas.h"
-#include "src/gpu/graphite/DrawContext.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RasterPathAtlas.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/RendererProvider.h"
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/text/TextAtlasManager.h"
 
+#if defined(SK_ENABLE_SPARSE_STRIPS)
+#include "src/gpu/graphite/sparse_strips/AlphaAtlasManager.h"
+#endif
+
+#include <utility>
+
 namespace skgpu::graphite {
 
-AtlasProvider::PathAtlasFlagsBitMask AtlasProvider::QueryPathAtlasSupport(const Caps* caps) {
-    // The raster-backend path atlas is always supported.
-    PathAtlasFlagsBitMask flags = PathAtlasFlags::kRaster;
-    if (RendererProvider::IsVelloRendererSupported(caps)) {
-        flags |= PathAtlasFlags::kCompute;
-    }
-    return flags;
+static bool use_clip_atlas(const Recorder* recorder) {
+    // Currently only the raster atlas strategy utilizes the clip atlas.
+    return recorder->priv().rendererProvider()->pathRendererStrategy() ==
+           PathRendererStrategy::kRasterAtlas;
 }
 
 AtlasProvider::AtlasProvider(Recorder* recorder)
         : fTextAtlasManager(std::make_unique<TextAtlasManager>(recorder))
         , fRasterPathAtlas(std::make_unique<RasterPathAtlas>(recorder))
-        , fPathAtlasFlags(QueryPathAtlasSupport(recorder->priv().caps())) {}
+        , fClipAtlasManager(use_clip_atlas(recorder) ? std::make_unique<ClipAtlasManager>(recorder)
+                                                     : nullptr)
+#if defined(SK_ENABLE_SPARSE_STRIPS)
+        , fAlphaAtlasManager(std::make_unique<AlphaAtlasManager>(recorder))
+#endif
+{}
+
+AtlasProvider::~AtlasProvider() = default;
 
 std::unique_ptr<ComputePathAtlas> AtlasProvider::createComputePathAtlas(Recorder* recorder) const {
-    if (this->isAvailable(PathAtlasFlags::kCompute)) {
+    if (recorder->priv().caps()->computeSupport()) {
         return ComputePathAtlas::CreateDefault(recorder);
     }
     return nullptr;
 }
 
-RasterPathAtlas* AtlasProvider::getRasterPathAtlas() const {
-    return fRasterPathAtlas.get();
-}
+RasterPathAtlas* AtlasProvider::getRasterPathAtlas() const { return fRasterPathAtlas.get(); }
+
+ClipAtlasManager* AtlasProvider::getClipAtlasManager() const { return fClipAtlasManager.get(); }
 
 sk_sp<TextureProxy> AtlasProvider::getAtlasTexture(Recorder* recorder,
                                                    uint16_t width,
@@ -50,8 +63,8 @@ sk_sp<TextureProxy> AtlasProvider::getAtlasTexture(Recorder* recorder,
                                                    SkColorType colorType,
                                                    uint16_t identifier,
                                                    bool requireStorageUsage) {
-    uint64_t key = static_cast<uint64_t>(width)  << 48 |
-                   static_cast<uint64_t>(height) << 32 |
+    uint64_t key = static_cast<uint64_t>(width)     << 48 |
+                   static_cast<uint64_t>(height)    << 32 |
                    static_cast<uint64_t>(colorType) << 16 |
                    static_cast<uint64_t>(identifier);
     auto iter = fTexturePool.find(key);
@@ -64,14 +77,14 @@ sk_sp<TextureProxy> AtlasProvider::getAtlasTexture(Recorder* recorder,
     // used as a render attachment.
     const Caps* caps = recorder->priv().caps();
     auto textureInfo = requireStorageUsage
-            ? caps->getDefaultStorageTextureInfo(colorType)
-            : caps->getDefaultSampledTextureInfo(colorType,
-                                                 Mipmapped::kNo,
-                                                 recorder->priv().isProtected(),
-                                                 Renderable::kNo);
+                               ? caps->getDefaultStorageTextureInfo(colorType)
+                               : caps->getDefaultSampledTextureInfo(colorType,
+                                                                    Mipmapped::kNo,
+                                                                    recorder->priv().isProtected(),
+                                                                    Renderable::kNo);
     sk_sp<TextureProxy> proxy = TextureProxy::Make(caps,
                                                    recorder->priv().resourceProvider(),
-                                                   SkISize::Make((int32_t) width, (int32_t) height),
+                                                   SkISize::Make((int32_t)width, (int32_t)height),
                                                    textureInfo,
                                                    "AtlasProviderTexture",
                                                    Budgeted::kYes);
@@ -84,10 +97,21 @@ sk_sp<TextureProxy> AtlasProvider::getAtlasTexture(Recorder* recorder,
 }
 
 void AtlasProvider::freeGpuResources() {
-    // Only compact the atlases, not fully free the atlases. freeGpuResources() can be called while
-    // there is pending work on the Recorder that refers to pages. In the event this is called right
-    // after a snap(), all pages would eligible for cleanup during compaction anyways.
-    this->compact();
+    // Clear out any pages not in use or needed for any pending work on the Recorder.
+    // In the event this is called right after a snap(), all pages would be eligible
+    // for cleanup anyways.
+    fTextAtlasManager->freeGpuResources();
+    if (fRasterPathAtlas) {
+        fRasterPathAtlas->freeGpuResources();
+    }
+    if (fClipAtlasManager) {
+        fClipAtlasManager->freeGpuResources();
+    }
+#if defined(SK_ENABLE_SPARSE_STRIPS)
+    if (fAlphaAtlasManager) {
+        fAlphaAtlasManager->freeGpuResources();
+    }
+#endif
     // Release any textures held directly by the provider. These textures are used by transient
     // ComputePathAtlases that are reset every time a DrawContext snaps a DrawTask so there is no
     // need to reset those atlases explicitly here. Since the AtlasProvider gives out refs to the
@@ -98,18 +122,29 @@ void AtlasProvider::freeGpuResources() {
 
 void AtlasProvider::recordUploads(DrawContext* dc) {
     if (!fTextAtlasManager->recordUploads(dc)) {
-        SKGPU_LOG_E("TextAtlasManager uploads have failed -- may see invalid results.");
+        SKIA_LOG_E("TextAtlasManager uploads have failed -- may see invalid results.");
     }
 
     if (fRasterPathAtlas) {
         fRasterPathAtlas->recordUploads(dc);
     }
+    if (fClipAtlasManager) {
+        fClipAtlasManager->recordUploads(dc);
+    }
+#if defined(SK_ENABLE_SPARSE_STRIPS)
+    if (fAlphaAtlasManager) {
+        fAlphaAtlasManager->recordUploads(dc);
+    }
+#endif
 }
 
 void AtlasProvider::compact() {
     fTextAtlasManager->compact();
     if (fRasterPathAtlas) {
         fRasterPathAtlas->compact();
+    }
+    if (fClipAtlasManager) {
+        fClipAtlasManager->compact();
     }
 }
 
@@ -121,6 +156,9 @@ void AtlasProvider::invalidateAtlases() {
     fTextAtlasManager->evictAtlases();
     if (fRasterPathAtlas) {
         fRasterPathAtlas->evictAtlases();
+    }
+    if (fClipAtlasManager) {
+        fClipAtlasManager->evictAtlases();
     }
 }
 

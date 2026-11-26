@@ -29,6 +29,7 @@
 
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -39,7 +40,7 @@ class RTCDataChannelHandlerClient;
 struct RTCDataChannelInit;
 
 class GStreamerDataChannelHandler final : public RTCDataChannelHandler {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerDataChannelHandler);
 public:
     explicit GStreamerDataChannelHandler(GRefPtr<GstWebRTCDataChannel>&&);
     ~GStreamerDataChannelHandler();
@@ -53,19 +54,19 @@ public:
 
 private:
     // RTCDataChannelHandler API
-    void setClient(RTCDataChannelHandlerClient&, ScriptExecutionContextIdentifier) final;
+    void setClient(RTCDataChannelHandlerClient&, std::optional<ScriptExecutionContextIdentifier>) final;
     bool sendStringData(const CString&) final;
     bool sendRawData(std::span<const uint8_t>) final;
     std::optional<unsigned short> id() const final;
     void close() final;
 
     void onMessageData(GBytes*);
-    void onMessageString(const char*);
+    void onMessageString(CStringView);
     void onError(GError*);
     void onClose();
-
     void readyStateChanged();
-    void bufferedAmountChanged();
+    void bufferedAmountChanged(size_t);
+
     bool checkState();
     void postTask(Function<void()>&&);
 
@@ -73,19 +74,21 @@ private:
         RTCDataChannelState state;
         std::optional<GError*> error;
     };
-    using Message = std::variant<StateChange, String, Ref<FragmentedSharedBuffer>>;
+    using Message = Variant<StateChange, String, Ref<FragmentedSharedBuffer>>;
     using PendingMessages = Vector<Message>;
 
     Lock m_clientLock;
     GRefPtr<GstWebRTCDataChannel> m_channel;
     std::optional<WeakPtr<RTCDataChannelHandlerClient>> m_client WTF_GUARDED_BY_LOCK(m_clientLock);
-    ScriptExecutionContextIdentifier m_contextIdentifier;
+    Markable<ScriptExecutionContextIdentifier> m_contextIdentifier;
     PendingMessages m_pendingMessages WTF_GUARDED_BY_LOCK(m_clientLock);
 
     std::optional<size_t> m_cachedBufferedAmount;
     bool m_closing { false };
 
     String m_channelId;
+
+    Vector<unsigned long, 6> m_signalHandlers;
 };
 
 } // namespace WebCore

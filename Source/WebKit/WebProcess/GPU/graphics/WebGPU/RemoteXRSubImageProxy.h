@@ -42,13 +42,14 @@ class Device;
 namespace WebKit::WebGPU {
 
 class ConvertToBackingContext;
+class RemoteTextureProxy;
 
 class RemoteXRSubImageProxy final : public WebCore::WebGPU::XRSubImage {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(RemoteXRSubImageProxy);
 public:
-    static Ref<RemoteXRSubImageProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteXRSubImageProxy> create(Ref<RemoteGPUProxy>&& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteXRSubImageProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteXRSubImageProxy(WTF::move(parent), convertToBackingContext, identifier));
     }
 
     virtual ~RemoteXRSubImageProxy();
@@ -59,31 +60,43 @@ public:
 private:
     friend class DowncastConvertToBackingContext;
 
-    RemoteXRSubImageProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteXRSubImageProxy(Ref<RemoteGPUProxy>&&, ConvertToBackingContext&, WebGPUIdentifier);
 
     RemoteXRSubImageProxy(const RemoteXRSubImageProxy&) = delete;
     RemoteXRSubImageProxy(RemoteXRSubImageProxy&&) = delete;
     RemoteXRSubImageProxy& operator=(const RemoteXRSubImageProxy&) = delete;
     RemoteXRSubImageProxy& operator=(RemoteXRSubImageProxy&&) = delete;
 
+    bool isRemoteXRSubImageProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
+    RefPtr<WebCore::WebGPU::Texture> colorTexture() final;
+    RefPtr<WebCore::WebGPU::Texture> depthStencilTexture() final;
+    RefPtr<WebCore::WebGPU::Texture> motionVectorTexture() final;
 
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult<T> sendSync(T&& message)
+    [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().streamClientConnection().sendSync(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->sendSync(WTF::move(message), backing());
     }
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_parent;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteGPUProxy> m_parent;
+
+    const RefPtr<RemoteTextureProxy> m_currentTexture;
+    const RefPtr<RemoteTextureProxy> m_currentDepthTexture;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteXRSubImageProxy)
+    static bool isType(const WebCore::WebGPU::XRSubImage& image) { return image.isRemoteXRSubImageProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

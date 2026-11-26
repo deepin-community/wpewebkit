@@ -26,8 +26,8 @@
 #include "config.h"
 
 #include <WebCore/FontCascadeDescription.h>
-#include <WebCore/RenderStyle.h>
 #include <WebCore/StyleChange.h>
+#include <WebCore/StyleComputedStyle+GettersInlines.h>
 
 namespace TestWebKitAPI {
 
@@ -36,14 +36,14 @@ using namespace Style;
 
 TEST(RenderStyleChangeTest, None)
 {
-    RenderStyle style1 = RenderStyle::create();
+    auto style1 = ComputedStyle::create();
     FontCascadeDescription fontDescription1;
-    style1.setFontDescription(WTFMove(fontDescription1));
-    RenderStyle style2 = RenderStyle::create();
+    style1.setFontDescription(WTF::move(fontDescription1));
+    auto style2 = ComputedStyle::create();
     FontCascadeDescription fontDescription2;
-    style1.setFontDescription(WTFMove(fontDescription2));
-    Change change = determineChange(style1, style2);
-    EXPECT_EQ(change, Change::None);
+    style1.setFontDescription(WTF::move(fontDescription2));
+    auto changes = determineChanges(style1, style2);
+    EXPECT_EQ(changes, OptionSet<Change> { });
 }
 
 } // namespace TestWebKitAPI

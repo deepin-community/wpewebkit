@@ -33,7 +33,7 @@ all_uniform_types = [
     "GL_UNSIGNED_INT_SAMPLER_3D", "GL_UNSIGNED_INT_SAMPLER_CUBE",
     "GL_UNSIGNED_INT_SAMPLER_CUBE_MAP_ARRAY", "GL_UNSIGNED_INT_SAMPLER_BUFFER",
     "GL_UNSIGNED_INT_VEC2", "GL_UNSIGNED_INT_VEC3", "GL_UNSIGNED_INT_VEC4",
-    "GL_SAMPLER_VIDEO_IMAGE_WEBGL", "GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT"
+    "GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT"
 ]
 
 # Uniform texture types. Be wary of substrings finding the wrong types.
@@ -53,7 +53,6 @@ texture_types = {
     "RECT": "RECTANGLE",
     "CUBE_MAP_ARRAY": "CUBE_MAP_ARRAY",
     "BUFFER": "BUFFER",
-    "VIDEO_IMAGE_WEBGL": "VIDEO_IMAGE_WEBGL",
 }
 
 template_cpp = """// GENERATED FILE - DO NOT EDIT.
@@ -74,13 +73,13 @@ using namespace angle;
 namespace gl
 {{
 
-namespace
-{{
-constexpr std::array<UniformTypeInfo, {total_count}> kInfoTable =
+extern const std::array<UniformTypeInfo, {total_count}> kUniformInfoTable =
 {{{{
 {uniform_type_info_data}
 }}}};
 
+namespace
+{{
 uint16_t GetIndex(GLenum uniformType)
 {{
     switch (uniformType)
@@ -100,14 +99,8 @@ UniformTypeIndex GetUniformTypeIndex(GLenum uniformType)
 
 const UniformTypeInfo &GetUniformTypeInfo(GLenum uniformType)
 {{
-    ASSERT(kInfoTable[GetIndex(uniformType)].type == uniformType);
-    return kInfoTable[GetIndex(uniformType)];
-}}
-
-const UniformTypeInfo &GetUniformTypeInfoFromIndex(UniformTypeIndex index)
-{{
-    ASSERT(index.value >= 0 && index.value < {total_count});
-    return kInfoTable[index.value];
+    ASSERT(kUniformInfoTable[GetIndex(uniformType)].type == uniformType);
+    return kUniformInfoTable[GetIndex(uniformType)];
 }}
 
 }}  // namespace gl
@@ -138,6 +131,8 @@ inline GLint GetUniformElementComponents(UniformTypeIndex index)
     ASSERT(index.value >= 0 && index.value < {total_count});
     return kElementComponents[index.value];
 }}
+
+extern const std::array<UniformTypeInfo, {total_count}> kUniformInfoTable;
 
 }}  // namespace gl
 #endif  // COMMON_UNIFORM_TYPE_INFO_AUTOGEN_H_

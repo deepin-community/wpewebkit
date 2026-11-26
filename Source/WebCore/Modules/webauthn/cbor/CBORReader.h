@@ -31,7 +31,7 @@
 
 #if ENABLE(WEB_AUTHN)
 
-#include "CBORValue.h"
+#include <WebCore/CBORValue.h>
 #include <stddef.h>
 
 // Concise Binary Object Representation (CBOR) decoder as defined by
@@ -103,6 +103,10 @@ public:
     // decoding failures.
     WEBCORE_EXPORT static std::optional<CBORValue> read(const Bytes&, DecoderError* errorCodeOut = nullptr, int maxNestingLevel = kCBORMaxDepth);
 
+    // Reads and parses |input_data| into a CBORValue and returns the number of bytes consumed.
+    // If parsing fails, returns nullopt and sets |errorCodeOut| if provided.
+    WEBCORE_EXPORT static std::optional<std::pair<CBORValue, size_t>> readWithBytesConsumed(const Bytes&, DecoderError* errorCodeOut = nullptr, int maxNestingLevel = kCBORMaxDepth);
+
     // Translates errors to human-readable error messages.
     static ASCIILiteral errorCodeToString(DecoderError errorCode);
 
@@ -118,13 +122,13 @@ private:
     std::optional<CBORValue> readCBORArray(uint64_t length, int maxNestingLevel);
     std::optional<CBORValue> readCBORMap(uint64_t length, int maxNestingLevel);
     bool canConsume(uint64_t bytes);
-    void checkExtraneousData();
-    bool checkDuplicateKey(const CBORValue& newKey, const CBORValue::MapValue&);
-    bool hasValidUTF8Format(const String&);
-    bool checkOutOfOrderKey(const CBORValue& newKey, const CBORValue::MapValue&);
-    bool checkMinimalEncoding(uint8_t additionalBytes, uint64_t uintData);
+    void NODELETE checkExtraneousData();
+    bool NODELETE checkDuplicateKey(const CBORValue& newKey, const CBORValue::MapValue&);
+    bool NODELETE hasValidUTF8Format(const String&);
+    bool NODELETE checkOutOfOrderKey(const CBORValue& newKey, const CBORValue::MapValue&);
+    bool NODELETE checkMinimalEncoding(uint8_t additionalBytes, uint64_t uintData);
 
-    DecoderError getErrorCode();
+    DecoderError NODELETE getErrorCode();
 
     const Bytes& m_data;
     Bytes::iterator m_it;

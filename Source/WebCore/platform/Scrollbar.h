@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2006, 2014-2015 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004, 2006, 2014-2015 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,11 @@
 
 #pragma once
 
-#include "ScrollTypes.h"
-#include "Timer.h"
-#include "Widget.h"
+#include <WebCore/ScrollTypes.h>
+#include <WebCore/ScrollbarTheme.h>
+#include <WebCore/Timer.h>
+#include <WebCore/Widget.h>
+#include <wtf/Platform.h>
 
 namespace WebCore {
 
@@ -35,7 +37,6 @@ class GraphicsContext;
 class IntRect;
 class PlatformMouseEvent;
 class ScrollableArea;
-class ScrollbarTheme;
 
 class Scrollbar : public Widget {
 public:
@@ -49,16 +50,16 @@ public:
 
     WEBCORE_EXPORT void setFrameRect(const IntRect&) final;
 
-    static int pixelsPerLineStep() { return 40; }
-    WEBCORE_EXPORT static int pixelsPerLineStep(int viewWidthOrHeight);
-    WEBCORE_EXPORT static void setShouldUseFixedPixelsPerLineStepForTesting(bool);
+    static constexpr int pixelsPerLineStep() { return 40; }
+    WEBCORE_EXPORT static int NODELETE pixelsPerLineStep(int viewWidthOrHeight);
+    WEBCORE_EXPORT static void NODELETE setShouldUseFixedPixelsPerLineStepForTesting(bool);
     static float minFractionToStepWhenPaging() { return 0.8; }
     WEBCORE_EXPORT static int maxOverlapBetweenPages();
     static int pageStep(int viewWidthOrHeight, int contentWidthOrHeight) { return std::max(std::max<int>(lroundf(viewWidthOrHeight * Scrollbar::minFractionToStepWhenPaging()), lroundf(contentWidthOrHeight - Scrollbar::maxOverlapBetweenPages())), 1); }
     static int pageStep(int viewWidthOrHeight) { return pageStep(viewWidthOrHeight, viewWidthOrHeight); }
     static float pageStepDelta(int widthOrHeight) { return std::max(std::max(static_cast<float>(widthOrHeight) * Scrollbar::minFractionToStepWhenPaging(), static_cast<float>(widthOrHeight) - Scrollbar::maxOverlapBetweenPages()), 1.0f); }
 
-    ScrollableArea& scrollableArea() const { return m_scrollableArea; }
+    inline ScrollableArea& scrollableArea() const; // Defined in ScrollbarInlines.h.
 
     bool isCustomScrollbar() const { return m_isCustomScrollbar; }
     WEBCORE_EXPORT bool isMockScrollbar() const;
@@ -85,7 +86,7 @@ public:
     virtual void setHoveredPart(ScrollbarPart);
     virtual void setPressedPart(ScrollbarPart);
 
-    WEBCORE_EXPORT void setSteps(int lineStep, int pageStep, int pixelsPerStep = 1);
+    WEBCORE_EXPORT void NODELETE setSteps(int lineStep, int pageStep, int pixelsPerStep = 1);
     WEBCORE_EXPORT void setProportion(int visibleSize, int totalSize);
     void setPressedPos(int p) { m_pressedPos = p; }
 
@@ -96,6 +97,7 @@ public:
 
     virtual bool isOverlayScrollbar() const;
     bool shouldParticipateInHitTesting();
+    int expandedHitTestToleranceThreshold() const;
     virtual bool isHiddenByStyle() const;
 
     bool isWindowActive() const;
@@ -121,13 +123,16 @@ public:
     bool suppressInvalidation() const { return m_suppressInvalidation; }
     void setSuppressInvalidation(bool s) { m_suppressInvalidation = s; }
 
+    bool paintingIntoSnapshot() const { return m_paintingIntoSnapshot; }
+    void setPaintingIntoSnapshot(bool value) { m_paintingIntoSnapshot = value; }
+
     virtual void styleChanged() { }
 
     IntRect convertToContainingView(const IntRect&) const override;
     IntRect convertFromContainingView(const IntRect&) const override;
 
-    IntPoint convertToContainingView(const IntPoint&) const override;
-    IntPoint convertFromContainingView(const IntPoint&) const override;
+    IntPoint convertToContainingView(IntPoint) const override;
+    IntPoint convertFromContainingView(IntPoint) const override;
 
     void moveThumb(int pos, bool draggingDocument = false);
 
@@ -158,10 +163,10 @@ protected:
     void startTimerIfNeeded(Seconds delay);
     void stopTimerIfNeeded();
     void autoscrollPressedPart(Seconds delay);
-    ScrollDirection pressedPartScrollDirection();
-    ScrollGranularity pressedPartScrollGranularity();
+    ScrollDirection NODELETE pressedPartScrollDirection();
+    ScrollGranularity NODELETE pressedPartScrollGranularity();
 
-    ScrollableArea& m_scrollableArea;
+    WeakRef<ScrollableArea> m_scrollableArea;
     ScrollbarOrientation m_orientation;
     ScrollbarWidth m_widthStyle;
     ScrollbarTheme& m_theme;
@@ -186,6 +191,7 @@ protected:
     Timer m_scrollTimer;
 
     bool m_suppressInvalidation { false };
+    bool m_paintingIntoSnapshot { false };
 
 #if !PLATFORM(COCOA)
     float m_opacity { 1 };

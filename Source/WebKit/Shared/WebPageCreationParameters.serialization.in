@@ -30,10 +30,13 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     OptionSet<WebCore::ActivityState> activityState;
 
     WebKit::WebPreferencesStore store;
+#if ENABLE(TILED_CA_DRAWING_AREA)
     WebKit::DrawingAreaType drawingAreaType;
+#endif
     WebKit::DrawingAreaIdentifier drawingAreaIdentifier;
     WebKit::WebPageProxyIdentifier webPageProxyIdentifier;
     WebKit::WebPageGroupData pageGroupData;
+    std::optional<WebCore::BrowsingContextGroupIdentifier> browsingContextGroupIdentifier;
 
     bool isEditable;
 
@@ -63,20 +66,24 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     String userAgent;
 
-    bool itemStatesWereRestoredByAPIRequest;
-    Vector<WebKit::BackForwardListItemState> itemStates;
-
     WebKit::VisitedLinkTableIdentifier visitedLinkTableID;
     bool canRunBeforeUnloadConfirmPanel;
     bool canRunModal;
 
     float deviceScaleFactor;
+#if USE(GRAPHICS_LAYER_WC) || USE(GRAPHICS_LAYER_TEXTURE_MAPPER)
+    float intrinsicDeviceScaleFactor;
+#endif
     float viewScaleFactor;
 
     double textZoomFactor;
     double pageZoomFactor;
 
-    float topContentInset;
+    WebCore::FloatBoxExtent obscuredContentInsets;
+
+#if HAVE(NSREFRESHCONTROLLER)
+    bool hasRefreshController;
+#endif
 
     float mediaVolume;
     WebCore::MediaProducerMutedStateFlags muted;
@@ -91,11 +98,9 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     WebCore::ScrollPinningBehavior scrollPinningBehavior;
 
-    std::optional<uint32_t> scrollbarOverlayStyle;
+    std::optional<WebCore::ScrollbarOverlayStyle> scrollbarOverlayStyle;
 
     bool backgroundExtendsBeyondPage;
-
-    WebKit::LayerHostingMode layerHostingMode;
 
     bool hasResourceLoadClient;
 
@@ -106,10 +111,11 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     bool useDarkAppearance;
     bool useElevatedUserInterfaceLevel;
+    bool allowPostingLegacySynchronousMessages;
+    bool backgroundTextExtractionEnabled;
 
 #if PLATFORM(MAC)
     std::optional<WebCore::DestinationColorSpace> colorSpace;
-    bool useSystemAppearance;
     bool useFormSemanticContext;
     int headerBannerHeight;
     int footerBannerHeight;
@@ -141,14 +147,11 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     Vector<WebKit::SandboxExtensionHandle> gpuIOKitExtensionHandles;
     Vector<WebKit::SandboxExtensionHandle> gpuMachExtensionHandles;
 #endif
-#if PLATFORM(MAC)
+#if ENABLE(TILED_CA_DRAWING_AREA)
     WebKit::SandboxExtensionHandle renderServerMachExtensionHandle;
 #endif
-#if HAVE(STATIC_FONT_REGISTRY)
+#if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<WebKit::SandboxExtensionHandle> fontMachExtensionHandles;
-#endif
-#if HAVE(HOSTED_CORE_ANIMATION)
-    MachSendRight acceleratedCompositingPort;
 #endif
 #if HAVE(APP_ACCENT_COLORS)
     WebCore::Color accentColor;
@@ -182,6 +185,8 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     bool needsFontAttributes;
 
+    bool needsScrollGeometryUpdates;
+
     bool iceCandidateFilteringEnabled;
     bool enumeratingAllNetworkInterfacesEnabled;
 
@@ -198,7 +203,6 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     String overriddenMediaType;
     Vector<String> corsDisablingPatterns;
     HashSet<String> maskedURLSchemes;
-    bool userScriptsShouldWaitUntilNotification;
     bool loadsSubresources;
     std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> allowedNetworkHosts;
     std::optional<std::pair<uint16_t, uint16_t>> portsForUpgradingInsecureSchemeForTesting;
@@ -230,10 +234,6 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     bool httpsUpgradeEnabled;
 
-#if PLATFORM(IOS) || PLATFORM(VISION)
-    bool allowsDeprecatedSynchronousXMLHttpRequestDuringUnload;
-#endif
-
 #if ENABLE(APP_HIGHLIGHTS)
     WebCore::HighlightVisibility appHighlightsVisible;
 #endif
@@ -244,11 +244,27 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 
     bool hasResizableWindows;
 
+#if PLATFORM(MAC)
+    double overflowHeightForTopScrollEdgeEffect;
+#if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
+    bool fullScreenTitlebarOverlayIsDisplayed;
+#endif
+#if HAVE(NSVIEW_CORNER_CONFIGURATION)
+    WebCore::CornerRadii scrollbarAvoidanceCornerRadii;
+#endif
+#endif
+
     WebCore::ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension;
 
     std::optional<WebKit::RemotePageParameters> remotePageParameters;
-    std::optional<WebCore::FrameIdentifier> openerFrameIdentifier;
+    std::optional<WebKit::ProvisionalFrameCreationParameters> provisionalFrameCreationParameters;
     WebCore::FrameIdentifier mainFrameIdentifier;
+    String openedMainFrameName;
+    std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier;
+    URL mainFrameOpenerURL;
+    WebCore::SandboxFlags initialSandboxFlags;
+    WebCore::ReferrerPolicy initialReferrerPolicy;
+    std::optional<WebCore::WindowFeatures> windowFeatures;
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
     Vector<WebCore::LinkDecorationFilteringData> linkDecorationFilteringData;
@@ -260,14 +276,41 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 #endif
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
-#if USE(GBM)
-    Vector<WebKit::DMABufRendererBufferFormat> preferredBufferFormats;
+#if USE(GBM) || OS(ANDROID)
+    Vector<WebKit::RendererBufferFormat> preferredBufferFormats;
 #endif
 #endif
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     WebCore::ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent;
 #endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    bool allowsImmersiveEnvironments;
+#endif
+
+#if HAVE(AUDIT_TOKEN)
+    std::optional<WebKit::CoreIPCAuditToken> presentingApplicationAuditToken;
+#endif
+
+#if PLATFORM(COCOA)
+    String presentingApplicationBundleIdentifier;
+#endif
+
+    bool shouldSendConsoleLogsToUIProcessForTesting;
+
+#if ENABLE(IMAGE_ANALYSIS)
+    std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
+#endif
+
+    std::optional<WebKit::TextManipulationParameters> textManipulationParameters;
+
+    bool isPopup;
+
+    WebCore::AccessibilityMode accessibilityMode;
+    bool shouldForceSiteIsolationAlwaysOnForTesting;
+    bool shouldEnableNetworkInstrumentation;
+    bool shouldEnablePageInstrumentation;
 }
 
 [Nested] struct WebKit::RemotePageParameters {

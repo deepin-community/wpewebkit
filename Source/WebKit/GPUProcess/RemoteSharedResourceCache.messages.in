@@ -22,8 +22,13 @@
 
 #if ENABLE(GPU_PROCESS)
 
-messages -> RemoteSharedResourceCache NotRefCounted {
-    void ReleaseSerializedImageBuffer(WebCore::RenderingResourceIdentifier imageBuffer)
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    ExceptionForEnabledBy
+]
+messages -> RemoteSharedResourceCache {
+    void ReleaseSerializedImageBuffer(WebKit::RemoteSerializedImageBufferIdentifier identifier)
 }
 
 #endif

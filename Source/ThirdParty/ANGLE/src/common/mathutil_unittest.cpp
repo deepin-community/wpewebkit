@@ -9,6 +9,8 @@
 
 #include "mathutil.h"
 
+#include <array>
+
 #include <gtest/gtest.h>
 
 using namespace gl;
@@ -20,10 +22,17 @@ namespace
 // For floats f1 and f2, unpackSnorm2x16(packSnorm2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackSnorm2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f}};
-    const float floatFaultTolerance = 0.0001f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0001f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -64,10 +73,17 @@ TEST(MathUtilTest, packAndUnpackSnorm2x16Infinity)
 // For floats f1 and f2, unpackUnorm2x16(packUnorm2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackUnorm2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f}};
-    const float floatFaultTolerance = 0.0001f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0001f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -110,11 +126,17 @@ TEST(MathUtilTest, packAndUnpackUnorm2x16Infinity)
 // For floats f1 and f2, unpackHalf2x16(packHalf2x16(f1, f2)) should be same as f1 and f2.
 TEST(MathUtilTest, packAndUnpackHalf2x16)
 {
-    const float input[8][2] = {
-        {0.0f, 0.0f},    {1.0f, 1.0f},          {-1.0f, 1.0f},           {-1.0f, -1.0f},
-        {0.875f, 0.75f}, {0.00392f, -0.99215f}, {-0.000675f, 0.004954f}, {-0.6937f, -0.02146f},
-    };
-    const float floatFaultTolerance = 0.0005f;
+    static constexpr std::array<std::array<float, 2>, 8> input = {{
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {0.875f, 0.75f},
+        {0.00392f, -0.99215f},
+        {-0.000675f, 0.004954f},
+        {-0.6937f, -0.02146f},
+    }};
+    const float floatFaultTolerance                            = 0.0005f;
     float outputVal1, outputVal2;
 
     for (size_t i = 0; i < 8; i++)
@@ -129,14 +151,16 @@ TEST(MathUtilTest, packAndUnpackHalf2x16)
 // For floats f1 to f4, unpackUnorm4x8(packUnorm4x8(f1, f2, f3, f4)) should be same as f1 to f4.
 TEST(MathUtilTest, packAndUnpackUnorm4x8)
 {
-    const float input[5][4] = {{0.0f, 0.0f, 0.0f, 0.0f},
-                               {1.0f, 1.0f, 1.0f, 1.0f},
-                               {-1.0f, 1.0f, -1.0f, 1.0f},
-                               {-1.0f, -1.0f, -1.0f, -1.0f},
-                               {64.0f / 255.0f, 128.0f / 255.0f, 32.0f / 255.0f, 16.0f / 255.0f}};
+    static constexpr std::array<std::array<float, 4>, 5> input = {{
+        {0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f, 1.0f},
+        {-1.0f, -1.0f, -1.0f, -1.0f},
+        {64.0f / 255.0f, 128.0f / 255.0f, 32.0f / 255.0f, 16.0f / 255.0f},
+    }};
 
     const float floatFaultTolerance = 0.005f;
-    float outputVals[4];
+    std::array<float, 4> outputVals;
 
     for (size_t i = 0; i < 5; i++)
     {
@@ -154,14 +178,16 @@ TEST(MathUtilTest, packAndUnpackUnorm4x8)
 // For floats f1 to f4, unpackSnorm4x8(packSnorm4x8(f1, f2, f3, f4)) should be same as f1 to f4.
 TEST(MathUtilTest, packAndUnpackSnorm4x8)
 {
-    const float input[5][4] = {{0.0f, 0.0f, 0.0f, 0.0f},
-                               {1.0f, 1.0f, 1.0f, 1.0f},
-                               {-1.0f, 1.0f, -1.0f, 1.0f},
-                               {-1.0f, -1.0f, -1.0f, -1.0f},
-                               {64.0f / 127.0f, -8.0f / 127.0f, 32.0f / 127.0f, 16.0f / 127.0f}};
+    static constexpr std::array<std::array<float, 4>, 5> input = {{
+        {0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f, 1.0f},
+        {-1.0f, -1.0f, -1.0f, -1.0f},
+        {64.0f / 127.0f, -8.0f / 127.0f, 32.0f / 127.0f, 16.0f / 127.0f},
+    }};
 
     const float floatFaultTolerance = 0.01f;
-    float outputVals[4];
+    std::array<float, 4> outputVals;
 
     for (size_t i = 0; i < 5; i++)
     {
@@ -199,6 +225,25 @@ TEST(MathUtilTest, isInf)
     EXPECT_FALSE(isInf(bitCast<float>(1u << 31 | 0xffu << 23 | 0x7fffffu)));
     EXPECT_FALSE(isInf(bitCast<float>(0xfeu << 23 | 0x7fffffu)));
     EXPECT_FALSE(isInf(bitCast<float>(1u << 31 | 0xfeu << 23 | 0x7fffffu)));
+}
+
+// Test the correctness of gl::isOutsideOfBounds function.
+TEST(MathUtilTest, isOutsideOfBounds)
+{
+    EXPECT_TRUE(isOutsideOfBounds(0.5f, 1.0f, 16.0f));
+    EXPECT_TRUE(isOutsideOfBounds(17.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(1.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(16.0f, 1.0f, 16.0f));
+    EXPECT_FALSE(isOutsideOfBounds(8.0f, 1.0f, 16.0f));
+
+    EXPECT_TRUE(isOutsideOfBounds(std::numeric_limits<float>::quiet_NaN(), 1.0f, 16.0f));
+    EXPECT_TRUE(isOutsideOfBounds(std::numeric_limits<float>::signaling_NaN(), 1.0f, 16.0f));
+
+    EXPECT_TRUE(isOutsideOfBounds(0, 1, 10));
+    EXPECT_TRUE(isOutsideOfBounds(11, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(1, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(10, 1, 10));
+    EXPECT_FALSE(isOutsideOfBounds(5, 1, 10));
 }
 
 TEST(MathUtilTest, CountLeadingZeros)
@@ -247,6 +292,34 @@ TEST(MathUtilTest, CheckedRoundUpInvalid)
     // Our implementation can't handle this query, despite the parameters being in range.
     auto checkedLimit = rx::CheckedRoundUp(limit - 1, limit);
     ASSERT_FALSE(checkedLimit.IsValid());
+}
+
+// Test basic correctness of rx::CheckedRoundUpPow2
+TEST(MathUtilTest, CheckedRoundUpPow2)
+{
+    auto checkedValue = rx::CheckedRoundUpPow2(1u, 4u);
+    ASSERT_TRUE(checkedValue.IsValid());
+    EXPECT_EQ(4u, checkedValue.ValueOrDie());
+
+    checkedValue = rx::CheckedRoundUpPow2(4u, 4u);
+    ASSERT_TRUE(checkedValue.IsValid());
+    EXPECT_EQ(4u, checkedValue.ValueOrDie());
+}
+
+// Test that rounding up zero produces zero for rx::CheckedRoundUpPow2.
+TEST(MathUtilTest, CheckedRoundUpPow2Zero)
+{
+    auto checkedValue = rx::CheckedRoundUpPow2(0u, 4u);
+    ASSERT_TRUE(checkedValue.IsValid());
+    EXPECT_EQ(0u, checkedValue.ValueOrDie());
+}
+
+// Test out-of-bounds with rx::CheckedRoundUpPow2
+TEST(MathUtilTest, CheckedRoundUpPow2Invalid)
+{
+    auto limit        = std::numeric_limits<unsigned int>::max();
+    auto checkedValue = rx::CheckedRoundUpPow2(limit, 4u);
+    ASSERT_FALSE(checkedValue.IsValid());
 }
 
 // Test BitfieldReverse which reverses the order of the bits in an integer.
@@ -351,6 +424,93 @@ TEST(MathUtilTest, RangeExtend)
     EXPECT_EQ(12, range.length());
 }
 
+// Test that Range::merge works as expected.
+TEST(MathUtilTest, RangMerge)
+{
+    // merge valid range to invalid range
+    RangeI range1;
+    range1.invalidate();
+    RangeI range2(1, 2);
+    range1.merge(range2);
+    EXPECT_EQ(1, range1.low());
+    EXPECT_EQ(2, range1.high());
+    EXPECT_EQ(1, range1.length());
+
+    // merge invalid range to valid range
+    RangeI range3(1, 2);
+    RangeI range4;
+    range4.invalidate();
+    range3.merge(range4);
+    EXPECT_EQ(1, range3.low());
+    EXPECT_EQ(2, range3.high());
+    EXPECT_EQ(1, range3.length());
+
+    // merge two valid non-overlapping ranges
+    RangeI range5(1, 2);
+    RangeI range6(3, 4);
+    range5.merge(range6);
+    EXPECT_EQ(1, range5.low());
+    EXPECT_EQ(4, range5.high());
+    EXPECT_EQ(3, range5.length());
+
+    // merge two valid non-overlapping ranges
+    RangeI range7(2, 3);
+    RangeI range8(1, 2);
+    range7.merge(range8);
+    EXPECT_EQ(1, range7.low());
+    EXPECT_EQ(3, range7.high());
+    EXPECT_EQ(2, range7.length());
+
+    // merge two valid overlapping ranges
+    RangeI range9(2, 4);
+    RangeI range10(1, 3);
+    range9.merge(range10);
+    EXPECT_EQ(1, range9.low());
+    EXPECT_EQ(4, range9.high());
+    EXPECT_EQ(3, range9.length());
+
+    // merge two valid overlapping ranges
+    RangeI range11(1, 3);
+    RangeI range12(2, 4);
+    range11.merge(range12);
+    EXPECT_EQ(1, range11.low());
+    EXPECT_EQ(4, range11.high());
+    EXPECT_EQ(3, range11.length());
+}
+
+// Test that Range::intersectsOrContinuous works as expected.
+TEST(MathUtilTest, RangIntersectsOrContinuous)
+{
+    // Two non-overlapping ranges
+    RangeI range1(1, 2);
+    RangeI range2(3, 4);
+    EXPECT_EQ(false, range1.intersectsOrContinuous(range2));
+    EXPECT_EQ(false, range2.intersectsOrContinuous(range1));
+
+    // Two overlapping ranges
+    RangeI range3(1, 3);
+    RangeI range4(2, 4);
+    EXPECT_EQ(true, range3.intersectsOrContinuous(range4));
+    EXPECT_EQ(true, range4.intersectsOrContinuous(range3));
+
+    // Two overlapping ranges
+    RangeI range5(1, 4);
+    RangeI range6(2, 3);
+    EXPECT_EQ(true, range5.intersectsOrContinuous(range6));
+    EXPECT_EQ(true, range6.intersectsOrContinuous(range5));
+
+    // Two continuous ranges
+    RangeI range7(1, 3);
+    RangeI range8(3, 4);
+    EXPECT_EQ(true, range7.intersectsOrContinuous(range8));
+    EXPECT_EQ(true, range8.intersectsOrContinuous(range7));
+
+    // Two identical ranges
+    RangeI range9(1, 3);
+    RangeI range10(1, 3);
+    EXPECT_EQ(true, range9.intersectsOrContinuous(range10));
+}
+
 // Test that Range iteration works as expected.
 TEST(MathUtilTest, RangeIteration)
 {
@@ -441,39 +601,42 @@ TEST(MathUtilTest, Float32ToFloat16)
 // Tests the RGB float to 999E5 conversion
 TEST(MathUtilTest, convertRGBFloatsTo999E5)
 {
-    const int numTests                  = 18;
-    const float input[numTests][3]      = {// The basics
-                                      {0.0f, 0.0f, 0.0f},
-                                      {0.0f, 0.0f, 1.0f},
-                                      {0.0f, 1.0f, 0.0f},
-                                      {0.0f, 1.0f, 1.0f},
-                                      {1.0f, 0.0f, 0.0f},
-                                      {1.0f, 0.0f, 1.0f},
-                                      {1.0f, 1.0f, 0.0f},
-                                      {1.0f, 1.0f, 1.0f},
-                                      // Extended range
-                                      {0.0f, 0.0f, 1.5f},
-                                      {0.0f, 2.0f, 0.0f},
-                                      {0.0f, 2.5f, 3.0f},
-                                      {3.5f, 0.0f, 0.0f},
-                                      {4.0f, 0.0f, 4.5f},
-                                      {5.0f, 5.5f, 0.0f},
-                                      {6.0f, 6.5f, 7.0f},
-                                      // Random
-                                      {0.1f, 9.6f, 3.2f},
-                                      {2.0f, 1.7f, 8.6f},
-                                      {0.7f, 4.2f, 9.1f}};
-    const unsigned int result[numTests] = {// The basics
-                                           0x00000000, 0x84000000, 0x80020000, 0x84020000,
-                                           0x80000100, 0x84000100, 0x80020100, 0x84020100,
-                                           // Extended range
-                                           0x86000000, 0x88020000, 0x8E028000, 0x880001C0,
-                                           0x94800100, 0x9002C140, 0x97034180,
-                                           // Random
-                                           0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
+    const int numTests                                                = 18;
+    static constexpr std::array<std::array<float, 3>, numTests> input = {{
+        // The basics
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 1.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f},
+        // Extended range
+        {0.0f, 0.0f, 1.5f},
+        {0.0f, 2.0f, 0.0f},
+        {0.0f, 2.5f, 3.0f},
+        {3.5f, 0.0f, 0.0f},
+        {4.0f, 0.0f, 4.5f},
+        {5.0f, 5.5f, 0.0f},
+        {6.0f, 6.5f, 7.0f},
+        // Random
+        {0.1f, 9.6f, 3.2f},
+        {2.0f, 1.7f, 8.6f},
+        {0.7f, 4.2f, 9.1f},
+    }};
+    static constexpr std::array<unsigned int, numTests> result        = {
+        // The basics
+        0x00000000, 0x84000000, 0x80020000, 0x84020000, 0x80000100, 0x84000100, 0x80020100,
+        0x84020100,
+        // Extended range
+        0x86000000, 0x88020000, 0x8E028000, 0x880001C0, 0x94800100, 0x9002C140, 0x97034180,
+        // Random
+        0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
 
     for (int i = 0; i < numTests; i++)
     {
+
         EXPECT_EQ(convertRGBFloatsTo999E5(input[i][0], input[i][1], input[i][2]), result[i]);
     }
 }
@@ -481,36 +644,38 @@ TEST(MathUtilTest, convertRGBFloatsTo999E5)
 // Tests the 999E5 to RGB float conversion
 TEST(MathUtilTest, convert999E5toRGBFloats)
 {
-    const int numTests                 = 18;
-    const float result[numTests][3]    = {// The basics
-                                       {0.0f, 0.0f, 0.0f},
-                                       {0.0f, 0.0f, 1.0f},
-                                       {0.0f, 1.0f, 0.0f},
-                                       {0.0f, 1.0f, 1.0f},
-                                       {1.0f, 0.0f, 0.0f},
-                                       {1.0f, 0.0f, 1.0f},
-                                       {1.0f, 1.0f, 0.0f},
-                                       {1.0f, 1.0f, 1.0f},
-                                       // Extended range
-                                       {0.0f, 0.0f, 1.5f},
-                                       {0.0f, 2.0f, 0.0f},
-                                       {0.0f, 2.5f, 3.0f},
-                                       {3.5f, 0.0f, 0.0f},
-                                       {4.0f, 0.0f, 4.5f},
-                                       {5.0f, 5.5f, 0.0f},
-                                       {6.0f, 6.5f, 7.0f},
-                                       // Random
-                                       {0.1f, 9.6f, 3.2f},
-                                       {2.0f, 1.7f, 8.6f},
-                                       {0.7f, 4.2f, 9.1f}};
-    const unsigned int input[numTests] = {// The basics
-                                          0x00000000, 0x84000000, 0x80020000, 0x84020000,
-                                          0x80000100, 0x84000100, 0x80020100, 0x84020100,
-                                          // Extended range
-                                          0x86000000, 0x88020000, 0x8E028000, 0x880001C0,
-                                          0x94800100, 0x9002C140, 0x97034180,
-                                          // Random
-                                          0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
+    const int numTests                                                 = 18;
+    static constexpr std::array<std::array<float, 3>, numTests> result = {{
+        // The basics
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 1.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 1.0f, 1.0f},
+        // Extended range
+        {0.0f, 0.0f, 1.5f},
+        {0.0f, 2.0f, 0.0f},
+        {0.0f, 2.5f, 3.0f},
+        {3.5f, 0.0f, 0.0f},
+        {4.0f, 0.0f, 4.5f},
+        {5.0f, 5.5f, 0.0f},
+        {6.0f, 6.5f, 7.0f},
+        // Random
+        {0.1f, 9.6f, 3.2f},
+        {2.0f, 1.7f, 8.6f},
+        {0.7f, 4.2f, 9.1f},
+    }};
+    static constexpr std::array<unsigned int, numTests> input          = {
+        // The basics
+        0x00000000, 0x84000000, 0x80020000, 0x84020000, 0x80000100, 0x84000100, 0x80020100,
+        0x84020100,
+        // Extended range
+        0x86000000, 0x88020000, 0x8E028000, 0x880001C0, 0x94800100, 0x9002C140, 0x97034180,
+        // Random
+        0x999A6603, 0x9C4C6C40, 0x9C8D0C16};
     // Note: quite a low tolerance is required
     const float floatFaultTolerance = 0.05f;
     float outR, outG, outB;
@@ -755,6 +920,266 @@ TEST(MathUtilTest, FloatToNormalizedSnorm30)
     // Check near values
     EXPECT_NEAR((floatToNormalized<30, int32_t>(-0.50f)), -268435455, 1);
     EXPECT_NEAR((floatToNormalized<30, int32_t>(+0.50f)), +268435455, 1);
+}
+
+// Test normalizedToFloat conversions with 8-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm8)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<uint8_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<uint8_t>(255)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<uint8_t>(127)), 0.5f, 0.004f);
+    EXPECT_NEAR((normalizedToFloat<uint8_t>(128)), 0.5f, 0.004f);
+}
+
+// Test normalizedToFloat conversions with 8-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm8)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<int8_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<int8_t>(+127)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<int8_t>(-127)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<int8_t>(-128)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<int8_t>(+64)), +0.5f, 0.008f);
+    EXPECT_NEAR((normalizedToFloat<int8_t>(+63)), +0.5f, 0.008f);
+    EXPECT_NEAR((normalizedToFloat<int8_t>(-63)), -0.5f, 0.008f);
+    EXPECT_NEAR((normalizedToFloat<int8_t>(-64)), -0.5f, 0.008f);
+}
+
+// Test normalizedToFloat conversions with 16-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm16)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<uint16_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<uint16_t>(65535)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<uint16_t>(32767)), 0.5f, 0.00002f);
+    EXPECT_NEAR((normalizedToFloat<uint16_t>(32768)), 0.5f, 0.00002f);
+}
+
+// Test normalizedToFloat conversions with 16-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm16)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<int16_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<int16_t>(+32767)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<int16_t>(-32767)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<int16_t>(-32768)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<int16_t>(+16384)), +0.5f, 0.00004f);
+    EXPECT_NEAR((normalizedToFloat<int16_t>(+16383)), +0.5f, 0.00004f);
+    EXPECT_NEAR((normalizedToFloat<int16_t>(-16383)), -0.5f, 0.00004f);
+    EXPECT_NEAR((normalizedToFloat<int16_t>(-16384)), -0.5f, 0.00004f);
+}
+
+// Test normalizedToFloat conversions with 32-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm32)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<uint32_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<uint32_t>(4294967295)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<uint32_t>(2147483647)), 0.5, 0.0000000003);
+    EXPECT_NEAR((normalizedToFloat<uint32_t>(2147483648)), 0.5, 0.0000000003);
+}
+
+// Test normalizedToFloat conversions with 32-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm32)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<int32_t>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<int32_t>(+2147483647)), +1.0);
+    EXPECT_EQ((normalizedToFloat<int32_t>(-2147483647)), -1.0);
+    EXPECT_EQ((normalizedToFloat<int32_t>(-2147483648)), -1.0);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<int32_t>(+1073741824)), +0.5, 0.0000000005);
+    EXPECT_NEAR((normalizedToFloat<int32_t>(+1073741823)), +0.5, 0.0000000005);
+    EXPECT_NEAR((normalizedToFloat<int32_t>(-1073741823)), -0.5, 0.0000000005);
+    EXPECT_NEAR((normalizedToFloat<int32_t>(-1073741824)), -0.5, 0.0000000005);
+}
+
+// Test normalizedToFloat conversions with 1-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm1)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<1>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<1>(1u)), 1.0f);
+}
+
+// Test normalizedToFloat conversions with 2-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm2)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<2>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<2>(1u)), 0.33333333f);
+    EXPECT_EQ((normalizedToFloat<2>(2u)), 0.66666667f);
+    EXPECT_EQ((normalizedToFloat<2>(3u)), 1.0f);
+}
+
+// Test normalizedToFloat conversions with 2-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm2)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<2>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<2>(+1)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<2>(-1)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<2>(-2)), -1.0f);
+}
+
+// Test normalizedToFloat conversions with 4-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm4)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<4>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<4>(15u)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<4>(7u)), 0.5f, 0.07);
+    EXPECT_NEAR((normalizedToFloat<4>(8u)), 0.5f, 0.07);
+}
+
+// Test normalizedToFloat conversions with 5-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm5)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<5>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<5>(31u)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<5>(15u)), 0.5f, 0.04);
+    EXPECT_NEAR((normalizedToFloat<5>(16u)), 0.5f, 0.04);
+}
+
+// Test normalizedToFloat conversions with 6-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm6)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<6>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<6>(63u)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<6>(31u)), 0.5f, 0.02);
+    EXPECT_NEAR((normalizedToFloat<6>(32u)), 0.5f, 0.02);
+}
+
+// Test normalizedToFloat conversions with 10-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm10)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<10>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<10>(1023u)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<10>(511u)), 0.5f, 0.001);
+    EXPECT_NEAR((normalizedToFloat<10>(512u)), 0.5f, 0.001);
+}
+
+// Test normalizedToFloat conversions with 10-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatSnorm10)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<10>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<10>(+511)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<10>(-511)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<10>(-512)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<10>(+256)), +0.5f, 0.002);
+    EXPECT_NEAR((normalizedToFloat<10>(+255)), +0.5f, 0.002);
+    EXPECT_NEAR((normalizedToFloat<10>(-255)), -0.5f, 0.002);
+    EXPECT_NEAR((normalizedToFloat<10>(-256)), -0.5f, 0.002);
+}
+
+// Test normalizedToFloat conversions with 24-bit unsigned
+TEST(MathUtilTest, NormalizedToFloatUnorm24)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<24>(0u)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<24>(16777215u)), 1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<24>(8388607u)), 0.5f, 0.00000006);
+    EXPECT_NEAR((normalizedToFloat<24>(8388608u)), 0.5f, 0.00000006);
+}
+
+// Test normalizedToFloat conversions with 24-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm24)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<24>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<24>(+8388607)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<24>(-8388607)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<24>(-8388608)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<24>(+4194304)), +0.5f, 0.00000012);
+    EXPECT_NEAR((normalizedToFloat<24>(+4194303)), +0.5f, 0.00000012);
+    EXPECT_NEAR((normalizedToFloat<24>(-4194303)), -0.5f, 0.00000012);
+    EXPECT_NEAR((normalizedToFloat<24>(-4194304)), -0.5f, 0.00000012);
+}
+
+// Test normalizedToFloat conversions with 25-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm25)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<25>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<25>(+16777215)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<25>(-16777215)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<25>(-16777216)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<25>(+8388608)), +0.5f, 0.00000006);
+    EXPECT_NEAR((normalizedToFloat<25>(+8388607)), +0.5f, 0.00000006);
+    EXPECT_NEAR((normalizedToFloat<25>(-8388607)), -0.5f, 0.00000006);
+    EXPECT_NEAR((normalizedToFloat<25>(-8388608)), -0.5f, 0.00000006);
+}
+
+// Test normalizedToFloat conversions with 26-bit signed
+TEST(MathUtilTest, NormalizedToFloatSnorm26)
+{
+    // Check exact values
+    EXPECT_EQ((normalizedToFloat<26>(0)), 0.0f);
+    EXPECT_EQ((normalizedToFloat<26>(+33554431)), +1.0f);
+    EXPECT_EQ((normalizedToFloat<26>(-33554431)), -1.0f);
+    EXPECT_EQ((normalizedToFloat<26>(-33554432)), -1.0f);
+
+    // Check near values
+    EXPECT_NEAR((normalizedToFloat<26>(+16777216)), +0.5f, 0.00000003);
+    EXPECT_NEAR((normalizedToFloat<26>(+16777215)), +0.5f, 0.00000003);
+    EXPECT_NEAR((normalizedToFloat<26>(-16777215)), -0.5f, 0.00000003);
+    EXPECT_NEAR((normalizedToFloat<26>(-16777216)), -0.5f, 0.00000003);
+}
+
+// Test UnsignedCeilDivide
+TEST(MathUtilTest, UnsignedCeilDivide)
+{
+    EXPECT_EQ(0u, rx::UnsignedCeilDivide(0u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(1u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(4u, 5u));
+    EXPECT_EQ(1u, rx::UnsignedCeilDivide(5u, 5u));
+    EXPECT_EQ(2u, rx::UnsignedCeilDivide(6u, 5u));
+}
+
+// Test UnsignedCeilDivide64
+TEST(MathUtilTest, UnsignedCeilDivide64)
+{
+    EXPECT_EQ(0ull, rx::UnsignedCeilDivide64(0ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(1ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(4ull, 5ull));
+    EXPECT_EQ(1ull, rx::UnsignedCeilDivide64(5ull, 5ull));
+    EXPECT_EQ(2ull, rx::UnsignedCeilDivide64(6ull, 5ull));
+
+    uint64_t largeValue = 0xFFFFFFFF00000000ull;
+    EXPECT_EQ(0xFFFFFFFFull, rx::UnsignedCeilDivide64(largeValue, 0x100000000ull));
+    EXPECT_EQ(0x100000000ull, rx::UnsignedCeilDivide64(largeValue + 1, 0x100000000ull));
 }
 
 }  // anonymous namespace

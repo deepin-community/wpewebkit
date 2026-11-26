@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  * Copyright (C) 2011, 2012 Igalia S.L
  * Copyright (C) 2018 Sony Interactive Entertainment Inc.
  *
@@ -36,8 +36,8 @@ OBJC_CLASS NSView;
 #endif
 
 #if PLATFORM(GTK)
-#include <WebCore/GRefPtrGtk.h>
-#include <WebCore/GUniquePtrGtk.h>
+#include "GRefPtrGtk.h"
+#include "GUniquePtrGtk.h"
 #if USE(GTK4)
 typedef struct _GdkEvent GdkEvent;
 #else
@@ -78,12 +78,18 @@ public:
 #elif PLATFORM(IOS_FAMILY)
     enum class HandledByInputMethod : bool { No, Yes };
     NativeWebKeyboardEvent(::WebEvent *, HandledByInputMethod);
-#elif USE(LIBWPE)
+#elif PLATFORM(WPE)
+#if USE(LIBWPE)
     enum class HandledByInputMethod : bool { No, Yes };
     NativeWebKeyboardEvent(struct wpe_input_keyboard_event*, const String&, bool isAutoRepeat, HandledByInputMethod, std::optional<Vector<WebCore::CompositionUnderline>>&&, std::optional<EditingRange>&&);
-#if PLATFORM(WPE) && ENABLE(WPE_PLATFORM)
-    NativeWebKeyboardEvent(WPEEvent*, const String&, bool isAutoRepeat);
 #endif
+#if ENABLE(WPE_PLATFORM)
+    NativeWebKeyboardEvent(WPEEvent*, const String&, bool isAutoRepeat);
+    NativeWebKeyboardEvent(const String&, std::optional<Vector<WebCore::CompositionUnderline>>&&, std::optional<EditingRange>&&);
+#endif
+#elif PLATFORM(PLAYSTATION)
+    enum class HandledByInputMethod : bool { No, Yes };
+    NativeWebKeyboardEvent(struct wpe_input_keyboard_event*, const String&, bool isAutoRepeat, HandledByInputMethod, std::optional<Vector<WebCore::CompositionUnderline>>&&, std::optional<EditingRange>&&);
 #elif PLATFORM(WIN)
     NativeWebKeyboardEvent(HWND, UINT message, WPARAM, LPARAM, Vector<MSG>&& pendingCharEvents);
 #endif
@@ -95,8 +101,8 @@ public:
 #elif PLATFORM(IOS_FAMILY)
     ::WebEvent* nativeEvent() const { return m_nativeEvent.get(); }
 #elif PLATFORM(WIN)
-    const MSG* nativeEvent() const { return &m_nativeEvent; }
-    const Vector<MSG>& pendingCharEvents() const { return m_pendingCharEvents; }
+    const MSG* nativeEvent() const LIFETIME_BOUND { return &m_nativeEvent; }
+    const Vector<MSG>& pendingCharEvents() const LIFETIME_BOUND { return m_pendingCharEvents; }
 #else
     const void* nativeEvent() const { return nullptr; }
 #endif

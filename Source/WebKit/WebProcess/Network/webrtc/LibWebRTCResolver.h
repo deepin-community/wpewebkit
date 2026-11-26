@@ -30,19 +30,10 @@
 #include "LibWebRTCDnsResolverFactory.h"
 #include "LibWebRTCResolverIdentifier.h"
 #include <WebCore/LibWebRTCMacros.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Identified.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakPtr.h>
-
-namespace WebKit {
-class LibWebRTCResolver;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::LibWebRTCResolver> : std::true_type { };
-}
 
 namespace IPC {
 class Connection;
@@ -51,13 +42,15 @@ class Connection;
 namespace WebKit {
 class LibWebRTCSocketFactory;
 
-class LibWebRTCResolver final : public LibWebRTCDnsResolverFactory::Resolver, private webrtc::AsyncDnsResolverResult, public CanMakeWeakPtr<LibWebRTCResolver>, public Identified<LibWebRTCResolverIdentifier> {
+class LibWebRTCResolver final : public LibWebRTCDnsResolverFactory::Resolver, private webrtc::AsyncDnsResolverResult, public CanMakeCheckedPtr<LibWebRTCResolver>, public Identified<LibWebRTCResolverIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCResolver);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LibWebRTCResolver);
 public:
     LibWebRTCResolver() = default;
     ~LibWebRTCResolver();
 
-    void start(const rtc::SocketAddress&, Function<void()>&&) final;
+    void start(const webrtc::SocketAddress&, Function<void()>&&) final;
+    Function<void()> takeCallback();
 
 private:
     friend class WebRTCResolver;
@@ -66,16 +59,16 @@ private:
     const webrtc::AsyncDnsResolverResult& result() const final;
 
     // webrtc::AsyncDnsResolverResult
-    bool GetResolvedAddress(int family, rtc::SocketAddress*) const final;
+    bool GetResolvedAddress(int family, webrtc::SocketAddress*) const final;
     int GetError() const { return m_error; }
 
     void setError(int);
-    void setResolvedAddress(Vector<rtc::IPAddress>&&);
+    void setResolvedAddress(Vector<webrtc::IPAddress>&&);
 
     static void sendOnMainThread(Function<void(IPC::Connection&)>&&);
 
-    Vector<rtc::IPAddress> m_addresses;
-    rtc::SocketAddress m_addressToResolve;
+    Vector<webrtc::IPAddress> m_addresses;
+    webrtc::SocketAddress m_addressToResolve;
     Function<void()> m_callback;
     int m_error { 0 };
     uint16_t m_port { 0 };

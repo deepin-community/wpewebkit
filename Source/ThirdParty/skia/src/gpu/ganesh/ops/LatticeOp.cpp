@@ -11,25 +11,26 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/gpu/GpuTypes.h"
-#include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrRecordingContext.h"
-#include "include/gpu/GrTypes.h"
-#include "include/private/SkColorData.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrTypes.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkVx.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkLatticeIter.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/core/SkSafeMath.h"
+#include "src/core/SkVx.h"
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/SkBackingFit.h"
@@ -52,8 +53,8 @@
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
 
-#if defined(GR_TEST_UTILS)
-#include "src/base/SkRandom.h"
+#if defined(GPU_TEST_UTILS)
+#include "src/core/SkRandom.h"
 #include "src/gpu/ganesh/GrDrawOpTest.h"
 #include "src/gpu/ganesh/GrProxyProvider.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
@@ -288,11 +289,13 @@ private:
 
         int patchCnt = fPatches.size();
         int numRects = 0;
+
+        SkSafeMath safeMath;
         for (int i = 0; i < patchCnt; i++) {
-            numRects += fPatches[i].fIter->numRectsToDraw();
+            numRects = safeMath.addInt(numRects, fPatches[i].fIter->numRectsToDraw());
         }
 
-        if (!numRects) {
+        if (!numRects || !safeMath) {
             return;
         }
 
@@ -396,7 +399,7 @@ private:
         if (fFilter != that->fFilter) {
             return CombineResult::kCannotCombine;
         }
-        if (GrColorSpaceXform::Equals(fColorSpaceXform.get(), that->fColorSpaceXform.get())) {
+        if (!GrColorSpaceXform::Equals(fColorSpaceXform.get(), that->fColorSpaceXform.get())) {
             return CombineResult::kCannotCombine;
         }
         if (!fHelper.isCompatible(that->fHelper, caps, this->bounds(), that->bounds())) {
@@ -408,7 +411,7 @@ private:
         return CombineResult::kMerged;
     }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     SkString onDumpInfo() const override {
         SkString str;
 
@@ -461,7 +464,7 @@ GrOp::Owner MakeNonAA(GrRecordingContext* context,
 
 }  // namespace skgpu::ganesh::LatticeOp
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 
 /** Randomly divides subset into count divs. */
 static void init_random_divs(int divs[], int count, int subsetStart, int subsetStop,
@@ -568,7 +571,7 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
     dst.fTop = random->nextRangeScalar(-2000.5f, 1000.f);
     dst.fRight = dst.fLeft + random->nextRangeScalar(0.5f, 1000.f);
     dst.fBottom = dst.fTop + random->nextRangeScalar(0.5f, 1000.f);
-    std::unique_ptr<SkLatticeIter> iter(new SkLatticeIter(lattice, dst));
+    auto iter = std::make_unique<SkLatticeIter>(lattice, dst);
     SkMatrix viewMatrix = GrTest::TestMatrixPreservesRightAngles(random);
     auto csxf = GrTest::TestColorXform(random);
     GrSamplerState::Filter filter =

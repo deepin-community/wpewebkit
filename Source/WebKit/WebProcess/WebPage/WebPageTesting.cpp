@@ -26,17 +26,25 @@
 #include "config.h"
 #include "WebPageTesting.h"
 
+#include "DrawingArea.h"
 #include "NotificationPermissionRequestManager.h"
 #include "PluginView.h"
+#include "WebBackForwardListProxy.h"
 #include "WebNotificationClient.h"
 #include "WebPage.h"
 #include "WebPageTestingMessages.h"
 #include "WebProcess.h"
+#include <WebCore/BackForwardController.h>
+#include <WebCore/Document.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/Editor.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/IntPoint.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <WebCore/LocalFrameView.h>
 #include <WebCore/NotificationController.h>
 #include <WebCore/Page.h>
+#include <WebCore/WheelEventTestMonitor.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -44,32 +52,38 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebPageTesting);
 
+Ref<WebPageTesting> WebPageTesting::create(WebPage& page)
+{
+    return adoptRef(*new WebPageTesting(page));
+}
+
 WebPageTesting::WebPageTesting(WebPage& page)
     : m_page(page)
+    , m_pageIdentifier(page.identifier())
 {
-    WebProcess::singleton().addMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_page->identifier(), *this);
+    WebProcess::singleton().addMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_pageIdentifier, *this);
 }
 
 WebPageTesting::~WebPageTesting()
 {
-    WebProcess::singleton().removeMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_page->identifier());
-}
-
-void WebPageTesting::setDefersLoading(bool defersLoading)
-{
-    if (RefPtr page = m_page->corePage())
-        page->setDefersLoading(defersLoading);
+    WebProcess::singleton().removeMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_pageIdentifier);
 }
 
 void WebPageTesting::isLayerTreeFrozen(CompletionHandler<void(bool)>&& completionHandler)
 {
-    completionHandler(!!m_page->layerTreeFreezeReasons());
+    completionHandler(m_page && !!m_page->layerTreeFreezeReasons());
+}
+
+void WebPageTesting::numberOfLiveDocuments(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    completionHandler(WebCore::Document::allDocuments().size());
 }
 
 void WebPageTesting::setPermissionLevel(const String& origin, bool allowed)
 {
 #if ENABLE(NOTIFICATIONS)
-    if (RefPtr notificationPermissionRequestManager = protectedPage()->notificationPermissionRequestManager())
+    RefPtr page = m_page.get();
+    if (RefPtr notificationPermissionRequestManager = page ? page->notificationPermissionRequestManager() : nullptr)
         notificationPermissionRequestManager->setPermissionLevelForTesting(origin, allowed);
 #else
     UNUSED_PARAM(origin);
@@ -79,56 +93,132 @@ void WebPageTesting::setPermissionLevel(const String& origin, bool allowed)
 
 void WebPageTesting::isEditingCommandEnabled(const String& commandName, CompletionHandler<void(bool)>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
-    RefPtr frame = page->checkedFocusController()->focusedOrMainFrame();
+    RefPtr page = m_page.get();
+    if (!page)
+        return completionHandler(false);
+
+    RefPtr frame = page->corePage()->focusController().focusedOrMainFrame();
     if (!frame)
         return completionHandler(false);
 
 #if ENABLE(PDF_PLUGIN)
-    if (RefPtr pluginView = protectedPage()->focusedPluginViewForFrame(*frame))
+    if (RefPtr pluginView = page->focusedPluginViewForFrame(*frame))
         return completionHandler(pluginView->isEditingCommandEnabled(commandName));
 #endif
 
-    auto command = frame->checkedEditor()->command(commandName);
+    auto command = protect(frame->editor())->command(commandName);
     completionHandler(command.isSupported() && command.isEnabled());
 }
 
 #if ENABLE(NOTIFICATIONS)
 void WebPageTesting::clearNotificationPermissionState()
 {
-    RefPtr page = m_page->corePage();
-    auto& client = static_cast<WebNotificationClient&>(WebCore::NotificationController::from(page.get())->client());
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
+    auto& client = downcast<WebNotificationClient>(WebCore::NotificationController::from(page.get())->client());
     client.clearNotificationPermissionState();
 }
 #endif
 
 void WebPageTesting::clearWheelEventTestMonitor()
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     if (!page)
         return;
 
     page->clearWheelEventTestMonitor();
 }
 
-void WebPageTesting::setTopContentInset(float contentInset, CompletionHandler<void()>&& completionHandler)
+void WebPageTesting::startMonitoringWheelEventsForTesting(CompletionHandler<void()>&& completionHandler)
 {
-    protectedPage()->setTopContentInset(contentInset);
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
+    if (!page) {
+        completionHandler();
+        return;
+    }
+
+    page->startMonitoringWheelEvents(true);
     completionHandler();
 }
 
-void WebPageTesting::setPageScaleFactor(double scale, IntPoint origin, CompletionHandler<void()>&& completionHandler)
+void WebPageTesting::waitForWheelEventsToCompleteForTesting(CompletionHandler<void()>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
+    if (!page || !page->isMonitoringWheelEvents()) {
+        completionHandler();
+        return;
+    }
+
+    if (auto wheelEventTestMonitor = page->wheelEventTestMonitor())
+        wheelEventTestMonitor->setTestCallbackAndStartMonitoring(true, false, WTF::move(completionHandler));
+    else
+        completionHandler();
+}
+
+void WebPageTesting::setObscuredContentInsets(float top, float right, float bottom, float left, CompletionHandler<void()>&& completionHandler)
+{
+    if (RefPtr page = m_page.get())
+        page->setObscuredContentInsets({ top, right, bottom, left });
+    completionHandler();
+}
+
+void WebPageTesting::resetStateBetweenTests()
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    if (RefPtr mainFrame = page->mainFrame()) {
+        mainFrame->disownOpener();
+        mainFrame->tree().clearName();
+    }
+    if (auto* corePage = page->corePage()) {
+        // Force consistent "responsive" behavior for WebPage::eventThrottlingDelay() for testing. Tests can override via internals.
+        corePage->setEventThrottlingBehaviorOverride(WebCore::EventThrottlingBehavior::Responsive);
+    }
+}
+
+void WebPageTesting::clearCachedBackForwardListCounts(CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     if (!page)
         return completionHandler();
-    page->setPageScaleFactor(scale, origin);
+
+    Ref backForwardListProxy = downcast<WebBackForwardListProxy>(page->backForward().client());
+    backForwardListProxy->clearCachedListCounts();
     completionHandler();
 }
 
-Ref<WebPage> WebPageTesting::protectedPage() const
+void WebPageTesting::setTracksRepaints(bool trackRepaints, CompletionHandler<void()>&& completionHandler)
 {
-    return m_page.get();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
+    if (!page)
+        return completionHandler();
+
+    for (auto& rootFrame : page->rootFrames()) {
+        if (RefPtr view = rootFrame->view())
+            view->setTracksRepaints(trackRepaints);
+    }
+    completionHandler();
+}
+
+void WebPageTesting::displayAndTrackRepaints(CompletionHandler<void()>&& completionHandler)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    RefPtr corePage = m_page->corePage();
+    if (!corePage)
+        return completionHandler();
+
+    protect(page->drawingArea())->updateRenderingWithForcedRepaint();
+    for (auto& rootFrame : corePage->rootFrames()) {
+        if (RefPtr view = rootFrame->view()) {
+            view->setTracksRepaints(true);
+            view->resetTrackedRepaints();
+        }
+    }
+    completionHandler();
 }
 
 } // namespace WebKit

@@ -34,7 +34,7 @@
 namespace WebCore {
 
 class ImageBufferSkiaUnacceleratedBackend final : public ImageBufferSkiaSurfaceBackend {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ImageBufferSkiaUnacceleratedBackend);
+    WTF_MAKE_TZONE_ALLOCATED(ImageBufferSkiaUnacceleratedBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferSkiaUnacceleratedBackend);
 public:
     static std::unique_ptr<ImageBufferSkiaUnacceleratedBackend> create(const Parameters&, const ImageBufferCreationContext&);
@@ -47,7 +47,7 @@ private:
     RefPtr<NativeImage> createNativeImageReference() final;
 
     void getPixelBuffer(const IntRect&, PixelBuffer&) final;
-    void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) final;
+    void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) final;
 };
 
 } // namespace WebCore

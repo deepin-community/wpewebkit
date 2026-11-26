@@ -36,7 +36,6 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
-#include <wtf/text/StringHash.h>
 
 namespace JSC {
 
@@ -152,7 +151,7 @@ static void initializeOverrideInfo(const SourceCode& origCode, const String& new
     info.functionEnd = newProviderString.length() - 1;
 
     info.sourceCode =
-        SourceCode(WTFMove(newProvider), info.parametersStartOffset, info.functionEnd + 1, 1, 1);
+        SourceCode(WTF::move(newProvider), info.parametersStartOffset, info.functionEnd + 1, 1, 1);
 }
     
 bool FunctionOverrides::initializeOverrideFor(const SourceCode& origCode, FunctionOverrides::OverrideInfo& result)
@@ -170,7 +169,7 @@ bool FunctionOverrides::initializeOverrideFor(const SourceCode& origCode, Functi
     String newBody;
     {
         Locker locker { overrides.m_lock };
-        auto it = overrides.m_entries.find(WTFMove(sourceBodyString).isolatedCopy());
+        auto it = overrides.m_entries.find(WTF::move(sourceBodyString).isolatedCopy());
         if (it == overrides.m_entries.end())
             return false;
         newBody = it->value.isolatedCopy();
@@ -190,7 +189,8 @@ bool FunctionOverrides::initializeOverrideFor(const SourceCode& origCode, Functi
         exitProcess(EXIT_FAILURE); \
     } while (false)
 
-static bool hasDisallowedCharacters(const char* str, size_t length)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+static bool NODELETE hasDisallowedCharacters(const char* str, size_t length)
 {
     while (length--) {
         char c = *str++;
@@ -206,7 +206,9 @@ static bool hasDisallowedCharacters(const char* str, size_t length)
 static String parseClause(const char* keyword, size_t keywordLength, FILE* file, const char* line, char* buffer, size_t bufferSize)
 {
     FunctionOverridesAssertScope assertScope;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     const char* keywordPos = strstr(line, keyword);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     if (!keywordPos)
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Expecting '", keyword, "' clause:\n", line, "\n"));
     if (keywordPos != line)
@@ -218,33 +220,38 @@ static String parseClause(const char* keyword, size_t keywordLength, FILE* file,
     const char* delimiterEnd = strchr(delimiterStart, '{');
     if (!delimiterEnd)
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Missing { after '", keyword, "' clause start delimiter:\n", line, "\n"));
-    
+
     size_t delimiterLength = delimiterEnd - delimiterStart;
-    String delimiter({ delimiterStart, delimiterLength });
+    String delimiter(unsafeMakeSpan(delimiterStart, delimiterLength));
 
     if (hasDisallowedCharacters(delimiterStart, delimiterLength))
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Delimiter '", delimiter, "' cannot have '{', '}', or whitespace:\n", line, "\n"));
-    
+
     CString terminatorCString = makeString('}', delimiter).ascii();
     const char* terminator = terminatorCString.data();
     line = delimiterEnd; // Start from the {.
 
     StringBuilder builder;
     do {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         const char* p = strstr(line, terminator);
         if (p) {
             if (p[strlen(terminator)] != '\n')
                 FAIL_WITH_ERROR(SYNTAX_ERROR, ("Unexpected characters after '", keyword, "' clause end delimiter '", delimiter, "':\n", line, "\n"));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
             builder.append(std::span { line, p + 1 });
             return builder.toString();
         }
-        builder.append(span(line));
+        builder.append(unsafeSpan(line));
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     } while ((line = fgets(buffer, bufferSize, file)));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     FAIL_WITH_ERROR(SYNTAX_ERROR, ("'", keyword, "' clause end delimiter '", delimiter, "' not found:\n", builder.toString(), "\n", "Are you missing a '}' before the delimiter?\n"));
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void FunctionOverrides::parseOverridesInFile(const char* fileName)
 {
@@ -258,9 +265,11 @@ void FunctionOverrides::parseOverridesInFile(const char* fileName)
 
     char* line;
     char buffer[BUFSIZ];
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     while ((line = fgets(buffer, sizeof(buffer), file))) {
         if (strstr(line, "//") == line)
             continue;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         if (line[0] == '\n' || line[0] == '\0')
             continue;
@@ -270,7 +279,9 @@ void FunctionOverrides::parseOverridesInFile(const char* fileName)
         keywordLength = sizeof("override") - 1;
         String keyStr = parseClause("override", keywordLength, file, line, buffer, sizeof(buffer));
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         line = fgets(buffer, sizeof(buffer), file);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         keywordLength = sizeof("with") - 1;
         String valueStr = parseClause("with", keywordLength, file, line, buffer, sizeof(buffer));
@@ -280,8 +291,7 @@ void FunctionOverrides::parseOverridesInFile(const char* fileName)
     
     int result = fclose(file);
     if (result)
-        dataLogF("Failed to close file %s: %s\n", fileName, safeStrerror(errno).data());
+        dataLogLn("Failed to close file ", fileName, ": ", safeStrerror(errno).data());
 }
     
 } // namespace JSC
-

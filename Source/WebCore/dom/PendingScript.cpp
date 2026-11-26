@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  * Copyright (C) 2011-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -77,12 +77,12 @@ void PendingScript::notifyFinished(LoadableScript&)
 
 bool PendingScript::isLoaded() const
 {
-    return m_loadableScript && m_loadableScript->isLoaded();
+    return m_loadableScript && protect(m_loadableScript)->isLoaded();
 }
 
 bool PendingScript::hasError() const
 {
-    return m_loadableScript && m_loadableScript->hasError();
+    return m_loadableScript && protect(m_loadableScript)->hasError();
 }
 
 void PendingScript::setClient(PendingScriptClient& client)

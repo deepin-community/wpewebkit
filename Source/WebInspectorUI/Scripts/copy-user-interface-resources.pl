@@ -117,7 +117,7 @@ my $inspectorLicense = <<'EOF';
  * Copyright (C) 2008-2009 Anthony Ricaud <rik@webkit.org>
  * Copyright (C) 2009-2010 Joseph Pecoraro. All rights reserved.
  * Copyright (C) 2009-2011 Google Inc. All rights reserved.
- * Copyright (C) 2009 280 North Inc. All Rights Reserved.
+ * Copyright (C) 2009 280 North Inc. All rights reserved.
  * Copyright (C) 2010 Nikita Vasilyev. All rights reserved.
  * Copyright (C) 2011 Brian Grinstead All rights reserved.
  * Copyright (C) 2013 Matt Holden <jftholden@yahoo.com>
@@ -277,6 +277,14 @@ sub combineOrStripResourcesForWebKitAdditions() {
     } else {
         debugLog("Stripping resources provided by WebKitAdditions.");
         stripResourcesForWebKitAdditions();
+    }
+
+    # Copy the contents of the Protocol/Legacy directory from WebKitAdditions/WebInspectorUI/ if it exists
+    if (defined $webInspectorUIAdditionsDir) {
+        my $protocolLegacyAdditionsDir = File::Spec->catdir($webInspectorUIAdditionsDir, 'Protocol', 'Legacy');
+        if (-d $protocolLegacyAdditionsDir) {
+            ditto($protocolLegacyAdditionsDir, File::Spec->catdir($protocolDir, 'Legacy'));
+        }
     }
 }
 

@@ -44,17 +44,17 @@ ExceptionOr<Ref<WebCodecsAudioData>> WebCodecsAudioData::create(ScriptExecutionC
         return Exception { ExceptionCode::TypeError, "Invalid init data"_s };
 
     auto rawData = init.data.span();
-    auto data = PlatformRawAudioData::create(WTFMove(rawData), init.format, init.sampleRate, init.timestamp, init.numberOfFrames, init.numberOfChannels);
+    auto data = PlatformRawAudioData::create(WTF::move(rawData), init.format, init.sampleRate, init.timestamp, init.numberOfFrames, init.numberOfChannels);
 
     if (!data)
         return Exception { ExceptionCode::NotSupportedError, "AudioData creation failed"_s };
 
-    return adoptRef(*new WebCodecsAudioData(context, WebCodecsAudioInternalData { WTFMove(data) }));
+    return adoptRef(*new WebCodecsAudioData(context, WebCodecsAudioInternalData { WTF::move(data) }));
 }
 
 Ref<WebCodecsAudioData> WebCodecsAudioData::create(ScriptExecutionContext& context, Ref<PlatformRawAudioData>&& data)
 {
-    return adoptRef(*new WebCodecsAudioData(context, WebCodecsAudioInternalData { WTFMove(data) }));
+    return adoptRef(*new WebCodecsAudioData(context, WebCodecsAudioInternalData { WTF::move(data) }));
 }
 
 WebCodecsAudioData::WebCodecsAudioData(ScriptExecutionContext& context)
@@ -64,49 +64,41 @@ WebCodecsAudioData::WebCodecsAudioData(ScriptExecutionContext& context)
 
 WebCodecsAudioData::WebCodecsAudioData(ScriptExecutionContext& context, WebCodecsAudioInternalData&& data)
     : ContextDestructionObserver(&context)
-    , m_data(WTFMove(data))
+    , m_data(WTF::move(data))
+    , m_memoryCost(m_data.memoryCost())
 {
 }
 
-WebCodecsAudioData::~WebCodecsAudioData()
-{
-    if (m_isDetached)
-        return;
-    if (auto* context = scriptExecutionContext()) {
-        context->postTask([](auto& context) {
-            context.addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "A AudioData was destroyed without having been closed explicitly"_s);
-        });
-    }
-}
+WebCodecsAudioData::~WebCodecsAudioData() = default;
 
 std::optional<AudioSampleFormat> WebCodecsAudioData::format() const
 {
-    return m_data.audioData ? std::make_optional(m_data.audioData->format()) : std::nullopt;
+    return m_data.audioData ? std::make_optional(protect(m_data.audioData)->format()) : std::nullopt;
 }
 
 float WebCodecsAudioData::sampleRate() const
 {
-    return m_data.audioData ? m_data.audioData->sampleRate() : 0;
+    return m_data.audioData ? protect(m_data.audioData)->sampleRate() : 0;
 }
 
 size_t WebCodecsAudioData::numberOfFrames() const
 {
-    return m_data.audioData ? m_data.audioData->numberOfFrames() : 0;
+    return m_data.audioData ? protect(m_data.audioData)->numberOfFrames() : 0;
 }
 
 size_t WebCodecsAudioData::numberOfChannels() const
 {
-    return m_data.audioData ? m_data.audioData->numberOfChannels() : 0;
+    return m_data.audioData ? protect(m_data.audioData)->numberOfChannels() : 0;
 }
 
 std::optional<uint64_t> WebCodecsAudioData::duration()
 {
-    return m_data.audioData ? m_data.audioData->duration() : std::nullopt;
+    return m_data.audioData ? protect(m_data.audioData)->duration() : std::nullopt;
 }
 
 int64_t WebCodecsAudioData::timestamp() const
 {
-    return m_data.audioData ? m_data.audioData->timestamp() : 0;
+    return m_data.audioData ? protect(m_data.audioData)->timestamp() : 0;
 }
 
 // https://www.w3.org/TR/webcodecs/#dom-audiodata-allocationsize
@@ -141,10 +133,10 @@ ExceptionOr<void> WebCodecsAudioData::copyTo(BufferSource&& source, CopyToOption
     if (!WTF::safeMultiply(maxCopyElementCount, bytesPerSample, allocationSize))
         return Exception { ExceptionCode::RangeError, "Calculated destination buffer size overflows"_s };
 
-    if (allocationSize > source.length())
+    if (allocationSize > source.byteLength())
         return Exception { ExceptionCode::RangeError, "Buffer is too small"_s };
 
-    m_data.audioData->copyTo(source.mutableSpan(), destFormat, options.planeIndex, options.frameOffset, options.frameCount, maxCopyElementCount);
+    protect(m_data.audioData)->copyTo(source.mutableSpan(), destFormat, options.planeIndex, options.frameOffset, options.frameCount, maxCopyElementCount);
     return { };
 }
 
@@ -160,6 +152,7 @@ ExceptionOr<Ref<WebCodecsAudioData>> WebCodecsAudioData::clone(ScriptExecutionCo
 // https://www.w3.org/TR/webcodecs/#dom-audiodata-close
 void WebCodecsAudioData::close()
 {
+    m_memoryCost.store(0, std::memory_order_relaxed);
     m_data.audioData = nullptr;
 
     m_isDetached = true;

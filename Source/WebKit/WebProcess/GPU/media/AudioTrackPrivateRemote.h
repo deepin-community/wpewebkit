@@ -30,6 +30,7 @@
 
 #include <WebCore/AudioTrackPrivate.h>
 #include <WebCore/MediaPlayerIdentifier.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
 
@@ -38,11 +39,12 @@ class MediaPlayerPrivateRemote;
 struct AudioTrackPrivateRemoteConfiguration;
 
 class AudioTrackPrivateRemote final : public WebCore::AudioTrackPrivate {
+    WTF_MAKE_TZONE_ALLOCATED(AudioTrackPrivateRemote);
     WTF_MAKE_NONCOPYABLE(AudioTrackPrivateRemote)
 public:
     static Ref<AudioTrackPrivateRemote> create(GPUProcessConnection& gpuProcessConnection, WebCore::MediaPlayerIdentifier playerIdentifier, AudioTrackPrivateRemoteConfiguration&& configuration)
     {
-        return adoptRef(*new AudioTrackPrivateRemote(gpuProcessConnection, playerIdentifier, WTFMove(configuration)));
+        return adoptRef(*new AudioTrackPrivateRemote(gpuProcessConnection, playerIdentifier, WTF::move(configuration)));
     }
 
     WebCore::TrackID id() const final { return m_id; }
@@ -53,8 +55,8 @@ private:
 
     using AudioTrackKind = WebCore::AudioTrackPrivate::Kind;
     AudioTrackKind kind() const final { return m_kind; }
-    AtomString label() const final { return AtomString { m_label }; }
-    AtomString language() const final { return AtomString { m_language }; }
+    String label() const final { return m_label; }
+    String language() const final { return m_language; }
     int trackIndex() const final { return m_trackIndex; }
     void setEnabled(bool) final;
     MediaTime startTimeVariance() const final { return m_startTimeVariance; }

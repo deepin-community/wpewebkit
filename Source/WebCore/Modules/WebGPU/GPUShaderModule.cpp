@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPUShaderModule.h"
 
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUCompilationInfo.h"
 
@@ -38,13 +39,13 @@ String GPUShaderModule::label() const
 
 void GPUShaderModule::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    m_backing->setLabel(WTF::move(label));
 }
 
 void GPUShaderModule::getCompilationInfo(CompilationInfoPromise&& promise)
 {
-    m_backing->compilationInfo([promise = WTFMove(promise)](Ref<WebGPU::CompilationInfo>&& compilationInfo) mutable {
-        promise.resolve(GPUCompilationInfo::create(WTFMove(compilationInfo)));
+    m_backing->compilationInfo([promise = WTF::move(promise)](Ref<WebGPU::CompilationInfo>&& compilationInfo) mutable {
+        promise.resolve(GPUCompilationInfo::create(WTF::move(compilationInfo)));
     });
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,12 +26,17 @@
 #pragma once
 
 #include "AnchorPositionEvaluator.h"
+#include "PropertyCascade.h"
+#include "ResolvedStyle.h"
 #include "SelectorChecker.h"
 #include "SelectorMatchingState.h"
 #include "StyleChange.h"
-#include "StyleSharingResolver.h"
+#include "StyleComputedStyle.h"
+#include "StyleDisplay.h"
+#include "StylePositionTryFallback.h"
 #include "StyleUpdate.h"
 #include "Styleable.h"
+#include "TreeResolutionState.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
 
@@ -40,13 +45,15 @@ namespace WebCore {
 class Document;
 class Element;
 class Node;
-class RenderStyle;
 class ShadowRoot;
 
 namespace Style {
 
+class ComputedStyle;
 class Resolver;
+struct BuilderPositionTryFallback;
 struct MatchResult;
+struct PositionTryFallback;
 struct PseudoElementIdentifier;
 struct ResolutionContext;
 struct ResolvedStyle;
@@ -61,39 +68,52 @@ public:
 
     std::unique_ptr<Update> resolve();
 
-    bool hasUnresolvedQueryContainers() const { return m_hasUnresolvedQueryContainers; }
-    bool hasUnresolvedAnchorPositionedElements() const { return m_hasUnresolvedAnchorPositionedElements; }
+    bool needsInterleavedLayout() const { return m_needsInterleavedLayout; }
 
 private:
     enum class ResolutionType : uint8_t { RebuildUsingExisting, AnimationOnly, FastPathInherit, FullWithMatchResultCache, Full };
-    ResolvedStyle styleForStyleable(const Styleable&, ResolutionType, const ResolutionContext&, const RenderStyle* existingStyle);
+    ResolvedStyle styleForStyleable(const Styleable&, ResolutionType, const ResolutionContext&, const Style::ComputedStyle* existingStyle);
 
     void resolveComposedTree();
 
-    const RenderStyle* existingStyle(const Element&);
+    const Style::ComputedStyle* existingStyle(const Element&);
 
-    enum class AnchorPositionedElementAction : bool { None, SkipDescendants };
-    enum class QueryContainerAction : uint8_t { None, Resolve, Continue };
+    enum class LayoutInterleavingAction : uint8_t { None, SkipDescendants };
     enum class DescendantsToResolve : uint8_t { None, RebuildAllUsingExisting, ChildrenWithExplicitInherit, Children, All };
 
-    QueryContainerAction updateStateForQueryContainer(Element&, const RenderStyle*, Change&, DescendantsToResolve&);
+    LayoutInterleavingAction updateStateForQueryContainer(Element&, const Style::ComputedStyle*, DescendantsToResolve&);
 
-    std::pair<ElementUpdate, DescendantsToResolve> resolveElement(Element&, const RenderStyle* existingStyle, ResolutionType);
+    // For elements requiring style/layout interleaving (anchor-positioned and query
+    // containers), descendant resolution is deferred on the first style resolution
+    // pass and resumed in subsequent passes.
+    // When deferral is needed, deferDescendantResolution saves the internal state
+    // relevant to which descendants should be resolved.
+    void deferDescendantResolution(Element&, OptionSet<Change>, DescendantsToResolve);
+    // When descendant resolution can be resumed, resumeDescendantResolutionIfNeeded
+    // restores the previously saved state (if there is)
+    void resumeDescendantResolutionIfNeeded(Element&, OptionSet<Change>&, DescendantsToResolve&);
 
-    ElementUpdate createAnimatedElementUpdate(ResolvedStyle&&, const Styleable&, Change, const ResolutionContext&, IsInDisplayNoneTree = IsInDisplayNoneTree::No);
-    std::unique_ptr<RenderStyle> resolveStartingStyle(const ResolvedStyle&, const Styleable&, const ResolutionContext&) const;
-    HashSet<AnimatableCSSProperty> applyCascadeAfterAnimation(RenderStyle&, const HashSet<AnimatableCSSProperty>&, bool isTransition, const MatchResult&, const Element&, const ResolutionContext&);
+    std::pair<ElementUpdate, DescendantsToResolve> resolveElement(Element&, const Style::ComputedStyle* existingStyle, ResolutionType);
 
-    std::optional<ElementUpdate> resolvePseudoElement(Element&, const PseudoElementIdentifier&, const ElementUpdate&, IsInDisplayNoneTree);
+    ElementUpdate createAnimatedElementUpdate(ResolvedStyle&&, const Styleable&, OptionSet<Change>, const ResolutionContext&, IsInDisplayNoneTree = IsInDisplayNoneTree::No);
+    std::unique_ptr<Style::ComputedStyle> resolveStartingStyle(const ResolvedStyle&, const Styleable&, const ResolutionContext&);
+    std::unique_ptr<Style::ComputedStyle> resolveAfterChangeStyleForNonAnimated(const ResolvedStyle&, const Styleable&, const ResolutionContext&);
+    std::unique_ptr<Style::ComputedStyle> resolveAgainInDifferentContext(const ResolvedStyle&, const Styleable&, const Style::ComputedStyle& parentStyle,  OptionSet<PropertyCascade::PropertyType>, std::optional<BuilderPositionTryFallback>&&, const ResolutionContext&);
+    const Style::ComputedStyle& parentAfterChangeStyle(const Styleable&, const ResolutionContext&) const;
+
+    HashSet<AnimatableCSSProperty> applyCascadeAfterAnimation(Style::ComputedStyle&, const HashMap<AnimatableCSSProperty, EnumSet<PropertyCascade::AnimationSource>>&, const MatchResult&, const Element&, const ResolutionContext&);
+
+    std::optional<ElementUpdate> resolvePseudoElement(Element&, const PseudoElementIdentifier&, const ElementUpdate&, IsInDisplayNoneTree, const Style::ComputedStyle*);
     std::optional<ElementUpdate> resolveAncestorPseudoElement(Element&, const PseudoElementIdentifier&, const ElementUpdate&);
     std::optional<ResolvedStyle> resolveAncestorFirstLinePseudoElement(Element&, const ElementUpdate&);
     std::optional<ResolvedStyle> resolveAncestorFirstLetterPseudoElement(Element&, const ElementUpdate&, ResolutionContext&);
 
+    void resetStyleForNonRenderedDescendants(Element&);
+
     struct Scope : RefCounted<Scope> {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(TreeResolverScope);
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Scope, TreeResolverScope);
         Ref<Resolver> resolver;
         SelectorMatchingState selectorMatchingState;
-        SharingResolver sharingResolver;
         RefPtr<ShadowRoot> shadowRoot;
         RefPtr<Scope> enclosingScope;
 
@@ -104,79 +124,151 @@ private:
 
     struct Parent {
         Element* element;
-        const RenderStyle& style;
-        Change change { Change::None };
+        const Style::ComputedStyle& style;
+        OptionSet<Change> changes;
         DescendantsToResolve descendantsToResolve { DescendantsToResolve::None };
         bool didPushScope { false };
         bool resolvedFirstLineAndLetterChild { false };
         bool needsUpdateQueryContainerDependentStyle { false };
         IsInDisplayNoneTree isInDisplayNoneTree { IsInDisplayNoneTree::No };
 
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+        // Used to determine whether the AXObjectCache has already propagated down font and color updates for the current subtree.
+        bool didAXUpdateFontSubtree { false };
+        bool didAXUpdateTextColorSubtree { false };
+#endif
+
         Parent(Document&);
-        Parent(Element&, const RenderStyle&, Change, DescendantsToResolve, IsInDisplayNoneTree);
+        Parent(Element&, const Style::ComputedStyle&, OptionSet<Change>, DescendantsToResolve, IsInDisplayNoneTree);
     };
 
     Scope& scope() { return m_scopeStack.last(); }
     const Scope& scope() const { return m_scopeStack.last(); }
 
-    Parent& parent() { return m_parentStack.last(); }
-    const Parent& parent() const { return m_parentStack.last(); }
+    Parent& parent() LIFETIME_BOUND { return m_parentStack.last(); }
+    const Parent& parent() const LIFETIME_BOUND { return m_parentStack.last(); }
 
     void pushScope(ShadowRoot&);
     void pushEnclosingScope();
     void popScope();
 
-    void pushParent(Element&, const RenderStyle&, Change, DescendantsToResolve, IsInDisplayNoneTree);
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    void pushParent(Element&, const Style::ComputedStyle&, OptionSet<Change>, DescendantsToResolve, IsInDisplayNoneTree, bool, bool);
+#else
+    void pushParent(Element&, const Style::ComputedStyle&, OptionSet<Change>, DescendantsToResolve, IsInDisplayNoneTree);
+#endif
     void popParent();
     void popParentsToDepth(unsigned depth);
 
-    DescendantsToResolve computeDescendantsToResolve(const ElementUpdate&, const RenderStyle* existingStyle, Validity) const;
-    static std::optional<ResolutionType> determineResolutionType(const Element&, const RenderStyle*, DescendantsToResolve, Change parentChange);
-    static void resetDescendantStyleRelations(Element&, DescendantsToResolve);
+    DescendantsToResolve computeDescendantsToResolve(const ElementUpdate&, const Style::ComputedStyle* existingStyle, Validity) const;
+    static std::optional<ResolutionType> determineResolutionType(const Element&, const Style::ComputedStyle*, DescendantsToResolve, OptionSet<Change> parentChange);
+    void resetDescendantStyleRelations(Element&, DescendantsToResolve);
 
     ResolutionContext makeResolutionContext();
     ResolutionContext makeResolutionContextForPseudoElement(const ElementUpdate&, const PseudoElementIdentifier&);
-    std::optional<ResolutionContext> makeResolutionContextForInheritedFirstLine(const ElementUpdate&, const RenderStyle& inheritStyle);
-    const Parent* boxGeneratingParent() const;
-    const RenderStyle* parentBoxStyle() const;
-    const RenderStyle* parentBoxStyleForPseudoElement(const ElementUpdate&) const;
+    std::optional<ResolutionContext> makeResolutionContextForInheritedFirstLine(const ElementUpdate&, const Style::ComputedStyle& inheritStyle);
+    const Parent* boxGeneratingParent() const LIFETIME_BOUND;
+    const Style::ComputedStyle* parentBoxStyle() const LIFETIME_BOUND;
+    const Style::ComputedStyle* parentBoxStyleForPseudoElement(const ElementUpdate&) const LIFETIME_BOUND;
+    const Style::ComputedStyle* NODELETE documentElementStyle() const;
 
-    AnchorPositionedElementAction updateAnchorPositioningState(Element&, const RenderStyle*);
+    LayoutInterleavingAction updateAnchorPositioningState(Element&, const Style::ComputedStyle*);
 
-    struct QueryContainerState {
-        Change change { Change::None };
-        DescendantsToResolve descendantsToResolve { DescendantsToResolve::None };
-    };
+    void generatePositionOptionsIfNeeded(const ResolvedStyle&, const Styleable&, const ResolutionContext&);
+    std::unique_ptr<Style::ComputedStyle> generatePositionOption(const PositionTryFallback&, const ResolvedStyle&, const Styleable&, const ResolutionContext&);
+    struct PositionOptions;
+    void sortPositionOptionsIfNeeded(PositionOptions&, const Styleable&);
+    std::optional<ResolvedStyle> tryChoosePositionOption(const Styleable&, const ResolutionContext&);
 
-    Document& m_document;
-    std::unique_ptr<RenderStyle> m_documentElementStyle;
+    void updateForPositionVisibility(Style::ComputedStyle&, const Styleable&);
+
+    // This returns the style that was in effect (applied to the render tree) before we started the style resolution.
+    // Layout interleaving may cause different styles to be applied during the style resolution.
+    const Style::ComputedStyle* beforeResolutionStyle(const Element&, std::optional<PseudoElementIdentifier>);
+    void saveBeforeResolutionStyleForInterleaving(const Element&, const Style::ComputedStyle*);
+
+    bool hasUnresolvedAnchorPosition(const Styleable&) const;
+    bool hasResolvedAnchorPosition(const Styleable&) const;
+    // Returns true if (1) the styleable specifies position fallbacks and
+    // (2) we're in the middle of trying position options.
+    bool isTryingPositionOption(const Styleable&) const;
+
+    void collectChangedAnchorNames(const Style::ComputedStyle&, const Style::ComputedStyle* currentStyle);
+
+    static unsigned maximumRenderTreeDepth();
+
+    const CheckedRef<Document> m_document;
+    std::unique_ptr<Style::ComputedStyle> m_computedDocumentElementStyle;
 
     Vector<Ref<Scope>, 4> m_scopeStack;
     Vector<Parent, 32> m_parentStack;
     bool m_didSeePendingStylesheet { false };
+    bool m_isFullDocumentStyleRebuild { false };
 
-    HashMap<Ref<Element>, std::optional<QueryContainerState>> m_queryContainerStates;
-    bool m_hasUnresolvedQueryContainers { false };
+    // States relevant to deferring and resuming descendant resolution.
+    // Also see deferDescendantResolution and resumeDescendantResolutionIfNeeded.
+    struct DeferredDescendantResolutionState {
+        OptionSet<Change> changes;
+        DescendantsToResolve descendantsToResolve { DescendantsToResolve::None };
+    };
+    HashMap<Ref<Element>, DeferredDescendantResolutionState> m_deferredDescendantResolutionStates;
+    bool m_needsInterleavedLayout { false };
+    bool m_didFirstInterleavedLayout { false };
 
-    bool m_hasUnresolvedAnchorPositionedElements { false };
-    bool m_canFindAnchorsForNextAnchorPositionedElement { false };
+    struct QueryContainerState {
+        bool invalidated { false };
+    };
+    HashMap<Ref<Element>, QueryContainerState> m_queryContainerStates;
+
+    // This state gets passes to the style builder and holds state for a single tree resolution, including over any interleaving.
+    TreeResolutionState m_treeResolutionState;
+    HashMap<Ref<const Element>, std::unique_ptr<Style::ComputedStyle>> m_savedBeforeResolutionStylesForInterleaving;
+
+    struct PositionOption {
+        // New style after applying the option.
+        std::unique_ptr<Style::ComputedStyle> style;
+
+        // The position option used to generate the style. If option is nullopt, no position option is used.
+        std::optional<PositionTryFallback> option;
+
+        // The size of the content box of the element when the style is generated.
+        // Non-overlay scrollbars appearing or disappearing may affect the content box size that anchor functions are resolved against.
+        std::optional<LayoutSize> scrollContainerSizeOnGeneration;
+    };
+
+    struct PositionOptions {
+        // Array of option styles. By convention, the original style is at index 0.
+        Vector<PositionOption> optionStyles { };
+        ResolvedStyle originalResolvedStyle;
+        size_t index { 0 };
+        bool sorted { false };
+        bool chosen { false };
+        bool isFirstTry { true };
+
+        const Style::ComputedStyle& NODELETE originalStyle() const;
+        std::unique_ptr<Style::ComputedStyle> currentOption() const;
+    };
+    HashMap<WeakStyleable, PositionOptions> m_positionOptions;
+
+    HashSet<AtomString> m_changedAnchorNames;
+    bool m_allAnchorNamesInvalid { false };
 
     std::unique_ptr<Update> m_update;
 };
 
 // Integrate with the HTML5 event loop instead, see EventLoop.cpp and consumers.
 void deprecatedQueuePostResolutionCallback(Function<void()>&&);
-bool postResolutionCallbacksAreSuspended();
+bool NODELETE postResolutionCallbacksAreSuspended();
 
 class PostResolutionCallbackDisabler {
 public:
     enum class DrainCallbacks : bool { No, Yes };
     explicit PostResolutionCallbackDisabler(Document&, DrainCallbacks = DrainCallbacks::Yes);
     ~PostResolutionCallbackDisabler();
+
 private:
     DrainCallbacks m_drainCallbacks;
 };
 
-}
-
-}
+} // namespace Style
+} // namespace WebCore

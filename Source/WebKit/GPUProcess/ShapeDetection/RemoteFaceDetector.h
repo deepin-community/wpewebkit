@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "Connection.h"
+#include "RemoteRenderingBackend.h"
 #include "ShapeDetectionIdentifier.h"
 #include "StreamMessageReceiver.h"
 #include <WebCore/ProcessIdentifier.h>
@@ -54,35 +55,27 @@ class ObjectHeap;
 class RemoteFaceDetector : public IPC::StreamMessageReceiver {
 public:
     WTF_MAKE_TZONE_ALLOCATED(RemoteFaceDetector);
+    WTF_MAKE_NONCOPYABLE(RemoteFaceDetector);
 public:
-    static Ref<RemoteFaceDetector> create(Ref<WebCore::ShapeDetection::FaceDetector>&& faceDetector, ShapeDetection::ObjectHeap& objectHeap, RemoteRenderingBackend& backend, ShapeDetectionIdentifier identifier, WebCore::ProcessIdentifier webProcessIdentifier)
+    static Ref<RemoteFaceDetector> create(Ref<WebCore::ShapeDetection::FaceDetector>&& faceDetector, RemoteRenderingBackend& renderingBackend, ShapeDetectionIdentifier identifier)
     {
-        return adoptRef(*new RemoteFaceDetector(WTFMove(faceDetector), objectHeap, backend, identifier, webProcessIdentifier));
+        return adoptRef(*new RemoteFaceDetector(WTF::move(faceDetector), renderingBackend, identifier));
     }
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     virtual ~RemoteFaceDetector();
 
 private:
-    RemoteFaceDetector(Ref<WebCore::ShapeDetection::FaceDetector>&&, ShapeDetection::ObjectHeap&, RemoteRenderingBackend&, ShapeDetectionIdentifier, WebCore::ProcessIdentifier);
-
-    RemoteFaceDetector(const RemoteFaceDetector&) = delete;
-    RemoteFaceDetector(RemoteFaceDetector&&) = delete;
-    RemoteFaceDetector& operator=(const RemoteFaceDetector&) = delete;
-    RemoteFaceDetector& operator=(RemoteFaceDetector&&) = delete;
-
-    WebCore::ShapeDetection::FaceDetector& backing() { return m_backing; }
+    RemoteFaceDetector(Ref<WebCore::ShapeDetection::FaceDetector>&&, RemoteRenderingBackend&, ShapeDetectionIdentifier);
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void detect(WebCore::RenderingResourceIdentifier, CompletionHandler<void(Vector<WebCore::ShapeDetection::DetectedFace>&&)>&&);
 
-    Ref<WebCore::ShapeDetection::FaceDetector> m_backing;
-    WeakRef<ShapeDetection::ObjectHeap> m_objectHeap;
-    WeakRef<RemoteRenderingBackend> m_backend;
+    const Ref<WebCore::ShapeDetection::FaceDetector> m_backing;
+    const WeakRef<RemoteRenderingBackend> m_renderingBackend;
     const ShapeDetectionIdentifier m_identifier;
-    const WebCore::ProcessIdentifier m_webProcessIdentifier;
 };
 
 } // namespace WebKit

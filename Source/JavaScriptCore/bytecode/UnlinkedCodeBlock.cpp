@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2024 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,6 +51,7 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_numParameters(0)
     , m_hasCapturedVariables(false)
     , m_isBuiltinFunction(info.isBuiltinFunction())
+    , m_isBuiltinDefaultClassConstructor(info.isBuiltinDefaultClassConstructor())
     , m_superBinding(static_cast<unsigned>(info.superBinding()))
     , m_scriptMode(static_cast<unsigned>(info.scriptMode()))
     , m_isArrowFunctionContext(info.isArrowFunctionContext())
@@ -95,7 +96,7 @@ void UnlinkedCodeBlock::initializeLoopHintExecutionCounter()
 template<typename Visitor>
 void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    UnlinkedCodeBlock* thisObject = jsCast<UnlinkedCodeBlock*>(cell);
+    UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     Locker locker { thisObject->cellLock() };
@@ -111,8 +112,8 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         extraMemory += thisObject->m_instructions->sizeInBytes();
     if (thisObject->hasRareData())
         extraMemory += thisObject->m_rareData->sizeInBytes(locker);
-
-    extraMemory += thisObject->m_expressionInfo->byteSize();
+    if (thisObject->m_expressionInfo)
+        extraMemory += thisObject->m_expressionInfo->byteSize();
     extraMemory += thisObject->m_jumpTargets.byteSize();
     extraMemory += thisObject->m_identifiers.byteSize();
     extraMemory += thisObject->m_constantRegisters.byteSize();
@@ -127,7 +128,7 @@ DEFINE_VISIT_CHILDREN(UnlinkedCodeBlock);
 
 size_t UnlinkedCodeBlock::estimatedSize(JSCell* cell, VM& vm)
 {
-    UnlinkedCodeBlock* thisObject = jsCast<UnlinkedCodeBlock*>(cell);
+    UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     size_t extraSize = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
         extraSize += thisObject->m_instructions->sizeInBytes();
@@ -164,7 +165,7 @@ ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(Bytecode
 static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, LineColumn lineColumn, unsigned divot, unsigned startOffset, unsigned endOffset)
 {
     const auto instruction = instructionStream.at(instructionOffset);
-    const char* event = "";
+    ASCIILiteral event = "";
     if (instruction->is<OpDebug>()) {
         switch (instruction->as<OpDebug>().m_debugHookType) {
         case WillExecuteProgram: event = " WillExecuteProgram"; break;
@@ -174,9 +175,11 @@ static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& i
         case WillLeaveCallFrame: event = " WillLeaveCallFrame"; break;
         case WillExecuteStatement: event = " WillExecuteStatement"; break;
         case WillExecuteExpression: event = " WillExecuteExpression"; break;
+        case WillAwait: event = " WillAwait"; break;
+        case DidAwait: event = " DidAwait"; break;
         }
     }
-    dataLogF("  [%zu] pc %u @ line %u col %u divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, lineColumn.line, lineColumn.column, divot, startOffset, endOffset, instruction->name(), event);
+    SAFE_DATALOGF("  [%zu] pc %u @ line %u col %u divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, lineColumn.line, lineColumn.column, divot, startOffset, endOffset, instruction->name(), event);
 }
 
 void UnlinkedCodeBlock::dumpExpressionInfo()
@@ -221,7 +224,7 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
-    if (UNLIKELY(Options::returnEarlyFromInfiniteLoopsForFuzzing())) {
+    if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
         if (auto* instructions = m_instructions.get()) {
             VM& vm = this->vm();
             for (const auto& instruction : *instructions) {
@@ -282,14 +285,14 @@ bool UnlinkedCodeBlock::hasIdentifier(UniquedStringImpl* uid)
     if (numberOfIdentifiers() > 100) {
         if (numberOfIdentifiers() != m_cachedIdentifierUids.size()) {
             Locker locker(m_cachedIdentifierUidsLock);
-            HashSet<UniquedStringImpl*> cachedIdentifierUids;
+            UncheckedKeyHashSet<UniquedStringImpl*> cachedIdentifierUids;
             for (unsigned i = 0; i < numberOfIdentifiers(); ++i) {
                 const Identifier& identifier = this->identifier(i);
                 cachedIdentifierUids.add(identifier.impl());
             }
 
             WTF::storeStoreFence();
-            m_cachedIdentifierUids = WTFMove(cachedIdentifierUids);
+            m_cachedIdentifierUids = WTF::move(cachedIdentifierUids);
         }
 
         return m_cachedIdentifierUids.contains(uid);

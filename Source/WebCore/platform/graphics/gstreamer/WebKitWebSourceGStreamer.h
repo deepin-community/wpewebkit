@@ -28,6 +28,7 @@
 namespace WebCore {
 class MediaPlayer;
 class SecurityOrigin;
+class MediaPlayerPrivateGStreamer;
 }
 
 G_BEGIN_DECLS
@@ -39,7 +40,7 @@ G_BEGIN_DECLS
 #define WEBKIT_IS_WEB_SRC_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), WEBKIT_TYPE_WEB_SRC))
 #define WEBKIT_WEB_SRC_CAST(obj)       ((WebKitWebSrc*)(obj))
 
-#define WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME  "webkit.resource-loader"
+static constexpr auto WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME = "webkit.resource-loader"_s;
 
 struct WebKitWebSrcPrivate;
 
@@ -58,6 +59,8 @@ void webKitWebSrcSetResourceLoader(WebKitWebSrc*, WebCore::PlatformMediaResource
 void webKitWebSrcSetReferrer(WebKitWebSrc*, const String&);
 bool webKitSrcPassedCORSAccessCheck(WebKitWebSrc*);
 bool webKitSrcIsCrossOrigin(WebKitWebSrc*, const WebCore::SecurityOrigin&);
+bool webKitSrcIsSeekable(WebKitWebSrc*);
+void webKitWebSrcSetPlayer(WebKitWebSrc*, ThreadSafeWeakPtr<WebCore::MediaPlayerPrivateGStreamer>&&);
 
 G_END_DECLS
 

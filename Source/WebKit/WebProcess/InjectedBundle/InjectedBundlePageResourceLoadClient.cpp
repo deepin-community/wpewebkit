@@ -30,9 +30,12 @@
 #include "WKBundleAPICast.h"
 #include "WebFrame.h"
 #include "WebPage.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 using namespace WebCore;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InjectedBundlePageResourceLoadClient);
 
 InjectedBundlePageResourceLoadClient::InjectedBundlePageResourceLoadClient(const WKBundlePageResourceLoadClientBase* client)
 {
@@ -59,7 +62,7 @@ void InjectedBundlePageResourceLoadClient::willSendRequestForFrame(WebPage& page
         RefPtr<FormData> returnedHTTPBody = returnedResourceRequest.httpBody();
         request.updateFromDelegatePreservingOldProperties(returnedResourceRequest);
         if (returnedHTTPBody)
-            request.setHTTPBody(WTFMove(returnedHTTPBody));
+            request.setHTTPBody(WTF::move(returnedHTTPBody));
     } else
         request = { };
 }

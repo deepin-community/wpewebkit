@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include <WebCore/BlobData.h>
 #include <WebCore/FormData.h>
 #include <WebCore/HistoryItem.h>
+#include <WebCore/SerializedScriptValue.h>
 #include <wtf/FileSystem.h>
 
 namespace WebKit {
@@ -52,75 +53,74 @@ static HTTPBody toHTTPBody(const FormData& formData)
                 if (fileData.fileLength != BlobDataItem::toEndOfFile)
                     data.fileLength = fileData.fileLength;
                 data.expectedFileModificationTime = fileData.expectedFileModificationTime;
-                element.data = WTFMove(data);
+                element.data = WTF::move(data);
             }, [&] (const FormDataElement::EncodedBlobData& blobData) {
                 element.data = blobData.url.string();
             }
         );
 
-        httpBody.elements.append(WTFMove(element));
+        httpBody.elements.append(WTF::move(element));
     }
 
     return httpBody;
 }
 
-static FrameState toFrameState(const HistoryItem& historyItem)
+Ref<FrameState> toFrameState(const HistoryItem& historyItem)
 {
-    FrameState frameState;
+    Ref frameState = FrameState::create();
 
-    frameState.urlString = historyItem.urlString();
-    frameState.originalURLString = historyItem.originalURLString();
-    frameState.referrer = historyItem.referrer();
-    frameState.target = historyItem.target();
-    frameState.frameID = historyItem.frameID();
+    frameState->urlString = historyItem.urlString();
+    frameState->originalURLString = historyItem.originalURLString();
+    frameState->referrer = historyItem.referrer();
+    frameState->target = historyItem.target();
+    frameState->frameID = historyItem.frameID();
 
-    frameState.setDocumentState(historyItem.documentState());
+    frameState->setDocumentState(historyItem.documentState());
     if (RefPtr<SerializedScriptValue> stateObject = historyItem.stateObject())
-        frameState.stateObjectData = stateObject->wireBytes();
+        frameState->stateObjectData = stateObject->wireBytes();
 
-    frameState.documentSequenceNumber = historyItem.documentSequenceNumber();
-    frameState.itemSequenceNumber = historyItem.itemSequenceNumber();
+    frameState->documentSequenceNumber = historyItem.documentSequenceNumber();
+    frameState->itemSequenceNumber = historyItem.itemSequenceNumber();
 
-    frameState.scrollPosition = historyItem.scrollPosition();
-    frameState.shouldRestoreScrollPosition = historyItem.shouldRestoreScrollPosition();
-    frameState.pageScaleFactor = historyItem.pageScaleFactor();
+    frameState->navigationAPIKey = historyItem.navigationAPIKey();
 
-    if (FormData* formData = const_cast<HistoryItem&>(historyItem).formData()) {
-        HTTPBody httpBody = toHTTPBody(*formData);
+    frameState->scrollPosition = historyItem.scrollPosition();
+    frameState->shouldRestoreScrollPosition = historyItem.shouldRestoreScrollPosition();
+    frameState->pageScaleFactor = historyItem.pageScaleFactor();
+
+    if (RefPtr formData = const_cast<HistoryItem&>(historyItem).formData()) {
+        HTTPBody httpBody = toHTTPBody(formData.releaseNonNull());
         httpBody.contentType = historyItem.formContentType();
 
-        frameState.httpBody = WTFMove(httpBody);
+        frameState->httpBody = WTF::move(httpBody);
     }
 
+    frameState->itemID = historyItem.itemID();
+    frameState->frameItemID = historyItem.frameItemID();
+    frameState->shouldOpenExternalURLsPolicy = historyItem.shouldOpenExternalURLsPolicy();
+    frameState->sessionStateObject = historyItem.stateObject();
+    frameState->wasCreatedByJSWithoutUserInteraction = historyItem.wasCreatedByJSWithoutUserInteraction();
+    frameState->wasRestoredFromSession = historyItem.wasRestoredFromSession();
+    frameState->isInitialAboutBlank = historyItem.isInitialAboutBlank();
+    frameState->policyContainer = historyItem.policyContainer();
+
+    static constexpr auto maxTitleLength = 1000u; // Closest power of 10 above the W3C recommendation for Title length.
+    frameState->title = historyItem.title().left(maxTitleLength);
+
 #if PLATFORM(IOS_FAMILY)
-    frameState.exposedContentRect = historyItem.exposedContentRect();
-    frameState.unobscuredContentRect = historyItem.unobscuredContentRect();
-    frameState.minimumLayoutSizeInScrollViewCoordinates = historyItem.minimumLayoutSizeInScrollViewCoordinates();
-    frameState.contentSize = historyItem.contentSize();
-    frameState.scaleIsInitial = historyItem.scaleIsInitial();
-    frameState.obscuredInsets = historyItem.obscuredInsets();
+    frameState->exposedContentRect = historyItem.exposedContentRect();
+    frameState->unobscuredContentRect = historyItem.unobscuredContentRect();
+    frameState->minimumLayoutSizeInScrollViewCoordinates = historyItem.minimumLayoutSizeInScrollViewCoordinates();
+    frameState->contentSize = historyItem.contentSize();
+    frameState->scaleIsInitial = historyItem.scaleIsInitial();
+    frameState->obscuredInsets = historyItem.obscuredInsets();
 #endif
 
-    frameState.children = historyItem.children().map([](auto& childHistoryItem) {
+    frameState->children = historyItem.children().map([](auto& childHistoryItem) {
         return toFrameState(childHistoryItem);
     });
 
     return frameState;
-}
-
-BackForwardListItemState toBackForwardListItemState(const WebCore::HistoryItem& historyItem)
-{
-    static constexpr unsigned maxTitleLength = 1000; // Closest power of 10 above the W3C recommendation for Title length.
-
-    BackForwardListItemState state;
-    state.identifier = historyItem.identifier();
-    state.pageState.title = historyItem.title().left(maxTitleLength);
-    state.pageState.mainFrameState = toFrameState(historyItem);
-    state.pageState.shouldOpenExternalURLsPolicy = historyItem.shouldOpenExternalURLsPolicy();
-    state.pageState.sessionStateObject = historyItem.stateObject();
-    state.pageState.wasCreatedByJSWithoutUserInteraction = historyItem.wasCreatedByJSWithoutUserInteraction();
-    state.hasCachedPage = historyItem.isInBackForwardCache();
-    return state;
 }
 
 static Ref<FormData> toFormData(const HTTPBody& httpBody)
@@ -140,10 +140,10 @@ static Ref<FormData> toFormData(const HTTPBody& httpBody)
     return formData;
 }
 
-static void applyFrameState(WebCore::HistoryItemClient& client, HistoryItem& historyItem, const FrameState& frameState)
+static void applyFrameState(HistoryItemClient& client, HistoryItem& historyItem, const FrameState& frameState)
 {
     historyItem.setOriginalURLString(frameState.originalURLString);
-    historyItem.setReferrer(frameState.referrer);
+    historyItem.setReferrer(String { frameState.referrer });
     historyItem.setTarget(frameState.target);
     historyItem.setFrameID(frameState.frameID);
 
@@ -151,11 +151,14 @@ static void applyFrameState(WebCore::HistoryItemClient& client, HistoryItem& his
 
     if (frameState.stateObjectData) {
         Vector<uint8_t> stateObjectData = frameState.stateObjectData.value();
-        historyItem.setStateObject(SerializedScriptValue::createFromWireBytes(WTFMove(stateObjectData)));
+        historyItem.setStateObject(SerializedScriptValue::createFromWireBytes(WTF::move(stateObjectData)));
     }
 
     historyItem.setDocumentSequenceNumber(frameState.documentSequenceNumber);
     historyItem.setItemSequenceNumber(frameState.itemSequenceNumber);
+
+    if (frameState.navigationAPIKey)
+        historyItem.setNavigationAPIKey(*frameState.navigationAPIKey);
 
     historyItem.setScrollPosition(frameState.scrollPosition);
     historyItem.setShouldRestoreScrollPosition(frameState.shouldRestoreScrollPosition);
@@ -168,6 +171,14 @@ static void applyFrameState(WebCore::HistoryItemClient& client, HistoryItem& his
         historyItem.setFormData(toFormData(httpBody));
     }
 
+    historyItem.setShouldOpenExternalURLsPolicy(frameState.shouldOpenExternalURLsPolicy);
+    historyItem.setStateObject(frameState.sessionStateObject.get());
+    historyItem.setWasCreatedByJSWithoutUserInteraction(frameState.wasCreatedByJSWithoutUserInteraction);
+    historyItem.setWasRestoredFromSession(frameState.wasRestoredFromSession);
+    historyItem.setIsInitialAboutBlank(frameState.isInitialAboutBlank);
+    if (auto policyContainer = frameState.policyContainer)
+        historyItem.setPolicyContainer(*policyContainer);
+
 #if PLATFORM(IOS_FAMILY)
     historyItem.setExposedContentRect(frameState.exposedContentRect);
     historyItem.setUnobscuredContentRect(frameState.unobscuredContentRect);
@@ -177,21 +188,18 @@ static void applyFrameState(WebCore::HistoryItemClient& client, HistoryItem& his
     historyItem.setObscuredInsets(frameState.obscuredInsets);
 #endif
 
-    for (const auto& childFrameState : frameState.children) {
-        Ref<HistoryItem> childHistoryItem = HistoryItem::create(client, childFrameState.urlString, { }, { });
+    for (auto& childFrameState : frameState.children) {
+        Ref childHistoryItem = HistoryItem::create(client, childFrameState->urlString, { }, { }, childFrameState->itemID, childFrameState->frameItemID);
         applyFrameState(client, childHistoryItem, childFrameState);
 
-        historyItem.addChildItem(WTFMove(childHistoryItem));
+        historyItem.addChildItem(WTF::move(childHistoryItem));
     }
 }
 
-Ref<HistoryItem> toHistoryItem(WebCore::HistoryItemClient& client, const BackForwardListItemState& itemState)
+Ref<HistoryItem> toHistoryItem(HistoryItemClient& client, const FrameState& frameState)
 {
-    Ref<HistoryItem> historyItem = HistoryItem::create(client, itemState.pageState.mainFrameState.urlString, itemState.pageState.title, { }, itemState.identifier);
-    historyItem->setShouldOpenExternalURLsPolicy(itemState.pageState.shouldOpenExternalURLsPolicy);
-    historyItem->setStateObject(itemState.pageState.sessionStateObject.get());
-    applyFrameState(client, historyItem, itemState.pageState.mainFrameState);
-
+    Ref historyItem = HistoryItem::create(client, frameState.urlString, frameState.title, { }, frameState.itemID, frameState.frameItemID);
+    applyFrameState(client, historyItem, frameState);
     return historyItem;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Michael Emmel mike.emmel@gmail.com
  * Copyright (C) 2007, 2008 Alp Toker <alp@atoker.com>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
@@ -49,8 +49,8 @@
 
 namespace WebCore {
 
-void FontCascade::drawGlyphs(GraphicsContext& context, const Font& font, const GlyphBufferGlyph* glyphs,
-    const GlyphBufferAdvance* advances, unsigned numGlyphs, const FloatPoint& point,
+void FontCascade::drawGlyphs(GraphicsContext& context, const Font& font, std::span<const GlyphBufferGlyph> glyphs,
+    std::span<const GlyphBufferAdvance> advances, const FloatPoint& point,
     FontSmoothingMode fontSmoothingMode)
 {
     if (!font.platformData().size())
@@ -58,10 +58,10 @@ void FontCascade::drawGlyphs(GraphicsContext& context, const Font& font, const G
 
     auto xOffset = point.x();
     Vector<cairo_glyph_t> cairoGlyphs;
-    cairoGlyphs.reserveInitialCapacity(numGlyphs);
+    cairoGlyphs.reserveInitialCapacity(glyphs.size());
     {
         auto yOffset = point.y();
-        for (size_t i = 0; i < numGlyphs; ++i) {
+        for (size_t i = 0; i < glyphs.size(); ++i) {
             bool append = true;
 #if PLATFORM(WIN)
             // GlyphBuffer::makeGlyphInvisible expects 0xFFFF glyph is invisible. However, DirectWrite shows a blank square for it.
@@ -78,7 +78,7 @@ void FontCascade::drawGlyphs(GraphicsContext& context, const Font& font, const G
     double syntheticBoldOffset = font.syntheticBoldOffset();
 
     if (!font.allowsAntialiasing())
-        fontSmoothingMode = FontSmoothingMode::NoSmoothing;
+        fontSmoothingMode = FontSmoothingMode::None;
 
     ASSERT(context.hasPlatformContext());
     auto& state = context.state();
@@ -100,7 +100,7 @@ Path Font::platformPathForGlyph(Glyph glyph) const
         cairo_translate(cr.get(), syntheticBoldOffset, 0);
         cairo_glyph_path(cr.get(), &cairoGlyph, 1);
     }
-    return { PathCairo::create(WTFMove(cr)) };
+    return { PathCairo::create(WTF::move(cr)) };
 }
 
 FloatRect Font::platformBoundsForGlyph(Glyph glyph) const

@@ -59,7 +59,7 @@ struct _JSCWeakValuePrivate {
     JSC::JSWeakValue weakValueRef;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(JSCWeakValue, jsc_weak_value, G_TYPE_OBJECT, GObject)
 
@@ -91,6 +91,7 @@ static void jscWeakValueInitialize(JSCWeakValue* weakValue, JSCValue* value)
     JSCWeakValuePrivate* priv = weakValue->priv;
     auto* jsContext = jscContextGetJSContext(jsc_value_get_context(value));
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
+    JSC::JSLockHolder locker(globalObject->vm());
     auto& owner = weakValueHandleOwner();
     JSC::Weak<JSC::JSGlobalObject> weak(globalObject, &owner, weakValue);
     priv->globalObject.swap(weak);
@@ -98,9 +99,9 @@ static void jscWeakValueInitialize(JSCWeakValue* weakValue, JSCValue* value)
 
     JSC::JSValue jsValue = toJS(globalObject, jscValueGetJSValue(value));
     if (jsValue.isObject())
-        priv->weakValueRef.setObject(JSC::jsCast<JSC::JSObject*>(jsValue.asCell()), owner, weakValue);
+        priv->weakValueRef.setObject(uncheckedDowncast<JSC::JSObject>(jsValue.asCell()), owner, weakValue);
     else if (jsValue.isString())
-        priv->weakValueRef.setString(JSC::jsCast<JSC::JSString*>(jsValue.asCell()), owner, weakValue);
+        priv->weakValueRef.setString(uncheckedDowncast<JSC::JSString>(jsValue.asCell()), owner, weakValue);
     else
         priv->weakValueRef.setPrimitive(jsValue);
 }

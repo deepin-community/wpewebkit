@@ -46,7 +46,7 @@ public:
     unsigned hash() const { return m_attributedBundleIdentifier.hash(); }
     friend bool operator==(const WebPageNetworkParameters&, const WebPageNetworkParameters&) = default;
 
-    const String& attributedBundleIdentifier() const { return m_attributedBundleIdentifier; }
+    const String& attributedBundleIdentifier() const LIFETIME_BOUND { return m_attributedBundleIdentifier; }
 private:
     String m_attributedBundleIdentifier;
 };
@@ -54,12 +54,6 @@ private:
 } // namespace WebKit
 
 namespace WTF {
-
-template<> struct DefaultHash<WebKit::WebPageNetworkParameters> {
-    static unsigned hash(const WebKit::WebPageNetworkParameters& key) { return key.hash(); }
-    static bool equal(const WebKit::WebPageNetworkParameters& a, const WebKit::WebPageNetworkParameters& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = false;
-};
 
 template<> struct HashTraits<WebKit::WebPageNetworkParameters> : public SimpleClassHashTraits<WebKit::WebPageNetworkParameters> { };
 

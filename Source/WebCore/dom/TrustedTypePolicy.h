@@ -28,7 +28,6 @@
 #include "CreateHTMLCallback.h"
 #include "CreateScriptCallback.h"
 #include "CreateScriptURLCallback.h"
-#include "ExceptionOr.h"
 #include "ScriptWrappable.h"
 #include "TrustedTypePolicyOptions.h"
 #include <JavaScriptCore/Strong.h>
@@ -40,34 +39,35 @@ namespace WebCore {
 class TrustedHTML;
 class TrustedScript;
 class TrustedScriptURL;
-enum class TrustedType : int8_t;
-struct TrustedTypePolicyOptions;
 class WebCoreOpaqueRoot;
+struct TrustedTypePolicyOptions;
+template<typename> class ExceptionOr;
+
+enum class TrustedType : int8_t;
 
 enum class IfMissing : bool { Throw, ReturnNull };
 
 class TrustedTypePolicy : public ScriptWrappable, public RefCounted<TrustedTypePolicy> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(TrustedTypePolicy);
+    WTF_MAKE_TZONE_ALLOCATED(TrustedTypePolicy);
 public:
     static Ref<TrustedTypePolicy> create(const String&, const TrustedTypePolicyOptions&);
-    ~TrustedTypePolicy() = default;
+    ~TrustedTypePolicy();
+
     ExceptionOr<Ref<TrustedHTML>> createHTML(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&&);
     ExceptionOr<Ref<TrustedScript>> createScript(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&&);
     ExceptionOr<Ref<TrustedScriptURL>> createScriptURL(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&&);
     ExceptionOr<String> getPolicyValue(TrustedType trustedTypeName, const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&&, IfMissing = IfMissing::Throw);
-    const String name() const { return m_name; }
+    const String& name() const { return m_name; }
 
-    const TrustedTypePolicyOptions& options() const { return m_options; }
-    Lock& lock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
 private:
     TrustedTypePolicy(const String&, const TrustedTypePolicyOptions&);
 
-    String m_name;
-    TrustedTypePolicyOptions m_options WTF_GUARDED_BY_LOCK(m_lock);
-    mutable Lock m_lock;
+    const String m_name;
+    const TrustedTypePolicyOptions m_options;
 };
 
-WebCoreOpaqueRoot root(TrustedTypePolicy*);
+WebCoreOpaqueRoot NODELETE root(TrustedTypePolicy*);
 
 } // namespace WebCore

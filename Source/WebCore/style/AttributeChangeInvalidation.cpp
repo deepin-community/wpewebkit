@@ -28,12 +28,14 @@
 
 #include "ElementIterator.h"
 #include "ElementRareData.h"
+#include "NodeDocument.h"
+#include "NodeInlines.h"
 #include "StyleInvalidationFunctions.h"
 
 namespace WebCore {
 namespace Style {
 
-static bool mayBeAffectedByAttributeChange(const RuleFeatureSet& features, bool isHTML, const QualifiedName& attributeName)
+static bool NODELETE mayBeAffectedByAttributeChange(const RuleFeatureSet& features, bool isHTML, const QualifiedName& attributeName)
 {
     auto& nameSet = isHTML ? features.attributeLowercaseLocalNamesInRules : features.attributeLocalNamesInRules;
     return nameSet.contains(attributeName.localName());
@@ -44,7 +46,7 @@ void AttributeChangeInvalidation::invalidateStyle(const QualifiedName& attribute
     if (newValue == oldValue)
         return;
 
-    bool isHTML = m_element.isHTMLElement() && m_element.document().isHTMLDocument();
+    bool isHTML = m_element->isHTMLElement() && m_element->document().isHTMLDocument();
 
     bool shouldInvalidateCurrent = false;
     bool mayAffectStyleInShadowTree = false;
@@ -56,34 +58,37 @@ void AttributeChangeInvalidation::invalidateStyle(const QualifiedName& attribute
             mayAffectStyleInShadowTree = true;
         if (features.attributesAffectingHost.contains(attributeNameForLookups))
             shouldInvalidateCurrent = true;
-        else if (features.contentAttributeNamesInRules.contains(attributeNameForLookups))
+        else if (auto affectsShadowTree = features.substitutionAttributeNamesInRules.getOptional(attributeNameForLookups)) {
             shouldInvalidateCurrent = true;
+            // Only invalidate the host's shadow subtree if a shadow-piercing rule (::part(),
+            // ::placeholder, etc.) actually uses attr() on this attribute and the element has
+            // a shadow tree to invalidate.
+            if (m_element->shadowRoot() && *affectsShadowTree == RuleFeatureSet::AffectsShadowTree::Yes)
+                mayAffectStyleInShadowTree = true;
+        }
     });
 
     if (mayAffectStyleInShadowTree) {
         // FIXME: More fine-grained invalidation.
-        m_element.invalidateStyleForSubtree();
+        m_element->invalidateStyleForSubtree();
     }
 
     if (shouldInvalidateCurrent)
-        m_element.invalidateStyle();
+        m_element->invalidateStyle();
 
-    auto collect = [&](auto& ruleSets, std::optional<MatchElement> onlyMatchElement = { }) {
+    auto collect = [&](auto& ruleSets, std::optional<MatchElement::Relation> onlyRelation = { }) {
         auto* invalidationRuleSets = ruleSets.attributeInvalidationRuleSets(attributeNameForLookups);
         if (!invalidationRuleSets)
             return;
 
         for (auto& invalidationRuleSet : *invalidationRuleSets) {
-            if (onlyMatchElement && invalidationRuleSet.matchElement != onlyMatchElement)
+            if (onlyRelation && invalidationRuleSet.matchElement.relation != onlyRelation)
                 continue;
 
-            for (auto* selector : invalidationRuleSet.invalidationSelectors) {
-                if (!selector->isAttributeSelector()) {
-                    ASSERT_NOT_REACHED();
-                    continue;
-                }
-                bool oldMatches = !oldValue.isNull() && SelectorChecker::attributeSelectorMatches(m_element, attributeName, oldValue, *selector);
-                bool newMatches = !newValue.isNull() && SelectorChecker::attributeSelectorMatches(m_element, attributeName, newValue, *selector);
+            for (auto& selector : invalidationRuleSet.invalidationSelectors) {
+                ASSERT(selector.isAttributeSelector());
+                bool oldMatches = !oldValue.isNull() && SelectorChecker::attributeSelectorMatches(m_element, attributeName, oldValue, selector);
+                bool newMatches = !newValue.isNull() && SelectorChecker::attributeSelectorMatches(m_element, attributeName, newValue, selector);
                 if (oldMatches != newMatches) {
                     Invalidator::addToMatchElementRuleSets(m_matchElementRuleSets, invalidationRuleSet);
                     break;
@@ -92,10 +97,10 @@ void AttributeChangeInvalidation::invalidateStyle(const QualifiedName& attribute
         }
     };
 
-    collect(m_element.styleResolver().ruleSets());
+    collect(m_element->styleResolver().ruleSets());
 
-    if (auto* shadowRoot = m_element.shadowRoot())
-        collect(shadowRoot->styleScope().resolver().ruleSets(), MatchElement::Host);
+    if (RefPtr shadowRoot = m_element->shadowRoot())
+        collect(shadowRoot->styleScope().resolver().ruleSets(), MatchElement::Relation::Host);
 }
 
 void AttributeChangeInvalidation::invalidateStyleWithRuleSets()

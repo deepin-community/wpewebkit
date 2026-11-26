@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,13 +25,14 @@
 
 #pragma once
 
-#include "CustomElementFormValue.h"
-#include "Element.h"
-#include "GCReachableRef.h"
-#include "QualifiedName.h"
+#include <WebCore/CustomElementFormValue.h>
+#include <WebCore/Element.h>
+#include <WebCore/GCReachableRef.h>
+#include <WebCore/QualifiedName.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 
@@ -51,7 +52,7 @@ class HTMLFormElement;
 class JSCustomElementInterface;
 
 class CustomElementReactionQueueItem {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CustomElementReactionQueueItem);
     WTF_MAKE_NONCOPYABLE(CustomElementReactionQueueItem);
 public:
     enum class Type : uint8_t {
@@ -59,6 +60,7 @@ public:
         ElementUpgrade,
         Connected,
         Disconnected,
+        ConnectedMove,
         Adopted,
         AttributeChanged,
         FormAssociated,
@@ -81,7 +83,7 @@ public:
     using AttributeChangedPayload = std::tuple<QualifiedName, AtomString, AtomString>;
     using FormDisabledPayload = bool;
     using FormStateRestorePayload = CustomElementFormValue;
-    using Payload = std::optional<std::variant<AdoptedPayload, AttributeChangedPayload, FormAssociatedPayload, FormDisabledPayload, FormStateRestorePayload>>;
+    using Payload = std::optional<Variant<AdoptedPayload, AttributeChangedPayload, FormAssociatedPayload, FormDisabledPayload, FormStateRestorePayload>>;
 
     CustomElementReactionQueueItem();
     CustomElementReactionQueueItem(CustomElementReactionQueueItem&&);
@@ -97,7 +99,7 @@ private:
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#element-queue
 class CustomElementQueue {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CustomElementQueue);
     WTF_MAKE_NONCOPYABLE(CustomElementQueue);
 public:
     CustomElementQueue() = default;
@@ -117,7 +119,7 @@ private:
 };
 
 class CustomElementReactionQueue final : public CanMakeCheckedPtr<CustomElementReactionQueue> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(CustomElementReactionQueue);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CustomElementReactionQueue);
     WTF_MAKE_NONCOPYABLE(CustomElementReactionQueue);
 public:
@@ -128,6 +130,7 @@ public:
     static void tryToUpgradeElement(Element&);
     static void enqueueConnectedCallbackIfNeeded(Element&);
     static void enqueueDisconnectedCallbackIfNeeded(Element&);
+    static void enqueueConnectedMoveCallbackIfNeeded(Element&);
     static void enqueueAdoptedCallbackIfNeeded(Element&, Document& oldDocument, Document& newDocument);
     static void enqueueAttributeChangedCallbackIfNeeded(Element&, const QualifiedName&, const AtomString& oldValue, const AtomString& newValue);
     static void enqueueFormAssociatedCallbackIfNeeded(Element&, HTMLFormElement*);
@@ -136,12 +139,12 @@ public:
     static void enqueueFormStateRestoreCallbackIfNeeded(Element&, CustomElementFormValue&&);
     static void enqueuePostUpgradeReactions(Element&);
 
-    bool observesStyleAttribute() const;
-    bool isElementInternalsDisabled() const;
-    bool isElementInternalsAttached() const;
-    void setElementInternalsAttached();
-    bool isFormAssociated() const;
-    bool hasFormStateRestoreCallback() const;
+    bool NODELETE observesStyleAttribute() const;
+    bool NODELETE isElementInternalsDisabled() const;
+    bool isElementInternalsAttached() const { return m_elementInternalsAttached; }
+    void NODELETE setElementInternalsAttached();
+    bool NODELETE isFormAssociated() const;
+    bool NODELETE hasFormStateRestoreCallback() const;
 
     void invokeAll(Element&);
     void clear();
@@ -159,7 +162,7 @@ private:
 
     using Item = CustomElementReactionQueueItem;
 
-    Ref<JSCustomElementInterface> m_interface;
+    const Ref<JSCustomElementInterface> m_interface;
     Vector<Item, 1> m_items;
     bool m_elementInternalsAttached { false };
 };
@@ -227,7 +230,7 @@ public:
 
     ALWAYS_INLINE ~CustomElementReactionStack()
     {
-        if (UNLIKELY(!m_queue.isEmpty()))
+        if (!m_queue.isEmpty()) [[unlikely]]
             m_queue.processQueue(m_state);
         s_currentProcessingStack = m_previousProcessingStack;
     }

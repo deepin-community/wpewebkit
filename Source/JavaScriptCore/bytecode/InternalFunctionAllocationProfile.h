@@ -25,9 +25,8 @@
 
 #pragma once
 
-#include "JSGlobalObject.h"
-#include "SlotVisitor.h"
-#include "WriteBarrier.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/WriteBarrier.h>
 
 namespace JSC {
 
@@ -47,7 +46,7 @@ private:
 
 inline Structure* InternalFunctionAllocationProfile::createAllocationStructureFromBase(VM& vm, JSGlobalObject* baseGlobalObject, JSCell* owner, JSObject* prototype, Structure* baseStructure, InlineWatchpointSet& watchpointSet)
 {
-    ASSERT(!m_structureID || m_structureID.get()->classInfoForCells() != baseStructure->classInfoForCells() || m_structureID->globalObject() != baseStructure->globalObject());
+    ASSERT(!m_structureID || m_structureID.get()->classInfoForCells() != baseStructure->classInfoForCells() || m_structureID->realm() != baseStructure->realm());
     ASSERT(baseStructure->hasMonoProto());
 
     Structure* structure;
@@ -65,7 +64,7 @@ inline Structure* InternalFunctionAllocationProfile::createAllocationStructureFr
     // function Foo() { }
     // Reflect.construct(Promise, [], Foo);
     // Reflect.construct(Int8Array, [], Foo);
-    if (UNLIKELY(m_structureID && m_structureID.value() != structure->id()))
+    if (m_structureID && m_structureID.value() != structure->id()) [[unlikely]]
         watchpointSet.fireAll(vm, "InternalFunctionAllocationProfile rotated to a new structure");
 
     m_structureID.set(vm, owner, structure);

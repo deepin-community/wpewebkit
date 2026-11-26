@@ -30,12 +30,13 @@
 #include "HTMLAudioElement.h"
 
 #include "CommonAtomStrings.h"
+#include "EventTarget.h"
 #include "HTMLNames.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLAudioElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLAudioElement);
 
 using namespace HTMLNames;
 
@@ -59,6 +60,8 @@ Ref<HTMLAudioElement> HTMLAudioElement::createForLegacyFactoryFunction(Document&
     element->setAttributeWithoutSynchronization(srcAttr, src);
     return element;
 }
+
+HTMLAudioElement::~HTMLAudioElement() = default;
 
 }
 

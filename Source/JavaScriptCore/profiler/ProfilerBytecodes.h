@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "CodeBlockHash.h"
-#include "JSCJSValue.h"
-#include "ProfilerBytecodeSequence.h"
+#include <JavaScriptCore/CodeBlockHash.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/ProfilerBytecodeSequence.h>
 #include <wtf/PrintStream.h>
 #include <wtf/text/WTFString.h>
 
@@ -39,8 +39,8 @@ public:
     ~Bytecodes();
     
     size_t id() const { return m_id; }
-    const CString& inferredName() const { return m_inferredName; }
-    const CString& sourceCode() const { return m_sourceCode; }
+    const CString& inferredName() const LIFETIME_BOUND { return m_inferredName; }
+    const CString& sourceCode() const LIFETIME_BOUND { return m_sourceCode; }
     unsigned instructionCount() const { return m_instructionCount; }
     CodeBlockHash hash() const { return m_hash; }
 

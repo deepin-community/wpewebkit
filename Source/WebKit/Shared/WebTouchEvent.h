@@ -27,7 +27,11 @@
 #pragma once
 
 #include "WebEvent.h"
-#include <WebCore/IntPoint.h>
+#include <WebCore/DoublePoint.h>
+
+namespace WebCore {
+class RemoteFrameGeometryTransformer;
+}
 
 namespace WebKit {
 
@@ -52,20 +56,25 @@ public:
     };
 
     WebPlatformTouchPoint() = default;
-    WebPlatformTouchPoint(unsigned identifier, WebCore::IntPoint location, State phase)
+    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint previousLocationInRootView, WebCore::DoublePoint locationInViewport, State phase)
         : m_identifier(identifier)
-        , m_location(location)
+        , m_locationInRootView(locationInRootView)
+        , m_previousLocationInRootView(previousLocationInRootView)
+        , m_locationInViewport(locationInViewport)
         , m_phase(phase)
     {
     }
 #if ENABLE(IOS_TOUCH_EVENTS)
-    WebPlatformTouchPoint(unsigned identifier, WebCore::IntPoint location, State phase, double radiusX, double radiusY, double rotationAngle, double force, double altitudeAngle, double azimuthAngle, TouchType touchType)
+    WebPlatformTouchPoint(unsigned identifier, WebCore::DoublePoint locationInRootView, WebCore::DoublePoint previousLocationInRootView, WebCore::DoublePoint locationInViewport, State phase, double radiusX, double radiusY, double rotationAngle, double twist, double force, double altitudeAngle, double azimuthAngle, TouchType touchType)
         : m_identifier(identifier)
-        , m_location(location)
+        , m_locationInRootView(locationInRootView)
+        , m_previousLocationInRootView(previousLocationInRootView)
+        , m_locationInViewport(locationInViewport)
         , m_phase(phase)
         , m_radiusX(radiusX)
         , m_radiusY(radiusY)
         , m_rotationAngle(rotationAngle)
+        , m_twist(twist)
         , m_force(force)
         , m_altitudeAngle(altitudeAngle)
         , m_azimuthAngle(azimuthAngle)
@@ -75,9 +84,13 @@ public:
 #endif
 
     unsigned identifier() const { return m_identifier; }
-    WebCore::IntPoint location() const { return m_location; }
+    WebCore::DoublePoint locationInRootView() const { return m_locationInRootView; }
+    WebCore::DoublePoint previousLocationInRootView() const { return m_previousLocationInRootView; }
+    WebCore::DoublePoint locationInViewport() const { return m_locationInViewport; }
     State phase() const { return m_phase; }
     State state() const { return phase(); }
+
+    void transformToRemoteFrameCoordinates(const WebCore::RemoteFrameGeometryTransformer&);
 
 #if ENABLE(IOS_TOUCH_EVENTS)
     void setRadiusX(double radiusX) { m_radiusX = radiusX; }
@@ -86,6 +99,8 @@ public:
     double radiusY() const { return m_radiusY; }
     void setRotationAngle(double rotationAngle) { m_rotationAngle = rotationAngle; }
     double rotationAngle() const { return m_rotationAngle; }
+    void setTwist(double twist) { m_twist = twist; }
+    double twist() const { return m_twist; }
     void setForce(double force) { m_force = force; }
     double force() const { return m_force; }
     void setAltitudeAngle(double altitudeAngle) { m_altitudeAngle = altitudeAngle; }
@@ -99,12 +114,15 @@ public:
 
 private:
     unsigned m_identifier { 0 };
-    WebCore::IntPoint m_location;
+    WebCore::DoublePoint m_locationInRootView;
+    WebCore::DoublePoint m_previousLocationInRootView;
+    WebCore::DoublePoint m_locationInViewport;
     State m_phase { State::Released };
 #if ENABLE(IOS_TOUCH_EVENTS)
     double m_radiusX { 0 };
     double m_radiusY { 0 };
     double m_rotationAngle { 0 };
+    double m_twist { std::numbers::pi };
     double m_force { 0 };
     double m_altitudeAngle { 0 };
     double m_azimuthAngle { 0 };
@@ -114,8 +132,8 @@ private:
 
 class WebTouchEvent : public WebEvent {
 public:
-    WebTouchEvent(WebEvent&& event, const Vector<WebPlatformTouchPoint>& touchPoints, const Vector<WebTouchEvent>& coalescedEvents, const Vector<WebTouchEvent>& predictedEvents, WebCore::IntPoint position, bool isPotentialTap, bool isGesture, float gestureScale, float gestureRotation, bool canPreventNativeGestures = true)
-        : WebEvent(WTFMove(event))
+    WebTouchEvent(WebEvent&& event, const Vector<WebPlatformTouchPoint>& touchPoints, const Vector<WebTouchEvent>& coalescedEvents, const Vector<WebTouchEvent>& predictedEvents, WebCore::DoublePoint position, bool isPotentialTap, bool isGesture, float gestureScale, float gestureRotation, bool canPreventNativeGestures = true)
+        : WebEvent(WTF::move(event))
         , m_touchPoints(touchPoints)
         , m_coalescedEvents(coalescedEvents)
         , m_predictedEvents(predictedEvents)
@@ -129,16 +147,17 @@ public:
         ASSERT(type() == WebEventType::TouchStart || type() == WebEventType::TouchMove || type() == WebEventType::TouchEnd || type() == WebEventType::TouchCancel);
     }
 
-    const Vector<WebPlatformTouchPoint>& touchPoints() const { return m_touchPoints; }
+    const Vector<WebPlatformTouchPoint>& touchPoints() const LIFETIME_BOUND { return m_touchPoints; }
 
-    const Vector<WebTouchEvent>& coalescedEvents() const { return m_coalescedEvents; }
+    const Vector<WebTouchEvent>& coalescedEvents() const LIFETIME_BOUND { return m_coalescedEvents; }
     void setCoalescedEvents(const Vector<WebTouchEvent>& coalescedEvents) { m_coalescedEvents = coalescedEvents; }
 
-    const Vector<WebTouchEvent>& predictedEvents() const { return m_predictedEvents; }
+    const Vector<WebTouchEvent>& predictedEvents() const LIFETIME_BOUND { return m_predictedEvents; }
     void setPredictedEvents(const Vector<WebTouchEvent>& predictedEvents) { m_predictedEvents = predictedEvents; }
 
-    WebCore::IntPoint position() const { return m_position; }
-    void setPosition(WebCore::IntPoint position) { m_position = position; }
+    WebCore::DoublePoint position() const { return m_position; }
+
+    void transformToRemoteFrameCoordinates(const WebCore::RemoteFrameGeometryTransformer&);
 
     bool isPotentialTap() const { return m_isPotentialTap; }
 
@@ -156,12 +175,15 @@ private:
     Vector<WebTouchEvent> m_coalescedEvents;
     Vector<WebTouchEvent> m_predictedEvents;
 
-    WebCore::IntPoint m_position;
+    WebCore::DoublePoint m_position;
     bool m_canPreventNativeGestures { false };
     bool m_isPotentialTap { false };
     bool m_isGesture { false };
     float m_gestureScale { 0 };
     float m_gestureRotation { 0 };
+#if ASSERT_ENABLED
+    bool m_hasTransformedToRemoteFrameCoordinates { false };
+#endif
 };
 
 #else // !PLATFORM(IOS_FAMILY)
@@ -179,16 +201,16 @@ public:
     WebPlatformTouchPoint()
         : m_rotationAngle(0.0), m_force(0.0) { }
 
-    WebPlatformTouchPoint(uint32_t id, State, const WebCore::IntPoint& screenPosition, const WebCore::IntPoint& position);
+    WebPlatformTouchPoint(uint32_t id, State, const WebCore::DoublePoint& screenPosition, const WebCore::DoublePoint& position);
 
-    WebPlatformTouchPoint(uint32_t id, State, const WebCore::IntPoint& screenPosition, const WebCore::IntPoint& position, const WebCore::IntSize& radius, float rotationAngle = 0.0, float force = 0.0);
-    
+    WebPlatformTouchPoint(uint32_t id, State, const WebCore::DoublePoint& screenPosition, const WebCore::DoublePoint& position, const WebCore::DoubleSize& radius, float rotationAngle = 0.0, float force = 0.0);
+
     uint32_t id() const { return m_id; }
     State state() const { return m_state; }
 
-    const WebCore::IntPoint& screenPosition() const { return m_screenPosition; }
-    const WebCore::IntPoint& position() const { return m_position; }
-    const WebCore::IntSize& radius() const { return m_radius; }
+    const WebCore::DoublePoint& screenPosition() const LIFETIME_BOUND { return m_screenPosition; }
+    const WebCore::DoublePoint& position() const LIFETIME_BOUND { return m_position; }
+    const WebCore::DoubleSize& radius() const LIFETIME_BOUND { return m_radius; }
     float rotationAngle() const { return m_rotationAngle; }
     float force() const { return m_force; }
 
@@ -197,9 +219,9 @@ public:
 private:
     uint32_t m_id;
     State m_state;
-    WebCore::IntPoint m_screenPosition;
-    WebCore::IntPoint m_position;
-    WebCore::IntSize m_radius;
+    WebCore::DoublePoint m_screenPosition;
+    WebCore::DoublePoint m_position;
+    WebCore::DoubleSize m_radius;
     float m_rotationAngle;
     float m_force;
 };
@@ -208,13 +230,21 @@ class WebTouchEvent : public WebEvent {
 public:
     WebTouchEvent(WebEvent&&, Vector<WebPlatformTouchPoint>&&, Vector<WebTouchEvent>&&, Vector<WebTouchEvent>&&);
 
-    const Vector<WebPlatformTouchPoint>& touchPoints() const { return m_touchPoints; }
+    const Vector<WebPlatformTouchPoint>& touchPoints() const LIFETIME_BOUND { return m_touchPoints; }
 
-    const Vector<WebTouchEvent>& coalescedEvents() const { return m_coalescedEvents; }
+    const Vector<WebTouchEvent>& coalescedEvents() const LIFETIME_BOUND { return m_coalescedEvents; }
 
-    const Vector<WebTouchEvent>& predictedEvents() const { return m_predictedEvents; }
+    const Vector<WebTouchEvent>& predictedEvents() const LIFETIME_BOUND { return m_predictedEvents; }
 
     bool allTouchPointsAreReleased() const;
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    void mergeMovedTouchPointsFrom(const WebTouchEvent&);
+#endif
+
+#if PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
+    virtual bool isNativeWebTouchEvent() const { return false; }
+#endif
 
 private:
     static bool isTouchEventType(WebEventType);

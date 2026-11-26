@@ -24,6 +24,7 @@
 #include "FloatRect.h"
 #include "FloatSize.h"
 #include "Image.h"
+#include "NativeImage.h"
 
 namespace WebCore {
 
@@ -35,11 +36,6 @@ SVGImageForContainer::SVGImageForContainer(SVGImage* image, const FloatSize& con
 {
 }
 
-RefPtr<SVGImage> SVGImageForContainer::protectedImage() const
-{
-    return m_image.get();
-}
-
 FloatSize SVGImageForContainer::size(ImageOrientation) const
 {
     FloatSize scaledContainerSize(m_containerSize);
@@ -49,18 +45,18 @@ FloatSize SVGImageForContainer::size(ImageOrientation) const
 
 ImageDrawResult SVGImageForContainer::draw(GraphicsContext& context, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
-    return protectedImage()->drawForContainer(context, m_containerSize, m_containerZoom, m_initialFragmentURL, dstRect, srcRect, options);
+    return protect(m_image)->drawForContainer(context, m_containerSize, m_containerZoom, m_initialFragmentURL, dstRect, srcRect, options);
 }
 
 void SVGImageForContainer::drawPattern(GraphicsContext& context, const FloatRect& dstRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
     const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
 {
-    protectedImage()->drawPatternForContainer(context, m_containerSize, m_containerZoom, m_initialFragmentURL, srcRect, patternTransform, phase, spacing, dstRect, options);
+    protect(m_image)->drawPatternForContainer(context, m_containerSize, m_containerZoom, m_initialFragmentURL, srcRect, patternTransform, phase, spacing, dstRect, options);
 }
 
 RefPtr<NativeImage> SVGImageForContainer::currentNativeImage()
 {
-    return protectedImage()->currentNativeImage();
+    return protect(m_image)->nativeImage(size());
 }
 
 } // namespace WebCore

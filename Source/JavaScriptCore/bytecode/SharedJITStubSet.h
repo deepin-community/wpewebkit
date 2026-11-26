@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,45 +26,45 @@
 #pragma once
 
 #include "DOMJITGetterSetter.h"
-#include "StructureStubInfo.h"
+#include "PropertyInlineCache.h"
 
 namespace JSC {
 
 #if ENABLE(JIT)
 
 class SharedJITStubSet {
-    WTF_MAKE_FAST_ALLOCATED(SharedJITStubSet);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedJITStubSet);
 public:
     SharedJITStubSet() = default;
 
-    using StructureStubInfoKey = std::tuple<AccessType, bool, bool, bool, bool>;
-    using StatelessCacheKey = std::tuple<StructureStubInfoKey, AccessCase::AccessType>;
-    using DOMJITCacheKey = std::tuple<StructureStubInfoKey, const DOMJIT::GetterSetter*>;
+    using PropertyInlineCacheKey = std::tuple<AccessType, bool, bool, bool, bool>;
+    using StatelessCacheKey = std::tuple<PropertyInlineCacheKey, AccessCase::AccessType>;
+    using DOMJITCacheKey = std::tuple<PropertyInlineCacheKey, const DOMJIT::GetterSetter*>;
 
-    static StructureStubInfoKey stubInfoKey(const StructureStubInfo& stubInfo)
+    static PropertyInlineCacheKey propertyCacheKey(const PropertyInlineCache& propertyCache)
     {
-        return std::tuple { stubInfo.accessType, static_cast<bool>(stubInfo.propertyIsInt32), static_cast<bool>(stubInfo.propertyIsString), static_cast<bool>(stubInfo.propertyIsSymbol), static_cast<bool>(stubInfo.prototypeIsKnownObject) };
+        return std::tuple { propertyCache.accessType, static_cast<bool>(propertyCache.propertyIsInt32), static_cast<bool>(propertyCache.propertyIsString), static_cast<bool>(propertyCache.propertyIsSymbol), static_cast<bool>(propertyCache.prototypeIsKnownObject) };
     }
 
     struct Hash {
         struct Key {
             Key() = default;
 
-            Key(StructureStubInfoKey stubInfoKey, PolymorphicAccessJITStubRoutine* wrapped)
+            Key(PropertyInlineCacheKey propertyCacheKey, PolymorphicAccessJITStubRoutine* wrapped)
                 : m_wrapped(wrapped)
-                , m_stubInfoKey(stubInfoKey)
+                , m_propertyCacheKey(propertyCacheKey)
             { }
 
             Key(WTF::HashTableDeletedValueType)
-                : m_wrapped(bitwise_cast<PolymorphicAccessJITStubRoutine*>(static_cast<uintptr_t>(1)))
+                : m_wrapped(std::bit_cast<PolymorphicAccessJITStubRoutine*>(static_cast<uintptr_t>(1)))
             { }
 
-            bool isHashTableDeletedValue() const { return m_wrapped == bitwise_cast<PolymorphicAccessJITStubRoutine*>(static_cast<uintptr_t>(1)); }
+            bool isHashTableDeletedValue() const { return m_wrapped == std::bit_cast<PolymorphicAccessJITStubRoutine*>(static_cast<uintptr_t>(1)); }
 
             friend bool operator==(const Key&, const Key&) = default;
 
             PolymorphicAccessJITStubRoutine* m_wrapped { nullptr };
-            StructureStubInfoKey m_stubInfoKey { };
+            PropertyInlineCacheKey m_propertyCacheKey { };
         };
 
         using KeyTraits = SimpleClassHashTraits<Key>;
@@ -93,7 +93,7 @@ public:
 
             static bool equal(const Hash::Key a, const Searcher& b)
             {
-                if (a.m_stubInfoKey == b.m_stubInfoKey && Hash::hash(a) == b.m_hash) {
+                if (a.m_propertyCacheKey == b.m_propertyCacheKey && Hash::hash(a) == b.m_hash) {
                     if (a.m_wrapped->cases().size() != 1)
                         return false;
                     const auto& aCase = a.m_wrapped->cases()[0];
@@ -106,15 +106,15 @@ public:
             }
         };
 
-        Searcher(StructureStubInfoKey&& stubInfoKey, Ref<AccessCase>&& accessCase)
-            : m_stubInfoKey(WTFMove(stubInfoKey))
-            , m_accessCase(WTFMove(accessCase))
+        Searcher(PropertyInlineCacheKey&& propertyCacheKey, Ref<AccessCase>&& accessCase)
+            : m_propertyCacheKey(WTF::move(propertyCacheKey))
+            , m_accessCase(WTF::move(accessCase))
             , m_hash(m_accessCase->hash())
         {
         }
 
-        StructureStubInfoKey m_stubInfoKey;
-        Ref<AccessCase> m_accessCase;
+        PropertyInlineCacheKey m_propertyCacheKey;
+        const Ref<AccessCase> m_accessCase;
         unsigned m_hash { 0 };
     };
 
@@ -132,7 +132,7 @@ public:
 
     void add(Hash::Key&& key)
     {
-        m_stubs.add(WTFMove(key));
+        m_stubs.add(WTF::move(key));
     }
 
     void remove(PolymorphicAccessJITStubRoutine* stub)
@@ -156,20 +156,19 @@ public:
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> getDOMJITCode(DOMJITCacheKey) const;
     void setDOMJITCode(DOMJITCacheKey, MacroAssemblerCodeRef<JITStubRoutinePtrTag>);
 
-    RefPtr<InlineCacheHandler> getSlowPathHandler(AccessType) const;
+    RefPtr<InlineCacheHandler> NODELETE getSlowPathHandler(AccessType) const;
     void setSlowPathHandler(AccessType, Ref<InlineCacheHandler>);
 
 private:
-    HashSet<Hash::Key, Hash, Hash::KeyTraits> m_stubs;
-    HashMap<StatelessCacheKey, Ref<PolymorphicAccessJITStubRoutine>> m_statelessStubs;
-    HashMap<DOMJITCacheKey, MacroAssemblerCodeRef<JITStubRoutinePtrTag>> m_domJITCodes;
-    std::array<RefPtr<InlineCacheHandler>, numberOfAccessTypes> m_fallbackHandlers { };
+    UncheckedKeyHashSet<Hash::Key, Hash, Hash::KeyTraits> m_stubs;
+    UncheckedKeyHashMap<StatelessCacheKey, Ref<PolymorphicAccessJITStubRoutine>> m_statelessStubs;
+    UncheckedKeyHashMap<DOMJITCacheKey, MacroAssemblerCodeRef<JITStubRoutinePtrTag>> m_domJITCodes;
     std::array<RefPtr<InlineCacheHandler>, numberOfAccessTypes> m_slowPathHandlers { };
 };
 
 #else
 
-class StructureStubInfo;
+class PropertyInlineCache;
 
 #endif // ENABLE(JIT)
 

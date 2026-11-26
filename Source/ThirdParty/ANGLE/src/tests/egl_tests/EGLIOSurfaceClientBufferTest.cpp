@@ -3,12 +3,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-//    EGLIOSurfaceClientBufferTest.cpp: tests for the EGL_ANGLE_iosurface_client_buffer extension.
+// EGLIOSurfaceClientBufferTest.cpp: tests for the EGL_ANGLE_iosurface_client_buffer extension.
 //
 
 #include "test_utils/ANGLETest.h"
 
 #include "common/mathutil.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/gl_raii.h"
 #include "util/EGLWindow.h"
 
@@ -267,8 +268,9 @@ class IOSurfaceClientBufferTest : public ANGLETest<>
 
         IOSurfaceLock(ioSurface.get(), kIOSurfaceLockReadOnly, nullptr);
         std::array<T, dataSize> iosurfaceData;
-        memcpy(iosurfaceData.data(), IOSurfaceGetBaseAddressOfPlane(ioSurface.get(), plane),
-               sizeof(T) * data.size());
+        ANGLE_UNSAFE_TODO(memcpy(iosurfaceData.data(),
+                                 IOSurfaceGetBaseAddressOfPlane(ioSurface.get(), plane),
+                                 sizeof(T) * data.size()));
         IOSurfaceUnlock(ioSurface.get(), kIOSurfaceLockReadOnly, nullptr);
 
         if (internalFormat == GL_RGB && IsMac() && IsOpenGL())
@@ -309,7 +311,8 @@ class IOSurfaceClientBufferTest : public ANGLETest<>
     {
         // Write the data to the IOSurface
         IOSurfaceLock(ioSurface.get(), 0, nullptr);
-        memcpy(IOSurfaceGetBaseAddressOfPlane(ioSurface.get(), plane), data, dataSize);
+        ANGLE_UNSAFE_TODO(
+            memcpy(IOSurfaceGetBaseAddressOfPlane(ioSurface.get(), plane), data, dataSize));
         IOSurfaceUnlock(ioSurface.get(), 0, nullptr);
 
         GLTexture texture;
@@ -1360,13 +1363,88 @@ TEST_P(IOSurfaceClientBufferTest, SetMaxLevelWouldInvalidateRenderTargetBug)
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(1, 2, 255, 255));
 }
 
+// Test using GL_EXT_multisampled_render_to_texture to render to BGRX IOSurface.
+TEST_P(IOSurfaceClientBufferTest, MultisampledRenderToTextureBGRX)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_EXT_multisampled_render_to_texture"));
+
+    ANGLE_SKIP_TEST_IF(!hasIOSurfaceExt());
+
+    ANGLE_GL_PROGRAM(colorProgram, angle::essl1_shaders::vs::Simple(),
+                     angle::essl1_shaders::fs::UniformColor());
+
+    ScopedIOSurfaceRef ioSurface = CreateSinglePlaneIOSurface(1, 1, 'BGRA', 4);
+
+    GLTexture texture;
+    glBindTexture(getGLTextureTarget(), texture);
+
+    // Bind the IOSurface to a texture.
+    EGLSurface pbuffer;
+    bindIOSurfaceToTexture(ioSurface, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, &pbuffer, &texture);
+
+    // Attach IOSurface bound texture to a single sampled FBO and clear it.
+    GLFramebuffer singleSampledFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, singleSampledFbo);
+    EXPECT_GL_NO_ERROR();
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, getGLTextureTarget(), texture, 0);
+    glClearColor(1.0f / 255.0f, 2.0f / 255.0f, 3.0f / 255.0f, 4.0f / 255.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Attach IOSurface to a multisampled FBO and draw translucent blue color
+    GLFramebuffer multisampledSampledFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, multisampledSampledFbo);
+    EXPECT_GL_NO_ERROR();
+    glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, getGLTextureTarget(),
+                                         texture, 0, 4);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glUseProgram(colorProgram);
+    const GLint colorUniformLocation =
+        glGetUniformLocation(colorProgram, angle::essl1_shaders::ColorUniform());
+    ASSERT_NE(colorUniformLocation, -1);
+    glUniform4f(colorUniformLocation, 0, 0, 1, 0.5f);
+    drawQuad(colorProgram, angle::essl1_shaders::PositionAttrib(), 0.5f);
+
+    // Expect the final color to be accumulated color
+    glBindFramebuffer(GL_FRAMEBUFFER, singleSampledFbo);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(1, 2, 255, 255));
+}
+
 // TODO(cwallez@chromium.org): Test setting width and height to less than the IOSurface's work as
 // expected.
 
+// Test that binding an IOSurface and setting base level to 3 does not cause an error.
+TEST_P(IOSurfaceClientBufferTest, SetNonZeroBaseLevel)
+{
+    ANGLE_SKIP_TEST_IF(!hasIOSurfaceExt());
+    ANGLE_SKIP_TEST_IF(getGLTextureTarget() != GL_TEXTURE_2D);
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3);
+
+    // Create a 1x1 IOSurface
+    ScopedIOSurfaceRef ioSurface = CreateSinglePlaneIOSurface(1, 1, 'BGRA', 4);
+
+    // Bind it to a texture
+    EGLSurface pbuffer;
+    GLTexture texture;
+    bindIOSurfaceToTexture(ioSurface, 1, 1, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, &pbuffer, &texture);
+
+    // Set base level to 3
+    glTexParameteri(getGLTextureTarget(), GL_TEXTURE_BASE_LEVEL, 3);
+    EXPECT_GL_NO_ERROR();
+
+    // Clean up
+    EGLBoolean result = eglReleaseTexImage(mDisplay, pbuffer, EGL_BACK_BUFFER);
+    EXPECT_EGL_TRUE(result);
+    result = eglDestroySurface(mDisplay, pbuffer);
+    EXPECT_EGL_TRUE(result);
+}
+
 ANGLE_INSTANTIATE_TEST(IOSurfaceClientBufferTest,
-                       ES2_OPENGL(),
-                       ES3_OPENGL(),
                        ES2_VULKAN_SWIFTSHADER(),
                        ES3_VULKAN_SWIFTSHADER(),
                        ES2_METAL(),
-                       ES3_METAL());
+                       ES3_METAL(),
+                       ES3_METAL()
+                           .enable(Feature::EnableMultisampledRenderToTextureOnNonTilers)
+                           .enable(Feature::EmulateDontCareLoadWithRandomClear));

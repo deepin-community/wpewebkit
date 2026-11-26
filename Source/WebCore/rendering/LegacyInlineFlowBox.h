@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include "LegacyInlineBox.h"
-#include "RenderOverflow.h"
-#include "ShadowData.h"
+#include <WebCore/LegacyInlineBox.h>
+#include <WebCore/RenderOverflow.h>
 
 namespace WebCore {
 
@@ -37,7 +36,7 @@ struct GlyphOverflow;
 typedef HashMap<const LegacyInlineTextBox*, std::pair<Vector<SingleThreadWeakPtr<const Font>>, GlyphOverflow>> GlyphOverflowAndFallbackFontsMap;
 
 class LegacyInlineFlowBox : public LegacyInlineBox {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyInlineFlowBox);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyInlineFlowBox);
 public:
     explicit LegacyInlineFlowBox(RenderBoxModelObject& renderer)
         : LegacyInlineBox(renderer)
@@ -54,20 +53,20 @@ public:
 #endif
 
     RenderBoxModelObject& renderer() const { return downcast<RenderBoxModelObject>(LegacyInlineBox::renderer()); }
-    const RenderStyle& lineStyle() const { return isFirstLine() ? renderer().firstLineStyle() : renderer().style(); }
+    const Style::ComputedStyle& lineStyle() const LIFETIME_BOUND { return isFirstLine() ? renderer().firstLineStyle() : renderer().style(); }
 
-    LegacyInlineFlowBox* prevLineBox() const { return m_prevLineBox; }
-    LegacyInlineFlowBox* nextLineBox() const { return m_nextLineBox; }
+    LegacyInlineFlowBox* prevLineBox() const LIFETIME_BOUND { return m_prevLineBox; }
+    LegacyInlineFlowBox* nextLineBox() const LIFETIME_BOUND { return m_nextLineBox; }
     void setNextLineBox(LegacyInlineFlowBox* n) { m_nextLineBox = n; }
     void setPreviousLineBox(LegacyInlineFlowBox* p) { m_prevLineBox = p; }
 
-    LegacyInlineBox* firstChild() const { checkConsistency(); return m_firstChild; }
-    LegacyInlineBox* lastChild() const { checkConsistency(); return m_lastChild; }
+    LegacyInlineBox* firstChild() const LIFETIME_BOUND { checkConsistency(); return m_firstChild; }
+    LegacyInlineBox* lastChild() const LIFETIME_BOUND { checkConsistency(); return m_lastChild; }
 
     bool isLeaf() const final { return false; }
     
-    LegacyInlineBox* firstLeafDescendant() const;
-    LegacyInlineBox* lastLeafDescendant() const;
+    LegacyInlineBox* firstLeafDescendant() const LIFETIME_BOUND;
+    LegacyInlineBox* lastLeafDescendant() const LIFETIME_BOUND;
 
     void setConstructed() final
     {
@@ -78,16 +77,9 @@ public:
 
     void addToLine(LegacyInlineBox* child);
     void deleteLine() final;
-    void extractLine() final;
-    void attachLine() final;
     void adjustPosition(float dx, float dy) override;
 
-    virtual void extractLineBoxFromRenderObject();
-    virtual void attachLineBoxToRenderObject();
     virtual void removeLineBoxFromRenderObject();
-
-    void paint(PaintInfo&, const LayoutPoint&, LayoutUnit lineTop, LayoutUnit lineBottom) override;
-    bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, LayoutUnit lineTop, LayoutUnit lineBottom, HitTestAction) override;
 
     void computeOverflow(LayoutUnit lineTop, LayoutUnit lineBottom, GlyphOverflowAndFallbackFontsMap&);
     
@@ -160,7 +152,7 @@ protected:
     // The following members are only used by RootInlineBox but moved here to keep the bits packed.
 
     // Whether or not this line uses alphabetic or ideographic baselines by default.
-    unsigned m_baselineType : 1 { AlphabeticBaseline }; // FontBaseline
+    unsigned m_baselineType : 1 { std::to_underlying(FontBaseline::Alphabetic) }; // FontBaseline
 
     unsigned m_lineBreakBidiStatusEor : 5; // UCharDirection
     unsigned m_lineBreakBidiStatusLastStrong : 5; // UCharDirection
@@ -176,7 +168,7 @@ private:
 #endif
 
 protected:
-    RefPtr<RenderOverflow> m_overflow;
+    std::unique_ptr<RenderOverflow> m_overflow;
 
     LegacyInlineBox* m_firstChild { nullptr };
     LegacyInlineBox* m_lastChild { nullptr };

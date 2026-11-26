@@ -26,12 +26,15 @@
 #pragma once
 
 #include "BufferIdentifierSet.h"
+#include "ImageBufferSetIdentifier.h"
 #include "MarkSurfacesAsVolatileRequestIdentifier.h"
 #include "PrepareBackingStoreBuffersData.h"
-#include "RemoteDisplayListRecorderProxy.h"
-#include "RemoteImageBufferSetIdentifier.h"
+#include "RemoteGraphicsContextProxy.h"
+#include "RemoteImageBufferSetConfiguration.h"
 #include "RenderingUpdateID.h"
 #include "WorkQueueMessageReceiver.h"
+#include <wtf/AbstractCanMakeCheckedPtr.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Identified.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -64,13 +67,18 @@ public:
     ThreadSafeImageBufferSetFlusher() = default;
     virtual ~ThreadSafeImageBufferSetFlusher() = default;
     // Returns true if flush succeeded, false if it failed.
-    virtual bool flushAndCollectHandles(HashMap<RemoteImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&) = 0;
+    virtual bool flushAndCollectHandles(HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&) = 0;
 };
 
-// A RemoteImageBufferSet is a set of three ImageBuffers (front, back,
-// secondary back) owned by the GPU process, for the purpose of drawing
-// successive (layer) frames.
-// To draw a frame, the consumer allocates a new RemoteDisplayListRecorderProxy and
+class ImageBufferSetClient : public AbstractCanMakeCheckedPtr {
+public:
+    virtual ~ImageBufferSetClient() = default;
+
+    virtual void setNeedsDisplay() = 0;
+};
+
+// A RemoteImageBufferSet is an ImageBufferSet, where the actual ImageBuffers are owned by the GPU process.
+// To draw a frame, the consumer allocates a new RemoteGraphicsContextProxy and
 // asks the RemoteImageBufferSet set to map it to an appropriate new front
 // buffer (either by picking one of the back buffers, or by allocating a new
 // one). It then copies across the pixels from the previous front buffer,
@@ -78,69 +86,67 @@ public:
 // Usage is done through RemoteRenderingBackendProxy::prepareImageBufferSetsForDisplay,
 // so that a Vector of RemoteImageBufferSets can be used with a single
 // IPC call.
-class RemoteImageBufferSetProxy : public IPC::WorkQueueMessageReceiver, public Identified<RemoteImageBufferSetIdentifier> {
+// FIXME: It would be nice if this could actually be a subclass of ImageBufferSet, but
+// probably can't while it uses batching for prepare and volatility.
+class RemoteImageBufferSetProxy : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>, public Identified<ImageBufferSetIdentifier> {
 public:
-    RemoteImageBufferSetProxy(RemoteRenderingBackendProxy&);
+    static Ref<RemoteImageBufferSetProxy> create(RemoteRenderingBackendProxy&, ImageBufferSetClient&);
     ~RemoteImageBufferSetProxy();
 
     OptionSet<BufferInSetType> requestedVolatility() { return m_requestedVolatility; }
     OptionSet<BufferInSetType> confirmedVolatility() { return m_confirmedVolatility; }
-    void clearVolatilityUntilAfter(MarkSurfacesAsVolatileRequestIdentifier previousVolatilityRequest);
-    void addRequestedVolatility(OptionSet<BufferInSetType> request);
-    void setConfirmedVolatility(MarkSurfacesAsVolatileRequestIdentifier, OptionSet<BufferInSetType> types);
+    void NODELETE clearVolatility();
+    void NODELETE addRequestedVolatility(OptionSet<BufferInSetType> request);
+    void NODELETE setConfirmedVolatility(OptionSet<BufferInSetType> types);
+
+    void setNeedsDisplay();
 
 #if PLATFORM(COCOA)
-    void didPrepareForDisplay(ImageBufferSetPrepareBufferForDisplayOutputData, RenderingUpdateID);
+    void prepareToDisplay(const WebCore::Region& dirtyRegion, bool supportsPartialRepaint, bool hasEmptyDirtyRegion, bool drawingRequiresClearedPixels);
 #endif
 
-    WebCore::GraphicsContext& context();
-    bool hasContext() const { return !!m_displayListRecorder; }
+    WebCore::GraphicsContext& NODELETE context();
+    bool hasContext() const { return !!m_context; }
 
-    WebCore::RenderingResourceIdentifier displayListResourceIdentifier() const { return m_displayListIdentifier; }
+    RemoteGraphicsContextIdentifier contextIdentifier() const { return m_contextIdentifier; }
 
     std::unique_ptr<ThreadSafeImageBufferSetFlusher> flushFrontBufferAsync(ThreadSafeImageBufferSetFlusher::FlushType);
+    void submitDrawingCommands();
 
-    void setConfiguration(WebCore::FloatSize, float, const WebCore::DestinationColorSpace&, WebCore::ImageBufferPixelFormat, WebCore::RenderingMode, WebCore::RenderingPurpose);
+    void setConfiguration(RemoteImageBufferSetConfiguration&&);
     void willPrepareForDisplay();
-    void remoteBufferSetWasDestroyed();
+    void disconnect();
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     std::optional<WebCore::DynamicContentScalingDisplayList> dynamicContentScalingDisplayList();
 #endif
 
     unsigned generation() const { return m_generation; }
-
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
-
     void close();
 
 private:
+    RemoteImageBufferSetProxy(RemoteRenderingBackendProxy&, ImageBufferSetClient&);
     template<typename T> auto send(T&& message);
     template<typename T> auto sendSync(T&& message);
+    template<typename T, typename C> auto sendWithAsyncReply(T&& message, C&& handler);
     RefPtr<IPC::StreamClientConnection> connection() const;
     void didBecomeUnresponsive() const;
 
+    const RemoteGraphicsContextIdentifier m_contextIdentifier { RemoteGraphicsContextIdentifier::generate() };
     WeakPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
+    std::optional<RemoteGraphicsContextProxy> m_context;
 
-    WebCore::RenderingResourceIdentifier m_displayListIdentifier;
-    std::unique_ptr<RemoteDisplayListRecorderProxy> m_displayListRecorder;
+    CheckedPtr<ImageBufferSetClient> m_client;
 
-    MarkSurfacesAsVolatileRequestIdentifier m_minimumVolatilityRequest;
     OptionSet<BufferInSetType> m_requestedVolatility;
     OptionSet<BufferInSetType> m_confirmedVolatility;
 
-    WebCore::FloatSize m_size;
-    float m_scale { 1.0f };
-    WebCore::DestinationColorSpace m_colorSpace { WebCore::DestinationColorSpace::SRGB() };
-    WebCore::ImageBufferPixelFormat m_pixelFormat;
-    WebCore::RenderingMode m_renderingMode { WebCore::RenderingMode::Unaccelerated };
-    WebCore::RenderingPurpose m_renderingPurpose { WebCore::RenderingPurpose::Unspecified };
+    RemoteImageBufferSetConfiguration m_configuration;
+
     unsigned m_generation { 0 };
     bool m_remoteNeedsConfigurationUpdate { false };
 
     Lock m_lock;
-    RefPtr<RemoteImageBufferSetProxyFlushFence> m_pendingFlush WTF_GUARDED_BY_LOCK(m_lock);
-    RefPtr<IPC::StreamClientConnection> m_streamConnection  WTF_GUARDED_BY_LOCK(m_lock);
     bool m_prepareForDisplayIsPending WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_closed WTF_GUARDED_BY_LOCK(m_lock) { false };
 };

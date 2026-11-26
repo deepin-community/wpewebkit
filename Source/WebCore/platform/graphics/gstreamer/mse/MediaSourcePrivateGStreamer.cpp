@@ -41,6 +41,7 @@
 #include "Logging.h"
 #include "MediaPlayerPrivateGStreamer.h"
 #include "MediaPlayerPrivateGStreamerMSE.h"
+#include "MediaSourcePrivateClient.h"
 #include "MediaSourceTrackGStreamer.h"
 #include "NotImplemented.h"
 #include "SourceBufferPrivateGStreamer.h"
@@ -49,9 +50,10 @@
 #include <wtf/NativePromise.h>
 #include <wtf/RefPtr.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
-GST_DEBUG_CATEGORY_EXTERN(webkit_mse_debug);
-#define GST_CAT_DEFAULT webkit_mse_debug
+GST_DEBUG_CATEGORY_STATIC(webkit_mse_private_debug);
+#define GST_CAT_DEFAULT webkit_mse_private_debug
 
 namespace WebCore {
 
@@ -70,14 +72,83 @@ MediaSourcePrivateGStreamer::MediaSourcePrivateGStreamer(MediaSourcePrivateClien
     , m_logIdentifier(playerPrivate.mediaPlayerLogIdentifier())
 #endif
 {
+    static std::once_flag debugRegisteredFlag;
+    std::call_once(debugRegisteredFlag, [] {
+        GST_DEBUG_CATEGORY_INIT(webkit_mse_private_debug, "webkitmseprivate", 0, "WebKit MSE Private");
+    });
+#if !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
+    m_logger->addMessageHandlerObserver(*this);
+#endif
 }
 
 MediaSourcePrivateGStreamer::~MediaSourcePrivateGStreamer()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
+#if !RELEASE_LOG_DISABLED && GST_CHECK_VERSION(1, 22, 0) && !defined(GST_DISABLE_GST_DEBUG)
+    m_logger->removeMessageHandlerObserver(*this);
+#endif
 }
 
-MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuffer(const ContentType& contentType, bool, RefPtr<SourceBufferPrivate>& sourceBufferPrivate)
+#if !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
+void MediaSourcePrivateGStreamer::handleLogMessage(const WTFLogChannel& channel, WTFLogLevel level, std::optional<WTFLogLocation> location, const Vector<JSONLogValue>& values)
+{
+    auto gstDebugLevel = gstDebugLevelFromWTFLogLevel(level);
+    if (gstDebugLevel > gst_debug_category_get_threshold(GST_CAT_DEFAULT))
+        return;
+
+    auto name = StringView::fromLatin1(channel.name);
+    if (name != "MediaSource"_s)
+        return;
+
+    // Ignore logs containing only the call site information.
+    if (values.size() < 2)
+        return;
+
+    // Parse "foo::bar(hexidentifier) "
+    auto& signature = values[0].value;
+    auto leftParenthesisIndex = signature.reverseFind('(');
+    if (leftParenthesisIndex == notFound)
+        return;
+
+    auto rightParenthesisIndex = signature.reverseFind(')');
+    if (rightParenthesisIndex == notFound)
+        return;
+
+    auto identifierString = signature.substring(leftParenthesisIndex + 1, rightParenthesisIndex - leftParenthesisIndex - 1);
+    auto identifier = WTF::parseInteger<uint64_t>(identifierString, 16);
+    if (!identifier)
+        return;
+
+    // Filter out logs not related with our log identifier.
+    if (!LoggerHelper::isChildLogIdentifier(*identifier, m_logIdentifier))
+        return;
+
+    StringBuilder builder;
+    for (auto& value : values.subvector(1))
+        builder.append(value.value);
+
+    // Find the C++ method name, foo::bar() -> bar.
+    auto methodName = emptyString();
+    if (location)
+        methodName = String::fromUTF8(location->function);
+    else {
+        auto methodNameSeparatorIndex = signature.reverseFind(':');
+        if (methodNameSeparatorIndex != notFound)
+            methodName = signature.substring(methodNameSeparatorIndex + 1, leftParenthesisIndex - methodNameSeparatorIndex - 1);
+    }
+
+    auto message = builder.toString();
+    const char* file = location ? location->file : __FILE__;
+    int line = location ? location->line : __LINE__;
+#if GST_CHECK_VERSION(1, 22, 0)
+    gst_debug_log_id_literal(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().data(), line, identifierString.utf8().data(), message.utf8().data());
+#else
+    gst_debug_log(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().data(), line, nullptr, "%s: %s", identifierString.utf8().data(), message.utf8().data());
+#endif
+}
+#endif // !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
+
+MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuffer(const ContentType& contentType, const MediaSourceConfiguration&, RefPtr<SourceBufferPrivate>& sourceBufferPrivate)
 {
     DEBUG_LOG(LOGIDENTIFIER, contentType);
 
@@ -88,91 +159,167 @@ MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuf
     if (!SourceBufferPrivateGStreamer::isContentTypeSupported(contentType))
         return MediaSourcePrivateGStreamer::AddStatus::NotSupported;
 
-    m_sourceBuffers.append(SourceBufferPrivateGStreamer::create(*this, contentType, m_playerPrivate));
-    sourceBufferPrivate = m_sourceBuffers.last();
+    {
+        Locker locker { m_lock };
+        m_sourceBuffers.append(SourceBufferPrivateGStreamer::create(*this, contentType));
+        sourceBufferPrivate = m_sourceBuffers.last();
+    }
     sourceBufferPrivate->setMediaSourceDuration(duration());
     return MediaSourcePrivateGStreamer::AddStatus::Ok;
 }
 
 RefPtr<MediaPlayerPrivateInterface> MediaSourcePrivateGStreamer::player() const
 {
-    return &m_playerPrivate;
+    return m_playerPrivate.get();
+}
+
+void MediaSourcePrivateGStreamer::setPlayer(MediaPlayerPrivateInterface* player)
+{
+    m_playerPrivate = downcast<MediaPlayerPrivateGStreamerMSE>(player);
+}
+
+RefPtr<MediaPlayerPrivateGStreamerMSE> MediaSourcePrivateGStreamer::platformPlayer() const
+{
+    return m_playerPrivate.get();
 }
 
 void MediaSourcePrivateGStreamer::durationChanged(const MediaTime& duration)
 {
     ASSERT(isMainThread());
 
+    RefPtr player = platformPlayer();
+    if (!player)
+        return;
     MediaSourcePrivate::durationChanged(duration);
-    GST_TRACE_OBJECT(m_playerPrivate.pipeline(), "Duration: %" GST_TIME_FORMAT, GST_TIME_ARGS(toGstClockTime(duration)));
+    GST_TRACE_OBJECT(player->pipeline(), "Duration: %" GST_TIME_FORMAT, GST_TIME_ARGS(toGstClockTime(duration)));
     if (!duration.isValid() || duration.isNegativeInfinite())
         return;
 
-    m_playerPrivate.durationChanged();
+    player->durationChanged();
 }
 
 void MediaSourcePrivateGStreamer::markEndOfStream(EndOfStreamStatus endOfStreamStatus)
 {
     ASSERT(isMainThread());
+
+    MediaSourcePrivate::markEndOfStream(endOfStreamStatus);
+
 #ifndef GST_DISABLE_GST_DEBUG
-    const char* statusString = nullptr;
+    RefPtr player = platformPlayer();
+    if (!player)
+        return;
+
+    ASCIILiteral statusString;
     switch (endOfStreamStatus) {
     case EndOfStreamStatus::NoError:
-        statusString = "no-error";
+        statusString = "no-error"_s;
         break;
     case EndOfStreamStatus::DecodeError:
-        statusString = "decode-error";
+        statusString = "decode-error"_s;
         break;
     case EndOfStreamStatus::NetworkError:
-        statusString = "network-error";
+        statusString = "network-error"_s;
         break;
     }
-    GST_DEBUG_OBJECT(m_playerPrivate.pipeline(), "Marking EOS, status is %s", statusString);
+    GST_DEBUG_OBJECT(player->pipeline(), "Marked EOS, status is %s", statusString.characters());
 #endif
-    if (endOfStreamStatus == EndOfStreamStatus::NoError)
-        m_playerPrivate.setNetworkState(MediaPlayer::NetworkState::Loaded);
-    MediaSourcePrivate::markEndOfStream(endOfStreamStatus);
 }
 
-MediaPlayer::ReadyState MediaSourcePrivateGStreamer::mediaPlayerReadyState() const
+void MediaSourcePrivateGStreamer::unmarkEndOfStream()
 {
-    return m_playerPrivate.readyState();
-}
+    ASSERT(isMainThread());
+    RefPtr player = platformPlayer();
+    if (!player)
+        return;
 
-void MediaSourcePrivateGStreamer::setMediaPlayerReadyState(MediaPlayer::ReadyState state)
-{
-    m_playerPrivate.setReadyState(state);
+    player->rebuildPipeline();
+    MediaSourcePrivate::unmarkEndOfStream();
 }
 
 void MediaSourcePrivateGStreamer::startPlaybackIfHasAllTracks()
 {
+    RefPtr player = platformPlayer();
+    if (!player)
+        return;
+
     if (m_hasAllTracks) {
         // Already started, nothing to do.
         return;
     }
 
-    for (auto& sourceBuffer : m_sourceBuffers) {
-        if (!sourceBuffer->hasReceivedFirstInitializationSegment()) {
-            GST_DEBUG_OBJECT(m_playerPrivate.pipeline(), "There are still SourceBuffers without an initialization segment, not starting source yet.");
-            return;
+    {
+        Locker locker { m_lock };
+        for (auto& sourceBuffer : m_sourceBuffers) {
+            if (!sourceBuffer->hasReceivedFirstInitializationSegment()) {
+                GST_DEBUG_OBJECT(player->pipeline(), "There are still SourceBuffers without an initialization segment, not starting source yet.");
+                return;
+            }
         }
     }
 
-    GST_DEBUG_OBJECT(m_playerPrivate.pipeline(), "All SourceBuffers have an initialization segment, starting source.");
+    GST_DEBUG_OBJECT(player->pipeline(), "All SourceBuffers have an initialization segment, starting source.");
     m_hasAllTracks = true;
 
     Vector<RefPtr<MediaSourceTrackGStreamer>> tracks;
-    for (auto& privateSourceBuffer : m_sourceBuffers) {
-        auto sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
-        for (auto& [_, track] : sourceBuffer->tracks())
-            tracks.append(track);
+    {
+        Locker locker { m_lock };
+        for (auto& privateSourceBuffer : m_sourceBuffers) {
+            auto sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
+            for (auto& [_, track] : sourceBuffer->tracks())
+                tracks.append(track);
+        }
     }
-    m_playerPrivate.startSource(tracks);
+    player->startSource(tracks);
+}
+
+MediaSourcePrivateGStreamer::RegisteredTrack MediaSourcePrivateGStreamer::registerTrack(TrackID preferredId, StreamType streamType)
+{
+    ASSERT(isMainThread());
+    RefPtr player = platformPlayer();
+
+    TrackID assignedId = preferredId;
+
+    // If the ID is already known, assign one starting at 100 - this helps avoid a snowball effect
+    // where each following ID would now need to be offset by 1.
+    if (m_trackRegistry.contains(assignedId)) {
+        auto maxRegisteredId = std::max_element(m_trackRegistry.keys().begin(), m_trackRegistry.keys().end());
+        assignedId = std::max((TrackID) 100, *maxRegisteredId + 1);
+    }
+
+    // Ensure that indices are sequential by track type.
+    size_t assignedIndex = std::count_if(m_trackRegistry.values().begin(), m_trackRegistry.values().end(), [streamType](RegisteredTrack& other) -> bool {
+        return other.streamType == streamType;
+    });
+
+    RegisteredTrack info = RegisteredTrack(assignedId, assignedIndex, streamType);
+    [[maybe_unused]] auto result = m_trackRegistry.add(assignedId, info);
+    ASSERT(result.isNewEntry);
+
+    if (player)
+        GST_DEBUG_OBJECT(player->pipeline(), "Registered new Track with index %" PRIu64 " and ID %" PRIu64 " (preferred ID was %" PRIu64 ")", static_cast<uint64_t>(assignedIndex), static_cast<uint64_t>(assignedId), static_cast<uint64_t>(preferredId));
+
+    return info;
+}
+
+void MediaSourcePrivateGStreamer::unregisterTrack(TrackID trackId)
+{
+    ASSERT(isMainThread());
+    ASSERT(m_trackRegistry.contains(trackId));
+    m_trackRegistry.remove(trackId);
+
+    if (RefPtr player = platformPlayer())
+        GST_DEBUG_OBJECT(player->pipeline(), "Unregistered Track ID: %" PRIu64 "", trackId);
 }
 
 void MediaSourcePrivateGStreamer::notifyActiveSourceBuffersChanged()
 {
-    m_playerPrivate.notifyActiveSourceBuffersChanged();
+    if (RefPtr player = platformPlayer())
+        player->notifyActiveSourceBuffersChanged();
+}
+
+void MediaSourcePrivateGStreamer::detach()
+{
+    m_hasAllTracks = false;
 }
 
 #if !RELEASE_LOG_DISABLED

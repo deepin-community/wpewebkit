@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2019 Apple Inc.  All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,8 @@
 
 #pragma once
 
-#include "PlatformWheelEvent.h"
-#include "ScrollingNodeID.h"
+#include <WebCore/PlatformWheelEvent.h>
+#include <WebCore/ScrollingNodeID.h>
 #include <functional>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
@@ -42,16 +42,17 @@ namespace WebCore {
 class Page;
 
 enum class WheelEventTestMonitorDeferReason : uint16_t {
-    HandlingWheelEvent                  = 1 << 0,
-    HandlingWheelEventOnMainThread      = 1 << 1,
-    PostMainThreadWheelEventHandling    = 1 << 2,
-    RubberbandInProgress                = 1 << 3,
-    ScrollSnapInProgress                = 1 << 4,
-    ScrollAnimationInProgress           = 1 << 5,
-    ScrollingThreadSyncNeeded           = 1 << 6,
-    ContentScrollInProgress             = 1 << 7,
-    RequestedScrollPosition             = 1 << 8,
-    CommittingTransientZoom             = 1 << 9,
+    None                                = 1 << 0,
+    HandlingWheelEvent                  = 1 << 1,
+    HandlingWheelEventOnMainThread      = 1 << 2,
+    PostMainThreadWheelEventHandling    = 1 << 3,
+    RubberbandInProgress                = 1 << 4,
+    ScrollSnapInProgress                = 1 << 5,
+    ScrollAnimationInProgress           = 1 << 6,
+    ScrollingThreadSyncNeeded           = 1 << 7,
+    ContentScrollInProgress             = 1 << 8,
+    RequestedScrollPosition             = 1 << 9,
+    CommittingTransientZoom             = 1 << 10,
 };
 
 class WheelEventTestMonitor : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WheelEventTestMonitor> {
@@ -75,7 +76,7 @@ private:
     void scheduleCallbackCheck();
 
     Function<void()> m_completionCallback;
-    Page& m_page;
+    WeakRef<Page> m_page;
 
     Lock m_lock;
     ScrollableAreaReasonMap m_deferCompletionReasons WTF_GUARDED_BY_LOCK(m_lock);
@@ -87,6 +88,8 @@ private:
 };
 
 class WheelEventTestMonitorCompletionDeferrer {
+    WTF_MAKE_NONCOPYABLE(WheelEventTestMonitorCompletionDeferrer);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WheelEventTestMonitorCompletionDeferrer);
 public:
     WheelEventTestMonitorCompletionDeferrer(WheelEventTestMonitor* monitor, ScrollingNodeID identifier, WheelEventTestMonitor::DeferReason reason)
         : m_monitor(monitor)
@@ -98,7 +101,7 @@ public:
     }
     
     WheelEventTestMonitorCompletionDeferrer(WheelEventTestMonitorCompletionDeferrer&& other)
-        : m_monitor(WTFMove(other.m_monitor))
+        : m_monitor(WTF::move(other.m_monitor))
         , m_identifier(other.m_identifier)
         , m_reason(other.m_reason)
     {

@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include "InlineIteratorBoxLegacyPath.h"
-#include "LayoutIntegrationInlineContent.h"
-#include "LegacyRootInlineBox.h"
-#include "RenderBlockFlow.h"
+#include <WebCore/InlineIteratorBoxLegacyPath.h>
+#include <WebCore/LayoutIntegrationInlineContent.h>
+#include <WebCore/LegacyRootInlineBox.h>
+#include <WebCore/RenderBlockFlow.h>
 
 namespace WebCore {
 namespace InlineIterator {
@@ -39,10 +39,6 @@ public:
         : m_rootInlineBox(rootInlineBox)
     {
     }
-    LineBoxIteratorLegacyPath(LineBoxIteratorLegacyPath&&) = default;
-    LineBoxIteratorLegacyPath(const LineBoxIteratorLegacyPath&) = default;
-    LineBoxIteratorLegacyPath& operator=(const LineBoxIteratorLegacyPath&) = default;
-    LineBoxIteratorLegacyPath& operator=(LineBoxIteratorLegacyPath&&) = default;
 
     float contentLogicalTop() const { return m_rootInlineBox->lineTop().toFloat(); }
     float contentLogicalBottom() const { return m_rootInlineBox->lineBottom().toFloat(); }
@@ -76,14 +72,10 @@ public:
 
     const RenderBlockFlow& formattingContextRoot() const { return m_rootInlineBox->blockFlow(); }
 
-    RenderFragmentContainer* containingFragment() const { return nullptr; }
     bool isFirstAfterPageBreak() const { return false; }
+    bool hasBlockLevelBox() const { return false; }
 
-    size_t lineIndex() const
-    {
-        return formattingContextRoot().legacyRootBox() ? 1 : 0;
-    }
-
+    inline size_t lineIndex() const; // Defined in InlineIteratorLineBoxLegacyPathInlines.h
 
     void traverseNext()
     {

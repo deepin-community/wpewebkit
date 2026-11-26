@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,22 +39,22 @@ RefPtr<CanvasLayerContextSwitcher> CanvasLayerContextSwitcher::create(CanvasRend
     if (!effectiveDrawingContext)
         return nullptr;
 
-    auto targetSwitcher = GraphicsContextSwitcher::create(*effectiveDrawingContext, bounds, context.colorSpace(), WTFMove(filter));
+    auto targetSwitcher = GraphicsContextSwitcher::create(*effectiveDrawingContext, bounds, context.colorSpace(), WTF::move(filter));
     if (!targetSwitcher)
         return nullptr;
 
-    return adoptRef(*new CanvasLayerContextSwitcher(context, bounds, WTFMove(targetSwitcher)));
+    return adoptRef(*new CanvasLayerContextSwitcher(context, bounds, WTF::move(targetSwitcher)));
 }
 
 CanvasLayerContextSwitcher::CanvasLayerContextSwitcher(CanvasRenderingContext2DBase& context, const FloatRect& bounds, std::unique_ptr<GraphicsContextSwitcher>&& targetSwitcher)
     : m_context(context)
-    , m_effectiveDrawingContext(m_context.effectiveDrawingContext())
+    , m_effectiveDrawingContext(context.effectiveDrawingContext())
     , m_bounds(bounds)
-    , m_targetSwitcher(WTFMove(targetSwitcher))
+    , m_targetSwitcher(WTF::move(targetSwitcher))
 {
     ASSERT(m_targetSwitcher);
     ASSERT(m_effectiveDrawingContext);
-    m_targetSwitcher->beginDrawSourceImage(*m_effectiveDrawingContext, m_context.globalAlpha());
+    m_targetSwitcher->beginDrawSourceImage(*m_effectiveDrawingContext, context.globalAlpha());
 }
 
 CanvasLayerContextSwitcher::~CanvasLayerContextSwitcher()
@@ -71,7 +71,7 @@ GraphicsContext* CanvasLayerContextSwitcher::drawingContext() const
 
 FloatBoxExtent CanvasLayerContextSwitcher::outsets() const
 {
-    return m_context.calculateFilterOutsets(m_bounds);
+    return toFloatBoxExtent(context()->calculateFilterOutsets(m_bounds));
 }
 
 } // namespace WebCore

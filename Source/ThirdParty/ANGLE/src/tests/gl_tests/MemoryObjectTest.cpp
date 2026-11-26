@@ -6,6 +6,9 @@
 
 // MemoryObjectTest.cpp : Tests of the GL_EXT_memory_object extension.
 
+#include <array>
+
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include "test_utils/gl_raii.h"
@@ -36,8 +39,8 @@ TEST_P(MemoryObjectTest, MemoryObjectShouldBeMemoryObject)
     ANGLE_SKIP_TEST_IF(IsLinux() && IsAMD() && IsDesktopOpenGL());
 
     constexpr GLsizei kMemoryObjectCount = 2;
-    GLuint memoryObjects[kMemoryObjectCount];
-    glCreateMemoryObjectsEXT(kMemoryObjectCount, memoryObjects);
+    std::array<GLuint, kMemoryObjectCount> memoryObjects;
+    glCreateMemoryObjectsEXT(kMemoryObjectCount, memoryObjects.data());
 
     EXPECT_FALSE(glIsMemoryObjectEXT(0));
 
@@ -46,7 +49,7 @@ TEST_P(MemoryObjectTest, MemoryObjectShouldBeMemoryObject)
         EXPECT_TRUE(glIsMemoryObjectEXT(memoryObjects[i]));
     }
 
-    glDeleteMemoryObjectsEXT(kMemoryObjectCount, memoryObjects);
+    glDeleteMemoryObjectsEXT(kMemoryObjectCount, memoryObjects.data());
 
     EXPECT_GL_NO_ERROR();
 }
@@ -77,6 +80,17 @@ TEST_P(MemoryObjectTest, MemoryObjectQueries)
 
     // http://anglebug.com/42263921
     ANGLE_SKIP_TEST_IF(IsLinux() && IsAMD() && IsDesktopOpenGL());
+
+    // Validate that configuring or querying memory object zero fails
+    {
+        GLint dedicatedMemory = GL_TRUE;
+        glMemoryObjectParameterivEXT(0, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicatedMemory);
+        EXPECT_GL_ERROR(GL_INVALID_VALUE);
+
+        glGetMemoryObjectParameterivEXT(0, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicatedMemory);
+        EXPECT_GL_ERROR(GL_INVALID_VALUE);
+        EXPECT_EQ(dedicatedMemory, GL_TRUE);
+    }
 
     GLMemoryObject memoryObject;
 

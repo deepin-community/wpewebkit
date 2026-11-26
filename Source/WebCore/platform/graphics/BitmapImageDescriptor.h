@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include "ImageOrientation.h"
 #include "ImageTypes.h"
 #include "IntPoint.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
@@ -47,8 +48,10 @@ public:
     void clear() { m_cachedFlags = { }; }
 
     EncodedDataStatus encodedDataStatus() const;
+    bool isSizeAvailable() const { return encodedDataStatus() >= EncodedDataStatus::SizeAvailable; }
     IntSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const;
     IntSize sourceSize(ImageOrientation = ImageOrientation::Orientation::FromImage) const;
+    FloatSize density() const;
     std::optional<IntSize> densityCorrectedSize() const;
     ImageOrientation orientation() const;
     unsigned primaryFrameIndex() const;
@@ -56,6 +59,8 @@ public:
     RepetitionCount repetitionCount() const;
     DestinationColorSpace colorSpace() const;
     std::optional<Color> singlePixelSolidColor() const;
+    bool hasHDRGainMap() const;
+    bool hasHDRColorSpace() const;
 
     String uti() const;
     String filenameExtension() const;
@@ -65,11 +70,15 @@ public:
     SubsamplingLevel subsamplingLevelForScaleFactor(GraphicsContext&, const FloatSize& scaleFactor, AllowImageSubsampling) const;
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-    bool shouldUseQuickLookForFullscreen() const;
+    bool isPanorama() const;
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     bool isSpatial() const;
+#endif
+
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    bool isMaybePanoramic() const;
 #endif
 
     void dump(TextStream&) const;
@@ -78,19 +87,21 @@ private:
     enum class CachedFlag : uint16_t {
         EncodedDataStatus           = 1 << 0,
         Size                        = 1 << 1,
-        DensityCorrectedSize        = 1 << 2,
-        Orientation                 = 1 << 3,
-        PrimaryFrameIndex           = 1 << 4,
-        FrameCount                  = 1 << 5,
-        RepetitionCount             = 1 << 6,
-        ColorSpace                  = 1 << 7,
-        SinglePixelSolidColor       = 1 << 8,
+        Density                     = 1 << 2,
+        DensityCorrectedSize        = 1 << 3,
+        Orientation                 = 1 << 4,
+        PrimaryFrameIndex           = 1 << 5,
+        FrameCount                  = 1 << 6,
+        RepetitionCount             = 1 << 7,
+        ColorSpace                  = 1 << 8,
+        SinglePixelSolidColor       = 1 << 9,
+        HasHDRGainMap               = 1 << 10,
 
-        UTI                         = 1 << 9,
-        FilenameExtension           = 1 << 10,
-        AccessibilityDescription    = 1 << 11,
-        HotSpot                     = 1 << 12,
-        MaximumSubsamplingLevel     = 1 << 13,
+        UTI                         = 1 << 11,
+        FilenameExtension           = 1 << 12,
+        AccessibilityDescription    = 1 << 13,
+        HotSpot                     = 1 << 14,
+        MaximumSubsamplingLevel     = 1 << 15,
     };
 
     template<typename MetadataType>
@@ -106,6 +117,7 @@ private:
 
     mutable EncodedDataStatus m_encodedDataStatus { EncodedDataStatus::Unknown };
     mutable IntSize m_size;
+    mutable FloatSize m_density;
     mutable std::optional<IntSize> m_densityCorrectedSize;
     mutable ImageOrientation m_orientation;
     mutable size_t m_primaryFrameIndex { 0 };
@@ -113,6 +125,7 @@ private:
     mutable RepetitionCount m_repetitionCount { RepetitionCountNone };
     mutable DestinationColorSpace m_colorSpace { DestinationColorSpace::SRGB() };
     mutable std::optional<Color> m_singlePixelSolidColor;
+    mutable bool m_hasHDRGainMap { false };
 
     mutable String m_uti;
     mutable String m_filenameExtension;
@@ -120,7 +133,7 @@ private:
     mutable std::optional<IntPoint> m_hotSpot;
     mutable SubsamplingLevel m_maximumSubsamplingLevel { SubsamplingLevel::Default };
 
-    BitmapImageSource& m_source;
+    const CheckedRef<BitmapImageSource> m_source;
 };
 
 } // namespace WebCore

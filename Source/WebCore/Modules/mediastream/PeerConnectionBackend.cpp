@@ -34,12 +34,13 @@
 
 #if ENABLE(WEB_RTC)
 
+#include "DocumentPage.h"
 #include "EventNames.h"
+#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSRTCCertificate.h"
 #include "Logging.h"
 #include "Page.h"
-#include "RTCDataChannelEvent.h"
 #include "RTCDtlsTransport.h"
 #include "RTCIceCandidate.h"
 #include "RTCPeerConnection.h"
@@ -49,8 +50,11 @@
 #include "RTCSessionDescriptionInit.h"
 #include "RTCTrackEvent.h"
 #include "WebRTCProvider.h"
+#include <algorithm>
 #include <wtf/EnumTraits.h>
+#include <wtf/FilePrintStream.h>
 #include <wtf/UUID.h>
+#include <wtf/text/Base64.h>
 #include <wtf/text/StringBuilder.h>
 
 #if USE(GSTREAMER_WEBRTC)
@@ -68,7 +72,7 @@ namespace WebCore {
 
 std::optional<RTCRtpCapabilities> PeerConnectionBackend::receiverCapabilities(ScriptExecutionContext& context, const String& kind)
 {
-    auto* page = downcast<Document>(context).page();
+    RefPtr page = downcast<Document>(context).page();
     if (!page)
         return { };
     return page->webRTCProvider().receiverCapabilities(kind);
@@ -76,7 +80,7 @@ std::optional<RTCRtpCapabilities> PeerConnectionBackend::receiverCapabilities(Sc
 
 std::optional<RTCRtpCapabilities> PeerConnectionBackend::senderCapabilities(ScriptExecutionContext& context, const String& kind)
 {
-    auto* page = downcast<Document>(context).page();
+    RefPtr page = downcast<Document>(context).page();
     if (!page)
         return { };
     return page->webRTCProvider().senderCapabilities(kind);
@@ -84,7 +88,7 @@ std::optional<RTCRtpCapabilities> PeerConnectionBackend::senderCapabilities(Scri
 
 #else
 
-static std::unique_ptr<PeerConnectionBackend> createNoPeerConnectionBackend(RTCPeerConnection&)
+static std::unique_ptr<PeerConnectionBackend> createNoPeerConnectionBackend(RTCPeerConnection&, MediaEndpointConfiguration&&)
 {
     return nullptr;
 }
@@ -104,6 +108,69 @@ std::optional<RTCRtpCapabilities> PeerConnectionBackend::senderCapabilities(Scri
 }
 #endif // USE(LIBWEBRTC) || USE(GSTREAMER_WEBRTC)
 
+#if PLATFORM(WPE) || PLATFORM(GTK)
+class JSONFileHandler {
+public:
+    JSONFileHandler(String&& path)
+        : m_path(WTF::move(path))
+    {
+        Locker lock(m_clientsLock);
+        open(true);
+    }
+
+    void log(String&& event)
+    {
+        Locker lock(m_clientsLock);
+        if (m_logFile)
+            m_logFile->println(WTF::move(event));
+    }
+
+    void addClient(uint64_t identifier)
+    {
+        Locker lock(m_clientsLock);
+        m_clients.append(identifier);
+        if (!m_logFile)
+            open(false);
+    }
+
+    void removeClient(uint64_t identifier)
+    {
+        Locker lock(m_clientsLock);
+        if (!m_clients.contains(identifier))
+            return;
+
+        m_clients.removeFirst(identifier);
+        if (m_clients.isEmpty())
+            m_logFile = nullptr;
+    }
+
+private:
+    void open(bool overwrite)
+    {
+        assertIsHeld(m_clientsLock);
+        ASSERT(!m_logFile);
+
+        m_logFile = FilePrintStream::open(m_path.utf8().data(), overwrite ? "w" : "a");
+
+        // Prefer unbuffered output, so that we get a full log upon crash or deadlock.
+        setvbuf(m_logFile->file(), nullptr, _IONBF, 0);
+    }
+
+    String m_path;
+    Lock m_clientsLock;
+    std::unique_ptr<FilePrintStream> m_logFile WTF_GUARDED_BY_LOCK(m_clientsLock);
+    Vector<uint64_t> m_clients WTF_GUARDED_BY_LOCK(m_clientsLock);
+};
+
+JSONFileHandler& jsonFileHandler()
+{
+    auto path = String::fromUTF8(getenv("WEBKIT_WEBRTC_JSON_EVENTS_FILE"));
+    ASSERT(!path.isEmpty());
+    static NeverDestroyed<JSONFileHandler> sharedInstance(WTF::move(path));
+    return sharedInstance;
+}
+#endif
+
 PeerConnectionBackend::PeerConnectionBackend(RTCPeerConnection& peerConnection)
     : m_peerConnection(peerConnection)
 #if !RELEASE_LOG_DISABLED
@@ -112,31 +179,103 @@ PeerConnectionBackend::PeerConnectionBackend(RTCPeerConnection& peerConnection)
 #endif
 {
 #if USE(LIBWEBRTC)
-    RefPtr document = peerConnection.document();
+    auto* document = peerConnection.document();
     if (auto* page = document ? document->page() : nullptr)
         m_shouldFilterICECandidates = page->webRTCProvider().isSupportingMDNS();
 #endif
+
+#if RELEASE_LOG_DISABLED
+    m_logIdentifierString = makeString(hex(reinterpret_cast<uintptr_t>(this)));
+#endif
+
+#if !RELEASE_LOG_DISABLED && (PLATFORM(WPE) || PLATFORM(GTK))
+    m_jsonFilePath = String::fromUTF8(getenv("WEBKIT_WEBRTC_JSON_EVENTS_FILE"));
+    if (!m_jsonFilePath.isEmpty())
+        jsonFileHandler().addClient(m_logIdentifier);
+
+    m_logger->addMessageHandlerObserver(*this);
+    ALWAYS_LOG(LOGIDENTIFIER, "PeerConnection created"_s);
+#endif
 }
 
-PeerConnectionBackend::~PeerConnectionBackend() = default;
+PeerConnectionBackend::~PeerConnectionBackend()
+{
+#if !RELEASE_LOG_DISABLED && (PLATFORM(WPE) || PLATFORM(GTK))
+    ALWAYS_LOG(LOGIDENTIFIER, "Disposing PeerConnection"_s);
+    m_logger->removeMessageHandlerObserver(*this);
+
+    if (isJSONLogStreamingEnabled())
+        jsonFileHandler().removeClient(m_logIdentifier);
+#endif
+}
+
+#if !RELEASE_LOG_DISABLED && (PLATFORM(WPE) || PLATFORM(GTK))
+void PeerConnectionBackend::handleLogMessage(const WTFLogChannel& channel, WTFLogLevel, std::optional<WTFLogLocation>, const Vector<JSONLogValue>& values)
+{
+    auto name = StringView::fromLatin1(channel.name);
+    if (name != "WebRTC"_s)
+        return;
+
+    // Ignore logs containing only the call site information or JSON logs.
+    if (values.size() < 2 || values[1].type == JSONLogValue::Type::JSON)
+        return;
+
+    if (!isJSONLogStreamingEnabled())
+        return;
+
+    // Parse "foo::bar(hexidentifier) "
+    auto& callSite = values[0].value;
+    auto leftParenthesisIndex = callSite.reverseFind('(');
+    if (leftParenthesisIndex == notFound)
+        return;
+
+    auto rightParenthesisIndex = callSite.reverseFind(')');
+    if (rightParenthesisIndex == notFound)
+        return;
+
+    if (!m_logIdentifierString)
+        m_logIdentifierString = makeString(m_logIdentifier);
+
+    auto identifier = callSite.substring(leftParenthesisIndex + 1, rightParenthesisIndex - leftParenthesisIndex - 1);
+    if (identifier != m_logIdentifierString)
+        return;
+
+    String event;
+
+    // Check if the third message is a multi-lines string, concatenating such message would look ugly in log events.
+    if (values.size() >= 3 && values[2].value.find("\r\n"_s) != notFound)
+        event = generateJSONLogEvent(MessageLogEvent { values[1].value, { byteCast<uint8_t>(values[2].value.span8()) } }, false);
+    else {
+        StringBuilder builder;
+        for (auto& value : values.subvector(1))
+            builder.append(WTF::makeStringByReplacingAll(value.value, '\"', '\''));
+        event = generateJSONLogEvent(MessageLogEvent { builder.toString(), { } }, false);
+    }
+    emitJSONLogEvent(WTF::move(event));
+}
+#endif // !RELEASE_LOG_DISABLED && (PLATFORM(WPE) || PLATFORM(GTK))
 
 void PeerConnectionBackend::createOffer(RTCOfferOptions&& options, CreateCallback&& callback)
 {
     ASSERT(!m_offerAnswerCallback);
-    ASSERT(!m_peerConnection.isClosed());
+    ASSERT(!m_peerConnection->isClosed());
 
-    m_offerAnswerCallback = WTFMove(callback);
-    doCreateOffer(WTFMove(options));
+    m_offerAnswerCallback = WTF::move(callback);
+    doCreateOffer(WTF::move(options));
 }
 
 void PeerConnectionBackend::createOfferSucceeded(String&& sdp)
 {
     ASSERT(isMainThread());
-    ALWAYS_LOG(LOGIDENTIFIER, "Create offer succeeded:\n", sdp);
+
+#if !RELEASE_LOG_DISABLED
+    logger().toObservers(LogWebRTC, WTFLogLevel::Always, { }, LOGIDENTIFIER, "SDP offer created:\n", sdp);
+    RELEASE_LOG_FORWARDABLE(WebRTC, PeerConnectionBackendCreateOfferSucceeded, logIdentifier(), sdp.utf8());
+#endif
 
     ASSERT(m_offerAnswerCallback);
     validateSDP(sdp);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [callback = WTFMove(m_offerAnswerCallback), sdp = WTFMove(sdp)]() mutable {
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_offerAnswerCallback), sdp = WTF::move(sdp)](auto&) mutable {
         callback(RTCSessionDescriptionInit { RTCSdpType::Offer, sdp });
     });
 }
@@ -144,30 +283,34 @@ void PeerConnectionBackend::createOfferSucceeded(String&& sdp)
 void PeerConnectionBackend::createOfferFailed(Exception&& exception)
 {
     ASSERT(isMainThread());
-    ALWAYS_LOG(LOGIDENTIFIER, "Create offer failed:", exception.message());
+    ALWAYS_LOG(LOGIDENTIFIER, exception.message());
 
     ASSERT(m_offerAnswerCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [callback = WTFMove(m_offerAnswerCallback), exception = WTFMove(exception)]() mutable {
-        callback(WTFMove(exception));
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_offerAnswerCallback), exception = WTF::move(exception)](auto&) mutable {
+        callback(WTF::move(exception));
     });
 }
 
 void PeerConnectionBackend::createAnswer(RTCAnswerOptions&& options, CreateCallback&& callback)
 {
     ASSERT(!m_offerAnswerCallback);
-    ASSERT(!m_peerConnection.isClosed());
+    ASSERT(!m_peerConnection->isClosed());
 
-    m_offerAnswerCallback = WTFMove(callback);
-    doCreateAnswer(WTFMove(options));
+    m_offerAnswerCallback = WTF::move(callback);
+    doCreateAnswer(WTF::move(options));
 }
 
 void PeerConnectionBackend::createAnswerSucceeded(String&& sdp)
 {
     ASSERT(isMainThread());
-    ALWAYS_LOG(LOGIDENTIFIER, "Create answer succeeded:\n", sdp);
+
+#if !RELEASE_LOG_DISABLED
+    logger().toObservers(LogWebRTC, WTFLogLevel::Always, { }, LOGIDENTIFIER, "SDP answer created:\n", sdp);
+    RELEASE_LOG_FORWARDABLE(WebRTC, PeerConnectionBackendCreateAnswerSucceeded, logIdentifier(), sdp.utf8());
+#endif
 
     ASSERT(m_offerAnswerCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [callback = WTFMove(m_offerAnswerCallback), sdp = WTFMove(sdp)]() mutable {
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_offerAnswerCallback), sdp = WTF::move(sdp)](auto&) mutable {
         callback(RTCSessionDescriptionInit { RTCSdpType::Answer, sdp });
     });
 }
@@ -175,20 +318,20 @@ void PeerConnectionBackend::createAnswerSucceeded(String&& sdp)
 void PeerConnectionBackend::createAnswerFailed(Exception&& exception)
 {
     ASSERT(isMainThread());
-    ALWAYS_LOG(LOGIDENTIFIER, "Create answer failed:", exception.message());
+    ALWAYS_LOG(LOGIDENTIFIER, exception.message());
 
     ASSERT(m_offerAnswerCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [callback = WTFMove(m_offerAnswerCallback), exception = WTFMove(exception)]() mutable {
-        callback(WTFMove(exception));
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_offerAnswerCallback), exception = WTF::move(exception)](auto&) mutable {
+        callback(WTF::move(exception));
     });
 }
 
 void PeerConnectionBackend::setLocalDescription(const RTCSessionDescription* sessionDescription, Function<void(ExceptionOr<void>&&)>&& callback)
 {
-    ASSERT(!m_peerConnection.isClosed());
+    ASSERT(!m_peerConnection->isClosed());
 
     m_isProcessingLocalDescriptionAnswer = sessionDescription && (sessionDescription->type() == RTCSdpType::Answer || sessionDescription->type() == RTCSdpType::Pranswer);
-    m_setDescriptionCallback = WTFMove(callback);
+    m_setDescriptionCallback = WTF::move(callback);
     doSetLocalDescription(sessionDescription);
 }
 
@@ -201,19 +344,19 @@ struct MediaStreamAndTrackItem {
 static void setAssociatedRemoteStreams(RTCRtpReceiver& receiver, const PeerConnectionBackend::TransceiverState& state, Vector<MediaStreamAndTrackItem>& addList, Vector<MediaStreamAndTrackItem>& removeList)
 {
     for (auto& currentStream : receiver.associatedStreams()) {
-        if (currentStream && !anyOf(state.receiverStreams, [&currentStream](auto& stream) { return stream->id() == currentStream->id(); }))
+        if (currentStream && std::ranges::none_of(state.receiverStreams, [&currentStream](auto& stream) { return stream->id() == currentStream->id(); }))
             removeList.append({ Ref { *currentStream }, Ref { receiver.track() } });
     }
 
     for (auto& stream : state.receiverStreams) {
-        if (!anyOf(receiver.associatedStreams(), [&stream](auto& currentStream) { return stream->id() == currentStream->id(); }))
+        if (std::ranges::none_of(receiver.associatedStreams(), [&stream](auto& currentStream) { return stream->id() == currentStream->id(); }))
             addList.append({ stream, Ref { receiver.track() } });
     }
 
     receiver.setAssociatedStreams(WTF::map(state.receiverStreams, [](auto& stream) { return WeakPtr { stream.get() }; }));
 }
 
-static bool isDirectionReceiving(RTCRtpTransceiverDirection direction)
+static bool NODELETE isDirectionReceiving(RTCRtpTransceiverDirection direction)
 {
     return direction == RTCRtpTransceiverDirection::Sendrecv || direction == RTCRtpTransceiverDirection::Recvonly;
 }
@@ -221,16 +364,18 @@ static bool isDirectionReceiving(RTCRtpTransceiverDirection direction)
 // https://w3c.github.io/webrtc-pc/#process-remote-tracks
 static void processRemoteTracks(RTCRtpTransceiver& transceiver, PeerConnectionBackend::TransceiverState&& state, Vector<MediaStreamAndTrackItem>& addList, Vector<MediaStreamAndTrackItem>& removeList, Vector<Ref<RTCTrackEvent>>& trackEventList, Vector<Ref<MediaStreamTrack>>& muteTrackList)
 {
-    auto addListSize = addList.size();
-    auto& receiver = transceiver.receiver();
-    setAssociatedRemoteStreams(receiver, state, addList, removeList);
-    if ((state.firedDirection && isDirectionReceiving(*state.firedDirection) && (!transceiver.firedDirection() || !isDirectionReceiving(*transceiver.firedDirection()))) || addListSize != addList.size()) {
-        // https://w3c.github.io/webrtc-pc/#process-remote-track-addition
-        trackEventList.append(RTCTrackEvent::create(eventNames().trackEvent, Event::CanBubble::No, Event::IsCancelable::No, &receiver, &receiver.track(), WTFMove(state.receiverStreams), &transceiver));
+    Ref receiver = transceiver.receiver();
+    if (!transceiver.stopped()) {
+        auto addListSize = addList.size();
+        setAssociatedRemoteStreams(receiver.get(), state, addList, removeList);
+        if ((state.firedDirection && isDirectionReceiving(*state.firedDirection) && (!transceiver.firedDirection() || !isDirectionReceiving(*transceiver.firedDirection()))) || addListSize != addList.size()) {
+            // https://w3c.github.io/webrtc-pc/#process-remote-track-addition
+            trackEventList.append(RTCTrackEvent::create(eventNames().trackEvent, Event::CanBubble::No, Event::IsCancelable::No, receiver.copyRef(), receiver->track(), WTF::move(state.receiverStreams), transceiver));
+        }
     }
     if (!(state.firedDirection && isDirectionReceiving(*state.firedDirection)) && transceiver.firedDirection() && isDirectionReceiving(*transceiver.firedDirection())) {
         // https://w3c.github.io/webrtc-pc/#process-remote-track-removal
-        muteTrackList.append(receiver.track());
+        muteTrackList.append(receiver->track());
     }
     transceiver.setFiredDirection(state.firedDirection);
 }
@@ -238,25 +383,25 @@ static void processRemoteTracks(RTCRtpTransceiver& transceiver, PeerConnectionBa
 void PeerConnectionBackend::setLocalDescriptionSucceeded(std::optional<DescriptionStates>&& descriptionStates, std::optional<TransceiverStates>&& transceiverStates, std::unique_ptr<RTCSctpTransportBackend>&& sctpBackend, std::optional<double> maxMessageSize)
 {
     ASSERT(isMainThread());
-    ALWAYS_LOG(LOGIDENTIFIER);
+    ALWAYS_LOG(LOGIDENTIFIER, "Set local description succeeded");
     if (transceiverStates)
         DEBUG_LOG(LOGIDENTIFIER, "Transceiver states: ", *transceiverStates);
     ASSERT(m_setDescriptionCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [this, callback = WTFMove(m_setDescriptionCallback), descriptionStates = WTFMove(descriptionStates), transceiverStates = WTFMove(transceiverStates), sctpBackend = WTFMove(sctpBackend), maxMessageSize]() mutable {
-        if (m_peerConnection.isClosed())
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [this, protectedThis = Ref { *this }, callback = WTF::move(m_setDescriptionCallback), descriptionStates = WTF::move(descriptionStates), transceiverStates = WTF::move(transceiverStates), sctpBackend = WTF::move(sctpBackend), maxMessageSize](auto& peerConnection) mutable {
+        if (peerConnection.isClosed())
             return;
 
-        m_peerConnection.updateTransceiversAfterSuccessfulLocalDescription();
-        m_peerConnection.updateSctpBackend(WTFMove(sctpBackend), maxMessageSize);
+        peerConnection.updateTransceiversAfterSuccessfulLocalDescription();
+        peerConnection.updateSctpBackend(WTF::move(sctpBackend), maxMessageSize);
 
         if (descriptionStates) {
-            m_peerConnection.updateDescriptions(WTFMove(*descriptionStates));
-            if (m_peerConnection.isClosed())
+            peerConnection.updateDescriptions(WTF::move(*descriptionStates));
+            if (peerConnection.isClosed())
                 return;
         }
 
-        m_peerConnection.processIceTransportChanges();
-        if (m_peerConnection.isClosed())
+        peerConnection.processIceTransportChanges();
+        if (peerConnection.isClosed())
             return;
 
         if (m_isProcessingLocalDescriptionAnswer && transceiverStates) {
@@ -266,9 +411,9 @@ void PeerConnectionBackend::setLocalDescriptionSucceeded(std::optional<Descripti
             Vector<MediaStreamAndTrackItem> addListNoOp;
             for (auto& transceiverState : *transceiverStates) {
                 RefPtr<RTCRtpTransceiver> transceiver;
-                for (auto& item : m_peerConnection.currentTransceivers()) {
+                for (auto& item : peerConnection.currentTransceivers()) {
                     if (item->mid() == transceiverState.mid) {
-                        transceiver = item;
+                        transceiver = item.ptr();
                         break;
                     }
                 }
@@ -282,15 +427,16 @@ void PeerConnectionBackend::setLocalDescriptionSucceeded(std::optional<Descripti
             }
             for (auto& track : muteTrackList) {
                 track->setShouldFireMuteEventImmediately(true);
-                track->source().setMuted(true);
+                protect(track->source())->setMuted(true);
                 track->setShouldFireMuteEventImmediately(false);
-                if (m_peerConnection.isClosed())
+                if (peerConnection.isClosed())
                     return;
             }
 
             for (auto& pair : removeList) {
+                DEBUG_LOG(LOGIDENTIFIER, "Removing track "_s, pair.track->id(), " from MediaStream "_s, pair.stream->id());
                 pair.stream->privateStream().removeTrack(pair.track->privateTrack());
-                if (m_peerConnection.isClosed())
+                if (peerConnection.isClosed())
                     return;
             }
         }
@@ -305,19 +451,19 @@ void PeerConnectionBackend::setLocalDescriptionFailed(Exception&& exception)
     ALWAYS_LOG(LOGIDENTIFIER, "Set local description failed:", exception.message());
 
     ASSERT(m_setDescriptionCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [this, callback = WTFMove(m_setDescriptionCallback), exception = WTFMove(exception)]() mutable {
-        if (m_peerConnection.isClosed())
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_setDescriptionCallback), exception = WTF::move(exception)](auto& peerConnection) mutable {
+        if (peerConnection.isClosed())
             return;
 
-        callback(WTFMove(exception));
+        callback(WTF::move(exception));
     });
 }
 
 void PeerConnectionBackend::setRemoteDescription(const RTCSessionDescription& sessionDescription, Function<void(ExceptionOr<void>&&)>&& callback)
 {
-    ASSERT(!m_peerConnection.isClosed());
+    ASSERT(!m_peerConnection->isClosed());
 
-    m_setDescriptionCallback = WTFMove(callback);
+    m_setDescriptionCallback = WTF::move(callback);
     doSetRemoteDescription(sessionDescription);
 }
 
@@ -329,14 +475,16 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
         DEBUG_LOG(LOGIDENTIFIER, "Transceiver states: ", *transceiverStates);
     ASSERT(m_setDescriptionCallback);
 
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [this, callback = WTFMove(m_setDescriptionCallback), descriptionStates = WTFMove(descriptionStates), transceiverStates = WTFMove(transceiverStates), sctpBackend = WTFMove(sctpBackend), maxMessageSize]() mutable {
-        if (m_peerConnection.isClosed())
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [this, callback = WTF::move(m_setDescriptionCallback), descriptionStates = WTF::move(descriptionStates), transceiverStates = WTF::move(transceiverStates), sctpBackend = WTF::move(sctpBackend), maxMessageSize](auto& peerConnection) mutable {
+        UNUSED_PARAM(this);
+
+        if (peerConnection.isClosed())
             return;
 
         Vector<MediaStreamAndTrackItem> removeList;
         if (transceiverStates) {
-            for (auto& transceiver : m_peerConnection.currentTransceivers()) {
-                if (!anyOf(*transceiverStates, [&transceiver](auto& state) { return state.mid == transceiver->mid(); })) {
+            for (auto& transceiver : peerConnection.currentTransceivers()) {
+                if (std::ranges::none_of(*transceiverStates, [&transceiver](auto& state) { return state.mid == transceiver->mid(); })) {
                     for (auto& stream : transceiver->receiver().associatedStreams()) {
                         if (stream)
                             removeList.append({ Ref { *stream }, Ref { transceiver->receiver().track() } });
@@ -345,19 +493,19 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
             }
         }
 
-        m_peerConnection.updateTransceiversAfterSuccessfulRemoteDescription();
-        m_peerConnection.updateSctpBackend(WTFMove(sctpBackend), maxMessageSize);
+        peerConnection.updateTransceiversAfterSuccessfulRemoteDescription();
+        peerConnection.updateSctpBackend(WTF::move(sctpBackend), maxMessageSize);
 
         if (descriptionStates) {
-            m_peerConnection.updateDescriptions(WTFMove(*descriptionStates));
-            if (m_peerConnection.isClosed()) {
+            peerConnection.updateDescriptions(WTF::move(*descriptionStates));
+            if (peerConnection.isClosed()) {
                 DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed after descriptions update");
                 return;
             }
         }
 
-        m_peerConnection.processIceTransportChanges();
-        if (m_peerConnection.isClosed()) {
+        peerConnection.processIceTransportChanges();
+        if (peerConnection.isClosed()) {
             DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed after ICE transport changes");
             return;
         }
@@ -369,22 +517,22 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
             Vector<Ref<RTCTrackEvent>> trackEventList;
             for (auto& transceiverState : *transceiverStates) {
                 RefPtr<RTCRtpTransceiver> transceiver;
-                for (auto& item : m_peerConnection.currentTransceivers()) {
+                for (auto& item : peerConnection.currentTransceivers()) {
                     if (item->mid() == transceiverState.mid) {
-                        transceiver = item;
+                        transceiver = item.ptr();
                         break;
                     }
                 }
                 if (transceiver)
-                    processRemoteTracks(*transceiver, WTFMove(transceiverState), addList, removeList, trackEventList, muteTrackList);
+                    processRemoteTracks(*transceiver, WTF::move(transceiverState), addList, removeList, trackEventList, muteTrackList);
             }
 
             DEBUG_LOG(LOGIDENTIFIER, "Processing ", muteTrackList.size(), " muted tracks");
             for (auto& track : muteTrackList) {
                 track->setShouldFireMuteEventImmediately(true);
-                track->source().setMuted(true);
+                protect(track->source())->setMuted(true);
                 track->setShouldFireMuteEventImmediately(false);
-                if (m_peerConnection.isClosed()) {
+                if (peerConnection.isClosed()) {
                     DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed while processing muted tracks");
                     return;
                 }
@@ -393,7 +541,7 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
             DEBUG_LOG(LOGIDENTIFIER, "Removing ", removeList.size(), " tracks");
             for (auto& pair : removeList) {
                 pair.stream->privateStream().removeTrack(pair.track->privateTrack());
-                if (m_peerConnection.isClosed()) {
+                if (peerConnection.isClosed()) {
                     DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed while removing tracks");
                     return;
                 }
@@ -401,8 +549,8 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
 
             DEBUG_LOG(LOGIDENTIFIER, "Adding ", addList.size(), " tracks");
             for (auto& pair : addList) {
-                pair.stream->addTrackFromPlatform(pair.track.copyRef());
-                if (m_peerConnection.isClosed()) {
+                Ref { pair.stream }->addTrackFromPlatform(pair.track.copyRef());
+                if (peerConnection.isClosed()) {
                     DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed while adding tracks");
                     return;
                 }
@@ -411,13 +559,12 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
             DEBUG_LOG(LOGIDENTIFIER, "Dispatching ", trackEventList.size(), " track events");
             for (auto& event : trackEventList) {
                 RefPtr track = event->track();
-                m_peerConnection.dispatchEvent(event);
-                if (m_peerConnection.isClosed()) {
+                ALWAYS_LOG(LOGIDENTIFIER, "Dispatching track event for track ", track->id());
+                peerConnection.dispatchEvent(event);
+                if (peerConnection.isClosed()) {
                     DEBUG_LOG(LOGIDENTIFIER, "PeerConnection closed while dispatching track events");
                     return;
                 }
-
-                track->source().setMuted(false);
             }
         }
 
@@ -431,22 +578,25 @@ void PeerConnectionBackend::setRemoteDescriptionFailed(Exception&& exception)
     ALWAYS_LOG(LOGIDENTIFIER, "Set remote description failed:", exception.message());
 
     ASSERT(m_setDescriptionCallback);
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [this, callback = WTFMove(m_setDescriptionCallback), exception = WTFMove(exception)]() mutable {
-        if (m_peerConnection.isClosed())
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(m_setDescriptionCallback), exception = WTF::move(exception)](auto& peerConnection) mutable {
+        if (peerConnection.isClosed())
             return;
 
-        callback(WTFMove(exception));
+        callback(WTF::move(exception));
     });
 }
 
 void PeerConnectionBackend::iceGatheringStateChanged(RTCIceGatheringState state)
 {
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [this, state] {
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [this, protectedThis = Ref { *this }, state](auto& peerConnection) {
+        if (peerConnection.isClosed())
+            return;
+
         if (state == RTCIceGatheringState::Complete) {
             doneGatheringCandidates();
             return;
         }
-        m_peerConnection.updateIceGatheringState(state);
+        peerConnection.updateIceGatheringState(state);
     });
 }
 
@@ -475,7 +625,7 @@ static inline bool shouldIgnoreIceCandidate(const RTCIceCandidate& iceCandidate)
 
 void PeerConnectionBackend::addIceCandidate(RTCIceCandidate* iceCandidate, Function<void(ExceptionOr<void>&&)>&& callback)
 {
-    ASSERT(!m_peerConnection.isClosed());
+    ASSERT(!m_peerConnection->isClosed());
 
     if (!iceCandidate) {
         callback({ });
@@ -487,23 +637,23 @@ void PeerConnectionBackend::addIceCandidate(RTCIceCandidate* iceCandidate, Funct
         return;
     }
 
-    doAddIceCandidate(*iceCandidate, [weakThis = WeakPtr { *this }, callback = WTFMove(callback)]<typename Result> (Result&& result) mutable {
-        if (!weakThis)
+    doAddIceCandidate(*iceCandidate, [weakThis = WeakPtr { *this }, callback = WTF::move(callback)]<typename Result> (Result&& result) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return;
 
-        auto& peerConnection = weakThis->m_peerConnection;
-        peerConnection.queueTaskKeepingObjectAlive(peerConnection, TaskSource::Networking, [&peerConnection, callback = WTFMove(callback), result = std::forward<Result>(result)] () mutable {
+        ActiveDOMObject::queueTaskKeepingObjectAlive(protect(protectedThis->m_peerConnection).get(), TaskSource::Networking, [callback = WTF::move(callback), result = std::forward<Result>(result)](auto& peerConnection) mutable {
             if (peerConnection.isClosed())
                 return;
 
             if (result.hasException()) {
-                RELEASE_LOG_ERROR(WebRTC, "Adding ice candidate failed %hhu", enumToUnderlyingType(result.exception().code()));
+                RELEASE_LOG_ERROR(WebRTC, "Adding ice candidate failed %hhu", std::to_underlying(result.exception().code()));
                 callback(result.releaseException());
                 return;
             }
 
             if (auto descriptions = result.releaseReturnValue())
-                peerConnection.updateDescriptions(WTFMove(*descriptions));
+                peerConnection.updateDescriptions(WTF::move(*descriptions));
             callback({ });
         });
     });
@@ -534,14 +684,14 @@ void PeerConnectionBackend::validateSDP(const String& sdp) const
 
 void PeerConnectionBackend::newICECandidate(String&& sdp, String&& mid, unsigned short sdpMLineIndex, String&& serverURL, std::optional<DescriptionStates>&& descriptions)
 {
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [logSiteIdentifier = LOGIDENTIFIER, this, sdp = WTFMove(sdp), mid = WTFMove(mid), sdpMLineIndex, serverURL = WTFMove(serverURL), descriptions = WTFMove(descriptions)]() mutable {
-        if (m_peerConnection.isClosed())
+    ActiveDOMObject::queueTaskKeepingObjectAlive(protect(m_peerConnection).get(), TaskSource::Networking, [logSiteIdentifier = LOGIDENTIFIER, this, protectedThis = Ref { *this }, sdp = WTF::move(sdp), mid = WTF::move(mid), sdpMLineIndex, serverURL = WTF::move(serverURL), descriptions = WTF::move(descriptions)](auto& peerConnection) mutable {
+        if (peerConnection.isClosed())
             return;
 
         if (descriptions)
-            m_peerConnection.updateDescriptions(WTFMove(*descriptions));
+            peerConnection.updateDescriptions(WTF::move(*descriptions));
 
-        if (m_peerConnection.isClosed())
+        if (peerConnection.isClosed())
             return;
 
         UNUSED_PARAM(logSiteIdentifier);
@@ -549,21 +699,15 @@ void PeerConnectionBackend::newICECandidate(String&& sdp, String&& mid, unsigned
         m_finishedGatheringCandidates = false;
 
         ASSERT(!m_shouldFilterICECandidates || sdp.contains(".local"_s) || sdp.contains(" srflx "_s) || sdp.contains(" relay "_s));
-        auto candidate = RTCIceCandidate::create(WTFMove(sdp), WTFMove(mid), sdpMLineIndex);
-        m_peerConnection.dispatchEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, WTFMove(candidate), WTFMove(serverURL)));
+        auto candidate = RTCIceCandidate::create(WTF::move(sdp), WTF::move(mid), sdpMLineIndex);
+        ALWAYS_LOG(logSiteIdentifier, "Dispatching ICE event for SDP ", candidate->candidate());
+        peerConnection.dispatchEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, WTF::move(candidate), WTF::move(serverURL)));
     });
 }
 
 void PeerConnectionBackend::newDataChannel(UniqueRef<RTCDataChannelHandler>&& channelHandler, String&& label, RTCDataChannelInit&& channelInit)
 {
-    m_peerConnection.queueTaskKeepingObjectAlive(m_peerConnection, TaskSource::Networking, [connection = Ref { m_peerConnection }, label = WTFMove(label), channelHandler = WTFMove(channelHandler), channelInit = WTFMove(channelInit)]() mutable {
-        if (connection->isClosed())
-            return;
-
-        auto channel = RTCDataChannel::create(*connection->document(), channelHandler.moveToUniquePtr(), WTFMove(label), WTFMove(channelInit), RTCDataChannelState::Open);
-        connection->dispatchEvent(RTCDataChannelEvent::create(eventNames().datachannelEvent, Event::CanBubble::No, Event::IsCancelable::No, Ref { channel }));
-        channel->fireOpenEventIfNeeded();
-    });
+    protect(m_peerConnection)->dispatchDataChannelEvent(WTF::move(channelHandler), WTF::move(label), WTF::move(channelInit));
 }
 
 void PeerConnectionBackend::doneGatheringCandidates()
@@ -572,8 +716,9 @@ void PeerConnectionBackend::doneGatheringCandidates()
     ALWAYS_LOG(LOGIDENTIFIER, "Finished ice candidate gathering");
     m_finishedGatheringCandidates = true;
 
-    m_peerConnection.scheduleEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, nullptr, { }));
-    m_peerConnection.updateIceGatheringState(RTCIceGatheringState::Complete);
+    Ref peerConnection = m_peerConnection.get();
+    peerConnection->scheduleEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, nullptr, { }));
+    peerConnection->updateIceGatheringState(RTCIceGatheringState::Complete);
 }
 
 void PeerConnectionBackend::stop()
@@ -586,7 +731,7 @@ void PeerConnectionBackend::stop()
 
 void PeerConnectionBackend::markAsNeedingNegotiation(uint32_t eventId)
 {
-    m_peerConnection.updateNegotiationNeededFlag(eventId);
+    protect(m_peerConnection)->updateNegotiationNeededFlag(eventId);
 }
 
 ExceptionOr<Ref<RTCRtpSender>> PeerConnectionBackend::addTrack(MediaStreamTrack&, FixedVector<String>&&)
@@ -607,15 +752,15 @@ ExceptionOr<Ref<RTCRtpTransceiver>> PeerConnectionBackend::addTransceiver(Ref<Me
 void PeerConnectionBackend::generateCertificate(Document& document, const CertificateInformation& info, DOMPromiseDeferred<IDLInterface<RTCCertificate>>&& promise)
 {
 #if USE(LIBWEBRTC)
-    auto* page = document.page();
+    RefPtr page = document.page();
     if (!page) {
         promise.reject(ExceptionCode::InvalidStateError);
         return;
     }
 
-    auto& webRTCProvider = static_cast<LibWebRTCProvider&>(page->webRTCProvider());
-    LibWebRTCCertificateGenerator::generateCertificate(document.securityOrigin(), webRTCProvider, info, [promise = WTFMove(promise)](auto&& result) mutable {
-        promise.settle(WTFMove(result));
+    auto& webRTCProvider = downcast<LibWebRTCProvider>(page->webRTCProvider());
+    LibWebRTCCertificateGenerator::generateCertificate(document.securityOrigin(), webRTCProvider, info, [promise = WTF::move(promise)](auto&& result) mutable {
+        promise.settle(WTF::move(result));
     });
 #elif USE(GSTREAMER_WEBRTC)
     auto certificate = ::WebCore::generateCertificate(document.securityOrigin(), info);
@@ -632,7 +777,7 @@ void PeerConnectionBackend::generateCertificate(Document& document, const Certif
 
 ScriptExecutionContext* PeerConnectionBackend::context() const
 {
-    return m_peerConnection.scriptExecutionContext();
+    return m_peerConnection->scriptExecutionContext();
 }
 
 #if !RELEASE_LOG_DISABLED
@@ -650,7 +795,7 @@ static Ref<JSON::Object> toJSONObject(const PeerConnectionBackend::TransceiverSt
     auto receiverStreams = JSON::Array::create();
     for (auto receiverStream : transceiverState.receiverStreams)
         receiverStreams->pushString(receiverStream->id());
-    object->setArray("receiverStreams"_s, WTFMove(receiverStreams));
+    object->setArray("receiverStreams"_s, WTF::move(receiverStreams));
 
     if (auto firedDirection = transceiverState.firedDirection)
         object->setString("firedDirection"_s, convertEnumerationToString(*firedDirection));
@@ -675,6 +820,58 @@ static String toJSONString(const PeerConnectionBackend::TransceiverState& transc
 static String toJSONString(const PeerConnectionBackend::TransceiverStates& transceiverStates)
 {
     return toJSONArray(transceiverStates)->toJSONString();
+}
+
+void PeerConnectionBackend::ref() const
+{
+    m_peerConnection->ref();
+}
+
+void PeerConnectionBackend::deref() const
+{
+    m_peerConnection->deref();
+}
+
+String PeerConnectionBackend::generateJSONLogEvent(LogEvent&& logEvent, bool isForGatherLogs)
+{
+    ASCIILiteral type;
+    String event;
+    WTF::switchOn(WTF::move(logEvent), [&](MessageLogEvent&& logEvent) {
+        type = "event"_s;
+        StringBuilder builder;
+        auto strippedMessage = logEvent.message.removeCharacters([](auto character) {
+            return character == '\n';
+        });
+        builder.append("{\"message\":\""_s, strippedMessage, "\",\"payload\":\""_s);
+        if (logEvent.payload)
+            builder.append(WTF::base64EncodeToString(*logEvent.payload));
+        builder.append("\"}"_s);
+        event = builder.toString();
+    }, [&](StatsLogEvent&& logEvent) {
+        type = "stats"_s;
+        event = WTF::move(logEvent);
+    });
+
+    if (isForGatherLogs) {
+        UNUSED_VARIABLE(type);
+        return event;
+    }
+
+    auto timestamp = WTF::WallTime::now().secondsSinceEpoch().microseconds();
+    return makeString("{\"peer-connection\":\""_s, m_logIdentifierString, "\",\"timestamp\":"_s, timestamp, ",\"type\":\""_s, type, "\",\"event\":"_s, event, '}');
+}
+
+void PeerConnectionBackend::emitJSONLogEvent(String&& event)
+{
+#if PLATFORM(WPE) || PLATFORM(GTK)
+    if (!isJSONLogStreamingEnabled())
+        return;
+
+    auto& handler = jsonFileHandler();
+    handler.log(WTF::move(event));
+#else
+    UNUSED_PARAM(event);
+#endif
 }
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +32,7 @@ namespace WebCore {
 enum class FilterRenderingMode : uint8_t {
     Software        = 1 << 0,
     Accelerated     = 1 << 1,
-    GraphicsContext = 1 << 2
+    GraphicsContext = 1 << 2,
 };
 
 constexpr OptionSet<FilterRenderingMode> allFilterRenderingModes = {
@@ -40,5 +40,7 @@ constexpr OptionSet<FilterRenderingMode> allFilterRenderingModes = {
     FilterRenderingMode::Accelerated,
     FilterRenderingMode::GraphicsContext
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, FilterRenderingMode);
 
 } // namespace WebCore

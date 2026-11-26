@@ -25,8 +25,15 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
+#if !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)
+
+#include <wtf/HashTable.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 #if PLATFORM(COCOA)
@@ -35,6 +42,7 @@
 #include "WKObject.h"
 #include <wtf/RetainPtr.h>
 #endif
+#include <wtf/HashMap.h>
 #endif
 
 #define DELEGATE_REF_COUNTING_TO_COCOA PLATFORM(COCOA)
@@ -46,8 +54,9 @@ class Object
     : public ThreadSafeRefCounted<Object>
 #endif
 {
+    WTF_MAKE_NONCOPYABLE(Object);
 public:
-    enum class Type {
+    enum class Type : uint8_t {
         // Base types
         Null = 0,
         Array,
@@ -69,7 +78,6 @@ public:
         ResourceLoadInfo,
         SecurityOrigin,
         SessionState,
-        SerializedScriptValue,
         String,
         TargetedElementInfo,
         TargetedElementRequest,
@@ -94,7 +102,6 @@ public:
         Rect,
         
         // UIProcess types
-        ApplicationCacheManager,
 #if ENABLE(APPLICATION_MANIFEST)
         ApplicationManifest,
 #endif
@@ -108,6 +115,7 @@ public:
         ContentRuleListAction,
         ContentRuleListStore,
         ContentWorld,
+        ContentWorldConfiguration,
 #if PLATFORM(IOS_FAMILY)
         ContextMenuElementInfo,
 #endif
@@ -120,6 +128,7 @@ public:
         DebuggableInfo,
         Download,
         Feature,
+        FormInfo,
         FormSubmissionListener,
         Frame,
         FrameInfo,
@@ -130,6 +139,7 @@ public:
         GeolocationPermissionRequest,
         HTTPCookieStore,
         HitTestResult,
+        JSHandle,
         GeolocationPosition,
         GrammarDetail,
         IconDatabase,
@@ -166,8 +176,10 @@ public:
         RunJavaScriptAlertResultListener,
         RunJavaScriptConfirmResultListener,
         RunJavaScriptPromptResultListener,
-        SpeechRecognitionPermissionCallback,
+        ScriptMessage,
+        SerializedNode,
         TextChecker,
+        TextRun,
         URLSchemeTask,
         UserContentController,
         UserInitiatedAction,
@@ -190,11 +202,15 @@ public:
 #endif
 #endif
         WebResourceLoadStatisticsManager,
+        WebPushDaemonConnection,
+        WebPushMessage,
+        WebPushSubscriptionData,
         WebsiteDataRecord,
         WebsiteDataStore,
         WebsiteDataStoreConfiguration,
         WebsitePolicies,
         WindowFeatures,
+        CompletionListener,
 
 #if ENABLE(WEB_AUTHN)
         WebAuthenticationAssertionResponse,
@@ -237,17 +253,15 @@ public:
     template<typename T, typename... Args>
     static void constructInWrapper(id <WKObject> wrapper, Args&&... args)
     {
-        Object* object = new (&wrapper._apiObject) T(std::forward<Args>(args)...);
-        object->m_wrapper = (__bridge CFTypeRef)wrapper;
+        apiObjectsUnderConstruction().add(&wrapper._apiObject, (__bridge CFTypeRef)wrapper);
+        new (&wrapper._apiObject) T(std::forward<Args>(args)...);
     }
 
-    id <WKObject> wrapper() const { return (__bridge id <WKObject>)m_wrapper; }
+    id wrapper() const { return (__bridge id)m_wrapper; }
 #endif
 
     void ref() const;
     void deref() const;
-    void refAllowingPartiallyDestroyed() const { ref(); }
-    void derefAllowingPartiallyDestroyed() const { deref(); }
 #endif // DELEGATE_REF_COUNTING_TO_COCOA
 
     static void* wrap(API::Object*);
@@ -267,12 +281,14 @@ protected:
     static void* newObject(size_t, Type);
 
 private:
+    static HashMap<Object*, CFTypeRef>& apiObjectsUnderConstruction();
+
     // Derived classes must override operator new and call newObject().
     void* operator new(size_t) = delete;
 
     CFTypeRef m_wrapper;
 #endif // DELEGATE_REF_COUNTING_TO_COCOA
-};
+} SWIFT_SHARED_REFERENCE(refObject, derefObject);
 
 template <Object::Type ArgumentType>
 class ObjectImpl : public Object {
@@ -304,7 +320,20 @@ inline API::Object* Object::unwrap(void* object)
 }
 #endif
 
+using VectorRefPtrAPIObject = Vector<RefPtr<Object>>;
+using RefPtrAPIObject = RefPtr<Object>;
+
 } // namespace API
+
+inline void refObject(API::Object* WTF_NONNULL obj)
+{
+    obj->ref();
+}
+
+inline void derefObject(API::Object* WTF_NONNULL obj)
+{
+    obj->deref();
+}
 
 #undef DELEGATE_REF_COUNTING_TO_COCOA
 
@@ -312,3 +341,5 @@ inline API::Object* Object::unwrap(void* object)
 SPECIALIZE_TYPE_TRAITS_BEGIN(API::ClassName) \
 static bool isType(const API::Object& object) { return object.type() == API::Object::Type::ClassName; } \
 SPECIALIZE_TYPE_TRAITS_END()
+
+#endif // !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)

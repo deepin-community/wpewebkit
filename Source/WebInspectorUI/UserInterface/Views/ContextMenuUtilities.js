@@ -52,21 +52,23 @@ WI.addMouseDownContextMenuHandlers = function(element, populateContextMenuCallba
     });
 };
 
-WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocation)
+WI.appendContextMenuItemsForNetworkResource = function(contextMenu, sourceCodeOrLocation)
 {
-    console.assert(contextMenu instanceof WI.ContextMenu);
+    console.assert(contextMenu instanceof WI.ContextMenu, contextMenu);
     if (!(contextMenu instanceof WI.ContextMenu))
         return;
 
     let sourceCode = sourceCodeOrLocation;
+    let displaySourceCode = sourceCode;
     let location = null;
     if (sourceCodeOrLocation instanceof WI.SourceCodeLocation) {
         sourceCode = sourceCodeOrLocation.sourceCode;
+        displaySourceCode = sourceCodeOrLocation.displaySourceCode;
         location = sourceCodeOrLocation;
     }
 
-    console.assert(sourceCode instanceof WI.SourceCode);
-    if (!(sourceCode instanceof WI.SourceCode))
+    console.assert(sourceCode instanceof WI.SourceCode || sourceCode instanceof WI.Redirect, sourceCode);
+    if (!(sourceCode instanceof WI.SourceCode) && !(sourceCode instanceof WI.Redirect))
         return;
 
     if (contextMenu.__domBreakpointItemsAdded)
@@ -129,7 +131,7 @@ WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocat
 
     contextMenu.appendSeparator();
 
-    if (location && (sourceCode instanceof WI.Script || (sourceCode instanceof WI.Resource && sourceCode.type === WI.Resource.Type.Script && !sourceCode.localResourceOverride))) {
+    if (location && (displaySourceCode instanceof WI.Script || (displaySourceCode instanceof WI.Resource && displaySourceCode.type === WI.Resource.Type.Script && !displaySourceCode.localResourceOverride))) {
         let existingJavaScriptBreakpoint = WI.debuggerManager.breakpointForSourceCodeLocation(location);
         if (existingJavaScriptBreakpoint) {
             contextMenu.appendItem(WI.UIString("Delete JavaScript Breakpoint"), () => {
@@ -156,8 +158,8 @@ WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocat
         }
     }
 
-    if (sourceCode.supportsScriptBlackboxing) {
-        let blackboxData = WI.debuggerManager.blackboxDataForSourceCode(sourceCode);
+    if (displaySourceCode.supportsScriptBlackboxing) {
+        let blackboxData = WI.debuggerManager.blackboxDataForSourceCode(displaySourceCode);
         if (blackboxData && blackboxData.type === WI.DebuggerManager.BlackboxType.Pattern) {
             contextMenu.appendItem(WI.UIString("Reveal Blackbox Pattern"), () => {
                 WI.showSettingsTab({
@@ -167,7 +169,7 @@ WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocat
             });
         } else {
             contextMenu.appendItem(blackboxData ? WI.UIString("Unblackbox Script") : WI.UIString("Blackbox Script"), () => {
-                WI.debuggerManager.setShouldBlackboxScript(sourceCode, !blackboxData);
+                WI.debuggerManager.setShouldBlackboxScript(displaySourceCode, !blackboxData);
             });
         }
     }
@@ -176,27 +178,32 @@ WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocat
 
     WI.appendContextMenuItemsForURL(contextMenu, sourceCode.url, {sourceCode, location});
 
-    if (sourceCode instanceof WI.Resource && !sourceCode.localResourceOverride && sourceCode.hasMetadata) {
-        if (sourceCode.urlComponents.scheme !== "data") {
-            contextMenu.appendItem(WI.UIString("Copy as fetch", "Copy the URL, method, headers, etc. of the given network request in the format of a JS fetch expression."), () => {
-                InspectorFrontendHost.copyText(sourceCode.generateFetchCode());
+    let shouldShowCopyOptions = false;
+    if (sourceCode instanceof WI.Resource && !sourceCode.localResourceOverride && sourceCode.hasMetadata)
+        shouldShowCopyOptions = true;
+    else if (sourceCode instanceof WI.Redirect)
+        shouldShowCopyOptions = true;
+
+    if (shouldShowCopyOptions && sourceCode.urlComponents.scheme !== "data") {
+        contextMenu.appendItem(WI.UIString("Copy as fetch", "Copy the URL, method, headers, etc. of the given network request in the format of a JS fetch expression."), () => {
+            InspectorFrontendHost.copyText(sourceCode.generateFetchCode());
+        });
+
+        contextMenu.appendItem(WI.UIString("Copy as cURL"), () => {
+            InspectorFrontendHost.copyText(sourceCode.generateCURLCommand());
+        });
+
+        contextMenu.appendSeparator();
+
+        contextMenu.appendItem(WI.UIString("Copy HTTP Request Headers"), () => {
+            InspectorFrontendHost.copyText(sourceCode.stringifyHTTPRequestHeaders());
+        });
+
+        let hasResponseHeaders = sourceCode instanceof WI.Redirect || (sourceCode instanceof WI.Resource && sourceCode.hasResponse());
+        if (hasResponseHeaders) {
+            contextMenu.appendItem(WI.UIString("Copy HTTP Response Headers"), () => {
+                InspectorFrontendHost.copyText(sourceCode.stringifyHTTPResponseHeaders());
             });
-
-            contextMenu.appendItem(WI.UIString("Copy as cURL"), () => {
-                InspectorFrontendHost.copyText(sourceCode.generateCURLCommand());
-            });
-
-            contextMenu.appendSeparator();
-
-            contextMenu.appendItem(WI.UIString("Copy HTTP Request"), () => {
-                InspectorFrontendHost.copyText(sourceCode.stringifyHTTPRequest());
-            });
-
-            if (sourceCode.hasResponse()) {
-                contextMenu.appendItem(WI.UIString("Copy HTTP Response"), () => {
-                    InspectorFrontendHost.copyText(sourceCode.stringifyHTTPResponse());
-                });
-            }
         }
     }
 
@@ -204,15 +211,15 @@ WI.appendContextMenuItemsForSourceCode = function(contextMenu, sourceCodeOrLocat
         contextMenu.appendSeparator();
 
         contextMenu.appendItem(WI.UIString("Save File"), () => {
-            sourceCode.requestContent().then(() => {
+            displaySourceCode.requestContent().then(() => {
                 let saveData = {
-                    url: sourceCode.url,
-                    content: sourceCode.content,
-                    base64Encoded: sourceCode.base64Encoded,
+                    url: displaySourceCode.url,
+                    content: displaySourceCode.content,
+                    base64Encoded: displaySourceCode.base64Encoded,
                 };
 
-                if (sourceCode.urlComponents.path === "/") {
-                    let extension = WI.fileExtensionForMIMEType(sourceCode.mimeType);
+                if (displaySourceCode.urlComponents.path === "/") {
+                    let extension = WI.fileExtensionForMIMEType(displaySourceCode.mimeType);
                     if (extension)
                         saveData.suggestedName = `index.${extension}`;
                 }
@@ -269,11 +276,11 @@ WI.appendContextMenuItemsForURL = function(contextMenu, url, options = {})
 
 WI.appendContextMenuItemsForDOMNode = function(contextMenu, domNode, options = {})
 {
-    console.assert(contextMenu instanceof WI.ContextMenu);
+    console.assert(contextMenu instanceof WI.ContextMenu, contextMenu);
     if (!(contextMenu instanceof WI.ContextMenu))
         return;
 
-    console.assert(domNode instanceof WI.DOMNode);
+    console.assert(domNode instanceof WI.DOMNode, domNode);
     if (!(domNode instanceof WI.DOMNode))
         return;
 

@@ -37,18 +37,19 @@
 
 namespace WebCore {
 
+enum class EventHandlerRemovalReason : bool;
 class HTMLInputElement;
 class TouchEvent;
 
 class SliderThumbElement final : public HTMLDivElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SliderThumbElement);
+    WTF_MAKE_TZONE_ALLOCATED(SliderThumbElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SliderThumbElement);
 public:
     static Ref<SliderThumbElement> create(Document&);
 
     void setPositionFromValue();
     void dragFrom(const LayoutPoint&);
-    RefPtr<HTMLInputElement> hostInput() const;
+    RefPtr<HTMLInputElement> NODELETE hostInput() const;
     void setPositionFromPoint(const LayoutPoint&);
 
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -59,9 +60,10 @@ public:
 
 private:
     explicit SliderThumbElement(Document&);
-    bool isSliderThumbElement() const final { return true; }
 
-    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&) final;
+    bool NODELETE isSliderThumbElement() const final { return true; }
+
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
     bool isDisabledFormControl() const final;
     bool matchesReadWritePseudoClass() const final;
 
@@ -74,7 +76,7 @@ private:
 #endif
     void willDetachRenderers() final;
 
-    std::optional<Style::ResolvedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
+    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const Style::ComputedStyle*) final;
 
     void startDragging();
     void stopDragging();
@@ -88,9 +90,9 @@ private:
     void handleTouchMove(TouchEvent&);
     void handleTouchEndAndCancel(TouchEvent&);
 
-    bool shouldAcceptTouchEvents();
     void registerForTouchEvents();
-    void unregisterForTouchEvents();
+    void unregisterForTouchEvents(); // EventHandlerRemovalReason::Other
+    void unregisterForTouchEvents(EventHandlerRemovalReason);
 #endif
 
     bool m_inDragMode { false };
@@ -107,15 +109,15 @@ private:
 // --------------------------------
 
 class SliderContainerElement final : public HTMLDivElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SliderContainerElement);
+    WTF_MAKE_TZONE_ALLOCATED(SliderContainerElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SliderContainerElement);
 public:
     static Ref<SliderContainerElement> create(Document&);
 
 private:
     explicit SliderContainerElement(Document&);
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isSliderContainerElement() const final { return true; }
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    bool NODELETE isSliderContainerElement() const final { return true; }
 };
 
 } // namespace WebCore

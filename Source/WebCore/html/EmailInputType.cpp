@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2009 Michelangelo De Simone <micdesim@gmail.com>
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -32,9 +32,12 @@
 #include "LocalizedStrings.h"
 #include <JavaScriptCore/RegularExpression.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EmailInputType);
 
 using namespace HTMLNames;
 
@@ -60,15 +63,15 @@ const AtomString& EmailInputType::formControlType() const
     return InputTypeNames::email();
 }
 
-bool EmailInputType::typeMismatchFor(const String& value) const
+bool EmailInputType::typeMismatchFor(StringView value) const
 {
     ASSERT(element());
     if (value.isEmpty())
         return false;
     if (!element()->multiple())
         return !isValidEmailAddress(value);
-    for (auto& address : value.splitAllowingEmptyEntries(',')) {
-        if (!isValidEmailAddress(StringView(address).trim(isASCIIWhitespace<UChar>)))
+    for (auto address : value.splitAllowingEmptyEntries(',')) {
+        if (!isValidEmailAddress(address.trim(isASCIIWhitespace<char16_t>)))
             return true;
     }
     return false;
@@ -77,7 +80,7 @@ bool EmailInputType::typeMismatchFor(const String& value) const
 bool EmailInputType::typeMismatch() const
 {
     ASSERT(element());
-    return typeMismatchFor(element()->value());
+    return typeMismatchFor(protect(element())->value());
 }
 
 String EmailInputType::typeMismatchText() const
@@ -93,17 +96,19 @@ bool EmailInputType::supportsSelectionAPI() const
 
 void EmailInputType::attributeChanged(const QualifiedName& name)
 {
-    if (name == multipleAttr)
-        element()->setValueInternal(sanitizeValue(element()->value()), TextFieldEventBehavior::DispatchNoEvent);
+    if (name == multipleAttr) {
+        Ref element = *this->element();
+        element->setValueInternal(sanitizeValue(element->value()), TextFieldEventBehavior::DispatchNoEvent);
+    }
 
     BaseTextInputType::attributeChanged(name);
 }
 
-String EmailInputType::sanitizeValue(const String& proposedValue) const
+ValueOrReference<String> EmailInputType::sanitizeValue(const String& proposedValue LIFETIME_BOUND) const
 {
     // Passing a lambda instead of a function name helps the compiler inline isHTMLLineBreak.
     String noLineBreakValue = proposedValue;
-    if (UNLIKELY(containsHTMLLineBreak(proposedValue))) {
+    if (containsHTMLLineBreak(proposedValue)) [[unlikely]] {
         noLineBreakValue = proposedValue.removeCharacters([](auto character) {
             return isHTMLLineBreak(character);
         });
@@ -112,14 +117,15 @@ String EmailInputType::sanitizeValue(const String& proposedValue) const
     ASSERT(element());
     if (!element()->multiple())
         return noLineBreakValue.trim(isASCIIWhitespace);
-    Vector<String> addresses = noLineBreakValue.splitAllowingEmptyEntries(',');
     StringBuilder strippedValue;
-    for (unsigned i = 0; i < addresses.size(); ++i) {
-        if (i > 0)
+    bool first = true;
+    for (auto address : StringView(noLineBreakValue).splitAllowingEmptyEntries(',')) {
+        if (!first)
             strippedValue.append(',');
-        strippedValue.append(addresses[i].trim(isASCIIWhitespace));
+        first = false;
+        strippedValue.append(address.trim(isASCIIWhitespace));
     }
-    return strippedValue.toString();
+    return String { strippedValue.toString() };
 }
 
 } // namespace WebCore

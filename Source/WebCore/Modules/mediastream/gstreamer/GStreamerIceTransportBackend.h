@@ -23,21 +23,14 @@
 
 #include "GRefPtrGStreamer.h"
 #include "RTCIceTransportBackend.h"
-#include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class GStreamerIceTransportBackend;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::GStreamerIceTransportBackend> : std::true_type { };
-}
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
-class GStreamerIceTransportBackend final : public RTCIceTransportBackend, public CanMakeWeakPtr<GStreamerIceTransportBackend> {
-    WTF_MAKE_FAST_ALLOCATED;
+class GStreamerIceTransportBackendObserver;
+
+class GStreamerIceTransportBackend final : public RTCIceTransportBackend {
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerIceTransportBackend);
 
 public:
     explicit GStreamerIceTransportBackend(GRefPtr<GstWebRTCDTLSTransport>&&);
@@ -45,19 +38,12 @@ public:
 
 private:
     // RTCIceTransportBackend
-    const void* backend() const final { return m_backend.get(); }
-
+    const void* backend() const final { return m_dtlsTransport.get(); }
     void registerClient(RTCIceTransportBackendClient&) final;
     void unregisterClient() final;
 
-    void stateChanged() const;
-    void gatheringStateChanged() const;
-    void iceTransportChanged();
-    void selectedCandidatePairChanged();
-
-    GRefPtr<GstWebRTCDTLSTransport> m_backend;
-    GRefPtr<GstWebRTCICETransport> m_iceTransport;
-    WeakPtr<RTCIceTransportBackendClient> m_client;
+    GRefPtr<GstWebRTCDTLSTransport> m_dtlsTransport;
+    const RefPtr<GStreamerIceTransportBackendObserver> m_observer;
 };
 
 } // namespace WebCore

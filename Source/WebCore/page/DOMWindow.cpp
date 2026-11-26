@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,33 +27,55 @@
 #include "DOMWindow.h"
 
 #include "BackForwardController.h"
+#include "BarProp.h"
 #include "CSSRuleList.h"
-#include "CSSStyleDeclaration.h"
-#include "Document.h"
+#include "CSSStyleProperties.h"
+#include "CookieStore.h"
+#include "Crypto.h"
+#include "CustomElementRegistry.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
+#include "ExceptionOr.h"
 #include "Frame.h"
+#include "FrameConsoleClient.h"
 #include "FrameLoader.h"
 #include "HTTPParsers.h"
+#include "History.h"
 #include "LocalDOMWindow.h"
+#include "LocalFrame.h"
 #include "Location.h"
+#include "Logging.h"
 #include "MediaQueryList.h"
+#include "Navigation.h"
+#include "Navigator.h"
 #include "NodeList.h"
 #include "Page.h"
-#include "PageConsoleClient.h"
+#include "Performance.h"
+#include "PlatformStrategies.h"
 #include "RemoteDOMWindow.h"
 #include "ResourceLoadObserver.h"
 #include "ScheduledAction.h"
+#include "Screen.h"
 #include "SecurityOrigin.h"
+#include "Site.h"
+#include "StyleMedia.h"
+#include "VisualViewport.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebKitPoint.h"
+#include "WindowProxy.h"
+#include "dom/SandboxFlags.h"
+#include "page/RemoteFrame.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TypeCasts.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "DocumentPage.h"
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(DOMWindow);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DOMWindow);
 
 DOMWindow::DOMWindow(GlobalWindowIdentifier&& identifier, DOMWindowType type)
-    : m_identifier(WTFMove(identifier))
+    : m_identifier(WTF::move(identifier))
     , m_type(type)
 {
 }
@@ -64,7 +86,7 @@ ExceptionOr<RefPtr<SecurityOrigin>> DOMWindow::createTargetOriginForPostMessage(
 {
     RefPtr<SecurityOrigin> targetSecurityOrigin;
     if (targetOrigin == "/"_s)
-        targetSecurityOrigin = &sourceDocument.securityOrigin();
+        targetSecurityOrigin = sourceDocument.securityOrigin();
     else if (targetOrigin != "*"_s) {
         targetSecurityOrigin = SecurityOrigin::createFromString(targetOrigin);
         // It doesn't make sense target a postMessage at an opaque origin
@@ -84,17 +106,20 @@ Location& DOMWindow::location()
 
 bool DOMWindow::closed() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     if (!frame)
         return true;
 
-    RefPtr page = frame->page();
+    auto* page = frame->page();
     return !page || page->isClosing();
 }
 
 void DOMWindow::close(Document& document)
 {
-    if (!document.canNavigate(protectedFrame().get()))
+    bool canClose = document.canNavigate(protect(frame()).get()) == CanNavigateState::Able;
+    RELEASE_LOG_DEBUG(DOMAPI, "DOMWindow::close canClose=%d frameID=%" PRIu64, canClose, frame() ? protect(frame())->frameID().toUInt64() : 0);
+
+    if (!canClose)
         return;
     close();
 }
@@ -112,35 +137,25 @@ void DOMWindow::close()
     if (!frame->isMainFrame())
         return;
 
-    if (!(page->openedByDOM() || page->backForward().count() <= 1)) {
-        checkedConsole()->addMessage(MessageSource::JS, MessageLevel::Warning, "Can't close the window since it was not opened by JavaScript"_s);
+    if (!(page->openedByDOM() || protect(page->backForward())->count() <= 1)) {
+        protect(console())->addMessage(MessageSource::JS, MessageLevel::Warning, "Can't close the window since it was not opened by JavaScript"_s);
         return;
     }
 
     RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
-    if (localFrame && !localFrame->checkedLoader()->shouldClose())
+    if (localFrame && !localFrame->loader().shouldClose())
         return;
 
-    ResourceLoadObserver::shared().updateCentralStatisticsStore([] { });
+    ResourceLoadObserver::singleton().updateCentralStatisticsStore([] { });
 
     page->setIsClosing();
     closePage();
 }
 
-PageConsoleClient* DOMWindow::console() const
+FrameConsoleClient* DOMWindow::console() const
 {
-    auto* frame = this->frame();
-    return frame && frame->page() ? &frame->page()->console() : nullptr;
-}
-
-CheckedPtr<PageConsoleClient> DOMWindow::checkedConsole() const
-{
-    return console();
-}
-
-RefPtr<Frame> DOMWindow::protectedFrame() const
-{
-    return frame();
+    auto* frame = dynamicDowncast<LocalFrame>(this->frame());
+    return frame ? &frame->console() : nullptr;
 }
 
 WebCoreOpaqueRoot root(DOMWindow* window)
@@ -151,6 +166,9 @@ WebCoreOpaqueRoot root(DOMWindow* window)
 WindowProxy* DOMWindow::opener() const
 {
     RefPtr frame = this->frame();
+
+    RELEASE_LOG_DEBUG(DOMAPI, "DOMWindow::opener hasOpener=%d frameID=%" PRIu64, frame && frame->opener(), frame ? frame->frameID().toUInt64() : 0);
+
     if (!frame)
         return nullptr;
 
@@ -163,7 +181,7 @@ WindowProxy* DOMWindow::opener() const
 
 WindowProxy* DOMWindow::top() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     if (!frame)
         return nullptr;
 
@@ -175,11 +193,11 @@ WindowProxy* DOMWindow::top() const
 
 WindowProxy* DOMWindow::parent() const
 {
-    RefPtr frame = this->frame();
+    auto* frame = this->frame();
     if (!frame)
         return nullptr;
 
-    RefPtr parentFrame = frame->tree().parent();
+    auto* parentFrame = frame->tree().parent();
     if (parentFrame)
         return &parentFrame->windowProxy();
 
@@ -503,6 +521,14 @@ ExceptionOr<bool> DOMWindow::crossOriginIsolated() const
     return localThis->crossOriginIsolated();
 }
 
+ExceptionOr<bool> DOMWindow::originAgentCluster() const
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->originAgentCluster();
+}
+
 void DOMWindow::focus(LocalDOMWindow& incumbentWindow)
 {
     switch (m_type) {
@@ -553,18 +579,20 @@ ExceptionOr<Performance&> DOMWindow::performance() const
 
 ExceptionOr<void> DOMWindow::postMessage(JSC::JSGlobalObject& globalObject, LocalDOMWindow& incumbentWindow, JSC::JSValue message, WindowPostMessageOptions&& options)
 {
+    RELEASE_LOG_DEBUG(DOMAPI, "DOMWindow::postMessage frameID=%" PRIu64, frame() ? frame()->frameID().toUInt64() : 0);
     switch (m_type) {
     case DOMWindowType::Local:
-        return downcast<LocalDOMWindow>(*this).postMessage(globalObject, incumbentWindow, message, WTFMove(options));
+        return downcast<LocalDOMWindow>(*this).postMessage(globalObject, incumbentWindow, message, WTF::move(options));
     case DOMWindowType::Remote:
-        return downcast<RemoteDOMWindow>(*this).postMessage(globalObject, incumbentWindow, message, WTFMove(options));
+        return downcast<RemoteDOMWindow>(*this).postMessage(globalObject, incumbentWindow, message, WTF::move(options));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 ExceptionOr<void> DOMWindow::postMessage(JSC::JSGlobalObject& globalObject, LocalDOMWindow& incumbentWindow, JSC::JSValue message, String&& targetOrigin, Vector<JSC::Strong<JSC::JSObject>>&& transfer)
 {
-    return postMessage(globalObject, incumbentWindow, message, WindowPostMessageOptions { WTFMove(targetOrigin), WTFMove(transfer) });
+    RELEASE_LOG_DEBUG(DOMAPI, "DOMWindow::postMessage frameID=%" PRIu64, frame() ? protect(frame())->frameID().toUInt64() : 0);
+    return postMessage(globalObject, incumbentWindow, message, WindowPostMessageOptions { { WTF::move(transfer) }, WTF::move(targetOrigin) });
 }
 
 ExceptionOr<Ref<CSSStyleDeclaration>> DOMWindow::getComputedStyle(Element& element, const String& pseudoElt) const
@@ -655,7 +683,7 @@ ExceptionOr<int> DOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallb
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return localThis->requestAnimationFrame(WTFMove(callback));
+    return localThis->requestAnimationFrame(WTF::move(callback));
 }
 
 ExceptionOr<int> DOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
@@ -663,7 +691,7 @@ ExceptionOr<int> DOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFram
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return localThis->webkitRequestAnimationFrame(WTFMove(callback));
+    return localThis->webkitRequestAnimationFrame(WTF::move(callback));
 }
 
 ExceptionOr<void> DOMWindow::cancelAnimationFrame(int id)
@@ -680,7 +708,7 @@ ExceptionOr<int> DOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callb
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return localThis->requestIdleCallback(WTFMove(callback), options);
+    return localThis->requestIdleCallback(WTF::move(callback), options);
 }
 
 ExceptionOr<void> DOMWindow::cancelIdleCallback(int id)
@@ -697,7 +725,7 @@ ExceptionOr<void> DOMWindow::createImageBitmap(ImageBitmap::Source&& source, Ima
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    localThis->createImageBitmap(WTFMove(source), WTFMove(options), WTFMove(promise));
+    localThis->createImageBitmap(WTF::move(source), WTF::move(options), WTF::move(promise));
     return { };
 }
 
@@ -706,7 +734,7 @@ ExceptionOr<void> DOMWindow::createImageBitmap(ImageBitmap::Source&& source, int
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    localThis->createImageBitmap(WTFMove(source), sx, sy, sw, sh, WTFMove(options), WTFMove(promise));
+    localThis->createImageBitmap(WTF::move(source), sx, sy, sw, sh, WTF::move(options), WTF::move(promise));
     return { };
 }
 
@@ -835,7 +863,7 @@ ExceptionOr<int> DOMWindow::setTimeout(std::unique_ptr<ScheduledAction> action, 
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return localThis->setTimeout(WTFMove(action), timeout, WTFMove(arguments));
+    return localThis->setTimeout(WTF::move(action), timeout, WTF::move(arguments));
 }
 
 ExceptionOr<void> DOMWindow::clearTimeout(int timeoutId)
@@ -852,7 +880,7 @@ ExceptionOr<int> DOMWindow::setInterval(std::unique_ptr<ScheduledAction> action,
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return { { } };
-    return localThis->setInterval(WTFMove(action), timeout, WTFMove(arguments));
+    return localThis->setInterval(WTF::move(action), timeout, WTF::move(arguments));
 }
 
 ExceptionOr<void> DOMWindow::clearInterval(int timeoutId)
@@ -888,7 +916,7 @@ ExceptionOr<JSC::JSValue> DOMWindow::structuredClone(JSDOMGlobalObject& lexicalG
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return WindowOrWorkerGlobalScope::structuredClone(lexicalGlobalObject, relevantGlobalObject, value, WTFMove(options));
+    return WindowOrWorkerGlobalScope::structuredClone(lexicalGlobalObject, relevantGlobalObject, value, WTF::move(options));
 }
 
 ExceptionOr<String> DOMWindow::btoa(const String& stringToEncode)
@@ -896,7 +924,7 @@ ExceptionOr<String> DOMWindow::btoa(const String& stringToEncode)
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return Base64Utilities::btoa(stringToEncode);
+    return WindowOrWorkerGlobalScope::btoa(stringToEncode);
 }
 
 ExceptionOr<String> DOMWindow::atob(const String& stringToEncode)
@@ -904,7 +932,139 @@ ExceptionOr<String> DOMWindow::atob(const String& stringToEncode)
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return Base64Utilities::atob(stringToEncode);
+    return WindowOrWorkerGlobalScope::atob(stringToEncode);
+}
+
+#if ENABLE(DECLARATIVE_WEB_PUSH)
+ExceptionOr<PushManager&> DOMWindow::pushManager()
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->pushManager();
+}
+#endif
+
+bool DOMWindow::isCurrentlyDisplayedInFrame() const
+{
+    RefPtr frame = this->frame();
+    return frame && frame->window() == this;
+}
+
+void DOMWindow::printErrorMessage(const String& message) const
+{
+    if (message.isEmpty())
+        return;
+
+    if (CheckedPtr frameConsole = console())
+        frameConsole->addMessage(MessageSource::JS, MessageLevel::Error, message);
+}
+
+String DOMWindow::crossDomainAccessErrorMessage(const LocalDOMWindow& activeWindow, IncludeTargetOrigin includeTargetOrigin)
+{
+    URL activeWindowURL = protect(activeWindow.document())->url();
+    if (activeWindowURL.isNull())
+        return String();
+
+    RefPtr remoteFrame = (m_type == DOMWindowType::Remote) ? dynamicDowncast<RemoteDOMWindow>(*this)->frame() : nullptr;
+    RefPtr localDocument = documentIfLocal();
+    // We can't figure anything out if we are operating on a RemoteDOMWindow and don't have a remote frame
+    if (!localDocument && !remoteFrame)
+        return String();
+    Ref activeOrigin = protect(activeWindow.document())->securityOrigin();
+    const Ref targetOrigin = localDocument ? localDocument->securityOrigin() : remoteFrame->frameDocumentSecurityOriginOrOpaque();
+    // A remote frame with an empty site may legitimately appear as same-origin.
+    ASSERT(!activeOrigin->isSameOriginDomain(targetOrigin) || (remoteFrame && Site { activeOrigin->data() }.isEmpty()));
+
+    // FIXME: This message, and other console messages, have extra newlines. Should remove them.
+    String message;
+    if (includeTargetOrigin == IncludeTargetOrigin::Yes)
+        message = makeString("Blocked a frame with origin \""_s, activeOrigin->toString(), "\" from accessing a frame with origin \""_s, targetOrigin->toString(), "\". "_s);
+    else
+        message = makeString("Blocked a frame with origin \""_s, activeOrigin->toString(), "\" from accessing a cross-origin frame. "_s);
+
+    // Sandbox errors: Use the origin of the frames' location, rather than their actual origin (since we know that at least one will be "null").
+    URL activeURL = protect(activeWindow.document())->url();
+    RefPtr<const SecurityOrigin> remoteFrameSecurityOrigin = (m_type == DOMWindowType::Remote) ? remoteFrame->frameDocumentSecurityOriginOrOpaque() : RefPtr<const SecurityOrigin>();
+    URL targetURL = localDocument ? localDocument->url() : remoteFrameSecurityOrigin->toURL();
+    bool targetSandboxed = localDocument ? localDocument->isSandboxed(SandboxFlag::Origin) : (remoteFrame && remoteFrame->frameDocumentIsSandboxedOrigin());
+
+    if (targetSandboxed || activeWindow.document()->isSandboxed(SandboxFlag::Origin)) {
+        if (includeTargetOrigin == IncludeTargetOrigin::Yes)
+            message = makeString("Blocked a frame at \""_s, SecurityOrigin::create(activeURL).get().toString(), "\" from accessing a frame at \""_s, SecurityOrigin::create(targetURL).get().toString(), "\". "_s);
+        else
+            message = makeString("Blocked a frame at \""_s, SecurityOrigin::create(activeURL).get().toString(), "\" from accessing a cross-origin frame. "_s);
+
+        if (targetSandboxed && activeWindow.document()->isSandboxed(SandboxFlag::Origin))
+            return makeString("Sandbox access violation: "_s, message, " Both frames are sandboxed and lack the \"allow-same-origin\" flag."_s);
+        if (targetSandboxed)
+            return makeString("Sandbox access violation: "_s, message, " The frame being accessed is sandboxed and lacks the \"allow-same-origin\" flag."_s);
+        return makeString("Sandbox access violation: "_s, message, " The frame requesting access is sandboxed and lacks the \"allow-same-origin\" flag."_s);
+    }
+
+    if (includeTargetOrigin == IncludeTargetOrigin::Yes) {
+        // Protocol errors: Use the URL's protocol rather than the origin's protocol so that we get a useful message for non-heirarchal URLs like 'data:'.
+        if (targetOrigin->protocol() != activeOrigin->protocol())
+            return makeString(message, " The frame requesting access has a protocol of \""_s, activeURL.protocol(), "\", the frame being accessed has a protocol of \""_s, targetURL.protocol(), "\". Protocols must match.\n"_s);
+
+        // 'document.domain' errors.
+        if (targetOrigin->domainWasSetInDOM() && activeOrigin->domainWasSetInDOM())
+            return makeString(message, "The frame requesting access set \"document.domain\" to \""_s, activeOrigin->domain(), "\", the frame being accessed set it to \""_s, targetOrigin->domain(), "\". Both must set \"document.domain\" to the same value to allow access."_s);
+        if (activeOrigin->domainWasSetInDOM())
+            return makeString(message, "The frame requesting access set \"document.domain\" to \""_s, activeOrigin->domain(), "\", but the frame being accessed did not. Both must set \"document.domain\" to the same value to allow access."_s);
+        if (targetOrigin->domainWasSetInDOM())
+            return makeString(message, "The frame being accessed set \"document.domain\" to \""_s, targetOrigin->domain(), "\", but the frame requesting access did not. Both must set \"document.domain\" to the same value to allow access."_s);
+    }
+
+    // Default.
+    return makeString(message, "Protocols, domains, and ports must match."_s);
+}
+
+bool DOMWindow::isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const URL& url)
+{
+    if (!url.protocolIsJavaScript())
+        return false;
+
+    // If this LocalDOMWindow isn't currently active in the Frame, then there's no
+    // way we should allow the access.
+    // FIXME: Remove this check if we're able to disconnect LocalDOMWindow from
+    // Frame on navigation: https://bugs.webkit.org/show_bug.cgi?id=62054
+    if (isCurrentlyDisplayedInFrame()) {
+        // FIXME: Is there some way to eliminate the need for a separate "activeWindow == this" check?
+        if (&activeWindow == this)
+            return false;
+
+        if (RefPtr frame = this->frame()) {
+            if (RefPtr securityOrigin = frame->frameDocumentSecurityOrigin()) {
+                if (protect(protect(activeWindow.document())->securityOrigin())->isSameOriginDomain(*securityOrigin))
+                    return false;
+            }
+        }
+    }
+
+    activeWindow.printErrorMessage(crossDomainAccessErrorMessage(activeWindow, IncludeTargetOrigin::Yes));
+    return true;
+}
+
+bool DOMWindow::passesSetLocationSecurityChecks(const LocalDOMWindow& activeWindow, const URL& completedURL, CanNavigateState& navigationState)
+{
+    ASSERT(navigationState != CanNavigateState::Unchecked);
+    if (!isCurrentlyDisplayedInFrame())
+        return false;
+
+    RefPtr activeDocument = activeWindow.document();
+    if (!activeDocument)
+        return false;
+
+    RefPtr frame = this->frame();
+    if (navigationState != CanNavigateState::Able) [[unlikely]]
+        navigationState = activeDocument->canNavigate(frame.get(), completedURL);
+    if (navigationState == CanNavigateState::Unable)
+        return false;
+
+    if (isInsecureScriptAccess(activeWindow, completedURL))
+        return false;
+    return true;
 }
 
 } // namespace WebCore

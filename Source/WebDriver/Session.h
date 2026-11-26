@@ -27,30 +27,55 @@
 
 #include "Actions.h"
 #include "Capabilities.h"
+#include "SessionHost.h"
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/AtomString.h>
+#include <wtf/text/AtomStringHash.h>
 #include <wtf/text/WTFString.h>
+
+#if ENABLE(WEBDRIVER_BIDI)
+#include "WebSocketServer.h"
+#endif
 
 namespace WebDriver {
 
 class CommandResult;
 class SessionHost;
 
-class Session : public RefCounted<Session> {
+class Session :
+#if ENABLE(WEBDRIVER_BIDI)
+public BidiMessageHandler // Inherits RefCounted
+#else
+public RefCounted<Session>
+#endif
+{
 public:
-    static Ref<Session> create(std::unique_ptr<SessionHost>&& host)
+    static Ref<Session> create(Ref<SessionHost>&& host)
     {
-        return adoptRef(*new Session(WTFMove(host)));
+        return adoptRef(*new Session(WTF::move(host)));
     }
-    ~Session();
+#if ENABLE(WEBDRIVER_BIDI)
+    static Ref<Session> create(Ref<SessionHost>&& host, WeakPtr<WebSocketServer> bidiServer)
+    {
+        return adoptRef(*new Session(WTF::move(host), WTF::move(bidiServer)));
+    }
+#endif
+    virtual ~Session();
 
     const String& id() const;
     const Capabilities& capabilities() const;
     bool isConnected() const;
+#if ENABLE(WEBDRIVER_BIDI)
+    bool hasBiDiEnabled() const { return m_hasBiDiEnabled; };
+    void setHasBiDiEnabled(bool flag) { m_hasBiDiEnabled = flag; }
+#endif
     double scriptTimeout() const { return m_scriptTimeout; }
     double pageLoadTimeout() const { return m_pageLoadTimeout; }
     double implicitWaitTimeout() const { return m_implicitWaitTimeout; }
@@ -133,9 +158,18 @@ public:
     void sendAlertText(const String&, Function<void(CommandResult&&)>&&);
     void takeScreenshot(std::optional<String> elementID, std::optional<bool> scrollIntoView, Function<void(CommandResult&&)>&&);
 
-private:
-    Session(std::unique_ptr<SessionHost>&&);
+#if ENABLE(WEBDRIVER_BIDI)
+    void dispatchBidiMessage(RefPtr<JSON::Object>&&);
+    void relayBidiCommand(const String&, unsigned commandId, Function<void(WebSocketMessageHandler::Message&&)>&&);
+#endif
 
+private:
+    Session(Ref<SessionHost>&&);
+#if ENABLE(WEBDRIVER_BIDI)
+    Session(Ref<SessionHost>&&, WeakPtr<WebSocketServer>&&);
+#endif
+
+    String uncheckedTopLevelBrowsingContext() const;
     void switchToTopLevelBrowsingContext(const String&);
     void switchToBrowsingContext(const String&, Function<void(CommandResult&&)>&&);
     void switchToBrowsingContext(const String& toplevelBrowsingContext, const String& browsingContext, Function<void(CommandResult&&)>&&);
@@ -145,6 +179,7 @@ private:
     void getToplevelBrowsingContextRect(Function<void(CommandResult&&)>&&);
 
     std::optional<String> pageLoadStrategyString() const;
+    bool clearBrowsingContextsOnError(const CommandResult&);
 
     void handleUserPrompts(Function<void(CommandResult&&)>&&);
     void handleUnexpectedAlertOpen(Function<void(CommandResult&&)>&&);
@@ -155,8 +190,10 @@ private:
     RefPtr<JSON::Object> createElement(RefPtr<JSON::Value>&&);
     Ref<JSON::Object> createElement(const String& elementID);
     RefPtr<JSON::Object> createShadowRoot(RefPtr<JSON::Value>&&);
-    RefPtr<JSON::Object> extractElement(JSON::Value&);
-    String extractElementID(JSON::Value&);
+    RefPtr<JSON::Object> extractElement(const JSON::Value&);
+    String extractElementID(const JSON::Value&);
+    Expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&);
+    Expected<Ref<JSON::Value>, CommandResult> replaceReferences(Ref<JSON::Value>&&, HashSet<Ref<JSON::Value>>&);
     Ref<JSON::Value> handleScriptResult(Ref<JSON::Value>&&);
     void elementIsEditable(const String& elementID, Function<void(CommandResult&&)>&&);
 
@@ -189,11 +226,6 @@ private:
     void setInputFileUploadFiles(const String& elementID, const String& text, bool multiple, Function<void(CommandResult&&)>&&);
     void didSetInputFileUploadFiles(bool wasCancelled);
 
-    enum class MouseInteraction { Move,
-        Down,
-        Up,
-        SingleClick,
-        DoubleClick };
     void performMouseInteraction(int x, int y, MouseButton, MouseInteraction, Function<void(CommandResult&&)>&&);
 
     enum class KeyboardInteractionType { KeyPress,
@@ -211,7 +243,7 @@ private:
         Alternate = 1 << 2,
         Meta = 1 << 3,
     };
-    String virtualKeyForKey(UChar, KeyModifier&);
+    String virtualKeyForKey(char16_t, KeyModifier&);
     void performKeyboardInteractions(Vector<KeyboardInteraction>&&, Function<void(CommandResult&&)>&&);
 
     struct InputSourceState {
@@ -222,12 +254,13 @@ private:
         Type type;
         String subtype;
         std::optional<MouseButton> pressedButton;
+        std::optional<MouseInteraction> mouseInteraction;
         std::optional<String> pressedKey;
         HashSet<String> pressedVirtualKeys;
     };
     InputSourceState& inputSourceState(const String& id);
 
-    std::unique_ptr<SessionHost> m_host;
+    RefPtr<SessionHost> m_host;
     double m_scriptTimeout;
     double m_pageLoadTimeout;
     double m_implicitWaitTimeout;
@@ -236,6 +269,14 @@ private:
     std::optional<String> m_currentParentBrowsingContext;
     HashMap<String, InputSource> m_activeInputSources;
     HashMap<String, InputSourceState> m_inputStateTable;
+#if ENABLE(WEBDRIVER_BIDI)
+    bool m_hasBiDiEnabled { false };
+
+    WeakPtr<WebSocketServer> m_bidiServer;
+
+    // Actual event handlers
+    RefPtr<JSON::Object> processLogEntryAdded(RefPtr<JSON::Object>&&);
+#endif
 };
 
 } // WebDriver
