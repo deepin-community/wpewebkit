@@ -12,7 +12,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/SkFloatingPoint.h"
 
 #include <algorithm>
 #include <array>
@@ -20,7 +20,7 @@
 
 class SkDevice;
 class SkRuntimeEffect;
-class SkRuntimeShaderBuilder;
+class SkRuntimeEffectBuilder;
 class SkSpecialImage;
 struct SkImageInfo;
 struct SkIRect;
@@ -90,8 +90,6 @@ public:
         int possibleWindow = sk_float_floor2int(sigma * 3 * sqrt(2 * SK_FloatPI) / 4 + 0.5f);
         return std::max(1, possibleWindow);
     }
-
-    // TODO: Bring in anything needed for the single-channel box blur from SkMaskBlurFilter
 };
 
 class SkBlurEngine::Algorithm {
@@ -148,7 +146,7 @@ private:
     // Create a new surface, which can be approx-fit and have undefined contents.
     virtual sk_sp<SkDevice> makeDevice(const SkImageInfo&) const = 0;
 
-    sk_sp<SkSpecialImage> renderBlur(SkRuntimeShaderBuilder* blurEffectBuilder,
+    sk_sp<SkSpecialImage> renderBlur(SkRuntimeEffectBuilder* blurEffectBuilder,
                                      SkFilterMode filter,
                                      SkISize radii,
                                      sk_sp<SkSpecialImage> input,

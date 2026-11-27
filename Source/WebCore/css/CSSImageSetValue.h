@@ -29,20 +29,21 @@
 
 namespace WebCore {
 
-class StyleImage;
-
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSImageSetValue final : public CSSValueContainingVector {
 public:
     static Ref<CSSImageSetValue> create(CSSValueListBuilder);
 
-    String customCSSText() const;
+    String customCSSText(const CSS::SerializationContext&) const;
     bool equals(const CSSImageSetValue& other) const { return itemsEqual(other); }
 
-    RefPtr<StyleImage> createStyleImage(Style::BuilderState&) const;
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
+
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
 private:
     explicit CSSImageSetValue(CSSValueListBuilder);

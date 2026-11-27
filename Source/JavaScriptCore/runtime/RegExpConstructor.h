@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2021 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2021 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "CommonIdentifiers.h"
 #include "InternalFunction.h"
 #include "RegExp.h"
 #include "RegExpCachedResult.h"
@@ -53,21 +54,10 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RegExpConstructor, InternalFunction);
 
 JSObject* constructRegExp(JSGlobalObject*, const ArgList&, JSObject* callee = nullptr, JSValue newTarget = JSValue());
+RegExpObject* regExpCreate(JSGlobalObject*, JSValue newTarget, JSValue patternArg, JSValue flagsArg);
+RegExpObject* regExpCreate(JSGlobalObject*, JSValue newTarget, const String& pattern, OptionSet<Yarr::Flags>);
 
-ALWAYS_INLINE bool isRegExp(VM& vm, JSGlobalObject* globalObject, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!value.isObject())
-        return false;
-
-    JSObject* object = asObject(value);
-    JSValue matchValue = object->get(globalObject, vm.propertyNames->matchSymbol);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!matchValue.isUndefined())
-        return matchValue.toBoolean(globalObject);
-
-    return object->inherits<RegExpObject>();
-}
+ALWAYS_INLINE bool isRegExp(VM&, JSGlobalObject*, JSValue); // Defined in RegExpConstructorInlines.h
 
 JSC_DECLARE_HOST_FUNCTION(esSpecRegExpCreate);
 JSC_DECLARE_HOST_FUNCTION(esSpecIsRegExp);

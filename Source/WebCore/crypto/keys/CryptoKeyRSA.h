@@ -26,7 +26,6 @@
 #pragma once
 
 #include "CryptoKey.h"
-#include "ExceptionOr.h"
 #include <wtf/Function.h>
 
 #if OS(DARWIN) && !PLATFORM(GTK)
@@ -63,16 +62,18 @@ class ScriptExecutionContext;
 struct CryptoKeyPair;
 struct JsonWebKey;
 
+template<typename> class ExceptionOr;
+
 class CryptoKeyRSA final : public CryptoKey {
 public:
     static Ref<CryptoKeyRSA> create(CryptoAlgorithmIdentifier identifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType type, PlatformRSAKeyContainer&& platformKey, bool extractable, CryptoKeyUsageBitmap usage)
     {
-        return adoptRef(*new CryptoKeyRSA(identifier, hash, hasHash, type, WTFMove(platformKey), extractable, usage));
+        return adoptRef(*new CryptoKeyRSA(identifier, hash, hasHash, type, WTF::move(platformKey), extractable, usage));
     }
     static RefPtr<CryptoKeyRSA> create(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, const CryptoKeyRSAComponents&, bool extractable, CryptoKeyUsageBitmap);
     virtual ~CryptoKeyRSA() = default;
 
-    bool isRestrictedToHash(CryptoAlgorithmIdentifier&) const;
+    bool NODELETE isRestrictedToHash(CryptoAlgorithmIdentifier&) const;
 
     size_t keySizeInBits() const;
 
@@ -96,8 +97,8 @@ private:
     CryptoKeyRSA(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType, PlatformRSAKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::RSA; }
-
     KeyAlgorithm algorithm() const final;
+    CryptoKey::Data data() const final;
 
     PlatformRSAKeyContainer m_platformKey;
 

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/WritingDirection.h>
+#include <wtf/Markable.h>
 #include <wtf/UUID.h>
 
 namespace WebCore {
@@ -44,8 +46,14 @@ enum class TextAnimationType : uint8_t {
 struct TextAnimationData {
     TextAnimationType style;
     TextAnimationRunMode runMode;
-    WTF::UUID unanimatedRangeUUID { WTF::UUID::emptyValue };
+    Markable<WTF::UUID> unanimatedRangeUUID;
+    Markable<WTF::UUID> sourceAnimationUUID;
+    Markable<WTF::UUID> destinationAnimationUUID;
 
+};
+
+struct TextEffectData {
+    WritingDirection writingDirection;
 };
 
 } // namespace WebKit

@@ -25,12 +25,12 @@
 
 #pragma once
 
-#include "FormattingConstraints.h"
-#include "InlineContentBreaker.h"
-#include "InlineLayoutState.h"
-#include "InlineLine.h"
-#include "InlineLineTypes.h"
-#include "LineLayoutResult.h"
+#include <WebCore/FormattingConstraints.h>
+#include <WebCore/InlineContentBreaker.h>
+#include <WebCore/InlineLayoutState.h>
+#include <WebCore/InlineLine.h>
+#include <WebCore/InlineLineTypes.h>
+#include <WebCore/LineLayoutResult.h>
 
 namespace WebCore {
 namespace Layout {
@@ -40,43 +40,47 @@ struct LineInput {
     InlineRect initialLogicalRect;
 };
 
+using WrapOpportunityList = Vector<const InlineItem*, 32>;
+
 class AbstractLineBuilder {
 public:
-    virtual LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&) = 0;
+    virtual LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&, bool isFirstFormattedLineCandidate) = 0;
     virtual ~AbstractLineBuilder() { };
 
-    void setIntrinsicWidthMode(IntrinsicWidthMode);
+    void NODELETE setIntrinsicWidthMode(IntrinsicWidthMode);
 
 protected:
     AbstractLineBuilder(InlineFormattingContext&, const ElementBox& rootBox, HorizontalConstraints rootHorizontalConstraints, const InlineItemList&);
 
     void reset();
 
-    std::optional<InlineLayoutUnit> eligibleOverflowWidthAsLeading(const InlineContentBreaker::ContinuousContent::RunList&, const InlineContentBreaker::Result&, bool) const;
+    std::optional<InlineLayoutUnit> overflowWidthAsLeadingForNextLine(const InlineContentBreaker::ContinuousContent::RunList&, const InlineContentBreaker::Result&) const;
 
     std::optional<IntrinsicWidthMode> intrinsicWidthMode() const { return m_intrinsicWidthMode; }
     bool isInIntrinsicWidthMode() const { return !!intrinsicWidthMode(); }
 
-    bool isFirstFormattedLine() const { return !m_previousLine.has_value(); }
+    bool isFirstFormattedLineCandidate() const { return m_isFirstFormattedLineCandidate; }
 
-    InlineContentBreaker& inlineContentBreaker() { return m_inlineContentBreaker; }
+    InlineContentBreaker& inlineContentBreaker() LIFETIME_BOUND { return m_inlineContentBreaker; }
 
-    InlineFormattingContext& formattingContext() { return m_inlineFormattingContext; }
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
-    const HorizontalConstraints& rootHorizontalConstraints() const { return m_rootHorizontalConstraints; }
-    const InlineLayoutState& layoutState() const;
-    InlineLayoutState& layoutState();
-    const BlockLayoutState& blockLayoutState() const { return layoutState().parentBlockLayoutState(); }
+    InlineFormattingContext& formattingContext() LIFETIME_BOUND { return m_inlineFormattingContext; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
+    const HorizontalConstraints& rootHorizontalConstraints() const LIFETIME_BOUND { return m_rootHorizontalConstraints; }
+    const InlineLayoutState& NODELETE layoutState() const LIFETIME_BOUND;
+    InlineLayoutState& NODELETE layoutState() LIFETIME_BOUND;
+    const BlockLayoutState& blockLayoutState() const LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
+    BlockLayoutState& blockLayoutState() LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
     const ElementBox& root() const { return m_rootBox; }
-    const RenderStyle& rootStyle() const;
+    const Style::ComputedStyle& rootStyle() const LIFETIME_BOUND;
 
 protected:
     Line m_line;
     InlineRect m_lineLogicalRect;
     std::span<const InlineItem> m_inlineItemList;
-    Vector<const InlineItem*, 32> m_wrapOpportunityList;
+    WrapOpportunityList m_wrapOpportunityList;
     std::optional<InlineTextItem> m_partialLeadingTextItem;
     std::optional<PreviousLine> m_previousLine { };
+    bool m_isFirstFormattedLineCandidate { false };
 
 private:
     InlineFormattingContext& m_inlineFormattingContext;

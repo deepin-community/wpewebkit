@@ -8,6 +8,7 @@
 //
 
 #include "libANGLE/renderer/vulkan/vk_caps_utils.h"
+#include "common/unsafe_buffers.h"
 
 #include <type_traits>
 
@@ -76,18 +77,15 @@ bool GetTextureSRGBDecodeSupport(const Renderer *renderer)
 {
     static constexpr bool kLinearColorspace = true;
 
+    // As per OpenGL ES specs, ASTC, ETC2, and BPTC compressed formats are either exposed with their
+    // sRGB variants or not exposed at all; the Vulkan backend treats S3TC formats similarly.
+    // Therefore, there is no need to check compressed formats here as they do not affect support
+    // for skipping sRGB decode.
+
     // GL_SRGB and GL_SRGB_ALPHA unsized formats are also required by the spec, but the only valid
     // type for them is GL_UNSIGNED_BYTE, so they are fully included in the sized formats listed
     // here
-    std::vector<GLenum> optionalSizedSRGBFormats = {
-        GL_SRGB8,
-        GL_SRGB8_ALPHA8_EXT,
-        GL_COMPRESSED_SRGB_S3TC_DXT1_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT,
-    };
-
+    std::vector<GLenum> optionalSizedSRGBFormats = {GL_SRGB8, GL_SRGB8_ALPHA8_EXT};
     if (!FormatReinterpretationSupported(optionalSizedSRGBFormats, renderer, kLinearColorspace))
     {
         return false;
@@ -101,51 +99,23 @@ bool GetTextureSRGBOverrideSupport(const Renderer *renderer,
 {
     static constexpr bool kNonLinearColorspace = false;
 
+    // As per OpenGL ES specs, ASTC, ETC2, and BPTC compressed formats are either exposed with their
+    // sRGB variants or not exposed at all; the Vulkan backend treats S3TC formats similarly.
+    // Therefore, there is no need to check compressed formats here as they do not affect support
+    // for sRGB overriding.
+
     // If the given linear format is supported, we also need to support its corresponding nonlinear
     // format. If the given linear format is NOT supported, we don't care about its corresponding
     // nonlinear format.
-    std::vector<GLenum> optionalLinearFormats     = {GL_RGB8,
-                                                     GL_RGBA8,
-                                                     GL_COMPRESSED_RGB8_ETC2,
-                                                     GL_COMPRESSED_RGBA8_ETC2_EAC,
-                                                     GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2,
-                                                     GL_COMPRESSED_RGBA_ASTC_4x4,
-                                                     GL_COMPRESSED_RGBA_ASTC_5x4,
-                                                     GL_COMPRESSED_RGBA_ASTC_5x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_6x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_6x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x8,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x8,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x10,
-                                                     GL_COMPRESSED_RGBA_ASTC_12x10,
-                                                     GL_COMPRESSED_RGBA_ASTC_12x12};
-    std::vector<GLenum> optionalS3TCLinearFormats = {
-        GL_COMPRESSED_RGB_S3TC_DXT1_EXT, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT,
-        GL_COMPRESSED_RGBA_S3TC_DXT3_EXT, GL_COMPRESSED_RGBA_S3TC_DXT5_EXT};
-    std::vector<GLenum> optionalR8LinearFormats   = {GL_R8};
-    std::vector<GLenum> optionalRG8LinearFormats  = {GL_RG8};
-    std::vector<GLenum> optionalBPTCLinearFormats = {GL_COMPRESSED_RGBA_BPTC_UNORM_EXT};
-
+    std::vector<GLenum> optionalLinearFormats = {GL_RGB8, GL_RGBA8};
     if (!FormatReinterpretationSupported(optionalLinearFormats, renderer, kNonLinearColorspace))
     {
         return false;
     }
 
-    if (supportedExtensions.textureCompressionS3tcSrgbEXT)
-    {
-        if (!FormatReinterpretationSupported(optionalS3TCLinearFormats, renderer,
-                                             kNonLinearColorspace))
-        {
-            return false;
-        }
-    }
-
     if (supportedExtensions.textureSRGBR8EXT)
     {
+        std::vector<GLenum> optionalR8LinearFormats = {GL_R8};
         if (!FormatReinterpretationSupported(optionalR8LinearFormats, renderer,
                                              kNonLinearColorspace))
         {
@@ -155,16 +125,8 @@ bool GetTextureSRGBOverrideSupport(const Renderer *renderer,
 
     if (supportedExtensions.textureSRGBRG8EXT)
     {
+        std::vector<GLenum> optionalRG8LinearFormats = {GL_RG8};
         if (!FormatReinterpretationSupported(optionalRG8LinearFormats, renderer,
-                                             kNonLinearColorspace))
-        {
-            return false;
-        }
-    }
-
-    if (supportedExtensions.textureCompressionBptcEXT)
-    {
-        if (!FormatReinterpretationSupported(optionalBPTCLinearFormats, renderer,
                                              kNonLinearColorspace))
         {
             return false;
@@ -186,36 +148,38 @@ bool CanSupportYuvInternalFormat(const Renderer *renderer)
 
     const Format &twoPlane8bitYuvFormat = renderer->getFormat(GL_G8_B8R8_2PLANE_420_UNORM_ANGLE);
     bool twoPlane8bitYuvFormatSupported = renderer->hasImageFormatFeatureBits(
-        twoPlane8bitYuvFormat.getActualImageFormatID(vk::ImageAccess::SampleOnly),
+        twoPlane8bitYuvFormat.getActualImageFormatID(vk::ImageFormatSupport::SampleOnly),
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
 
     const Format &threePlane8bitYuvFormat = renderer->getFormat(GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE);
     bool threePlane8bitYuvFormatSupported = renderer->hasImageFormatFeatureBits(
-        threePlane8bitYuvFormat.getActualImageFormatID(vk::ImageAccess::SampleOnly),
+        threePlane8bitYuvFormat.getActualImageFormatID(vk::ImageFormatSupport::SampleOnly),
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
 
     return twoPlane8bitYuvFormatSupported && threePlane8bitYuvFormatSupported;
 }
 
-uint32_t GetTimestampValidBits(const std::vector<VkQueueFamilyProperties> &queueFamilyProperties,
+uint32_t GetTimestampValidBits(const std::vector<VkQueueFamilyProperties2> &queueFamilyProperties2,
                                uint32_t queueFamilyIndex)
 {
-    ASSERT(!queueFamilyProperties.empty());
+    ASSERT(!queueFamilyProperties2.empty());
 
-    if (queueFamilyIndex < queueFamilyProperties.size())
+    if (queueFamilyIndex < queueFamilyProperties2.size())
     {
         // If a queue family is already selected (which is only currently the case if there is only
         // one family), get the timestamp valid bits from that queue.
-        return queueFamilyProperties[queueFamilyIndex].timestampValidBits;
+        return queueFamilyProperties2[queueFamilyIndex].queueFamilyProperties.timestampValidBits;
     }
 
     // If a queue family is not already selected, we cannot know which queue family will end up
     // being used until a surface is used.  Take the minimum valid bits from all queues as a safe
     // measure.
-    uint32_t timestampValidBits = queueFamilyProperties[0].timestampValidBits;
-    for (const VkQueueFamilyProperties &properties : queueFamilyProperties)
+    uint32_t timestampValidBits =
+        queueFamilyProperties2[0].queueFamilyProperties.timestampValidBits;
+    for (const VkQueueFamilyProperties2 &properties2 : queueFamilyProperties2)
     {
-        timestampValidBits = std::min(timestampValidBits, properties.timestampValidBits);
+        timestampValidBits =
+            std::min(timestampValidBits, properties2.queueFamilyProperties.timestampValidBits);
     }
     return timestampValidBits;
 }
@@ -311,7 +275,7 @@ void LogMissingExtensionsForGLES32(const gl::Extensions &nativeExtensions)
         if (!requiredExtensions[index])
         {
             INFO() << "The following extension is required for GLES 3.2: "
-                   << kRequiredExtensionNames[index];
+                   << ANGLE_UNSAFE_TODO(kRequiredExtensionNames[index]);
         }
     }
 }
@@ -333,6 +297,31 @@ void Renderer::ensureCapsInitialized() const
     // Enable GL_EXT_buffer_storage
     mNativeExtensions.bufferStorageEXT = true;
 
+    // If the BC compression formats device feature is not explicitly enabled, ensure that either
+    // all S3TC formats are supported or none to guarantee availability of their sRGB variants.
+    if (mPhysicalDeviceFeatures.textureCompressionBC == VK_FALSE)
+    {
+        if (!mNativeExtensions.textureCompressionDxt1EXT ||
+            !mNativeExtensions.textureCompressionDxt3ANGLE ||
+            !mNativeExtensions.textureCompressionDxt5ANGLE ||
+            !mNativeExtensions.textureCompressionS3tcSrgbEXT)
+        {
+            mNativeExtensions.textureCompressionDxt1EXT     = false;
+            mNativeExtensions.textureCompressionDxt3ANGLE   = false;
+            mNativeExtensions.textureCompressionDxt5ANGLE   = false;
+            mNativeExtensions.textureCompressionS3tcSrgbEXT = false;
+        }
+    }
+    else
+    {
+        ASSERT(mNativeExtensions.textureCompressionDxt1EXT);
+        ASSERT(mNativeExtensions.textureCompressionDxt3ANGLE);
+        ASSERT(mNativeExtensions.textureCompressionDxt5ANGLE);
+        ASSERT(mNativeExtensions.textureCompressionS3tcSrgbEXT);
+        ASSERT(mNativeExtensions.textureCompressionRgtcEXT);
+        ASSERT(mNativeExtensions.textureCompressionBptcEXT);
+    }
+
     // When ETC2/EAC formats are natively supported, enable ANGLE-specific extension string to
     // expose them to WebGL. In other case, mark potentially-available ETC1 extension as emulated.
     if ((mPhysicalDeviceFeatures.textureCompressionETC2 == VK_TRUE) &&
@@ -352,14 +341,19 @@ void Renderer::ensureCapsInitialized() const
         mNativeLimitations.emulatedAstc = true;
     }
 
-    // Vulkan doesn't support ASTC 3D block textures, which are required by
-    // GL_OES_texture_compression_astc.
-    mNativeExtensions.textureCompressionAstcOES = false;
-    // Vulkan does not support sliced 3D ASTC textures either.
-    mNativeExtensions.textureCompressionAstcSliced3dKHR = false;
+    // Enable KHR_texture_compression_astc_sliced_3d
+    mNativeExtensions.textureCompressionAstcSliced3dKHR =
+        mNativeExtensions.textureCompressionAstcLdrKHR &&
+        getFeatures().supportsAstcSliced3d.enabled;
 
-    // Vulkan doesn't guarantee HDR blocks decoding without VK_EXT_texture_compression_astc_hdr.
-    mNativeExtensions.textureCompressionAstcHdrKHR = false;
+    // Enable KHR_texture_compression_astc_hdr
+    mNativeExtensions.textureCompressionAstcHdrKHR =
+        mNativeExtensions.textureCompressionAstcLdrKHR && supportsAstcHdr();
+
+    // Enable GL_OES_texture_compression_astc
+    mNativeExtensions.textureCompressionAstcOES = getFeatures().supportsAstc3d.enabled &&
+                                                  mNativeExtensions.textureCompressionAstcHdrKHR &&
+                                                  mNativeExtensions.textureCompressionAstcLdrKHR;
 
     // Enable EXT_compressed_ETC1_RGB8_sub_texture
     mNativeExtensions.compressedETC1RGB8SubTextureEXT =
@@ -381,6 +375,8 @@ void Renderer::ensureCapsInitialized() const
         getFeatures().enableMultisampledRenderToTexture.enabled;
     mNativeExtensions.multisampledRenderToTexture2EXT =
         getFeatures().enableMultisampledRenderToTexture.enabled;
+    mNativeExtensions.multiviewMultisampledRenderToTextureOVR =
+        getFeatures().supportsMultiviewMultisampleRenderToTexture.enabled;
     mNativeExtensions.textureStorageMultisample2dArrayOES =
         (limitsVk.standardSampleLocations == VK_TRUE);
     mNativeExtensions.copyTextureCHROMIUM           = true;
@@ -406,8 +402,12 @@ void Renderer::ensureCapsInitialized() const
     mNativeExtensions.textureMirrorClampToEdgeEXT =
         getFeatures().supportsSamplerMirrorClampToEdge.enabled;
 
+    // Enable EXT_texture_shadow_lod
+    mNativeExtensions.textureShadowLodEXT = true;
+
     // Enable EXT_multi_draw_indirect
     mNativeExtensions.multiDrawIndirectEXT = true;
+    mNativeLimitations.multidrawEmulated   = false;
 
     // Enable EXT_base_instance
     mNativeExtensions.baseInstanceEXT = true;
@@ -477,7 +477,7 @@ void Renderer::ensureCapsInitialized() const
         vk::RenderPassCommandBuffer::SupportsQueries(mPhysicalDeviceFeatures))
     {
         const uint32_t timestampValidBits =
-            vk::GetTimestampValidBits(mQueueFamilyProperties, mCurrentQueueFamilyIndex);
+            vk::GetTimestampValidBits(mQueueFamilyProperties2, mCurrentQueueFamilyIndex);
 
         mNativeExtensions.disjointTimerQueryEXT = timestampValidBits > 0;
         mNativeCaps.queryCounterBitsTimeElapsed = timestampValidBits;
@@ -529,8 +529,12 @@ void Renderer::ensureCapsInitialized() const
         vk::GetTextureSRGBOverrideSupport(this, mNativeExtensions);
     mNativeExtensions.textureSRGBDecodeEXT = vk::GetTextureSRGBDecodeSupport(this);
 
-    // EXT_srgb_write_control requires image_format_list
-    mNativeExtensions.sRGBWriteControlEXT = getFeatures().supportsImageFormatList.enabled;
+    // Enable EXT_srgb_write_control if either of these conditions are met -
+    // - VK_KHR_swapchain_mutable_format is supported
+    // - exposeNonConformantExtensionsAndVersions is enabled
+    mNativeExtensions.sRGBWriteControlEXT =
+        getFeatures().supportsSwapchainMutableFormat.enabled ||
+        getFeatures().exposeNonConformantExtensionsAndVersions.enabled;
 
     // Vulkan natively supports io interface block.
     mNativeExtensions.shaderIoBlocksOES = true;
@@ -590,8 +594,7 @@ void Renderer::ensureCapsInitialized() const
 
     mNativeExtensions.blendEquationAdvancedCoherentKHR =
         mFeatures.supportsBlendOperationAdvancedCoherent.enabled ||
-        (mFeatures.emulateAdvancedBlendEquations.enabled &&
-         mFeatures.supportsShaderFramebufferFetch.enabled);
+        (mFeatures.emulateAdvancedBlendEquations.enabled && mIsColorFramebufferFetchCoherent);
 
     // Enable EXT_unpack_subimage
     mNativeExtensions.unpackSubimageEXT = true;
@@ -626,11 +629,23 @@ void Renderer::ensureCapsInitialized() const
     // https://gitlab.khronos.org/opengl/API/-/issues/149
     mNativeExtensions.shaderMultisampleInterpolationOES = mNativeExtensions.sampleVariablesOES;
 
-    // Always enable ANGLE_rgbx_internal_format to expose GL_RGBX8_ANGLE.
-    mNativeExtensions.rgbxInternalFormatANGLE = true;
+    // Always enable ANGLE_rgbx_internal_format to expose GL_RGBX8_ANGLE except for Samsung.
+    mNativeExtensions.rgbxInternalFormatANGLE = mFeatures.supportsAngleRgbxInternalFormat.enabled;
 
-    // https://vulkan.lunarg.com/doc/view/1.0.30.0/linux/vkspec.chunked/ch31s02.html
-    mNativeCaps.maxElementIndex  = std::numeric_limits<GLuint>::max() - 1;
+    // Enable EXT_texture_compression_astc_decode_mode
+    mNativeExtensions.textureCompressionAstcDecodeModeEXT =
+        mNativeExtensions.textureCompressionAstcLdrKHR &&
+        getFeatures().supportsAstcDecodeMode.enabled;
+    mNativeExtensions.textureCompressionAstcDecodeModeRgb9e5EXT =
+        mNativeExtensions.textureCompressionAstcLdrKHR &&
+        getFeatures().supportsAstcDecodeModeRgb9e5.enabled;
+
+    // The Vulkan limit maxDrawIndexedIndexValue has a minimum required value of 2^32-1.
+    // OpenGL ES 3.2 requires a minimum value of 2^24-1 for GL_MAX_ELEMENT_INDEX.
+    // 2^30-1 is chosen as an arbitrary value larger than the minimum requirement, but
+    // avoiding integer limits and overflows in math.
+    mNativeCaps.maxElementIndex = (1 << 30) - 1;
+
     mNativeCaps.max3DTextureSize = rx::LimitToInt(limitsVk.maxImageDimension3D);
     mNativeCaps.max2DTextureSize =
         std::min(limitsVk.maxFramebufferWidth, limitsVk.maxImageDimension2D);
@@ -713,11 +728,9 @@ void Renderer::ensureCapsInitialized() const
         rx::LimitToInt(limitsVk.maxComputeWorkGroupInvocations);
     mNativeCaps.maxComputeSharedMemorySize = rx::LimitToInt(limitsVk.maxComputeSharedMemorySize);
 
-    GLuint maxUniformBlockSize = limitsVk.maxUniformBufferRange;
-
-    // Clamp the maxUniformBlockSize to 64KB (majority of devices support up to this size
-    // currently), on AMD the maxUniformBufferRange is near uint32_t max.
-    maxUniformBlockSize = std::min(0x10000u, maxUniformBlockSize);
+    const GLuint maxUniformBlockSize = std::min<GLuint>(
+        rx::LimitToIntAnd(limitsVk.maxUniformBufferRange, mMaxBufferMemorySizeLimit),
+        gl::IMPLEMENTATION_MAX_UNIFORM_BLOCK_SIZE);
 
     const GLuint maxUniformVectors = maxUniformBlockSize / (sizeof(GLfloat) * kComponentsPerVector);
     const GLuint maxUniformComponents = maxUniformVectors * kComponentsPerVector;
@@ -730,7 +743,6 @@ void Renderer::ensureCapsInitialized() const
     {
         mNativeCaps.maxShaderUniformComponents[shaderType] = maxUniformComponents;
     }
-    mNativeCaps.maxUniformLocations = maxUniformVectors;
 
     const int32_t maxPerStageUniformBuffers = rx::LimitToInt(
         limitsVk.maxPerStageDescriptorUniformBuffers - kReservedPerStageDefaultUniformBindingCount);
@@ -751,8 +763,18 @@ void Renderer::ensureCapsInitialized() const
 
     // Note that Vulkan currently implements textures as combined image+samplers, so the limit is
     // the minimum of supported samplers and sampled images.
-    const uint32_t maxPerStageTextures = std::min(limitsVk.maxPerStageDescriptorSamplers,
-                                                  limitsVk.maxPerStageDescriptorSampledImages);
+    uint32_t maxPerStageTextures = std::min(limitsVk.maxPerStageDescriptorSamplers,
+                                            limitsVk.maxPerStageDescriptorSampledImages);
+
+    // Many devices support a huge number of samplers (millions) and every one needs a uniform
+    // location, either generated by ANGLE or assigned by the user. Limit the number of samplers per
+    // stage to something reasonable, which in turn also lowers the number of uniform locations.
+    // This isn't expected to have any practical effect on real apps/users, but is instead to keep
+    // tests for these limits (e.g., dEQP, end2end) within reason in terms of shader program sizes
+    // and compilation times.
+    constexpr uint32_t kMaximumSamplersPerStage = 4096;
+    maxPerStageTextures = std::min(kMaximumSamplersPerStage, maxPerStageTextures);
+
     const uint32_t maxCombinedTextures =
         std::min(limitsVk.maxDescriptorSetSamplers, limitsVk.maxDescriptorSetSampledImages);
     for (gl::ShaderType shaderType : gl::AllShaderTypes())
@@ -760,6 +782,10 @@ void Renderer::ensureCapsInitialized() const
         mNativeCaps.maxShaderTextureImageUnits[shaderType] = rx::LimitToInt(maxPerStageTextures);
     }
     mNativeCaps.maxCombinedTextureImageUnits = rx::LimitToInt(maxCombinedTextures);
+
+    // All uniforms (variables + samplers) consume a location when a shader is linked.
+    mNativeCaps.maxUniformLocations =
+        LimitToInt(maxUniformVectors + LimitToInt(maxPerStageTextures));
 
     uint32_t maxPerStageStorageBuffers    = limitsVk.maxPerStageDescriptorStorageBuffers;
     uint32_t maxVertexStageStorageBuffers = maxPerStageStorageBuffers;
@@ -835,7 +861,8 @@ void Renderer::ensureCapsInitialized() const
     // Emulated as storage buffers, atomic counter buffers have the same size limit.  However, the
     // limit is a signed integer and values above int max will end up as a negative size.  The
     // storage buffer size is just capped to int unconditionally.
-    uint32_t maxStorageBufferRange = rx::LimitToInt(limitsVk.maxStorageBufferRange);
+    uint32_t maxStorageBufferRange =
+        rx::LimitToIntAnd(limitsVk.maxStorageBufferRange, mMaxBufferMemorySizeLimit);
     if (mFeatures.limitMaxStorageBufferSize.enabled)
     {
         constexpr uint32_t kStorageBufferLimit = 256 * 1024 * 1024;
@@ -863,9 +890,10 @@ void Renderer::ensureCapsInitialized() const
     mNativeCaps.maxAtomicCounterBufferSize     = maxStorageBufferRange;
 
     // There is no particular limit to how many atomic counters there can be, other than the size of
-    // a storage buffer.  We nevertheless limit this to something reasonable (4096 arbitrarily).
+    // a storage buffer.  We nevertheless limit this to something reasonable; 32 arbitrarily, which
+    // is more than what most GLES drivers support (8, the minimum required value).
     const int32_t maxAtomicCounters =
-        std::min<int32_t>(4096, maxStorageBufferRange / sizeof(uint32_t));
+        std::min<int32_t>(32, maxStorageBufferRange / sizeof(uint32_t));
     for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
         mNativeCaps.maxShaderAtomicCounters[shaderType] = maxAtomicCounters;
@@ -945,12 +973,7 @@ void Renderer::ensureCapsInitialized() const
 
     GLint reservedVaryingComponentCount = 0;
 
-    if (getFeatures().supportsTransformFeedbackExtension.enabled &&
-        (!getFeatures().supportsDepthClipControl.enabled ||
-         getFeatures().enablePreRotateSurfaces.enabled ||
-         getFeatures().emulatedPrerotation90.enabled ||
-         getFeatures().emulatedPrerotation180.enabled ||
-         getFeatures().emulatedPrerotation270.enabled))
+    if (getFeatures().supportsTransformFeedbackExtension.enabled)
     {
         reservedVaryingComponentCount += kReservedVaryingComponentsForTransformFeedbackExtension;
     }
@@ -996,19 +1019,16 @@ void Renderer::ensureCapsInitialized() const
 
     if (getFeatures().supportsShaderFramebufferFetch.enabled)
     {
-        // Enable GL_EXT_shader_framebuffer_fetch
-        // gl::IMPLEMENTATION_MAX_DRAW_BUFFERS is used to support the extension.
-        mNativeExtensions.shaderFramebufferFetchEXT =
-            mNativeCaps.maxDrawBuffers >= gl::IMPLEMENTATION_MAX_DRAW_BUFFERS;
-        mNativeExtensions.shaderFramebufferFetchARM = mNativeExtensions.shaderFramebufferFetchEXT;
+        mNativeExtensions.shaderFramebufferFetchEXT = true;
+        mNativeExtensions.shaderFramebufferFetchARM = true;
+        // ANGLE correctly maps gl_LastFragColorARM to input attachment 0 and has no problem with
+        // MRT.
+        mNativeCaps.fragmentShaderFramebufferFetchMRT = true;
     }
 
     if (getFeatures().supportsShaderFramebufferFetchNonCoherent.enabled)
     {
-        // Enable GL_EXT_shader_framebuffer_fetch_non_coherent
-        // For supporting this extension, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS is used.
-        mNativeExtensions.shaderFramebufferFetchNonCoherentEXT =
-            mNativeCaps.maxDrawBuffers >= gl::IMPLEMENTATION_MAX_DRAW_BUFFERS;
+        mNativeExtensions.shaderFramebufferFetchNonCoherentEXT = true;
     }
 
     // Enable Program Binary extension.
@@ -1088,9 +1108,53 @@ void Renderer::ensureCapsInitialized() const
     //    GL_RGBA32UI                  Y                           Y
     mNativeExtensions.textureBufferOES = true;
     mNativeExtensions.textureBufferEXT = true;
-    mNativeCaps.maxTextureBufferSize   = rx::LimitToInt(limitsVk.maxTexelBufferElements);
+
+    {
+        // GLES 3.2's limit for GL_MAX_TEXTURE_BUFFER_SIZE is 65536.  Note that this limit is about
+        // how many texels are addressable by the texture buffer.
+        //
+        // Aiming for 256MB of memory (see https://gitlab.freedesktop.org/mesa/mesa/-/issues/9862),
+        // a buffer of RGBA32 values would need 16 million elements, which is chosen by ANGLE.  This
+        // is far above the minimum requirement.  Note also that it could correspond to a 4k*4k 2D
+        // texture.
+        //
+        // Note additionally that mMaxBufferMemorySizeLimit is a value in bytes, so it's divided by
+        // 16 (for RGBA32) too to get to the maximum texel count that is allowed.  Vulkan's required
+        // limit for maxMemoryAllocationSize is 2^30 for this value, which divided by 16 is 64
+        // million, which is always higher than the desired value of 16 million.
+        constexpr uint32_t kTextureBufferLimit = 16 * 1024 * 1024;
+        ASSERT(kTextureBufferLimit < mMaxBufferMemorySizeLimit);
+        mNativeCaps.maxTextureBufferSize =
+            std::min(limitsVk.maxTexelBufferElements, kTextureBufferLimit);
+    }
+
     mNativeCaps.textureBufferOffsetAlignment =
         rx::LimitToInt(limitsVk.minTexelBufferOffsetAlignment);
+
+    // From the GL_EXT_texture_norm16 spec: Accepted by the <internalFormat> parameter of
+    // TexImage2D,TexImage3D, TexStorage2D, TexStorage3D and TexStorage2DMultisample,
+    // TexStorage3DMultisampleOES, TexBufferEXT, TexBufferRangeEXT, TextureViewEXT,
+    // RenderbufferStorage and RenderbufferStorageMultisample:
+    //   - R16_EXT
+    //   - RG16_EXT
+    //   - RGBA16_EXT
+    bool norm16FormatsSupportedForBufferTexture =
+        hasBufferFormatFeatureBits(angle::FormatID::R16_UNORM,
+                                   VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT) &&
+        hasBufferFormatFeatureBits(angle::FormatID::R16G16_UNORM,
+                                   VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT) &&
+        hasBufferFormatFeatureBits(angle::FormatID::R16G16B16A16_UNORM,
+                                   VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT);
+
+    if (!norm16FormatsSupportedForBufferTexture)
+    {
+        mNativeExtensions.textureNorm16EXT = false;
+
+        // With textureNorm16EXT disabled, renderSnormEXT will skip checking support for the 16-bit
+        // normalized formats.
+        mNativeExtensions.renderSnormEXT =
+            DetermineRenderSnormSupport(mNativeTextureCaps, mNativeExtensions.textureNorm16EXT);
+    }
 
     // Atomic image operations in the vertex and fragment shaders require the
     // vertexPipelineStoresAndAtomics and fragmentStoresAndAtomics Vulkan features respectively.
@@ -1112,6 +1176,7 @@ void Renderer::ensureCapsInitialized() const
         bool tessellationShaderEnabled =
             mFeatures.supportsTransformFeedbackExtension.enabled &&
             (mFeatures.supportsPrimitivesGeneratedQuery.enabled ||
+             mFeatures.allowPipelineStatisticsForPrimitivesGeneratedQuery.enabled ||
              mFeatures.exposeNonConformantExtensionsAndVersions.enabled);
         mNativeExtensions.tessellationShaderEXT = tessellationShaderEnabled;
         mNativeExtensions.tessellationShaderOES = tessellationShaderEnabled;
@@ -1164,9 +1229,11 @@ void Renderer::ensureCapsInitialized() const
     // Geometry shaders are required for ES 3.2.
     if (mPhysicalDeviceFeatures.geometryShader)
     {
-        bool geometryShaderEnabled = mFeatures.supportsTransformFeedbackExtension.enabled &&
-                                     (mFeatures.supportsPrimitivesGeneratedQuery.enabled ||
-                                      mFeatures.exposeNonConformantExtensionsAndVersions.enabled);
+        bool geometryShaderEnabled =
+            mFeatures.supportsTransformFeedbackExtension.enabled &&
+            (mFeatures.supportsPrimitivesGeneratedQuery.enabled ||
+             mFeatures.allowPipelineStatisticsForPrimitivesGeneratedQuery.enabled ||
+             mFeatures.exposeNonConformantExtensionsAndVersions.enabled);
         mNativeExtensions.geometryShaderEXT = geometryShaderEnabled;
         mNativeExtensions.geometryShaderOES = geometryShaderEnabled;
         mNativeCaps.maxFramebufferLayers    = rx::LimitToInt(limitsVk.maxFramebufferLayers);
@@ -1225,10 +1292,13 @@ void Renderer::ensureCapsInitialized() const
     // After implementing EXT_geometry_shader, EXT_clip_cull_distance should be additionally
     // implemented to support the geometry shader. Until then, EXT_clip_cull_distance is enabled
     // only in the experimental cases.
-    if (mPhysicalDeviceFeatures.shaderClipDistance &&
+    if ((mFeatures.supportsClipCullDistanceInGSAndTS.enabled ||
+         (!mNativeExtensions.geometryShaderAny() && !mNativeExtensions.tessellationShaderAny())) &&
+        mPhysicalDeviceFeatures.shaderClipDistance &&
         limitsVk.maxClipDistances >= kMaxClipDistancePerSpec)
     {
-        mNativeExtensions.clipDistanceAPPLE     = true;
+        // Do not enable GL_APPLE_clip_distance for Samsung devices.
+        mNativeExtensions.clipDistanceAPPLE     = mFeatures.supportsAppleClipDistance.enabled;
         mNativeExtensions.clipCullDistanceANGLE = true;
         mNativeCaps.maxClipDistances            = limitsVk.maxClipDistances;
 
@@ -1286,42 +1356,168 @@ void Renderer::ensureCapsInitialized() const
     mNativeExtensions.readDepthStencilNV = true;
     mNativeExtensions.readStencilNV      = true;
 
+    // GL_EXT_clear_texture
+    mNativeExtensions.clearTextureEXT = true;
+
     // GL_QCOM_shading_rate
     mNativeExtensions.shadingRateQCOM = mFeatures.supportsFragmentShadingRate.enabled;
+
+    // GL_EXT_fragment_shading_rate
+    if (mFeatures.supportFragmentShadingRateExtExtensions.enabled)
+    {
+        mNativeExtensions.fragmentShadingRateEXT = mFeatures.supportsFragmentShadingRate.enabled;
+        mNativeExtensions.fragmentShadingRatePrimitiveEXT =
+            mFeatures.supportsPrimitiveFragmentShadingRate.enabled;
+    }
 
     // GL_QCOM_framebuffer_foveated
     mNativeExtensions.framebufferFoveatedQCOM = mFeatures.supportsFoveatedRendering.enabled;
     // GL_QCOM_texture_foveated
     mNativeExtensions.textureFoveatedQCOM = mFeatures.supportsFoveatedRendering.enabled;
+    // GL_QCOM_texture_lod_bias
+    mNativeExtensions.textureLodBiasQCOM = true;
+
+    // GL_EXT_texture_lod_bias
+    mNativeExtensions.textureLodBiasEXT = true;
 
     // GL_ANGLE_shader_pixel_local_storage
-    mNativeExtensions.shaderPixelLocalStorageANGLE = true;
-    if (getFeatures().supportsShaderFramebufferFetch.enabled)
+    //
+    // NOTE:
+    //   * The Vulkan backend limits the ES version to 2.0 when drawBuffersIndexed is not supported.
+    //   * The frontend disables all ES 3.x extensions when the context version is too low for them.
+    //   * This means it is impossible on Vulkan to have pixel local storage without DBI.
+    if (mFeatures.supportShaderPixelLocalStorageAngle.enabled &&
+        mNativeExtensions.drawBuffersIndexedAny())
     {
-        mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = true;
-        mNativePLSOptions.type             = ShPixelLocalStorageType::FramebufferFetch;
-        mNativePLSOptions.fragmentSyncType = ShFragmentSynchronizationType::Automatic;
+        mNativeExtensions.shaderPixelLocalStorageANGLE = true;
+
+        // Prefer framebuffer fetch in almost all cases if it's available, except if framebuffer
+        // fetch isn't coherent *and* fragment shader pixel interlock is available. This is the case
+        // on many desktop GPUs. Fall back to using shader images with interlock to provide coherent
+        // PLS in this case.
+        bool fetchIsNonCoherentButHasInterlock =
+            !mIsColorFramebufferFetchCoherent &&
+            getFeatures().supportsFragmentShaderPixelInterlock.enabled;
+
+        if (getFeatures().supportsShaderFramebufferFetch.enabled &&
+            !fetchIsNonCoherentButHasInterlock)
+        {
+            // Input attachments are the preferred implementation for PLS on Vulkan.
+            mNativeExtensions.shaderPixelLocalStorageCoherentANGLE =
+                mIsColorFramebufferFetchCoherent;
+            mNativePLSOptions.type             = ShPixelLocalStorageType::FramebufferFetch;
+            mNativePLSOptions.fragmentSyncType = mIsColorFramebufferFetchCoherent
+                                                     ? ShFragmentSynchronizationType::Automatic
+                                                     : ShFragmentSynchronizationType::NotSupported;
+        }
+        else
+        {
+            mNativePLSOptions.type = ShPixelLocalStorageType::ImageLoadStore;
+            mNativePLSOptions.supportsNativeRGBA8ImageFormats = true;
+
+            if (getFeatures().supportsFragmentShaderPixelInterlock.enabled)
+            {
+                // Use shader images with VK_EXT_fragment_shader_interlock, instead of input
+                // attachments, if they're our only option to be coherent.
+                mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = true;
+                // GL_ARB_fragment_shader_interlock compiles to SPV_EXT_fragment_shader_interlock.
+                mNativePLSOptions.fragmentSyncType =
+                    ShFragmentSynchronizationType::FragmentShaderInterlock_ARB_GL;
+            }
+            else
+            {
+                // If fragment shader pixel interlock isn't supported, then only non-coherent PLS is
+                // supported.
+                mNativePLSOptions.fragmentSyncType = ShFragmentSynchronizationType::NotSupported;
+            }
+        }
+
+        mNativePLSOptions.supportsNoncoherent = true;
     }
-    else if (getFeatures().supportsFragmentShaderPixelInterlock.enabled)
+
+    // If framebuffer fetch is to be enabled/used, cap maxColorAttachments/maxDrawBuffers to
+    // maxPerStageDescriptorInputAttachments.  Note that 4 is the minimum required value for
+    // maxColorAttachments and maxDrawBuffers in GL, and also happens to be the minimum required
+    // value for maxPerStageDescriptorInputAttachments in Vulkan.  This means that capping the color
+    // attachment count to maxPerStageDescriptorInputAttachments can never lead to an invalid value.
+    const bool hasMRTFramebufferFetch =
+        mNativeExtensions.shaderFramebufferFetchEXT ||
+        mNativeExtensions.shaderFramebufferFetchNonCoherentEXT ||
+        mNativePLSOptions.type == ShPixelLocalStorageType::FramebufferFetch;
+    if (hasMRTFramebufferFetch)
     {
-        // Use shader images with VK_EXT_fragment_shader_interlock, instead of attachments, if
-        // they're our only option to be coherent.
-        mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = true;
-        mNativePLSOptions.type = ShPixelLocalStorageType::ImageLoadStore;
-        // GL_ARB_fragment_shader_interlock compiles to SPV_EXT_fragment_shader_interlock.
-        mNativePLSOptions.fragmentSyncType =
-            ShFragmentSynchronizationType::FragmentShaderInterlock_ARB_GL;
-        mNativePLSOptions.supportsNativeRGBA8ImageFormats = true;
+        mNativeCaps.maxColorAttachments = std::min<uint32_t>(
+            mNativeCaps.maxColorAttachments, limitsVk.maxPerStageDescriptorInputAttachments);
+        mNativeCaps.maxDrawBuffers = std::min<uint32_t>(
+            mNativeCaps.maxDrawBuffers, limitsVk.maxPerStageDescriptorInputAttachments);
+
+        // Make sure no more than the allowed input attachments bindings are used by descriptor set
+        // layouts.  This number matches the number of color attachments because of framebuffer
+        // fetch, and that limit is later capped to IMPLEMENTATION_MAX_DRAW_BUFFERS in Context.cpp.
+        mMaxColorInputAttachmentCount = std::min<uint32_t>(mNativeCaps.maxColorAttachments,
+                                                           gl::IMPLEMENTATION_MAX_DRAW_BUFFERS);
+    }
+    else if (mFeatures.emulateAdvancedBlendEquations.enabled)
+    {
+        // ANGLE may also use framebuffer fetch to emulate KHR_blend_equation_advanced, which needs
+        // a single input attachment.
+        mMaxColorInputAttachmentCount = 1;
     }
     else
     {
-        mNativePLSOptions.type = ShPixelLocalStorageType::FramebufferFetch;
-        ASSERT(mNativePLSOptions.fragmentSyncType == ShFragmentSynchronizationType::NotSupported);
+        // mMaxColorInputAttachmentCount is left as 0 to catch bugs if a future user of framebuffer
+        // fetch functionality does not update the logic in this if/else chain.
+    }
+
+    // Enable the ARM_shader_framebuffer_fetch_depth_stencil extension only if the number of input
+    // descriptor exceeds the color attachment count by at least 2 (for depth and stencil), or if
+    // the number of color attachments can be reduced to accomodate for the 2 depth/stencil images.
+    if (mFeatures.supportsShaderFramebufferFetchDepthStencil.enabled)
+    {
+        const uint32_t maxColorAttachmentsWithDepthStencilInput = std::min<uint32_t>(
+            mNativeCaps.maxColorAttachments, limitsVk.maxPerStageDescriptorInputAttachments - 2);
+        const uint32_t maxDrawBuffersWithDepthStencilInput = std::min<uint32_t>(
+            mNativeCaps.maxDrawBuffers, limitsVk.maxPerStageDescriptorInputAttachments - 2);
+
+        // As long as the minimum required color attachments (4) is satisfied, the extension can be
+        // exposed.
+        if (maxColorAttachmentsWithDepthStencilInput >= 4 &&
+            maxDrawBuffersWithDepthStencilInput >= 4)
+        {
+            mNativeExtensions.shaderFramebufferFetchDepthStencilARM = true;
+            mNativeCaps.maxColorAttachments = maxColorAttachmentsWithDepthStencilInput;
+            mNativeCaps.maxDrawBuffers      = maxDrawBuffersWithDepthStencilInput;
+            mMaxColorInputAttachmentCount =
+                std::min<uint32_t>(mMaxColorInputAttachmentCount, mNativeCaps.maxColorAttachments);
+        }
     }
 
     mNativeExtensions.logicOpANGLE = mPhysicalDeviceFeatures.logicOp == VK_TRUE;
 
-    mNativeExtensions.YUVTargetEXT = mFeatures.supportsExternalFormatResolve.enabled;
+    mNativeExtensions.YUVTargetEXT = mFeatures.supportsYuvTarget.enabled;
+
+    mNativeExtensions.textureStorageCompressionEXT =
+        mFeatures.supportsImageCompressionControl.enabled;
+    mNativeExtensions.EGLImageStorageCompressionEXT =
+        mFeatures.supportsImageCompressionControl.enabled;
+
+    if (mFeatures.supportsFragmentShadingRate.enabled)
+    {
+        mNativeCaps.fragmentShadingRateProperties
+            .fragmentShadingRateWithShaderDepthStencilWritesSupport = static_cast<bool>(
+            mFragmentShadingRateProperties.fragmentShadingRateNonTrivialCombinerOps);
+    }
+
+    // GL_OES_compressed_paletted_texture
+    mNativeExtensions.compressedPalettedTextureOES = true;
+
+    // Limits for texture and buffer allocations
+    mNativeLimitations.maxBufferBytes  = static_cast<size_t>(mMaxMemoryAllocationSize);
+    mNativeLimitations.maxTextureBytes = static_cast<size_t>(mMaxMemoryAllocationSize);
+
+    // Ask the front-end to handle robust-init when copying between mips of the same texture via
+    // glCopyTexImage2D.
+    mNativeLimitations.noRobustInitOnOOBCopyTexImageSameTexture = true;
 
     // Log any missing extensions required for GLES 3.2.
     LogMissingExtensionsForGLES32(mNativeExtensions);
@@ -1330,9 +1526,9 @@ void Renderer::ensureCapsInitialized() const
 bool CanSupportGLES32(const gl::Extensions &nativeExtensions)
 {
     std::vector<bool> requiredExtensions = GetRequiredGLES32ExtensionList(nativeExtensions);
-    for (uint32_t index = 0; index < requiredExtensions.size(); index++)
+    for (bool requiredExtension : requiredExtensions)
     {
-        if (!requiredExtensions[index])
+        if (!requiredExtension)
         {
             return false;
         }
@@ -1412,14 +1608,12 @@ egl::Config GenerateDefaultConfig(DisplayVk *display,
 
     const VkPhysicalDeviceProperties &physicalDeviceProperties =
         renderer->getPhysicalDeviceProperties();
-    gl::Version maxSupportedESVersion                = renderer->getMaxSupportedESVersion();
-    Optional<gl::Version> maxSupportedDesktopVersion = display->getMaxSupportedDesktopVersion();
+    gl::Version maxSupportedESVersion = renderer->getMaxSupportedESVersion();
 
     // ES3 features are required to emulate ES1
-    EGLint es1Support     = (maxSupportedESVersion.major >= 3 ? EGL_OPENGL_ES_BIT : 0);
-    EGLint es2Support     = (maxSupportedESVersion.major >= 2 ? EGL_OPENGL_ES2_BIT : 0);
-    EGLint es3Support     = (maxSupportedESVersion.major >= 3 ? EGL_OPENGL_ES3_BIT : 0);
-    EGLint desktopSupport = (maxSupportedDesktopVersion.valid() ? EGL_OPENGL_BIT : 0);
+    EGLint es1Support = (maxSupportedESVersion >= gl::ES_3_0 ? EGL_OPENGL_ES_BIT : 0);
+    EGLint es2Support = (maxSupportedESVersion >= gl::ES_2_0 ? EGL_OPENGL_ES2_BIT : 0);
+    EGLint es3Support = (maxSupportedESVersion >= gl::ES_3_0 ? EGL_OPENGL_ES3_BIT : 0);
 
     egl::Config config;
 
@@ -1448,10 +1642,10 @@ egl::Config GenerateDefaultConfig(DisplayVk *display,
     config.nativeRenderable   = EGL_TRUE;
     config.nativeVisualID     = static_cast<EGLint>(GetNativeVisualID(colorFormat));
     config.nativeVisualType   = EGL_NONE;
-    config.renderableType     = es1Support | es2Support | es3Support | desktopSupport;
+    config.renderableType     = es1Support | es2Support | es3Support;
     config.sampleBuffers      = (sampleCount > 0) ? 1 : 0;
     config.samples            = sampleCount;
-    config.surfaceType        = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
+    config.surfaceType        = EGL_WINDOW_BIT | EGL_PBUFFER_BIT | EGL_SWAP_BEHAVIOR_PRESERVED_BIT;
     if (display->getExtensions().mutableRenderBufferKHR)
     {
         config.surfaceType |= EGL_MUTABLE_RENDER_BUFFER_BIT_KHR;
@@ -1493,7 +1687,6 @@ egl::ConfigSet GenerateConfigs(const GLenum *colorFormats,
 
     gl::SupportedSampleSet colorSampleCounts;
     gl::SupportedSampleSet depthStencilSampleCounts;
-    gl::SupportedSampleSet sampleCounts;
 
     const VkPhysicalDeviceLimits &limits =
         display->getRenderer()->getPhysicalDeviceProperties().limits;
@@ -1509,39 +1702,37 @@ egl::ConfigSet GenerateConfigs(const GLenum *colorFormats,
     colorSampleCounts.insert(0);
     depthStencilSampleCounts.insert(0);
 
-    std::set_intersection(colorSampleCounts.begin(), colorSampleCounts.end(),
-                          depthStencilSampleCounts.begin(), depthStencilSampleCounts.end(),
-                          std::inserter(sampleCounts, sampleCounts.begin()));
+    gl::SupportedSampleSet sampleCounts = colorSampleCounts & depthStencilSampleCounts;
 
     egl::ConfigSet configSet;
 
     for (size_t colorFormatIdx = 0; colorFormatIdx < colorFormatsCount; colorFormatIdx++)
     {
         const gl::InternalFormat &colorFormatInfo =
-            gl::GetSizedInternalFormatInfo(colorFormats[colorFormatIdx]);
+            gl::GetSizedInternalFormatInfo(ANGLE_UNSAFE_TODO(colorFormats[colorFormatIdx]));
         ASSERT(colorFormatInfo.sized);
 
         for (size_t depthStencilFormatIdx = 0; depthStencilFormatIdx < depthStencilFormatCount;
              depthStencilFormatIdx++)
         {
-            const gl::InternalFormat &depthStencilFormatInfo =
-                gl::GetSizedInternalFormatInfo(depthStencilFormats[depthStencilFormatIdx]);
-            ASSERT(depthStencilFormats[depthStencilFormatIdx] == GL_NONE ||
-                   depthStencilFormatInfo.sized);
+            const gl::InternalFormat &depthStencilFormatInfo = gl::GetSizedInternalFormatInfo(
+                ANGLE_UNSAFE_TODO(depthStencilFormats[depthStencilFormatIdx]));
+            ANGLE_UNSAFE_TODO(ASSERT(depthStencilFormats[depthStencilFormatIdx] == GL_NONE ||
+                                     depthStencilFormatInfo.sized));
 
             const gl::SupportedSampleSet *configSampleCounts = &sampleCounts;
             // If there is no depth/stencil buffer, use the color samples set.
-            if (depthStencilFormats[depthStencilFormatIdx] == GL_NONE)
+            if (ANGLE_UNSAFE_TODO(depthStencilFormats[depthStencilFormatIdx]) == GL_NONE)
             {
                 configSampleCounts = &colorSampleCounts;
             }
             // If there is no color buffer, use the depth/stencil samples set.
-            else if (colorFormats[colorFormatIdx] == GL_NONE)
+            else if (ANGLE_UNSAFE_TODO(colorFormats[colorFormatIdx]) == GL_NONE)
             {
                 configSampleCounts = &depthStencilSampleCounts;
             }
 
-            for (EGLint sampleCount : *configSampleCounts)
+            for (EGLint sampleCount : configSampleCounts->sampleCounts())
             {
                 egl::Config config = GenerateDefaultConfig(display, colorFormatInfo,
                                                            depthStencilFormatInfo, sampleCount);

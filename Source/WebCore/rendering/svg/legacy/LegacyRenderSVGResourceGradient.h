@@ -2,6 +2,7 @@
  * Copyright (C) 2006 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2008 Eric Seidel <eric@webkit.org>
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
+ * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -32,7 +33,7 @@ namespace WebCore {
 class GraphicsContext;
 
 struct GradientData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(GradientData);
 
     struct Inputs {
         friend bool operator==(const Inputs&, const Inputs&) = default;
@@ -56,44 +57,52 @@ struct GradientData {
     Inputs inputs;
 };
 
+class GradientApplier {
+public:
+    GradientApplier() = default;
+    virtual ~GradientApplier() = default;
+
+    virtual bool applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, const GradientData&, OptionSet<RenderSVGResourceMode>) = 0;
+    virtual void postApplyResource(RenderElement&, GraphicsContext*&, const GradientData&, SVGUnitTypes::SVGUnitType gradientUnits, const AffineTransform& gradientTransform, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement*) = 0;
+};
+
 class LegacyRenderSVGResourceGradient : public LegacyRenderSVGResourceContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRenderSVGResourceGradient);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceGradient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceGradient);
 public:
     virtual ~LegacyRenderSVGResourceGradient();
 
-    SVGGradientElement& gradientElement() const { return static_cast<SVGGradientElement&>(LegacyRenderSVGResourceContainer::element()); }
+    inline SVGGradientElement& gradientElement() const; // Defined in LegacyRenderSVGResourceGradientInlines.h
 
-    void removeAllClientsFromCacheIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers) final;
-    void removeClientFromCache(RenderElement&, bool markForInvalidation = true) final;
+    void removeAllClientsFromCache() final;
+    void removeAllClientsFromCacheAndMarkForInvalidationIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers) override;
+    void removeClientFromCache(RenderElement&) final;
 
-    OptionSet<ApplyResult> applyResource(RenderElement&, const RenderStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) final;
+    OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) final;
     void postApplyResource(RenderElement&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>, const Path*, const RenderElement*) final;
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) final { return FloatRect(); }
 
 protected:
-    LegacyRenderSVGResourceGradient(Type, SVGGradientElement&, RenderStyle&&);
+    LegacyRenderSVGResourceGradient(Type, SVGGradientElement&, Style::ComputedStyle&&);
 
-    static GradientColorStops stopsByApplyingColorFilter(const GradientColorStops&, const RenderStyle&);
-    static GradientSpreadMethod platformSpreadMethodFromSVGType(SVGSpreadMethodType);
+    static GradientColorStops stopsByApplyingColorFilter(const GradientColorStops&, const Style::ComputedStyle&);
+    static GradientSpreadMethod NODELETE platformSpreadMethodFromSVGType(SVGSpreadMethodType);
+    ColorInterpolationMethod gradientColorInterpolationMethod() const;
 
 private:
     void element() const = delete;
 
     GradientData::Inputs computeInputs(RenderElement&, OptionSet<RenderSVGResourceMode>);
+    GradientData* gradientDataForRenderer(RenderElement&, const Style::ComputedStyle&, OptionSet<RenderSVGResourceMode>);
 
     virtual SVGUnitTypes::SVGUnitType gradientUnits() const = 0;
     virtual AffineTransform gradientTransform() const = 0;
     virtual bool collectGradientAttributes() = 0;
-    virtual Ref<Gradient> buildGradient(const RenderStyle&) const = 0;
+    virtual Ref<Gradient> buildGradient(const Style::ComputedStyle&) const = 0;
 
-    HashMap<RenderObject*, std::unique_ptr<GradientData>> m_gradientMap;
+    HashMap<SingleThreadWeakRef<RenderElement>, std::unique_ptr<GradientData>> m_gradientMap;
 
-#if USE(CG)
-    GraphicsContext* m_savedContext { nullptr };
-    RefPtr<ImageBuffer> m_imageBuffer;
-#endif
-
+    std::unique_ptr<GradientApplier> m_gradientApplier;
     bool m_shouldCollectGradientAttributes { true };
 };
 

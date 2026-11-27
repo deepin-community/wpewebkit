@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "Heap.h"
+#include <JavaScriptCore/Heap.h>
 
 namespace JSC {
 
@@ -47,11 +47,11 @@ public:
 private:
     static constexpr size_t inlineCapacity = 2048;
     
-    template<typename MarkHook>
-    void genericAddPointer(void*, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter<uintptr_t>, MarkHook&);
+    template<bool lookForWasmCallees, typename MarkHook>
+    void genericAddPointer(char*, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter<uintptr_t> jsGCFilter, TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter, MarkHook&);
 
     template<typename MarkHook>
-    void genericAddSpan(void*, void* end, MarkHook&);
+    void genericAddSpan(void* begin, void* end, MarkHook&);
     
     void grow();
 

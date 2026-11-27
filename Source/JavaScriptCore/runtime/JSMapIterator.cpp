@@ -41,20 +41,13 @@ JSMapIterator* JSMapIterator::createWithInitialValues(VM& vm, Structure* structu
     return iterator;
 }
 
-void JSMapIterator::finishCreation(JSGlobalObject* globalObject, JSMap* iteratedObject, IterationKind kind)
+void JSMapIterator::finishCreation(VM& vm, JSMap* iteratedObject, IterationKind kind)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     Base::finishCreation(vm);
     setEntry(vm, 0);
     setIteratedObject(vm, iteratedObject);
-
-    iteratedObject->materializeIfNeeded(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    setStorage(vm, iteratedObject->m_storage.get());
-
-    internalField(Field::Kind).set(vm, this, jsNumber(static_cast<int32_t>(kind)));
+    internalField(Field::Storage).set(vm, this, iteratedObject->storage());
+    internalField(Field::Kind).setWithoutWriteBarrier(jsNumber(static_cast<int32_t>(kind)));
 }
 
 void JSMapIterator::finishCreation(VM& vm)
@@ -68,45 +61,11 @@ void JSMapIterator::finishCreation(VM& vm)
 template<typename Visitor>
 void JSMapIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSMapIterator*>(cell);
+    auto* thisObject = uncheckedDowncast<JSMapIterator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMapIterator);
-
-
-JSC_DEFINE_HOST_FUNCTION(mapIteratorPrivateFuncMapIteratorNext, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame->argument(0).isCell());
-
-    VM& vm = globalObject->vm();
-    JSCell* cell = callFrame->uncheckedArgument(0).asCell();
-    if (cell == vm.orderedHashTableSentinel())
-        return JSValue::encode(cell);
-    return JSValue::encode(jsCast<JSMapIterator*>(cell)->next(vm));
-}
-
-JSC_DEFINE_HOST_FUNCTION(mapIteratorPrivateFuncMapIteratorKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame->argument(0).isCell());
-
-    VM& vm = globalObject->vm();
-    JSCell* cell = callFrame->uncheckedArgument(0).asCell();
-    if (cell == vm.orderedHashTableSentinel())
-        return JSValue::encode(cell);
-    return JSValue::encode(jsCast<JSMapIterator*>(cell)->nextKey(vm));
-}
-
-JSC_DEFINE_HOST_FUNCTION(mapIteratorPrivateFuncMapIteratorValue, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame->argument(0).isCell());
-
-    VM& vm = globalObject->vm();
-    JSCell* cell = callFrame->uncheckedArgument(0).asCell();
-    if (cell == vm.orderedHashTableSentinel())
-        return JSValue::encode(cell);
-    return JSValue::encode(jsCast<JSMapIterator*>(cell)->nextValue(vm));
-}
 
 }

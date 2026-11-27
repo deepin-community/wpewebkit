@@ -39,14 +39,14 @@ namespace JSC { namespace B3 { namespace Air {
 
 bool PatchCustom::isValidForm(Inst& inst)
 {
-    if (inst.args.size() < 1)
+    if (inst.args().size() < 1)
         return false;
-    if (!inst.args[0].isSpecial())
+    if (!inst.args()[0].isSpecial())
         return false;
-    if (!inst.args[0].special()->isValid(inst))
+    if (!inst.args()[0].special()->isValid(inst))
         return false;
-    auto clobberedEarly = inst.extraEarlyClobberedRegs().filter(RegisterSetBuilder::allScalarRegisters()).buildAndValidate();
-    auto clobberedLate = inst.extraClobberedRegs().filter(RegisterSetBuilder::allScalarRegisters()).buildAndValidate();
+    auto clobberedEarly = inst.extraEarlyClobberedRegs().filter(RegisterSet::allScalarRegisters());
+    auto clobberedLate = inst.extraClobberedRegs().filter(RegisterSet::allScalarRegisters());
     bool ok = true;
     inst.forEachTmp(
         [&] (Tmp& tmp, Arg::Role role, Bank, Width) {
@@ -66,56 +66,56 @@ bool CCallCustom::isValidForm(Inst& inst)
     if (!value)
         return false;
 
-    if (!inst.args[0].isSpecial())
+    if (!inst.args()[0].isSpecial())
         return false;
 
-    Special* special = inst.args[0].special();
+    Special* special = inst.args()[0].special();
     Code& code = special->code();
 
     size_t resultCount = cCallResultCount(code, value);
     size_t expectedArgCount = resultCount + 1; // first Arg is always CCallSpecial.
     for (Value* child : value->children()) {
         ASSERT(!child->type().isTuple());
-        expectedArgCount += cCallArgumentRegisterCount(child);
+        expectedArgCount += cCallArgumentRegisterCount(child->type());
     }
 
-    if (inst.args.size() != expectedArgCount)
+    if (inst.args().size() != expectedArgCount)
         return false;
 
     // The arguments can only refer to the stack, tmps, or immediates.
-    for (unsigned i = inst.args.size() - 1; i; --i) {
-        Arg arg = inst.args[i];
+    for (unsigned i = inst.args().size() - 1; i; --i) {
+        Arg arg = inst.args()[i];
         if (!arg.isTmp() && !arg.isStackMemory() && !arg.isSomeImm())
             return false;
     }
 
     // Callee
-    if (!inst.args[1].isGP())
+    if (!inst.args()[1].isGP())
         return false;
 
     unsigned offset = 2;
 
     // If there is a result then it cannot be an immediate.
     for (size_t i = 0; i < resultCount; ++i) {
-        if (inst.args[offset].isSomeImm())
+        if (inst.args()[offset].isSomeImm())
             return false;
 
         if (value->type().isTuple()) {
             Type type = code.proc().typeAtOffset(value->type(), i);
-            if (!inst.args[offset].canRepresent(type))
+            if (!inst.args()[offset].canRepresent(type))
                 return false;
-        } else if (!inst.args[offset].canRepresent(value))
+        } else if (!inst.args()[offset].canRepresent(value))
             return false;
         offset++;
     }
 
     auto checkNextArg = [&](Value* child) {
-        return inst.args[offset++].canRepresent(child);
+        return inst.args()[offset++].canRepresent(child);
     };
 
     for (unsigned i = 1 ; i < value->numChildren(); ++i) {
         Value* child = value->child(i);
-        for (unsigned j = 0; j < cCallArgumentRegisterCount(child); j++) {
+        for (unsigned j = 0; j < cCallArgumentRegisterCount(child->type()); j++) {
             if (!checkNextArg(child))
                 return false;
         }
@@ -133,7 +133,7 @@ MacroAssembler::Jump CCallCustom::generate(Inst& inst, CCallHelpers&, Generation
 
 bool ShuffleCustom::isValidForm(Inst& inst)
 {
-    if (inst.args.size() % 3)
+    if (inst.args().size() % 3)
         return false;
 
     // A destination may only appear once. This requirement allows us to avoid the undefined behavior
@@ -148,10 +148,10 @@ bool ShuffleCustom::isValidForm(Inst& inst)
     // - Closed loops. These loops consist of nodes that have one successor and one predecessor, so
     //   there is no way to "get into" the loop from outside of it. These can be executed using swaps
     //   or by saving one of the Args to a scratch register and executing it as a shift.
-    HashSet<Arg> dsts;
+    UncheckedKeyHashSet<Arg> dsts;
 
-    for (unsigned i = 0; i < inst.args.size(); ++i) {
-        Arg arg = inst.args[i];
+    for (unsigned i = 0; i < inst.args().size(); ++i) {
+        Arg arg = inst.args()[i];
         unsigned mode = i % 3;
 
         if (mode == 2) {
@@ -166,7 +166,7 @@ bool ShuffleCustom::isValidForm(Inst& inst)
             if (arg.isSomeImm())
                 continue;
 
-            if (!arg.isCompatibleBank(inst.args[i + 1]))
+            if (!arg.isCompatibleBank(inst.args()[i + 1]))
                 return false;
         } else {
             ASSERT(mode == 1);
@@ -183,7 +183,7 @@ bool ShuffleCustom::isValidForm(Inst& inst)
     // No destination register may appear in any address expressions. The lowering can't handle it
     // and it's not useful for the way we end up using Shuffles. Normally, Shuffles only used for
     // stack addresses and non-stack registers.
-    for (Arg& arg : inst.args) {
+    for (Arg& arg : inst.args()) {
         if (!arg.isMemory())
             continue;
         bool ok = true;
@@ -208,32 +208,49 @@ MacroAssembler::Jump ShuffleCustom::generate(Inst& inst, CCallHelpers&, Generati
 
 bool WasmBoundsCheckCustom::isValidForm(Inst& inst)
 {
-    if (inst.args.size() != 2)
-        return false;
-    if (!inst.args[0].isTmp() && !inst.args[0].isSomeImm())
+    if (inst.args().size() < 2 || inst.args().size() > 3)
         return false;
 
-    return inst.args[1].isReg() || inst.args[1].isTmp() || inst.args[1].isSomeImm();
+    if (!inst.args()[0].isTmp() && !inst.args()[0].isSomeImm())
+        return false;
+
+    if (!(inst.args()[1].isReg() || inst.args()[1].isTmp() || inst.args()[1].isSomeImm()))
+        return false;
+
+    if (inst.args().size() == 3)
+        return inst.args()[2].isTmp() || inst.args()[2].isReg();
+
+    return true;
 }
 
 MacroAssembler::Jump WasmBoundsCheckCustom::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
 {
     WasmBoundsCheckValue* value = inst.origin->as<WasmBoundsCheckValue>();
-    MacroAssembler::Jump outOfBounds = Inst(Air::Branch64, value, Arg::relCond(MacroAssembler::AboveOrEqual), inst.args[0], inst.args[1]).generate(jit, context);
 
-    context.latePaths.append(createSharedTask<GenerationContext::LatePathFunction>(
-        [outOfBounds, value] (CCallHelpers& jit, Air::GenerationContext& context) {
-            outOfBounds.link(&jit);
-            switch (value->boundsType()) {
-            case WasmBoundsCheckValue::Type::Pinned:
-                context.code->wasmBoundsCheckGenerator()->run(jit, value->bounds().pinnedSize);
-                break;
+    MacroAssembler::Jump overflowOOB { };
+    if (inst.args().size() > 2)
+        overflowOOB = Inst((is32Bit() ? Air::Branch32 : Air::Branch64), value, Arg::relCond(MacroAssembler::Below), inst.args()[0], inst.args()[2]).generate(jit, context);
 
-            case WasmBoundsCheckValue::Type::Maximum:
-                context.code->wasmBoundsCheckGenerator()->run(jit, InvalidGPRReg);
-                break;
-            }
-        }));
+    MacroAssembler::Jump outOfBounds = Inst((is32Bit() ? Air::Branch32 : Air::Branch64), value, Arg::relCond(MacroAssembler::AboveOrEqual), inst.args()[0], inst.args()[1]).generate(jit, context);
+
+    context.latePaths.append(std::tuple {
+        value->origin(),
+        createSharedTask<GenerationContext::LatePathFunction>(
+            [outOfBounds, overflowOOB, value] (CCallHelpers& jit, Air::GenerationContext& context) {
+                if (overflowOOB.isSet())
+                    overflowOOB.link(&jit);
+                outOfBounds.link(&jit);
+                switch (value->boundsType()) {
+                case WasmBoundsCheckValue::Type::Pinned:
+                    context.code->wasmBoundsCheckGenerator()->run(jit, value, value->bounds().pinnedSize);
+                    break;
+
+                case WasmBoundsCheckValue::Type::Maximum:
+                    context.code->wasmBoundsCheckGenerator()->run(jit, value, InvalidGPRReg);
+                    break;
+                }
+            })
+        });
 
     // We said we were not a terminal.
     return MacroAssembler::Jump();

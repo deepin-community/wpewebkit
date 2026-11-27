@@ -33,26 +33,21 @@ namespace WebKit {
 namespace NetworkCache {
 
 Data::Data(std::span<const uint8_t> data)
-    : m_buffer(Box<std::variant<Vector<uint8_t>, FileSystem::MappedFileData>>::create(Vector<uint8_t>(data.size())))
-    , m_size(data.size())
+    : m_buffer(Box<Variant<Vector<uint8_t>, FileSystem::MappedFileData>>::create(Vector<uint8_t>(data.size())))
 {
-    memcpy(std::get<Vector<uint8_t>>(*m_buffer).data(), data.data(), data.size());
+    memcpySpan(std::get<Vector<uint8_t>>(*m_buffer).mutableSpan(), data);
 }
 
-Data::Data(std::variant<Vector<uint8_t>, FileSystem::MappedFileData>&& data)
-    : m_buffer(Box<std::variant<Vector<uint8_t>, FileSystem::MappedFileData>>::create(WTFMove(data)))
+Data::Data(Variant<Vector<uint8_t>, FileSystem::MappedFileData>&& data)
+    : m_buffer(Box<Variant<Vector<uint8_t>, FileSystem::MappedFileData>>::create(WTF::move(data)))
     , m_isMap(std::holds_alternative<FileSystem::MappedFileData>(*m_buffer))
 {
-    m_size = WTF::switchOn(*m_buffer,
-        [](const Vector<uint8_t>& buffer) -> size_t { return buffer.size(); },
-        [](const FileSystem::MappedFileData& mappedFile) -> size_t { return mappedFile.size(); }
-    );
 }
 
 Data Data::empty()
 {
     Vector<uint8_t> buffer;
-    return { WTFMove(buffer) };
+    return { WTF::move(buffer) };
 }
 
 std::span<const uint8_t> Data::span() const
@@ -66,12 +61,22 @@ std::span<const uint8_t> Data::span() const
     );
 }
 
+size_t Data::size() const
+{
+    if (!m_buffer)
+        return 0;
+    return WTF::switchOn(*m_buffer,
+        [](const Vector<uint8_t>& buffer) -> size_t { return buffer.size(); },
+        [](const FileSystem::MappedFileData& mappedFile) -> size_t { return mappedFile.size(); }
+    );
+}
+
 bool Data::isNull() const
 {
     return !m_buffer;
 }
 
-bool Data::apply(const Function<bool(std::span<const uint8_t>)>& applier) const
+bool Data::apply(NOESCAPE const Function<bool(std::span<const uint8_t>)>& applier) const
 {
     if (isEmpty())
         return false;
@@ -97,15 +102,15 @@ Data concatenate(const Data& a, const Data& b)
     Vector<uint8_t> buffer(a.size() + b.size());
     memcpySpan(buffer.mutableSpan(), a.span());
     memcpySpan(buffer.mutableSpan().subspan(a.size()), b.span());
-    return Data(WTFMove(buffer));
+    return Data(WTF::move(buffer));
 }
 
-Data Data::adoptMap(FileSystem::MappedFileData&& mappedFile, FileSystem::PlatformFileHandle fd)
+Data Data::adoptMap(FileSystem::MappedFileData&& mappedFile, FileSystem::FileHandle&& fileHandle)
 {
     ASSERT(mappedFile);
-    FileSystem::closeFile(fd);
+    fileHandle = { };
 
-    return { WTFMove(mappedFile) };
+    return { WTF::move(mappedFile) };
 }
 
 #if ENABLE(SHAREABLE_RESOURCE) && OS(WINDOWS)
@@ -118,7 +123,7 @@ RefPtr<WebCore::SharedMemory> Data::tryCreateSharedMemory() const
     if (!newHandle)
         return nullptr;
 
-    return WebCore::SharedMemory::map({ WTFMove(newHandle), m_size }, WebCore::SharedMemory::Protection::ReadOnly);
+    return WebCore::SharedMemory::map({ WTF::move(newHandle), size() }, WebCore::SharedMemory::Protection::ReadOnly);
 }
 #endif
 

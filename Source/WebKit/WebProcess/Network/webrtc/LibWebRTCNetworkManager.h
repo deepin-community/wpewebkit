@@ -36,14 +36,17 @@
 
 namespace WebKit {
 
-class LibWebRTCNetworkManager final : public WebCore::RTCNetworkManager, public rtc::NetworkManagerBase, public webrtc::MdnsResponderInterface, public WebRTCMonitorObserver {
+class LibWebRTCNetworkManager final : public WebCore::RTCNetworkManager, public webrtc::NetworkManagerBase, public webrtc::MdnsResponderInterface, public WebRTCMonitorObserver {
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCNetworkManager);
 public:
-    static LibWebRTCNetworkManager* getOrCreate(WebCore::ScriptExecutionContextIdentifier);
+    static RefPtr<LibWebRTCNetworkManager> getOrCreate(WebCore::ScriptExecutionContextIdentifier);
     ~LibWebRTCNetworkManager();
 
-    void setEnumeratingAllNetworkInterfacesEnabled(bool);
-    void setEnumeratingVisibleNetworkInterfacesEnabled(bool);
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
+    void NODELETE setEnumeratingAllNetworkInterfacesEnabled(bool);
+    void NODELETE setEnumeratingVisibleNetworkInterfacesEnabled(bool);
 
     static void signalUsedInterface(WebCore::ScriptExecutionContextIdentifier, String&&);
 
@@ -62,8 +65,8 @@ private:
     webrtc::MdnsResponderInterface* GetMdnsResponder() const final;
 
     // webrtc::MdnsResponderInterface
-    void CreateNameForAddress(const rtc::IPAddress&, NameCreatedCallback);
-    void RemoveNameForAddress(const rtc::IPAddress&, NameRemovedCallback);
+    void CreateNameForAddress(const webrtc::IPAddress&, NameCreatedCallback);
+    void RemoveNameForAddress(const webrtc::IPAddress&, NameRemovedCallback);
 
     // WebRTCMonitorObserver
     void networksChanged(const Vector<RTCNetwork>&, const RTCNetwork::IPAddress&, const RTCNetwork::IPAddress&) final;
@@ -71,6 +74,8 @@ private:
 
     void networksChanged(const Vector<RTCNetwork>&, const RTCNetwork::IPAddress&, const RTCNetwork::IPAddress&, bool forceSignaling);
     void signalUsedInterface(String&&);
+
+    bool isLibWebRTCNetworkManager() const final { return true; }
 
     WebCore::ScriptExecutionContextIdentifier m_documentIdentifier;
     bool m_useMDNSCandidates { true };
@@ -80,10 +85,16 @@ private:
 #endif
     bool m_enableEnumeratingAllNetworkInterfaces { false };
     bool m_enableEnumeratingVisibleNetworkInterfaces { false };
+#if PLATFORM(COCOA)
     bool m_hasQueriedInterface { false };
+#endif
     HashSet<String> m_allowedInterfaces;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::LibWebRTCNetworkManager)
+static bool isType(const WebCore::RTCNetworkManager& manager) { return manager.isLibWebRTCNetworkManager(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif

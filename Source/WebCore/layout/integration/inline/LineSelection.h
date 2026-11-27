@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "InlineIteratorBox.h"
-#include "InlineIteratorLineBox.h"
-#include "RenderBlockFlow.h"
+#include <WebCore/InlineIteratorBox.h>
+#include <WebCore/InlineIteratorLineBox.h>
+#include <WebCore/RenderBlockFlow.h>
 
 namespace WebCore {
 
@@ -58,12 +58,12 @@ public:
 
     static RenderObject::HighlightState selectionState(const InlineIterator::LineBox& lineBox)
     {
-        auto& root = lineBox.formattingContextRoot();
-        if (root.selectionState() == RenderObject::HighlightState::None)
+        CheckedRef root = lineBox.formattingContextRoot();
+        if (root->selectionState() == RenderObject::HighlightState::None)
             return RenderObject::HighlightState::None;
 
         auto lineState = RenderObject::HighlightState::None;
-        for (auto box = lineBox.firstLeafBox(); box; box.traverseNextOnLine()) {
+        for (auto box = lineBox.lineLeftmostLeafBox(); box; box.traverseLineRightwardOnLine()) {
             auto boxState = box->selectionState();
             if (lineState == RenderObject::HighlightState::None)
                 lineState = boxState;

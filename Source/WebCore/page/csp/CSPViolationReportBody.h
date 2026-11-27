@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "ReportBody.h"
-#include "SecurityPolicyViolationEvent.h"
-#include "ViolationReportType.h"
+#include <WebCore/ReportBody.h>
+#include <WebCore/SecurityPolicyViolationEvent.h>
+#include <WebCore/ViolationReportType.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -38,31 +38,31 @@ struct CSPInfo;
 struct SecurityPolicyViolationEventInit;
 
 class CSPViolationReportBody final : public ReportBody {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CSPViolationReportBody);
+    WTF_MAKE_TZONE_ALLOCATED(CSPViolationReportBody);
 public:
     using Init = SecurityPolicyViolationEventInit;
 
     WEBCORE_EXPORT static Ref<CSPViolationReportBody> create(Init&&);
-    WEBCORE_EXPORT static Ref<CSPViolationReportBody> create(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition, unsigned short statusCode, unsigned long lineNumber, unsigned long columnNumber);
+    WEBCORE_EXPORT static Ref<CSPViolationReportBody> create(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition, unsigned short statusCode, std::optional<uint64_t> lineNumber, std::optional<uint64_t> columnNumber);
 
-    const String& type() const final;
-    const String& documentURL() const { return m_documentURL; }
-    const String& referrer() const { return m_referrer; }
-    const String& blockedURL() const { return m_blockedURL; }
-    const String& effectiveDirective() const { return m_effectiveDirective; }
-    const String& originalPolicy() const { return m_originalPolicy; }
-    const String& sourceFile() const { return m_sourceFile; }
-    const String& sample() const { return m_sample; }
+    const String& type() const LIFETIME_BOUND final;
+    const String& documentURL() const LIFETIME_BOUND { return m_documentURL; }
+    const String& referrer() const LIFETIME_BOUND { return m_referrer; }
+    const String& blockedURL() const LIFETIME_BOUND { return m_blockedURL; }
+    const String& effectiveDirective() const LIFETIME_BOUND { return m_effectiveDirective; }
+    const String& originalPolicy() const LIFETIME_BOUND { return m_originalPolicy; }
+    const String& sourceFile() const LIFETIME_BOUND { return m_sourceFile; }
+    const String& sample() const LIFETIME_BOUND { return m_sample; }
     SecurityPolicyViolationEventDisposition disposition() const { return m_disposition; }
     unsigned short statusCode() const { return m_statusCode; }
-    unsigned long lineNumber() const { return m_lineNumber; }
-    unsigned long columnNumber() const { return m_columnNumber; }
+    std::optional<uint64_t> lineNumber() const { return m_lineNumber; }
+    std::optional<uint64_t> columnNumber() const { return m_columnNumber; }
     
     WEBCORE_EXPORT Ref<FormData> createReportFormDataForViolation(bool usesReportTo, bool isReportOnly) const;
 
 private:
     CSPViolationReportBody(Init&&);
-    CSPViolationReportBody(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition, unsigned short statusCode, unsigned long lineNumber, unsigned long columnNumber);
+    CSPViolationReportBody(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition, unsigned short statusCode, std::optional<uint64_t> lineNumber, std::optional<uint64_t> columnNumber);
 
     ViolationReportType reportBodyType() const final { return ViolationReportType::ContentSecurityPolicy; }
 
@@ -75,8 +75,8 @@ private:
     const String m_sample;
     const SecurityPolicyViolationEventDisposition m_disposition;
     const unsigned short m_statusCode;
-    const unsigned long m_lineNumber;
-    const unsigned long m_columnNumber;
+    const std::optional<uint64_t> m_lineNumber;
+    const std::optional<uint64_t> m_columnNumber;
 };
 
 } // namespace WebCore

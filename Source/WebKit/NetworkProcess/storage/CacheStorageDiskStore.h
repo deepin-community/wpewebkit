@@ -34,10 +34,9 @@
 namespace WebCore {
 class FormData;
 class SharedBuffer;
+namespace DOMCacheEngine {
+using ResponseBody = Variant<std::nullptr_t, Ref<FormData>, Ref<SharedBuffer>>;
 }
-
-namespace WebCore::DOMCacheEngine {
-using ResponseBody = std::variant<std::nullptr_t, Ref<FormData>, Ref<SharedBuffer>>;
 }
 
 namespace WebKit {
@@ -49,6 +48,15 @@ public:
 
 private:
     CacheStorageDiskStore(const String& cacheName, const String& path, Ref<WorkQueue>&&);
+
+    struct SafeFileData {
+        Variant<std::monostate, FileSystem::MappedFileData, Vector<uint8_t>> data;
+
+        std::span<const uint8_t> span() const;
+        RefPtr<WebCore::SharedBuffer> convertToSharedBuffer() &&;
+        explicit NODELETE operator bool() const;
+        static SafeFileData read(const String& filePath);
+    };
 
     // CacheStorageStore
     void readAllRecordInfos(ReadAllRecordInfosCallback&&) final;
@@ -63,16 +71,15 @@ private:
     String recordBlobFilePath(const String&) const;
     String blobsDirectoryPath() const;
     String blobFilePath(const String&) const;
-    std::optional<CacheStorageRecord> readRecordFromFileData(std::span<const uint8_t>, FileSystem::MappedFileData&&);
-    using FileDatas = Vector<FileSystem::MappedFileData>;
-    void readAllRecordInfosInternal(CompletionHandler<void(FileDatas&&)>&&);
-    void readRecordsInternal(Vector<String>&&, CompletionHandler<void(FileDatas&&, FileDatas&&)>&&);
+    std::optional<CacheStorageRecord> readRecordFromFileData(std::span<const uint8_t>, SafeFileData&&);
+    void readAllRecordInfosInternal(ReadAllRecordInfosCallback&&);
+    void readRecordsInternal(const Vector<CacheStorageRecordInformation>&, ReadRecordsCallback&&);
 
     String m_cacheName;
     String m_path;
     FileSystem::Salt m_salt;
-    Ref<WorkQueue> m_callbackQueue;
-    Ref<WorkQueue> m_ioQueue;
+    const Ref<WorkQueue> m_callbackQueue;
+    const Ref<WorkQueue> m_ioQueue;
 };
 
 }

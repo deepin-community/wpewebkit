@@ -28,19 +28,24 @@
 
 #if ENABLE(APPLE_PAY)
 
-#include "Document.h"
+#include "ContextDestructionObserverInlines.h"
+#include "DocumentPage.h"
 #include "JSApplePaySetupFeature.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMPromiseDeferred.h"
 #include "Page.h"
 #include "PaymentCoordinator.h"
 #include "PaymentCoordinatorClient.h"
 #include "PaymentSession.h"
 #include "Settings.h"
+#include "UserGestureIndicator.h"
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
 
-static bool shouldDiscloseFeatures(Document& document)
+static bool NODELETE shouldDiscloseFeatures(Document& document)
 {
     auto* page = document.page();
     if (!page || page->usesEphemeralSession())
@@ -57,7 +62,7 @@ void ApplePaySetup::getSetupFeatures(Document& document, SetupFeaturesPromise&& 
         return;
     }
 
-    auto page = document.page();
+    RefPtr page = document.page();
     if (!page) {
         promise.reject(Exception { ExceptionCode::InvalidStateError });
         return;
@@ -74,11 +79,11 @@ void ApplePaySetup::getSetupFeatures(Document& document, SetupFeaturesPromise&& 
         return;
     }
 
-    m_setupFeaturesPromise = WTFMove(promise);
+    m_setupFeaturesPromise = makeUnique<SetupFeaturesPromise>(WTF::move(promise));
 
-    page->paymentCoordinator().getSetupFeatures(m_configuration, document.url(), [this, pendingActivity = makePendingActivity(*this)](Vector<Ref<ApplePaySetupFeature>>&& setupFeatures) {
-        if (m_setupFeaturesPromise)
-            std::exchange(m_setupFeaturesPromise, std::nullopt)->resolve(WTFMove(setupFeatures));
+    protect(page->paymentCoordinator())->getSetupFeatures(m_configuration, document.url(), [pendingActivity = makePendingActivity(*this)](Vector<Ref<ApplePaySetupFeature>>&& setupFeatures) {
+        if (pendingActivity->object().m_setupFeaturesPromise)
+            std::exchange(pendingActivity->object().m_setupFeaturesPromise, nullptr)->resolve(WTF::move(setupFeatures));
     });
 }
 
@@ -106,40 +111,37 @@ void ApplePaySetup::begin(Document& document, Vector<Ref<ApplePaySetupFeature>>&
         return;
     }
 
-    m_beginPromise = WTFMove(promise);
-    m_pendingActivity = makePendingActivity(*this);
+    m_beginPromise = makeUnique<BeginPromise>(WTF::move(promise));
 
-    page->paymentCoordinator().beginApplePaySetup(m_configuration, page->mainFrameURL(), WTFMove(features), [this](bool result) {
-        if (m_beginPromise)
-            std::exchange(m_beginPromise, std::nullopt)->resolve(result);
+    protect(page->paymentCoordinator())->beginApplePaySetup(m_configuration, page->mainFrameURL(), WTF::move(features), [pendingActivity = makePendingActivity(*this)](bool result) {
+        if (pendingActivity->object().m_beginPromise)
+            std::exchange(pendingActivity->object().m_beginPromise, nullptr)->resolve(result);
     });
 }
 
 Ref<ApplePaySetup> ApplePaySetup::create(ScriptExecutionContext& context, ApplePaySetupConfiguration&& configuration)
 {
-    auto setup = adoptRef(*new ApplePaySetup(context, WTFMove(configuration)));
+    auto setup = adoptRef(*new ApplePaySetup(context, WTF::move(configuration)));
     setup->suspendIfNeeded();
     return setup;
 }
 
 ApplePaySetup::ApplePaySetup(ScriptExecutionContext& context, ApplePaySetupConfiguration&& configuration)
     : ActiveDOMObject(&context)
-    , m_configuration(WTFMove(configuration))
+    , m_configuration(WTF::move(configuration))
 {
 }
 
 void ApplePaySetup::stop()
 {
     if (m_setupFeaturesPromise)
-        std::exchange(m_setupFeaturesPromise, std::nullopt)->reject(Exception { ExceptionCode::AbortError });
+        std::exchange(m_setupFeaturesPromise, nullptr)->reject(Exception { ExceptionCode::AbortError });
 
     if (m_beginPromise)
-        std::exchange(m_beginPromise, std::nullopt)->reject(Exception { ExceptionCode::AbortError });
+        std::exchange(m_beginPromise, nullptr)->reject(Exception { ExceptionCode::AbortError });
 
-    if (auto page = downcast<Document>(*scriptExecutionContext()).page())
-        page->paymentCoordinator().endApplePaySetup();
-
-    m_pendingActivity = nullptr;
+    if (RefPtr page = downcast<Document>(*scriptExecutionContext()).page())
+        protect(page->paymentCoordinator())->endApplePaySetup();
 }
 
 void ApplePaySetup::suspend(ReasonForSuspension)

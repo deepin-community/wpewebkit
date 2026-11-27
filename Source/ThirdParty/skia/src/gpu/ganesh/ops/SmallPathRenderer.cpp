@@ -12,29 +12,29 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPixmap.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkPoint3.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
-#include "include/gpu/GrRecordingContext.h"
-#include "include/private/SkColorData.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkAutoMalloc.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
+#include "src/core/SkColorData.h"
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkRasterClip.h"
-#include "src/gpu/AtlasTypes.h"
 #include "src/gpu/BufferWriter.h"
+#include "src/gpu/MaskFormat.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrAuditTrail.h"
 #include "src/gpu/ganesh/GrBuffer.h"
@@ -67,8 +67,8 @@
 #include "src/gpu/ganesh/ops/SmallPathAtlasMgr.h"
 #include "src/gpu/ganesh/ops/SmallPathShapeData.h"
 
-#if defined(GR_TEST_UTILS)
-#include "src/base/SkRandom.h"
+#if defined(GPU_TEST_UTILS)
+#include "src/core/SkRandom.h"
 #include "src/gpu/ganesh/GrTestUtils.h"
 #endif
 
@@ -87,8 +87,6 @@ struct GrUserStencilSettings;
 using namespace skia_private;
 
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)
-
-using MaskFormat = skgpu::MaskFormat;
 
 namespace skgpu::ganesh {
 
@@ -133,7 +131,8 @@ public:
         // Compute bounds
         this->setTransformedBounds(shape.bounds(), viewMatrix, HasAABloat::kYes, IsHairline::kNo);
 
-#if defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
+#if (defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)) || \
+        defined(SK_GANESH_SMALL_PATH_DISTANCE_FIELD_ALWAYS)
         fUsesDistanceField = true;
 #else
         // only use distance fields on desktop and Android framework to save space in the atlas
@@ -264,7 +263,7 @@ private:
             &flushInfo.fVertexBuffer, &flushInfo.fVertexOffset);
 
         flushInfo.fIndexBuffer = target->resourceProvider()->refNonAAQuadIndexBuffer();
-        if (!vertices || !flushInfo.fIndexBuffer) {
+        if (!vertices || !flushInfo.fIndexBuffer) SK_UNLIKELY {
             SkDebugf("Could not allocate vertices\n");
             return;
         }
@@ -445,8 +444,7 @@ private:
         // TODO We should really generate this directly into the plot somehow
         SkAutoSMalloc<1024> dfStorage(width * height * sizeof(unsigned char));
 
-        SkPath path;
-        shape.asPath(&path);
+        SkPath path = shape.asPath();
         // Generate signed distance field directly from SkPath
         bool succeed = GrGenerateDistanceFieldFromPath((unsigned char*)dfStorage.get(),
                                                        path, drawMatrix, width, height,
@@ -464,7 +462,7 @@ private:
             paint.setStyle(SkPaint::kFill_Style);
             paint.setAntiAlias(true);
 
-            SkDraw draw;
+            skcpu::Draw draw;
 
             SkRasterClip rasterClip;
             rasterClip.setRect(devPathBounds);
@@ -528,8 +526,7 @@ private:
         SkASSERT(devPathBounds.width() > 0);
         SkASSERT(devPathBounds.height() > 0);
 
-        SkPath path;
-        shape.asPath(&path);
+        SkPath path = shape.asPath();
         // setup bitmap backing
         SkAutoPixmapStorage dst;
         if (!dst.tryAlloc(SkImageInfo::MakeA8(devPathBounds.width(), devPathBounds.height()))) {
@@ -542,7 +539,7 @@ private:
         paint.setStyle(SkPaint::kFill_Style);
         paint.setAntiAlias(true);
 
-        SkDraw draw;
+        skcpu::Draw draw;
 
         SkRasterClip rasterClip;
         rasterClip.setRect(devPathBounds);
@@ -574,10 +571,8 @@ private:
         auto texCoords = VertexWriter::TriStripFromUVs(shapeData->fAtlasLocator.getUVs());
 
         if (fUsesDistanceField) {
-            SkPoint pts[4];
             SkPoint3 out[4];
-            translatedBounds.toQuad(pts);
-            ctm.mapHomogeneousPoints(out, pts, 4);
+            ctm.mapPointsToHomogeneous(out, translatedBounds.toQuad());
 
             vertices << out[0] << color << texCoords.l << texCoords.t;
             vertices << out[3] << color << texCoords.l << texCoords.b;
@@ -687,7 +682,7 @@ private:
         return CombineResult::kMerged;
     }
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     SkString onDumpInfo() const override {
         SkString string;
         for (const auto& geo : fShapes) {
@@ -740,11 +735,24 @@ PathRenderer::CanDrawPath SmallPathRenderer::onCanDrawPath(const CanDrawPathArgs
         return CanDrawPath::kNo;
     }
 
+    const SkRect bounds = args.fShape->styledBounds();
+
     SkScalar scaleFactors[2] = { 1, 1 };
-    // TODO: handle perspective distortion
-    if (!args.fViewMatrix->hasPerspective() && !args.fViewMatrix->getMinMaxScales(scaleFactors)) {
-        return CanDrawPath::kNo;
+    if (args.fViewMatrix->hasPerspective()) {
+        if (bounds.isEmpty()) {
+            return CanDrawPath::kNo;
+        }
+        const SkRect xformedBounds = args.fViewMatrix->mapRect(bounds);
+        const float sx = xformedBounds.width()  / bounds.width(),
+                    sy = xformedBounds.height() / bounds.height();
+        scaleFactors[0] = std::min(sx, sy);
+        scaleFactors[1] = std::max(sx, sy);
+    } else {
+        if (!args.fViewMatrix->getMinMaxScales(scaleFactors)) {
+            return CanDrawPath::kNo;
+        }
     }
+
     // For affine transformations, too much shear can produce artifacts.
     if (!scaleFactors[0] || scaleFactors[1]/scaleFactors[0] > 4) {
         return CanDrawPath::kNo;
@@ -752,7 +760,6 @@ PathRenderer::CanDrawPath SmallPathRenderer::onCanDrawPath(const CanDrawPathArgs
     // Only support paths with bounds within kMaxDim by kMaxDim,
     // scaled to have bounds within kMaxSize by kMaxSize.
     // The goal is to accelerate rendering of lots of small paths that may be scaling.
-    SkRect bounds = args.fShape->styledBounds();
     SkScalar minDim = std::min(bounds.width(), bounds.height());
     SkScalar maxDim = std::max(bounds.width(), bounds.height());
     SkScalar minSize = minDim * SkScalarAbs(scaleFactors[0]);
@@ -782,7 +789,7 @@ bool SmallPathRenderer::onDrawPath(const DrawPathArgs& args) {
 
 }  // namespace skgpu::ganesh
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 
 GR_DRAW_OP_TEST_DEFINE(SmallPathOp) {
     SkMatrix viewMatrix = GrTest::TestMatrix(random);
@@ -798,6 +805,6 @@ GR_DRAW_OP_TEST_DEFINE(SmallPathOp) {
                                             GrGetRandomStencil(random, context));
 }
 
-#endif // defined(GR_TEST_UTILS)
+#endif // defined(GPU_TEST_UTILS)
 
 #endif // SK_ENABLE_OPTIMIZE_SIZE

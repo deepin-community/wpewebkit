@@ -4,9 +4,11 @@
 // found in the LICENSE file.
 //
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include <stdint.h>
+#include <array>
 #include <memory>
 
 #include "common/string_utils.h"
@@ -226,6 +228,82 @@ TEST_P(ProgramBinaryTest, SaveAndLoadBinaryTwice)
 
     glDeleteProgram(programToLoad);
     glDeleteProgram(programToLoad2);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test to verify that when saving a program binary twice consecutively, both the length and the
+// binary match. Also verify that when loading each program binary, the quad rendered using the
+// binary matches as expected.
+TEST_P(ProgramBinaryTest, ReturnedBinaryTwiceShouldMatch)
+{
+    if (!supported())
+    {
+        return;
+    }
+
+    // Create a red program.
+    ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    GLint programLength1 = 0;
+    GLint writtenLength1 = 0;
+    GLenum binaryFormat1 = GL_NONE;
+
+    GLint programLength2 = 0;
+    GLint writtenLength2 = 0;
+    GLenum binaryFormat2 = GL_NONE;
+
+    // Get the binary initially.
+    glGetProgramiv(redProgram, GL_PROGRAM_BINARY_LENGTH_OES, &programLength1);
+    std::vector<uint8_t> binary1(programLength1);
+    glGetProgramBinaryOES(redProgram, programLength1, &writtenLength1, &binaryFormat1,
+                          binary1.data());
+    EXPECT_GL_NO_ERROR();
+
+    // Ensure that the lengths from glGetProgramiv and glGetProgramBinaryOES match.
+    EXPECT_EQ(programLength1, writtenLength1);
+
+    // Immediately get the binary again.
+    glGetProgramiv(redProgram, GL_PROGRAM_BINARY_LENGTH_OES, &programLength2);
+    std::vector<uint8_t> binary2(programLength2);
+    glGetProgramBinaryOES(redProgram, programLength2, &writtenLength2, &binaryFormat2,
+                          binary2.data());
+    EXPECT_GL_NO_ERROR();
+
+    // Ensure that the lengths from glGetProgramiv and glGetProgramBinaryOES match again.
+    EXPECT_EQ(programLength2, writtenLength2);
+
+    // Verify length/binary 1 and 2 are the same.
+    EXPECT_EQ(programLength1, programLength2);
+    EXPECT_EQ(binary1, binary2);
+
+    // Load the program binary 1.
+    GLuint loadedProgram = glCreateProgram();
+    glProgramBinaryOES(loadedProgram, binaryFormat1, binary1.data(), writtenLength1);
+    EXPECT_GL_NO_ERROR();
+
+    // Load the program binary 2.
+    GLuint reloadedProgram = glCreateProgram();
+    glProgramBinaryOES(reloadedProgram, binaryFormat2, binary2.data(), writtenLength2);
+    EXPECT_GL_NO_ERROR();
+
+    glUseProgram(loadedProgram);
+
+    // Verify that the red program draws correctly for the program binary 1.
+    drawQuad(loadedProgram, std::string(essl1_shaders::PositionAttrib()), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_GL_NO_ERROR();
+
+    // Clear with black before the second iteration.
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+    EXPECT_GL_NO_ERROR();
+
+    glUseProgram(reloadedProgram);
+
+    // Verify that the red program draws correctly for the program binary 2.
+    drawQuad(reloadedProgram, std::string(essl1_shaders::PositionAttrib()), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
     EXPECT_GL_NO_ERROR();
 }
 
@@ -1028,7 +1106,6 @@ TEST_P(ProgramBinaryTest, SRGBDecodeWithSamplerAndTexelFetchTest)
     // http://anglebug.com/42263564
     ANGLE_SKIP_TEST_IF(IsOpenGL() && IsIntel() && IsWindows());
     ANGLE_SKIP_TEST_IF(IsOpenGL() && IsAMD() && IsWindows());
-    ANGLE_SKIP_TEST_IF(IsOpenGL() && (IsNVIDIA() || IsARM64()) && IsMac());
     ANGLE_SKIP_TEST_IF(IsOpenGLES() && IsNexus5X());
 
     constexpr char kVS[] =
@@ -1110,10 +1187,13 @@ TEST_P(ProgramBinaryES3Test, ArrayOfStructContainingArrayOfSamplers)
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
     glUseProgram(program);
-    GLTexture textures[4];
+    std::array<GLTexture, 4> textures;
     GLColor expected = MakeGLColor(32, 64, 96, 255);
-    GLubyte data[8]  = {};  // 4 bytes of padding, so that texture can be initialized with 4 bytes
-    memcpy(data, expected.data(), sizeof(expected));
+
+    // 4 bytes of padding, so that texture can be initialized with 4 bytes
+    const std::array<GLubyte, 8> data = {expected.R, expected.G, expected.B, expected.A,
+                                         0,          0,          0,          0};
+
     for (int i = 0; i < 4; i++)
     {
         int outerIdx = i % 2;
@@ -1121,7 +1201,7 @@ TEST_P(ProgramBinaryES3Test, ArrayOfStructContainingArrayOfSamplers)
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, textures[i]);
         // Each element provides two components.
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, data + i);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &data[i]);
         std::stringstream uniformName;
         uniformName << "test[" << innerIdx << "].data[" << outerIdx << "]";
         // Then send it as a uniform
@@ -1311,7 +1391,7 @@ void main() {
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomicCounterBuffer);
     void *mappedBuffer =
         glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint) * 3, GL_MAP_READ_BIT);
-    memcpy(bufferData, mappedBuffer, sizeof(bufferData));
+    ANGLE_UNSAFE_TODO(memcpy(bufferData, mappedBuffer, sizeof(bufferData)));
     glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
 
     EXPECT_EQ(11u, bufferData[0]);
@@ -1531,6 +1611,17 @@ class ProgramBinariesAcrossPlatforms : public testing::TestWithParam<PlatformsWi
   public:
     void SetUp() override
     {
+        // TODO(b/429026255): ProgramBinariesAcrossPlatforms does not inherit from ANGLETest, so it
+        // cannot (1) be skipped with angle_end2end_tests_expectations.txt and (2) cannot call
+        // isDriverSystemEgl(). We need to use #ifdefs and skip the test here instead.
+#if defined(ANGLE_TEST_ENABLE_SYSTEM_EGL)
+        // TODO(b/424595860): Test fails on Android when testing SystemEGL.
+        if (IsAndroid())
+        {
+            GTEST_SKIP();
+        }
+#endif
+
         mOSWindow   = OSWindow::New();
         bool result = mOSWindow->initialize("ProgramBinariesAcrossRenderersTests", 100, 100);
 
@@ -1545,8 +1636,7 @@ class ProgramBinariesAcrossPlatforms : public testing::TestWithParam<PlatformsWi
 
     EGLWindow *createAndInitEGLWindow(angle::PlatformParameters &param)
     {
-        EGLWindow *eglWindow = EGLWindow::New(param.clientType, param.majorVersion,
-                                              param.minorVersion, param.profileMask);
+        EGLWindow *eglWindow = EGLWindow::New(param.majorVersion, param.minorVersion);
         ConfigParameters configParams;
         bool result = eglWindow->initializeGL(mOSWindow, mEntryPointsLib.get(), param.driver,
                                               param.eglParameters, configParams);
@@ -1605,8 +1695,11 @@ class ProgramBinariesAcrossPlatforms : public testing::TestWithParam<PlatformsWi
 
     void TearDown() override
     {
-        mOSWindow->destroy();
-        OSWindow::Delete(&mOSWindow);
+        if (mOSWindow != nullptr)
+        {
+            mOSWindow->destroy();
+            OSWindow::Delete(&mOSWindow);
+        }
     }
 
     OSWindow *mOSWindow = nullptr;
@@ -1726,8 +1819,6 @@ ANGLE_INSTANTIATE_TEST(ProgramBinariesAcrossPlatforms,
                        //                     | this config  | this config  | result
                        PlatformsWithLinkResult(ES2_D3D11(),   ES2_D3D11(),   true ), // Loading + reloading binary should work
                        PlatformsWithLinkResult(ES3_D3D11(),   ES3_D3D11(),   true ), // Loading + reloading binary should work
-                       PlatformsWithLinkResult(ES2_D3D11(),   ES2_D3D9(),    false), // Switching from D3D11 to D3D9 shouldn't work
-                       PlatformsWithLinkResult(ES2_D3D9(),    ES2_D3D11(),   false), // Switching from D3D9 to D3D11 shouldn't work
                        PlatformsWithLinkResult(ES2_D3D11(),   ES3_D3D11(),   false), // Switching to newer client version shouldn't work
                        PlatformsWithLinkResult(ES2_VULKAN(),  ES2_VULKAN(),  true ), // Loading + reloading binary should work
                        PlatformsWithLinkResult(ES3_VULKAN(),  ES3_VULKAN(),  true ), // Loading + reloading binary should work

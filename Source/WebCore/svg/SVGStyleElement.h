@@ -23,12 +23,11 @@
 
 #include "InlineStyleSheetOwner.h"
 #include "SVGElement.h"
-#include "Timer.h"
 
 namespace WebCore {
 
 class SVGStyleElement final : public SVGElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGStyleElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGStyleElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGStyleElement);
 public:
     static Ref<SVGStyleElement> create(const QualifiedName&, Document&, bool createdByParser);
@@ -38,35 +37,27 @@ public:
 
     bool disabled() const;
     void setDisabled(bool);
-                          
-    const AtomString& type() const;
-    void setType(const AtomString&);
-
-    const AtomString& media() const;
-    void setMedia(const AtomString&);
 
 private:
     SVGStyleElement(const QualifiedName&, Document&, bool createdByParser);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void childrenChanged(const ChildChange&) final;
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
     bool supportsFocus() const final { return false; }
 
     void finishParsingChildren() final;
 
-    virtual bool isLoading() const { return m_styleSheetOwner.isLoading(); }
+    bool isLoading() const { return m_styleSheetOwner.isLoading(); }
     bool sheetLoaded() final { return m_styleSheetOwner.sheetLoaded(*this); }
     void startLoadingDynamicSheet() final { m_styleSheetOwner.startLoadingDynamicSheet(*this); }
-    Timer* loadEventTimer() final { return &m_loadEventTimer; }
 
     String title() const final;
 
     InlineStyleSheetOwner m_styleSheetOwner;
-    Timer m_loadEventTimer;
 };
 
 } // namespace WebCore

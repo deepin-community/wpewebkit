@@ -31,10 +31,7 @@
 #include "config.h"
 #include <wtf/UUID.h>
 
-#include <mutex>
-#include <wtf/ASCIICType.h>
 #include <wtf/CryptographicallyRandomNumber.h>
-#include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SHA1.h>
@@ -48,7 +45,7 @@
 
 namespace WTF {
 
-static ALWAYS_INLINE UInt128 convertRandomUInt128ToUUIDVersion4(UInt128 buffer)
+static ALWAYS_INLINE UInt128 NODELETE convertRandomUInt128ToUUIDVersion4(UInt128 buffer)
 {
     // By default, we generate a v4 UUID value, as per https://datatracker.ietf.org/doc/html/rfc4122#section-4.4.
     auto high = static_cast<uint64_t>((buffer >> 64) & 0xffffffffffff0fff) | 0x4000;
@@ -61,7 +58,7 @@ static UInt128 generateCryptographicallyRandomUUIDVersion4()
 {
     UInt128 buffer { };
     static_assert(sizeof(buffer) == 16);
-    cryptographicallyRandomValues({ reinterpret_cast<uint8_t*>(&buffer), sizeof(buffer) });
+    cryptographicallyRandomValues(asMutableByteSpan(buffer));
     return convertRandomUInt128ToUUIDVersion4(buffer);
 }
 
@@ -128,7 +125,7 @@ std::optional<UUID> UUID::parse(StringView value)
         return { };
 
     // parseInteger may accept integers starting with +, let's check this beforehand.
-    if (value[0] == '+' || value[9] == '+'  || value[19] == '+' || value[24] == '+')
+    if (value[0] == '+' || value[9] == '+'  || value[14] == '+' || value[19] == '+' || value[24] == '+')
         return { };
 
     auto firstValue = parseInteger<uint64_t>(value.left(8), 16);
@@ -192,16 +189,14 @@ String createVersion4UUIDStringWeak()
 String bootSessionUUIDString()
 {
 #if OS(DARWIN)
-    static LazyNeverDestroyed<String> bootSessionUUID;
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
+    static NeverDestroyed<String> bootSessionUUID = []() -> String {
         constexpr size_t maxUUIDLength = 37;
-        char uuid[maxUUIDLength];
+        std::array<char, maxUUIDLength> uuid;
         size_t uuidLength = maxUUIDLength;
-        if (sysctlbyname("kern.bootsessionuuid", uuid, &uuidLength, nullptr, 0))
-            return;
-        bootSessionUUID.construct(std::span { static_cast<const char*>(uuid), uuidLength - 1 });
-    });
+        if (sysctlbyname("kern.bootsessionuuid", uuid.data(), &uuidLength, nullptr, 0))
+            return { };
+        return std::span<const char> { uuid }.first(uuidLength - 1);
+    }();
     return bootSessionUUID;
 #else
     return String();

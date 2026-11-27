@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,26 +64,26 @@ void WebPageProxy::loadRecentSearches(IPC::Connection&, const String&, Completio
 
 void WebPageProxy::didInitiateLoadForResource(WebCore::ResourceLoaderIdentifier resourceID, WebCore::FrameIdentifier frameID, WebCore::ResourceRequest&& request)
 {
-    if (auto* manager = pageClient().webResourceLoadManager())
-        manager->didInitiateLoad(resourceID, frameID, WTFMove(request));
+    if (auto* manager = pageClient() ? pageClient()->webResourceLoadManager() : nullptr)
+        manager->didInitiateLoad(resourceID, frameID, WTF::move(request));
 }
 
 void WebPageProxy::didSendRequestForResource(WebCore::ResourceLoaderIdentifier resourceID, WebCore::FrameIdentifier frameID, WebCore::ResourceRequest&& request, WebCore::ResourceResponse&& redirectResponse)
 {
-    if (auto* manager = pageClient().webResourceLoadManager())
-        manager->didSendRequest(resourceID, frameID, WTFMove(request), WTFMove(redirectResponse));
+    if (auto* manager = pageClient() ? pageClient()->webResourceLoadManager() : nullptr)
+        manager->didSendRequest(resourceID, frameID, WTF::move(request), WTF::move(redirectResponse));
 }
 
 void WebPageProxy::didReceiveResponseForResource(WebCore::ResourceLoaderIdentifier resourceID, WebCore::FrameIdentifier frameID, WebCore::ResourceResponse&& response)
 {
-    if (auto* manager = pageClient().webResourceLoadManager())
-        manager->didReceiveResponse(resourceID, frameID, WTFMove(response));
+    if (auto* manager = pageClient() ? pageClient()->webResourceLoadManager() : nullptr)
+        manager->didReceiveResponse(resourceID, frameID, WTF::move(response));
 }
 
 void WebPageProxy::didFinishLoadForResource(WebCore::ResourceLoaderIdentifier resourceID, WebCore::FrameIdentifier frameID, WebCore::ResourceError&& error)
 {
-    if (auto* manager = pageClient().webResourceLoadManager())
-        manager->didFinishLoad(resourceID, frameID, WTFMove(error));
+    if (auto* manager = pageClient() ? pageClient()->webResourceLoadManager() : nullptr)
+        manager->didFinishLoad(resourceID, frameID, WTF::move(error));
 }
 
 void WebPageProxy::scheduleActivityStateUpdate()

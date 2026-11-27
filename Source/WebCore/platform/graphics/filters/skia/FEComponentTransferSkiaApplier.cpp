@@ -33,12 +33,17 @@
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "NativeImage.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win ports
 #include <skia/core/SkCanvas.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <skia/core/SkColorFilter.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-bool FEComponentTransferSkiaApplier::apply(const Filter&, const FilterImageVector& inputs, FilterImage& result) const
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FEComponentTransferSkiaApplier);
+
+bool FEComponentTransferSkiaApplier::apply(const Filter&, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const
 {
     ASSERT(inputs.size() == 1);
     auto& input = inputs[0].get();
@@ -52,10 +57,10 @@ bool FEComponentTransferSkiaApplier::apply(const Filter&, const FilterImageVecto
     if (!nativeImage || !nativeImage->platformImage())
         return false;
 
-    auto alphaTable = m_effect.computeLookupTable(m_effect.alphaFunction());
-    auto redTable = m_effect.computeLookupTable(m_effect.redFunction());
-    auto greenTable = m_effect.computeLookupTable(m_effect.greenFunction());
-    auto blueTable = m_effect.computeLookupTable(m_effect.blueFunction());
+    auto alphaTable = m_effect->computeLookupTable(m_effect->alphaFunction());
+    auto redTable = m_effect->computeLookupTable(m_effect->redFunction());
+    auto greenTable = m_effect->computeLookupTable(m_effect->greenFunction());
+    auto blueTable = m_effect->computeLookupTable(m_effect->blueFunction());
 
     SkPaint paint;
     paint.setColorFilter(SkColorFilters::TableARGB(alphaTable.data(), redTable.data(), greenTable.data(), blueTable.data()));

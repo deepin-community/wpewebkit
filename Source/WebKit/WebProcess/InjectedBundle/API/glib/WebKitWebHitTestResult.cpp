@@ -31,6 +31,7 @@
 #include <WebCore/JSNode.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/Node.h>
+#include <WebCore/NodeDocument.h>
 #include <WebCore/ScriptController.h>
 #include <glib/gi18n-lib.h>
 #include <jsc/JSCContextPrivate.h>
@@ -120,7 +121,7 @@ static void webkit_web_hit_test_result_class_init(WebKitWebHitTestResultClass* k
     /**
      * WebKitWebHitTestResult:node:
      *
-     * The #WebKitDOMNode
+     * The #WebKitDOMNode.
      *
      * Deprecated: 2.40
      */
@@ -178,7 +179,7 @@ WebKitWebHitTestResult* webkitWebHitTestResultCreate(const HitTestResult& hitTes
 
 #if ENABLE(2022_GLIB_API)
     auto* result = WEBKIT_WEB_HIT_TEST_RESULT(g_object_new(WEBKIT_TYPE_WEB_HIT_TEST_RESULT, nullptr));
-    result->priv->hitTestResult = WTFMove(webkitHitTestResult);
+    result->priv->hitTestResult = WTF::move(webkitHitTestResult);
     result->priv->node = hitTestResult.innerNonSharedNode();
 #endif
     return result;
@@ -190,7 +191,7 @@ WebKitWebHitTestResult* webkitWebHitTestResultCreate(const HitTestResult& hitTes
  * webkit_web_hit_test_result_get_context:
  * @web_hit_test_result: a #WebKitWebHitTestResult
  *
- * Gets the the context flags for the hit test result.
+ * Gets the context flags for the hit test result.
  *
  * Returns: a bitmask of #WebKitHitTestResultContext flags
  */
@@ -202,7 +203,7 @@ guint webkit_web_hit_test_result_get_context(WebKitWebHitTestResult* webHitTestR
 
 /**
  * webkit_web_hit_test_result_context_is_link:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is a link element at the hit test position.
  *
@@ -219,7 +220,7 @@ gboolean webkit_web_hit_test_result_context_is_link(WebKitWebHitTestResult* webH
 
 /**
  * webkit_web_hit_test_result_context_is_image:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is an image element at the hit test position.
  *
@@ -236,7 +237,7 @@ gboolean webkit_web_hit_test_result_context_is_image(WebKitWebHitTestResult* web
 
 /**
  * webkit_web_hit_test_result_context_is_media:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is a media element at the hit test position.
  *
@@ -253,7 +254,7 @@ gboolean webkit_web_hit_test_result_context_is_media(WebKitWebHitTestResult* web
 
 /**
  * webkit_web_hit_test_result_context_is_editable:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is an editable element at the hit test position.
  *
@@ -270,7 +271,7 @@ gboolean webkit_web_hit_test_result_context_is_editable(WebKitWebHitTestResult* 
 
 /**
  * webkit_web_hit_test_result_context_is_selection:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is a selected element at the hit test position.
  *
@@ -287,7 +288,7 @@ gboolean webkit_web_hit_test_result_context_is_selection(WebKitWebHitTestResult*
 
 /**
  * webkit_web_hit_test_result_get_link_uri:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Obtains the URI associated with the link element at the hit test position.
  *
@@ -301,7 +302,7 @@ const gchar* webkit_web_hit_test_result_get_link_uri(WebKitWebHitTestResult* web
 
 /**
  * webkit_web_hit_test_result_get_link_title:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Obtains the title associated with the link element at the hit test position.
  *
@@ -316,7 +317,7 @@ const gchar* webkit_web_hit_test_result_get_link_title(WebKitWebHitTestResult* w
 
 /**
  * webkit_web_hit_test_result_get_link_label:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Obtains the label associated with the link element at the hit test position.
  *
@@ -331,7 +332,7 @@ const gchar* webkit_web_hit_test_result_get_link_label(WebKitWebHitTestResult* w
 
 /**
  * webkit_web_hit_test_result_get_image_uri:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Obtains the URI associated with the image element at the hit test position.
  *
@@ -345,7 +346,7 @@ const gchar* webkit_web_hit_test_result_get_image_uri(WebKitWebHitTestResult *we
 
 /**
  * webkit_web_hit_test_result_get_media_uri:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Obtains the URI associated with the media element at the hit test position.
  *
@@ -359,7 +360,7 @@ const gchar* webkit_web_hit_test_result_get_media_uri(WebKitWebHitTestResult* we
 
 /**
  * webkit_web_hit_test_result_context_is_scrollbar:
- * @web_hit_test_result: a #WebWebKitHitTestResult
+ * @web_hit_test_result: a #WebKitWebHitTestResult
  *
  * Check whether there is a scrollbar at the hit test position.
  *
@@ -427,7 +428,7 @@ JSCValue* webkit_web_hit_test_result_get_js_node(WebKitWebHitTestResult* webHitT
     JSValueRef jsValue = nullptr;
     {
         JSC::JSLockHolder lock(globalObject);
-        jsValue = toRef(globalObject, toJS(globalObject, globalObject, webHitTestResult->priv->node.get()));
+        jsValue = toRef(globalObject, toJS(globalObject, globalObject, *webHitTestResult->priv->node));
     }
 
     return jsValue ? jscContextGetOrCreateValue(jsContext.get(), jsValue).leakRef() : nullptr;

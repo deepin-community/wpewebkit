@@ -25,11 +25,11 @@
 
 #pragma once
 
-#include "AbstractSlotVisitor.h"
-#include "JSCJSValue.h"
-#include "MarkedBlock.h"
-#include "VisitRaceKey.h"
-#include "Weak.h"
+#include <JavaScriptCore/AbstractSlotVisitor.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/MarkedBlock.h>
+#include <JavaScriptCore/VisitRaceKey.h>
+#include <JavaScriptCore/Weak.h>
 #include <memory>
 #include <wtf/BitSet.h>
 #include <wtf/Deque.h>
@@ -67,7 +67,7 @@ public:
         MarkerData& operator=(MarkerData&&) = default;
 
         ReferrerToken referrer() const { return m_referrer; }
-        StackTrace* stack() const { return m_stack.get(); }
+        StackTrace* stack() const LIFETIME_BOUND { return m_stack.get(); }
 
     private:
         ReferrerToken m_referrer;
@@ -115,6 +115,13 @@ public:
 
     JS_EXPORT_PRIVATE void dumpMarkerData(HeapCell*);
 
+    bool doneMarking() { return m_doneMarking; }
+    void setDoneMarking()
+    {
+        ASSERT(!m_doneMarking);
+        m_doneMarking = true;
+    }
+
 private:
     class MarkedBlockData {
         WTF_MAKE_TZONE_ALLOCATED(MarkedBlockData);
@@ -125,13 +132,13 @@ private:
         MarkedBlockData(MarkedBlock*);
 
         MarkedBlock* block() const { return m_block; }
-        const AtomsBitSet& atoms() const { return m_atoms; }
+        const AtomsBitSet& atoms() const LIFETIME_BOUND { return m_atoms; }
 
         bool isMarked(unsigned atomNumber) { return m_atoms.get(atomNumber); }
         bool testAndSetMarked(unsigned atomNumber) { return m_atoms.testAndSet(atomNumber); }
 
         void addMarkerData(unsigned atomNumber, MarkerData&&);
-        const MarkerData* markerData(unsigned atomNumber) const;
+        const MarkerData* NODELETE markerData(unsigned atomNumber) const;
 
     private:
         MarkedBlock* m_block { nullptr };
@@ -167,9 +174,9 @@ private:
         MarkerData m_marker;
     };
 
-    using MarkedBlockMap = HashMap<MarkedBlock*, std::unique_ptr<MarkedBlockData>>;
-    using PreciseAllocationMap = HashMap<PreciseAllocation*, std::unique_ptr<PreciseAllocationData>>;
-    using OpaqueRootMap = HashMap<void*, std::unique_ptr<OpaqueRootData>>;
+    using MarkedBlockMap = UncheckedKeyHashMap<MarkedBlock*, std::unique_ptr<MarkedBlockData>>;
+    using PreciseAllocationMap = UncheckedKeyHashMap<PreciseAllocation*, std::unique_ptr<PreciseAllocationData>>;
+    using OpaqueRootMap = UncheckedKeyHashMap<void*, std::unique_ptr<OpaqueRootData>>;
 
     void appendToMarkStack(JSCell*);
     void appendSlow(JSCell* cell) { setMarkedAndAppendToMarkStack(cell); }
@@ -187,6 +194,7 @@ private:
     MarkedBlockMap m_markedBlockMap;
     ConcurrentPtrHashSet m_opaqueRootStorage;
     Deque<RefPtr<SharedTask<void(AbstractSlotVisitor&)>>, 32> m_constraintTasks;
+    bool m_doneMarking { false };
 };
 
 } // namespace JSC

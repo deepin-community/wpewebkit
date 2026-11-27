@@ -25,9 +25,13 @@ enum class WebKit::FileSystemStorageError : uint8_t {
     AccessHandleActive,
     BackendNotSupported,
     FileNotFound,
+    InvalidDataType,
     InvalidModification,
     InvalidName,
     InvalidState,
+    MissingArgument,
+    NoModificationAllowed,
     TypeMismatch,
+    QuotaError,
     Unknown
 }

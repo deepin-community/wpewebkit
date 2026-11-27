@@ -29,8 +29,11 @@
 #include "Logging.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePortChannelRegistry);
 
 MessagePortChannelRegistry::MessagePortChannelRegistry() = default;
 
@@ -67,6 +70,11 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
 
     m_openChannels.remove(channel.port1());
     m_openChannels.remove(channel.port2());
+
+    m_pendingTransferOrigins.remove(channel.port1());
+    m_pendingTransferOrigins.remove(channel.port2());
+    m_pendingTransferDestinations.remove(channel.port1());
+    m_pendingTransferDestinations.remove(channel.port2());
 
     LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }
@@ -128,7 +136,7 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
         return false;
     }
 
-    return channel->postMessageToRemote(WTFMove(message), remoteTarget);
+    return channel->postMessageToRemote(WTF::move(message), remoteTarget);
 }
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
@@ -144,7 +152,7 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
         return;
     }
 
-    channel->takeAllMessagesForPort(port, WTFMove(callback));
+    channel->takeAllMessagesForPort(port, WTF::move(callback));
 }
 
 MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
@@ -152,6 +160,38 @@ MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(co
     ASSERT(isMainThread());
 
     return m_openChannels.get(port);
+}
+
+void MessagePortChannelRegistry::recordPendingTransferOrigin(const MessagePortIdentifier& port, ProcessIdentifier origin)
+{
+    ASSERT(isMainThread());
+    m_pendingTransferOrigins.set(port, origin);
+}
+
+bool MessagePortChannelRegistry::claimPendingTransferOrigin(const MessagePortIdentifier& port, ProcessIdentifier expected)
+{
+    ASSERT(isMainThread());
+    auto it = m_pendingTransferOrigins.find(port);
+    if (it == m_pendingTransferOrigins.end() || it->value != expected)
+        return false;
+    m_pendingTransferOrigins.remove(it);
+    return true;
+}
+
+void MessagePortChannelRegistry::recordPendingTransferDestination(const MessagePortIdentifier& port, ProcessIdentifier destination)
+{
+    ASSERT(isMainThread());
+    m_pendingTransferDestinations.set(port, destination);
+}
+
+bool MessagePortChannelRegistry::claimPendingTransferDestination(const MessagePortIdentifier& port, ProcessIdentifier expected)
+{
+    ASSERT(isMainThread());
+    auto it = m_pendingTransferDestinations.find(port);
+    if (it == m_pendingTransferDestinations.end() || it->value != expected)
+        return false;
+    m_pendingTransferDestinations.remove(it);
+    return true;
 }
 
 } // namespace WebCore

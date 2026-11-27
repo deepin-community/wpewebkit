@@ -30,7 +30,7 @@
 #include "config.h"
 #include "JSElement.h"
 
-#include "Document.h"
+#include "DocumentQuirks.h"
 #include "HTMLFrameElementBase.h"
 #include "HTMLNames.h"
 #include "JSAttr.h"
@@ -40,11 +40,13 @@
 #include "JSDOMConvertSequences.h"
 #include "JSHTMLElementWrapperFactory.h"
 #include "JSMathMLElementWrapperFactory.h"
+#include "JSNodeCustom.h"
 #include "JSNodeList.h"
 #include "JSSVGElementWrapperFactory.h"
 #include "MathMLElement.h"
 #include "NodeList.h"
 #include "SVGElement.h"
+#include "Settings.h"
 #include "WebCoreJSClientData.h"
 
 
@@ -55,22 +57,22 @@ using namespace HTMLNames;
 
 static JSValue createNewElementWrapper(JSDOMGlobalObject* globalObject, Ref<Element>&& element)
 {
-    if (auto* htmlElement = dynamicDowncast<HTMLElement>(element.get()))
-        return createJSHTMLWrapper(globalObject, *htmlElement);
-    if (auto* svgElement = dynamicDowncast<SVGElement>(element.get()))
-        return createJSSVGWrapper(globalObject, *svgElement);
+    if (is<HTMLElement>(element))
+        return createJSHTMLWrapper(globalObject, uncheckedDowncast<HTMLElement>(WTF::move(element)));
+    if (is<SVGElement>(element))
+        return createJSSVGWrapper(globalObject, uncheckedDowncast<SVGElement>(WTF::move(element)));
 #if ENABLE(MATHML)
-    if (auto* mathmlElement = dynamicDowncast<MathMLElement>(element.get()))
-        return createJSMathMLWrapper(globalObject, *mathmlElement);
+    if (is<MathMLElement>(element))
+        return createJSMathMLWrapper(globalObject, uncheckedDowncast<MathMLElement>(WTF::move(element)));
 #endif
-    return createWrapper<Element>(globalObject, WTFMove(element));
+    return createWrapper<Element>(globalObject, WTF::move(element));
 }
 
 JSValue toJS(JSGlobalObject*, JSDOMGlobalObject* globalObject, Element& element)
 {
     if (auto* wrapper = getCachedWrapper(globalObject->world(), element))
         return wrapper;
-    return createNewElementWrapper(globalObject, element);
+    return createNewElementWrapper(globalObjectForNode(element, globalObject), element);
 }
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Element>&& element)
@@ -82,7 +84,7 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
         ASSERT(!globalObject->vm().exceptionForInspection());
     }
     ASSERT(!getCachedWrapper(globalObject->world(), element));
-    return createNewElementWrapper(globalObject, WTFMove(element));
+    return createNewElementWrapper(globalObjectForNode(element, globalObject), WTF::move(element));
 }
 
 static JSValue getElementsArrayAttribute(JSGlobalObject& lexicalGlobalObject, const JSElement& thisObject, const QualifiedName& attributeName)
@@ -95,11 +97,11 @@ static JSValue getElementsArrayAttribute(JSGlobalObject& lexicalGlobalObject, co
     if (cachedObjectValue)
         cachedObject = asObject(cachedObjectValue);
     else {
-        cachedObject = constructEmptyObject(vm, thisObject.globalObject()->nullPrototypeObjectStructure());
+        cachedObject = JSC::constructEmptyObject(vm, thisObject.realm()->nullPrototypeObjectStructure());
         const_cast<JSElement&>(thisObject).putDirect(vm, builtinNames(vm).cachedAttrAssociatedElementsPrivateName(), cachedObject);
     }
 
-    std::optional<Vector<Ref<Element>>> elements = thisObject.wrapped().getElementsArrayAttribute(attributeName);
+    std::optional<Vector<Ref<Element>>> elements = protect(thisObject.wrapped())->getElementsArrayAttributeForBindings(attributeName);
     auto propertyName = PropertyName(Identifier::fromString(vm, attributeName.toString()));
     JSValue cachedValue = cachedObject->getDirect(vm, propertyName);
     if (!cachedValue.isEmpty()) {
@@ -108,7 +110,7 @@ static JSValue getElementsArrayAttribute(JSGlobalObject& lexicalGlobalObject, co
             return cachedValue;
     }
 
-    JSValue elementsValue = toJS<IDLNullable<IDLFrozenArray<IDLInterface<Element>>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, elements);
+    JSValue elementsValue = toJS<IDLNullable<IDLFrozenArray<IDLInterface<Element>>>>(lexicalGlobalObject, *thisObject.realm(), throwScope, elements);
     cachedObject->putDirect(vm, propertyName, elementsValue);
     return elementsValue;
 }
@@ -116,6 +118,11 @@ static JSValue getElementsArrayAttribute(JSGlobalObject& lexicalGlobalObject, co
 JSValue JSElement::ariaControlsElements(JSGlobalObject& lexicalGlobalObject) const
 {
     return getElementsArrayAttribute(lexicalGlobalObject, *this, WebCore::HTMLNames::aria_controlsAttr);
+}
+
+JSValue JSElement::ariaActionsElements(JSGlobalObject& lexicalGlobalObject) const
+{
+    return getElementsArrayAttribute(lexicalGlobalObject, *this, WebCore::HTMLNames::aria_actionsAttr);
 }
 
 JSValue JSElement::ariaDescribedByElements(JSGlobalObject& lexicalGlobalObject) const
@@ -146,6 +153,24 @@ JSValue JSElement::ariaLabelledByElements(JSGlobalObject& lexicalGlobalObject) c
 JSValue JSElement::ariaOwnsElements(JSGlobalObject& lexicalGlobalObject) const
 {
     return getElementsArrayAttribute(lexicalGlobalObject, *this, WebCore::HTMLNames::aria_ownsAttr);
+}
+
+bool JSElement::shouldEnableWebkitRequestFullScreen(ScriptExecutionContext* context)
+{
+#if ENABLE(FULLSCREEN_API)
+    RefPtr document = dynamicDowncast<Document>(context);
+    if (!document)
+        return false;
+
+    if (document->quirks().shouldDisableElementFullscreenQuirk())
+        return false;
+
+    return document->settings().fullScreenEnabled()
+        || document->quirks().shouldEnterNativeFullscreenWhenCallingElementRequestFullscreenQuirk();
+#else
+    UNUSED_PARAM(context);
+    return false;
+#endif
 }
 
 } // namespace WebCore

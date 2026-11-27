@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2019 Apple Inc.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted, provided that the following conditions
@@ -31,25 +31,19 @@
 #if USE(LIBWEBRTC)
 
 #include "LibWebRTCMacros.h"
+#include "LibWebRTCRefWrappers.h"
 #include "MediaStreamTrackPrivate.h"
 #include "Timer.h"
 #include <wtf/Lock.h>
-
-ALLOW_UNUSED_PARAMETERS_BEGIN
-ALLOW_COMMA_BEGIN
-
-#include <webrtc/api/media_stream_interface.h>
-
-ALLOW_UNUSED_PARAMETERS_END
-ALLOW_COMMA_END
-
 #include <wtf/LoggerHelper.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
 
+struct PlatformVideoColorSpace;
+
 class RealtimeOutgoingVideoSource
-    : public ThreadSafeRefCounted<RealtimeOutgoingVideoSource, WTF::DestructionThread::Main>
+    : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeOutgoingVideoSource, WTF::DestructionThread::Main>
     , public webrtc::VideoTrackSourceInterface
     , private MediaStreamTrackPrivateObserver
     , private RealtimeMediaSource::VideoFrameObserver
@@ -60,6 +54,9 @@ class RealtimeOutgoingVideoSource
 public:
     static Ref<RealtimeOutgoingVideoSource> create(Ref<MediaStreamTrackPrivate>&& videoSource);
     ~RealtimeOutgoingVideoSource();
+
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
 
     void start() { observeSource(); }
     void stop();
@@ -79,18 +76,18 @@ public:
 protected:
     explicit RealtimeOutgoingVideoSource(Ref<MediaStreamTrackPrivate>&&);
 
-    void sendFrame(rtc::scoped_refptr<webrtc::VideoFrameBuffer>&&);
+    void sendFrame(webrtc::scoped_refptr<webrtc::VideoFrameBuffer>&&, const PlatformVideoColorSpace&);
     bool isSilenced() const { return m_muted || !m_enabled; }
 
-    virtual rtc::scoped_refptr<webrtc::VideoFrameBuffer> createBlackFrame(size_t width, size_t height) = 0;
+    virtual webrtc::scoped_refptr<webrtc::VideoFrameBuffer> createBlackFrame(size_t width, size_t height) = 0;
 
-    bool m_shouldApplyRotation { false };
+    bool m_isApplyingRotation { false };
     webrtc::VideoRotation m_currentRotation { webrtc::kVideoRotation_0 };
 
 #if !RELEASE_LOG_DISABLED
     // LoggerHelper API
     const Logger& logger() const final { return m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "RealtimeOutgoingVideoSource"_s; }
     WTFLogChannel& logChannel() const final;
 #endif
@@ -106,30 +103,28 @@ private:
     void observeSource();
     void unobserveSource();
 
-    using MediaStreamTrackPrivateObserver::weakPtrFactory;
-    using MediaStreamTrackPrivateObserver::WeakValueType;
-    using MediaStreamTrackPrivateObserver::WeakPtrImplType;
+    USING_CAN_MAKE_WEAKPTR(MediaStreamTrackPrivateObserver);
 
     // Notifier API
     void RegisterObserver(webrtc::ObserverInterface*) final { }
     void UnregisterObserver(webrtc::ObserverInterface*) final { }
 
     // VideoTrackSourceInterface API
-    bool is_screencast() const final { return false; }
-    absl::optional<bool> needs_denoising() const final { return absl::optional<bool>(); }
-    bool GetStats(Stats*) final { return false; };
+    bool is_screencast() const final;
+    std::optional<bool> needs_denoising() const final { return std::optional<bool>(); }
+    bool GetStats(Stats*) final;
     bool SupportsEncodedOutput() const final { return false; }
     void GenerateKeyFrame() final { }
-    void AddEncodedSink(rtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*) final { }
-    void RemoveEncodedSink(rtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*) final { }
+    void AddEncodedSink(webrtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*) final { }
+    void RemoveEncodedSink(webrtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*) final { }
 
     // MediaSourceInterface API
     SourceState state() const final { return SourceState(); }
     bool remote() const final { return true; }
 
-    // rtc::VideoSourceInterface<webrtc::VideoFrame> API
-    void AddOrUpdateSink(rtc::VideoSinkInterface<webrtc::VideoFrame>*, const rtc::VideoSinkWants&) final;
-    void RemoveSink(rtc::VideoSinkInterface<webrtc::VideoFrame>*) final;
+    // webrtc::VideoSourceInterface<webrtc::VideoFrame> API
+    void AddOrUpdateSink(webrtc::VideoSinkInterface<webrtc::VideoFrame>*, const webrtc::VideoSinkWants&) final;
+    void RemoveSink(webrtc::VideoSinkInterface<webrtc::VideoFrame>*) final;
 
     void sourceMutedChanged();
     void sourceEnabledChanged();
@@ -146,25 +141,27 @@ private:
 
     Ref<MediaStreamTrackPrivate> m_videoSource;
     Timer m_blackFrameTimer;
-    rtc::scoped_refptr<webrtc::VideoFrameBuffer> m_blackFrame;
+    RefPtr<webrtc::VideoFrameBuffer> m_blackFrame;
 
     mutable Lock m_sinksLock;
-    HashSet<rtc::VideoSinkInterface<webrtc::VideoFrame>*> m_sinks WTF_GUARDED_BY_LOCK(m_sinksLock);
+    HashSet<webrtc::VideoSinkInterface<webrtc::VideoFrame>*> m_sinks WTF_GUARDED_BY_LOCK(m_sinksLock);
     bool m_areSinksAskingToApplyRotation { false };
 
     bool m_enabled { true };
     bool m_muted { false };
-    uint32_t m_width { 0 };
-    uint32_t m_height { 0 };
+    Lock m_frameSizeLock;
+    uint32_t m_width WTF_GUARDED_BY_LOCK(m_frameSizeLock) { 0 };
+    uint32_t m_height WTF_GUARDED_BY_LOCK(m_frameSizeLock) { 0 };
     std::optional<double> m_maxFrameRate;
     std::optional<double> m_maxPixelCount;
     std::atomic<double> m_videoFrameScaling { 1.0 };
+    std::atomic<bool> m_isScreencast { false };
     bool m_enableVideoFrameScaling { true };
     bool m_isObservingVideoFrames { false };
 
 #if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
     MonotonicTime m_lastFrameLogTime;
     unsigned m_frameCount { 0 };
 #endif

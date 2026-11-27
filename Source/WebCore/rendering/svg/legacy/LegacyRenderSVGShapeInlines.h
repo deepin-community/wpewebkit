@@ -25,25 +25,21 @@
 
 #pragma once
 
+#include "LegacyRenderSVGModelObjectInlines.h"
 #include "LegacyRenderSVGShape.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "SVGGraphicsElement.h"
-#include "SVGRenderStyle.h"
 
 namespace WebCore {
 
 inline bool LegacyRenderSVGShape::hasNonScalingStroke() const
 {
-    return style().svgStyle().vectorEffect() == VectorEffect::NonScalingStroke;
+    return style().vectorEffect() == VectorEffect::NonScalingStroke;
 }
 
 inline SVGGraphicsElement& LegacyRenderSVGShape::graphicsElement() const
 {
     return downcast<SVGGraphicsElement>(LegacyRenderSVGModelObject::element());
-}
-
-inline Ref<SVGGraphicsElement> LegacyRenderSVGShape::protectedGraphicsElement() const
-{
-    return graphicsElement();
 }
 
 } // namespace WebCore

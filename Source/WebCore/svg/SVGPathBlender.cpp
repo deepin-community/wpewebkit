@@ -1,6 +1,6 @@
 /*
  * Copyright (C) Research In Motion Limited 2010, 2011. All rights reserved.
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,8 +26,11 @@
 #include "SVGPathSource.h"
 #include <functional>
 #include <wtf/SetForScope.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPathBlender);
 
 bool SVGPathBlender::addAnimatedPath(SVGPathSource& fromSource, SVGPathSource& toSource, SVGPathConsumer& consumer, unsigned repeatCount)
 {
@@ -55,7 +58,7 @@ SVGPathBlender::SVGPathBlender(SVGPathSource& fromSource, SVGPathSource& toSourc
 }
 
 // Helper functions
-static inline FloatPoint blendFloatPoint(const FloatPoint& a, const FloatPoint& b, float progress)
+static inline FloatPoint NODELETE blendFloatPoint(const FloatPoint& a, const FloatPoint& b, float progress)
 {
     BlendingContext context { progress };
     return FloatPoint(blend(a.x(), b.x(), context), blend(a.y(), b.y(), context));
@@ -118,28 +121,28 @@ FloatPoint SVGPathBlender::blendAnimatedFloatPoint(const FloatPoint& fromPoint, 
     return animatedPoint;
 }
 
-template<typename Function> using InvokeResult = typename std::invoke_result_t<Function, SVGPathSource>::value_type;
+template<typename Function> using InvokeResult = typename std::invoke_result_t<Function, SVGPathSource, FloatPoint>::value_type;
 template<typename Function> using ResultPair = std::pair<InvokeResult<Function>, InvokeResult<Function>>;
-template<typename Function> static std::optional<ResultPair<Function>> pullFromSources(SVGPathSource& fromSource, SVGPathSource& toSource, Function&& function)
+template<typename Function> static std::optional<ResultPair<Function>> pullFromSources(SVGPathSource& fromSource, SVGPathSource& toSource, Function&& function, FloatPoint currentPoint)
 {
     InvokeResult<Function> fromResult;
     if (fromSource.hasMoreData()) {
-        auto parsedFrom = std::invoke(function, fromSource);
+        auto parsedFrom = std::invoke(function, fromSource, currentPoint);
         if (!parsedFrom)
             return std::nullopt;
-        fromResult = WTFMove(*parsedFrom);
+        fromResult = WTF::move(*parsedFrom);
     }
 
-    auto parsedTo = std::invoke(std::forward<Function>(function), toSource);
+    auto parsedTo = std::invoke(std::forward<Function>(function), toSource, currentPoint);
     if (!parsedTo)
         return std::nullopt;
 
-    return ResultPair<Function> { WTFMove(fromResult), WTFMove(*parsedTo) };
+    return ResultPair<Function> { WTF::move(fromResult), WTF::move(*parsedTo) };
 }
 
 bool SVGPathBlender::blendMoveToSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseMoveToSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseMoveToSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -160,7 +163,7 @@ bool SVGPathBlender::blendMoveToSegment(float progress)
 
 bool SVGPathBlender::blendLineToSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -177,7 +180,7 @@ bool SVGPathBlender::blendLineToSegment(float progress)
 
 bool SVGPathBlender::blendLineToHorizontalSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToHorizontalSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToHorizontalSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -194,7 +197,7 @@ bool SVGPathBlender::blendLineToHorizontalSegment(float progress)
 
 bool SVGPathBlender::blendLineToVerticalSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToVerticalSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseLineToVerticalSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -211,7 +214,7 @@ bool SVGPathBlender::blendLineToVerticalSegment(float progress)
 
 bool SVGPathBlender::blendCurveToCubicSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToCubicSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToCubicSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -231,7 +234,7 @@ bool SVGPathBlender::blendCurveToCubicSegment(float progress)
 
 bool SVGPathBlender::blendCurveToCubicSmoothSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToCubicSmoothSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToCubicSmoothSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -250,7 +253,7 @@ bool SVGPathBlender::blendCurveToCubicSmoothSegment(float progress)
 
 bool SVGPathBlender::blendCurveToQuadraticSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToQuadraticSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToQuadraticSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -269,7 +272,7 @@ bool SVGPathBlender::blendCurveToQuadraticSegment(float progress)
 
 bool SVGPathBlender::blendCurveToQuadraticSmoothSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToQuadraticSmoothSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseCurveToQuadraticSmoothSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -286,7 +289,7 @@ bool SVGPathBlender::blendCurveToQuadraticSmoothSegment(float progress)
 
 bool SVGPathBlender::blendArcToSegment(float progress)
 {
-    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseArcToSegment);
+    auto result = pullFromSources(m_fromSource, m_toSource, &SVGPathSource::parseArcToSegment, m_fromCurrentPoint);
     if (!result)
         return false;
 
@@ -308,11 +311,17 @@ bool SVGPathBlender::blendArcToSegment(float progress)
             m_fromMode);
     } else {
         BlendingContext context { progress };
+        // Per spec, the arc flags interpolate as numbers (with progress clamped to
+        // [0, 1]) and any non-zero result is treated as a set flag, matching <path>.
+        // https://w3c.github.io/svgwg/specs/paths/#PathElement
+        BlendingContext flagContext { clampTo<float>(progress, 0.0f, 1.0f) };
+        bool largeArc = blend(from.largeArc ? 1.0f : 0.0f, to.largeArc ? 1.0f : 0.0f, flagContext);
+        bool sweep = blend(from.sweep ? 1.0f : 0.0f, to.sweep ? 1.0f : 0.0f, flagContext);
         m_consumer->arcTo(blend(from.rx, to.rx, context),
             blend(from.ry, to.ry, context),
             blend(from.angle, to.angle, context),
-            m_isInFirstHalfOfAnimation ? from.largeArc : to.largeArc,
-            m_isInFirstHalfOfAnimation ? from.sweep : to.sweep,
+            largeArc,
+            sweep,
             blendAnimatedFloatPoint(from.targetPoint, to.targetPoint, progress),
             m_isInFirstHalfOfAnimation ? m_fromMode : m_toMode);
     }
@@ -321,25 +330,25 @@ bool SVGPathBlender::blendArcToSegment(float progress)
     return true;
 }
 
-static inline PathCoordinateMode coordinateModeOfCommand(const SVGPathSegType& type)
+static inline PathCoordinateMode NODELETE coordinateModeOfCommand(const SVGPathSegType& type)
 {
     if (type < SVGPathSegType::MoveToAbs)
         return AbsoluteCoordinates;
 
     // Odd number = relative command
-    if (enumToUnderlyingType(type) % 2)
+    if (std::to_underlying(type) % 2)
         return RelativeCoordinates;
 
     return AbsoluteCoordinates;
 }
 
-static inline bool isSegmentEqual(const SVGPathSegType& fromType, const SVGPathSegType& toType, const PathCoordinateMode& fromMode, const PathCoordinateMode& toMode)
+static inline bool NODELETE isSegmentEqual(const SVGPathSegType& fromType, const SVGPathSegType& toType, const PathCoordinateMode& fromMode, const PathCoordinateMode& toMode)
 {
     if (fromType == toType && (fromType == SVGPathSegType::Unknown || fromType == SVGPathSegType::ClosePath))
         return true;
 
-    auto from = enumToUnderlyingType(fromType);
-    auto to = enumToUnderlyingType(toType);
+    auto from = std::to_underlying(fromType);
+    auto to = std::to_underlying(toType);
     if (fromMode == toMode)
         return from == to;
     if (fromMode == AbsoluteCoordinates)

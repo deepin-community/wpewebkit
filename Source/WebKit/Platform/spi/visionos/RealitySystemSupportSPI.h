@@ -25,11 +25,13 @@
 
 #pragma once
 
+DECLARE_SYSTEM_HEADER
+
 #if USE(APPLE_INTERNAL_SDK)
 #import <RealitySystemSupport/RealitySystemSupport.h>
 #else
 
-#import <QuartzCore/CALayer.h>
+#import <pal/spi/cocoa/QuartzCoreSPI.h>
 
 @class CARemoteEffectGroup;
 
@@ -56,6 +58,10 @@ typedef NS_OPTIONS(NSUInteger, RCPGlowEffectContentRenderingHints) {
 @property (nonatomic) RCPGlowEffectContentRenderingHints contentRenderingHints;
 
 - (void)setBrightnessMultiplier:(CGFloat)multiplier forInputTypes:(RCPRemoteEffectInputTypes)inputTypes;
+@end
+
+@interface CARemoteExternalEffect (RealitySystemSupport)
++ (instancetype)rcp_requiresTwoHandedInteractionProcessorEffect;
 @end
 
 #endif // USE(APPLE_INTERNAL_SDK)

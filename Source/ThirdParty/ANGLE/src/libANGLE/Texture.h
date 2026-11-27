@@ -23,6 +23,7 @@
 #include "libANGLE/FramebufferAttachment.h"
 #include "libANGLE/Image.h"
 #include "libANGLE/Observer.h"
+#include "libANGLE/RefCountObject.h"
 #include "libANGLE/Stream.h"
 #include "libANGLE/angletypes.h"
 #include "libANGLE/formatutils.h"
@@ -47,6 +48,12 @@ class MemoryObject;
 class Sampler;
 class State;
 class Texture;
+
+enum class EnsureInitializedLevels
+{
+    BaseOnly,
+    AllEnabledLevels,
+};
 
 constexpr GLuint kInitialMaxLevel = 1000;
 
@@ -114,6 +121,10 @@ class TextureState final : private angle::NonCopyable
     // Returns the value called "q" in the GLES 3.0.4 spec section 3.8.10.
     GLuint getMipmapMaxLevel() const;
 
+    // Used by validation, returns the number of possible mip levels for this texture type based on
+    // level 0's definition.
+    GLuint getMaxPossibleMipmapLevelsFromLevelZero() const;
+
     // Returns true if base level changed.
     bool setBaseLevel(GLuint baseLevel);
     GLuint getBaseLevel() const { return mBaseLevel; }
@@ -147,9 +158,11 @@ class TextureState final : private angle::NonCopyable
     bool renderabilityValidation() const { return mRenderabilityValidation; }
     GLenum getDepthStencilTextureMode() const { return mDepthStencilTextureMode; }
 
+    bool isExternalMemoryTexture() const { return mIsExternalMemoryTexture; }
     bool hasBeenBoundAsImage() const { return mHasBeenBoundAsImage; }
     bool hasBeenBoundAsAttachment() const { return mHasBeenBoundAsAttachment; }
     bool hasBeenBoundToMSRTTFramebuffer() const { return mHasBeenBoundToMSRTTFramebuffer; }
+    bool hasBeenBoundAsSourceOfEglImage() const { return mHasBeenBoundAsSourceOfEglImage; }
 
     gl::SrgbOverride getSRGBOverride() const { return mSrgbOverride; }
 
@@ -174,11 +187,23 @@ class TextureState final : private angle::NonCopyable
     void setGenerateMipmapHint(GLenum hint);
     GLenum getGenerateMipmapHint() const;
 
+    bool setASTCDecodePrecision(GLenum astcDecodePrecision);
+    GLenum getASTCDecodePrecision() const;
+
     // Return the enabled mipmap level count.
     GLuint getEnabledLevelCount() const;
+    GLuint getCompatibleLevelCount(GLuint baseLevel,
+                                   GLuint maxLevel,
+                                   bool *anyIncompatibleLevelOut) const;
 
     bool getImmutableFormat() const { return mImmutableFormat; }
     GLuint getImmutableLevels() const { return mImmutableLevels; }
+    bool anyLevelsDefinedAtOrAbove(GLuint level, GLuint maxLevel) const;
+    bool isCompatibleWithLevelZero(GLint level,
+                                   GLsizei width,
+                                   GLsizei height,
+                                   GLsizei depth,
+                                   const InternalFormat &format) const;
 
     const std::vector<ImageDesc> &getImageDescs() const { return mImageDescs; }
 
@@ -193,6 +218,30 @@ class TextureState final : private angle::NonCopyable
     bool isInternalIncompleteTexture() const { return mIsInternalIncompleteTexture; }
 
     const FoveationState &getFoveationState() const { return mFoveationState; }
+
+    GLenum getSurfaceCompressionFixedRate() const { return mCompressionFixedRate; }
+
+    const egl::ImageSourceAttributes &getEGLImageSourceAttributes() const
+    {
+        return mEGLImageSourceAttributes;
+    }
+
+    OwnerImageIndex toOwnerIndex(const ImageIndex &index) const
+    {
+        return mEGLImageSourceAttributes.toOwnerIndex(index);
+    }
+    OwnerLevel toOwnerLevel(LevelIndex level) const
+    {
+        return mEGLImageSourceAttributes.toOwnerLevel(level);
+    }
+    OwnerLayer toOwnerLayer(LayerIndex layer) const
+    {
+        return mEGLImageSourceAttributes.toOwnerLayer(layer);
+    }
+    OwnerLayer toOwnerDepth(const Offset &offset) const
+    {
+        return mEGLImageSourceAttributes.toOwnerDepth(offset);
+    }
 
   private:
     // Texture needs access to the ImageDesc functions.
@@ -242,9 +291,14 @@ class TextureState final : private angle::NonCopyable
     // overhead of tail-call checks to draw calls.
     bool mIsInternalIncompleteTexture;
 
+    // Whether this is an external memory texture created via EXT_external_objects or
+    // ANGLE_external_objects_flags.
+    bool mIsExternalMemoryTexture;
+
     bool mHasBeenBoundAsImage;
     bool mHasBeenBoundAsAttachment;
     bool mHasBeenBoundToMSRTTFramebuffer;
+    bool mHasBeenBoundAsSourceOfEglImage;
 
     bool mImmutableFormat;
     GLuint mImmutableLevels;
@@ -281,6 +335,19 @@ class TextureState final : private angle::NonCopyable
 
     // GL_QCOM_texture_foveated
     FoveationState mFoveationState;
+
+    // GL_EXT_texture_storage_compression
+    GLenum mCompressionFixedRate;
+
+    // GL_EXT_texture_compression_astc_decode_mode
+    // GL_EXT_texture_compression_astc_decode_mode_rgb9e5
+    GLenum mAstcDecodePrecision;
+
+    // |mEGLImageSourceAttributes.type| is only valid if this texture is an "EGLImage target" and
+    // the associated EGL Image was originally sourced from an OpenGL texture.  Such EGL Images can
+    // be a slice of the underlying resource.  The level and layer offset are used to track the
+    // location of the slice.
+    egl::ImageSourceAttributes mEGLImageSourceAttributes;
 };
 
 bool operator==(const TextureState &a, const TextureState &b);
@@ -350,11 +417,17 @@ class Texture final : public RefCountObject<TextureID>,
     void setMaxLod(const Context *context, GLfloat maxLod);
     GLfloat getMaxLod() const;
 
+    void setLodBias(const Context *context, GLfloat lodBias);
+    GLfloat getLodBias() const;
+
     void setCompareMode(const Context *context, GLenum compareMode);
     GLenum getCompareMode() const;
 
     void setCompareFunc(const Context *context, GLenum compareFunc);
     GLenum getCompareFunc() const;
+
+    void setASTCDecodePrecision(const Context *context, GLenum astcDecodePrecision);
+    GLenum getASTCDecodePrecision() const;
 
     void setSRGBDecode(const Context *context, GLenum sRGBDecode);
     GLenum getSRGBDecode() const;
@@ -395,8 +468,8 @@ class Texture final : public RefCountObject<TextureID>,
     void setBorderColor(const Context *context, const ColorGeneric &color);
     const ColorGeneric &getBorderColor() const;
 
-    angle::Result setBuffer(const Context *context, gl::Buffer *buffer, GLenum internalFormat);
-    angle::Result setBufferRange(const Context *context,
+    angle::Result setBuffer(Context *context, gl::Buffer *buffer, GLenum internalFormat);
+    angle::Result setBufferRange(Context *context,
                                  gl::Buffer *buffer,
                                  GLenum internalFormat,
                                  GLintptr offset,
@@ -436,6 +509,12 @@ class Texture final : public RefCountObject<TextureID>,
                        float gainY,
                        float foveaArea);
     const FocalPoint &getFocalPoint(uint32_t layer, uint32_t focalPoint) const;
+
+    GLint getImageCompressionRate(const Context *context) const;
+    GLint getFormatSupportedCompressionRates(const Context *context,
+                                             GLenum internalformat,
+                                             GLsizei bufSize,
+                                             GLint *rates) const;
 
     angle::Result setImage(Context *context,
                            const PixelUnpackState &unpackState,
@@ -488,17 +567,14 @@ class Texture final : public RefCountObject<TextureID>,
 
     angle::Result copyRenderbufferSubData(Context *context,
                                           const gl::Renderbuffer *srcBuffer,
-                                          GLint srcLevel,
                                           GLint srcX,
                                           GLint srcY,
-                                          GLint srcZ,
                                           GLint dstLevel,
                                           GLint dstX,
                                           GLint dstY,
                                           GLint dstZ,
                                           GLsizei srcWidth,
-                                          GLsizei srcHeight,
-                                          GLsizei srcDepth);
+                                          GLsizei srcHeight);
 
     angle::Result copyTextureSubData(Context *context,
                                      const gl::Texture *srcTexture,
@@ -575,6 +651,13 @@ class Texture final : public RefCountObject<TextureID>,
                                            egl::Image *image,
                                            const GLint *attrib_list);
 
+    angle::Result setStorageAttribs(Context *context,
+                                    TextureType type,
+                                    GLsizei levels,
+                                    GLenum internalFormat,
+                                    const Extents &size,
+                                    const GLint *attribList);
+
     angle::Result generateMipmap(Context *context);
 
     angle::Result clearImage(Context *context,
@@ -590,6 +673,7 @@ class Texture final : public RefCountObject<TextureID>,
                                 const uint8_t *data);
 
     void onBindAsImageTexture();
+    void onBindAsEglImageSource();
 
     egl::Surface *getBoundSurface() const;
     egl::Stream *getBoundStream() const;
@@ -602,6 +686,10 @@ class Texture final : public RefCountObject<TextureID>,
     bool isSamplerComplete(const Context *context, const Sampler *optionalSampler);
     bool isSamplerCompleteForCopyImage(const Context *context,
                                        const Sampler *optionalSampler) const;
+    // Check the rules in Framebuffer Attachment Completeness sections, excluding those related to
+    // framebuffer layers.  If a texture is immutable, always returns true, otherwise checks
+    // cube-completeness, mip-completeness, etc, if necessary.
+    bool isFramebufferAttachmentComplete(GLuint attachmentMipLevel, const char **error) const;
 
     GLenum getImplementationColorReadFormat(const Context *context) const;
     GLenum getImplementationColorReadType(const Context *context) const;
@@ -647,10 +735,8 @@ class Texture final : public RefCountObject<TextureID>,
     // Used specifically for FramebufferAttachmentObject.
     GLuint getId() const override;
 
-    GLuint getNativeID() const;
-
     // Needed for robust resource init.
-    angle::Result ensureInitialized(const Context *context);
+    angle::Result ensureInitialized(const Context *context, EnsureInitializedLevels levels);
     InitState initState(GLenum binding, const ImageIndex &imageIndex) const override;
     InitState initState() const { return mState.mInitState; }
     void setInitState(GLenum binding, const ImageIndex &imageIndex, InitState initState) override;
@@ -658,14 +744,18 @@ class Texture final : public RefCountObject<TextureID>,
 
     bool isBoundToFramebuffer(rx::UniqueSerial framebufferSerial) const
     {
-        for (size_t index = 0; index < mBoundFramebufferSerials.size(); ++index)
+        for (rx::UniqueSerial boundFramebufferSerial : mBoundFramebufferSerials)
         {
-            if (mBoundFramebufferSerials[index] == framebufferSerial)
+            if (boundFramebufferSerial == framebufferSerial)
+            {
                 return true;
+            }
         }
 
         return false;
     }
+
+    bool isEGLImageSource(const OwnerImageIndex &index) const;
 
     bool isDepthOrStencil() const
     {
@@ -698,13 +788,12 @@ class Texture final : public RefCountObject<TextureID>,
         DIRTY_BIT_MAX_LEVEL,
         DIRTY_BIT_DEPTH_STENCIL_TEXTURE_MODE,
         DIRTY_BIT_RENDERABILITY_VALIDATION_ANGLE,
+        DIRTY_BIT_ASTC_DECODE_PRECISION,
+        DIRTY_BIT_LOD_BIAS_QCOM,
 
         // Image state
         DIRTY_BIT_BOUND_AS_IMAGE,
         DIRTY_BIT_BOUND_AS_ATTACHMENT,
-
-        // Bound to MSRTT Framebuffer
-        DIRTY_BIT_BOUND_TO_MSRTT_FRAMEBUFFER,
 
         // Misc
         DIRTY_BIT_USAGE,
@@ -750,6 +839,8 @@ class Texture final : public RefCountObject<TextureID>,
     angle::Result releaseImageFromStream(const Context *context);
 
     void invalidateCompletenessCache() const;
+
+    void releaseTexImageInternalNoRedefinition(Context *context);
     angle::Result releaseTexImageInternal(Context *context);
 
     bool doesSubImageNeedInit(const Context *context,
@@ -765,6 +856,8 @@ class Texture final : public RefCountObject<TextureID>,
                                         TextureType type,
                                         GLuint levels,
                                         egl::Image *imageTarget);
+    angle::Result orphanImages(const gl::Context *context,
+                               egl::RefCountObjectReleaser<egl::Image> *outReleaseImage);
 
     void signalDirtyState(size_t dirtyBit);
 

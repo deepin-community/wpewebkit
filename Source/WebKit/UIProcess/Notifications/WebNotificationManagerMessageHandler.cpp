@@ -29,6 +29,7 @@
 #include "Logging.h"
 #include "ServiceWorkerNotificationHandler.h"
 #include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 #include <WebCore/NotificationData.h>
 #include <wtf/CompletionHandler.h>
 
@@ -39,76 +40,94 @@ WebNotificationManagerMessageHandler::WebNotificationManagerMessageHandler(WebPa
 {
 }
 
+void WebNotificationManagerMessageHandler::ref() const
+{
+    m_webPageProxy->ref();
+}
+
+void WebNotificationManagerMessageHandler::deref() const
+{
+    m_webPageProxy->deref();
+}
+
 void WebNotificationManagerMessageHandler::showNotification(IPC::Connection& connection, const WebCore::NotificationData& data, RefPtr<WebCore::NotificationResources>&& resources, CompletionHandler<void()>&& callback)
 {
     RELEASE_LOG(Push, "WebNotificationManagerMessageHandler showNotification called");
 
     if (!data.serviceWorkerRegistrationURL.isEmpty()) {
-        ServiceWorkerNotificationHandler::singleton().showNotification(connection, data, WTFMove(resources), WTFMove(callback));
+        ServiceWorkerNotificationHandler::singleton().showNotification(connection, data, WTF::move(resources), WTF::move(callback));
         return;
     }
-    m_webPageProxy.showNotification(connection, data, WTFMove(resources));
+    protect(page())->showNotification(connection, data, WTF::move(resources));
     callback();
 }
 
-void WebNotificationManagerMessageHandler::cancelNotification(const WTF::UUID& notificationID)
+void WebNotificationManagerMessageHandler::cancelNotification(WebCore::SecurityOriginData&& origin, const WTF::UUID& notificationID)
 {
-    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
-    if (serviceWorkerNotificationHandler.handlesNotification(notificationID)) {
-        serviceWorkerNotificationHandler.cancelNotification(notificationID);
+    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    if (serviceWorkerNotificationHandler->handlesNotification(notificationID)) {
+        serviceWorkerNotificationHandler->cancelNotification(WTF::move(origin), notificationID);
         return;
     }
-    m_webPageProxy.cancelNotification(notificationID);
+    protect(page())->cancelNotification(notificationID);
 }
 
 void WebNotificationManagerMessageHandler::clearNotifications(const Vector<WTF::UUID>& notificationIDs)
 {
-    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
 
     Vector<WTF::UUID> persistentNotifications;
     Vector<WTF::UUID> pageNotifications;
     persistentNotifications.reserveInitialCapacity(notificationIDs.size());
     pageNotifications.reserveInitialCapacity(notificationIDs.size());
     for (auto& notificationID : notificationIDs) {
-        if (serviceWorkerNotificationHandler.handlesNotification(notificationID))
+        if (serviceWorkerNotificationHandler->handlesNotification(notificationID))
             persistentNotifications.append(notificationID);
         else
             pageNotifications.append(notificationID);
     }
     if (!persistentNotifications.isEmpty())
-        serviceWorkerNotificationHandler.clearNotifications(persistentNotifications);
+        serviceWorkerNotificationHandler->clearNotifications(persistentNotifications);
     if (!pageNotifications.isEmpty())
-        m_webPageProxy.clearNotifications(pageNotifications);
+        protect(page())->clearNotifications(pageNotifications);
 }
 
 void WebNotificationManagerMessageHandler::didDestroyNotification(const WTF::UUID& notificationID)
 {
-    auto& serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
-    if (serviceWorkerNotificationHandler.handlesNotification(notificationID)) {
-        serviceWorkerNotificationHandler.didDestroyNotification(notificationID);
+    Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
+    if (serviceWorkerNotificationHandler->handlesNotification(notificationID)) {
+        serviceWorkerNotificationHandler->didDestroyNotification(notificationID);
         return;
     }
-    m_webPageProxy.didDestroyNotification(notificationID);
+    protect(page())->didDestroyNotification(notificationID);
 }
 
 void WebNotificationManagerMessageHandler::pageWasNotifiedOfNotificationPermission()
 {
-    m_webPageProxy.pageWillLikelyUseNotifications();
+    protect(page())->pageWillLikelyUseNotifications();
 }
 
-void WebNotificationManagerMessageHandler::requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&&)
+void WebNotificationManagerMessageHandler::requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
 }
 
-void WebNotificationManagerMessageHandler::getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&)
+void WebNotificationManagerMessageHandler::getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
 }
 
-void WebNotificationManagerMessageHandler::getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&)
+void WebNotificationManagerMessageHandler::getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
+}
+
+std::optional<SharedPreferencesForWebProcess> WebNotificationManagerMessageHandler::sharedPreferencesForWebProcess(const IPC::Connection&) const
+{
+    return page().legacyMainFrameProcess().sharedPreferencesForWebProcess();
 }
 
 } // namespace WebKit

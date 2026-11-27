@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,12 +49,12 @@ static RefPtr<ArrayBuffer> convertToArrayBuffer(RefPtr<const SharedBuffer>&& buf
 
 static RefPtr<Uint8Array> convertToUint8Array(RefPtr<const SharedBuffer>&& buffer)
 {
-    auto arrayBuffer = convertToArrayBuffer(WTFMove(buffer));
+    auto arrayBuffer = convertToArrayBuffer(WTF::move(buffer));
     if (!arrayBuffer)
         return nullptr;
 
     size_t sizeInBytes = arrayBuffer->byteLength();
-    return Uint8Array::create(WTFMove(arrayBuffer), 0, sizeInBytes);
+    return Uint8Array::create(WTF::move(arrayBuffer), 0, sizeInBytes);
 }
 
 template <typename T>
@@ -65,34 +65,49 @@ static RefPtr<SharedBuffer> convertToSharedBuffer(T array)
     return SharedBuffer::create(array->span());
 }
 
-std::unique_ptr<RemoteLegacyCDMSession> RemoteLegacyCDMSession::create(WeakPtr<RemoteLegacyCDMFactory> factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
+RefPtr<RemoteLegacyCDMSession> RemoteLegacyCDMSession::create(RemoteLegacyCDMFactory& factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
 {
-    auto session = std::unique_ptr<RemoteLegacyCDMSession>(new RemoteLegacyCDMSession(WTFMove(factory), WTFMove(identifier), client));
-    if (session->m_factory)
-        session->m_factory->addSession(identifier, *session);
+    RefPtr session = adoptRef(new RemoteLegacyCDMSession(factory, WTF::move(identifier), client));
+    if (RefPtr factory = session->m_factory.get())
+        factory->addSession(identifier, *session);
     return session;
 }
 
-RemoteLegacyCDMSession::RemoteLegacyCDMSession(WeakPtr<RemoteLegacyCDMFactory> factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
-    : m_factory(WTFMove(factory))
-    , m_identifier(WTFMove(identifier))
+RemoteLegacyCDMSession::RemoteLegacyCDMSession(RemoteLegacyCDMFactory& factory, RemoteLegacyCDMSessionIdentifier&& identifier, LegacyCDMSessionClient& client)
+    : m_factory(WTF::move(factory))
+    , m_identifier(WTF::move(identifier))
     , m_client(client)
 {
 }
 
 RemoteLegacyCDMSession::~RemoteLegacyCDMSession()
 {
-    if (m_factory)
-        m_factory->removeSession(m_identifier);
+    ASSERT(!m_factory);
+}
+
+void RemoteLegacyCDMSession::invalidate()
+{
+    if (RefPtr factory = m_factory.get()) {
+        factory->removeSession(m_identifier);
+        m_factory = nullptr;
+    }
 }
 
 RefPtr<Uint8Array> RemoteLegacyCDMSession::generateKeyRequest(const String& mimeType, Uint8Array* initData, String& destinationURL, unsigned short& errorCode, uint32_t& systemCode)
 {
-    if (!m_factory || !initData)
+    if (!initData)
+        return nullptr;
+
+    RefPtr client = m_client.get();
+    if (!client)
+        return nullptr;
+
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return nullptr;
 
     auto ipcInitData = convertToSharedBuffer(initData);
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::GenerateKeyRequest(mimeType, ipcInitData), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::GenerateKeyRequest(mimeType, ipcInitData, client->mediaKeysHashSalt()), m_identifier);
 
     RefPtr<SharedBuffer> ipcNextMessage;
     if (sendResult.succeeded())
@@ -101,25 +116,30 @@ RefPtr<Uint8Array> RemoteLegacyCDMSession::generateKeyRequest(const String& mime
     if (!ipcNextMessage)
         return nullptr;
 
-    return convertToUint8Array(WTFMove(ipcNextMessage));
+    return convertToUint8Array(WTF::move(ipcNextMessage));
 }
 
 void RemoteLegacyCDMSession::releaseKeys()
 {
-    if (!m_factory)
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return;
 
-    m_factory->gpuProcessConnection().connection().send(Messages::RemoteLegacyCDMSessionProxy::ReleaseKeys(), m_identifier);
+    factory->gpuProcessConnection().connection().send(Messages::RemoteLegacyCDMSessionProxy::ReleaseKeys(), m_identifier);
     m_cachedKeyCache.clear();
 }
 
 bool RemoteLegacyCDMSession::update(Uint8Array* keyData, RefPtr<Uint8Array>& nextMessage, unsigned short& errorCode, uint32_t& systemCode)
 {
-    if (!m_factory || !keyData)
+    if (!keyData)
+        return false;
+
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return false;
 
     auto ipcKeyData = convertToSharedBuffer(keyData);
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::Update(ipcKeyData), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::Update(ipcKeyData), m_identifier);
 
     bool succeeded { false };
     RefPtr<SharedBuffer> ipcNextMessage;
@@ -127,48 +147,50 @@ bool RemoteLegacyCDMSession::update(Uint8Array* keyData, RefPtr<Uint8Array>& nex
         std::tie(succeeded, ipcNextMessage, errorCode, systemCode) = sendResult.takeReply();
 
     if (ipcNextMessage)
-        nextMessage = convertToUint8Array(WTFMove(ipcNextMessage));
+        nextMessage = convertToUint8Array(WTF::move(ipcNextMessage));
 
     return succeeded;
 }
 
 RefPtr<ArrayBuffer> RemoteLegacyCDMSession::cachedKeyForKeyID(const String& keyId) const
 {
-    if (!m_factory)
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return nullptr;
 
     auto foundInCache = m_cachedKeyCache.find(keyId);
     if (foundInCache != m_cachedKeyCache.end())
         return foundInCache->value;
 
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::CachedKeyForKeyID(keyId), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::CachedKeyForKeyID(keyId), m_identifier);
     auto [ipcKey] = sendResult.takeReplyOr(nullptr);
 
     if (!ipcKey)
         return nullptr;
 
-    auto ipcKeyBuffer = convertToArrayBuffer(WTFMove(ipcKey));
+    auto ipcKeyBuffer = convertToArrayBuffer(WTF::move(ipcKey));
     m_cachedKeyCache.set(keyId, ipcKeyBuffer);
     return ipcKeyBuffer;
 }
 
 void RemoteLegacyCDMSession::sendMessage(RefPtr<SharedBuffer>&& message, const String& destinationURL)
 {
-    if (!m_client)
+    RefPtr client = m_client.get();
+    if (!client)
         return;
 
     if (!message) {
-        m_client->sendMessage(nullptr, destinationURL);
+        client->sendMessage(nullptr, destinationURL);
         return;
     }
 
-    m_client->sendMessage(convertToUint8Array(WTFMove(message)).get(), destinationURL);
+    client->sendMessage(convertToUint8Array(WTF::move(message)).get(), destinationURL);
 }
 
 void RemoteLegacyCDMSession::sendError(WebCore::LegacyCDMSessionClient::MediaKeyErrorCode errorCode, uint32_t systemCode)
 {
-    if (m_client)
-        m_client->sendError(errorCode, systemCode);
+    if (RefPtr client = m_client.get())
+        client->sendError(errorCode, systemCode);
 }
 
 }

@@ -29,6 +29,7 @@
 #include "IPCSemaphore.h"
 #include "MessageNames.h"
 #include <wtf/Forward.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 
@@ -48,19 +49,21 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     explicit SendSemaphore(const IPC::Semaphore& s0)
-        : m_arguments(s0)
+        : m_s0(s0)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        encoder << m_s0;
     }
 
 private:
-    std::tuple<const IPC::Semaphore&> m_arguments;
+    const IPC::Semaphore& m_s0;
 };
 
 class ReceiveSemaphore {
@@ -71,19 +74,48 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithSemaphore_ReceiveSemaphoreReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<IPC::Semaphore>;
     using Reply = CompletionHandler<void(IPC::Semaphore&&)>;
     using Promise = WTF::NativePromise<IPC::Semaphore, IPC::Error>;
-    auto&& arguments()
+    ReceiveSemaphore()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
+};
+
+class ReceiveSemaphoreReply {
+public:
+    using Arguments = std::tuple<IPC::Semaphore>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithSemaphore_ReceiveSemaphoreReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    explicit ReceiveSemaphoreReply(const IPC::Semaphore& r0)
+        : m_r0(r0)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        encoder << m_r0;
+    }
+
+private:
+    const IPC::Semaphore& m_r0;
 };
 
 } // namespace TestWithSemaphore

@@ -72,25 +72,40 @@ RemoteSharedResourceCache::RemoteSharedResourceCache(GPUConnectionToWebProcess& 
 
 RemoteSharedResourceCache::~RemoteSharedResourceCache() = default;
 
-void RemoteSharedResourceCache::addSerializedImageBuffer(RenderingResourceIdentifier identifier, Ref<ImageBuffer> imageBuffer)
+bool RemoteSharedResourceCache::addSerializedImageBuffer(RemoteSerializedImageBufferIdentifier identifier, Ref<ImageBuffer> imageBuffer)
 {
-    m_serializedImageBuffers.add({ identifier, 0 }, WTFMove(imageBuffer));
+    didCreateImageBuffer(imageBuffer->renderingPurpose(), imageBuffer->renderingMode());
+    return m_serializedImageBuffers.add({ identifier, 0 }, WTF::move(imageBuffer));
 }
 
-RefPtr<ImageBuffer> RemoteSharedResourceCache::takeSerializedImageBuffer(RenderingResourceIdentifier identifier)
+RefPtr<ImageBuffer> RemoteSharedResourceCache::takeSerializedImageBuffer(RemoteSerializedImageBufferIdentifier identifier)
 {
-    return m_serializedImageBuffers.take({ { identifier, 0 }, 0 }, defaultRemoteSharedResourceCacheTimeout);
+    RefPtr imageBuffer = m_serializedImageBuffers.take({ { identifier, 0 }, 0 }, defaultRemoteSharedResourceCacheTimeout);
+    if (imageBuffer)
+        didReleaseImageBuffer(imageBuffer->renderingPurpose(), imageBuffer->renderingMode());
+    return imageBuffer;
 }
 
-void RemoteSharedResourceCache::releaseSerializedImageBuffer(WebCore::RenderingResourceIdentifier identifier)
+bool RemoteSharedResourceCache::addNativeImage(RenderingResourceIdentifier identifier, Ref<NativeImage> image)
 {
-    m_serializedImageBuffers.remove({ { identifier, 0 }, 0 });
+    return m_nativeImages.add({ identifier, 0 }, WTF::move(image));
+}
+
+RefPtr<NativeImage> RemoteSharedResourceCache::takeNativeImage(RenderingResourceIdentifier identifier)
+{
+    return m_nativeImages.take({ { identifier, 0 }, 0 }, defaultRemoteSharedResourceCacheTimeout);
+}
+
+void RemoteSharedResourceCache::releaseSerializedImageBuffer(RemoteSerializedImageBufferIdentifier identifier)
+{
+    // Must wait due to using current accounting mechanism.
+    takeSerializedImageBuffer(identifier);
 }
 
 void RemoteSharedResourceCache::lowMemoryHandler()
 {
 #if HAVE(IOSURFACE)
-    m_ioSurfacePool->discardAllSurfaces();
+    Ref { m_ioSurfacePool }->discardAllSurfaces();
 #endif
 }
 

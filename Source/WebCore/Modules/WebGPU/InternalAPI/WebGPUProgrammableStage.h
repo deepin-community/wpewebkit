@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "WebGPUShaderModule.h"
+#include <WebCore/WebGPUShaderModule.h>
 #include <wtf/KeyValuePair.h>
 #include <wtf/Ref.h>
 #include <wtf/Vector.h>
@@ -37,7 +37,7 @@ using PipelineConstantValue = double; // May represent WGSL’s bool, f32, i32, 
 
 struct ProgrammableStage {
     WeakRef<ShaderModule> module;
-    std::optional<String> entryPoint;
+    String entryPoint;
     Vector<KeyValuePair<String, PipelineConstantValue>> constants;
 };
 

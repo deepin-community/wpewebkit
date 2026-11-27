@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-#include "JSDOMExceptionHandling.h"
-#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/GetVM.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/PureNaN.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMConvertBase.h>
+#include <WebCore/JSDOMExceptionHandling.h>
 
 namespace WebCore {
 
@@ -180,7 +181,7 @@ template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
 
     static inline Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
     {
-        if (UNLIKELY(!std::isfinite(number))) {
+        if (!std::isfinite(number)) [[unlikely]] {
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
             return Result::exception();
         }
@@ -193,11 +194,11 @@ template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, Result::exception());
-        if (UNLIKELY(!std::isfinite(number))) {
+        if (!std::isfinite(number)) [[unlikely]] {
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
             return Result::exception();
         }
-        if (UNLIKELY(number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max())) {
+        if (number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()) [[unlikely]] {
             throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float"_s);
             return Result::exception();
         }
@@ -222,9 +223,9 @@ template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestri
 
         RETURN_IF_EXCEPTION(scope, Result::exception());
 
-        if (UNLIKELY(number < std::numeric_limits<float>::lowest()))
+        if (number < std::numeric_limits<float>::lowest()) [[unlikely]]
             return -std::numeric_limits<float>::infinity();
-        if (UNLIKELY(number > std::numeric_limits<float>::max()))
+        if (number > std::numeric_limits<float>::max()) [[unlikely]]
             return std::numeric_limits<float>::infinity();
         return static_cast<float>(number);
     }
@@ -235,7 +236,7 @@ template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
 
     static inline Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
     {
-        if (UNLIKELY(!std::isfinite(number))) {
+        if (!std::isfinite(number)) [[unlikely]] {
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
             return Result::exception();
         }
@@ -251,7 +252,7 @@ template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
 
         RETURN_IF_EXCEPTION(scope, Result::exception());
 
-        if (UNLIKELY(!std::isfinite(number))) {
+        if (!std::isfinite(number)) [[unlikely]] {
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
             return Result::exception();
         }
@@ -265,11 +266,7 @@ template<> struct JSConverter<IDLDouble> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    static JSC::JSValue convert(Type value)
-    {
-        ASSERT(!std::isnan(value));
-        return JSC::jsNumber(value);
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(Type);
 };
 
 template<> struct Converter<IDLUnrestrictedDouble> : DefaultConverter<IDLUnrestrictedDouble> {
@@ -299,16 +296,10 @@ template<> struct JSConverter<IDLUnrestrictedDouble> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(JSC::purifyNaN(value));
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(Type);
 
     // Add overload for MediaTime.
-    static JSC::JSValue convert(const MediaTime& value)
-    {
-        return JSC::jsNumber(JSC::purifyNaN(value.toDouble()));
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(const MediaTime&);
 };
 
 } // namespace WebCore

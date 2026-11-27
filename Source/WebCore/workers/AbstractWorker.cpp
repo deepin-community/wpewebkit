@@ -32,6 +32,8 @@
 #include "AbstractWorker.h"
 
 #include "ContentSecurityPolicy.h"
+#include "Document.h"
+#include "ExceptionOr.h"
 #include "OriginAccessPatterns.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
@@ -40,7 +42,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(AbstractWorker);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AbstractWorker);
 
 FetchOptions AbstractWorker::workerFetchOptions(const WorkerOptions& options, FetchOptions::Destination destination)
 {
@@ -58,21 +60,32 @@ FetchOptions AbstractWorker::workerFetchOptions(const WorkerOptions& options, Fe
 
 ExceptionOr<URL> AbstractWorker::resolveURL(const String& url)
 {
-    auto& context = *scriptExecutionContext();
+    Ref context = *scriptExecutionContext();
 
     // FIXME: This should use the dynamic global scope (bug #27887).
-    URL scriptURL = context.completeURL(url);
+    URL scriptURL = context->encodingParseURL(url);
     if (!scriptURL.isValid())
         return Exception { ExceptionCode::SyntaxError };
 
-    if (!context.protectedSecurityOrigin()->canRequest(scriptURL, OriginAccessPatternsForWebProcess::singleton()) && !scriptURL.protocolIsData())
-        return Exception { ExceptionCode::SecurityError };
+    return scriptURL;
+}
+
+bool AbstractWorker::validateURL(ScriptExecutionContext& context, const URL& scriptURL)
+{
+    // Per the specification, any same-origin URL (including blob: URLs) can be used. data: URLs can also be used, but they create a worker with an opaque origin.
+    if (!protect(context.securityOrigin())->canRequest(scriptURL, OriginAccessPatternsForWebProcess::singleton()) && !scriptURL.protocolIsData())
+        return false;
 
     ASSERT(context.contentSecurityPolicy());
-    if (!context.checkedContentSecurityPolicy()->allowWorkerFromSource(scriptURL))
-        return Exception { ExceptionCode::SecurityError };
 
-    return scriptURL;
+    std::optional<TextPosition> sourcePosition;
+    if (RefPtr document = dynamicDowncast<Document>(context))
+        sourcePosition = document->currentParserSourcePosition();
+
+    if (!protect(context.contentSecurityPolicy())->allowWorkerFromSource(scriptURL, WTF::move(sourcePosition)))
+        return false;
+
+    return true;
 }
 
 } // namespace WebCore

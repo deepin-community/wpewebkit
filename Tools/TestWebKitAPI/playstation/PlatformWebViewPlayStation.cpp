@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "PlatformWebView.h"
+#include "Helpers/PlatformWebView.h"
 
 #include <KeyboardEvents.h>
 #include <WebKit/WKContextConfigurationPlayStation.h>
@@ -51,8 +51,9 @@ PlatformWebView::PlatformWebView(WKPageRef relatedPage)
 {
     WKRetainPtr<WKPageConfigurationRef> configuration = adoptWK(WKPageConfigurationCreate());
     WKPageConfigurationSetContext(configuration.get(), WKPageGetContext(relatedPage));
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     WKPageConfigurationSetRelatedPage(configuration.get(), relatedPage);
-
+    ALLOW_DEPRECATED_DECLARATIONS_END
     initialize(configuration.get());
 }
 

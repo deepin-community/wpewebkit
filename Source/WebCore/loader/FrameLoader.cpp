@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Nokia Corporation and/or its subsidiary(-ies)
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  * Copyright (C) 2008 Alp Toker <alp@atoker.com>
@@ -36,28 +36,35 @@
 #include "FrameLoader.h"
 
 #include "AXObjectCache.h"
-#include "ApplicationCacheHost.h"
 #include "BackForwardCache.h"
 #include "BackForwardController.h"
 #include "BeforeUnloadEvent.h"
 #include "CachePolicy.h"
 #include "CachedPage.h"
-#include "CachedResourceLoader.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "CommonVM.h"
+#include "ContainerNodeInlines.h"
 #include "ContentFilter.h"
 #include "ContentRuleListResults.h"
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginAccessControl.h"
 #include "CrossOriginEmbedderPolicy.h"
 #include "DNS.h"
+#include "DOMWrapperWorld.h"
 #include "DatabaseManager.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
 #include "DiagnosticLoggingResultType.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentPrefetcher.h"
+#include "DocumentQuirks.h"
+#include "DocumentResourceLoader.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
+#include "DocumentWindow.h"
 #include "Editor.h"
 #include "EditorClient.h"
 #include "ElementInlines.h"
@@ -67,11 +74,14 @@
 #include "FloatRect.h"
 #include "FormState.h"
 #include "FormSubmission.h"
+#include "FrameInlines.h"
 #include "FrameLoadRequest.h"
 #include "FrameNetworkingContext.h"
 #include "FrameTree.h"
-#include "GCController.h"
+#include "GarbageCollectionController.h"
+#include "HTMLAnchorElement.h"
 #include "HTMLFormElement.h"
+#include "HTMLIFrameElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
 #include "HTMLObjectElement.h"
@@ -81,8 +91,8 @@
 #include "HTTPParsers.h"
 #include "HistoryController.h"
 #include "HistoryItem.h"
-#include "InspectorController.h"
 #include "InspectorInstrumentation.h"
+#include "IntegrityPolicy.h"
 #include "LinkLoader.h"
 #include "LoaderStrategy.h"
 #include "LocalDOMWindow.h"
@@ -93,12 +103,14 @@
 #include "MemoryCache.h"
 #include "MemoryRelease.h"
 #include "Navigation.h"
+#include "NavigationActivation.h"
 #include "NavigationDisabler.h"
 #include "NavigationNavigationType.h"
 #include "NavigationScheduler.h"
 #include "Node.h"
 #include "OriginAccessPatterns.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "PageTransitionEvent.h"
 #include "Performance.h"
 #include "PerformanceLogging.h"
@@ -108,17 +120,18 @@
 #include "PluginDocument.h"
 #include "PolicyChecker.h"
 #include "ProgressTracker.h"
-#include "Quirks.h"
 #include "RemoteFrame.h"
+#include "RemoteFrameClient.h"
+#include "RenderWidgetInlines.h"
 #include "ReportingScope.h"
 #include "ResourceLoadInfo.h"
 #include "ResourceLoadObserver.h"
 #include "ResourceRequest.h"
-#include "SVGLocatable.h"
 #include "SVGNames.h"
 #include "SVGViewElement.h"
 #include "SVGViewSpec.h"
 #include "ScriptController.h"
+#include "ScriptDisallowedScope.h"
 #include "ScriptSourceCode.h"
 #include "ScrollAnimator.h"
 #include "SecurityOrigin.h"
@@ -136,7 +149,7 @@
 #include "UserGestureIndicator.h"
 #include "WindowFeatures.h"
 #include "XMLDocumentParser.h"
-#include <dom/ScriptDisallowedScope.h>
+#include <ranges>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
@@ -147,6 +160,7 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
+#include "FrameDestructionObserverInlines.h"
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
 #include "Archive.h"
@@ -164,12 +178,13 @@
 #if PLATFORM(IOS_FAMILY)
 #include "DocumentType.h"
 #include "ResourceLoader.h"
-#include "RuntimeApplicationChecks.h"
+#include <wtf/RuntimeApplicationChecks.h>
 #endif
 
-#define PAGE_ID (valueOrDefault(pageID()).toUInt64())
-#define FRAME_ID (frameID().object().toUInt64())
+#define PAGE_ID (pageID() ? pageID()->toUInt64() : 0)
+#define FRAME_ID (frameID().toUInt64())
 #define FRAMELOADER_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", isMainFrame=%d] FrameLoader::" fmt, this, PAGE_ID, FRAME_ID, m_frame->isMainFrame(), ##__VA_ARGS__)
+#define FRAMELOADER_RELEASE_LOG_FORWARDABLE(fmt, ...) RELEASE_LOG_FORWARDABLE(ResourceLoading, fmt, PAGE_ID, FRAME_ID, m_frame->isMainFrame(), ##__VA_ARGS__)
 #define FRAMELOADER_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", isMainFrame=%d] FrameLoader::" fmt, this, PAGE_ID, FRAME_ID, m_frame->isMainFrame(), ##__VA_ARGS__)
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/FrameLoaderAdditions.h>)
@@ -177,7 +192,7 @@
 #else
 namespace WebCore {
 
-static void verifyUserAgent(const String&)
+static void NODELETE verifyUserAgent(const String&)
 {
 }
 
@@ -198,7 +213,8 @@ bool isBackForwardLoadType(FrameLoadType type)
     case FrameLoadType::ReloadExpiredOnly:
     case FrameLoadType::Same:
     case FrameLoadType::RedirectWithLockedBackForwardList:
-    case FrameLoadType::Replace:
+    case FrameLoadType::MultipartReplace:
+    case FrameLoadType::NavigationAPIReplace:
         return false;
     case FrameLoadType::Back:
     case FrameLoadType::Forward:
@@ -219,7 +235,8 @@ bool isReload(FrameLoadType type)
     case FrameLoadType::Standard:
     case FrameLoadType::Same:
     case FrameLoadType::RedirectWithLockedBackForwardList:
-    case FrameLoadType::Replace:
+    case FrameLoadType::MultipartReplace:
+    case FrameLoadType::NavigationAPIReplace:
     case FrameLoadType::Back:
     case FrameLoadType::Forward:
     case FrameLoadType::IndexedBackForward:
@@ -235,14 +252,14 @@ bool isReload(FrameLoadType type)
 // non-member lets us exclude it from the header file, thus keeping FrameLoader.h's
 // API simpler.
 //
-static bool isDocumentSandboxed(LocalFrame& frame, SandboxFlags mask)
+static bool NODELETE isDocumentSandboxed(LocalFrame& frame, SandboxFlag flag)
 {
-    return frame.document() && frame.document()->isSandboxed(mask);
+    return frame.document() && frame.document()->isSandboxed(flag);
 }
 
-static bool isInVisibleAndActivePage(const LocalFrame& frame)
+static bool NODELETE isInVisibleAndActivePage(const LocalFrame& frame)
 {
-    RefPtr page = frame.page();
+    auto* page = frame.page();
     return page && page->isVisibleAndActive();
 }
 
@@ -262,13 +279,13 @@ struct ForbidPromptsScope : public PageLevelForbidScope {
     explicit ForbidPromptsScope(Page* page)
         : PageLevelForbidScope(page)
     {
-        if (RefPtr page = m_page.get())
+        if (auto* page = m_page.get())
             page->forbidPrompts();
     }
 
     ~ForbidPromptsScope()
     {
-        if (RefPtr page = m_page.get())
+        if (auto* page = m_page.get())
             page->allowPrompts();
     }
 };
@@ -277,13 +294,13 @@ struct ForbidSynchronousLoadsScope : public PageLevelForbidScope {
     explicit ForbidSynchronousLoadsScope(Page* page)
         : PageLevelForbidScope(page)
     {
-        if (RefPtr page = m_page.get())
+        if (auto* page = m_page.get())
             page->forbidSynchronousLoads();
     }
 
     ~ForbidSynchronousLoadsScope()
     {
-        if (RefPtr page = m_page.get())
+        if (auto* page = m_page.get())
             page->allowSynchronousLoads();
     }
 };
@@ -318,7 +335,7 @@ private:
 
 
 class FrameLoader::FrameProgressTracker final : public CanMakeCheckedPtr<FrameLoader::FrameProgressTracker> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FrameProgressTracker, Loader);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FrameProgressTracker);
 public:
     explicit FrameProgressTracker(LocalFrame& frame)
@@ -330,7 +347,7 @@ public:
     {
         if (m_inProgress && m_frame->page()) {
             Ref frame = m_frame.get();
-            frame->protectedPage()->checkedProgress()->progressCompleted(frame);
+            frame->page()->progress().progressCompleted(frame);
         }
     }
 
@@ -339,20 +356,22 @@ public:
         ASSERT(m_frame->page());
         if (!m_inProgress) {
             Ref frame = m_frame.get();
-            frame->protectedPage()->checkedProgress()->progressStarted(frame);
+            frame->page()->progress().progressStarted(frame);
         }
         m_inProgress = true;
     }
 
-    void progressCompleted()
+    enum class LoadCompletionStatus { Success, Failure };
+    void progressCompleted(LoadCompletionStatus completion)
     {
         ASSERT(m_inProgress);
         ASSERT(m_frame->page());
         m_inProgress = false;
         Ref frame = m_frame.get();
         RefPtr page = frame->page();
-        page->checkedProgress()->progressCompleted(frame);
-        platformStrategies()->loaderStrategy()->pageLoadCompleted(*page);
+        protect(page->progress())->progressCompleted(frame);
+        if (completion == LoadCompletionStatus::Success)
+            platformStrategies()->loaderStrategy()->pageLoadCompleted(*page);
     }
 
 private:
@@ -360,26 +379,39 @@ private:
     bool m_inProgress { false };
 };
 
-FrameLoader::FrameLoader(LocalFrame& frame, UniqueRef<LocalFrameLoaderClient>&& client)
+FrameLoader::FrameLoader(LocalFrame& frame, CompletionHandler<UniqueRef<LocalFrameLoaderClient>(LocalFrame&, FrameLoader&)>&& clientCreator)
     : m_frame(frame)
-    , m_client(WTFMove(client))
-    , m_policyChecker(makeUnique<PolicyChecker>(frame))
+    , m_client(clientCreator(frame, *this))
+    , m_policyChecker(makeUniqueRef<PolicyChecker>(frame))
+    , m_history(makeUniqueRefWithoutRefCountedCheck<HistoryController>(frame))
     , m_notifier(frame)
-    , m_subframeLoader(makeUnique<SubframeLoader>(frame))
+    , m_subframeLoader(makeUniqueRef<SubframeLoader>(frame))
     , m_state(FrameState::Provisional)
     , m_loadType(FrameLoadType::Standard)
     , m_checkTimer(*this, &FrameLoader::checkTimerFired)
-    , m_forcedSandboxFlags(SandboxNone)
+    , m_crossOriginParentSyntheticSameDocLoadEventTimer(*this, &FrameLoader::crossOriginParentSyntheticSameDocLoadEventTimerFired)
+    , m_documentPrefetcher(DocumentPrefetcher::create(frame))
 {
 }
 
 FrameLoader::~FrameLoader()
 {
-    m_frame->setOpener(nullptr);
-    m_frame->detachFromAllOpenedFrames();
+    Ref frame = m_frame.get();
+    frame->disownOpener();
+    frame->detachFromAllOpenedFrames();
 
-    if (RefPtr networkingContext = m_networkingContext)
+    if (auto* networkingContext = m_networkingContext.get())
         networkingContext->invalidate();
+}
+
+void FrameLoader::ref() const
+{
+    m_frame->ref();
+}
+
+void FrameLoader::deref() const
+{
+    m_frame->deref();
 }
 
 LocalFrame& FrameLoader::frame() const
@@ -387,21 +419,16 @@ LocalFrame& FrameLoader::frame() const
     return m_frame;
 }
 
-Ref<LocalFrame> FrameLoader::protectedFrame() const
-{
-    return m_frame.get();
-}
-
 void FrameLoader::init()
 {
     // This somewhat odd set of steps gives the frame an initial empty document.
     setPolicyDocumentLoader(m_client->createDocumentLoader(ResourceRequest(URL({ }, emptyString())), SubstituteData()));
     setProvisionalDocumentLoader(m_policyDocumentLoader.copyRef());
-    protectedProvisionalDocumentLoader()->startLoadingMainResource();
+    protect(m_provisionalDocumentLoader)->startLoadingMainResource();
     setPolicyDocumentLoader(nullptr);
 
     Ref frame = m_frame.get();
-    frame->protectedDocument()->cancelParsing();
+    protect(frame->document())->cancelParsing();
     m_stateMachine.advanceTo(FrameLoaderStateMachine::DisplayingInitialEmptyDocument);
 
     m_networkingContext = m_client->createNetworkingContext();
@@ -417,9 +444,9 @@ void FrameLoader::initForSynthesizedDocument(const URL&)
     {
         Ref loader = m_client->createDocumentLoader(ResourceRequest(URL({ }, emptyString())), SubstituteData());
         loader->attachToFrame(frame);
-        loader->setResponse(ResourceResponse(URL(), textHTMLContentTypeAtom(), 0, String()));
+        loader->setResponse(ResourceResponse(URL(), String { textHTMLContentTypeAtom() }, 0, String()));
         loader->setCommitted(true);
-        setDocumentLoader(WTFMove(loader));
+        setDocumentLoader(WTF::move(loader));
     }
 
     m_stateMachine.advanceTo(FrameLoaderStateMachine::DisplayingInitialEmptyDocument);
@@ -431,6 +458,10 @@ void FrameLoader::initForSynthesizedDocument(const URL&)
     m_didCallImplicitClose = true;
     m_isComplete = true;
     m_state = FrameState::Complete;
+    // Synthesized documents bypass setState(FrameState::Complete), which normally
+    // stops recording responses on the DocumentLoader.
+    if (RefPtr documentLoader = m_documentLoader)
+        documentLoader->stopRecordingResponses();
     m_needsClear = true;
 
     m_networkingContext = m_client->createNetworkingContext();
@@ -455,11 +486,10 @@ void FrameLoader::setDefersLoading(bool defers)
         provisionalDocumentLoader->setDefersLoading(defers);
     if (RefPtr policyDocumentLoader = m_policyDocumentLoader)
         policyDocumentLoader->setDefersLoading(defers);
-    Ref frame = m_frame.get();
-    frame->checkedHistory()->setDefersLoading(defers);
+    history().setDefersLoading(defers);
 
     if (!defers) {
-        frame->checkedNavigationScheduler()->startTimer();
+        protect(m_frame)->navigationScheduler().startTimer();
         startCheckCompleteTimer();
     }
 }
@@ -473,27 +503,38 @@ void FrameLoader::checkContentPolicy(const ResourceResponse& response, ContentPo
     }
 
     // FIXME: Validate the policy check identifier.
-    client().dispatchDecidePolicyForResponse(response, activeDocumentLoader()->request(), activeDocumentLoader()->downloadAttribute(), WTFMove(function));
+    protect(client())->dispatchDecidePolicyForResponse(response, activeDocumentLoader()->request(), activeDocumentLoader()->downloadAttribute(), WTF::move(function));
 }
 
-void FrameLoader::changeLocation(const URL& url, const AtomString& passedTarget, Event* triggeringEvent, const ReferrerPolicy& referrerPolicy, ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy, std::optional<NewFrameOpenerPolicy> openerPolicy, const AtomString& downloadAttribute, std::optional<PrivateClickMeasurement>&& privateClickMeasurement, NavigationHistoryBehavior historyBehavior)
+FrameLoadRequest FrameLoader::createFrameLoadRequest(URL&& url)
 {
     RefPtr frame = lexicalFrameFromCommonVM();
     auto initiatedByMainFrame = frame && frame->isMainFrame() ? InitiatedByMainFrame::Yes : InitiatedByMainFrame::Unknown;
 
+    Ref document = *m_frame->document();
+    return FrameLoadRequest(document.copyRef(), document->securityOrigin(), { WTF::move(url) }, selfTargetFrameName(), initiatedByMainFrame, { });
+}
+
+void FrameLoader::changeLocation(const URL& url, const AtomString& passedTarget, Event* triggeringEvent, const ReferrerPolicy& referrerPolicy, ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy, std::optional<NewFrameOpenerPolicy> openerPolicy, const AtomString& downloadAttribute, std::optional<PrivateClickMeasurement>&& privateClickMeasurement, NavigationHistoryBehavior historyBehavior, Element* sourceElement)
+{
+    RefPtr frame = lexicalFrameFromCommonVM();
+    auto initiatedByMainFrame = frame && frame->isMainFrame() ? InitiatedByMainFrame::Yes : InitiatedByMainFrame::Unknown;
+
+    Ref document = *m_frame->document();
     NewFrameOpenerPolicy newFrameOpenerPolicy = openerPolicy.value_or(referrerPolicy == ReferrerPolicy::NoReferrer ? NewFrameOpenerPolicy::Suppress : NewFrameOpenerPolicy::Allow);
-    FrameLoadRequest frameLoadRequest(*m_frame->document(), m_frame->document()->securityOrigin(), { url }, passedTarget, initiatedByMainFrame, downloadAttribute);
+    FrameLoadRequest frameLoadRequest(document.copyRef(), document->securityOrigin(), { URL { url } }, passedTarget, initiatedByMainFrame, downloadAttribute);
     frameLoadRequest.setNewFrameOpenerPolicy(newFrameOpenerPolicy);
     frameLoadRequest.setReferrerPolicy(referrerPolicy);
     frameLoadRequest.setShouldOpenExternalURLsPolicy(shouldOpenExternalURLsPolicy);
     frameLoadRequest.disableShouldReplaceDocumentIfJavaScriptURL();
     frameLoadRequest.setNavigationHistoryBehavior(historyBehavior);
-    changeLocation(WTFMove(frameLoadRequest), triggeringEvent, WTFMove(privateClickMeasurement));
+    frameLoadRequest.setSourceElement(sourceElement);
+    changeLocation(WTF::move(frameLoadRequest), triggeringEvent, WTF::move(privateClickMeasurement));
 }
 
 void FrameLoader::changeLocation(FrameLoadRequest&& frameRequest, Event* triggeringEvent, std::optional<PrivateClickMeasurement>&& privateClickMeasurement)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "changeLocation: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderChangeLocation);
     ASSERT(frameRequest.resourceRequest().httpMethod() == "GET"_s);
 
     Ref frame = m_frame.get();
@@ -501,10 +542,15 @@ void FrameLoader::changeLocation(FrameLoadRequest&& frameRequest, Event* trigger
     if (frameRequest.frameName().isEmpty())
         frameRequest.setFrameName(frame->document()->baseTarget());
 
-    if (RefPtr document = frame->protectedDocument())
-        document->checkedContentSecurityPolicy()->upgradeInsecureRequestIfNeeded(frameRequest.resourceRequest(), ContentSecurityPolicy::InsecureRequestType::Navigation);
+    if (CheckedPtr requesterCSP = frameRequest.requester().contentSecurityPolicy())
+        requesterCSP->upgradeInsecureRequestIfNeeded(frameRequest.resourceRequest(), ContentSecurityPolicy::InsecureRequestType::Navigation);
 
-    loadFrameRequest(WTFMove(frameRequest), triggeringEvent, { }, WTFMove(privateClickMeasurement));
+    if (RefPtr document = frame->document()) {
+        if (document->contentSecurityPolicy() != frameRequest.requester().contentSecurityPolicy())
+            protect(document->contentSecurityPolicy())->upgradeInsecureRequestIfNeeded(frameRequest.resourceRequest(), ContentSecurityPolicy::InsecureRequestType::Navigation);
+    }
+
+    loadFrameRequest(WTF::move(frameRequest), triggeringEvent, { }, WTF::move(privateClickMeasurement));
 }
 
 void FrameLoader::submitForm(Ref<FormSubmission>&& submission)
@@ -512,7 +558,7 @@ void FrameLoader::submitForm(Ref<FormSubmission>&& submission)
     ASSERT(submission->method() == FormSubmission::Method::Post || submission->method() == FormSubmission::Method::Get);
 
     // FIXME: Find a good spot for these.
-    ASSERT(!submission->state().sourceDocument().frame() || submission->state().sourceDocument().frame() == m_frame.ptr());
+    ASSERT(!submission->state()->sourceDocument().frame() || submission->state()->sourceDocument().frame() == m_frame.ptr());
 
     Ref frame = m_frame.get();
     if (!frame->page())
@@ -522,17 +568,17 @@ void FrameLoader::submitForm(Ref<FormSubmission>&& submission)
         return;
 
     RefPtr document = frame->document();
-    if (isDocumentSandboxed(frame, SandboxForms)) {
+    if (isDocumentSandboxed(frame, SandboxFlag::Forms)) {
         // FIXME: This message should be moved off the console once a solution to https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
         document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Blocked form submission to '"_s, submission->action().stringCenterEllipsizedToLength(), "' because the form's frame is sandboxed and the 'allow-forms' permission is not set."_s));
         return;
     }
 
     URL formAction = submission->action();
-    if (!document->checkedContentSecurityPolicy()->allowFormAction(formAction))
+    if (!protect(document->contentSecurityPolicy())->allowFormAction(formAction, document->currentParserSourcePosition()))
         return;
 
-    RefPtr targetFrame = findFrameForNavigation(submission->target(), submission->state().protectedSourceDocument().ptr());
+    RefPtr targetFrame = findFrameForNavigation(submission->target(), &submission->state()->sourceDocument());
     if (!targetFrame) {
         if (!LocalDOMWindow::allowPopUp(frame) && !UserGestureIndicator::processingUserGesture())
             return;
@@ -554,16 +600,16 @@ void FrameLoader::submitForm(Ref<FormSubmission>&& submission)
         m_submittedFormURL = submission->requestURL();
 
     submission->setReferrer(outgoingReferrer());
-    submission->setOrigin(SecurityPolicy::generateOriginHeader(frame->document()->referrerPolicy(), submission->requestURL(), m_frame->document()->protectedSecurityOrigin(), OriginAccessPatternsForWebProcess::singleton()));
+    submission->setOrigin(SecurityPolicy::generateOriginHeader(frame->document()->referrerPolicy(), submission->requestURL(), protect(protect(frame->document())->securityOrigin()), OriginAccessPatternsForWebProcess::singleton()));
 
-    targetFrame->checkedNavigationScheduler()->scheduleFormSubmission(WTFMove(submission));
+    protect(targetFrame->navigationScheduler())->scheduleFormSubmission(WTF::move(submission));
 }
 
 void FrameLoader::stopLoading(UnloadEventPolicy unloadEventPolicy)
 {
-    RefAllowingPartiallyDestroyed<LocalFrame> protectedFrame { m_frame.get() };
+    Ref frame = m_frame.get();
 
-    if (RefPtr parser = m_frame->document() ? m_frame->document()->parser() : nullptr)
+    if (RefPtr parser = frame->document() ? frame->document()->parser() : nullptr)
         parser->stopParsing();
 
     if (unloadEventPolicy != UnloadEventPolicy::None)
@@ -572,20 +618,25 @@ void FrameLoader::stopLoading(UnloadEventPolicy unloadEventPolicy)
     m_isComplete = true; // to avoid calling completed() in finishedParsing()
     m_didCallImplicitClose = true; // don't want that one either
 
-    if (RefPtr document = m_frame->document(); document && document->parsing()) {
+    if (RefPtr document = frame->document(); document && document->parsing()) {
         finishedParsing();
         document->setParsing(false);
     }
 
-    if (RefPtr document = m_frame->document()) {
+    if (RefPtr document = frame->document()) {
         // FIXME: Should the DatabaseManager watch for something like ActiveDOMObject::stop() rather than being special-cased here?
         DatabaseManager::singleton().stopDatabases(*document, nullptr);
+
+        if (document->settings().navigationAPIEnabled() && !m_doNotAbortNavigationAPI && unloadEventPolicy != UnloadEventPolicy::UnloadAndPageHide) {
+            RefPtr window = frame->document()->window();
+            protect(window->navigation())->abortOngoingNavigationIfNeeded();
+        }
     }
 
     policyChecker().stopCheck();
 
     // FIXME: This will cancel redirection timer, which really needs to be restarted when restoring the frame from b/f cache.
-    m_frame->checkedNavigationScheduler()->cancel();
+    protect(frame->navigationScheduler())->cancel();
 }
 
 void FrameLoader::stop()
@@ -602,7 +653,7 @@ void FrameLoader::stop()
 
 void FrameLoader::closeURL()
 {
-    m_frame->checkedHistory()->saveDocumentState();
+    history().saveDocumentState();
 
     RefPtr currentDocument = m_frame->document();
     UnloadEventPolicy unloadEventPolicy;
@@ -617,19 +668,19 @@ void FrameLoader::closeURL()
     stopLoading(unloadEventPolicy);
     
     if (currentDocument)
-        currentDocument->checkedEditor()->clearUndoRedoOperations();
+        protect(currentDocument->editor())->clearUndoRedoOperations();
 }
 
 bool FrameLoader::didOpenURL()
 {
     Ref frame = m_frame.get();
-    if (frame->checkedNavigationScheduler()->redirectScheduledDuringLoad()) {
+    if (frame->navigationScheduler().redirectScheduledDuringLoad()) {
         // A redirect was scheduled before the document was created.
         // This can happen when one frame changes another frame's location.
         return false;
     }
 
-    frame->checkedNavigationScheduler()->cancel();
+    protect(frame->navigationScheduler())->cancel();
 
     m_isComplete = false;
     m_didCallImplicitClose = false;
@@ -655,7 +706,7 @@ void FrameLoader::didExplicitOpen()
     // from a subsequent window.document.open / window.document.write call. 
     // Canceling redirection here works for all cases because document.open 
     // implicitly precedes document.write.
-    protectedFrame()->checkedNavigationScheduler()->cancel();
+    protect(m_frame)->navigationScheduler().cancel();
 }
 
 static inline bool shouldClearWindowName(const LocalFrame& frame, const Document& newDocument)
@@ -666,7 +717,7 @@ static inline bool shouldClearWindowName(const LocalFrame& frame, const Document
     if (frame.opener())
         return false;
 
-    return !newDocument.protectedSecurityOrigin()->isSameOriginAs(frame.document()->protectedSecurityOrigin());
+    return !protect(newDocument.securityOrigin())->isSameOriginAs(protect(protect(frame.document())->securityOrigin()));
 }
 
 void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperties, bool clearScriptObjects, bool clearFrameView, Function<void()>&& handleDOMWindowCreation)
@@ -674,19 +725,19 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
     bool neededClear = m_needsClear;
     m_needsClear = false;
 
-    RefAllowingPartiallyDestroyed<LocalFrame> frame = m_frame.get();
+    Ref frame = m_frame;
 
+    RefPtr document = frame->document();
     if (neededClear)
-        frame->document()->transferViewTransitionParams(*newDocument);
+        document->transferViewTransitionParams(*newDocument);
 
-    if (neededClear && frame->document()->backForwardCacheState() != Document::InBackForwardCache) {
-        Ref document { *frame->document() };
+    if (neededClear && document->backForwardCacheState() != Document::InBackForwardCache) {
         document->cancelParsing();
         document->stopActiveDOMObjects();
         bool hadLivingRenderTree = document->hasLivingRenderTree();
         document->willBeRemovedFromFrame();
         if (hadLivingRenderTree)
-            document->adjustFocusedNodeOnNodeRemoval(document);
+            document->adjustFocusedNodeOnNodeRemoval(*document);
     }
 
     if (handleDOMWindowCreation)
@@ -697,18 +748,18 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
     
     // Do this after detaching the document so that the unload event works.
     if (clearWindowProperties) {
-        InspectorInstrumentation::frameWindowDiscarded(frame, frame->document()->protectedWindow().get());
-        frame->document()->protectedWindow()->resetUnlessSuspendedForDocumentSuspension();
-        frame->protectedWindowProxy()->clearJSWindowProxiesNotMatchingDOMWindow(newDocument->protectedWindow().get(), frame->document()->backForwardCacheState() == Document::AboutToEnterBackForwardCache);
+        InspectorInstrumentation::frameWindowDiscarded(frame, protect(document->window()).get());
+        protect(document->window())->resetUnlessSuspendedForDocumentSuspension();
+        protect(frame->windowProxy())->clearJSWindowProxiesNotMatchingDOMWindow(protect(newDocument->window()).get(), frame->document()->backForwardCacheState() == Document::AboutToEnterBackForwardCache);
 
         if (shouldClearWindowName(frame, *newDocument))
             frame->tree().setSpecifiedName(nullAtom());
     }
 
-    frame->checkedEventHandler()->clear();
+    frame->eventHandler().clear();
 
     if (clearFrameView && frame->view())
-        frame->protectedView()->clear();
+        protect(frame->view())->clear();
 
     // Do not drop the document before the ScriptController and view are cleared
     // as some destructors might still try to access the document.
@@ -717,10 +768,10 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
     subframeLoader().clear();
 
     if (clearWindowProperties)
-        frame->protectedWindowProxy()->setDOMWindow(newDocument->protectedWindow().get());
+        protect(frame->windowProxy())->setDOMWindow(protect(newDocument->window()).get());
 
     if (clearScriptObjects)
-        frame->checkedScript()->clearScriptObjects();
+        protect(frame->script())->clearScriptObjects();
 
     if (CheckedPtr newDocumentCSP = newDocument->contentSecurityPolicy()) {
         bool enableEvalValue = newDocumentCSP->evalErrorMessage().isNull();
@@ -730,9 +781,10 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
         script->setWebAssemblyEnabled(enableWASMValue, newDocumentCSP->webAssemblyErrorMessage());
     }
 
-    frame->checkedNavigationScheduler()->clear();
+    protect(frame->navigationScheduler())->clear();
 
     m_checkTimer.stop();
+    m_crossOriginParentSyntheticSameDocLoadEventTimer.stop();
     m_shouldCallCheckCompleted = false;
     m_shouldCallCheckLoadComplete = false;
 
@@ -762,12 +814,20 @@ void FrameLoader::receivedFirstData()
     LinkLoader::loadLinksFromHeader(documentLoader->response().httpHeaderField(HTTPHeaderName::Link), document->url(), document, LinkLoader::MediaAttributeCheck::MediaAttributeEmpty);
 
     scheduleRefreshIfNeeded(document, documentLoader->response().httpHeaderField(HTTPHeaderName::Refresh), IsMetaRefresh::No);
+
+    // https://html.spec.whatwg.org/C#shared-document-creation-infrastructure
+    // 18. If navigationParams's navigable is a top-level traversable, then process the `Speculation-Rules` header given document and navigationParams's response.
+    if (frame->isMainFrame() && document->settings().speculationRulesPrefetchEnabled()) {
+        String speculationRulesHeader = documentLoader->response().httpHeaderField(HTTPHeaderName::SpeculationRules);
+        if (!speculationRulesHeader.isEmpty())
+            document->processSpeculationRulesHeader(speculationRulesHeader, documentLoader->response().url());
+    }
 }
 
 void FrameLoader::setOutgoingReferrer(const URL& url)
 {
     auto result = url.strippedForUseAsReferrer();
-    m_outgoingReferrer = WTFMove(result.string);
+    m_outgoingReferrer = WTF::move(result.string);
     if (result.stripped)
         m_outgoingReferrerURL = { };
     else
@@ -778,14 +838,15 @@ static AtomString extractContentLanguageFromHeader(const String& header)
 {
     auto commaIndex = header.find(',');
     if (commaIndex == notFound)
-        return AtomString { header.trim(isASCIIWhitespace) };
-    return StringView(header).left(commaIndex).trim(isASCIIWhitespace<UChar>).toAtomString();
+        return StringView(header).trim(isASCIIWhitespace).toAtomString();
+    return StringView(header).left(commaIndex).trim(isASCIIWhitespace).toAtomString();
 }
 
-void FrameLoader::didBeginDocument(bool dispatch)
+void FrameLoader::didBeginDocument(bool dispatch, LocalDOMWindow* previousWindow)
 {
     m_needsClear = true;
     m_isComplete = false;
+    m_asyncBackForwardNavigationState = AsyncBackForwardNavigationState::None;
     m_didCallImplicitClose = false;
     Ref frame = m_frame.get();
     Ref document = *frame->document();
@@ -798,27 +859,27 @@ void FrameLoader::didBeginDocument(bool dispatch)
     document->initContentSecurityPolicy();
 
     Ref settings = frame->settings();
-    document->protectedCachedResourceLoader()->setImagesEnabled(settings->areImagesEnabled());
-    document->protectedCachedResourceLoader()->setAutoLoadImages(settings->loadsImagesAutomatically());
+    protect(document->cachedResourceLoader())->setImagesEnabled(settings->areImagesEnabled());
+    protect(document->cachedResourceLoader())->setAutoLoadImages(settings->loadsImagesAutomatically());
 
     std::optional<NavigationNavigationType> navigationType;
 
     if (RefPtr documentLoader = m_documentLoader) {
-        String dnsPrefetchControl = documentLoader->response().httpHeaderField(HTTPHeaderName::XDNSPrefetchControl);
-        if (!dnsPrefetchControl.isEmpty())
-            document->parseDNSPrefetchControlHeader(dnsPrefetchControl);
-
         // The DocumentLoader may have already parsed the CSP header to do some checks. If so, reuse the already parsed version instead of parsing again.
         if (CheckedPtr contentSecurityPolicy = documentLoader->contentSecurityPolicy())
-            document->checkedContentSecurityPolicy()->didReceiveHeaders(*contentSecurityPolicy, ContentSecurityPolicy::ReportParsingErrors::No);
+            protect(document->contentSecurityPolicy())->didReceiveHeaders(*contentSecurityPolicy, ContentSecurityPolicy::ReportParsingErrors::No);
         else
-            document->checkedContentSecurityPolicy()->didReceiveHeaders(ContentSecurityPolicyResponseHeaders(documentLoader->response()), referrer(), ContentSecurityPolicy::ReportParsingErrors::No);
+            protect(document->contentSecurityPolicy())->didReceiveHeaders(ContentSecurityPolicyResponseHeaders(documentLoader->response()), referrer(), ContentSecurityPolicy::ReportParsingErrors::No);
 
         if (document->url().protocolIsBlob())
-            document->checkedContentSecurityPolicy()->updateSourceSelf(SecurityOrigin::create(document->url()));
+            protect(document->contentSecurityPolicy())->updateSourceSelf(SecurityOrigin::create(document->url()));
 
-        if (document->url().protocolIsInHTTPFamily() || document->url().protocolIsBlob())
+        if (document->url().protocolIsInHTTPFamily() || document->url().protocolIsBlob()) {
             document->setCrossOriginEmbedderPolicy(obtainCrossOriginEmbedderPolicy(documentLoader->response(), document.ptr()));
+
+            if (frame->settings().originAgentClusterEnabled() && !m_stateMachine.creatingInitialEmptyDocument())
+                document->setIsOriginKeyed(documentLoader->isOriginKeyedFromUIProcess());
+        }
 
         String referrerPolicy = documentLoader->response().httpHeaderField(HTTPHeaderName::ReferrerPolicy);
         if (!referrerPolicy.isNull())
@@ -828,32 +889,39 @@ void FrameLoader::didBeginDocument(bool dispatch)
         if (!headerContentLanguage.isEmpty()) {
             auto contentLanguage = extractContentLanguageFromHeader(headerContentLanguage);
             if (!contentLanguage.isEmpty())
-                document->setContentLanguage(WTFMove(contentLanguage));
+                document->setContentLanguage(WTF::move(contentLanguage));
         }
 
         String reportingEndpoints = documentLoader->response().httpHeaderField(HTTPHeaderName::ReportingEndpoints);
         if (!reportingEndpoints.isEmpty())
-            document->reportingScope().parseReportingEndpoints(reportingEndpoints, documentLoader->response().url());
+            protect(document->reportingScope())->parseReportingEndpoints(reportingEndpoints, documentLoader->response().url());
 
         // https://html.spec.whatwg.org/multipage/browsing-the-web.html#initialise-the-document-object (Step 7)
         if (frame->isMainFrame()) {
             if (auto crossOriginOpenerPolicy = documentLoader->crossOriginOpenerPolicy())
-                document->setCrossOriginOpenerPolicy(WTFMove(*crossOriginOpenerPolicy));
+                document->setCrossOriginOpenerPolicy(WTF::move(*crossOriginOpenerPolicy));
         }
 
-        navigationType = m_documentLoader->triggeringAction().navigationAPIType();
+        if (auto integrityPolicy = documentLoader->integrityPolicy())
+            document->setIntegrityPolicy(WTF::move(integrityPolicy));
+
+        if (auto integrityPolicyReportOnly = documentLoader->integrityPolicyReportOnly())
+            document->setIntegrityPolicyReportOnly(WTF::move(integrityPolicyReportOnly));
+
+        navigationType = documentLoader->triggeringAction().navigationAPIType();
     }
 
-    updateNavigationAPIEntries(navigationType);
+    if (document->settings().navigationAPIEnabled() && document->window() && !document->securityOrigin().isOpaque())
+        protect(document->window())->navigation().initializeForNewWindow(navigationType, previousWindow);
 
-    frame->checkedHistory()->restoreDocumentState();
+    history().restoreDocumentState();
 }
 
 void FrameLoader::finishedParsing()
 {
-    LOG(Loading, "WebCoreLoading frame %" PRIu64 ": Finished parsing", m_frame->frameID().object().toUInt64());
+    LOG(Loading, "WebCoreLoading frame %" PRIu64 ": Finished parsing", m_frame->frameID().toUInt64());
 
-    RefAllowingPartiallyDestroyed<LocalFrame> frame = m_frame.get();
+    Ref frame = m_frame;
 
     frame->injectUserScripts(UserScriptInjectionTime::DocumentEnd);
 
@@ -862,7 +930,7 @@ void FrameLoader::finishedParsing()
 
     m_client->dispatchDidFinishDocumentLoad();
 
-    scrollToFragmentWithParentBoundary(frame->document()->url());
+    scrollToFragmentWithParentBoundary(protect(frame->document())->url());
 
     checkCompleted();
 
@@ -902,7 +970,7 @@ bool FrameLoader::allChildrenAreComplete() const
 
 bool FrameLoader::allAncestorsAreComplete() const
 {
-    for (RefPtr<Frame> ancestor = m_frame.ptr(); ancestor; ancestor = ancestor->tree().parent()) {
+    for (Frame* ancestor = m_frame.ptr(); ancestor; ancestor = ancestor->tree().parent()) {
         auto* localAncestor = dynamicDowncast<LocalFrame>(*ancestor);
         if (!localAncestor)
             continue;
@@ -921,8 +989,8 @@ void FrameLoader::checkCompleted()
     if (m_isComplete)
         return;
 
-    RefAllowingPartiallyDestroyed<LocalFrame> frame = m_frame.get();
-    RefAllowingPartiallyDestroyed<Document> document = *frame->document();
+    Ref frame = m_frame;
+    Ref<Document> document = *frame->document();
 
     // FIXME: It would be better if resource loads were kicked off after render tree update (or didn't complete synchronously).
     //        https://bugs.webkit.org/show_bug.cgi?id=171729
@@ -958,7 +1026,7 @@ void FrameLoader::checkCompleted()
 
     checkCallImplicitClose(); // if we didn't do it before
 
-    frame->checkedNavigationScheduler()->startTimer();
+    protect(frame->navigationScheduler())->startTimer();
 
     completed();
     if (frame->page())
@@ -970,11 +1038,24 @@ void FrameLoader::checkTimerFired()
     checkCompletenessNow();
 }
 
+void FrameLoader::startCrossOriginParentSyntheticSameDocLoadEventTimer()
+{
+    static constexpr Seconds crossOriginParentSyntheticSameDocLoadEventDelay { 100_ms };
+    if (m_crossOriginParentSyntheticSameDocLoadEventTimer.isActive())
+        m_crossOriginParentSyntheticSameDocLoadEventTimer.stop();
+    m_crossOriginParentSyntheticSameDocLoadEventTimer.startOneShot(crossOriginParentSyntheticSameDocLoadEventDelay);
+}
+
+void FrameLoader::crossOriginParentSyntheticSameDocLoadEventTimerFired()
+{
+    protect(m_frame)->dispatchLoadEventToParent();
+}
+
 void FrameLoader::checkCompletenessNow()
 {
     Ref frame = m_frame.get();
 
-    if (RefPtr page = frame->page()) {
+    if (auto* page = frame->page()) {
         if (page->defersLoading())
             return;
     }
@@ -1022,16 +1103,14 @@ void FrameLoader::checkCallImplicitClose()
     document->implicitClose();
 }
 
-void FrameLoader::loadURLIntoChildFrame(const URL& url, const String& referer, LocalFrame* childFrame)
+void FrameLoader::loadURLIntoChildFrame(const URL& url, const String& referer, LocalFrame& childFrame)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadURLIntoChildFrame: frame load started");
-
-    ASSERT(childFrame);
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadUrlIntoChildFrame);
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
     if (RefPtr activeLoader = activeDocumentLoader()) {
-        if (RefPtr subframeArchive = activeLoader->popArchiveForSubframe(childFrame->tree().uniqueName(), url)) {
-            childFrame->checkedLoader()->loadArchive(subframeArchive.releaseNonNull());
+        if (RefPtr subframeArchive = activeLoader->popArchiveForSubframe(childFrame.tree().uniqueName(), url)) {
+            childFrame.loader().loadArchive(subframeArchive.releaseNonNull());
             return;
         }
     }
@@ -1039,24 +1118,51 @@ void FrameLoader::loadURLIntoChildFrame(const URL& url, const String& referer, L
 
     // If we're moving in the back/forward list, we might want to replace the content
     // of this child frame with whatever was there at that point.
-    RefPtr parentItem = m_frame->history().currentItem();
-    if (parentItem && parentItem->children().size() && isBackForwardLoadType(loadType()) && !m_frame->document()->loadEventFinished()) {
-        if (RefPtr childItem = parentItem->childItemWithTarget(childFrame->tree().uniqueName())) {
-            CheckedRef childLoader = childFrame->loader();
-            childLoader->m_requestedHistoryItem = childItem;
-            childLoader->loadDifferentDocumentItem(*childItem, nullptr, loadType(), MayAttemptCacheOnlyLoadForFormSubmissionItem, ShouldTreatAsContinuingLoad::No);
+    if (isBackForwardLoadType(loadType()) && !m_frame->document()->loadEventFinished()) {
+        if (m_frame->page() && m_frame->page()->settings().useUIProcessForBackForwardItemLoading()) {
+            m_client->dispatchBackForwardItemLoading(url, referer, childFrame);
             return;
         }
+
+        if (loadChildHistoryItemIntoFrame(childFrame))
+            return;
     }
 
+    continueLoadURLIntoChildFrame(url, referer, childFrame);
+}
+
+bool FrameLoader::loadChildHistoryItemIntoFrame(LocalFrame& childFrame)
+{
+    ASSERT(isBackForwardLoadType(loadType()));
+    ASSERT(!m_frame->document()->loadEventFinished());
+    ASSERT(!m_frame->page() || !m_frame->page()->settings().useUIProcessForBackForwardItemLoading());
+
+    RefPtr parentItem = history().currentItem();
+    if (!parentItem || !parentItem->children().size())
+        return false;
+
+    RefPtr childItem = parentItem->childItemWithTarget(childFrame.tree().uniqueName());
+    if (!childItem)
+        return false;
+
+    Ref childLoader = childFrame.loader();
+    childItem->setFrameID(childFrame.frameID());
+    childLoader->m_requestedHistoryItem = childItem;
+    childLoader->loadDifferentDocumentItem(*childItem, nullptr, loadType(), MayAttemptCacheOnlyLoadForFormSubmissionItem, ShouldTreatAsContinuingLoad::No);
+    return true;
+}
+
+void FrameLoader::continueLoadURLIntoChildFrame(const URL& url, const String& referer, LocalFrame& childFrame)
+{
     RefPtr lexicalFrame = lexicalFrameFromCommonVM();
     auto initiatedByMainFrame = lexicalFrame && lexicalFrame->isMainFrame() ? InitiatedByMainFrame::Yes : InitiatedByMainFrame::Unknown;
 
-    FrameLoadRequest frameLoadRequest { m_frame->protectedDocument().releaseNonNull(), m_frame->document()->securityOrigin(), { url }, selfTargetFrameName(), initiatedByMainFrame };
+    RefPtr document = m_frame->document();
+    FrameLoadRequest frameLoadRequest { *document, document->securityOrigin(), { URL { url } }, selfTargetFrameName(), initiatedByMainFrame };
     frameLoadRequest.setNewFrameOpenerPolicy(NewFrameOpenerPolicy::Suppress);
     frameLoadRequest.setLockBackForwardList(LockBackForwardList::Yes);
     frameLoadRequest.setIsInitialFrameSrcLoad(true);
-    childFrame->checkedLoader()->loadURL(WTFMove(frameLoadRequest), referer, FrameLoadType::RedirectWithLockedBackForwardList, nullptr, { }, std::nullopt, [] { });
+    childFrame.loader().loadURL(WTF::move(frameLoadRequest), referer, FrameLoadType::RedirectWithLockedBackForwardList, nullptr, { }, std::nullopt, [] { });
 }
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
@@ -1070,13 +1176,13 @@ void FrameLoader::loadArchive(Ref<Archive>&& archive)
     if (!mainResource)
         return;
 
-    ResourceResponse response(URL(), mainResource->mimeType(), mainResource->data().size(), mainResource->textEncoding());
-    SubstituteData substituteData(&mainResource->data(), URL(), response, SubstituteData::SessionHistoryVisibility::Hidden);
+    ResourceResponse response(URL(), String { mainResource->mimeType() }, mainResource->data().size(), String { mainResource->textEncoding() });
+    SubstituteData substituteData(&mainResource->data(), URL(), WTF::move(response), SubstituteData::SessionHistoryVisibility::Hidden);
     
-    ResourceRequest request(mainResource->url());
+    ResourceRequest request(URL { mainResource->url() });
 
-    Ref documentLoader = m_client->createDocumentLoader(request, substituteData);
-    documentLoader->setArchive(WTFMove(archive));
+    Ref documentLoader = m_client->createDocumentLoader(WTF::move(request), WTF::move(substituteData));
+    documentLoader->setArchive(WTF::move(archive));
     load(documentLoader, nullptr);
 }
 
@@ -1086,7 +1192,7 @@ RefPtr<LocalFrame> FrameLoader::nonSrcdocFrame() const
 {
     // See http://www.whatwg.org/specs/web-apps/current-work/#fetching-resources
     // for why we walk the parent chain for srcdoc documents.
-    RefPtr<Frame> frame = m_frame.ptr();
+    Frame* frame = m_frame.ptr();
     while (frame && is<LocalFrame>(*frame) && downcast<LocalFrame>(*frame).document()->isSrcdocDocument()) {
         frame = frame->tree().parent();
         // Srcdoc documents cannot be top-level documents, by definition,
@@ -1122,7 +1228,7 @@ URL FrameLoader::outgoingReferrerURL()
 
 String FrameLoader::outgoingOrigin() const
 {
-    return m_frame->document()->securityOrigin().toString();
+    return protect(m_frame->document())->securityOrigin().toString();
 }
 
 bool FrameLoader::checkIfFormActionAllowedByCSP(const URL& url, bool didReceiveRedirectResponse, const URL& preRedirectURL) const
@@ -1130,8 +1236,9 @@ bool FrameLoader::checkIfFormActionAllowedByCSP(const URL& url, bool didReceiveR
     if (m_submittedFormURL.isEmpty())
         return true;
 
+    Ref document = *m_frame->document();
     auto redirectResponseReceived = didReceiveRedirectResponse ? ContentSecurityPolicy::RedirectResponseReceived::Yes : ContentSecurityPolicy::RedirectResponseReceived::No;
-    return m_frame->protectedDocument()->checkedContentSecurityPolicy()->allowFormAction(url, redirectResponseReceived, preRedirectURL);
+    return protect(document->contentSecurityPolicy())->allowFormAction(url, document->currentParserSourcePosition(), redirectResponseReceived, preRedirectURL);
 }
 
 void FrameLoader::provisionalLoadStarted()
@@ -1139,7 +1246,7 @@ void FrameLoader::provisionalLoadStarted()
     if (m_stateMachine.firstLayoutDone())
         m_stateMachine.advanceTo(FrameLoaderStateMachine::CommittedFirstRealLoad);
     Ref frame = m_frame.get();
-    frame->checkedNavigationScheduler()->cancel(NewLoadInProgress::Yes);
+    protect(frame->navigationScheduler())->cancel(NewLoadInProgress::Yes);
     m_client->provisionalLoadStarted();
 
     if (frame->isMainFrame()) {
@@ -1157,8 +1264,19 @@ void FrameLoader::resetMultipleFormSubmissionProtection()
 
 void FrameLoader::updateFirstPartyForCookies()
 {
-    if (RefPtr page = m_frame->page())
-        setFirstPartyForCookies(page->mainFrameURL());
+    RefPtr page = m_frame->page();
+    if (!page)
+        return;
+
+    auto firstPartyForCookies = page->mainFrameURL();
+    if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(firstPartyForCookies)) {
+        if (RefPtr opener = dynamicDowncast<LocalFrame>(page->mainFrame().opener())) {
+            if (RefPtr openerDocument = opener->document())
+                firstPartyForCookies = openerDocument->firstPartyForCookies();
+        }
+    }
+
+    setFirstPartyForCookies(firstPartyForCookies);
 }
 
 void FrameLoader::setFirstPartyForCookies(const URL& url)
@@ -1166,7 +1284,7 @@ void FrameLoader::setFirstPartyForCookies(const URL& url)
     Ref frame = m_frame.get();
     for (RefPtr<Frame> descendantFrame = frame.ptr(); descendantFrame; descendantFrame = descendantFrame->tree().traverseNext(frame.ptr())) {
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendantFrame))
-            localFrame->protectedDocument()->setFirstPartyForCookies(url);
+            protect(localFrame->document())->setFirstPartyForCookies(url);
     }
 
     RegistrableDomain registrableDomain(url);
@@ -1174,12 +1292,15 @@ void FrameLoader::setFirstPartyForCookies(const URL& url)
         RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendantFrame);
         if (!localFrame)
             continue;
-        if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(localFrame->document()->url()) || registrableDomain.matches(localFrame->document()->url()))
-            localFrame->protectedDocument()->setSiteForCookies(url);
+        if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(protect(localFrame->document())->url())) {
+            if (RefPtr parent = dynamicDowncast<LocalFrame>(localFrame->tree().parent()))
+                protect(localFrame->document())->setSiteForCookies(parent->document()->siteForCookies());
+        } else if (registrableDomain.matches(protect(localFrame->document())->url()))
+            protect(localFrame->document())->setSiteForCookies(url);
     }
 }
 
-static NavigationNavigationType determineNavigationType(FrameLoadType loadType, NavigationHistoryBehavior historyHandling)
+static NavigationNavigationType NODELETE determineNavigationType(FrameLoadType loadType, NavigationHistoryBehavior historyHandling)
 {
     if (historyHandling == NavigationHistoryBehavior::Push)
         return NavigationNavigationType::Push;
@@ -1192,7 +1313,7 @@ static NavigationNavigationType determineNavigationType(FrameLoadType loadType, 
         return NavigationNavigationType::Traverse;
     if (isReload(loadType))
         return NavigationNavigationType::Reload;
-    if (loadType == FrameLoadType::Replace)
+    if (loadType == FrameLoadType::MultipartReplace || loadType == FrameLoadType::NavigationAPIReplace)
         return NavigationNavigationType::Replace;
 
     return NavigationNavigationType::Push;
@@ -1203,24 +1324,24 @@ void FrameLoader::updateURLAndHistory(const URL& newURL, RefPtr<SerializedScript
 {
     ASSERT(m_frame->document() && documentLoader());
 
-    if (documentLoader()->isInitialAboutBlank())
+    if (documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes)
         historyHandling = NavigationHistoryBehavior::Replace;
 
-    CheckedRef history = m_frame->checkedHistory();
+    Ref history = m_history.get();
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#restore-the-history-object-state
     // FIXME: Implement "restore the history object state" deserializing (step 2).
-    if (!stateObject)
-        stateObject = history->currentItem()->stateObject();
+    // Note: Implement "otherwise activeEntry's classic history API state" (step 3) if a caller needs that (so far
+    // callers always set stateObject explicitly).
 
-    m_frame->protectedDocument()->updateURLForPushOrReplaceState(newURL);
+    protect(m_frame->document())->updateURLForPushOrReplaceState(newURL);
 
     if (historyHandling == NavigationHistoryBehavior::Replace) {
-        history->replaceState(WTFMove(stateObject), newURL.string());
-        client().dispatchDidReplaceStateWithinPage();
+        history->replaceState(WTF::move(stateObject), newURL.string());
+        protect(client())->dispatchDidReplaceStateWithinPage();
     } else {
-        history->pushState(WTFMove(stateObject), newURL.string());
-        client().dispatchDidPushStateWithinPage();
+        history->pushState(WTF::move(stateObject), newURL.string());
+        protect(client())->dispatchDidPushStateWithinPage();
     }
 }
 
@@ -1239,9 +1360,9 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
     // Update the data source's request with the new URL to fake the URL change
     URL oldURL = document->url();
 
-    document->setURL(url);
+    document->setURL(URL { url });
     setOutgoingReferrer(url);
-    protectedDocumentLoader()->replaceRequestURLForSameDocumentNavigation(url);
+    protect(m_documentLoader)->replaceRequestURLForSameDocumentNavigation(url);
     if (isNewNavigation && !shouldTreatURLAsSameAsCurrent(requesterOrigin, url) && !stateObject) {
         // NB: must happen after replaceRequestURLForSameDocumentNavigation(), since we add 
         // based on the current request. Must also happen before we openURL and displace the 
@@ -1254,25 +1375,31 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
         // we have already saved away the scroll and doc state for the long slow load,
         // but it's not an obvious case.
 
-        m_frame->checkedHistory()->updateBackForwardListForFragmentScroll();
+        auto wasCreatedByJSWithoutUserInteraction = HistoryController::WasCreatedByJSWithoutUserInteraction::No;
+        if (!document->hasRecentUserInteractionForNavigationFromJS() && !documentLoader()->triggeringAction().isRequestFromClientOrUserInput())
+            wasCreatedByJSWithoutUserInteraction = HistoryController::WasCreatedByJSWithoutUserInteraction::Yes;
 
-        if (!document->hasRecentUserInteractionForNavigationFromJS() && !documentLoader()->triggeringAction().isRequestFromClientOrUserInput()) {
-            if (RefPtr currentItem = m_frame->history().currentItem())
-                currentItem->setWasCreatedByJSWithoutUserInteraction(true);
-        }
+        if (historyHandling == NavigationHistoryBehavior::Replace)
+            history().updateBackForwardListForReplaceState(nullptr, url.string(), wasCreatedByJSWithoutUserInteraction);
+        else
+            history().updateBackForwardListForFragmentScroll(wasCreatedByJSWithoutUserInteraction);
     }
 
     bool hashChange = equalIgnoringFragmentIdentifier(url, oldURL) && !equalRespectingNullity(url.fragmentIdentifier(), oldURL.fragmentIdentifier());
 
-    m_frame->checkedHistory()->updateForSameDocumentNavigation();
+    history().updateForSameDocumentNavigation();
 
     auto navigationType = determineNavigationType(m_loadType, historyHandling);
-    if (document->settings().navigationAPIEnabled() && document->domWindow() && m_frame->checkedHistory()->currentItem())
-        document->protectedWindow()->navigation().updateForNavigation(*m_frame->checkedHistory()->currentItem(), navigationType);
+    if (document->settings().navigationAPIEnabled() && document->window() && history().currentItem()) {
+        Ref navigation = protect(document->window())->navigation();
+        // Skip updateForNavigation() for intercepted traverse navigations, as it was already called after intercept detection in innerDispatchNavigateEvent().
+        if (navigationType != NavigationNavigationType::Traverse || !navigation->hasInterceptedOngoingNavigateEvent())
+            navigation->updateForNavigation(*history().currentItem(), navigationType, ShouldCopyStateObjectFromCurrentEntry::Yes);
+    }
 
     // If we were in the autoscroll/panScroll mode we want to stop it before following the link to the anchor
     if (hashChange)
-        protectedFrame()->checkedEventHandler()->stopAutoscrollTimer();
+        m_frame->eventHandler().stopAutoscrollTimer();
     
     // It's important to model this as a load that starts and immediately finishes.
     // Otherwise, the parent frame may think we never finished loading.
@@ -1282,7 +1409,7 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
         CheckedPtr ownerRenderer = dynamicDowncast<RenderWidget>(ownerElement->renderer());
         RefPtr view = m_frame->view();
         if (ownerRenderer && view)
-            ownerRenderer->setWidget(WTFMove(view));
+            ownerRenderer->setWidget(WTF::move(view));
     }
 
     // We need to scroll to the fragment whether or not a hash change occurred, since
@@ -1309,18 +1436,17 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
         m_client->dispatchDidChangeLocationWithinPage();
     }
 
-    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent()); parentFrame
+    // Asynchronously dispatch a synthetic load event on the iframe owner so a cross-origin
+    // parent cannot distinguish same-doc from cross-doc navigations by load-event timing.
+    RefPtr parentFrame = m_frame->tree().parent();
+    RefPtr localParentFrame = dynamicDowncast<LocalFrame>(parentFrame.get());
+    if (parentFrame
         && (document->processingLoadEvent() || document->loadEventFinished())
-        && !document->protectedSecurityOrigin()->isSameOriginAs(parentFrame->document()->protectedSecurityOrigin()))
-        m_frame->protectedOwnerElement()->dispatchEvent(Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        && (!localParentFrame || !protect(document->securityOrigin())->isSameOriginAs(protect(protect(localParentFrame->document())->securityOrigin()))))
+        startCrossOriginParentSyntheticSameDocLoadEventTimer();
 
     // LocalFrameLoaderClient::didFinishLoad() tells the internal load delegate the load finished with no error
     m_client->didFinishLoad();
-}
-
-bool FrameLoader::isComplete() const
-{
-    return m_isComplete;
 }
 
 void FrameLoader::completed()
@@ -1328,11 +1454,11 @@ void FrameLoader::completed()
     Ref frame = m_frame.get();
 
     for (RefPtr descendant = frame->tree().traverseNext(frame.ptr()); descendant; descendant = descendant->tree().traverseNext(frame.ptr()))
-        descendant->checkedNavigationScheduler()->startTimer();
+        protect(descendant->navigationScheduler())->startTimer();
 
     if (RefPtr parent = frame->tree().parent()) {
         if (RefPtr localParent = dynamicDowncast<LocalFrame>(parent.releaseNonNull()))
-            localParent->checkedLoader()->checkCompleted();
+            localParent->loader().checkCompleted();
     }
 
     if (RefPtr view = frame->view())
@@ -1341,40 +1467,40 @@ void FrameLoader::completed()
 
 void FrameLoader::started()
 {
-    for (RefPtr<Frame> frame = m_frame.ptr(); frame; frame = frame->tree().parent()) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame))
+    for (Frame* frame = m_frame.ptr(); frame; frame = frame->tree().parent()) {
+        if (auto* localFrame = dynamicDowncast<LocalFrame>(*frame))
             localFrame->loader().m_isComplete = false;
     }
 }
 
 void FrameLoader::prepareForLoadStart()
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "prepareForLoadStart: Starting frame load");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderPrepareForLoadStart);
 
     m_progressTracker->progressStarted();
     m_client->dispatchDidStartProvisionalLoad();
 
     if (AXObjectCache::accessibilityEnabled()) {
-        if (CheckedPtr cache = m_frame->document()->existingAXObjectCache()) {
-            AXObjectCache::AXLoadingEvent loadingEvent = loadType() == FrameLoadType::Reload ? AXObjectCache::AXLoadingReloaded : AXObjectCache::AXLoadingStarted;
-            cache->frameLoadingEventNotification(protectedFrame().ptr(), loadingEvent);
+        if (CheckedPtr cache = protect(m_frame->document())->existingAXObjectCache()) {
+            auto loadingEvent = loadType() == FrameLoadType::Reload ? AXLoadingEvent::Reloaded : AXLoadingEvent::Started;
+            cache->frameLoadingEventNotification(protect(m_frame).ptr(), loadingEvent);
         }
     }
 }
 
-void FrameLoader::setupForReplace()
+void FrameLoader::setupForMultipartReplace()
 {
-    m_client->revertToProvisionalState(protectedDocumentLoader().get());
+    m_client->revertToProvisionalState(protect(documentLoader()));
     setState(FrameState::Provisional);
     m_provisionalDocumentLoader = m_documentLoader;
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "setupForReplace: Setting provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG(ResourceLoading, "setupForMultipartReplace: Setting provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
     m_documentLoader = nullptr;
     detachChildren();
 }
 
-void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, RefPtr<FormState>&& formState, std::optional<PrivateClickMeasurement>&& privateClickMeasurement)
+void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, RefPtr<const FormSubmission>&& formSubmission, std::optional<PrivateClickMeasurement>&& privateClickMeasurement)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadFrameRequestFrameLoadStarted);
 
     m_errorOccurredInLoading = false;
 
@@ -1384,15 +1510,9 @@ void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, Ref
     URL url = request.resourceRequest().url();
 
     ASSERT(frame->document());
-    if (!request.requesterSecurityOrigin().canDisplay(url, OriginAccessPatternsForWebProcess::singleton())) {
+    if (!protect(request.requesterSecurityOrigin())->canDisplay(url, OriginAccessPatternsForWebProcess::singleton())) {
         FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: canceling - Not allowed to load local resource");
         reportLocalLoadFailed(frame.ptr(), url.stringCenterEllipsizedToLength());
-        return;
-    }
-
-    if (!portAllowed(url)) {
-        FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: canceling - port not allowed");
-        reportBlockedLoadFailed(frame, url);
         return;
     }
 
@@ -1419,9 +1539,12 @@ void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, Ref
         loadType = FrameLoadType::Reload;
     else if (request.lockBackForwardList() == LockBackForwardList::Yes)
         loadType = FrameLoadType::RedirectWithLockedBackForwardList;
+    else if (request.isFromNavigationAPI() && request.navigationHistoryBehavior() == NavigationHistoryBehavior::Replace)
+        loadType = FrameLoadType::NavigationAPIReplace;
     else
         loadType = FrameLoadType::Standard;
 
+    RefPtr formState = formSubmission ? protect(formSubmission->state()) : nullptr;
     auto completionHandler = [frame, formState = WeakPtr { formState }, frameName = request.frameName()] {
         // FIXME: It's possible this targetFrame will not be the same frame that was targeted by the actual
         // load if frame names have changed.
@@ -1435,10 +1558,30 @@ void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, Ref
         }
     };
 
-    if (request.resourceRequest().httpMethod() == "POST"_s)
-        loadPostRequest(WTFMove(request), referrer, loadType, event, WTFMove(formState), WTFMove(completionHandler));
-    else
-        loadURL(WTFMove(request), referrer, loadType, event, WTFMove(formState), WTFMove(privateClickMeasurement), WTFMove(completionHandler));
+    auto finishLoadFrameRequest = [referrer, event = RefPtr { event }, loadType] (Ref<LocalFrame>&& frame, FrameLoadRequest&& request, RefPtr<const FormSubmission>&& formSubmission, std::optional<PrivateClickMeasurement>&& privateClickMeasurement, CompletionHandler<void()>&& completionHandler) mutable {
+        if (request.resourceRequest().httpMethod() == "POST"_s)
+            frame->loader().loadPostRequest(WTF::move(request), referrer, loadType, event.get(), WTF::move(formSubmission), WTF::move(completionHandler));
+        else
+            frame->loader().loadURL(WTF::move(request), referrer, loadType, event.get(), WTF::move(formSubmission), WTF::move(privateClickMeasurement), WTF::move(completionHandler));
+    };
+
+    if (loadType == FrameLoadType::Reload) {
+        if (m_frame->document() && m_frame->document()->settings().navigationAPIEnabled()) {
+            if (RefPtr window = frame->document()->window()) {
+                RefPtr<SerializedScriptValue> stateObject;
+                if (RefPtr currentItem = history().currentItem())
+                    stateObject = currentItem->navigationAPIStateObject();
+                if (!dispatchNavigateEvent(loadType, request, false, formState.get(), event, stateObject.get()))
+                    return;
+                if (!frame->page())
+                    return;
+                finishLoadFrameRequest(WTF::move(frame), WTF::move(request), WTF::move(formSubmission), WTF::move(privateClickMeasurement), WTF::move(completionHandler));
+            }
+            return;
+        }
+    }
+
+    finishLoadFrameRequest(WTF::move(frame), WTF::move(request), WTF::move(formSubmission), WTF::move(privateClickMeasurement), WTF::move(completionHandler));
 }
 
 static ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicyToApply(LocalFrame& currentFrame, InitiatedByMainFrame initiatedByMainFrame, ShouldOpenExternalURLsPolicy propagatedPolicy)
@@ -1472,7 +1615,7 @@ static void applyShouldOpenExternalURLsPolicyToNewDocumentLoader(LocalFrame& fra
 
 bool FrameLoader::isNavigationAllowed() const
 {
-    return m_pageDismissalEventBeingDispatched == PageDismissalType::None && !m_frame->script().willReplaceWithResultOfExecutingJavascriptURL() && NavigationDisabler::isNavigationAllowed(protectedFrame());
+    return m_pageDismissalEventBeingDispatched == PageDismissalType::None && !m_frame->script().willReplaceWithResultOfExecutingJavascriptURL() && NavigationDisabler::isNavigationAllowed(m_frame.get());
 }
 
 bool FrameLoader::isStopLoadingAllowed() const
@@ -1480,14 +1623,14 @@ bool FrameLoader::isStopLoadingAllowed() const
     return m_pageDismissalEventBeingDispatched == PageDismissalType::None;
 }
 
-void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& referrer, FrameLoadType newLoadType, Event* event, RefPtr<FormState>&& formState, std::optional<PrivateClickMeasurement>&& privateClickMeasurement, CompletionHandler<void()>&& completionHandler)
+void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& referrer, FrameLoadType newLoadType, Event* event, RefPtr<const FormSubmission>&& formSubmission, std::optional<PrivateClickMeasurement>&& privateClickMeasurement, CompletionHandler<void()>&& completionHandler)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadURL: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadUrl);
     ASSERT(frameLoadRequest.resourceRequest().httpMethod() == "GET"_s);
 
     m_errorOccurredInLoading = false;
 
-    CompletionHandlerCallingScope completionHandlerCaller(WTFMove(completionHandler));
+    CompletionHandlerCallingScope completionHandlerCaller(WTF::move(completionHandler));
     if (m_inStopAllLoaders || m_inClearProvisionalLoadForPolicyCheck)
         return;
 
@@ -1495,58 +1638,67 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
 
     // Anchor target is ignored when the download attribute is set since it will download the hyperlink rather than follow it.
     auto effectiveFrameName = frameLoadRequest.downloadAttribute().isNull() ? frameLoadRequest.frameName() : nullAtom();
-    bool isFormSubmission = formState;
+    bool isFormSubmission = !!formSubmission;
 
     // The search for a target frame is done earlier in the case of form submission.
     RefPtr effectiveTargetFrame = findFrameForNavigation(effectiveFrameName);
-    if (is<RemoteFrame>(effectiveTargetFrame)) {
-        updateRequestAndAddExtraFields(*effectiveTargetFrame, frameLoadRequest.resourceRequest(), IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, WillOpenInNewWindow::No, frameLoadRequest.protectedRequester().ptr());
-        effectiveTargetFrame->changeLocation(WTFMove(frameLoadRequest));
+    if (RefPtr remoteEffectiveTargetFrame = dynamicDowncast<RemoteFrame>(effectiveTargetFrame)) {
+        updateRequestAndAddExtraFields(*remoteEffectiveTargetFrame, frameLoadRequest.resourceRequest(), IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, WillOpenInNewWindow::No, protect(frameLoadRequest.requester()).ptr());
+        // The local-frame path below attaches Private Click Measurement to the NavigationAction once the load
+        // reaches the main frame (see the frame->isMainFrame() check below). When the main frame is remote (site
+        // isolation) that path is never reached, so hand the data to the RemoteFrameClient directly to be
+        // re-attached to the cross-process NavigationAction.
+        remoteEffectiveTargetFrame->client().changeLocation(WTF::move(frameLoadRequest), remoteEffectiveTargetFrame->isMainFrame() ? WTF::move(privateClickMeasurement) : std::nullopt);
         return;
     }
 
     RefPtr targetFrame = isFormSubmission ? nullptr : dynamicDowncast<LocalFrame>(effectiveTargetFrame);
     if (targetFrame && targetFrame != frame.ptr()) {
         frameLoadRequest.setFrameName(selfTargetFrameName());
-        targetFrame->checkedLoader()->loadURL(WTFMove(frameLoadRequest), referrer, newLoadType, event, WTFMove(formState), WTFMove(privateClickMeasurement), completionHandlerCaller.release());
+        targetFrame->loader().loadURL(WTF::move(frameLoadRequest), referrer, newLoadType, event, WTF::move(formSubmission), WTF::move(privateClickMeasurement), completionHandlerCaller.release());
         return;
     }
 
     const URL& newURL = frameLoadRequest.resourceRequest().url();
-    ResourceRequest request(newURL);
+    ResourceRequest request(URL { newURL });
     if (!referrer.isEmpty())
         request.setHTTPReferrer(referrer);
 
     auto willOpenInNewWindow = !targetFrame && !effectiveFrameName.isEmpty() ? WillOpenInNewWindow::Yes : WillOpenInNewWindow::No;
-    updateRequestAndAddExtraFields(request, IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, willOpenInNewWindow, frameLoadRequest.protectedRequester().ptr());
+    updateRequestAndAddExtraFields(request, IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, willOpenInNewWindow, protect(frameLoadRequest.requester()).ptr());
 
     ASSERT(newLoadType != FrameLoadType::Same);
 
     if (!isNavigationAllowed())
         return;
 
-    NavigationAction action { frameLoadRequest.requester(), request, frameLoadRequest.initiatedByMainFrame(), frameLoadRequest.isRequestFromClientOrUserInput(), newLoadType, isFormSubmission, event, frameLoadRequest.shouldOpenExternalURLsPolicy(), frameLoadRequest.downloadAttribute() };
+    NavigationAction action { frameLoadRequest.requester(), request, frameLoadRequest.initiatedByMainFrame(), frameLoadRequest.isRequestFromClientOrUserInput(), newLoadType, isFormSubmission, event, frameLoadRequest.shouldOpenExternalURLsPolicy(), frameLoadRequest.downloadAttribute(), frameLoadRequest.sourceElement() };
     action.setLockHistory(frameLoadRequest.lockHistory());
     action.setLockBackForwardList(frameLoadRequest.lockBackForwardList());
     action.setShouldReplaceDocumentIfJavaScriptURL(frameLoadRequest.shouldReplaceDocumentIfJavaScriptURL());
     action.setIsInitialFrameSrcLoad(frameLoadRequest.isInitialFrameSrcLoad());
+    action.setIsFromNavigationAPI(frameLoadRequest.isFromNavigationAPI());
     action.setNewFrameOpenerPolicy(frameLoadRequest.newFrameOpenerPolicy());
     auto historyHandling = frameLoadRequest.navigationHistoryBehavior();
     RefPtr document = m_frame->document();
-    bool isSameOrigin = frameLoadRequest.requesterSecurityOrigin().isSameOriginDomain(document->securityOrigin());
+    bool isSameOrigin = protect(frameLoadRequest.requesterSecurityOrigin())->isSameOriginDomain(protect(document->securityOrigin()).get());
     if (!isReload(newLoadType)) {
         if (historyHandling == NavigationHistoryBehavior::Auto) {
-            if ((document->url() == newURL || document->readyState() != Document::ReadyState::Complete) && isSameOrigin)
+            // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate (navigate-convert-to-replace)
+            // "If url equals navigable's active document's URL, and initiatorOriginSnapshot is
+            // same origin with navigable's active document's origin, then set historyHandling to 'replace'."
+            if (document->url() == newURL && isSameOrigin)
                 historyHandling = NavigationHistoryBehavior::Replace;
             else
                 historyHandling = NavigationHistoryBehavior::Push;
         }
-        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank()))
+        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes))
             historyHandling = NavigationHistoryBehavior::Replace;
     }
+    frameLoadRequest.setNavigationHistoryBehavior(historyHandling);
     action.setNavigationAPIType(determineNavigationType(newLoadType, historyHandling));
     if (privateClickMeasurement && frame->isMainFrame())
-        action.setPrivateClickMeasurement(WTFMove(*privateClickMeasurement));
+        action.setPrivateClickMeasurement(WTF::move(*privateClickMeasurement));
 
     NewFrameOpenerPolicy openerPolicy = frameLoadRequest.newFrameOpenerPolicy();
     AllowNavigationToInvalidURL allowNavigationToInvalidURL = frameLoadRequest.allowNavigationToInvalidURL();
@@ -1554,18 +1706,19 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
         action = action.copyWithShouldOpenExternalURLsPolicy(shouldOpenExternalURLsPolicyToApply(frame, frameLoadRequest));
 
         // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
-        if (frameLoadRequest.requester().shouldForceNoOpenerBasedOnCOOP()) {
+        if (protect(frameLoadRequest.requester())->shouldForceNoOpenerBasedOnCOOP()) {
+            effectiveFrameName = blankTargetFrameName();
+            openerPolicy = NewFrameOpenerPolicy::Suppress;
+            action.setNewFrameOpenerPolicy(NewFrameOpenerPolicy::Suppress);
+        }
+
+        if (frameLoadRequest.resourceRequest().url().protocolIsBlob() && !protect(document->securityOrigin())->isSameOriginAs(protect(document->topOrigin()))) {
             effectiveFrameName = blankTargetFrameName();
             openerPolicy = NewFrameOpenerPolicy::Suppress;
         }
 
-        if (document->settingsValues().blobRegistryTopOriginPartitioningEnabled && frameLoadRequest.resourceRequest().url().protocolIsBlob() && !document->protectedSecurityOrigin()->isSameOriginAs(document->protectedTopOrigin())) {
-            effectiveFrameName = blankTargetFrameName();
-            openerPolicy = NewFrameOpenerPolicy::Suppress;
-        }
-
-        policyChecker().checkNewWindowPolicy(WTFMove(action), WTFMove(request), WTFMove(formState), effectiveFrameName, [this, allowNavigationToInvalidURL, openerPolicy, completionHandler = completionHandlerCaller.release()] (const ResourceRequest& request, WeakPtr<FormState>&& weakFormState, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) mutable {
-            continueLoadAfterNewWindowPolicy(request, RefPtr { weakFormState.get() }.get(), frameName, action, shouldContinue, allowNavigationToInvalidURL, openerPolicy);
+        policyChecker().checkNewWindowPolicy(WTF::move(action), WTF::move(request), WTF::move(formSubmission), effectiveFrameName, [this, protectedThis = Ref { *this }, allowNavigationToInvalidURL, openerPolicy, completionHandler = completionHandlerCaller.release()] (ResourceRequest&& request, WeakPtr<const FormSubmission>&& weakFormSubmission, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) mutable {
+            continueLoadAfterNewWindowPolicy(WTF::move(request), RefPtr { weakFormSubmission.get() }, frameName, action, shouldContinue, allowNavigationToInvalidURL, openerPolicy);
             completionHandler();
         });
         return;
@@ -1573,41 +1726,45 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
 
     RefPtr oldDocumentLoader = m_documentLoader;
 
-    bool sameURL = shouldTreatURLAsSameAsCurrent(frameLoadRequest.protectedRequesterSecurityOrigin().ptr(), newURL);
+    bool sameURL = shouldTreatURLAsSameAsCurrent(protect(frameLoadRequest.requesterSecurityOrigin()).ptr(), newURL);
     const String& httpMethod = request.httpMethod();
-    
+    RefPtr formState = formSubmission ? protect(formSubmission->state()): nullptr;
+
     // Make sure to do scroll to fragment processing even if the URL is
     // exactly the same so pages with '#' links and DHTML side effects
     // work properly.
     if (shouldPerformFragmentNavigation(isFormSubmission, httpMethod, newLoadType, newURL)) {
-
-        if (!dispatchNavigateEvent(newURL, newLoadType, action, historyHandling, true))
+        if (!dispatchNavigateEvent(newLoadType, frameLoadRequest, true, formState.get(), event))
             return;
 
-        oldDocumentLoader->setTriggeringAction(WTFMove(action));
+        oldDocumentLoader->setTriggeringAction(WTF::move(action));
         oldDocumentLoader->setLastCheckedRequest(ResourceRequest());
         policyChecker().stopCheck();
         policyChecker().setLoadType(newLoadType);
-        RELEASE_ASSERT(!isBackForwardLoadType(newLoadType) || frame->history().provisionalItem());
-        policyChecker().checkNavigationPolicy(WTFMove(request), ResourceResponse { } /* redirectResponse */, oldDocumentLoader.get(), WTFMove(formState), [this, frame, requesterOrigin = Ref { frameLoadRequest.requesterSecurityOrigin() }, historyHandling] (const ResourceRequest& request, WeakPtr<FormState>&&, NavigationPolicyDecision navigationPolicyDecision) {
+        RELEASE_ASSERT(!isBackForwardLoadType(newLoadType) || history().provisionalItem());
+        policyChecker().checkNavigationPolicy(WTF::move(request), ResourceResponse { } /* redirectResponse */, oldDocumentLoader.get(), WTF::move(formSubmission), [this, protectedThis = Ref { *this }, requesterOrigin = Ref { frameLoadRequest.requesterSecurityOrigin() }, historyHandling] (const ResourceRequest& request, WeakPtr<const FormSubmission>&&, NavigationPolicyDecision navigationPolicyDecision) {
             continueFragmentScrollAfterNavigationPolicy(request, requesterOrigin.ptr(), navigationPolicyDecision == NavigationPolicyDecision::ContinueLoad, historyHandling);
-        }, PolicyDecisionMode::Synchronous);
+        }, IsSameDocumentNavigation::Yes, PolicyDecisionMode::Synchronous);
         return;
     }
 
-    if (isSameOrigin) {
-        if (!dispatchNavigateEvent(newURL, newLoadType, action, historyHandling, false))
-            return;
+    if (isSameOrigin && newLoadType != FrameLoadType::Reload && !frameLoadRequest.isInitialFrameSrcLoad()) {
+        // FIXME: Ideally, we'd call dispatchNavigateEvent() directly from continueLoadAfterNavigationPolicy()
+        // instead of storing a lambda on the NavigationAction.
+        action.setPendingDispatchNavigateEvent([weakThis = WeakPtr { *this }, newLoadType, frameLoadRequest, formState, event = RefPtr { event }] {
+            RefPtr protectedThis = weakThis.get();
+            return protectedThis && protectedThis->dispatchNavigateEvent(newLoadType, frameLoadRequest, false, formState.get(), event.get());
+        });
     }
 
     // Must grab this now, since this load may stop the previous load and clear this flag.
     bool isRedirect = m_quickRedirectComing;
-    loadWithNavigationAction(request, WTFMove(action), newLoadType, WTFMove(formState), allowNavigationToInvalidURL, frameLoadRequest.shouldTreatAsContinuingLoad(), [this, isRedirect, sameURL, newLoadType, frame, completionHandler = completionHandlerCaller.release()] () mutable {
+    loadWithNavigationAction(WTF::move(request), WTF::move(action), newLoadType, WTF::move(formSubmission), allowNavigationToInvalidURL, frameLoadRequest.shouldTreatAsContinuingLoad(), ShouldRestoreFromBackForwardCache::No, [this, protectedThis = Ref { *this }, isRedirect, sameURL, newLoadType, completionHandler = completionHandlerCaller.release()] () mutable {
         if (isRedirect) {
             m_quickRedirectComing = false;
-            if (RefPtr provisionalDocumentLoader = m_provisionalDocumentLoader)
+            if (auto* provisionalDocumentLoader = m_provisionalDocumentLoader.get())
                 provisionalDocumentLoader->setIsClientRedirect(true);
-            else if (RefPtr policyDocumentLoader = m_policyDocumentLoader)
+            else if (auto* policyDocumentLoader = m_policyDocumentLoader.get())
                 policyDocumentLoader->setIsClientRedirect(true);
         } else if (sameURL && !isReload(newLoadType)) {
             // Example of this case are sites that reload the same URL with a different cookie
@@ -1623,17 +1780,21 @@ SubstituteData FrameLoader::defaultSubstituteDataForURL(const URL& url)
 {
     if (!shouldTreatURLAsSrcdocDocument(url))
         return SubstituteData();
-    auto& srcdoc = m_frame->ownerElement()->attributeWithoutSynchronization(srcdocAttr);
+    RefPtr iframeElement = dynamicDowncast<HTMLIFrameElement>(m_frame->ownerElement());
+    if (!iframeElement)
+        return SubstituteData();
+
+    auto& srcdoc = iframeElement->attributeWithoutSynchronization(srcdocAttr);
     ASSERT(!srcdoc.isNull());
     CString encodedSrcdoc = srcdoc.string().utf8();
 
-    ResourceResponse response(URL(), textHTMLContentTypeAtom(), encodedSrcdoc.length(), "UTF-8"_s);
-    return SubstituteData(SharedBuffer::create(encodedSrcdoc.span()), URL(), response, SubstituteData::SessionHistoryVisibility::Hidden);
+    ResourceResponse response(URL(), String { textHTMLContentTypeAtom() }, encodedSrcdoc.length(), "UTF-8"_s);
+    return SubstituteData(SharedBuffer::create(encodedSrcdoc.span()), URL(), WTF::move(response), iframeElement->srcdocSessionHistoryVisibility());
 }
 
-void FrameLoader::load(FrameLoadRequest&& request)
+void FrameLoader::load(FrameLoadRequest&& request, std::optional<NavigationRequester>&& crossSiteRequester)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "load (FrameLoadRequest): frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadFrameLoadRequest);
 
     m_errorOccurredInLoading = false;
 
@@ -1644,7 +1805,7 @@ void FrameLoader::load(FrameLoadRequest&& request)
         if (RefPtr frame = dynamicDowncast<LocalFrame>(findFrameForNavigation(request.frameName()))) {
             request.setShouldCheckNewWindowPolicy(false);
             if (&frame->loader() != this) {
-                frame->checkedLoader()->load(WTFMove(request));
+                frame->loader().load(WTF::move(request));
                 return;
             }
         }
@@ -1653,10 +1814,10 @@ void FrameLoader::load(FrameLoadRequest&& request)
     m_provisionalLoadHappeningInAnotherProcess = false;
 
     if (request.shouldCheckNewWindowPolicy()) {
-        NavigationAction action { request.requester(), request.resourceRequest(), InitiatedByMainFrame::Unknown, request.isRequestFromClientOrUserInput(), NavigationType::Other, request.shouldOpenExternalURLsPolicy() };
+        NavigationAction action { request, NavigationType::Other };
         action.setNewFrameOpenerPolicy(request.newFrameOpenerPolicy());
-        policyChecker().checkNewWindowPolicy(WTFMove(action), WTFMove(request.resourceRequest()), { }, request.frameName(), [this] (const ResourceRequest& request, WeakPtr<FormState>&& weakFormState, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) {
-            continueLoadAfterNewWindowPolicy(request, RefPtr { weakFormState.get() }.get(), frameName, action, shouldContinue, AllowNavigationToInvalidURL::Yes, NewFrameOpenerPolicy::Suppress);
+        policyChecker().checkNewWindowPolicy(WTF::move(action), WTF::move(request.resourceRequest()), { }, request.frameName(), [this, protectedThis = Ref { *this }] (ResourceRequest&& request, WeakPtr<const FormSubmission>&& weakFormSubmission, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) {
+            continueLoadAfterNewWindowPolicy(WTF::move(request), RefPtr { weakFormSubmission.get() }, frameName, action, shouldContinue, AllowNavigationToInvalidURL::Yes, NewFrameOpenerPolicy::Suppress);
         });
 
         return;
@@ -1665,13 +1826,23 @@ void FrameLoader::load(FrameLoadRequest&& request)
     if (!request.hasSubstituteData())
         request.setSubstituteData(defaultSubstituteDataForURL(request.resourceRequest().url()));
 
-    Ref loader = m_client->createDocumentLoader(request.resourceRequest(), request.substituteData());
+    Ref loader = m_client->createDocumentLoader(request.takeResourceRequest(), request.takeSubstituteData(), request.takeOriginalResourceRequest());
+    loader->setIsContentRuleListRedirect(request.isContentRuleListRedirect());
     loader->setIsRequestFromClientOrUserInput(request.isRequestFromClientOrUserInput());
-    loader->setIsContinuingLoadAfterProvisionalLoadStarted(request.shouldTreatAsContinuingLoad() == ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
+    loader->setIsContinuingLoad(request.shouldTreatAsContinuingLoad());
+    RefPtr<const SecurityOrigin> initiatorOrigin;
+    if (crossSiteRequester) {
+        initiatorOrigin = crossSiteRequester->securityOrigin.copyRef();
+        loader->setCrossSiteRequester(WTF::move(*crossSiteRequester));
+    } else
+        initiatorOrigin = &request.requesterSecurityOrigin();
+
     if (auto advancedPrivacyProtections = request.advancedPrivacyProtections())
         loader->setOriginatorAdvancedPrivacyProtections(*advancedPrivacyProtections);
-    addSameSiteInfoToRequestIfNeeded(loader->request());
-    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protectedFrame(), loader, request);
+    Ref initiator = request.requester();
+    addSameSiteInfoToRequestIfNeeded(loader->request(), SecurityPolicy::shouldInheritSecurityOriginFromOwner(initiator->url()) ? nullptr : initiator.ptr());
+    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protect(m_frame), loader, request);
+    loader->setIsHandledByAboutSchemeHandler(request.isHandledByAboutSchemeHandler());
 
     if (request.shouldTreatAsContinuingLoad() != ShouldTreatAsContinuingLoad::No) {
         loader->setClientRedirectSourceForHistory(request.clientRedirectSourceForHistory());
@@ -1682,38 +1853,47 @@ void FrameLoader::load(FrameLoadRequest&& request)
     }
 
     SetForScope continuingLoadGuard(m_currentLoadContinuingState, request.shouldTreatAsContinuingLoad() != ShouldTreatAsContinuingLoad::No ? LoadContinuingState::ContinuingWithRequest : LoadContinuingState::NotContinuing);
-    load(loader.get(), request.protectedRequesterSecurityOrigin().ptr());
+    SetForScope crossOriginContentRuleListCancellationGuard(m_needsCancellationForContentRuleListCrossOriginRedirect, request.isContentRuleListRedirect());
+    load(loader.get(), initiatorOrigin.get());
 }
 
-void FrameLoader::loadWithNavigationAction(const ResourceRequest& request, NavigationAction&& action, FrameLoadType type, RefPtr<FormState>&& formState, AllowNavigationToInvalidURL allowNavigationToInvalidURL, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, CompletionHandler<void()>&& completionHandler)
+void FrameLoader::loadWithNavigationAction(ResourceRequest&& request, NavigationAction&& action, FrameLoadType type, RefPtr<const FormSubmission>&& formSubmission, AllowNavigationToInvalidURL allowNavigationToInvalidURL, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache, CompletionHandler<void()>&& completionHandler)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadWithNavigationAction: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadWithNavigationAction);
 
     m_errorOccurredInLoading = false;
-
     if (request.url().protocolIsJavaScript() && !action.isInitialFrameSrcLoad()) {
+        if (auto requester = action.requester(); requester && requester->documentIdentifier) {
+            if (RefPtr requestingDocument = Document::allDocumentsMap().get(requester->documentIdentifier); requestingDocument && requestingDocument->contentSecurityPolicy()) {
+                if (!requestingDocument->contentSecurityPolicy()->allowJavaScriptURLs(protect(m_frame->document())->url().string(), { }, request.url().string(), nullptr))
+                    return completionHandler();
+            }
+        }
         executeJavaScriptURL(request.url(), action);
         return completionHandler();
     }
 
-    Ref loader = m_client->createDocumentLoader(request, defaultSubstituteDataForURL(request.url()));
-    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protectedFrame(), loader, action.initiatedByMainFrame(), action.shouldOpenExternalURLsPolicy());
-    loader->setIsContinuingLoadAfterProvisionalLoadStarted(shouldTreatAsContinuingLoad == ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
+    auto&& substituteData = defaultSubstituteDataForURL(request.url());
+    Ref loader = m_client->createDocumentLoader(WTF::move(request), WTF::move(substituteData));
+    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protect(m_frame), loader, action.initiatedByMainFrame(), action.shouldOpenExternalURLsPolicy());
+    loader->setIsContinuingLoad(shouldTreatAsContinuingLoad);
     loader->setIsRequestFromClientOrUserInput(action.isRequestFromClientOrUserInput());
 
-    if (action.lockHistory() == LockHistory::Yes && m_documentLoader)
-        loader->setClientRedirectSourceForHistory(m_documentLoader->didCreateGlobalHistoryEntry() ? m_documentLoader->urlForHistory().string() : m_documentLoader->clientRedirectSourceForHistory());
+    if (action.lockHistory() == LockHistory::Yes) {
+        if (RefPtr documentLoader = m_documentLoader)
+            loader->setClientRedirectSourceForHistory(documentLoader->didCreateGlobalHistoryEntry() ? documentLoader->urlForHistory().string() : documentLoader->clientRedirectSourceForHistory());
+    }
 
-    loader->setTriggeringAction(WTFMove(action));
+    loader->setTriggeringAction(WTF::move(action));
     if (m_documentLoader)
         loader->setOverrideEncoding(m_documentLoader->overrideEncoding());
 
-    loadWithDocumentLoader(loader.ptr(), type, WTFMove(formState), allowNavigationToInvalidURL, WTFMove(completionHandler));
+    loadWithDocumentLoader(loader.ptr(), type, WTF::move(formSubmission), allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache, WTF::move(completionHandler));
 }
 
 void FrameLoader::load(DocumentLoader& newDocumentLoader, const SecurityOrigin* requesterOrigin)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "load (DocumentLoader): frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadDocumentLoader);
 
     m_errorOccurredInLoading = false;
 
@@ -1728,7 +1908,7 @@ void FrameLoader::load(DocumentLoader& newDocumentLoader, const SecurityOrigin* 
         type = FrameLoadType::Same;
     } else if (shouldTreatURLAsSameAsCurrent(requesterOrigin, newDocumentLoader.unreachableURL()) && isReload(m_loadType))
         type = m_loadType;
-    else if (m_loadType == FrameLoadType::RedirectWithLockedBackForwardList && ((!newDocumentLoader.unreachableURL().isEmpty() && newDocumentLoader.substituteData().isValid()) || shouldTreatCurrentLoadAsContinuingLoad()))
+    else if ((m_loadType == FrameLoadType::RedirectWithLockedBackForwardList || policyChecker().loadType() == FrameLoadType::RedirectWithLockedBackForwardList) && ((!newDocumentLoader.unreachableURL().isEmpty() && newDocumentLoader.substituteData().isValid()) || shouldTreatCurrentLoadAsContinuingLoad()))
         type = FrameLoadType::RedirectWithLockedBackForwardList;
     else
         type = FrameLoadType::Standard;
@@ -1747,7 +1927,7 @@ void FrameLoader::load(DocumentLoader& newDocumentLoader, const SecurityOrigin* 
         // shouldReloadToHandleUnreachableURL returns true only when the original load type is back-forward.
         // In this case we should save the document state now. Otherwise the state can be lost because load type is
         // changed and updateForBackForwardNavigation() will not be called when loading is committed.
-        m_frame->checkedHistory()->saveDocumentAndScrollState();
+        history().saveDocumentAndScrollState();
 
         ASSERT(type == FrameLoadType::Standard);
         type = FrameLoadType::Reload;
@@ -1756,15 +1936,15 @@ void FrameLoader::load(DocumentLoader& newDocumentLoader, const SecurityOrigin* 
     loadWithDocumentLoader(&newDocumentLoader, type, nullptr, AllowNavigationToInvalidURL::Yes);
 }
 
-void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType type, RefPtr<FormState>&& formState, AllowNavigationToInvalidURL allowNavigationToInvalidURL, CompletionHandler<void()>&& completionHandler)
+void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType type, RefPtr<const FormSubmission>&& formSubmission, AllowNavigationToInvalidURL allowNavigationToInvalidURL, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache, CompletionHandler<void()>&& completionHandler)
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadWithDocumentLoader: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadWithDocumentLoaderFrameLoadStarted);
 
     m_errorOccurredInLoading = false;
 
     Ref frame = m_frame.get();
 
-    CompletionHandlerCallingScope completionHandlerCaller(WTFMove(completionHandler));
+    CompletionHandlerCallingScope completionHandlerCaller(WTF::move(completionHandler));
 
     ASSERT(m_client->hasWebView());
 
@@ -1776,8 +1956,11 @@ void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType t
     if (!isNavigationAllowed())
         return;
 
+    if (auto* page = frame->page(); page && page->isInSwipeAnimation())
+        loader->setLoadStartedDuringSwipeAnimation();
+
     if (frame->document())
-        m_previousURL = frame->document()->url();
+        m_previousURL = protect(frame->document())->url();
 
     const URL& newURL = loader->request().url();
 
@@ -1789,33 +1972,35 @@ void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType t
     // Log main frame navigation types.
     if (frame->isMainFrame()) {
         if (RefPtr page = frame->page()) {
-            FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadWithDocumentLoader: main frame load started");
+            FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadWithDocumentLoaderMainFrameLoadStarted);
             page->mainFrameLoadStarted(newURL, type);
             page->performanceLogging().didReachPointOfInterest(PerformanceLogging::MainFrameLoadStarted);
         }
     }
 
     policyChecker().setLoadType(type);
-    RELEASE_ASSERT(!isBackForwardLoadType(type) || frame->history().provisionalItem());
-    bool isFormSubmission = formState;
+    RELEASE_ASSERT(!isBackForwardLoadType(type) || history().provisionalItem());
+    bool isFormSubmission = !!formSubmission;
 
     const String& httpMethod = loader->request().httpMethod();
 
-    if (shouldPerformFragmentNavigation(isFormSubmission, httpMethod, policyChecker().loadType(), newURL)) {
+    if (shouldPerformFragmentNavigation(isFormSubmission, httpMethod, policyChecker().loadType(), newURL) && !loader->substituteData().isValid()) {
 
         RefPtr oldDocumentLoader = m_documentLoader;
-        NavigationAction action { frame->protectedDocument().releaseNonNull(), loader->request(), InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), policyChecker().loadType(), isFormSubmission };
+        NavigationAction action { protect(frame->document()).releaseNonNull(), loader->request(), InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), policyChecker().loadType(), isFormSubmission };
         action.setNavigationAPIType(determineNavigationType(type, NavigationHistoryBehavior::Auto));
-        oldDocumentLoader->setTriggeringAction(WTFMove(action));
+        oldDocumentLoader->setTriggeringAction(WTF::move(action));
         oldDocumentLoader->setLastCheckedRequest(ResourceRequest());
         policyChecker().stopCheck();
-        RELEASE_ASSERT(!isBackForwardLoadType(policyChecker().loadType()) || frame->history().provisionalItem());
+        RELEASE_ASSERT(!isBackForwardLoadType(policyChecker().loadType()) || history().provisionalItem());
         RefPtr<SecurityOrigin> requesterOrigin;
-        if (auto& requester = loader->triggeringAction().requester())
+        if (loader->crossSiteRequester())
+            requesterOrigin = loader->crossSiteRequester()->securityOrigin.copyRef();
+        else if (auto& requester = loader->triggeringAction().requester())
             requesterOrigin = requester->securityOrigin.copyRef();
-        policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { }  /* redirectResponse */, oldDocumentLoader.get(), WTFMove(formState), [this, frame, requesterOrigin = WTFMove(requesterOrigin)] (const ResourceRequest& request, WeakPtr<FormState>&&, NavigationPolicyDecision navigationPolicyDecision) {
+        policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { }  /* redirectResponse */, oldDocumentLoader.get(), WTF::move(formSubmission), [this, protectedThis = Ref { *this }, requesterOrigin = WTF::move(requesterOrigin)] (const ResourceRequest& request, WeakPtr<const FormSubmission>&&, NavigationPolicyDecision navigationPolicyDecision) {
             continueFragmentScrollAfterNavigationPolicy(request, requesterOrigin.get(), navigationPolicyDecision == NavigationPolicyDecision::ContinueLoad, NavigationHistoryBehavior::Auto);
-        }, PolicyDecisionMode::Synchronous);
+        }, IsSameDocumentNavigation::Yes, PolicyDecisionMode::Synchronous);
         return;
     }
 
@@ -1825,23 +2010,26 @@ void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType t
     policyChecker().stopCheck();
     setPolicyDocumentLoader(loader);
     if (loader->triggeringAction().isEmpty()) {
-        NavigationAction action { frame->protectedDocument().releaseNonNull(), loader->request(), InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), policyChecker().loadType(), isFormSubmission };
+        NavigationAction action = loader->crossSiteRequester() ? NavigationAction { *loader->crossSiteRequester(), loader->request(), InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), policyChecker().loadType(), isFormSubmission } : NavigationAction { protect(frame->document()).releaseNonNull(), loader->request(), InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), policyChecker().loadType(), isFormSubmission };
+        action.setIsContentRuleListRedirect(loader->isContentRuleListRedirect());
         action.setNavigationAPIType(determineNavigationType(type, NavigationHistoryBehavior::Auto));
-        loader->setTriggeringAction(WTFMove(action));
+        loader->setTriggeringAction(WTF::move(action));
     }
 
-    frame->checkedNavigationScheduler()->cancel(NewLoadInProgress::Yes);
+    protect(frame->navigationScheduler())->cancel(NewLoadInProgress::Yes);
+    cancelPendingAsyncBackForwardNavigation();
 
     if (shouldTreatCurrentLoadAsContinuingLoad()) {
-        continueLoadAfterNavigationPolicy(loader->request(), formState.get(), NavigationPolicyDecision::ContinueLoad, allowNavigationToInvalidURL);
+        continueLoadAfterNavigationPolicy(loader->request(), formSubmission.get(), NavigationPolicyDecision::ContinueLoad, allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache);
         return;
     }
 
-    RELEASE_ASSERT(!isBackForwardLoadType(policyChecker().loadType()) || frame->history().provisionalItem());
-    policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { } /* redirectResponse */, loader, WTFMove(formState), [this, frame, allowNavigationToInvalidURL, completionHandler = completionHandlerCaller.release()] (const ResourceRequest& request, WeakPtr<FormState>&& weakFormState, NavigationPolicyDecision navigationPolicyDecision) mutable {
-        continueLoadAfterNavigationPolicy(request, RefPtr { weakFormState.get() }.get(), navigationPolicyDecision, allowNavigationToInvalidURL);
+    auto policyDecisionMode = loader->triggeringAction().isFromNavigationAPI() ? PolicyDecisionMode::Synchronous : PolicyDecisionMode::Asynchronous;
+    RELEASE_ASSERT(!isBackForwardLoadType(policyChecker().loadType()) || history().provisionalItem());
+    policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { } /* redirectResponse */, loader, WTF::move(formSubmission), [this, protectedThis = Ref { *this }, allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache, completionHandler = completionHandlerCaller.release()] (const ResourceRequest& request, WeakPtr<const FormSubmission>&& weakFormSubmission, NavigationPolicyDecision navigationPolicyDecision) mutable {
+        continueLoadAfterNavigationPolicy(request, RefPtr { weakFormSubmission.get() }.get(), navigationPolicyDecision, allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache);
         completionHandler();
-    }, PolicyDecisionMode::Asynchronous);
+    }, IsSameDocumentNavigation::No, policyDecisionMode, determineNavigationType(type, NavigationHistoryBehavior::Auto));
 }
 
 void FrameLoader::clearProvisionalLoadForPolicyCheck()
@@ -1850,7 +2038,7 @@ void FrameLoader::clearProvisionalLoadForPolicyCheck()
         return;
 
     SetForScope change(m_inClearProvisionalLoadForPolicyCheck, true);
-    protectedProvisionalDocumentLoader()->stopLoading();
+    protect(m_provisionalDocumentLoader)->stopLoading();
     FRAMELOADER_RELEASE_LOG(ResourceLoading, "clearProvisionalLoadForPolicyCheck: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
     setProvisionalDocumentLoader(nullptr);
 }
@@ -1866,7 +2054,7 @@ void FrameLoader::reportLocalLoadFailed(LocalFrame* frame, const String& url)
     if (!frame)
         return;
 
-    frame->protectedDocument()->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Not allowed to load local resource: "_s, url));
+    protect(frame->document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Not allowed to load local resource: "_s, url));
 }
 
 void FrameLoader::reportBlockedLoadFailed(LocalFrame& frame, const URL& url)
@@ -1874,7 +2062,7 @@ void FrameLoader::reportBlockedLoadFailed(LocalFrame& frame, const URL& url)
     ASSERT(!url.isEmpty());
     auto restrictedHostPort = isIPAddressDisallowed(url) ? makeString("host \""_s, url.host(), "\""_s) : makeString("port "_s, url.port().value());
     auto message = makeString("Not allowed to use restricted network "_s, restrictedHostPort, ": "_s, url.stringCenterEllipsizedToLength());
-    frame.protectedDocument()->addConsoleMessage(MessageSource::Security, MessageLevel::Error, message);
+    protect(frame.document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, message);
 }
 
 bool FrameLoader::willLoadMediaElementURL(URL& url, Node& initiatorNode)
@@ -1882,19 +2070,18 @@ bool FrameLoader::willLoadMediaElementURL(URL& url, Node& initiatorNode)
 #if PLATFORM(IOS_FAMILY)
     // MobileStore depends on the iOS 4.0 era client delegate method because webView:resource:willSendRequest:redirectResponse:fromDataSource
     // doesn't let them tell when a load request is coming from a media element. See <rdar://problem/8266916> for more details.
-    if (IOSApplication::isMobileStore())
+    if (WTF::IOSApplication::isMobileStore())
         return m_client->shouldLoadMediaElementURL(url);
 #endif
 
-    ResourceRequest request(url);
+    ResourceRequest request(URL { url });
     request.setInspectorInitiatorNodeIdentifier(InspectorInstrumentation::identifierForNode(initiatorNode));
     if (m_documentLoader)
         request.setIsAppInitiated(m_documentLoader->lastNavigationWasAppInitiated());
 
-    ResourceLoaderIdentifier identifier;
     ResourceError error;
-    requestFromDelegate(request, identifier, error);
-    notifier().sendRemainingDelegateMessages(protectedDocumentLoader().get(), identifier, request, ResourceResponse(url, String(), -1, String()), nullptr, -1, -1, error);
+    auto identifier = requestFromDelegate(request, error);
+    notifier().sendRemainingDelegateMessages(protect(documentLoader()), identifier, request, ResourceResponse(URL { url }, String(), -1, String()), nullptr, -1, -1, error);
 
     url = request.url();
 
@@ -1924,22 +2111,24 @@ bool FrameLoader::shouldReloadToHandleUnreachableURL(DocumentLoader& docLoader)
 
 void FrameLoader::reloadWithOverrideEncoding(const String& encoding)
 {
-    if (!m_documentLoader)
+    RefPtr documentLoader = m_documentLoader;
+    if (!documentLoader)
         return;
 
     FRAMELOADER_RELEASE_LOG(ResourceLoading, "reloadWithOverrideEncoding: frame load started");
 
-    ResourceRequest request = m_documentLoader->request();
-    URL unreachableURL = m_documentLoader->unreachableURL();
+    ResourceRequest request = documentLoader->request();
+    URL unreachableURL = documentLoader->unreachableURL();
     if (!unreachableURL.isEmpty())
-        request.setURL(unreachableURL);
+        request.setURL(WTF::move(unreachableURL));
 
     // FIXME: If the resource is a result of form submission and is not cached, the form will be silently resubmitted.
     // We should ask the user for confirmation in this case.
     request.setCachePolicy(ResourceRequestCachePolicy::ReturnCacheDataElseLoad);
 
-    Ref loader = m_client->createDocumentLoader(request, defaultSubstituteDataForURL(request.url()));
-    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protectedFrame(), loader, InitiatedByMainFrame::Unknown, m_documentLoader->shouldOpenExternalURLsPolicyToPropagate());
+    auto&& substituteData = defaultSubstituteDataForURL(request.url());
+    Ref loader = m_client->createDocumentLoader(WTF::move(request), WTF::move(substituteData));
+    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protect(m_frame), loader, InitiatedByMainFrame::Unknown, documentLoader->shouldOpenExternalURLsPolicyToPropagate());
 
     setPolicyDocumentLoader(loader.copyRef());
 
@@ -1948,29 +2137,31 @@ void FrameLoader::reloadWithOverrideEncoding(const String& encoding)
     loadWithDocumentLoader(loader.ptr(), FrameLoadType::Reload, { }, AllowNavigationToInvalidURL::Yes);
 }
 
-void FrameLoader::reload(OptionSet<ReloadOption> options)
+void FrameLoader::reload(OptionSet<ReloadOption> options, bool isRequestFromClientOrUserInput)
 {
-    if (!m_documentLoader)
+    RefPtr documentLoader = m_documentLoader;
+    if (!documentLoader)
         return;
 
     // If a window is created by javascript, its main frame can have an empty but non-nil URL.
     // Reloading in this case will lose the current contents (see 4151001).
-    if (m_documentLoader->request().url().isEmpty())
+    if (documentLoader->request().url().isEmpty())
         return;
 
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "reload: frame load started");
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderReload);
 
     // Replace error-page URL with the URL we were trying to reach.
-    ResourceRequest initialRequest = m_documentLoader->request();
-    URL unreachableURL = m_documentLoader->unreachableURL();
+    ResourceRequest initialRequest = documentLoader->request();
+    URL unreachableURL = documentLoader->unreachableURL();
     if (!unreachableURL.isEmpty())
-        initialRequest.setURL(unreachableURL);
+        initialRequest.setURL(WTF::move(unreachableURL));
 
     // Create a new document loader for the reload, this will become m_documentLoader eventually,
     // but first it has to be the "policy" document loader, and then the "provisional" document loader.
-    Ref loader = m_client->createDocumentLoader(initialRequest, defaultSubstituteDataForURL(initialRequest.url()));
-    loader->setIsRequestFromClientOrUserInput(m_documentLoader->isRequestFromClientOrUserInput());
-    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protectedFrame(), loader, InitiatedByMainFrame::Unknown, m_documentLoader->shouldOpenExternalURLsPolicyToPropagate());
+    auto&& substituteData = defaultSubstituteDataForURL(initialRequest.url());
+    Ref loader = m_client->createDocumentLoader(WTF::move(initialRequest), WTF::move(substituteData));
+    loader->setIsRequestFromClientOrUserInput(documentLoader->isRequestFromClientOrUserInput() || isRequestFromClientOrUserInput);
+    applyShouldOpenExternalURLsPolicyToNewDocumentLoader(protect(m_frame), loader, InitiatedByMainFrame::Unknown, documentLoader->shouldOpenExternalURLsPolicyToPropagate());
 
     loader->setContentExtensionEnablement({ options.contains(ReloadOption::DisableContentBlockers) ? ContentExtensionDefaultEnablement::Disabled : ContentExtensionDefaultEnablement::Enabled, { } });
     
@@ -1983,9 +2174,10 @@ void FrameLoader::reload(OptionSet<ReloadOption> options)
 
     // If we're about to re-post, set up action so the application can warn the user.
     if (request.httpMethod() == "POST"_s)
-        loader->setTriggeringAction({ m_frame->protectedDocument().releaseNonNull(), request, InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), NavigationType::FormResubmitted });
+        loader->setTriggeringAction({ protect(m_frame->document()).releaseNonNull(), request, InitiatedByMainFrame::Unknown, loader->isRequestFromClientOrUserInput(), NavigationType::FormResubmitted });
 
-    loader->setOverrideEncoding(m_documentLoader->overrideEncoding());
+    loader->setOverrideEncoding(documentLoader->overrideEncoding());
+    loader->setTriggeringNavigationAPIType(NavigationNavigationType::Reload);
 
     auto frameLoadTypeForReloadOptions = [] (auto options) {
         if (options & ReloadOption::FromOrigin)
@@ -2024,19 +2216,14 @@ void FrameLoader::stopAllLoaders(ClearProvisionalItem clearProvisionalItem, Stop
     // If no new load is in progress, we should clear the provisional item from history
     // before we call stopLoading.
     if (clearProvisionalItem == ClearProvisionalItem::Yes)
-        m_frame->checkedHistory()->setProvisionalItem(nullptr);
+        history().setProvisionalItem(nullptr);
 
     for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         if (RefPtr localChild = dynamicDowncast<LocalFrame>(child.get()))
-            localChild->checkedLoader()->stopAllLoaders(clearProvisionalItem);
+            localChild->loader().stopAllLoaders(clearProvisionalItem);
     }
 
-    if (m_frame->document()->settings().navigationAPIEnabled()) {
-        RefPtr window = m_frame->document()->domWindow();
-        window->protectedNavigation()->abortOngoingNavigationIfNeeded();
-    }
-
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "stopAllLoaders: m_provisionalDocumentLoader=%p, m_documentLoader=%p", m_provisionalDocumentLoader.get(), m_documentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderStopAllLoaders, (uint64_t)m_provisionalDocumentLoader.get(), (uint64_t)m_documentLoader.get());
 
     if (RefPtr provisionalDocumentLoader = m_provisionalDocumentLoader)
         provisionalDocumentLoader->stopLoading();
@@ -2045,7 +2232,6 @@ void FrameLoader::stopAllLoaders(ClearProvisionalItem clearProvisionalItem, Stop
     if (frame->page() && !frame->page()->chrome().client().isSVGImageChromeClient())
         platformStrategies()->loaderStrategy()->browsingContextRemoved(frame);
 
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "stopAllLoaders: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
     setProvisionalDocumentLoader(nullptr);
 
     m_inStopAllLoaders = false;    
@@ -2067,15 +2253,13 @@ void FrameLoader::stopForBackForwardCache()
     if (RefPtr documentLoader = m_documentLoader)
         documentLoader->stopLoading();
 
-    for (RefPtr child = m_frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
-        if (RefPtr localChild = dynamicDowncast<LocalFrame>(child.get()))
-            localChild->checkedLoader()->stopForBackForwardCache();
-    }
+    for (RefPtr child = m_frame->tree().firstChild(); child; child = child->tree().nextSibling())
+        child->stopForBackForwardCache();
 
     // We cancel pending navigations & policy checks *after* cancelling loads because cancelling loads might end up
     // running script, which could schedule new navigations.
     policyChecker().stopCheck();
-    protectedFrame()->checkedNavigationScheduler()->cancel();
+    protect(m_frame)->navigationScheduler().cancel();
 }
 
 void FrameLoader::stopAllLoadersAndCheckCompleteness()
@@ -2086,6 +2270,7 @@ void FrameLoader::stopAllLoadersAndCheckCompleteness()
         return;
 
     m_checkTimer.stop();
+    m_crossOriginParentSyntheticSameDocLoadEventTimer.stop();
     m_checkingLoadCompleteForDetachment = true;
     checkCompletenessNow();
     m_checkingLoadCompleteForDetachment = false;
@@ -2100,12 +2285,17 @@ void FrameLoader::stopForUserCancel(bool deferCheckLoadComplete)
 
     stopAllLoaders();
 
+    if (m_frame->document()->settings().navigationAPIEnabled()) {
+        RefPtr window = m_frame->document()->window();
+        protect(window->navigation())->abortOngoingNavigationIfNeeded();
+    }
+
 #if PLATFORM(IOS_FAMILY)
     // Lay out immediately when stopping to immediately clear the old page if we just committed this one
     // but haven't laid out/painted yet.
     // FIXME: Is this behavior specific to iOS? Or should we expose a setting to toggle this behavior?
     if (frame->view() && !frame->view()->didFirstLayout())
-        frame->protectedView()->layoutContext().layout();
+        protect(frame->view())->layoutContext().layout();
 #endif
 
     if (deferCheckLoadComplete)
@@ -2117,18 +2307,13 @@ void FrameLoader::stopForUserCancel(bool deferCheckLoadComplete)
 DocumentLoader* FrameLoader::activeDocumentLoader() const
 {
     if (m_state == FrameState::Provisional)
-        return m_provisionalDocumentLoader.get();
-    return m_documentLoader.get();
-}
-
-RefPtr<DocumentLoader> FrameLoader::protectedActiveDocumentLoader() const
-{
-    return activeDocumentLoader();
+        return m_provisionalDocumentLoader;
+    return m_documentLoader;
 }
 
 bool FrameLoader::isLoading() const
 {
-    RefPtr documentLoader = activeDocumentLoader();
+    auto* documentLoader = activeDocumentLoader();
     return documentLoader && documentLoader->isLoading();
 }
 
@@ -2142,7 +2327,7 @@ void FrameLoader::setDocumentLoader(RefPtr<DocumentLoader>&& loader)
     if (loader == m_documentLoader)
         return;
 
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "setDocumentLoader: Setting document loader to %p (was %p)", loader.get(), m_documentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderSetDocumentLoader, (uint64_t)loader.get(), (uint64_t)m_documentLoader.get());
     
     RELEASE_ASSERT(!loader || loader->frameLoader() == this);
 
@@ -2162,7 +2347,7 @@ void FrameLoader::setDocumentLoader(RefPtr<DocumentLoader>&& loader)
     if (RefPtr documentLoader = m_documentLoader)
         documentLoader->detachFromFrame(LoadWillContinueInAnotherProcess::No);
 
-    m_documentLoader = WTFMove(loader);
+    m_documentLoader = WTF::move(loader);
 }
 
 void FrameLoader::setPolicyDocumentLoader(RefPtr<DocumentLoader>&& loader, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
@@ -2170,10 +2355,12 @@ void FrameLoader::setPolicyDocumentLoader(RefPtr<DocumentLoader>&& loader, LoadW
     if (m_policyDocumentLoader == loader)
         return;
 
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "setPolicyDocumentLoader: Setting policy document loader to %p (was %p)", loader.get(), m_policyDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderSetPolicyDocumentLoader, (uint64_t)loader.get(), (uint64_t)m_policyDocumentLoader.get());
+
+    history().clearPolicyItem();
 
     if (loader)
-        loader->attachToFrame(protectedFrame());
+        loader->attachToFrame(protect(m_frame));
 
     if (RefPtr policyDocumentLoader = m_policyDocumentLoader; policyDocumentLoader
         && policyDocumentLoader != m_provisionalDocumentLoader
@@ -2181,7 +2368,7 @@ void FrameLoader::setPolicyDocumentLoader(RefPtr<DocumentLoader>&& loader, LoadW
         policyDocumentLoader->detachFromFrame(loadWillContinueInAnotherProcess);
     }
 
-    m_policyDocumentLoader = WTFMove(loader);
+    m_policyDocumentLoader = WTF::move(loader);
 }
 
 void FrameLoader::setProvisionalDocumentLoader(RefPtr<DocumentLoader>&& loader)
@@ -2189,7 +2376,7 @@ void FrameLoader::setProvisionalDocumentLoader(RefPtr<DocumentLoader>&& loader)
     if (m_provisionalDocumentLoader == loader)
         return;
 
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "setProvisionalDocumentLoader: Setting provisional document loader to %p (was %p)", loader.get(), m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderSetProvisionalDocumentLoader, (uint64_t)loader.get(), (uint64_t)m_provisionalDocumentLoader.get());
 
     ASSERT(!loader || !m_provisionalDocumentLoader);
     RELEASE_ASSERT(!loader || loader->frameLoader() == this);
@@ -2197,7 +2384,7 @@ void FrameLoader::setProvisionalDocumentLoader(RefPtr<DocumentLoader>&& loader)
     if (RefPtr provisionalDocumentLoader = m_provisionalDocumentLoader; provisionalDocumentLoader && provisionalDocumentLoader != m_documentLoader)
         provisionalDocumentLoader->detachFromFrame(LoadWillContinueInAnotherProcess::No);
 
-    m_provisionalDocumentLoader = WTFMove(loader);
+    m_provisionalDocumentLoader = WTF::move(loader);
 }
 
 void FrameLoader::setState(FrameState newState)
@@ -2212,26 +2399,35 @@ void FrameLoader::setState(FrameState newState)
         if (RefPtr documentLoader = m_documentLoader)
             documentLoader->stopRecordingResponses();
         if (m_frame->isMainFrame() && oldState != newState) {
-            FRAMELOADER_RELEASE_LOG(ResourceLoading, "setState: main frame load completed");
-            protectedFrame()->protectedPage()->performanceLogging().didReachPointOfInterest(PerformanceLogging::MainFrameLoadCompleted);
+            FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderSetStateMainFrameLoadCompleted);
+            m_frame->page()->performanceLogging().didReachPointOfInterest(PerformanceLogging::MainFrameLoadCompleted);
         }
     }
 }
 
 void FrameLoader::clearProvisionalLoad()
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "clearProvisionalLoad: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderClearProvisionalLoad, m_provisionalDocumentLoader && m_provisionalDocumentLoader->navigationID() ? m_provisionalDocumentLoader->navigationID()->toUInt64() : 0);
     setProvisionalDocumentLoader(nullptr);
     if (CheckedPtr progressTracker = m_progressTracker.get())
-        progressTracker->progressCompleted();
+        progressTracker->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Failure);
     setState(FrameState::Complete);
 }
 
 void FrameLoader::provisionalLoadFailedInAnotherProcess()
 {
     m_provisionalLoadHappeningInAnotherProcess = false;
-    if (RefPtr localParent = dynamicDowncast<LocalFrame>(m_frame->tree().parent()))
-        localParent->checkedLoader()->checkLoadComplete();
+    m_isComplete = true;
+
+    if (RefPtr localParent = dynamicDowncast<LocalFrame>(m_frame->tree().parent())) {
+        Ref parentLoader = localParent->loader();
+        parentLoader->checkCompleted();
+        // checkCompleted() may short-circuit because the parent's document already finished, but the
+        // parent's FrameLoader state machine can still be stuck in CommittedPage if subframeIsLoading()
+        // was true while waiting for this cross-process load. Drive checkLoadComplete() so that
+        // dispatchDidFinishLoad() can fire on the parent now that subframeIsLoading() is false.
+        parentLoader->checkLoadComplete();
+    }
 }
 
 void FrameLoader::commitProvisionalLoad()
@@ -2239,31 +2435,82 @@ void FrameLoader::commitProvisionalLoad()
     RefPtr pdl = m_provisionalDocumentLoader;
     Ref frame = m_frame.get();
 
-    std::unique_ptr<CachedPage> cachedPage;
-    if (m_loadingFromCachedPage && frame->history().provisionalItem())
-        cachedPage = BackForwardCache::singleton().take(*frame->history().protectedProvisionalItem(), frame->protectedPage().get());
+    // Clear prefetch resources for URLs other than the one being navigated to.
+    // This ensures that prefetches are only used for the immediate next navigation,
+    // not for subsequent navigations to the same URL.
+    if (pdl)
+        m_documentPrefetcher->clearPrefetchedResourcesExcept(pdl->url());
 
-    LOG(BackForwardCache, "WebCoreLoading frame %" PRIu64 ": About to commit provisional load from previous URL '%s' to new URL '%s' with cached page %p", m_frame->frameID().object().toUInt64(),
+    std::unique_ptr<CachedPage> cachedPage;
+    if (m_loadingFromCachedPage && history().provisionalItem()) {
+        Ref provisionalItem = *history().provisionalItem();
+        cachedPage = BackForwardCache::singleton().take(provisionalItem->frameItemID(), protect(frame->page()).get());
+        if (cachedPage) {
+            // Fire DidTakeBackForwardItemForRestoration before any subsequent
+            // DidCacheBackForwardItem for the outgoing page, so the UIProcess
+            // WebBackForwardCache observes remove(provisional) → add(current)
+            // in the same order the WebProcess BackForwardCache did. Firing
+            // late (after the Document is swapped in) inverts that ordering
+            // and can drop a same-process sibling SPP entry as the new
+            // "oldest" entry under capacity pressure.
+            m_client->didTakeBackForwardItemForRestoration(provisionalItem->itemID());
+        }
+    }
+
+    LOG(BackForwardCache, "WebCoreLoading frame %" PRIu64 ": About to commit provisional load from previous URL '%s' to new URL '%s' with cached page %p", m_frame->frameID().toUInt64(),
         frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().data() : "",
         pdl ? pdl->url().stringCenterEllipsizedToLength().utf8().data() : "<no provisional DocumentLoader>", cachedPage.get());
+
+    if (RefPtr document = m_frame->document()) {
+        auto canTriggerCrossDocumentViewTransition = CanTriggerCrossDocumentViewTransition::No;
+        RefPtr<NavigationActivation> activation;
+        if (pdl) {
+            canTriggerCrossDocumentViewTransition = pdl->navigationCanTriggerCrossDocumentViewTransition(*document, !!cachedPage);
+
+            RefPtr window = document->window();
+            auto navigationAPIType = pdl->triggeringAction().navigationAPIType();
+            if (window && navigationAPIType && document->settings().navigationAPIEnabled()) {
+                // FIXME: The NavigationActivation for pageswap should be created after the global
+                // history update, but before the unload event (which might be delayed). Those steps
+                // are currently intertwined, so this creates a fake/detached new history entry to
+                // use for this purpose.
+                RefPtr<HistoryItem> newItem;
+                if (RefPtr page = frame->page(); page && *navigationAPIType != NavigationNavigationType::Reload)
+                    newItem = history().createItemWithLoader(page->historyItemClient(), pdl.get());
+
+                activation = protect(window->navigation())->createForPageswapEvent(newItem.get(), pdl.get(), !!cachedPage);
+            }
+        }
+        SetForScope dispatchingPageSwapEvent(m_isDispatchingPageSwapEvent, true);
+        document->dispatchPageswapEvent(canTriggerCrossDocumentViewTransition, WTF::move(activation));
+
+        // https://html.spec.whatwg.org/multipage/browsing-the-web.html#deactivate-a-document-for-a-cross-document-navigation
+        // FIXME: If the pageswap event resulted in starting a view-transition, then the
+        // 'proceedWithNavigationAfterViewTransitionCapture' steps should proceed after the next
+        // rendering update (which includes firing the unload event for the old Document).
+    }
 
     if (RefPtr document = frame->document()) {
         // In the case where we're restoring from a cached page, our document will not
         // be connected to its frame yet, so the following call with be a no-op. We will
         // attempt to confirm any active composition once again in this scenario after we
         // finish restoring from the cached page.
-        document->checkedEditor()->confirmOrCancelCompositionAndNotifyClient();
+        protect(document->editor())->confirmOrCancelCompositionAndNotifyClient();
     }
 
-    if (!frame->tree().parent() && frame->history().currentItem() && frame->history().currentItem() != frame->history().provisionalItem()) {
+    RefPtr page = frame->page();
+    bool isCurrentMainFrame = page && frame.ptr() == &page->mainFrame();
+    if (isCurrentMainFrame && history().currentItem() && (!history().provisionalItem() || history().currentItem()->itemID() != history().provisionalItem()->itemID())) {
         // Check to see if we need to cache the page we are navigating away from into the back/forward cache.
         // We are doing this here because we know for sure that a new page is about to be loaded.
-        BackForwardCache::singleton().addIfCacheable(*frame->history().protectedCurrentItem(), frame->protectedPage().get());
-        
+        Ref currentItem = *history().currentItem();
+        if (BackForwardCache::singleton().addIfCacheable(currentItem.get(), page.get()))
+            m_client->didCacheBackForwardItem(currentItem->itemID(), currentItem->frameItemID());
+
         WebCore::jettisonExpensiveObjectsOnTopLevelNavigation();
     }
 
-    if (m_loadType != FrameLoadType::Replace)
+    if (m_loadType != FrameLoadType::MultipartReplace)
         closeOldDataSources();
 
     if (!cachedPage && !m_stateMachine.creatingInitialEmptyDocument())
@@ -2274,7 +2521,7 @@ void FrameLoader::commitProvisionalLoad()
     if (pdl && m_documentLoader) {
         // Check if the destination page is allowed to access the previous page's timing information.
         Ref securityOrigin = SecurityOrigin::create(pdl->request().url());
-        protectedDocumentLoader()->timing().setHasSameOriginAsPreviousDocument(securityOrigin->canRequest(m_previousURL, OriginAccessPatternsForWebProcess::singleton()));
+        m_documentLoader->timing().setHasSameOriginAsPreviousDocument(securityOrigin->canRequest(m_previousURL, OriginAccessPatternsForWebProcess::singleton()));
     }
 
     // Call clientRedirectCancelledOrFinished() here so that the frame load delegate is notified that the redirect's
@@ -2288,17 +2535,16 @@ void FrameLoader::commitProvisionalLoad()
 #if PLATFORM(IOS_FAMILY)
         // FIXME: CachedPage::restore() would dispatch viewport change notification. However UIKit expects load
         // commit to happen before any changes to viewport arguments and dealing with this there is difficult.
-        frame->protectedPage()->chrome().setDispatchViewportDataDidChangeSuppressed(true);
+        protect(frame->page())->chrome().setDispatchViewportDataDidChangeSuppressed(true);
 #endif
         willRestoreFromCachedPage();
 
         // Start request for the main resource and dispatch didReceiveResponse before the load is committed for
         // consistency with all other loads. See https://bugs.webkit.org/show_bug.cgi?id=150927.
         ResourceError mainResouceError;
-        ResourceLoaderIdentifier mainResourceIdentifier;
         ResourceRequest mainResourceRequest(cachedPage->documentLoader()->request());
-        requestFromDelegate(mainResourceRequest, mainResourceIdentifier, mainResouceError);
-        notifier().dispatchDidReceiveResponse(cachedPage->protectedDocumentLoader().get(), mainResourceIdentifier, cachedPage->documentLoader()->response());
+        auto mainResourceIdentifier = requestFromDelegate(mainResourceRequest, mainResouceError);
+        notifier().dispatchDidReceiveResponse(protect(cachedPage->documentLoader()), mainResourceIdentifier, cachedPage->documentLoader()->response());
 
         auto hasInsecureContent = cachedPage->cachedMainFrame()->hasInsecureContent();
         auto usedLegacyTLS = cachedPage->cachedMainFrame()->usedLegacyTLS();
@@ -2310,18 +2556,34 @@ void FrameLoader::commitProvisionalLoad()
         RefPtr page = frame->page();
         cachedPage->restore(*page);
 
+        // Dispatch any pending navigate event after BFCache restoration is complete.
+        if (RefPtr item = std::exchange(m_pendingNavigationAPIItem, nullptr)) {
+            // Ensure we use the restored document context, not the previous one
+            if (m_frame->document() && m_frame->document()->window()) {
+                RefPtr navigation = protect(m_frame->document()->window())->navigation();
+                if (navigation && navigation->frame())
+                    navigation->dispatchTraversalNavigateEvent(*item);
+            }
+        }
+
 #if PLATFORM(IOS_FAMILY)
         page->chrome().setDispatchViewportDataDidChangeSuppressed(false);
-        page->chrome().dispatchViewportPropertiesDidChange(frame->page()->viewportArguments());
 #endif
-        page->chrome().dispatchDisabledAdaptationsDidChange(frame->page()->disabledAdaptations());
+        if (RefPtr framePage = frame->page()) {
+#if PLATFORM(IOS_FAMILY)
+            page->chrome().dispatchViewportPropertiesDidChange(framePage->viewportArguments());
+#endif
+            page->chrome().dispatchDisabledAdaptationsDidChange(framePage->disabledAdaptations());
+        }
 
-        auto& title = m_documentLoader->title();
-        if (!title.string.isNull())
-            m_client->dispatchDidReceiveTitle(title);
+        if (RefPtr documentLoader = m_documentLoader) {
+            auto& title = documentLoader->title();
+            if (!title.string.isNull())
+                m_client->dispatchDidReceiveTitle(title);
 
-        // Send remaining notifications for the main resource.
-        notifier().sendRemainingDelegateMessages(protectedDocumentLoader().get(), mainResourceIdentifier, mainResourceRequest, ResourceResponse(), nullptr, static_cast<int>(m_documentLoader->response().expectedContentLength()), 0, mainResouceError);
+            // Send remaining notifications for the main resource.
+            notifier().sendRemainingDelegateMessages(documentLoader.get(), mainResourceIdentifier, mainResourceRequest, ResourceResponse(), nullptr, static_cast<int>(documentLoader->response().expectedContentLength()), 0, mainResouceError);
+        }
 
         Vector<Ref<LocalFrame>> targetFrames;
         targetFrames.append(frame);
@@ -2331,43 +2593,47 @@ void FrameLoader::commitProvisionalLoad()
         }
 
         for (auto& frame : targetFrames)
-            frame->checkedLoader()->checkCompleted();
+            frame->loader().checkCompleted();
     } else
         didOpenURL();
 
     if (RefPtr document = frame->document())
-        document->checkedEditor()->confirmOrCancelCompositionAndNotifyClient();
+        protect(document->editor())->confirmOrCancelCompositionAndNotifyClient();
 
-    LOG(Loading, "WebCoreLoading frame %" PRIu64 ": Finished committing provisional load to URL %s", frame->frameID().object().toUInt64(),
+IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
+    LOG(Loading, "WebCoreLoading frame %" PRIu64 ": Finished committing provisional load to URL %s", frame->frameID().toUInt64(),
         frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().data() : "");
+IGNORE_GCC_WARNINGS_END
 
     if (m_loadType == FrameLoadType::Standard && m_documentLoader && m_documentLoader->isClientRedirect())
-        frame->checkedHistory()->updateForClientRedirect();
+        history().updateForClientRedirect();
 
     if (m_loadingFromCachedPage) {
         // Note, didReceiveDocType is expected to be called for cached pages. See <rdar://problem/5906758> for more details.
         if (RefPtr page = frame->page())
             page->chrome().didReceiveDocType(frame);
-        frame->protectedDocument()->resume(ReasonForSuspension::BackForwardCache);
+        protect(frame->document())->resume(ReasonForSuspension::BackForwardCache);
 
         // Force a layout to update view size and thereby update scrollbars.
+        auto shouldForceLayout = [&] {
 #if PLATFORM(IOS_FAMILY)
-        if (!m_client->forceLayoutOnRestoreFromBackForwardCache())
-            frame->protectedView()->forceLayout();
-#else
-        frame->protectedView()->forceLayout();
+            return !m_client->forceLayoutOnRestoreFromBackForwardCache();
 #endif
+            return true;
+        };
+        if (RefPtr view = frame->view(); view && shouldForceLayout())
+            view->forceLayout();
 
         // Main resource delegates were already sent, so we skip the first response here.
         RefPtr documentLoader = m_documentLoader;
-        for (unsigned i = 1; i < documentLoader->responses().size(); ++i) {
+        unsigned responsesSize = documentLoader ? documentLoader->responses().size() : 0;
+        for (unsigned i = 1; i < responsesSize; ++i) {
             const auto& response = documentLoader->responses()[i];
             // FIXME: If the WebKit client changes or cancels the request, this is not respected.
             ResourceError error;
-            ResourceLoaderIdentifier identifier;
-            ResourceRequest request(response.url());
+            ResourceRequest request(URL { response.url() });
             request.setIsAppInitiated(documentLoader->lastNavigationWasAppInitiated());
-            requestFromDelegate(request, identifier, error);
+            auto identifier = requestFromDelegate(request, error);
             // FIXME: If we get a resource with more than 2B bytes, this code won't do the right thing.
             // However, with today's computers and networking speeds, this won't happen in practice.
             // Could be an issue with a giant local file.
@@ -2393,14 +2659,7 @@ void FrameLoader::transitionToCommitted(CachedPage* cachedPage)
     }
 
     m_client->setCopiesOnScroll();
-    m_frame->checkedHistory()->updateForCommit();
-
-    if (RefPtr document = m_frame->document()) {
-        bool canTriggerCrossDocumentViewTransition = false;
-        if (m_provisionalDocumentLoader)
-            canTriggerCrossDocumentViewTransition = m_provisionalDocumentLoader->navigationCanTriggerCrossDocumentViewTransition(*document);
-        document->dispatchPageswapEvent(canTriggerCrossDocumentViewTransition);
-    }
+    history().updateForCommit();
 
     // The call to closeURL() invokes the unload event handler, which can execute arbitrary
     // JavaScript. If the script initiates a new load, we need to abandon the current load,
@@ -2422,7 +2681,7 @@ void FrameLoader::transitionToCommitted(CachedPage* cachedPage)
     setDocumentLoader(m_provisionalDocumentLoader.copyRef());
     if (originalProvisionalDocumentLoader != m_provisionalDocumentLoader)
         return;
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "transitionToCommitted: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderTransitionToCommitted, (uint64_t)m_provisionalDocumentLoader.get());
     setProvisionalDocumentLoader(nullptr);
 
     // Nothing else can interrupt this commit - set the Provisional->Committed transition in stone
@@ -2440,14 +2699,14 @@ void FrameLoader::transitionToCommitted(CachedPage* cachedPage)
             // without any of the items being loaded then we need to update the history in a similar manner as
             // for a standard load with the exception of updating the back/forward list (<rdar://problem/8091103>).
             if (!m_stateMachine.committedFirstRealDocumentLoad() && m_frame->isMainFrame())
-                m_frame->checkedHistory()->updateForStandardLoad(HistoryController::UpdateAllExceptBackForwardList);
+                history().updateForStandardLoad(HistoryController::UpdateAllExceptBackForwardList);
 
-            m_frame->checkedHistory()->updateForBackForwardNavigation();
+            history().updateForBackForwardNavigation();
 
             // Create a document view for this document, or used the cached view.
             if (cachedPage) {
                 ASSERT(cachedPage->documentLoader());
-                cachedPage->protectedDocumentLoader()->attachToFrame(protectedFrame());
+                protect(cachedPage->documentLoader())->attachToFrame(protect(m_frame));
                 m_client->transitionToCommittedFromCachedFrame(cachedPage->cachedMainFrame());
             } else
                 m_client->transitionToCommittedForNewPage(m_documentLoader && m_documentLoader->isInFinishedLoadingOfEmptyDocument() ?
@@ -2459,14 +2718,15 @@ void FrameLoader::transitionToCommitted(CachedPage* cachedPage)
     case FrameLoadType::ReloadFromOrigin:
     case FrameLoadType::ReloadExpiredOnly:
     case FrameLoadType::Same:
-    case FrameLoadType::Replace:
-        m_frame->checkedHistory()->updateForReload();
+    case FrameLoadType::MultipartReplace:
+    case FrameLoadType::NavigationAPIReplace:
+        history().updateForReloadOrReplace();
         m_client->transitionToCommittedForNewPage(m_documentLoader && m_documentLoader->isInFinishedLoadingOfEmptyDocument() ?
             LocalFrameLoaderClient::InitializingIframe::Yes : LocalFrameLoaderClient::InitializingIframe::No);
         break;
 
     case FrameLoadType::Standard:
-        m_frame->checkedHistory()->updateForStandardLoad();
+        history().updateForStandardLoad();
         if (RefPtr view = m_frame->view())
             view->setScrollbarsSuppressed(true);
         m_client->transitionToCommittedForNewPage(m_documentLoader && m_documentLoader->isInFinishedLoadingOfEmptyDocument() ?
@@ -2474,7 +2734,7 @@ void FrameLoader::transitionToCommitted(CachedPage* cachedPage)
         break;
 
     case FrameLoadType::RedirectWithLockedBackForwardList:
-        m_frame->checkedHistory()->updateForRedirectWithLockedBackForwardList();
+        history().updateForRedirectWithLockedBackForwardList();
         m_client->transitionToCommittedForNewPage(m_documentLoader && m_documentLoader->isInFinishedLoadingOfEmptyDocument() ?
             LocalFrameLoaderClient::InitializingIframe::Yes : LocalFrameLoaderClient::InitializingIframe::No);
         break;
@@ -2515,7 +2775,7 @@ void FrameLoader::clientRedirected(const URL& url, double seconds, WallTime fire
     // load as part of the original navigation. If we don't have a document loader, we have
     // no "original" load on which to base a redirect, so we treat the redirect as a normal load.
     // Loads triggered by JavaScript form submissions never count as quick redirects.
-    m_quickRedirectComing = (lockBackForwardList == LockBackForwardList::Yes || m_frame->checkedHistory()->currentItemShouldBeReplaced()) && m_documentLoader && !m_isExecutingJavaScriptFormAction;
+    m_quickRedirectComing = (lockBackForwardList == LockBackForwardList::Yes || history().currentItemShouldBeReplaced()) && m_documentLoader && !m_isExecutingJavaScriptFormAction;
 }
 
 bool FrameLoader::shouldReload(const URL& currentURL, const URL& destinationURL)
@@ -2535,7 +2795,7 @@ void FrameLoader::closeOldDataSources()
     // use a recursive algorithm here.
     for (RefPtr child = m_frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         if (RefPtr localChild = dynamicDowncast<LocalFrame>(child))
-            localChild->checkedLoader()->closeOldDataSources();
+            localChild->loader().closeOldDataSources();
     }
     
     if (m_documentLoader)
@@ -2550,7 +2810,7 @@ void FrameLoader::willRestoreFromCachedPage()
     ASSERT(m_frame->page());
     ASSERT(m_frame->isMainFrame());
 
-    protectedFrame()->checkedNavigationScheduler()->cancel();
+    protect(m_frame)->navigationScheduler().cancel();
 
     // We still have to close the previous part page.
     closeURL();
@@ -2569,7 +2829,7 @@ void FrameLoader::open(CachedFrameBase& cachedFrame)
 
     started();
     Ref document = *cachedFrame.document();
-    ASSERT(document->domWindow());
+    ASSERT(document->window());
 
     clear(document.ptr(), true, true, cachedFrame.isMainFrame());
 
@@ -2586,10 +2846,10 @@ void FrameLoader::open(CachedFrameBase& cachedFrame)
     // When navigating to a CachedFrame its FrameView should never be null.  If it is we'll crash in creative ways downstream.
     ASSERT(view);
     if (RefPtr localView = dynamicDowncast<LocalFrameView>(view.get()))
-        localView->setWasScrolledByUser(false);
+        localView->setLastUserScrollType(std::nullopt);
 
     Ref frame = m_frame.get();
-    std::optional<IntRect> previousViewFrameRect = frame->view() ?  frame->view()->frameRect() : std::optional<IntRect>(std::nullopt);
+    std::optional<IntRect> previousViewFrameRect = frame->view() ?  protect(frame->view())->frameRect() : std::optional<IntRect>(std::nullopt);
     if (RefPtr localView = dynamicDowncast<LocalFrameView>(view.get()))
         frame->setView(localView.releaseNonNull());
 
@@ -2606,21 +2866,21 @@ void FrameLoader::open(CachedFrameBase& cachedFrame)
     
     frame->setDocument(document.copyRef());
 
-    document->protectedWindow()->resumeFromBackForwardCache();
+    protect(document->window())->resumeFromBackForwardCache();
 
     updateFirstPartyForCookies();
 
     cachedFrame.restore();
 }
 
-bool FrameLoader::isReplacing() const
+bool FrameLoader::isMultipartReplacing() const
 {
-    return m_loadType == FrameLoadType::Replace;
+    return m_loadType == FrameLoadType::MultipartReplace;
 }
 
-void FrameLoader::setReplacing()
+void FrameLoader::setMultipartReplacing()
 {
-    m_loadType = FrameLoadType::Replace;
+    m_loadType = FrameLoadType::MultipartReplace;
 }
 
 bool FrameLoader::subframeIsLoading() const
@@ -2633,7 +2893,7 @@ bool FrameLoader::subframeIsLoading() const
                 return true;
             continue;
         }
-        CheckedRef childLoader = localChild->loader();
+        Ref childLoader = localChild->loader();
         RefPtr documentLoader = childLoader->documentLoader();
         if (documentLoader && documentLoader->isLoadingInAPISense())
             return true;
@@ -2654,14 +2914,14 @@ void FrameLoader::willChangeTitle(DocumentLoader* loader)
     m_client->willChangeTitle(loader);
 }
 
-FrameLoadType FrameLoader::loadType() const
+FrameLoadType NODELETE FrameLoader::loadType() const
 {
     return m_loadType;
 }
     
 CachePolicy FrameLoader::subresourceCachePolicy(const URL& url) const
 {
-    if (RefPtr page = m_frame->page()) {
+    if (auto* page = m_frame->page()) {
         if (page->isResourceCachingDisabledByWebInspector())
             return CachePolicy::Reload;
     }
@@ -2672,7 +2932,7 @@ CachePolicy FrameLoader::subresourceCachePolicy(const URL& url) const
     if (m_loadType == FrameLoadType::ReloadFromOrigin)
         return CachePolicy::Reload;
 
-    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent())) {
+    if (auto* parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent())) {
         CachePolicy parentCachePolicy = parentFrame->loader().subresourceCachePolicy(url);
         if (parentCachePolicy != CachePolicy::Verify)
             return parentCachePolicy;
@@ -2689,7 +2949,8 @@ CachePolicy FrameLoader::subresourceCachePolicy(const URL& url) const
         ASSERT_NOT_REACHED(); // Already handled above.
         return CachePolicy::Reload;
     case FrameLoadType::RedirectWithLockedBackForwardList:
-    case FrameLoadType::Replace:
+    case FrameLoadType::MultipartReplace:
+    case FrameLoadType::NavigationAPIReplace:
     case FrameLoadType::Same:
     case FrameLoadType::Standard:
         return CachePolicy::Verify;
@@ -2714,7 +2975,7 @@ void FrameLoader::dispatchDidFailProvisionalLoad(DocumentLoader& provisionalDocu
 #endif
 
     auto willContinueLoading = willInternallyHandleFailure == WillInternallyHandleFailure::Yes ? WillContinueLoading::Yes : WillContinueLoading::No;
-    if (m_frame->history().provisionalItem())
+    if (history().provisionalItem())
         willContinueLoading = WillContinueLoading::Yes;
 #if ENABLE(CONTENT_FILTERING)
     if (provisionalDocumentLoader.contentFilterWillHandleProvisionalLoadFailure(error)) {
@@ -2731,27 +2992,6 @@ void FrameLoader::dispatchDidFailProvisionalLoad(DocumentLoader& provisionalDocu
 #endif
 
     m_provisionalLoadErrorBeingHandledURL = { };
-}
-
-void FrameLoader::handleLoadFailureRecovery(DocumentLoader& documentLoader, const ResourceError& error, bool isHTTPSFirstApplicable)
-{
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "handleLoadFailureRecovery: errorRecoveryMethod: %hhu, isHTTPSFirstApplicable: %d, isHTTPFallbackInProgress: %d", enumToUnderlyingType(error.errorRecoveryMethod()), isHTTPSFirstApplicable, isHTTPFallbackInProgress());
-    if (error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::NoRecovery || !isHTTPSFirstApplicable || isHTTPFallbackInProgress()) {
-        if (isHTTPFallbackInProgress())
-            setHTTPFallbackInProgress(false);
-        return;
-    }
-
-    ASSERT(documentLoader.request().url().protocolIs("https"_s));
-    ASSERT(error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::HTTPFallback && isHTTPSFirstApplicable);
-
-    auto request = documentLoader.request();
-    auto url = request.url();
-    url.setProtocol("http"_s);
-    if (url.port() && WTF::isDefaultPortForProtocol(url.port().value(), "https"_s))
-        url.setPort(WTF::defaultPortForProtocol(url.protocol()));
-    setHTTPFallbackInProgress(true);
-    protectedFrame()->checkedNavigationScheduler()->scheduleRedirect(*m_frame->protectedDocument(), 0, url, IsMetaRefresh::No);
 }
 
 void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
@@ -2787,31 +3027,42 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         if (RefPtr page = m_frame->page()) {
             if (isBackForwardLoadType(loadType())) {
                 // Reset the back forward list to the last committed history item at the top level.
-                item = page->mainFrame().history().currentItem();
+                if (RefPtr localMainFrame = page->localMainFrame())
+                    item = localMainFrame->loader().history().currentItem();
             }
 
-            isHTTPSByDefaultEnabled = page->protectedSettings()->httpsByDefault();
+            isHTTPSByDefaultEnabled = page->settings().httpsByDefault();
         }
 
-        bool isHTTPSFirstApplicable = (isHTTPSByDefaultEnabled || provisionalDocumentLoader->httpsByDefaultMode() == HTTPSByDefaultMode::UpgradeWithHTTPFallback)
-            && provisionalDocumentLoader->httpsByDefaultMode() != HTTPSByDefaultMode::UpgradeAndFailClosed
-            && !isHTTPFallbackInProgress()
-            && (!provisionalDocumentLoader->mainResourceLoader() || !provisionalDocumentLoader->mainResourceLoader()->redirectCount());
+        bool isHTTPSFirstApplicable = (isHTTPSByDefaultEnabled || provisionalDocumentLoader->httpsByDefaultMode() == HTTPSByDefaultMode::UpgradeWithAutomaticFallback)
+            && provisionalDocumentLoader->httpsByDefaultMode() != HTTPSByDefaultMode::UpgradeWithUserMediatedFallback
+            && !isHTTPFallbackInProgressOrUpgradeDisabled()
+            && provisionalDocumentLoader->request().wasSchemeOptimisticallyUpgraded();
 
         // Only reset if we aren't already going to a new provisional item.
-        bool shouldReset = !m_frame->history().provisionalItem();
+        bool shouldReset = !history().provisionalItem();
         if (!provisionalDocumentLoader->isLoadingInAPISense() || provisionalDocumentLoader->isStopping()) {
-            FRAMELOADER_RELEASE_LOG(ResourceLoading, "checkLoadCompleteForThisFrame: Failed provisional load (isTimeout = %d, isCancellation = %d, errorCode = %d, httpsFirstApplicable = %d)", error.isTimeout(), error.isCancellation(), error.errorCode(), isHTTPSFirstApplicable);
+            FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderCheckLoadCompleteForThisFrameFailedProvisionalLoad, error.isTimeout(), error.isCancellation(), error.errorCode(), isHTTPSFirstApplicable);
+
+            // Provisional load failed before didBeginDocument() could clear the async-wait state;
+            // clear it here so this frame stops blocking its parent's completion.
+            clearAsyncBackForwardNavigationState();
 
             if (loadWillContinueInAnotherProcess == LoadWillContinueInAnotherProcess::No) {
-                auto willInternallyHandleFailure = (error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::NoRecovery || (error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::HTTPFallback && (!isHTTPSFirstApplicable || isHTTPFallbackInProgress()))) ? WillInternallyHandleFailure::No : WillInternallyHandleFailure::Yes;
+                auto willInternallyHandleFailure = (error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::NoRecovery || (error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::HTTPFallback && (!isHTTPSFirstApplicable || isHTTPFallbackInProgressOrUpgradeDisabled()))) ? WillInternallyHandleFailure::No : WillInternallyHandleFailure::Yes;
+
+                if (error.isCancellation() && m_needsCancellationForContentRuleListCrossOriginRedirect) {
+                    willInternallyHandleFailure = WillInternallyHandleFailure::Yes;
+                    m_needsCancellationForContentRuleListCrossOriginRedirect = false;
+                }
+
                 dispatchDidFailProvisionalLoad(*provisionalDocumentLoader, error, willInternallyHandleFailure);
             }
 
             ASSERT(!provisionalDocumentLoader->isLoading());
 
             // If we're in the middle of loading multipart data, we need to restore the document loader.
-            if (isReplacing() && !m_documentLoader)
+            if (isMultipartReplacing() && !m_documentLoader)
                 setDocumentLoader(provisionalDocumentLoader.copyRef());
 
             // Finish resetting the load state, but only if another load hasn't been started by the
@@ -2826,17 +3077,17 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         }
         if (shouldReset && item) {
             if (RefPtr page = m_frame->page())
-                page->backForward().setCurrentItem(*item);
+                protect(page->backForward())->setCurrentItem(*item);
         }
 
-        handleLoadFailureRecovery(*provisionalDocumentLoader, error, isHTTPSFirstApplicable);
         return;
     }
         
     case FrameState::CommittedPage: {
-        if (!m_documentLoader)
+        RefPtr documentLoader = m_documentLoader;
+        if (!documentLoader)
             return;
-        if (m_documentLoader->isLoadingInAPISense() && !m_documentLoader->isStopping() && !m_checkingLoadCompleteForDetachment)
+        if (documentLoader->isLoadingInAPISense() && !documentLoader->isStopping() && !m_checkingLoadCompleteForDetachment)
             return;
 
         setState(FrameState::Complete);
@@ -2850,13 +3101,13 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         // If the user had a scroll point, scroll to it, overriding the anchor point if any.
         if (m_frame->page()) {
             if (isBackForwardLoadType(m_loadType) || isReload(m_loadType))
-                m_frame->checkedHistory()->restoreScrollPositionAndViewState();
+                history().restoreScrollPositionAndViewState();
         }
 
         if (m_stateMachine.creatingInitialEmptyDocument() || !m_stateMachine.committedFirstRealDocumentLoad())
             return;
 
-        m_progressTracker->progressCompleted();
+        m_progressTracker->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Success);
         if (RefPtr page = m_frame->page()) {
             if (m_frame->isMainFrame()) {
                 tracePoint(MainResourceLoadDidEnd, PAGE_ID);
@@ -2864,45 +3115,41 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
             }
         }
 
-        if (RefPtr domWindow = m_frame->document() ? m_frame->document()->domWindow() : nullptr)
-            domWindow->protectedPerformance()->scheduleNavigationObservationTaskIfNeeded();
-
-        Ref documentLoader = *m_documentLoader;
         auto& error = documentLoader->mainDocumentError();
 
-        auto loadingEvent = AXObjectCache::AXLoadingFailed;
+        auto loadingEvent = AXLoadingEvent::Failed;
         if (!error.isNull()) {
             FRAMELOADER_RELEASE_LOG(ResourceLoading, "checkLoadCompleteForThisFrame: Finished frame load with error (isTimeout = %d, isCancellation = %d, errorCode = %d)", error.isTimeout(), error.isCancellation(), error.errorCode());
             m_client->dispatchDidFailLoad(error);
-            loadingEvent = AXObjectCache::AXLoadingFailed;
+            loadingEvent = AXLoadingEvent::Failed;
             m_errorOccurredInLoading = true;
         } else {
-            FRAMELOADER_RELEASE_LOG(ResourceLoading, "checkLoadCompleteForThisFrame: Finished frame load");
+            FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderCheckLoadCompleteForThisFrame);
 #if ENABLE(DATA_DETECTION)
             RefPtr document = m_frame->document();
-            auto types = OptionSet<DataDetectorType>::fromRaw(enumToUnderlyingType(m_frame->settings().dataDetectorTypes()));
+            auto types = OptionSet<DataDetectorType>::fromRaw(std::to_underlying(m_frame->settings().dataDetectorTypes()));
 
             if (document && types) {
-                DataDetection::detectContentInFrame(protectedFrame().ptr(), types, m_client->dataDetectionReferenceDate(), [this, weakFrame = WeakPtr { m_frame.get() }, document](NSArray *results) {
-                    RefPtr strongFrame { weakFrame.get() };
-                    if (!strongFrame || &strongFrame->loader() != this)
+                DataDetection::detectContentInFrame(protect(m_frame).ptr(), types, m_client->dataDetectionReferenceDate(), [weakThis = WeakPtr { *this }](NSArray *results) {
+                    RefPtr protectedThis = weakThis.get();
+                    if (!protectedThis)
                         return;
 
-                    auto documentLevelResults = retainPtr(results);
-                    strongFrame->dataDetectionResults().setDocumentLevelResults(documentLevelResults.get());
-                    if (strongFrame->isMainFrame())
-                        m_client->dispatchDidFinishDataDetection(documentLevelResults.get());
+                    Ref frame = protectedThis->frame();
+                    frame->dataDetectionResults().setDocumentLevelResults(results);
+                    if (frame->isMainFrame())
+                        protectedThis->m_client->dispatchDidFinishDataDetection(results);
                 });
             }
 #endif
             m_client->dispatchDidFinishLoad();
-            loadingEvent = AXObjectCache::AXLoadingFinished;
+            loadingEvent = AXLoadingEvent::Finished;
         }
 
         // Notify accessibility.
         if (RefPtr document = m_frame->document()) {
             if (CheckedPtr cache = document->existingAXObjectCache())
-                cache->frameLoadingEventNotification(protectedFrame().ptr(), loadingEvent);
+                cache->frameLoadingEventNotification(protect(m_frame).ptr(), loadingEvent);
         }
 
         // The above calls to dispatchDidFinishLoad() might have detached the Frame
@@ -2910,11 +3157,11 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         // Don't assume 'page' is still available to use.
         if (m_frame->isMainFrame() && m_frame->page()) {
             ASSERT(&m_frame->page()->mainFrame() == m_frame.ptr());
-            protectedFrame()->protectedPage()->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::pageLoadedKey(), emptyString(), error.isNull() ? DiagnosticLoggingResultPass : DiagnosticLoggingResultFail, ShouldSample::Yes);
+            protect(m_frame->page())->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::pageLoadedKey(), emptyString(), error.isNull() ? DiagnosticLoggingResultPass : DiagnosticLoggingResultFail, ShouldSample::Yes);
         }
 
-        m_shouldSkipHTTPSUpgradeForSameSiteNavigation = m_isHTTPFallbackInProgress;
-        setHTTPFallbackInProgress(false);
+        m_shouldSkipHTTPSUpgradeForSameSiteNavigation = isHTTPFallbackInProgressOrUpgradeDisabled();
+        resetHTTPFallbackInProgress();
 
         return;
     }
@@ -2951,7 +3198,7 @@ void FrameLoader::setOriginalURLForDownloadRequest(ResourceRequest& request)
         request.setFirstPartyForCookies(URL());
     else
         request.setFirstPartyForCookies(originalURL);
-    addSameSiteInfoToRequestIfNeeded(request, initiator.get(), protectedFrame()->protectedPage().get());
+    addSameSiteInfoToRequestIfNeeded(request, initiator.get());
 }
 
 void FrameLoader::didReachLayoutMilestone(OptionSet<LayoutMilestone> milestones)
@@ -2986,12 +3233,21 @@ void FrameLoader::restoreScrollPositionAndViewStateSoon()
         document->scheduleRenderingUpdate(RenderingUpdateStep::RestoreScrollPositionAndViewState);
 }
 
+static bool scrollingSuppressedByNavigationAPI(Document* document)
+{
+    if (!document || !document->settings().navigationAPIEnabled())
+        return false;
+
+    RefPtr window = document->window();
+    return window && window->navigation().suppressNormalScrollRestoration();
+}
+
 void FrameLoader::restoreScrollPositionAndViewStateNowIfNeeded()
 {
     if (!m_shouldRestoreScrollPositionAndViewState)
         return;
     m_shouldRestoreScrollPositionAndViewState = false;
-    m_frame->checkedHistory()->restoreScrollPositionAndViewState();
+    history().restoreScrollPositionAndViewState();
 }
 
 void FrameLoader::didReachVisuallyNonEmptyState()
@@ -3006,7 +3262,7 @@ void FrameLoader::frameLoadCompleted()
 
     m_client->frameLoadCompleted();
 
-    m_frame->checkedHistory()->updateForFrameLoadCompleted();
+    history().updateForFrameLoadCompleted();
 
     // After a canceled provisional load, firstLayoutDone is false.
     // Reset it to true if we're displaying a page.
@@ -3027,12 +3283,12 @@ void FrameLoader::detachChildren()
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
     std::unique_ptr<NavigationDisabler> navigationDisabler;
     if (m_frame->isMainFrame())
-        navigationDisabler = makeUnique<NavigationDisabler>(protectedFrame().ptr());
+        navigationDisabler = makeUnique<NavigationDisabler>(protect(m_frame).ptr());
 
     // Any subframe inserted by unload event handlers executed in the loop below will not get unloaded
     // because we create a copy of the subframes list before looping. Therefore, it would be unsafe to
     // allow loading of subframes at this point.
-    SubframeLoadingDisabler subframeLoadingDisabler(m_frame->protectedDocument().get());
+    SubframeLoadingDisabler subframeLoadingDisabler(protect(m_frame->document()).get());
 
     Vector<Ref<LocalFrame>, 16> childrenToDetach;
     childrenToDetach.reserveInitialCapacity(m_frame->tree().childCount());
@@ -3041,7 +3297,7 @@ void FrameLoader::detachChildren()
             childrenToDetach.append(localChild.releaseNonNull());
     }
     for (auto& child : childrenToDetach)
-        child->checkedLoader()->detachFromParent();
+        child->loader().detachFromParent();
 }
 
 void FrameLoader::closeAndRemoveChild(LocalFrame& child)
@@ -3052,7 +3308,7 @@ void FrameLoader::closeAndRemoveChild(LocalFrame& child)
     child.willDetachPage();
     child.detachFromPage();
 
-    protectedFrame()->tree().removeChild(child);
+    m_frame->tree().removeChild(child);
 }
 
 // Called every time a resource is completely loaded or an error is received.
@@ -3068,15 +3324,24 @@ void FrameLoader::checkLoadComplete(LoadWillContinueInAnotherProcess loadWillCon
     // FIXME: Always traversing the entire frame tree is a bit inefficient, but 
     // is currently needed in order to null out the previous history item for all frames.
     Vector<Ref<LocalFrame>, 16> frames;
-    for (RefPtr frame = &m_frame->mainFrame(); frame; frame = frame->tree().traverseNext()) {
+    for (RefPtr frame = m_frame->mainFrame(); frame; frame = frame->tree().traverseNext()) {
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
             frames.append(localFrame.releaseNonNull());
     }
 
+    // Provisional frames that are not in the frame tree need to be included to report provisional load failures.
+    if (m_frame->settings().siteIsolationEnabled()) {
+        bool containsThisFrame = std::ranges::any_of(frames, [thisFrame = Ref { m_frame.get() }] (auto& frame) {
+            return frame.ptr() == thisFrame.ptr();
+        });
+        if (!containsThisFrame)
+            frames.append(m_frame);
+    }
+
     // To process children before their parents, iterate the vector backwards.
-    for (auto frame = frames.rbegin(); frame != frames.rend(); ++frame) {
-        if ((*frame)->page())
-            (*frame)->checkedLoader()->checkLoadCompleteForThisFrame(loadWillContinueInAnotherProcess);
+    for (Ref frame : frames | std::views::reverse) {
+        if (frame->page())
+            frame->loader().checkLoadCompleteForThisFrame(loadWillContinueInAnotherProcess);
     }
 }
 
@@ -3084,12 +3349,12 @@ int FrameLoader::numPendingOrLoadingRequests(bool recurse) const
 {
     Ref frame = m_frame.get();
     if (!recurse)
-        return frame->document()->cachedResourceLoader().requestCount();
+        return protect(frame->document())->cachedResourceLoader().requestCount();
 
     int count = 0;
     for (RefPtr<Frame> descendantFrame = frame.ptr(); descendantFrame; descendantFrame = descendantFrame->tree().traverseNext(frame.ptr())) {
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(descendantFrame))
-            count += localFrame->document()->cachedResourceLoader().requestCount();
+            count += protect(localFrame->document())->cachedResourceLoader().requestCount();
     }
     return count;
 }
@@ -3110,11 +3375,26 @@ String FrameLoader::userAgent(const URL& url) const
             userAgent = mainFrame->customUserAgent();
     }
 
-    InspectorInstrumentation::applyUserAgentOverride(protectedFrame(), userAgent);
+    InspectorInstrumentation::applyUserAgentOverride(protect(m_frame), userAgent);
 
     if (userAgent.isEmpty() || m_client->hasCustomUserAgent())
         userAgent = m_client->userAgent(url);
-    
+
+    if (m_frame->settings().needsSiteSpecificQuirks()) {
+        if (RefPtr document = m_frame->document()) {
+            auto topFullURL = document->topURL();
+            auto topFullURLPath = topFullURL.path();
+            if (RegistrableDomain(topFullURL).string() == "easyjet.com"_s && topFullURLPath.contains("routemap"_s)) {
+                auto urlDomainString = RegistrableDomain(url).string();
+                if (urlDomainString == "bing.com"_s) {
+                    // FIXME: Move this to a proper UA override singular mechanism
+                    // https://bugs.webkit.org/show_bug.cgi?id=274374
+                    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0"_s;
+                }
+            }
+        }
+    }
+
     verifyUserAgent(userAgent);
 
     return userAgent;
@@ -3122,7 +3402,7 @@ String FrameLoader::userAgent(const URL& url) const
 
 String FrameLoader::navigatorPlatform() const
 {
-    auto customNavigatorPlatform = m_frame->mainFrame().customNavigatorPlatform();
+    auto customNavigatorPlatform = protect(m_frame->mainFrame())->customNavigatorPlatform();
     if (!customNavigatorPlatform.isEmpty())
         return customNavigatorPlatform;
     return String();
@@ -3132,7 +3412,7 @@ void FrameLoader::dispatchOnloadEvents()
 {
     m_client->dispatchDidDispatchOnloadEvents();
 
-    if (RefPtr documentLoader = this->documentLoader())
+    if (auto* documentLoader = this->documentLoader())
         documentLoader->dispatchOnloadEvents();
 }
 
@@ -3145,6 +3425,7 @@ void FrameLoader::frameDetached()
         m_checkTimer.stop();
         checkCompletenessNow();
     }
+    m_crossOriginParentSyntheticSameDocLoadEventTimer.stop();
 
     if (frame->document()->backForwardCacheState() != Document::InBackForwardCache)
         stopAllLoadersAndCheckCompleteness();
@@ -3152,7 +3433,7 @@ void FrameLoader::frameDetached()
     detachFromParent();
 
     if (frame->document()->backForwardCacheState() != Document::InBackForwardCache)
-        frame->protectedDocument()->stopActiveDOMObjects();
+        protect(frame->document())->stopActiveDOMObjects();
 }
 
 void FrameLoader::detachFromParent()
@@ -3161,7 +3442,7 @@ void FrameLoader::detachFromParent()
     Ref frame = m_frame.get();
 
     closeURL();
-    frame->checkedHistory()->saveScrollPositionAndViewStateToItem(frame->history().protectedCurrentItem().get());
+    history().saveScrollPositionAndViewStateToItem(protect(history().currentItem()).get());
     detachChildren();
     if (frame->document()->backForwardCacheState() != Document::InBackForwardCache) {
         // stopAllLoaders() needs to be called after detachChildren() if the document is not in the back/forward cache,
@@ -3177,11 +3458,13 @@ void FrameLoader::detachFromParent()
     m_progressTracker = nullptr;
 
     if (RefPtr parent = dynamicDowncast<LocalFrame>(frame->tree().parent())) {
-        CheckedRef parentLoader = parent->loader();
+        Ref parentLoader = parent->loader();
         parentLoader->closeAndRemoveChild(frame);
         parentLoader->scheduleCheckCompleted();
         parentLoader->scheduleCheckLoadComplete();
     } else {
+        if (RefPtr parent = frame->tree().parent())
+            parent->tree().removeChild(frame);
         frame->setView(nullptr);
         frame->willDetachPage();
         frame->detachFromPage();
@@ -3230,7 +3513,7 @@ ResourceRequestCachePolicy FrameLoader::defaultRequestCachingPolicy(const Resour
 
 void FrameLoader::updateRequestAndAddExtraFields(ResourceRequest& request, IsMainResource mainResource, FrameLoadType loadType, ShouldUpdateAppInitiatedValue shouldUpdate, IsServiceWorkerNavigationLoad isServiceWorkerNavigationLoad, WillOpenInNewWindow willOpenInNewWindow, Document* initiator)
 {
-    updateRequestAndAddExtraFields(m_frame.get(), request, mainResource, loadType, shouldUpdate, isServiceWorkerNavigationLoad, willOpenInNewWindow, initiator);
+    updateRequestAndAddExtraFields(protect(m_frame), request, mainResource, loadType, shouldUpdate, isServiceWorkerNavigationLoad, willOpenInNewWindow, initiator);
 }
 
 void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceRequest& request, IsMainResource mainResource, FrameLoadType loadType, ShouldUpdateAppInitiatedValue shouldUpdate, IsServiceWorkerNavigationLoad isServiceWorkerNavigationLoad, WillOpenInNewWindow willOpenInNewWindow, Document* initiator)
@@ -3256,20 +3539,21 @@ void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceReq
 
     RefPtr page = targetFrame.page();
     if (request.isSameSiteUnspecified()) {
-        if (!initiator && document) {
-            initiator = document.get();
+        RefPtr updatedInitiator = initiator;
+        if (!updatedInitiator && document) {
+            updatedInitiator = document.get();
             if (isMainResource) {
                 RefPtr ownerFrame = dynamicDowncast<LocalFrame>(localFrame->tree().parent());
                 if (!ownerFrame && m_stateMachine.isDisplayingInitialEmptyDocument()) {
                     if (RefPtr localOpener = dynamicDowncast<LocalFrame>(localFrame->opener()))
-                        ownerFrame = WTFMove(localOpener);
+                        ownerFrame = WTF::move(localOpener);
                 }
                 if (ownerFrame)
-                    initiator = ownerFrame->document();
+                    updatedInitiator = ownerFrame->document();
                 ASSERT(ownerFrame || localFrame->isMainFrame() || localFrame->settings().siteIsolationEnabled());
             }
         }
-        addSameSiteInfoToRequestIfNeeded(request, initiator, page.get());
+        addSameSiteInfoToRequestIfNeeded(request, updatedInitiator.get());
     }
 
     // In case of service worker navigation load, we inherit isTopSite from the FetchEvent request directly.
@@ -3305,7 +3589,7 @@ void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceReq
     applyUserAgentIfNeeded(request);
 
     if (isMainResource)
-        request.setHTTPHeaderField(HTTPHeaderName::Accept, CachedResourceRequest::acceptHeaderValueFromType(CachedResource::Type::MainResource));
+        request.setHTTPHeaderField(HTTPHeaderName::Accept, CachedResourceRequest::acceptHeaderValueFromType(CachedResource::Type::MainResource, request.url().protocolIsSecure()));
 
     if (document && localFrame->settings().privateTokenUsageByThirdPartyEnabled() && !localFrame->loader().client().isRemoteWorkerFrameLoaderClient())
         request.setIsPrivateTokenUsageByThirdPartyAllowed(PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::PrivateToken, *document, PermissionsPolicy::ShouldReportViolation::No));
@@ -3325,7 +3609,7 @@ void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceReq
 
     if (page && isMainResource) {
         auto [filteredURL, didFilter] = page->chrome().client().applyLinkDecorationFilteringWithResult(request.url(), LinkDecorationFilteringTrigger::Navigation);
-        request.setURL(filteredURL, didFilter == DidFilterLinkDecoration::Yes);
+        request.setURL(WTF::move(filteredURL), didFilter == DidFilterLinkDecoration::Yes);
     }
 }
 
@@ -3334,9 +3618,9 @@ void FrameLoader::scheduleRefreshIfNeeded(Document& document, const String& cont
     double delay = 0;
     String urlString;
     if (parseMetaHTTPEquivRefresh(content, delay, urlString)) {
-        auto completedURL = urlString.isEmpty() ? document.url() : document.completeURL(urlString);
+        auto completedURL = urlString.isEmpty() ? document.url() : document.encodingParseURL(urlString);
         if (!completedURL.protocolIsJavaScript())
-            protectedFrame()->checkedNavigationScheduler()->scheduleRedirect(document, delay, completedURL, isMetaRefresh);
+            protect(m_frame)->navigationScheduler().scheduleRedirect(document, delay, WTF::move(completedURL), isMetaRefresh);
         else {
             auto message = makeString("Refused to refresh "_s, document.url().stringCenterEllipsizedToLength(), " to a javascript: URL"_s);
             document.addConsoleMessage(MessageSource::Security, MessageLevel::Error, message);
@@ -3377,7 +3661,7 @@ void FrameLoader::addHTTPOriginIfNeeded(ResourceRequest& request, const String& 
 // Implements the "'Same-site' and 'cross-site' Requests" algorithm from <https://tools.ietf.org/html/draft-ietf-httpbis-cookie-same-site-00#section-2.1>.
 // The algorithm is ammended to treat URLs that inherit their security origin from their owner (e.g. about:blank)
 // as same-site. This matches the behavior of Chrome and Firefox.
-void FrameLoader::addSameSiteInfoToRequestIfNeeded(ResourceRequest& request, const Document* initiator, const Page* page)
+void FrameLoader::addSameSiteInfoToRequestIfNeeded(ResourceRequest& request, const Document* initiator)
 {
     if (!request.isSameSiteUnspecified())
         return;
@@ -3389,28 +3673,11 @@ void FrameLoader::addSameSiteInfoToRequestIfNeeded(ResourceRequest& request, con
         request.setIsSameSite(true);
         return;
     }
-    if (page && page->shouldAssumeSameSiteForRequestTo(request.url())) {
-        request.setIsSameSite(true);
-        return;
-    }
-#if PLATFORM(COCOA)
-    bool isFullBrowser { true };
-    if (auto frame = initiator->frame())
-        isFullBrowser = frame->loader().client().isParentProcessAFullWebBrowser();
-    if (initiator->url().protocolIsFile() && !isFullBrowser && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::LaxCookieSameSiteAttribute)) {
-        request.setIsSameSite(true);
-        return;
-    }
-    if (initiator->quirks().needsLaxSameSiteCookieQuirk(request.url())) {
-        request.setIsSameSite(true);
-        return;
-    }
-#endif
 
     request.setIsSameSite(initiator->isSameSiteForCookies(request.url()));
 }
 
-void FrameLoader::loadPostRequest(FrameLoadRequest&& request, const String& referrer, FrameLoadType loadType, Event* event, RefPtr<FormState>&& formState, CompletionHandler<void()>&& completionHandler)
+void FrameLoader::loadPostRequest(FrameLoadRequest&& request, const String& referrer, FrameLoadType loadType, Event* event, RefPtr<const FormSubmission>&& formSubmission, CompletionHandler<void()>&& completionHandler)
 {
     FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadPostRequest: frame load started");
 
@@ -3427,7 +3694,7 @@ void FrameLoader::loadPostRequest(FrameLoadRequest&& request, const String& refe
     const String& contentType = inRequest.httpContentType();
     String origin = inRequest.httpOrigin();
 
-    ResourceRequest workingResourceRequest(url);    
+    ResourceRequest workingResourceRequest(URL { url });
 
     if (!referrer.isEmpty())
         workingResourceRequest.setHTTPReferrer(referrer);
@@ -3436,58 +3703,61 @@ void FrameLoader::loadPostRequest(FrameLoadRequest&& request, const String& refe
     workingResourceRequest.setHTTPBody(inRequest.httpBody());
     workingResourceRequest.setHTTPContentType(contentType);
 
-    RefPtr targetFrame = formState || frameName.isEmpty() ? nullptr : dynamicDowncast<LocalFrame>(findFrameForNavigation(frameName));
+    RefPtr targetFrame = formSubmission || frameName.isEmpty() ? nullptr : dynamicDowncast<LocalFrame>(findFrameForNavigation(frameName));
 
     auto willOpenInNewWindow = !frameName.isEmpty() && !targetFrame ? WillOpenInNewWindow::Yes : WillOpenInNewWindow::No;
-    updateRequestAndAddExtraFields(workingResourceRequest, IsMainResource::Yes, loadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, willOpenInNewWindow, request.protectedRequester().ptr());
+    updateRequestAndAddExtraFields(workingResourceRequest, IsMainResource::Yes, loadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, willOpenInNewWindow, protect(request.requester()).ptr());
 
     if (RefPtr document = frame->document())
-        document->checkedContentSecurityPolicy()->upgradeInsecureRequestIfNeeded(workingResourceRequest, ContentSecurityPolicy::InsecureRequestType::Load);
+        protect(document->contentSecurityPolicy())->upgradeInsecureRequestIfNeeded(workingResourceRequest, ContentSecurityPolicy::InsecureRequestType::Load);
 
     NavigationAction action { request.requester(), workingResourceRequest, request.initiatedByMainFrame(), request.isRequestFromClientOrUserInput(), loadType, true, event, request.shouldOpenExternalURLsPolicy(), { } };
     action.setLockHistory(lockHistory);
     action.setLockBackForwardList(request.lockBackForwardList());
     action.setShouldReplaceDocumentIfJavaScriptURL(request.shouldReplaceDocumentIfJavaScriptURL());
     action.setNewFrameOpenerPolicy(request.newFrameOpenerPolicy());
+    action.setNavigationAPIType(determineNavigationType(loadType, request.navigationHistoryBehavior()));
 
     if (!frameName.isEmpty()) {
         // The search for a target frame is done earlier in the case of form submission.
         if (targetFrame) {
-            targetFrame->checkedLoader()->loadWithNavigationAction(workingResourceRequest, WTFMove(action), loadType, WTFMove(formState), allowNavigationToInvalidURL, request.shouldTreatAsContinuingLoad(), WTFMove(completionHandler));
+            targetFrame->loader().loadWithNavigationAction(WTF::move(workingResourceRequest), WTF::move(action), loadType, WTF::move(formSubmission), allowNavigationToInvalidURL, request.shouldTreatAsContinuingLoad(), ShouldRestoreFromBackForwardCache::No, WTF::move(completionHandler));
             return;
         }
 
         // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
-        if (request.requester().shouldForceNoOpenerBasedOnCOOP()) {
+        if (protect(request.requester())->shouldForceNoOpenerBasedOnCOOP()) {
             frameName = blankTargetFrameName();
             openerPolicy = NewFrameOpenerPolicy::Suppress;
         }
 
-        if (frame->protectedDocument()->settingsValues().blobRegistryTopOriginPartitioningEnabled && request.resourceRequest().url().protocolIsBlob() && !frame->document()->protectedSecurityOrigin()->isSameOriginAs(frame->document()->protectedTopOrigin())) {
+        RefPtr document = frame->document();
+        if (request.resourceRequest().url().protocolIsBlob() && !protect(document->securityOrigin())->isSameOriginAs(protect(document->topOrigin()))) {
             frameName = blankTargetFrameName();
             openerPolicy = NewFrameOpenerPolicy::Suppress;
         }
 
-        policyChecker().checkNewWindowPolicy(WTFMove(action), WTFMove(workingResourceRequest), WTFMove(formState), frameName, [this, frame, allowNavigationToInvalidURL, openerPolicy, completionHandler = WTFMove(completionHandler)] (const ResourceRequest& request, WeakPtr<FormState>&& weakFormState, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) mutable {
-            continueLoadAfterNewWindowPolicy(request, RefPtr { weakFormState.get() }.get(), frameName, action, shouldContinue, allowNavigationToInvalidURL, openerPolicy);
+        policyChecker().checkNewWindowPolicy(WTF::move(action), WTF::move(workingResourceRequest), WTF::move(formSubmission), frameName, [this, protectedThis = Ref { *this }, allowNavigationToInvalidURL, openerPolicy, completionHandler = WTF::move(completionHandler)] (ResourceRequest&& request, WeakPtr<const FormSubmission>&& weakFormSubmission, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue) mutable {
+            continueLoadAfterNewWindowPolicy(WTF::move(request), RefPtr { weakFormSubmission.get() }, frameName, action, shouldContinue, allowNavigationToInvalidURL, openerPolicy);
             completionHandler();
         });
         return;
     }
 
-    if (request.requesterSecurityOrigin().isSameOriginDomain(frame->document()->securityOrigin())) {
-        if (!dispatchNavigateEvent(url, loadType, action, request.navigationHistoryBehavior(), false, formState.get()))
+    if (protect(request.requesterSecurityOrigin())->isSameOriginDomain(protect(protect(frame->document())->securityOrigin()).get())) {
+        RefPtr formState = formSubmission ? protect(formSubmission->state()): nullptr;
+        if (!dispatchNavigateEvent(loadType, request, false, formState.get()))
             return completionHandler();
     }
 
     // must grab this now, since this load may stop the previous load and clear this flag
     bool isRedirect = m_quickRedirectComing;
-    loadWithNavigationAction(workingResourceRequest, WTFMove(action), loadType, WTFMove(formState), allowNavigationToInvalidURL, request.shouldTreatAsContinuingLoad(), [this, isRedirect, frame, completionHandler = WTFMove(completionHandler)] () mutable {
+    loadWithNavigationAction(WTF::move(workingResourceRequest), WTF::move(action), loadType, WTF::move(formSubmission), allowNavigationToInvalidURL, request.shouldTreatAsContinuingLoad(), ShouldRestoreFromBackForwardCache::No, [this, protectedThis = Ref { *this }, isRedirect, completionHandler = WTF::move(completionHandler)] () mutable {
         if (isRedirect) {
             m_quickRedirectComing = false;
-            if (RefPtr provisionalDocumentLoader = m_provisionalDocumentLoader)
+            if (auto* provisionalDocumentLoader = m_provisionalDocumentLoader.get())
                 provisionalDocumentLoader->setIsClientRedirect(true);
-            else if (RefPtr policyDocumentLoader = m_policyDocumentLoader)
+            else if (auto* policyDocumentLoader = m_policyDocumentLoader.get())
                 policyDocumentLoader->setIsClientRedirect(true);
         }
         completionHandler();
@@ -3498,7 +3768,7 @@ ResourceLoaderIdentifier FrameLoader::loadResourceSynchronously(const ResourceRe
 {
     ASSERT(m_frame->document());
     String referrer = SecurityPolicy::generateReferrerHeader(m_frame->document()->referrerPolicy(), request.url(), outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
-    
+
     ResourceRequest initialRequest = request;
     initialRequest.setTimeoutInterval(10);
     
@@ -3506,52 +3776,51 @@ ResourceLoaderIdentifier FrameLoader::loadResourceSynchronously(const ResourceRe
         initialRequest.setHTTPReferrer(referrer);
     addHTTPOriginIfNeeded(initialRequest, outgoingOrigin());
 
-    if (auto* page = m_frame->page())
+    if (RefPtr page = m_frame->page())
         initialRequest.setFirstPartyForCookies(page->mainFrameURL());
     
     updateRequestAndAddExtraFields(initialRequest, IsMainResource::No);
 
     applyUserAgentIfNeeded(initialRequest);
 
-    ResourceLoaderIdentifier identifier;    
-    ResourceRequest newRequest(initialRequest);
-    requestFromDelegate(newRequest, identifier, error);
+    URL initialRequestURL = initialRequest.url();
+    ResourceRequest newRequest = WTF::move(initialRequest);
+    auto identifier = requestFromDelegate(newRequest, error);
 
+    Ref frame { m_frame.get() };
 #if ENABLE(CONTENT_EXTENSIONS)
     if (error.isNull()) {
-        if (RefPtr page = m_frame->page()) {
-            if (RefPtr documentLoader = m_documentLoader) {
-                auto results = page->protectedUserContentProvider()->processContentRuleListsForLoad(*page, newRequest.url(), ContentExtensions::ResourceType::Fetch, *documentLoader);
-                bool blockedLoad = results.summary.blockedLoad;
-                ContentExtensions::applyResultsToRequest(WTFMove(results), page.get(), newRequest);
-                if (blockedLoad) {
-                    newRequest = { };
-                    error = ResourceError(errorDomainWebKitInternal, 0, initialRequest.url(), emptyString());
-                    response = { };
-                    data = nullptr;
-                }
+        RefPtr userContentProvider = frame->userContentProvider();
+        RefPtr page = frame->page();
+        RefPtr documentLoader = m_documentLoader;
+        if (page && userContentProvider && documentLoader) {
+            auto results = userContentProvider->processContentRuleListsForLoad(*page, newRequest.url(), ContentExtensions::ResourceType::Fetch, *documentLoader);
+            bool shouldBlock = results.shouldBlock();
+            ContentExtensions::applyResultsToRequest(WTF::move(results), page.get(), newRequest);
+            if (shouldBlock) {
+                newRequest = { };
+                error = ResourceError(errorDomainWebKitInternal, 0, WTF::move(initialRequestURL), emptyString());
+                response = { };
+                data = nullptr;
             }
         }
     }
 #endif
 
-    m_frame->protectedDocument()->checkedContentSecurityPolicy()->upgradeInsecureRequestIfNeeded(newRequest, ContentSecurityPolicy::InsecureRequestType::Load);
+    protect(protect(frame->document())->contentSecurityPolicy())->upgradeInsecureRequestIfNeeded(newRequest, ContentSecurityPolicy::InsecureRequestType::Load);
 
     if (error.isNull()) {
         ASSERT(!newRequest.isNull());
 
         RefPtr documentLoader = this->documentLoader();
-        if (!documentLoader->applicationCacheHost().maybeLoadSynchronously(newRequest, error, response, data)) {
-            Vector<uint8_t> buffer;
-            platformStrategies()->loaderStrategy()->loadResourceSynchronously(*this, identifier, newRequest, clientCredentialPolicy, options, originalRequestHeaders, error, response, buffer);
-            data = SharedBuffer::create(WTFMove(buffer));
-            documentLoader->applicationCacheHost().maybeLoadFallbackSynchronously(newRequest, error, response, data);
-            ResourceLoadObserver::shared().logSubresourceLoading(protectedFrame().ptr(), newRequest, response,
-                (isScriptLikeDestination(options.destination) ? ResourceLoadObserver::FetchDestinationIsScriptLike::Yes : ResourceLoadObserver::FetchDestinationIsScriptLike::No));
-        }
+        Vector<uint8_t> buffer;
+        platformStrategies()->loaderStrategy()->loadResourceSynchronously(*this, identifier, newRequest, clientCredentialPolicy, options, originalRequestHeaders, error, response, buffer);
+        data = SharedBuffer::create(WTF::move(buffer));
+        ResourceLoadObserver::singleton().logSubresourceLoading(protect(m_frame).ptr(), newRequest, response,
+            (isScriptLikeDestination(options.destination) ? ResourceLoadObserver::FetchDestinationIsScriptLike::Yes : ResourceLoadObserver::FetchDestinationIsScriptLike::No));
     }
 
-    notifier().sendRemainingDelegateMessages(protectedDocumentLoader().get(), identifier, request, response, data.get(), data ? data->size() : 0, -1, error);
+    notifier().sendRemainingDelegateMessages(protect(documentLoader()), identifier, request, response, data.get(), data ? data->size() : 0, -1, error);
     return identifier;
 }
 
@@ -3564,7 +3833,7 @@ void FrameLoader::receivedMainResourceError(const ResourceError& error, LoadWill
     // FIXME: Don't want to do this if an entirely new load is going, so should check
     // that both data sources on the frame are either this or nil.
     stop();
-    if (m_client->shouldFallBack(error)) {
+    if (loadWillContinueInAnotherProcess == LoadWillContinueInAnotherProcess::No && m_client->shouldFallBack(error)) {
         if (RefPtr owner = dynamicDowncast<HTMLObjectElement>(frame->ownerElement()))
             owner->renderFallbackContent();
     }
@@ -3576,7 +3845,7 @@ void FrameLoader::receivedMainResourceError(const ResourceError& error, LoadWill
         // We might have made a back/forward cache item, but now we're bailing out due to an error before we ever
         // transitioned to the new page (before WebFrameState == commit).  The goal here is to restore any state
         // so that the existing view (that wenever got far enough to replace) can continue being used.
-        frame->checkedHistory()->invalidateCurrentItemCachedPage();
+        history().invalidateCurrentItemCachedPage();
         
         // Call clientRedirectCancelledOrFinished here so that the frame load delegate is notified that the redirect's
         // status has changed, if there was a redirect. The frame load delegate may have saved some state about
@@ -3587,7 +3856,12 @@ void FrameLoader::receivedMainResourceError(const ResourceError& error, LoadWill
             clientRedirectCancelledOrFinished(NewLoadInProgress::No);
     }
 
-    checkCompleted();
+    if (frame->isMainFrame() || loadWillContinueInAnotherProcess == LoadWillContinueInAnotherProcess::No)
+        checkCompleted();
+    else if (loadWillContinueInAnotherProcess == LoadWillContinueInAnotherProcess::Yes) {
+        ASSERT(frame->settings().siteIsolationEnabled());
+        m_provisionalLoadHappeningInAnotherProcess = true;
+    }
     if (frame->page())
         checkLoadComplete(loadWillContinueInAnotherProcess);
 }
@@ -3603,9 +3877,12 @@ void FrameLoader::continueFragmentScrollAfterNavigationPolicy(const ResourceRequ
     // frame to be deallocated.
     Ref frame = m_frame.get();
 
+    // A fragment scroll should cancel any pending async back-forward navigation.
+    cancelPendingAsyncBackForwardNavigation();
+
     // If we have a provisional request for a different document, a fragment scroll should cancel it.
     if (m_provisionalDocumentLoader && !equalIgnoringFragmentIdentifier(m_provisionalDocumentLoader->request().url(), request.url())) {
-        protectedProvisionalDocumentLoader()->stopLoading();
+        protect(m_provisionalDocumentLoader)->stopLoading();
         FRAMELOADER_RELEASE_LOG(ResourceLoading, "continueFragmentScrollAfterNavigationPolicy: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
         setProvisionalDocumentLoader(nullptr);
     }
@@ -3626,14 +3903,14 @@ bool FrameLoader::shouldPerformFragmentNavigation(bool isFormSubmission, const S
         && !isReload(loadType)
         && loadType != FrameLoadType::Same
         && m_frame->document()->backForwardCacheState() != Document::InBackForwardCache
-        && !shouldReload(m_frame->document()->url(), url)
+        && !shouldReload(protect(m_frame->document())->url(), url)
         // We don't want to just scroll if a link from within a
         // frameset is trying to reload the frameset into _top.
-        && !m_frame->document()->isFrameSet()
+        && !protect(m_frame->document())->isFrameSet()
         && !stateMachine().isDisplayingInitialEmptyDocument();
 }
 
-static bool itemAllowsScrollRestoration(HistoryItem* historyItem, FrameLoadType loadType)
+static bool NODELETE itemAllowsScrollRestoration(HistoryItem* historyItem, FrameLoadType loadType)
 {
     if (!historyItem)
         return true;
@@ -3649,7 +3926,7 @@ static bool itemAllowsScrollRestoration(HistoryItem* historyItem, FrameLoadType 
     return true;
 }
 
-static bool isSameDocumentReload(bool isNewNavigation, FrameLoadType loadType)
+static bool NODELETE isSameDocumentReload(bool isNewNavigation, FrameLoadType loadType)
 {
     return !isNewNavigation && !isBackForwardLoadType(loadType);
 }
@@ -3661,13 +3938,22 @@ void FrameLoader::scrollToFragmentWithParentBoundary(const URL& url, bool isNewN
     if (!view || !document)
         return;
 
-    if (isSameDocumentReload(isNewNavigation, m_loadType) || itemAllowsScrollRestoration(m_frame->history().protectedCurrentItem().get(), m_loadType)) {
+    if (isSameDocumentReload(isNewNavigation, m_loadType) || itemAllowsScrollRestoration(history().currentItem(), m_loadType)) {
         // https://html.spec.whatwg.org/multipage/browsing-the-web.html#try-to-scroll-to-the-fragment
         if (!document->haveStylesheetsLoaded())
             document->setGotoAnchorNeededAfterStylesheetsLoad(true);
         else
             view->scrollToFragment(url);
     }
+}
+
+bool FrameLoader::shouldReplaceHistoryItemInChildFrame() const
+{
+    if (m_frame->isMainFrame())
+        return false;
+    if (m_loadType != FrameLoadType::RedirectWithLockedBackForwardList)
+        return false;
+    return m_documentLoader && m_documentLoader->isClientRedirect();
 }
 
 bool FrameLoader::shouldClose()
@@ -3680,24 +3966,28 @@ bool FrameLoader::shouldClose()
         return true;
 
     // Store all references to each subframe in advance since beforeunload's event handler may modify frame
-    Vector<Ref<LocalFrame>, 16> targetFrames;
+    Vector<Ref<Frame>, 16> targetFrames;
     targetFrames.append(frame.copyRef());
-    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().traverseNext(frame.ptr())) {
-        if (RefPtr localChild = dynamicDowncast<LocalFrame>(*child))
-            targetFrames.append(localChild.releaseNonNull());
-    }
+    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().traverseNext(frame.ptr()))
+        targetFrames.append(*child);
 
     bool shouldClose = false;
     {
         NavigationDisabler navigationDisabler(frame.ptr());
-        UnloadCountIncrementer UnloadCountIncrementer(frame->protectedDocument().get());
+        UnloadCountIncrementer UnloadCountIncrementer(protect(frame->document()).get());
         size_t i;
 
         for (i = 0; i < targetFrames.size(); i++) {
             if (!targetFrames[i]->tree().isDescendantOf(frame.ptr()))
                 continue;
-            if (!targetFrames[i]->checkedLoader()->dispatchBeforeUnloadEvent(page->chrome(), this))
-                break;
+            if (RefPtr localTargetFrame = dynamicDowncast<LocalFrame>(targetFrames[i])) {
+                if (!localTargetFrame->loader().dispatchBeforeUnloadEvent(page->chrome(), this))
+                    break;
+            } else if (RefPtr remoteTargetFrame = dynamicDowncast<RemoteFrame>(targetFrames[i])) {
+                if (RefPtr document = frame->document())
+                    remoteTargetFrame->client().dispatchCrossOriginBeforeUnloadCheck(document->securityOrigin().data());
+                continue;
+            }
         }
 
         if (i == targetFrames.size())
@@ -3747,7 +4037,7 @@ void FrameLoader::dispatchUnloadEvents(UnloadEventPolicy unloadEventPolicy)
                 m_pageDismissalEventBeingDispatched = PageDismissalType::Unload;
                 if (timing && !timing->unloadEventStart())
                     timing->markUnloadEventStart();
-                document->protectedWindow()->dispatchEvent(unloadEvent, document.ptr());
+                protect(document->window())->dispatchEvent(unloadEvent, document.ptr());
                 if (timing && !timing->unloadEventEnd())
                     timing->markUnloadEventEnd();
             }
@@ -3765,19 +4055,21 @@ void FrameLoader::dispatchUnloadEvents(UnloadEventPolicy unloadEventPolicy)
 
     // Don't remove event listeners from a transitional empty document (see bug 28716 for more information).
     bool shouldKeepEventListeners = m_stateMachine.isDisplayingInitialEmptyDocument() && m_provisionalDocumentLoader
-        && m_frame->document()->isSecureTransitionTo(m_provisionalDocumentLoader->url());
+        && m_frame->document()->isSecureTransitionTo(Ref { *m_provisionalDocumentLoader }->url());
 
     if (!shouldKeepEventListeners)
-        m_frame->protectedDocument()->removeAllEventListeners();
+        protect(m_frame->document())->removeAllEventListeners();
 }
 
-static bool shouldAskForNavigationConfirmation(Document& document, const BeforeUnloadEvent& event)
+static bool NODELETE shouldAskForNavigationConfirmation(Document& document, const BeforeUnloadEvent& event)
 {
     // Confirmation dialog should not be displayed when the allow-modals flag is not set.
-    if (document.isSandboxed(SandboxModals))
+    if (document.isSandboxed(SandboxFlag::Modals))
         return false;
 
-    bool userDidInteractWithPage = document.topDocument().userDidInteractWithPage();
+    auto* page = document.page();
+    bool userDidInteractWithPage = page && page->userDidInteractWithPage();
+
     // Web pages can request we ask for confirmation before navigating by:
     // - Cancelling the BeforeUnloadEvent (modern way)
     // - Setting the returnValue attribute on the BeforeUnloadEvent to a non-empty string.
@@ -3788,8 +4080,8 @@ static bool shouldAskForNavigationConfirmation(Document& document, const BeforeU
 
 bool FrameLoader::dispatchBeforeUnloadEvent(Chrome& chrome, FrameLoader* frameLoaderBeingNavigated)
 {
-    RefPtr domWindow = m_frame->document()->domWindow();
-    if (!domWindow)
+    RefPtr window = m_frame->document()->window();
+    if (!window)
         return true;
 
     RefPtr document = m_frame->document();
@@ -3800,10 +4092,10 @@ bool FrameLoader::dispatchBeforeUnloadEvent(Chrome& chrome, FrameLoader* frameLo
 
     {
         SetForScope change(m_pageDismissalEventBeingDispatched, PageDismissalType::BeforeUnload);
-        ForbidPromptsScope forbidPrompts(m_frame->protectedPage().get());
+        ForbidPromptsScope forbidPrompts(protect(m_frame->page()).get());
         ForbidSynchronousLoadsScope forbidSynchronousLoads(m_frame->page());
         ForbidCopyPasteScope forbidCopyPaste(m_frame->page());
-        domWindow->dispatchEvent(beforeUnloadEvent, domWindow->protectedDocument().get());
+        window->dispatchEvent(beforeUnloadEvent, protect(window->document()).get());
     }
 
     if (!beforeUnloadEvent->defaultPrevented())
@@ -3827,7 +4119,7 @@ bool FrameLoader::dispatchBeforeUnloadEvent(Chrome& chrome, FrameLoader* frameLo
             RefPtr parentDocument = parentFrame->document();
             if (!parentDocument)
                 return true;
-            if (!m_frame->document() || !m_frame->document()->protectedSecurityOrigin()->isSameOriginDomain(parentDocument->protectedSecurityOrigin())) {
+            if (RefPtr document = m_frame->document(); !document || !protect(document->securityOrigin())->isSameOriginDomain(protect(parentDocument->securityOrigin()))) {
                 document->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Blocked attempt to show beforeunload confirmation dialog on behalf of a frame with different security origin. Protocols, domains, and ports must match."_s);
                 return true;
             }
@@ -3846,7 +4138,7 @@ bool FrameLoader::dispatchBeforeUnloadEvent(Chrome& chrome, FrameLoader* frameLo
     frameLoaderBeingNavigated->m_currentNavigationHasShownBeforeUnloadConfirmPanel = true;
 
     String text = document->displayStringModifiedByEncoding(beforeUnloadEvent->returnValue());
-    return chrome.runBeforeUnloadConfirmPanel(text, protectedFrame());
+    return chrome.runBeforeUnloadConfirmPanel(WTF::move(text), protect(m_frame));
 }
 
 void FrameLoader::executeJavaScriptURL(const URL& url, const NavigationAction& action)
@@ -3864,14 +4156,14 @@ void FrameLoader::executeJavaScriptURL(const URL& url, const NavigationAction& a
         ownerDocument->incrementLoadEventDelayCount();
 
     bool didReplaceDocument = false;
-    bool requesterSandboxedFromScripts = action.requester() ? (action.requester()->sandboxFlags & SandboxScripts) : false;
+    bool requesterSandboxedFromScripts = action.requester() && action.requester()->sandboxFlags.contains(SandboxFlag::Scripts);
     if (requesterSandboxedFromScripts) {
         // FIXME: This message should be moved off the console once a solution to https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
         // This message is identical to the message in ScriptController::canExecuteScripts.
         if (RefPtr document = m_frame->document())
             document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Blocked script execution in '"_s, action.requester()->url.stringCenterEllipsizedToLength(), "' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."_s));
     } else
-        protectedFrame()->checkedScript()->executeJavaScriptURL(url, action.requester() ? action.requester()->securityOrigin.ptr() : nullptr, action.shouldReplaceDocumentIfJavaScriptURL(), didReplaceDocument);
+        protect(m_frame->script())->executeJavaScriptURL(url, action, didReplaceDocument);
 
     // We need to communicate that a load happened, even if the JavaScript URL execution didn't end up replacing the document.
     if (RefPtr document = m_frame->document(); isFirstNavigationInFrame && !didReplaceDocument)
@@ -3885,7 +4177,7 @@ void FrameLoader::executeJavaScriptURL(const URL& url, const NavigationAction& a
     m_quickRedirectComing = false;
 }
 
-void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& request, FormState* formState, NavigationPolicyDecision navigationPolicyDecision, AllowNavigationToInvalidURL allowNavigationToInvalidURL)
+void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& request, const FormSubmission* formSubmission, NavigationPolicyDecision navigationPolicyDecision, AllowNavigationToInvalidURL allowNavigationToInvalidURL, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache)
 {
     // If we loaded an alternate page to replace an unreachableURL, we'll get in here with a
     // nil policyDataSource because loading the alternate page will have passed
@@ -3893,19 +4185,43 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
     ASSERT(m_policyDocumentLoader || !m_provisionalDocumentLoader->unreachableURL().isEmpty());
 
     Ref frame = m_frame.get();
-    bool isTargetItem = frame->checkedHistory()->provisionalItem() ? frame->checkedHistory()->provisionalItem()->isTargetItem() : false;
 
     bool urlIsDisallowed = allowNavigationToInvalidURL == AllowNavigationToInvalidURL::No && !request.url().isValid();
-    bool canContinue = navigationPolicyDecision == NavigationPolicyDecision::ContinueLoad && shouldClose() && !urlIsDisallowed;
+
+    // For Navigation API traversal navigation, dispatch navigate event AFTER beforeunload.
+    bool navigateEventAborted = false;
+    bool shouldCloseResult = true;
+
+    if (m_pendingNavigationAPIItem) {
+        // Check if this will be a BFCache load - if so, defer navigate event until after restoration
+        bool willLoadFromBFCache = false;
+        if (RefPtr provisionalItem = history().provisionalItem(); provisionalItem && provisionalItem->isInBackForwardCache())
+            willLoadFromBFCache = true;
+
+        // Only call shouldClose() early for Navigation API traversals
+        shouldCloseResult = shouldClose();
+
+        if (shouldCloseResult && !willLoadFromBFCache) {
+            // For non-BFCache traversals, dispatch navigate event now
+            if (RefPtr window = frame->document()->window()) {
+                if (RefPtr navigation = window->navigation(); navigation->frame()) {
+                    if (navigation->dispatchTraversalNavigateEvent(Ref { *m_pendingNavigationAPIItem }) == Navigation::DispatchResult::Aborted)
+                        navigateEventAborted = true;
+                }
+            }
+
+            m_pendingNavigationAPIItem = nullptr;
+        }
+    } else {
+        // For non-Navigation API traversals, use original behavior with short-circuit evaluation
+        shouldCloseResult = (navigationPolicyDecision == NavigationPolicyDecision::ContinueLoad && !urlIsDisallowed) ? shouldClose() : false;
+    }
+
+    bool canContinue = navigationPolicyDecision == NavigationPolicyDecision::ContinueLoad && shouldCloseResult && !navigateEventAborted && !urlIsDisallowed;
+    bool isTargetItem = frame->loader().history().provisionalItem() ? frame->loader().history().provisionalItem()->isTargetItem() : false;
 
     if (!canContinue) {
-        FRAMELOADER_RELEASE_LOG(ResourceLoading, "continueLoadAfterNavigationPolicy: can't continue loading frame due to the following reasons ("
-            "allowNavigationToInvalidURL = %d, "
-            "requestURLIsValid = %d, "
-            "navigationPolicyDecision = %d)",
-            static_cast<int>(allowNavigationToInvalidURL),
-            request.url().isValid(),
-            static_cast<int>(navigationPolicyDecision));
+        FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderContinueLoadAfterNavigationPolicyCannotContinue, static_cast<int>(allowNavigationToInvalidURL), request.url().isValid(), static_cast<int>(navigationPolicyDecision));
 
         // If we were waiting for a quick redirect, but the policy delegate decided to ignore it, then we 
         // need to report that the client redirect was cancelled.
@@ -3916,6 +4232,7 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
         if (navigationPolicyDecision == NavigationPolicyDecision::LoadWillContinueInAnotherProcess) {
             stopAllLoaders();
             m_checkTimer.stop();
+            m_crossOriginParentSyntheticSameDocLoadEventTimer.stop();
         }
 
         setPolicyDocumentLoader(nullptr, navigationPolicyDecision == NavigationPolicyDecision::LoadWillContinueInAnotherProcess ? LoadWillContinueInAnotherProcess::Yes : LoadWillContinueInAnotherProcess::No);
@@ -3931,13 +4248,15 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
         if (navigationPolicyDecision != NavigationPolicyDecision::LoadWillContinueInAnotherProcess)
             checkLoadComplete();
 
-        // If the navigation request came from the back/forward menu, and we punt on it, we have the 
+        // If the navigation request came from the back/forward menu, and we punt on it, we have the
         // problem that we have optimistically moved the b/f cursor already, so move it back. For sanity,
-        // we only do this when punting a navigation for the target frame or top-level frame.  
+        // we only do this when punting a navigation for the target frame or top-level frame.
         if ((isTargetItem || frame->isMainFrame()) && isBackForwardLoadType(policyChecker().loadType())) {
             if (RefPtr page = frame->page()) {
-                if (RefPtr resetItem = frame->mainFrame().history().currentItem())
-                    page->backForward().setCurrentItem(*resetItem);
+                if (RefPtr localMainFrame = frame->localMainFrame()) {
+                    if (RefPtr resetItem = localMainFrame->loader().history().currentItem())
+                        protect(page->backForward())->setCurrentItem(*resetItem);
+                }
             }
         }
         return;
@@ -3950,10 +4269,20 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
         return;
     }
 
+    if (auto pendingDispatchNavigateEvent = m_policyDocumentLoader ? m_policyDocumentLoader->triggeringAction().takePendingDispatchNavigateEvent() : std::function<bool()> { }) {
+        if (!pendingDispatchNavigateEvent())
+            return;
+    }
+
     FrameLoadType type = policyChecker().loadType();
-    // A new navigation is in progress, so don't clear the history's provisional item.
-    stopAllLoaders(ClearProvisionalItem::No);
-    
+
+    {
+        SetForScope<bool> doNotAbortNavigationAPI { m_doNotAbortNavigationAPI, m_policyDocumentLoader && m_policyDocumentLoader->triggeringAction().isFromNavigationAPI() };
+
+        // A new navigation is in progress, so don't clear the history's provisional item.
+        stopAllLoaders(ClearProvisionalItem::No);
+    }
+
     // <rdar://problem/6250856> - In certain circumstances on pages with multiple frames, stopAllLoaders()
     // might detach the current FrameLoader, in which case we should bail on this newly defunct load. 
     if (!frame->page()) {
@@ -3962,29 +4291,36 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
     }
 
     setProvisionalDocumentLoader(m_policyDocumentLoader.copyRef());
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "continueLoadAfterNavigationPolicy: Setting provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderContinueLoadAfterNavigationPolicy, (uint64_t)m_provisionalDocumentLoader.get());
     m_loadType = type;
     setState(FrameState::Provisional);
 
     setPolicyDocumentLoader(nullptr);
 
     if (isBackForwardLoadType(type)) {
-        auto& diagnosticLoggingClient = frame->page()->diagnosticLoggingClient();
-        if (frame->history().provisionalItem() && frame->history().provisionalItem()->isInBackForwardCache()) {
-            diagnosticLoggingClient.logDiagnosticMessageWithResult(DiagnosticLoggingKeys::backForwardCacheKey(), DiagnosticLoggingKeys::retrievalKey(), DiagnosticLoggingResultPass, ShouldSample::Yes);
+        CheckedRef diagnosticLoggingClient = protect(frame->page())->diagnosticLoggingClient();
+        RefPtr provisionalItem = history().provisionalItem();
+        bool hasCachedPage = provisionalItem && BackForwardCache::singleton().get(*provisionalItem, protect(frame->page()).get());
+        if (hasCachedPage && shouldRestoreFromBackForwardCache != ShouldRestoreFromBackForwardCache::No) {
+            diagnosticLoggingClient->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::backForwardCacheKey(), DiagnosticLoggingKeys::retrievalKey(), DiagnosticLoggingResultPass, ShouldSample::Yes);
             loadProvisionalItemFromCachedPage();
             FRAMELOADER_RELEASE_LOG(ResourceLoading, "continueLoadAfterNavigationPolicy: can't continue loading frame because it will be loaded from cache");
             return;
         }
-        diagnosticLoggingClient.logDiagnosticMessageWithResult(DiagnosticLoggingKeys::backForwardCacheKey(), DiagnosticLoggingKeys::retrievalKey(), DiagnosticLoggingResultFail, ShouldSample::Yes);
+        if (hasCachedPage) {
+            FRAMELOADER_RELEASE_LOG_ERROR(ResourceLoading, "continueLoadAfterNavigationPolicy: evicting orphan cached page (UIProcess said No)");
+            BackForwardCache::singleton().remove(*provisionalItem);
+        } else if (shouldRestoreFromBackForwardCache == ShouldRestoreFromBackForwardCache::Yes)
+            FRAMELOADER_RELEASE_LOG_ERROR(ResourceLoading, "continueLoadAfterNavigationPolicy: expected to restore from back/forward cache but no cached page");
+        diagnosticLoggingClient->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::backForwardCacheKey(), DiagnosticLoggingKeys::retrievalKey(), DiagnosticLoggingResultFail, ShouldSample::Yes);
     }
 
-    CompletionHandler<void()> completionHandler = [this, frame] () mutable {
+    CompletionHandler<void()> completionHandler = [this, protectedThis = Ref { *this }] () mutable {
         if (!m_provisionalDocumentLoader) {
             FRAMELOADER_RELEASE_LOG(ResourceLoading, "continueLoadAfterNavigationPolicy (completionHandler): Frame load canceled - no provisional document loader before prepareForLoadStart");
             return;
         }
-        
+
         prepareForLoadStart();
 
         // The load might be cancelled inside of prepareForLoadStart(), nulling out the m_provisionalDocumentLoader,
@@ -4002,57 +4338,58 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
         
         m_loadingFromCachedPage = false;
 
-        protectedProvisionalDocumentLoader()->startLoadingMainResource();
+        protect(m_provisionalDocumentLoader)->startLoadingMainResource();
     };
     
-    if (!formState) {
+    if (!formSubmission) {
         completionHandler();
         return;
     }
 
-    m_client->dispatchWillSubmitForm(*formState, WTFMove(completionHandler));
+    auto requestURL = formSubmission->requestURL();
+    String method = normalizeHTTPMethod(FormSubmission::Attributes::methodString(formSubmission->method()));
+    m_client->dispatchWillSubmitForm(protect(formSubmission->state()).releaseNonNull(), WTF::move(requestURL), WTF::move(method), WTF::move(completionHandler));
 }
 
-void FrameLoader::continueLoadAfterNewWindowPolicy(const ResourceRequest& request,
-    FormState* formState, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue, AllowNavigationToInvalidURL allowNavigationToInvalidURL, NewFrameOpenerPolicy openerPolicy)
+void FrameLoader::continueLoadAfterNewWindowPolicy(ResourceRequest&& request,
+    RefPtr<const FormSubmission>&& formSubmission, const AtomString& frameName, const NavigationAction& action, ShouldContinuePolicyCheck shouldContinue, AllowNavigationToInvalidURL allowNavigationToInvalidURL, NewFrameOpenerPolicy openerPolicy)
 {
     if (shouldContinue != ShouldContinuePolicyCheck::Yes)
         return;
 
     Ref frame = m_frame.get();
 
-    if (request.url().protocolIsJavaScript() && !frame->protectedDocument()->checkedContentSecurityPolicy()->allowJavaScriptURLs(frame->document()->url().string(), { }, request.url().string(), nullptr))
+    if (request.url().protocolIsJavaScript() && !protect(protect(frame->document())->contentSecurityPolicy())->allowJavaScriptURLs(protect(frame->document())->url().string(), { }, request.url().string(), nullptr))
         return;
 
-    RefPtr mainFrame = m_client->dispatchCreatePage(action, openerPolicy);
+    auto name = isBlankTargetFrameName(frameName) ? emptyAtom() : frameName;
+    RefPtr mainFrame = m_client->dispatchCreatePage(action, openerPolicy, name);
     if (!mainFrame)
         return;
 
-    CheckedRef mainFrameLoader = mainFrame->loader();
-    SandboxFlags sandboxFlags = frame->loader().effectiveSandboxFlags();
-    if (sandboxFlags & SandboxPropagatesToAuxiliaryBrowsingContexts)
-        mainFrameLoader->forceSandboxFlags(sandboxFlags);
+    Ref mainFrameLoader = mainFrame->loader();
 
     if (!isBlankTargetFrameName(frameName))
         mainFrame->tree().setSpecifiedName(frameName);
 
-    mainFrame->protectedPage()->setOpenedByDOM();
+    mainFrame->page()->setOpenedByDOM();
     mainFrameLoader->m_client->dispatchShow();
     if (openerPolicy == NewFrameOpenerPolicy::Allow) {
-        mainFrame->setOpener(frame.ptr());
-        mainFrame->protectedDocument()->setReferrerPolicy(frame->document()->referrerPolicy());
+        ASSERT(mainFrame->opener() == frame.ptr());
+        mainFrame->page()->setOpenedByDOMWithOpener(true);
+        mainFrame->document()->setReferrerPolicy(frame->document()->referrerPolicy());
     }
 
-    NavigationAction newAction { frame->protectedDocument().releaseNonNull(), request, InitiatedByMainFrame::Unknown, action.isRequestFromClientOrUserInput(), NavigationType::Other, action.shouldOpenExternalURLsPolicy(), nullptr, action.downloadAttribute() };
+    NavigationAction newAction { protect(frame->document()).releaseNonNull(), request, InitiatedByMainFrame::Unknown, action.isRequestFromClientOrUserInput(), NavigationType::Other, action.shouldOpenExternalURLsPolicy(), nullptr, action.downloadAttribute() };
     newAction.setShouldReplaceDocumentIfJavaScriptURL(action.shouldReplaceDocumentIfJavaScriptURL());
-    mainFrameLoader->loadWithNavigationAction(request, WTFMove(newAction), FrameLoadType::Standard, formState, allowNavigationToInvalidURL, ShouldTreatAsContinuingLoad::No);
+    mainFrameLoader->loadWithNavigationAction(WTF::move(request), WTF::move(newAction), FrameLoadType::Standard, WTF::move(formSubmission), allowNavigationToInvalidURL, ShouldTreatAsContinuingLoad::No);
 }
 
-void FrameLoader::requestFromDelegate(ResourceRequest& request, ResourceLoaderIdentifier& identifier, ResourceError& error)
+ResourceLoaderIdentifier FrameLoader::requestFromDelegate(ResourceRequest& request, ResourceError& error)
 {
     ASSERT(!request.isNull());
 
-    identifier = ResourceLoaderIdentifier::generate();
+    auto identifier = ResourceLoaderIdentifier::generate();
     RefPtr documentLoader = m_documentLoader;
     notifier().assignIdentifierToInitialRequest(identifier, documentLoader.get(), request);
 
@@ -4065,6 +4402,7 @@ void FrameLoader::requestFromDelegate(ResourceRequest& request, ResourceLoaderId
         error = ResourceError();
 
     request = newRequest;
+    return identifier;
 }
 
 void FrameLoader::loadedResourceFromMemoryCache(CachedResource& resource, ResourceRequest& newRequest, ResourceError& error)
@@ -4095,8 +4433,7 @@ void FrameLoader::loadedResourceFromMemoryCache(CachedResource& resource, Resour
         return;
     }
 
-    ResourceLoaderIdentifier identifier;
-    requestFromDelegate(newRequest, identifier, error);
+    auto identifier = requestFromDelegate(newRequest, error);
 
     ResourceResponse response = resource.response();
     response.setSource(ResourceResponse::Source::MemoryCache);
@@ -4126,11 +4463,11 @@ bool FrameLoader::shouldInterruptLoadForXFrameOptions(const String& content, con
     switch (disposition) {
     case XFrameOptionsDisposition::SameOrigin: {
         Ref origin = SecurityOrigin::create(url);
-        if (!topFrame || !origin->isSameSchemeHostPort(topFrame->document()->protectedSecurityOrigin()))
+        if (!topFrame || !origin->isSameSchemeHostPort(protect(protect(topFrame->document())->securityOrigin())))
             return true;
-        for (auto* frame = m_frame->tree().parent(); frame; frame = frame->tree().parent()) {
-            auto* localFrame = dynamicDowncast<LocalFrame>(frame);
-            if (!localFrame || !origin->isSameSchemeHostPort(localFrame->document()->protectedSecurityOrigin()))
+        for (RefPtr frame = m_frame->tree().parent(); frame; frame = frame->tree().parent()) {
+            RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
+            if (!localFrame || !origin->isSameSchemeHostPort(protect(protect(localFrame->document())->securityOrigin())))
                 return true;
         }
         return false;
@@ -4140,10 +4477,10 @@ bool FrameLoader::shouldInterruptLoadForXFrameOptions(const String& content, con
     case XFrameOptionsDisposition::AllowAll:
         return false;
     case XFrameOptionsDisposition::Conflict:
-        m_frame->protectedDocument()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Multiple 'X-Frame-Options' headers with conflicting values ('"_s, content, "') encountered when loading '"_s, url.stringCenterEllipsizedToLength(), "'. Falling back to 'DENY'."_s), requestIdentifier.toUInt64());
+        protect(m_frame->document())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Multiple 'X-Frame-Options' headers with conflicting values ('"_s, content, "') encountered when loading '"_s, url.stringCenterEllipsizedToLength(), "'. Falling back to 'DENY'."_s), requestIdentifier.toUInt64());
         return true;
     case XFrameOptionsDisposition::Invalid:
-        m_frame->protectedDocument()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Invalid 'X-Frame-Options' header encountered when loading '"_s, url.stringCenterEllipsizedToLength(), "': '"_s, content, "' is not a recognized directive. The header will be ignored."_s), requestIdentifier.toUInt64());
+        protect(m_frame->document())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Invalid 'X-Frame-Options' header encountered when loading '"_s, url.stringCenterEllipsizedToLength(), "': '"_s, content, "' is not a recognized directive. The header will be ignored."_s), requestIdentifier.toUInt64());
         return false;
     case XFrameOptionsDisposition::None:
         return false;
@@ -4172,11 +4509,12 @@ void FrameLoader::loadProvisionalItemFromCachedPage()
 
 bool FrameLoader::shouldTreatURLAsSameAsCurrent(const SecurityOrigin* requesterOrigin, const URL& url) const
 {
-    if (!m_frame->history().currentItem())
+    RefPtr currentHistoryItem = history().currentItem();
+    if (!currentHistoryItem)
         return false;
-    if (requesterOrigin && (!m_frame->document() || !requesterOrigin->isSameOriginAs(m_frame->document()->protectedSecurityOrigin())))
+    if (requesterOrigin && (!m_frame->document() || !requesterOrigin->isSameOriginAs(protect(protect(m_frame->document())->securityOrigin()))))
         return false;
-    return url == m_frame->history().currentItem()->url() || url == m_frame->history().currentItem()->originalURL();
+    return url == currentHistoryItem->url();
 }
 
 bool FrameLoader::shouldTreatURLAsSrcdocDocument(const URL& url) const
@@ -4201,47 +4539,62 @@ RefPtr<Frame> FrameLoader::findFrameForNavigation(const AtomString& name, Docume
     if (!activeDocument)
         return nullptr;
 
-    RefPtr frame = protectedFrame()->tree().findBySpecifiedName(name, activeDocument->frame() ? *activeDocument->protectedFrame() : protectedFrame().get());
-    if (!activeDocument->canNavigate(frame.get()))
+    RefPtr frame = m_frame->tree().findBySpecifiedName(name, protect(activeDocument->frame() ? *activeDocument->frame() : m_frame.get()));
+    if (activeDocument->canNavigate(frame.get()) != CanNavigateState::Able)
         return nullptr;
 
     return frame;
 }
 
-bool FrameLoader::dispatchNavigateEvent(const URL& newURL, FrameLoadType loadType, const NavigationAction& action, NavigationHistoryBehavior historyHandling, bool isSameDocument, FormState* formState)
+bool FrameLoader::dispatchNavigateEvent(FrameLoadType loadType, const FrameLoadRequest& request, bool isSameDocument, FormState* formState, Event* event, SerializedScriptValue* classicHistoryAPIState)
 {
     RefPtr document = m_frame->document();
     if (!document || !document->settings().navigationAPIEnabled())
         return true;
-    RefPtr window = document->protectedWindow();
+    RefPtr window = document->window();
     if (!window)
         return true;
-    // Download events are handled later in PolicyChecker::checkNavigationPolicy().
-    if (!action.downloadAttribute().isNull())
+    if (request.skipNavigateEvent())
         return true;
+    // Download events are handled later in PolicyChecker::checkNavigationPolicy().
+    if (!request.downloadAttribute().isNull())
+        return true;
+
+    const URL& newURL = request.resourceRequest().url();
     if (!isSameDocument && !newURL.hasFetchScheme())
         return true;
 
-    auto navigationType = determineNavigationType(loadType, historyHandling);
+    auto navigationType = determineNavigationType(loadType, request.navigationHistoryBehavior());
+
+    if (m_policyDocumentLoader && m_policyDocumentLoader->triggeringAction().isFromNavigationAPI()) {
+        auto& action = m_policyDocumentLoader->triggeringAction();
+        auto apiType = action.navigationAPIType();
+        // If this is from Navigation API and should be a traverse, dispatch proper traverse event.
+        if (apiType && *apiType == NavigationNavigationType::Traverse)
+            return true;
+    }
+
     // Traversals are handled earlier, in loadItem().
     if (navigationType == NavigationNavigationType::Traverse)
         return true;
 
-    return window->protectedNavigation()->dispatchPushReplaceReloadNavigateEvent(newURL, navigationType, isSameDocument, formState);
+    RefPtr sourceElement = event ? dynamicDowncast<Element>(event->target()) : nullptr;
+
+    return protect(window->navigation())->dispatchPushReplaceReloadNavigateEvent(newURL, navigationType, isSameDocument, formState, classicHistoryAPIState, sourceElement.get());
 }
 
 void FrameLoader::loadSameDocumentItem(HistoryItem& item)
 {
-    ASSERT(item.documentSequenceNumber() == m_frame->history().currentItem()->documentSequenceNumber());
+    ASSERT(item.documentSequenceNumber() == history().currentItem()->documentSequenceNumber());
 
     Ref frame = m_frame.get();
-    CheckedRef history = frame->history();
+    Ref history = m_history.get();
 
     // Save user view state to the current history item here since we don't do a normal load.
     // FIXME: Does form state need to be saved here too?
-    history->saveScrollPositionAndViewStateToItem(history->protectedCurrentItem().get());
+    history->saveScrollPositionAndViewStateToItem(protect(history->currentItem()).get());
     if (RefPtr view = frame->view())
-        view->setWasScrolledByUser(false);
+        view->setLastUserScrollType(std::nullopt);
 
     history->setCurrentItem(item);
         
@@ -4249,13 +4602,14 @@ void FrameLoader::loadSameDocumentItem(HistoryItem& item)
     loadInSameDocument(item.url(), item.stateObject(), nullptr, false);
 
     // Restore user view state from the current history item here since we don't do a normal load.
-    history->restoreScrollPositionAndViewState();
+    if (!scrollingSuppressedByNavigationAPI(protect(frame->document()).get()))
+        history->restoreScrollPositionAndViewState();
 }
 
 // FIXME: This function should really be split into a couple pieces, some of
 // which should be methods of HistoryController and some of which should be
 // methods of FrameLoader.
-void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* fromItem, FrameLoadType loadType, FormSubmissionCacheLoadPolicy cacheLoadPolicy, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad)
+void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* fromItem, FrameLoadType loadType, FormSubmissionCacheLoadPolicy cacheLoadPolicy, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache, PolicyAlreadyDecided policyAlreadyDecided)
 {
     FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadDifferentDocumentItem: frame load started");
 
@@ -4265,36 +4619,37 @@ void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* from
     m_shouldReportResourceTimingToParentFrame = false;
 
     // Remember this item so we can traverse any child items as child frames load
-    frame->checkedHistory()->setProvisionalItem(&item);
+    history().setProvisionalItem(&item);
 
     auto initiatedByMainFrame = InitiatedByMainFrame::Unknown;
 
     SetForScope continuingLoadGuard(m_currentLoadContinuingState, shouldTreatAsContinuingLoad != ShouldTreatAsContinuingLoad::No ? LoadContinuingState::ContinuingWithHistoryItem : LoadContinuingState::NotContinuing);
 
-    if (CheckedPtr cachedPage = BackForwardCache::singleton().get(item, frame->protectedPage().get())) {
+    if (CheckedPtr cachedPage = BackForwardCache::singleton().get(item, protect(frame->page()).get())) {
         RefPtr documentLoader = cachedPage->documentLoader();
         m_client->updateCachedDocumentLoader(*documentLoader);
 
-        auto action = NavigationAction { frame->protectedDocument().releaseNonNull(), documentLoader->request(), initiatedByMainFrame, documentLoader->isRequestFromClientOrUserInput(), loadType, false };
-        action.setTargetBackForwardItem(item);
+        auto action = NavigationAction { protect(frame->document()).releaseNonNull(), documentLoader->request(), initiatedByMainFrame, documentLoader->isRequestFromClientOrUserInput(), loadType, false };
+        action.setTargetBackForwardItemIdentifier(item.itemID());
         action.setSourceBackForwardItem(fromItem);
         action.setNavigationAPIType(determineNavigationType(loadType, NavigationHistoryBehavior::Auto));
-        documentLoader->setTriggeringAction(WTFMove(action));
+        action.setPolicyAlreadyDecided(policyAlreadyDecided);
+        documentLoader->setTriggeringAction(WTF::move(action));
 
         documentLoader->setLastCheckedRequest(ResourceRequest());
         cachedPage = nullptr; // Call to loadWithDocumentLoader() below may destroy the CachedPage.
-        loadWithDocumentLoader(documentLoader.get(), loadType, { }, AllowNavigationToInvalidURL::Yes);
+        loadWithDocumentLoader(documentLoader.get(), loadType, { }, AllowNavigationToInvalidURL::Yes, shouldRestoreFromBackForwardCache);
         return;
     }
 
     URL itemURL = item.url();
     URL itemOriginalURL = item.originalURL();
     URL currentURL;
-    if (auto* loader = documentLoader())
+    if (RefPtr loader = documentLoader())
         currentURL = loader->url();
     RefPtr formData = item.formData();
 
-    ResourceRequest request(itemURL);
+    ResourceRequest request(WTF::move(itemURL));
 
     if (!item.referrer().isNull())
         request.setHTTPReferrer(item.referrer());
@@ -4311,7 +4666,7 @@ void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* from
     NavigationAction action;
     if (formData) {
         request.setHTTPMethod("POST"_s);
-        request.setHTTPBody(WTFMove(formData));
+        request.setHTTPBody(WTF::move(formData));
         request.setHTTPContentType(item.formContentType());
         auto securityOrigin = SecurityOrigin::createFromString(item.referrer());
         addHTTPOriginIfNeeded(request, securityOrigin->toString());
@@ -4328,10 +4683,10 @@ void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* from
         
         if (cacheLoadPolicy == MayAttemptCacheOnlyLoadForFormSubmissionItem) {
             request.setCachePolicy(ResourceRequestCachePolicy::ReturnCacheDataDontLoad);
-            action = { frame->protectedDocument().releaseNonNull(), request, initiatedByMainFrame, false, loadType, isFormSubmission, nullptr, shouldOpenExternalURLsPolicy };
+            action = { protect(frame->document()).releaseNonNull(), request, initiatedByMainFrame, false, loadType, isFormSubmission, nullptr, shouldOpenExternalURLsPolicy };
         } else {
             request.setCachePolicy(ResourceRequestCachePolicy::ReturnCacheDataElseLoad);
-            action = { frame->protectedDocument().releaseNonNull(), request, initiatedByMainFrame, false, NavigationType::FormResubmitted, shouldOpenExternalURLsPolicy, nullptr };
+            action = { protect(frame->document()).releaseNonNull(), request, initiatedByMainFrame, false, NavigationType::FormResubmitted, shouldOpenExternalURLsPolicy, nullptr };
         }
     } else {
         switch (loadType) {
@@ -4355,98 +4710,170 @@ void FrameLoader::loadDifferentDocumentItem(HistoryItem& item, HistoryItem* from
         }
         case FrameLoadType::Standard:
         case FrameLoadType::RedirectWithLockedBackForwardList:
+        case FrameLoadType::NavigationAPIReplace:
             break;
         case FrameLoadType::Same:
-        case FrameLoadType::Replace:
+        case FrameLoadType::MultipartReplace:
             ASSERT_NOT_REACHED();
         }
 
         updateRequestAndAddExtraFields(request, IsMainResource::Yes, loadType);
 
         ResourceRequest requestForOriginalURL(request);
-        requestForOriginalURL.setURL(itemOriginalURL);
-        action = { frame->protectedDocument().releaseNonNull(), requestForOriginalURL, initiatedByMainFrame, request.isAppInitiated(), loadType, isFormSubmission, nullptr, shouldOpenExternalURLsPolicy };
+        requestForOriginalURL.setURL(WTF::move(itemOriginalURL));
+        action = { protect(frame->document()).releaseNonNull(), requestForOriginalURL, initiatedByMainFrame, request.isAppInitiated(), loadType, isFormSubmission, nullptr, shouldOpenExternalURLsPolicy };
     }
 
-    action.setTargetBackForwardItem(item);
+    action.setTargetBackForwardItemIdentifier(item.itemID());
     action.setSourceBackForwardItem(fromItem);
     action.setNavigationAPIType(determineNavigationType(loadType, NavigationHistoryBehavior::Auto));
+    action.setPolicyAlreadyDecided(policyAlreadyDecided);
 
-    loadWithNavigationAction(request, WTFMove(action), loadType, { }, AllowNavigationToInvalidURL::Yes, shouldTreatAsContinuingLoad);
+    loadWithNavigationAction(WTF::move(request), WTF::move(action), loadType, { }, AllowNavigationToInvalidURL::Yes, shouldTreatAsContinuingLoad, shouldRestoreFromBackForwardCache);
+}
+
+bool FrameLoader::shouldDispatchNavigateEventForHistoryTraversal(const HistoryItem& item, const HistoryItem* fromItem)
+{
+    // Only dispatch navigate event if this history item belongs to the current frame
+    // and the navigation is same-origin. This prevents:
+    // 1. Joint session history bug where main frame incorrectly handles iframe history
+    // 2. Cross-origin navigations from firing navigate events
+    // Related spec: https://html.spec.whatwg.org/multipage/nav-history-apis.html#has-entries-and-events-disabled
+    return fromItem && item.frameID() == frame().frameID() && SecurityOrigin::create(item.url())->isSameOriginAs(SecurityOrigin::create(fromItem->url()));
 }
 
 // Loads content into this frame, as specified by history item
-void FrameLoader::loadItem(HistoryItem& item, HistoryItem* fromItem, FrameLoadType loadType, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad)
+void FrameLoader::loadItem(HistoryItem& item, HistoryItem* fromItem, FrameLoadType loadType, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache)
 {
-    m_requestedHistoryItem = &item;
-    RefPtr currentItem = frame().history().currentItem();
+    m_requestedHistoryItem = item;
+    RefPtr currentItem = history().currentItem();
 
-    if (frame().document() && frame().document()->settings().navigationAPIEnabled() && fromItem && SecurityOrigin::create(item.url())->isSameOriginAs(SecurityOrigin::create(fromItem->url()))) {
-        if (RefPtr domWindow = frame().document()->domWindow()) {
-            if (RefPtr navigation = domWindow->protectedNavigation(); navigation->frame()) {
-                navigation->dispatchTraversalNavigateEvent(item);
-                // In case the event detached the frame.
-                if (!navigation->frame())
-                    return;
+    // If we're continuing this history navigation in a new process, we cannot perform a same document navigation.
+    // Otherwise, the load won't commit and navigation won't complete.
+    bool sameDocumentNavigation = currentItem && item.shouldDoSameDocumentNavigationTo(*currentItem) && shouldTreatAsContinuingLoad == ShouldTreatAsContinuingLoad::No;
+
+    // Check if Navigation API should handle this traversal
+    if (frame().document() && frame().document()->settings().navigationAPIEnabled() && shouldDispatchNavigateEventForHistoryTraversal(item, fromItem)) {
+        if (sameDocumentNavigation) {
+            // For same-document navigation, dispatch navigate event immediately.
+            // https://html.spec.whatwg.org/multipage/nav-history-apis.html#fire-a-traverse-navigate-event
+            if (RefPtr window = frame().document()->window()) {
+                if (RefPtr navigation = window->navigation(); navigation->frame()) {
+                    if (navigation->dispatchTraversalNavigateEvent(item) == Navigation::DispatchResult::Aborted)
+                        return;
+                    // In case the event detached the frame.
+                    if (!navigation->frame())
+                        return;
+                }
             }
+        } else {
+            // For cross-document navigation, save the item for later dispatch.
+            // Navigate event will be dispatched after beforeunload.
+            m_pendingNavigationAPIItem = &item;
         }
     }
-
-    bool sameDocumentNavigation = currentItem && item.shouldDoSameDocumentNavigationTo(*currentItem);
-
-    // If we're continuing this history navigation in a new process, then doing a same document navigation never makes sense.
-    ASSERT(!sameDocumentNavigation || shouldTreatAsContinuingLoad == ShouldTreatAsContinuingLoad::No);
 
     if (sameDocumentNavigation) {
         m_loadType = loadType;
         loadSameDocumentItem(item);
     } else
-        loadDifferentDocumentItem(item, fromItem, loadType, MayAttemptCacheOnlyLoadForFormSubmissionItem, shouldTreatAsContinuingLoad);
+        loadDifferentDocumentItem(item, fromItem, loadType, MayAttemptCacheOnlyLoadForFormSubmissionItem, shouldTreatAsContinuingLoad, shouldRestoreFromBackForwardCache);
+}
+
+void FrameLoader::setRequestedHistoryItem(HistoryItem& item)
+{
+    Ref frame = m_frame.get();
+    ASSERT(!frame->page() || !frame->page()->settings().useUIProcessForBackForwardItemLoading() || item.children().isEmpty());
+
+    item.setFrameID(frame->frameID());
+    m_requestedHistoryItem = item;
+
+    // When UseUIProcessForBackForwardItemLoading is enabled, each child frame receives
+    // its HistoryItem individually from UIProcess. Add it to the parent's current
+    // HistoryItem so the tree structure matches what createItemTree would have produced
+    // during a normal navigation.
+    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent())) {
+        if (RefPtr parentItem = parentFrame->loader().history().currentItem())
+            parentItem->setChildItem(Ref { item });
+    }
+}
+
+void FrameLoader::setPendingAsyncBackForwardNavigation()
+{
+    m_asyncBackForwardNavigationState = AsyncBackForwardNavigationState::Pending;
+}
+
+void FrameLoader::clearAsyncBackForwardNavigationState()
+{
+    if (m_asyncBackForwardNavigationState == AsyncBackForwardNavigationState::None)
+        return;
+    m_asyncBackForwardNavigationState = AsyncBackForwardNavigationState::None;
+    Ref frame = m_frame.get();
+    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent()))
+        parentFrame->loader().checkCompleted();
+}
+
+void FrameLoader::cancelPendingAsyncBackForwardNavigation()
+{
+    if (m_asyncBackForwardNavigationState != AsyncBackForwardNavigationState::Pending)
+        return;
+
+    m_asyncBackForwardNavigationState = AsyncBackForwardNavigationState::Cancelled;
+
+    Ref frame = m_frame.get();
+    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent()))
+        parentFrame->loader().checkCompleted();
+}
+
+void FrameLoader::loadRequestedHistoryItem(FrameLoadType loadType, PolicyAlreadyDecided policyAlreadyDecided)
+{
+    ASSERT(m_requestedHistoryItem);
+    loadDifferentDocumentItem(protect(*m_requestedHistoryItem), nullptr, loadType, MayAttemptCacheOnlyLoadForFormSubmissionItem, ShouldTreatAsContinuingLoad::No, ShouldRestoreFromBackForwardCache::No, policyAlreadyDecided);
 }
 
 void FrameLoader::retryAfterFailedCacheOnlyMainResourceLoad()
 {
     ASSERT(m_state == FrameState::Provisional);
     ASSERT(!m_loadingFromCachedPage);
-    ASSERT(m_frame->history().provisionalItem());
-    ASSERT(m_frame->history().provisionalItem()->formData());
-    ASSERT(m_frame->history().provisionalItem() == m_requestedHistoryItem.get());
+    ASSERT(history().provisionalItem());
+    ASSERT(history().provisionalItem()->formData());
+    ASSERT(history().provisionalItem() == m_requestedHistoryItem);
 
     FrameLoadType loadType = m_loadType;
-    RefPtr item = m_frame->history().provisionalItem();
+    RefPtr item = history().provisionalItem();
 
     stopAllLoaders(ClearProvisionalItem::No);
     if (item)
-        loadDifferentDocumentItem(*item, m_frame->history().protectedCurrentItem().get(), loadType, MayNotAttemptCacheOnlyLoadForFormSubmissionItem, ShouldTreatAsContinuingLoad::No);
+        loadDifferentDocumentItem(*item, protect(history().currentItem()).get(), loadType, MayNotAttemptCacheOnlyLoadForFormSubmissionItem, ShouldTreatAsContinuingLoad::No);
     else {
         ASSERT_NOT_REACHED();
         FRAMELOADER_RELEASE_LOG_ERROR(ResourceLoading, "retryAfterFailedCacheOnlyMainResourceLoad: Retrying load after failed cache-only main resource load failed because there is no provisional history item.");
     }
 }
 
-ResourceError FrameLoader::cancelledError(const ResourceRequest& request) const
+ResourceError FrameLoader::cancelledError(const ResourceRequest& request)
 {
-    ResourceError error = m_client->cancelledError(request);
+    ResourceError error = platformStrategies()->loaderStrategy()->cancelledError(request);
     error.setType(ResourceError::Type::Cancellation);
     return error;
 }
 
-ResourceError FrameLoader::blockedByContentBlockerError(const ResourceRequest& request) const
+ResourceError FrameLoader::blockedByContentBlockerError(const ResourceRequest& request)
 {
-    return m_client->blockedByContentBlockerError(request);
+    return platformStrategies()->loaderStrategy()->blockedByContentBlockerError(request);
 }
 
-ResourceError FrameLoader::blockedError(const ResourceRequest& request) const
+ResourceError FrameLoader::blockedError(const ResourceRequest& request)
 {
-    ResourceError error = m_client->blockedError(request);
+    ResourceError error = platformStrategies()->loaderStrategy()->blockedError(request);
     error.setType(ResourceError::Type::Cancellation);
     return error;
 }
 
 #if ENABLE(CONTENT_FILTERING)
-ResourceError FrameLoader::blockedByContentFilterError(const ResourceRequest& request) const
+ResourceError FrameLoader::blockedByContentFilterError(const ResourceRequest& request)
 {
-    ResourceError error = m_client->blockedByContentFilterError(request);
+    ResourceError error = platformStrategies()->loaderStrategy()->blockedByContentFilterError(request);
     error.setType(ResourceError::Type::General);
     return error;
 }
@@ -4455,18 +4882,9 @@ ResourceError FrameLoader::blockedByContentFilterError(const ResourceRequest& re
 #if PLATFORM(IOS_FAMILY)
 RetainPtr<CFDictionaryRef> FrameLoader::connectionProperties(ResourceLoader* loader)
 {
-    return m_client->connectionProperties(loader->documentLoader(), loader->identifier());
+    return m_client->connectionProperties(protect(loader->documentLoader()), *loader->identifier());
 }
 #endif
-
-ReferrerPolicy FrameLoader::effectiveReferrerPolicy() const
-{
-    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent()))
-        return parentFrame->document()->referrerPolicy();
-    if (RefPtr opener = dynamicDowncast<LocalFrame>(m_frame->opener()))
-        return opener->document()->referrerPolicy();
-    return ReferrerPolicy::Default;
-}
 
 String FrameLoader::referrer() const
 {
@@ -4475,7 +4893,7 @@ String FrameLoader::referrer() const
 
 void FrameLoader::dispatchDidClearWindowObjectsInAllWorlds()
 {
-    if (!protectedFrame()->checkedScript()->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
+    if (!protect(m_frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
         return;
 
     Vector<Ref<DOMWrapperWorld>> worlds;
@@ -4487,7 +4905,7 @@ void FrameLoader::dispatchDidClearWindowObjectsInAllWorlds()
 void FrameLoader::dispatchDidClearWindowObjectInWorld(DOMWrapperWorld& world)
 {
     Ref frame = m_frame.get();
-    if (!frame->checkedScript()->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript) || !frame->windowProxy().existingJSWindowProxy(world))
+    if (!protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript) || !protect(frame->windowProxy())->existingJSWindowProxy(world))
         return;
 
     m_client->dispatchDidClearWindowObjectInWorld(world);
@@ -4506,33 +4924,18 @@ void FrameLoader::dispatchGlobalObjectAvailableInAllWorlds()
         m_client->dispatchGlobalObjectAvailable(world);
 }
 
-SandboxFlags FrameLoader::effectiveSandboxFlags() const
-{
-    SandboxFlags flags = m_forcedSandboxFlags;
-    if (RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent()))
-        flags |= parentFrame->document()->sandboxFlags();
-    if (RefPtr ownerElement = m_frame->ownerElement())
-        flags |= ownerElement->sandboxFlags();
-    return flags;
-}
-
 void FrameLoader::didChangeTitle(DocumentLoader* loader)
 {
     m_client->didChangeTitle(loader);
 
     if (loader == m_documentLoader) {
         // Must update the entries in the back-forward list too.
-        m_frame->history().setCurrentItemTitle(loader->title());
+        history().setCurrentItemTitle(loader->title());
         // This must go through the WebFrame because it has the right notion of the current b/f item.
         m_client->setTitle(loader->title(), loader->urlForHistory());
         m_client->setMainFrameDocumentReady(true); // update observers with new DOMDocument
         m_client->dispatchDidReceiveTitle(loader->title());
     }
-
-#if ENABLE(REMOTE_INSPECTOR)
-    if (m_frame->isMainFrame())
-        protectedFrame()->protectedPage()->remoteInspectorInformationDidChange();
-#endif
 }
 
 void FrameLoader::dispatchDidCommitLoad(std::optional<HasInsecureContent> initialHasInsecureContent, std::optional<UsedLegacyTLS> initialUsedLegacyTLS, std::optional<WasPrivateRelayed> initialWasPrivateRelayed)
@@ -4545,18 +4948,14 @@ void FrameLoader::dispatchDidCommitLoad(std::optional<HasInsecureContent> initia
     if (RefPtr page = m_frame->page(); page && m_frame->isMainFrame())
         page->didCommitLoad();
 
-    InspectorInstrumentation::didCommitLoad(protectedFrame(), protectedDocumentLoader().get());
-
-#if ENABLE(REMOTE_INSPECTOR)
-    if (RefPtr page = m_frame->page(); page && m_frame->isMainFrame())
-        page->remoteInspectorInformationDidChange();
-#endif
+    InspectorInstrumentation::didCommitLoad(protect(m_frame), protect(documentLoader()));
 }
 
 void FrameLoader::tellClientAboutPastMemoryCacheLoads()
 {
-    ASSERT(m_frame->page());
-    ASSERT(m_frame->page()->areMemoryCacheClientCallsEnabled());
+    RefPtr page = m_frame->page();
+    ASSERT(page);
+    ASSERT(page->areMemoryCacheClientCallsEnabled());
 
     if (!m_documentLoader)
         return;
@@ -4566,7 +4965,7 @@ void FrameLoader::tellClientAboutPastMemoryCacheLoads()
     documentLoader->takeMemoryCacheLoadsForClientNotification(pastLoads);
 
     for (auto& pastLoad : pastLoads) {
-        CachedResourceHandle resource = MemoryCache::singleton().resourceForRequest(pastLoad, m_frame->page()->sessionID());
+        RefPtr resource = MemoryCache::singleton().resourceForRequest(pastLoad, page->sessionID());
 
         // FIXME: These loads, loaded from cache, but now gone from the cache by the time
         // Page::setMemoryCacheClientCallsEnabled(true) is called, will not be seen by the client.
@@ -4575,17 +4974,12 @@ void FrameLoader::tellClientAboutPastMemoryCacheLoads()
         if (!resource)
             continue;
 
-        ResourceRequest request(resource->url());
+        ResourceRequest request(URL { resource->url() });
         m_client->dispatchDidLoadResourceFromMemoryCache(documentLoader.get(), request, resource->response(), resource->encodedSize());
     }
 }
 
 NetworkingContext* FrameLoader::networkingContext() const
-{
-    return m_networkingContext.get();
-}
-
-RefPtr<NetworkingContext> FrameLoader::protectedNetworkingContext() const
 {
     return m_networkingContext;
 }
@@ -4598,9 +4992,23 @@ void FrameLoader::loadProgressingStatusChanged()
     }
 }
 
+bool FrameLoader::shouldNavigateWithHTTP(bool isSameSiteNavigation) const
+{
+    if (isNavigationUpgradeToHTTPSDisabled())
+        return true;
+    if (shouldSkipHTTPSUpgradeForSameSiteNavigation() && isSameSiteNavigation)
+        return true;
+    return false;
+}
+
 void FrameLoader::completePageTransitionIfNeeded()
 {
     m_client->completePageTransitionIfNeeded();
+}
+
+void FrameLoader::setDocumentVisualUpdatesAllowed(bool allowed)
+{
+    m_client->setDocumentVisualUpdatesAllowed(allowed);
 }
 
 void FrameLoader::clearTestingOverrides()
@@ -4610,150 +5018,68 @@ void FrameLoader::clearTestingOverrides()
     m_isStrictRawResourceValidationPolicyDisabledForTesting = false;
 }
 
-bool LocalFrameLoaderClient::hasHTMLView() const
+bool NODELETE LocalFrameLoaderClient::hasHTMLView() const
 {
     return true;
 }
 
-RefPtr<Frame> createWindow(LocalFrame& openerFrame, LocalFrame& lookupFrame, FrameLoadRequest&& request, WindowFeatures& features, bool& created)
+std::pair<RefPtr<Frame>, CreatedNewPage> createWindow(LocalFrame& openerFrame, FrameLoadRequest&& request, WindowFeatures&& features)
 {
     ASSERT(!features.dialog || request.frameName().isEmpty());
     ASSERT(request.resourceRequest().httpMethod() == "GET"_s);
 
-    created = false;
-
     // FIXME: Provide line number information with respect to the opener's document.
-    if (request.resourceRequest().url().protocolIsJavaScript() && !openerFrame.protectedDocument()->checkedContentSecurityPolicy()->allowJavaScriptURLs(openerFrame.document()->url().string(), { }, request.resourceRequest().url().string(), nullptr))
-        return nullptr;
+    if (request.resourceRequest().url().protocolIsJavaScript() && !protect(protect(openerFrame.document())->contentSecurityPolicy())->allowJavaScriptURLs(protect(openerFrame.document())->url().string(), { }, request.resourceRequest().url().string(), nullptr))
+        return { nullptr, CreatedNewPage::No };
 
     if (!request.frameName().isEmpty() && !isBlankTargetFrameName(request.frameName())) {
-        if (RefPtr frame = lookupFrame.loader().findFrameForNavigation(request.frameName(), openerFrame.protectedDocument().get())) {
+        if (RefPtr frame = openerFrame.loader().findFrameForNavigation(request.frameName(), protect(openerFrame.document()).get())) {
             if (!isSelfTargetFrameName(request.frameName())) {
-                if (RefPtr page = frame->page(); page && isInVisibleAndActivePage(openerFrame))
+                RefPtr openerWindow = openerFrame.window();
+                if (RefPtr page = frame->page(); page && isInVisibleAndActivePage(openerFrame) && openerWindow && openerWindow->hasTransientActivation())
                     page->chrome().focus();
             }
-            return frame;
+            frame->updateOpener(openerFrame);
+            return { frame, CreatedNewPage::No };
         }
     }
 
-    // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
-    if (openerFrame.document()->shouldForceNoOpenerBasedOnCOOP()) {
-        request.setFrameName(blankTargetFrameName());
-        features.noopener = true;
-    }
-
-    if (openerFrame.document()->settingsValues().blobRegistryTopOriginPartitioningEnabled && request.resourceRequest().url().protocolIsBlob() && !openerFrame.document()->protectedSecurityOrigin()->isSameOriginAs(openerFrame.document()->protectedTopOrigin())) {
-        request.setFrameName(blankTargetFrameName());
-        features.noopener = true;
-    }
-
     // Sandboxed frames cannot open new auxiliary browsing contexts.
-    if (isDocumentSandboxed(openerFrame, SandboxPopups)) {
+    if (isDocumentSandboxed(openerFrame, SandboxFlag::Popups)) {
         // FIXME: This message should be moved off the console once a solution to https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
-        openerFrame.protectedDocument()->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Blocked opening '"_s, request.resourceRequest().url().stringCenterEllipsizedToLength(), "' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set."_s));
-        return nullptr;
+        protect(openerFrame.document())->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("Blocked opening '"_s, request.resourceRequest().url().stringCenterEllipsizedToLength(), "' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set."_s));
+        return { nullptr, CreatedNewPage::No };
     }
 
     // FIXME: Setting the referrer should be the caller's responsibility.
-    String referrer = SecurityPolicy::generateReferrerHeader(openerFrame.document()->referrerPolicy(), request.resourceRequest().url(), openerFrame.loader().outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
+    String referrer = features.wantsNoReferrer() ? String() :  SecurityPolicy::generateReferrerHeader(openerFrame.document()->referrerPolicy(), request.resourceRequest().url(), openerFrame.loader().outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
     if (!referrer.isEmpty())
         request.resourceRequest().setHTTPReferrer(referrer);
-    FrameLoader::addSameSiteInfoToRequestIfNeeded(request.resourceRequest(), openerFrame.protectedDocument().get());
+    FrameLoader::addSameSiteInfoToRequestIfNeeded(request.resourceRequest(), protect(openerFrame.document()).get());
 
     RefPtr oldPage = openerFrame.page();
     if (!oldPage)
-        return nullptr;
+        return { nullptr, CreatedNewPage::No };
 
+#if PLATFORM(GTK)
+    features.oldWindowRect = oldPage->chrome().windowRect();
+#endif
+
+    String openedMainFrameName = isBlankTargetFrameName(request.frameName()) ? String() : request.frameName();
     ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy = shouldOpenExternalURLsPolicyToApply(openerFrame, request);
-    NavigationAction action { request.requester(), request.resourceRequest(), request.initiatedByMainFrame(), request.isRequestFromClientOrUserInput(), NavigationType::Other, shouldOpenExternalURLsPolicy };
+    NavigationAction action { request, NavigationType::Other };
+    action.setShouldOpenExternalURLsPolicy(shouldOpenExternalURLsPolicy);
     action.setNewFrameOpenerPolicy(features.wantsNoOpener() ? NewFrameOpenerPolicy::Suppress : NewFrameOpenerPolicy::Allow);
-    RefPtr page = oldPage->chrome().createWindow(openerFrame, features, action);
+    RefPtr page = oldPage->chrome().createWindow(openerFrame, openedMainFrameName, features, action);
     if (!page)
-        return nullptr;
+        return { nullptr, CreatedNewPage::No };
 
     Ref frame = page->mainFrame();
 
-    if (isDocumentSandboxed(openerFrame, SandboxPropagatesToAuxiliaryBrowsingContexts)) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
-            localFrame->checkedLoader()->forceSandboxFlags(openerFrame.document()->sandboxFlags());
-    }
-
-    if (!isBlankTargetFrameName(request.frameName()))
-        frame->tree().setSpecifiedName(request.frameName());
-
-    page->chrome().setToolbarsVisible(features.toolBarVisible || features.locationBarVisible);
-
     if (!frame->page())
-        return nullptr;
-    if (features.statusBarVisible)
-        page->chrome().setStatusbarVisible(*features.statusBarVisible);
+        return { nullptr, CreatedNewPage::No };
 
-    if (!frame->page())
-        return nullptr;
-    if (features.scrollbarsVisible)
-        page->chrome().setScrollbarsVisible(*features.scrollbarsVisible);
-
-    if (!frame->page())
-        return nullptr;
-    if (features.menuBarVisible)
-        page->chrome().setMenubarVisible(*features.menuBarVisible);
-
-    if (!frame->page())
-        return nullptr;
-    if (features.resizable)
-        page->chrome().setResizable(*features.resizable);
-
-    // 'x' and 'y' specify the location of the window, while 'width' and 'height'
-    // specify the size of the viewport. We can only resize the window, so adjust
-    // for the difference between the window size and the viewport size.
-
-    // FIXME: We should reconcile the initialization of viewport arguments between iOS and non-IOS.
-#if !PLATFORM(IOS_FAMILY)
-    FloatSize viewportSize = page->chrome().pageRect().size();
-    FloatRect windowRect = page->chrome().windowRect();
-    if (features.x)
-        windowRect.setX(*features.x);
-    if (features.y)
-        windowRect.setY(*features.y);
-    // Zero width and height mean using default size, not minimum one.
-    if (features.width && *features.width)
-        windowRect.setWidth(*features.width + (windowRect.width() - viewportSize.width()));
-    if (features.height && *features.height)
-        windowRect.setHeight(*features.height + (windowRect.height() - viewportSize.height()));
-
-#if PLATFORM(GTK)
-    FloatRect oldWindowRect = oldPage->chrome().windowRect();
-    // Use the size of the previous window if there is no default size.
-    if (!windowRect.width())
-        windowRect.setWidth(oldWindowRect.width());
-    if (!windowRect.height())
-        windowRect.setHeight(oldWindowRect.height());
-#endif
-
-    // Ensure non-NaN values, minimum size as well as being within valid screen area.
-    FloatRect newWindowRect = LocalDOMWindow::adjustWindowRect(*page, windowRect);
-
-    if (!frame->page())
-        return nullptr;
-    page->chrome().setWindowRect(newWindowRect);
-#else
-    // On iOS, width and height refer to the viewport dimensions.
-    ViewportArguments arguments;
-    // Zero width and height mean using default size, not minimum one.
-    if (features.width && *features.width)
-        arguments.width = *features.width;
-    if (features.height && *features.height)
-        arguments.height = *features.height;
-    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
-        localFrame->setViewportArguments(arguments);
-#endif
-
-    if (!frame->page())
-        return nullptr;
-    page->chrome().show();
-
-    created = true;
-    return frame;
+    return { WTF::move(frame), CreatedNewPage::Yes };
 }
 
 // At the moment, we do not actually create a new browsing context / frame. We merely make it so that existing windowProxy for the
@@ -4763,8 +5089,8 @@ void FrameLoader::switchBrowsingContextsGroup()
 {
     // Disown opener.
     Ref frame = m_frame.get();
-    frame->setOpener(nullptr);
-    if (RefPtr page = m_frame->page())
+    frame->disownOpener();
+    if (auto* page = m_frame->page())
         page->setOpenedByDOMWithOpener(false);
 
     frame->detachFromAllOpenedFrames();
@@ -4777,7 +5103,7 @@ void FrameLoader::switchBrowsingContextsGroup()
 
     // On same-origin navigation from the initial empty document, we normally reuse the window for the new document. We need to prevent
     // this when we want to isolate so old window proxies will indeed start pointing to a frameless window and appear closed.
-    if (RefPtr window = frame->window())
+    if (auto* window = frame->window())
         window->setMayReuseForNavigation(false);
 }
 
@@ -4794,19 +5120,9 @@ void FrameLoader::advanceStatePastInitialEmptyDocument()
         stateMachine().advanceTo(FrameLoaderStateMachine::CommittedFirstRealLoad);
 }
 
-RefPtr<DocumentLoader> FrameLoader::protectedDocumentLoader() const
-{
-    return m_documentLoader;
-}
-
-RefPtr<DocumentLoader> FrameLoader::protectedProvisionalDocumentLoader() const
-{
-    return m_provisionalDocumentLoader;
-}
-
 RefPtr<DocumentLoader> FrameLoader::loaderForWebsitePolicies(CanIncludeCurrentDocumentLoader canIncludeCurrentDocumentLoader) const
 {
-    RefPtr loader = policyDocumentLoader();
+    auto* loader = policyDocumentLoader();
     if (!loader)
         loader = provisionalDocumentLoader();
     if (!loader && canIncludeCurrentDocumentLoader == CanIncludeCurrentDocumentLoader::Yes)
@@ -4814,48 +5130,34 @@ RefPtr<DocumentLoader> FrameLoader::loaderForWebsitePolicies(CanIncludeCurrentDo
     return loader;
 }
 
-void FrameLoader::updateNavigationAPIEntries(std::optional<NavigationNavigationType> navigationType)
+void FrameLoader::prefetchDNSIfNeeded(const URL& url)
 {
-    if (!m_frame->document() || !m_frame->document()->settings().navigationAPIEnabled())
-        return;
-    RefPtr domWindow = m_frame->document()->domWindow();
-    if (!domWindow)
-        return;
-    RefPtr page = m_frame->page();
+#if ENABLE(CONTENT_EXTENSIONS)
+    Ref frame { m_frame.get() };
+    RefPtr page = frame->page();
     if (!page)
         return;
-    RefPtr currentItem = m_frame->history().currentItem();
-    if (!currentItem)
+
+    RefPtr documentLoader = m_documentLoader;
+    if (!documentLoader)
         return;
 
-    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#getting-session-history-entries-for-the-navigation-api
-    Vector<Ref<HistoryItem>> entriesForNavigationAPI;
-    entriesForNavigationAPI.append(*currentItem);
+    RefPtr userContentProvider = frame->userContentProvider();
+    if (!userContentProvider)
+        return;
 
-    auto rawEntries = page->backForward().allItems();
-    auto startingIndex = rawEntries.find(*currentItem);
-    if (startingIndex != notFound) {
-        Ref startingOrigin = SecurityOrigin::create(rawEntries[startingIndex]->url());
+    auto results = userContentProvider->processContentRuleListsForLoad(*page, url, ContentExtensions::ResourceType::Ping, *documentLoader);
+    if (results.shouldBlock())
+        return;
+#endif
 
-        for (int64_t i = startingIndex - 1; i >= 0; i--) {
-            Ref item = rawEntries[i];
+    if (url.isValid() && !url.isEmpty() && url.protocolIsInHTTPFamily())
+        client().prefetchDNS(url.host().toString());
+}
 
-            if (!SecurityOrigin::create(item->url())->isSameOriginAs(startingOrigin))
-                break;
-            entriesForNavigationAPI.insert(0, WTFMove(item));
-        }
-
-        for (size_t i = startingIndex + 1; i < rawEntries.size(); i++) {
-            Ref item = rawEntries[i];
-            if (!SecurityOrigin::create(item->url())->isSameOriginAs(startingOrigin))
-                break;
-            entriesForNavigationAPI.append(WTFMove(item));
-        }
-    }
-
-    RefPtr navigation = domWindow->protectedNavigation();
-    navigation->initializeEntries(*currentItem, entriesForNavigationAPI);
-    navigation->updateForActivation(m_frame->history().previousItem(), navigationType);
+void FrameLoader::prefetch(const URL& url, const Vector<String>& tags, std::optional<ReferrerPolicy> referrerPolicy, bool lowPriority)
+{
+    m_documentPrefetcher->prefetch(url, tags, referrerPolicy, lowPriority);
 }
 
 } // namespace WebCore

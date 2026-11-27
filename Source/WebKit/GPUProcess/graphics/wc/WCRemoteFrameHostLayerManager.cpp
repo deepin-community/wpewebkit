@@ -29,6 +29,7 @@
 #if USE(GRAPHICS_LAYER_WC)
 
 #include <WebCore/BitmapTexture.h>
+#include <WebCore/TextureMapper.h>
 #include <WebCore/TextureMapperPlatformLayer.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -97,7 +98,7 @@ void WCRemoteFrameHostLayerManager::updateTexture(WebCore::LayerHostingContextId
     m_layers.ensure(layerHostingContextIdentifier, [&] {
         // Create a new data if the frame host didn't create it yet. The initial owner is the remote frame process.
         return makeUnique<RemoteFrameHostLayerData>(webProcessIdentifier);
-    }).iterator->value->layer().setTexture(WTFMove(texture));
+    }).iterator->value->layer().setTexture(WTF::move(texture));
 }
 
 void WCRemoteFrameHostLayerManager::removeAllLayersForProcess(WebCore::ProcessIdentifier webProcessIdentifier)

@@ -39,24 +39,26 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebMediaKeySystemClient);
 
+Ref<WebMediaKeySystemClient> WebMediaKeySystemClient::create(WebPage& page)
+{
+    return adoptRef(*new WebMediaKeySystemClient(page));
+}
+
 WebMediaKeySystemClient::WebMediaKeySystemClient(WebPage& page)
     : m_page(page)
 {
 }
 
-void WebMediaKeySystemClient::pageDestroyed()
-{
-    delete this;
-}
-
 void WebMediaKeySystemClient::requestMediaKeySystem(MediaKeySystemRequest& request)
 {
-    m_page->mediaKeySystemPermissionRequestManager().startMediaKeySystemRequest(request);
+    if (RefPtr page = m_page.get())
+        page->mediaKeySystemPermissionRequestManager().startMediaKeySystemRequest(request);
 }
 
 void WebMediaKeySystemClient::cancelMediaKeySystemRequest(MediaKeySystemRequest& request)
 {
-    m_page->mediaKeySystemPermissionRequestManager().cancelMediaKeySystemRequest(request);
+    if (RefPtr page = m_page.get())
+        page->mediaKeySystemPermissionRequestManager().cancelMediaKeySystemRequest(request);
 }
 
 } // namespace WebKit;

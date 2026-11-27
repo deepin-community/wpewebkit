@@ -25,11 +25,14 @@
 
 #pragma once
 
-#include "MacroAssembler.h"
+#include <JavaScriptCore/MacroAssembler.h>
 #include <array>
 #include <wtf/FunctionTraits.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Platform.h>
 #include <wtf/PrintStream.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -343,12 +346,14 @@ public:
     typedef GPRReg RegisterType;
     static constexpr unsigned numberOfRegisters = 10;
     static constexpr unsigned numberOfArgumentRegisters = NUMBER_OF_ARGUMENT_REGISTERS;
+    static constexpr unsigned numberOfCalleeSaveRegisters = 5;
 
     // These registers match the baseline JIT.
     static constexpr GPRReg callFrameRegister = X86Registers::ebp;
     static constexpr GPRReg numberTagRegister = X86Registers::r14;
     static constexpr GPRReg notCellMaskRegister = X86Registers::r15;
     static constexpr GPRReg jitDataRegister = X86Registers::r13;
+    static constexpr GPRReg wasmIPIntPCRegister = X86Registers::r13; // IPInt PC = csr2 = r13
     static constexpr GPRReg metadataTableRegister = X86Registers::r12;
 
     // Temporary registers.
@@ -361,12 +366,11 @@ public:
     static constexpr GPRReg regT6 = X86Registers::edi;
     static constexpr GPRReg regT7 = X86Registers::r9;
 
-    static constexpr GPRReg regCS0 = X86Registers::ebx;
-
-    static constexpr GPRReg regCS1 = X86Registers::r12; // metadataTable in LLInt/Baseline
-    static constexpr GPRReg regCS2 = X86Registers::r13; // jitDataRegister
-    static constexpr GPRReg regCS3 = X86Registers::r14; // numberTagRegister
-    static constexpr GPRReg regCS4 = X86Registers::r15; // notCellMaskRegister
+    static constexpr GPRReg regCS0 = X86Registers::ebx; // WasmInstance
+    static constexpr GPRReg regCS1 = X86Registers::r12; // metadataTable in LLInt/Baseline / IPIntMC
+    static constexpr GPRReg regCS2 = X86Registers::r13; // jitData / IPIntPC
+    static constexpr GPRReg regCS3 = X86Registers::r14; // numberTag / WasmBaseMemory
+    static constexpr GPRReg regCS4 = X86Registers::r15; // notCellMask / WasmBoundsCheckingSize
 
     static constexpr GPRReg regWS0 = X86Registers::eax;
     static constexpr GPRReg regWS1 = X86Registers::r10;
@@ -388,7 +392,7 @@ public:
     static constexpr GPRReg nonArgGPR0 = X86Registers::r10; // regT5
     static constexpr GPRReg nonArgGPR1 = X86Registers::eax; // regT0
     static constexpr GPRReg returnValueGPR = X86Registers::eax; // regT0
-    static constexpr GPRReg returnValueGPR2 = X86Registers::edx; // regT1 or regT2
+    static constexpr GPRReg returnValueGPR2 = X86Registers::edx; // regT2
     static constexpr GPRReg nonPreservedNonReturnGPR = X86Registers::r10; // regT5
     static constexpr GPRReg nonPreservedNonArgumentGPR0 = X86Registers::r10; // regT5
     static constexpr GPRReg nonPreservedNonArgumentGPR1 = X86Registers::eax;
@@ -426,6 +430,14 @@ public:
         ASSERT(reg != InvalidGPRReg);
         ASSERT(static_cast<int>(reg) < 16);
         static const unsigned indexForRegister[16] = { 0, 3, 2, 8, InvalidIndex, InvalidIndex, 1, 6, 4, 7, 5, InvalidIndex, 9, InvalidIndex, InvalidIndex, InvalidIndex };
+        return indexForRegister[reg];
+    }
+
+    static unsigned toArgumentIndex(GPRReg reg)
+    {
+        ASSERT(reg != InvalidGPRReg);
+        ASSERT(static_cast<int>(reg) < 16);
+        static const unsigned indexForRegister[16] = { InvalidIndex, 3, 2, InvalidIndex, InvalidIndex, InvalidIndex, 1, 0, 4, 5, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex };
         return indexForRegister[reg];
     }
 
@@ -473,12 +485,13 @@ public:
     static constexpr GPRReg regT5 = ARMRegisters::r5;
     static constexpr GPRReg regT6 = ARMRegisters::r8;
     static constexpr GPRReg regT7 = ARMRegisters::r9;
-    static constexpr GPRReg regCS0 = ARMRegisters::r10; // metadataTable in LLInt/Baseline
-    static constexpr GPRReg regCS1 = ARMRegisters::r11; // jitDataRegister
+    static constexpr GPRReg regCS0 = ARMRegisters::r10; // metadataTable in LLInt/Baseline / WasmInstance
+    static constexpr GPRReg regCS1 = ARMRegisters::r11; // jitData / IPIntPC
 
     // These registers match the baseline JIT.
     static constexpr GPRReg callFrameRegister = ARMRegisters::fp;
     static constexpr GPRReg jitDataRegister = regCS1;
+    static constexpr GPRReg wasmIPIntPCRegister = regCS1; // IPInt PC = csr1 = x11
     static constexpr GPRReg metadataTableRegister = regCS0;
 
     static constexpr GPRReg regWS0 = ARMRegisters::r5;
@@ -533,6 +546,15 @@ public:
         return result;
     }
 
+    static unsigned toArgumentIndex(GPRReg reg)
+    {
+        ASSERT(reg != InvalidGPRReg);
+        ASSERT(static_cast<int>(reg) < 16);
+        if (reg > argumentGPR3)
+            return InvalidIndex;
+        return static_cast<unsigned>(reg);
+    }
+
     static ASCIILiteral debugName(GPRReg reg)
     {
         ASSERT(reg != InvalidGPRReg);
@@ -554,12 +576,14 @@ public:
     typedef GPRReg RegisterType;
     static constexpr unsigned numberOfRegisters = 16;
     static constexpr unsigned numberOfArgumentRegisters = NUMBER_OF_ARGUMENT_REGISTERS;
+    static constexpr unsigned numberOfCalleeSaveRegisters = 10;
 
     // These registers match the baseline JIT.
     static constexpr GPRReg callFrameRegister = ARM64Registers::fp;
     static constexpr GPRReg numberTagRegister = ARM64Registers::x27;
     static constexpr GPRReg notCellMaskRegister = ARM64Registers::x28;
     static constexpr GPRReg jitDataRegister = ARM64Registers::x26;
+    static constexpr GPRReg wasmIPIntPCRegister = ARM64Registers::x26;
     static constexpr GPRReg metadataTableRegister = ARM64Registers::x25;
     static constexpr GPRReg dataTempRegister = MacroAssembler::dataTempRegister;
     static constexpr GPRReg memoryTempRegister = MacroAssembler::memoryTempRegister;
@@ -580,14 +604,14 @@ public:
     static constexpr GPRReg regT13 = ARM64Registers::x13;
     static constexpr GPRReg regT14 = ARM64Registers::x14;
     static constexpr GPRReg regT15 = ARM64Registers::x15;
-    static constexpr GPRReg regCS0 = ARM64Registers::x19; // Used by FTL only
-    static constexpr GPRReg regCS1 = ARM64Registers::x20; // Used by FTL only
-    static constexpr GPRReg regCS2 = ARM64Registers::x21; // Used by FTL only
-    static constexpr GPRReg regCS3 = ARM64Registers::x22; // Used by FTL only
-    static constexpr GPRReg regCS4 = ARM64Registers::x23; // Used by FTL only
-    static constexpr GPRReg regCS5 = ARM64Registers::x24; // Used by FTL only
-    static constexpr GPRReg regCS6 = ARM64Registers::x25; // metadataTable in LLInt/Baseline
-    static constexpr GPRReg regCS7 = ARM64Registers::x26; // constants
+    static constexpr GPRReg regCS0 = ARM64Registers::x19; // WasmInstance
+    static constexpr GPRReg regCS1 = ARM64Registers::x20; //
+    static constexpr GPRReg regCS2 = ARM64Registers::x21; //
+    static constexpr GPRReg regCS3 = ARM64Registers::x22; // WasmBaseMemory
+    static constexpr GPRReg regCS4 = ARM64Registers::x23; // WasmBoundsCheckingSize
+    static constexpr GPRReg regCS5 = ARM64Registers::x24; //
+    static constexpr GPRReg regCS6 = ARM64Registers::x25; // metadataTable in LLInt/Baseline / IPIntMC
+    static constexpr GPRReg regCS7 = ARM64Registers::x26; // jitData / IPIntPC
     static constexpr GPRReg regCS8 = ARM64Registers::x27; // numberTag
     static constexpr GPRReg regCS9 = ARM64Registers::x28; // notCellMask
     // These constants provide the names for the general purpose argument & return value registers.
@@ -655,13 +679,19 @@ public:
     {
         if (reg > regT15)
             return InvalidIndex;
-        return (unsigned)reg;
+        return static_cast<unsigned>(reg);
     }
 
     static constexpr GPRReg toArgumentRegister(unsigned index)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(index < numberOfArgumentRegisters);
         return toRegister(index);
+    }
+    static unsigned toArgumentIndex(GPRReg reg)
+    {
+        if (reg > argumentGPR7)
+            return InvalidIndex;
+        return static_cast<unsigned>(reg);
     }
 
     static ASCIILiteral debugName(GPRReg reg)
@@ -701,6 +731,7 @@ public:
     static constexpr GPRReg numberTagRegister = RISCV64Registers::x25;
     static constexpr GPRReg notCellMaskRegister = RISCV64Registers::x26;
     static constexpr GPRReg jitDataRegister = RISCV64Registers::x24;
+    static constexpr GPRReg wasmIPIntPCRegister = RISCV64Registers::x24; // IPInt PC = csr7 = x24
     static constexpr GPRReg metadataTableRegister = RISCV64Registers::x23;
 
     static constexpr GPRReg regT0 = RISCV64Registers::x10;
@@ -717,14 +748,14 @@ public:
     static constexpr GPRReg regT11 = RISCV64Registers::x28;
     static constexpr GPRReg regT12 = RISCV64Registers::x29;
 
-    static constexpr GPRReg regCS0 = RISCV64Registers::x9;
+    static constexpr GPRReg regCS0 = RISCV64Registers::x9;  // WasmInstance
     static constexpr GPRReg regCS1 = RISCV64Registers::x18;
     static constexpr GPRReg regCS2 = RISCV64Registers::x19;
-    static constexpr GPRReg regCS3 = RISCV64Registers::x20;
-    static constexpr GPRReg regCS4 = RISCV64Registers::x21;
+    static constexpr GPRReg regCS3 = RISCV64Registers::x20; // WasmBaseMemory
+    static constexpr GPRReg regCS4 = RISCV64Registers::x21; // WasmBoundsCheckingSize
     static constexpr GPRReg regCS5 = RISCV64Registers::x22;
-    static constexpr GPRReg regCS6 = RISCV64Registers::x23; // metadataTable in LLInt/Baseline
-    static constexpr GPRReg regCS7 = RISCV64Registers::x24; // constants
+    static constexpr GPRReg regCS6 = RISCV64Registers::x23; // metadataTable in LLInt/Baseline / IPIntMC
+    static constexpr GPRReg regCS7 = RISCV64Registers::x24; // jitData / IPIntPC
     static constexpr GPRReg regCS8 = RISCV64Registers::x25; // numberTag
     static constexpr GPRReg regCS9 = RISCV64Registers::x26; // notCellMask
     static constexpr GPRReg regCS10 = RISCV64Registers::x27;
@@ -802,6 +833,15 @@ public:
         return indexForRegister[reg];
     }
 
+    static unsigned toArgumentIndex(GPRReg reg)
+    {
+        ASSERT(reg != InvalidGPRReg);
+        ASSERT(static_cast<int>(reg) < 32);
+        if (reg < argumentGPR0 || reg > argumentGPR7)
+            return InvalidIndex;
+        return static_cast<unsigned>(reg) - 10;
+    }
+
     static ASCIILiteral debugName(GPRReg reg)
     {
         ASSERT(reg != InvalidGPRReg);
@@ -864,6 +904,7 @@ inline NoResultTag extractResult(NoResultTag) { return NoResult; }
 // We use this hack to get the GPRInfo from the GPRReg type in templates because our code is bad and we should feel bad..
 constexpr GPRInfo toInfoFromReg(GPRReg) { return GPRInfo(); }
 
+// FIXME: We should just use a RegisterSet for this check since RegisterSet is constexpr anyway.
 class NoOverlapImpl {
     static constexpr unsigned noOverlapImplRegMask(GPRReg gpr)
     {
@@ -874,62 +915,86 @@ class NoOverlapImpl {
         return 1ULL << bit;
     }
 
+    static constexpr unsigned noOverlapImplFPRMask(MacroAssembler::FPRegisterID fpr)
+    {
+        if (fpr == MacroAssembler::FPRegisterID::InvalidFPRReg)
+            return 0ULL;
+        unsigned bit = static_cast<unsigned>(fpr);
+        RELEASE_ASSERT(bit < countOfBits<uint64_t>);
+        return 1ULL << bit;
+    }
+
     // Base case
     template<typename... Args>
-    static constexpr bool noOverlapImpl(uint64_t) { return true; }
+    static constexpr bool noOverlapImpl(uint64_t, uint64_t) { return true; }
 
     // GPRReg case
     template<typename... Args>
-    static constexpr bool noOverlapImpl(uint64_t used, GPRReg gpr, Args... args)
+    static constexpr bool noOverlapImpl(uint64_t usedGPR, uint64_t usedFPR, GPRReg gpr, Args... args)
     {
         unsigned mask = noOverlapImplRegMask(gpr);
-        if (used & mask)
+        if (usedGPR & mask)
             return false;
-        return noOverlapImpl(used | mask, args...);
+        return noOverlapImpl(usedGPR | mask, usedFPR, args...);
+    }
+
+    // FPRegisterID case
+    template<typename... Args>
+    static constexpr bool noOverlapImpl(uint64_t usedGPR, uint64_t usedFPR, MacroAssembler::FPRegisterID fpr, Args... args)
+    {
+        unsigned mask = noOverlapImplFPRMask(fpr);
+        if (usedFPR & mask)
+            return false;
+        return noOverlapImpl(usedGPR, usedFPR | mask, args...);
     }
 
     // JSValueRegs case
     template<typename... Args>
-    static constexpr bool noOverlapImpl(uint64_t used, JSValueRegs jsr, Args... args)
+    static constexpr bool noOverlapImpl(uint64_t usedGPR, uint64_t usedFPR, JSValueRegs jsr, Args... args)
     {
         unsigned mask = noOverlapImplRegMask(jsr.payloadGPR());
 #if USE(JSVALUE32_64)
         mask |= noOverlapImplRegMask(jsr.tagGPR());
 #endif
-        if (used & mask)
+        if (usedGPR & mask)
             return false;
-        return noOverlapImpl(used | mask, args...);
+        return noOverlapImpl(usedGPR | mask, usedFPR, args...);
     }
 
     // NoResultTag case, this happens from templates
     template<typename... Args>
-    static constexpr bool noOverlapImpl(uint64_t used, NoResultTag, Args... args)
+    static constexpr bool noOverlapImpl(uint64_t usedGPR, uint64_t usedFPR, NoResultTag, Args... args)
     {
-        return noOverlapImpl(used, args...);
+        return noOverlapImpl(usedGPR, usedFPR, args...);
     }
 
 public:
     // Entry point
     template <typename... Args>
-    static constexpr bool entry(Args... args) { return noOverlapImpl(0, args...); }
+    static constexpr bool entry(Args... args) { return noOverlapImpl(0, 0, args...); }
 };
 
-// Checks that the given list of GPRRegs and JSValueRegs do not overlap. Use this in static
-// assertions to ensure that register aliases live at the same point do not map to the same
-// architectural register.
+// Checks that the given list of GPRRegs, FPRegisterIDs, and JSValueRegs do not overlap.
+// GPRs and FPRs are tracked independently (a GPR and FPR with the same number do not conflict).
+// Use this in static assertions to ensure that register aliases live at the same point do not
+// map to the same architectural register.
 template <typename... Args>
 constexpr bool noOverlap(Args... args) { return NoOverlapImpl::entry(args...); }
 
+template<typename OperationType, size_t ArgNum>
+concept HasNthArgument = FunctionTraits<OperationType>::arity > ArgNum;
+
 class PreferredArgumentImpl {
     private:
-    template <typename OperationType, unsigned ArgNum>
-    static constexpr std::enable_if_t<(FunctionTraits<OperationType>::arity > ArgNum), size_t> sizeOfArg()
+    template<typename OperationType, size_t ArgNum>
+        requires HasNthArgument<OperationType, ArgNum>
+    static constexpr size_t sizeOfArg()
     {
         return sizeof(typename FunctionTraits<OperationType>::template ArgumentType<ArgNum>);
     }
 
 #if USE(JSVALUE64)
-    template <typename OperationType, unsigned ArgNum, unsigned Index = ArgNum, typename... Args>
+    template <typename OperationType, size_t ArgNum, size_t Index = ArgNum, typename... Args>
     static constexpr JSValueRegs pickJSR(GPRReg first, Args... rest)
     {
         static_assert(sizeOfArg<OperationType, ArgNum - Index>() <= 8, "Don't know how to handle large arguments");
@@ -941,7 +1006,7 @@ class PreferredArgumentImpl {
         }
     }
 #elif USE(JSVALUE32_64)
-    template <typename OperationType, unsigned ArgNum, unsigned Index = ArgNum, typename... Args>
+    template <typename OperationType, size_t ArgNum, size_t Index = ArgNum, typename... Args>
     static constexpr JSValueRegs pickJSR(GPRReg first, GPRReg second, GPRReg third, Args... rest)
     {
         constexpr size_t sizeOfCurrentArg = sizeOfArg<OperationType, ArgNum - Index>();
@@ -974,7 +1039,7 @@ class PreferredArgumentImpl {
         }
     }
 
-    template <typename OperationType, unsigned ArgNum, unsigned Index = ArgNum, typename... Args>
+    template <typename OperationType, size_t ArgNum, size_t Index = ArgNum, typename... Args>
     static constexpr JSValueRegs pickJSR(GPRReg first, GPRReg second)
     {
         constexpr size_t sizeOfCurrentArg = sizeOfArg<OperationType, ArgNum - Index>();
@@ -995,7 +1060,7 @@ class PreferredArgumentImpl {
         }
     }
 
-    template <typename OperationType, unsigned ArgNum, unsigned Index = ArgNum, typename... Args>
+    template <typename OperationType, size_t ArgNum, size_t Index = ArgNum, typename... Args>
     static constexpr JSValueRegs pickJSR(GPRReg first)
     {
         constexpr size_t sizeOfCurrentArg = sizeOfArg<OperationType, ArgNum - Index>();
@@ -1009,9 +1074,9 @@ class PreferredArgumentImpl {
 #endif
 
 public:
-    template <typename OperationType, unsigned ArgNum>
-    static constexpr std::enable_if_t<(FunctionTraits<OperationType>::arity > ArgNum), JSValueRegs>
-    preferredArgumentJSR()
+    template<typename OperationType, size_t ArgNum>
+        requires HasNthArgument<OperationType, ArgNum>
+    static constexpr JSValueRegs preferredArgumentJSR()
     {
 #if USE(JSVALUE64)
         return pickJSR<OperationType, ArgNum>(
@@ -1033,9 +1098,9 @@ public:
 #endif
     }
 
-    template <typename OperationType, unsigned ArgNum>
-    static constexpr std::enable_if_t<(FunctionTraits<OperationType>::arity > ArgNum), GPRReg>
-    preferredArgumentGPR()
+    template<typename OperationType, size_t ArgNum>
+        requires HasNthArgument<OperationType, ArgNum>
+    static constexpr GPRReg preferredArgumentGPR()
     {
 #if USE(JSVALUE32_64)
         static_assert(sizeOfArg<OperationType, ArgNum>() <= 5, "Argument does not fit in GPR");
@@ -1050,9 +1115,9 @@ public:
 // arguments. The idea is that 'setupArguments' will have to do the minimal amount of work when
 // using these registers to hold the arguments, so if you are loading most arguments from memory
 // anyway, using these registers yields the smallest code required for a call.
-template <typename OperationType, unsigned ArgNum>
-constexpr std::enable_if_t<(FunctionTraits<OperationType>::arity > ArgNum), GPRReg>
-preferredArgumentGPR()
+template<typename OperationType, size_t ArgNum>
+    requires HasNthArgument<OperationType, ArgNum>
+constexpr GPRReg preferredArgumentGPR()
 {
     return PreferredArgumentImpl::preferredArgumentGPR<OperationType, ArgNum>();
 }
@@ -1062,9 +1127,9 @@ preferredArgumentGPR()
 // required to hold a 64-bit wide function argument, so use this in particular when passing a
 // JSValue/EncodedJSValue to be compatible with both JSVALUE64 an JSVALUE32_64 platforms, and use
 // preferredArgumentGPR when passing host pointers.
-template <typename OperationType, unsigned ArgNum>
-constexpr std::enable_if_t<(FunctionTraits<OperationType>::arity > ArgNum), JSValueRegs>
-preferredArgumentJSR()
+template<typename OperationType, size_t ArgNum>
+    requires HasNthArgument<OperationType, ArgNum>
+constexpr JSValueRegs preferredArgumentJSR()
 {
     return PreferredArgumentImpl::preferredArgumentJSR<OperationType, ArgNum>();
 }
@@ -1132,3 +1197,5 @@ inline void printInternal(PrintStream& out, JSC::GPRReg reg)
 }
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

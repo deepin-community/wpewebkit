@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/CrossOriginEmbedderPolicyValue.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
@@ -40,17 +41,12 @@ namespace WebKit {
 class WebSharedWorkerServer;
 }
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::WebSharedWorkerServer> : std::true_type { };
-}
-
 namespace PAL {
 class SessionID;
 }
 
 namespace WebCore {
-
+class Site;
 struct ClientOrigin;
 struct WorkerFetchResult;
 struct WorkerInitializationData;
@@ -64,14 +60,16 @@ class WebSharedWorker;
 class WebSharedWorkerServerConnection;
 class WebSharedWorkerServerToContextConnection;
 
-class WebSharedWorkerServer : public CanMakeWeakPtr<WebSharedWorkerServer> {
+class WebSharedWorkerServer : public CanMakeWeakPtr<WebSharedWorkerServer>, public CanMakeCheckedPtr<WebSharedWorkerServer> {
     WTF_MAKE_TZONE_ALLOCATED(WebSharedWorkerServer);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebSharedWorkerServer);
 public:
     explicit WebSharedWorkerServer(NetworkSession&);
     ~WebSharedWorkerServer();
 
-    PAL::SessionID sessionID();
-    WebSharedWorkerServerToContextConnection* contextConnectionForRegistrableDomain(const WebCore::RegistrableDomain&) const;
+    PAL::SessionID NODELETE sessionID();
+    using ContextConnectionKey = std::pair<WebCore::RegistrableDomain, WebCore::CrossOriginEmbedderPolicyValue>;
+    WebSharedWorkerServerToContextConnection* contextConnectionForRegistrableDomain(const WebCore::RegistrableDomain&, WebCore::CrossOriginEmbedderPolicyValue) const;
 
     void requestSharedWorker(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier, WebCore::TransferredMessagePort&&, WebCore::WorkerOptions&&);
     void sharedWorkerObjectIsGoingAway(const WebCore::SharedWorkerKey&, WebCore::SharedWorkerObjectIdentifier);
@@ -83,21 +81,26 @@ public:
     void terminateContextConnectionWhenPossible(const WebCore::RegistrableDomain&, WebCore::ProcessIdentifier);
     void addContextConnection(WebSharedWorkerServerToContextConnection&);
     void removeContextConnection(WebSharedWorkerServerToContextConnection&);
-    void addConnection(std::unique_ptr<WebSharedWorkerServerConnection>&&);
+    void addConnection(Ref<WebSharedWorkerServerConnection>&&);
     void removeConnection(WebCore::ProcessIdentifier);
 
+#if ENABLE(CONTENT_EXTENSIONS)
+    void reportNetworkUsageToAllSharedWorkerObjects(WebCore::SharedWorkerIdentifier, size_t bytesTransferredOverNetwork);
+#endif
+
 private:
-    void createContextConnection(const WebCore::RegistrableDomain&, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier);
+    void createContextConnection(const WebCore::Site&, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, WebCore::CrossOriginEmbedderPolicyValue);
+    void forEachContextConnectionForRegistrableDomain(const WebCore::RegistrableDomain&, NOESCAPE const Function<void(WebSharedWorkerServerToContextConnection&)>&);
     bool needsContextConnectionForRegistrableDomain(const WebCore::RegistrableDomain&) const;
     void contextConnectionCreated(WebSharedWorkerServerToContextConnection&);
     void didFinishFetchingSharedWorkerScript(WebSharedWorker&, WebCore::WorkerFetchResult&&, WebCore::WorkerInitializationData&&);
     void shutDownSharedWorker(const WebCore::SharedWorkerKey&);
 
-    NetworkSession& m_session;
-    HashMap<WebCore::ProcessIdentifier, std::unique_ptr<WebSharedWorkerServerConnection>> m_connections;
-    HashMap<WebCore::RegistrableDomain, WeakRef<WebSharedWorkerServerToContextConnection>> m_contextConnections;
-    HashSet<WebCore::RegistrableDomain> m_pendingContextConnectionDomains;
-    HashMap<WebCore::SharedWorkerKey, std::unique_ptr<WebSharedWorker>> m_sharedWorkers;
+    CheckedRef<NetworkSession> m_session;
+    HashMap<WebCore::ProcessIdentifier, Ref<WebSharedWorkerServerConnection>> m_connections;
+    HashMap<ContextConnectionKey, WeakRef<WebSharedWorkerServerToContextConnection>> m_contextConnections;
+    HashSet<ContextConnectionKey> m_pendingContextConnectionDomains;
+    HashMap<WebCore::SharedWorkerKey, Ref<WebSharedWorker>> m_sharedWorkers;
 };
 
 } // namespace WebKit

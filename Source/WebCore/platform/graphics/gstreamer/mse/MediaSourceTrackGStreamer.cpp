@@ -34,27 +34,31 @@
 
 #if ENABLE(MEDIA_SOURCE) && USE(GSTREAMER)
 
-GST_DEBUG_CATEGORY_EXTERN(webkit_mse_debug);
-#define GST_CAT_DEFAULT webkit_mse_debug
+GST_DEBUG_CATEGORY_STATIC(webkit_mse_track_debug);
+#define GST_CAT_DEFAULT webkit_mse_track_debug
 
 namespace WebCore {
 
-MediaSourceTrackGStreamer::MediaSourceTrackGStreamer(TrackPrivateBaseGStreamer::TrackType type, TrackID trackId, const AtomString& trackStringId, GRefPtr<GstCaps>&& initialCaps)
+MediaSourceTrackGStreamer::MediaSourceTrackGStreamer(GStreamerTrackType type, TrackID trackId, GRefPtr<GstCaps>&& initialCaps)
     : m_type(type)
     , m_id(trackId)
-    , m_stringId(trackStringId)
-    , m_initialCaps(WTFMove(initialCaps))
-    , m_queueDataMutex(trackStringId)
-{ }
+    , m_initialCaps(WTF::move(initialCaps))
+    , m_queueDataMutex(trackId)
+{
+    static std::once_flag debugRegisteredFlag;
+    std::call_once(debugRegisteredFlag, [] {
+        GST_DEBUG_CATEGORY_INIT(webkit_mse_track_debug, "webkitmsetrack", 0, "WebKit MSE Track");
+    });
+}
 
 MediaSourceTrackGStreamer::~MediaSourceTrackGStreamer()
 {
     ASSERT(m_isRemoved);
 }
 
-Ref<MediaSourceTrackGStreamer> MediaSourceTrackGStreamer::create(TrackPrivateBaseGStreamer::TrackType type, TrackID trackId, const AtomString& trackStringId, GRefPtr<GstCaps>&& initialCaps)
+Ref<MediaSourceTrackGStreamer> MediaSourceTrackGStreamer::create(GStreamerTrackType type, TrackID trackId, GRefPtr<GstCaps>&& initialCaps)
 {
-    return adoptRef(*new MediaSourceTrackGStreamer(type, trackId, trackStringId, WTFMove(initialCaps)));
+    return adoptRef(*new MediaSourceTrackGStreamer(type, trackId, WTF::move(initialCaps)));
 }
 
 bool MediaSourceTrackGStreamer::isReadyForMoreSamples()
@@ -68,14 +72,14 @@ void MediaSourceTrackGStreamer::notifyWhenReadyForMoreSamples(TrackQueue::LowLev
 {
     ASSERT(isMainThread());
     DataMutexLocker queue { m_queueDataMutex };
-    queue->notifyWhenLowLevel(WTFMove(handler));
+    queue->notifyWhenLowLevel(WTF::move(handler));
 }
 
 void MediaSourceTrackGStreamer::enqueueObject(GRefPtr<GstMiniObject>&& object)
 {
     ASSERT(isMainThread());
     DataMutexLocker queue { m_queueDataMutex };
-    queue->enqueueObject(WTFMove(object));
+    queue->enqueueObject(WTF::move(object));
 }
 
 void MediaSourceTrackGStreamer::clearQueue()

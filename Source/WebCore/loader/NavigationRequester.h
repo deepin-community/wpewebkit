@@ -25,26 +25,37 @@
 
 #pragma once
 
-#include "GlobalFrameIdentifier.h"
-#include "PolicyContainer.h"
-#include "SecurityContext.h"
-#include "SecurityOrigin.h"
+#include <WebCore/GlobalFrameIdentifier.h>
+#include <WebCore/PolicyContainer.h>
+#include <WebCore/ProcessIdentifier.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/SecurityContext.h>
+#include <WebCore/SecurityOrigin.h>
 
 namespace WebCore {
 
 class Document;
 
 struct NavigationRequester {
-    static NavigationRequester from(Document&);
+    WEBCORE_EXPORT static NavigationRequester from(Document&);
 
     URL url;
     Ref<SecurityOrigin> securityOrigin;
     Ref<SecurityOrigin> topOrigin;
     PolicyContainer policyContainer;
     std::optional<FrameIdentifier> frameID;
+    std::optional<FrameIdentifier> topFrameID;
     std::optional<PageIdentifier> pageID;
     ScriptExecutionContextIdentifier documentIdentifier;
     SandboxFlags sandboxFlags;
+    SandboxFlags frameSandboxFlags;
+    bool hasLoadedThirdPartyScript { false };
+    bool hasLoadedThirdPartyFrame { false };
+    bool hasHadUserInteraction { false };
+    bool parentOriginIsSameAsTopOrigin { false };
+    std::optional<ProcessIdentifier> processIdentifier;
 };
+
+WEBCORE_EXPORT bool shouldNavigationLoseFrameSpecificStorageAccess(const NavigationRequester&, FrameIdentifier navigatedFrame, const URL& fromURL, const URL& toURL);
 
 } // namespace WebCore

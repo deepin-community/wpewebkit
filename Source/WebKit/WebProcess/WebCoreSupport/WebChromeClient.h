@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies).
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,20 +27,28 @@
 #pragma once
 
 #include <WebCore/ChromeClient.h>
-#include <WebCore/HTMLVideoElement.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 
 namespace WebCore {
 class HTMLImageElement;
+class HTMLVideoElement;
 class RegistrableDomain;
-enum class CookieConsentDecisionResult : uint8_t;
+enum class BroadcastFocusedElement : bool;
+enum class ContentChange : uint8_t;
 enum class DidFilterLinkDecoration : bool;
 enum class IsLoggedIn : uint8_t;
+enum class PointerLockRequestResult : uint8_t;
 enum class StorageAccessPromptWasShown : bool;
 enum class StorageAccessWasGranted : uint8_t;
+struct FocusOptions;
+struct SystemPreviewInfo;
 struct TextRecognitionOptions;
 }
+
+namespace API {
+class Object;
+};
 
 namespace WebKit {
 
@@ -53,14 +61,16 @@ public:
     WebChromeClient(WebPage&);
     ~WebChromeClient();
 
-    WebPage& page() const { return m_page.get(); }
-    Ref<WebPage> protectedPage() const;
+    WebPage* page() const { return m_page.get(); }
 
 #if PLATFORM(IOS_FAMILY)
-    void relayAccessibilityNotification(const String&, const RetainPtr<NSData>&) const final;
+    void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&) const final;
+    void relayAriaNotifyNotification(WebCore::AriaNotifyData&&) const final;
+    void relayLiveRegionNotification(WebCore::LiveRegionAnnouncementData&&) const final;
 #endif
 
 private:
+    bool isWebChromeClient() const final { return true; }
     void chromeDestroyed() final;
     
     void setWindowRect(const WebCore::FloatRect&) final;
@@ -74,40 +84,29 @@ private:
     bool canTakeFocus(WebCore::FocusDirection) const final;
     void takeFocus(WebCore::FocusDirection) final;
 
-    void focusedElementChanged(WebCore::Element*) final;
+    void focusedElementChanged(WebCore::Element*, WebCore::LocalFrame*, WebCore::FocusOptions, WebCore::BroadcastFocusedElement) final;
     void focusedFrameChanged(WebCore::Frame*) final;
 
     // The Frame pointer provides the ChromeClient with context about which
     // Frame wants to create the new Page.  Also, the newly created window
     // should not be shown to the user until the ChromeClient of the newly
     // created Page has its show method called.
-    WebCore::Page* createWindow(WebCore::LocalFrame&, const WebCore::WindowFeatures&, const WebCore::NavigationAction&) final;
+    RefPtr<WebCore::Page> createWindow(WebCore::LocalFrame&, const String& openedMainFrameName, const WebCore::WindowFeatures&, const WebCore::NavigationAction&) final;
     void show() final;
     
     bool canRunModal() const final;
     void runModal() final;
 
     void reportProcessCPUTime(Seconds, WebCore::ActivityStateForCPUSampling) final;
-    
-    void setToolbarsVisible(bool) final;
-    bool toolbarsVisible() const final;
-    
-    void setStatusbarVisible(bool) final;
-    bool statusbarVisible() const final;
-    
-    void setScrollbarsVisible(bool) final;
-    bool scrollbarsVisible() const final;
-    
-    void setMenubarVisible(bool) final;
-    bool menubarVisible() const final;
+
+    bool isPopup() const final;
     
     void setResizable(bool) final;
     
     void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned lineNumber, unsigned columnNumber, const String& sourceID) final;
-    void addMessageWithArgumentsToConsole(JSC::MessageSource, JSC::MessageLevel, const String& message, std::span<const String> messageArguments, unsigned lineNumber, unsigned columnNumber, const String& sourceID) final;
     
     bool canRunBeforeUnloadConfirmPanel() final;
-    bool runBeforeUnloadConfirmPanel(const String& message, WebCore::LocalFrame&) final;
+    bool runBeforeUnloadConfirmPanel(String&& message, WebCore::LocalFrame&) final;
     
     void closeWindow() final;
 
@@ -117,10 +116,10 @@ private:
     void runJavaScriptAlert(WebCore::LocalFrame&, const String&) final;
     bool runJavaScriptConfirm(WebCore::LocalFrame&, const String&) final;
     bool runJavaScriptPrompt(WebCore::LocalFrame&, const String& message, const String& defaultValue, String& result) final;
-    void setStatusbarText(const String&) final;
 
     WebCore::KeyboardUIMode keyboardUIMode() final;
 
+    bool hasAccessoryMousePointingDevice() const final;
     bool hoverSupportedByPrimaryPointingDevice() const final;
     bool hoverSupportedByAnyAvailablePointingDevice() const final;
     std::optional<WebCore::PointerCharacteristics> pointerCharacteristicsOfPrimaryPointingDevice() const final;
@@ -133,41 +132,50 @@ private:
     void scroll(const WebCore::IntSize& scrollDelta, const WebCore::IntRect& scrollRect, const WebCore::IntRect& clipRect) final;
 
     WebCore::IntPoint screenToRootView(const WebCore::IntPoint&) const final;
+    WebCore::IntPoint rootViewToScreen(const WebCore::IntPoint&) const final;
     WebCore::IntRect rootViewToScreen(const WebCore::IntRect&) const final;
+    std::optional<WebCore::IntPoint> screenToRootViewUsingCachedPosition(const WebCore::IntPoint&, const WebCore::IntSize& viewSize) const final;
 
     WebCore::IntPoint accessibilityScreenToRootView(const WebCore::IntPoint&) const final;
     WebCore::IntRect rootViewToAccessibilityScreen(const WebCore::IntRect&) const final;
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    void requestFrameScreenPosition(WebCore::FrameIdentifier) const final;
+    void scheduleAccessibilityFrameGeometryUpdate() const final;
+#endif
+
+    void mainFrameDidChange() final;
 
     void didFinishLoadingImageForElement(WebCore::HTMLImageElement&) final;
+
+#if ENABLE(MODEL_PROCESS)
+    void setHasModelElement(bool) final;
+#endif
 
     PlatformPageClient platformPageClient() const final;
     void contentsSizeChanged(WebCore::LocalFrame&, const WebCore::IntSize&) const final;
     void intrinsicContentsSizeChanged(const WebCore::IntSize&) const final;
+    void scrollOriginDidChange(const WebCore::LocalFrame&) const final;
 
     void scrollContainingScrollViewsToRevealRect(const WebCore::IntRect&) const final; // Currently only Mac has a non empty implementation.
     void scrollMainFrameToRevealRect(const WebCore::IntRect&) const final;
 
-    bool shouldUnavailablePluginMessageBeButton(WebCore::RenderEmbeddedObject::PluginUnavailabilityReason) const final;
-    void unavailablePluginButtonClicked(WebCore::Element&, WebCore::RenderEmbeddedObject::PluginUnavailabilityReason) const final;
+    WebCore::CornerRadii scrollbarAvoidanceCornerRadii() const final;
+
+    bool shouldUnavailablePluginMessageBeButton(WebCore::PluginUnavailabilityReason) const final;
+    void unavailablePluginButtonClicked(WebCore::Element&, WebCore::PluginUnavailabilityReason) const final;
 
     void mouseDidMoveOverElement(const WebCore::HitTestResult&, OptionSet<WebCore::PlatformEventModifier>, const String& toolTip, WebCore::TextDirection) final;
 
     void print(WebCore::LocalFrame&, const WebCore::StringWithDirection&) final;
 
     void exceededDatabaseQuota(WebCore::LocalFrame&, const String& databaseName, WebCore::DatabaseDetails) final { }
-    
-#if ENABLE(INPUT_TYPE_COLOR)
-    std::unique_ptr<WebCore::ColorChooser> createColorChooser(WebCore::ColorChooserClient&, const WebCore::Color&) final;
-#endif
 
-#if ENABLE(DATALIST_ELEMENT)
-    std::unique_ptr<WebCore::DataListSuggestionPicker> createDataListSuggestionPicker(WebCore::DataListSuggestionsClient&) final;
+    RefPtr<WebCore::ColorChooser> createColorChooser(WebCore::ColorChooserClient&, const WebCore::Color&) final;
+
+    RefPtr<WebCore::DataListSuggestionPicker> createDataListSuggestionPicker(WebCore::DataListSuggestionsClient&) final;
     bool canShowDataListSuggestionLabels() const final;
-#endif
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
-    std::unique_ptr<WebCore::DateTimeChooser> createDateTimeChooser(WebCore::DateTimeChooserClient&) final;
-#endif
+    RefPtr<WebCore::DateTimeChooser> createDateTimeChooser(WebCore::DateTimeChooserClient&) final;
 
 #if ENABLE(IOS_TOUCH_EVENTS)
     void didPreventDefaultForEvent() final;
@@ -176,7 +184,6 @@ private:
 #if PLATFORM(IOS_FAMILY)
     void didReceiveMobileDocType(bool) final;
     void setNeedsScrollNotifications(WebCore::LocalFrame&, bool) final;
-    void didFinishContentChangeObserving(WebCore::LocalFrame&, WKContentChange) final;
     void notifyRevealedSelectionByScrollingFrame(WebCore::LocalFrame&) final;
     bool isStopping() final;
 
@@ -202,13 +209,19 @@ private:
     bool showDataDetectorsUIForElement(const WebCore::Element&, const WebCore::Event&) final;
 #endif
 
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+    void didFinishContentChangeObserving(WebCore::LocalFrame&, WebCore::ContentChange) final;
+#endif
+
 #if ENABLE(ORIENTATION_EVENTS)
     WebCore::IntDegrees deviceOrientation() const final;
 #endif
 
     void runOpenPanel(WebCore::LocalFrame&, WebCore::FileChooser&) final;
-    void showShareSheet(WebCore::ShareDataWithParsedURL&, WTF::CompletionHandler<void(bool)>&&) final;
-    void showContactPicker(const WebCore::ContactsRequestData&, WTF::CompletionHandler<void(std::optional<Vector<WebCore::ContactInfo>>&&)>&&) final;
+    void transcodeChosenFiles(Vector<String>&&, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&&) final;
+    void showShareSheet(WebCore::ShareDataWithParsedURL&&, WTF::CompletionHandler<void(bool)>&&) final;
+    void showContactPicker(WebCore::ContactsRequestData&&, WTF::CompletionHandler<void(std::optional<Vector<WebCore::ContactInfo>>&&)>&&) final;
+
     void loadIconForFiles(const Vector<String>&, WebCore::FileIconLoader&) final;
 
     void setCursor(const WebCore::Cursor&) final;
@@ -218,15 +231,13 @@ private:
 #endif
 
 #if ENABLE(POINTER_LOCK)
-    bool requestPointerLock() final;
-    void requestPointerUnlock() final;
+    void requestPointerLock(CompletionHandler<void(WebCore::PointerLockRequestResult)>&&) final;
+    void requestPointerUnlock(CompletionHandler<void(bool)>&&) final;
 #endif
 
-    void didAssociateFormControls(const Vector<RefPtr<WebCore::Element>>&, WebCore::LocalFrame&) final;
+    void didAssociateFormControls(const Vector<Ref<WebCore::Element>>&, WebCore::LocalFrame&) final;
     bool shouldNotifyOnFormChanges() final;
 
-    bool selectItemWritingDirectionIsNatural() final;
-    bool selectItemAlignmentFollowsMenuWritingDirection() final;
     RefPtr<WebCore::PopupMenu> createPopupMenu(WebCore::PopupMenuClient&) const final;
     RefPtr<WebCore::SearchPopupMenu> createSearchPopupMenu(WebCore::PopupMenuClient&) const final;
 
@@ -242,6 +253,7 @@ private:
     void registerBlobPathForTesting(const String& path, CompletionHandler<void()>&&) final;
 
     void contentRuleListNotification(const URL&, const WebCore::ContentRuleListResults&) final;
+    void contentRuleListMatchedRule(const WebCore::ContentRuleListMatchedRule&) final;
 
     bool testProcessIncomingSyncMessagesWhenWaitingForSyncReply() final;
 
@@ -251,9 +263,9 @@ private:
 #endif
 
 #if PLATFORM(PLAYSTATION)
-    void postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXObjectCache::AXNotification) final;
+    void postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXNotification) final;
     void postAccessibilityNodeTextChangeNotification(WebCore::AccessibilityObject*, WebCore::AXTextChange, unsigned, const String&) final;
-    void postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXObjectCache::AXLoadingEvent) final;
+    void postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXLoadingEvent) final;
 #endif
 
     void animationDidFinishForElement(const WebCore::Element&) final;
@@ -261,7 +273,7 @@ private:
     WebCore::DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final;
 
 #if ENABLE(GPU_PROCESS)
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferPixelFormat, OptionSet<WebCore::ImageBufferOptions>) const final;
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferFormat) const final;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) final;
 #endif
     std::unique_ptr<WebCore::WorkerClient> createWorkerClient(SerialFunctionDispatcher&) final;
@@ -284,7 +296,7 @@ private:
             VideoTrigger |
             PluginTrigger|
             CanvasTrigger |
-#if PLATFORM(COCOA) || USE(NICOSIA)
+#if PLATFORM(COCOA) || USE(COORDINATED_GRAPHICS)
             ScrollableNonMainFrameTrigger |
 #endif
 #if PLATFORM(IOS_FAMILY)
@@ -299,17 +311,18 @@ private:
     RefPtr<WebCore::ScrollingCoordinator> createScrollingCoordinator(WebCore::Page&) const final;
 #endif
 
-#if PLATFORM(MAC)
+#if PLATFORM(MAC) || USE(COORDINATED_GRAPHICS_ASYNC_SCROLLBAR)
     void ensureScrollbarsController(WebCore::Page&, WebCore::ScrollableArea&, bool update = false) const final;
 #endif
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     void prepareForVideoFullscreen() final;
-    bool canEnterVideoFullscreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const final;
+    bool canEnterVideoFullscreen(WebCore::HTMLVideoElement&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const final;
     bool supportsVideoFullscreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) final;
     bool supportsVideoFullscreenStandby() final;
     void setMockVideoPresentationModeEnabled(bool) final;
-    void enterVideoFullscreenForVideoElement(WebCore::HTMLVideoElement&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, bool standby) final;
+    void enterVideoFullscreenForVideoElement(WebCore::HTMLVideoElement&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, bool) final;
+    void setPlayerIdentifierForVideoElement(WebCore::HTMLVideoElement&) final;
     void exitVideoFullscreenForVideoElement(WebCore::HTMLVideoElement&, WTF::CompletionHandler<void(bool)>&& = [](bool) { }) final;
     void setUpPlaybackControlsManager(WebCore::HTMLMediaElement&) final;
     void clearPlaybackControlsManager() final;
@@ -330,17 +343,29 @@ private:
 
 #if ENABLE(FULLSCREEN_API)
     bool supportsFullScreenForElement(const WebCore::Element&, bool withKeyboard) final;
-    void enterFullScreenForElement(WebCore::Element&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode = WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard) final;
-    void exitFullScreenForElement(WebCore::Element*) final;
-#endif
+    void enterFullScreenForElement(WebCore::Element&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, CompletionHandler<void(WebCore::ExceptionOr<void>)>&&, CompletionHandler<bool(bool)>&&) final;
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+    void updateImageSource(WebCore::Element&) final;
+#endif // ENABLE(QUICKLOOK_FULLSCREEN)
+    void exitFullScreenForElement(WebCore::Element*, CompletionHandler<void()>&&) final;
+#endif // ENABLE(FULLSCREEN_API)
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     void elementDidFocus(WebCore::Element&, const WebCore::FocusOptions&) final;
     void elementDidBlur(WebCore::Element&) final;
     void elementDidRefocus(WebCore::Element&, const WebCore::FocusOptions&) final;
     void focusedElementDidChangeInputMode(WebCore::Element&, WebCore::InputMode) final;
-    void focusedSelectElementDidChangeOptions(const WebCore::HTMLSelectElement&) final;
+#endif
 
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    void focusedElementDidChangeReadOnly(WebCore::Element&) final;
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+    void focusedSelectElementDidChangeOptions(const WebCore::HTMLSelectElement&) final;
+#endif
+
+#if PLATFORM(COCOA)
     void makeFirstResponder() final;
     void assistiveTechnologyMakeFirstResponder() final;
 #endif
@@ -368,30 +393,40 @@ private:
     void themeColorChanged() const final;
     void pageExtendedBackgroundColorDidChange() const final;
     void sampledPageTopColorChanged() const final;
-    
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    void allowImmersiveElement(CompletionHandler<void(bool)>&&) const final;
+    void presentImmersiveElement(const WebCore::LayerHostingContextIdentifier, CompletionHandler<void(bool)>&&) const final;
+    void dismissImmersiveElement(CompletionHandler<void()>&&) const final;
+    bool supportsImmersiveElement() const final;
+#endif
+
 #if ENABLE(APP_HIGHLIGHTS)
     WebCore::HighlightVisibility appHighlightsVisiblility() const final;
 #endif
     
     void wheelEventHandlersChanged(bool) final;
 
-    String plugInStartLabelTitle(const String& mimeType) const final;
-    String plugInStartLabelSubtitle(const String& mimeType) const final;
-    String plugInExtraStyleSheet() const final;
-    String plugInExtraScript() const final;
-
     void didAddHeaderLayer(WebCore::GraphicsLayer&) final;
     void didAddFooterLayer(WebCore::GraphicsLayer&) final;
 
     bool shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView&) const final;
 
+    void frameViewLayoutOrVisualViewportChanged(const WebCore::LocalFrameView&) final;
+
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     void isAnyAnimationAllowedToPlayDidChange(bool /* anyAnimationCanPlay */) final;
+#endif
+    void resolveAccessibilityHitTestForTesting(WebCore::FrameIdentifier, const WebCore::IntPoint&, CompletionHandler<void(String)>&&) final;
+#if PLATFORM(MAC)
+    void performAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier, const WebCore::AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<WebCore::AccessibilityRemoteToken>&&)>&&) final;
+    void continueAccessibilitySearchFromChildFrame(WebCore::FrameIdentifier childFrameID, const WebCore::AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<WebCore::AccessibilityRemoteToken>&&)>&&) final;
 #endif
     void isPlayingMediaDidChange(WebCore::MediaProducerMediaStateFlags) final;
     void handleAutoplayEvent(WebCore::AutoplayEvent, OptionSet<WebCore::AutoplayEventFlags>) final;
 
-    void setTextIndicator(const WebCore::TextIndicatorData&) const final;
+    void setTextIndicator(RefPtr<WebCore::TextIndicator>&&) const final;
+    void updateTextIndicator(RefPtr<WebCore::TextIndicator>&&) const final;
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION) && PLATFORM(MAC)
     void handleTelephoneNumberClick(const String& number, const WebCore::IntPoint&, const WebCore::IntRect&) final;
@@ -402,10 +437,10 @@ private:
 #endif
 
 #if ENABLE(SERVICE_CONTROLS)
-    void handleSelectionServiceClick(WebCore::FrameSelection&, const Vector<String>& telephoneNumbers, const WebCore::IntPoint&) final;
+    void handleSelectionServiceClick(WebCore::FrameIdentifier, WebCore::FrameSelection&, const Vector<String>& telephoneNumbers, const WebCore::IntPoint&) final;
     bool hasRelevantSelectionServices(bool isTextOnly) const final;
-    void handleImageServiceClick(const WebCore::IntPoint&, WebCore::Image&, WebCore::HTMLImageElement&) final;
-    void handlePDFServiceClick(const WebCore::IntPoint&, WebCore::HTMLAttachmentElement&);
+    void handleImageServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::Image&, WebCore::HTMLImageElement&) final;
+    void handlePDFServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::HTMLAttachmentElement&);
 #endif
 
     bool shouldDispatchFakeMouseMoveEvents() const final;
@@ -422,7 +457,7 @@ private:
     void showPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier, const WebCore::IntPoint&, bool) final;
     void playbackTargetPickerClientStateDidChange(WebCore::PlaybackTargetClientContextIdentifier, WebCore::MediaProducerMediaStateFlags) final;
     void setMockMediaPlaybackTargetPickerEnabled(bool) final;
-    void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetContext::MockState) final;
+    void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetMockState) final;
     void mockMediaPlaybackTargetPickerDismissPopup() final;
 #endif
 
@@ -433,7 +468,7 @@ private:
     void didInvalidateDocumentMarkerRects() final;
 
     void hasStorageAccess(WebCore::RegistrableDomain&& subFrameDomain, WebCore::RegistrableDomain&& topFrameDomain, WebCore::LocalFrame&, WTF::CompletionHandler<void(bool)>&&) final;
-    void requestStorageAccess(WebCore::RegistrableDomain&& subFrameDomain, WebCore::RegistrableDomain&& topFrameDomain, WebCore::LocalFrame&, WebCore::StorageAccessScope, WTF::CompletionHandler<void(WebCore::RequestStorageAccessResult)>&&) final;
+    void requestStorageAccess(WebCore::RegistrableDomain&& subFrameDomain, WebCore::RegistrableDomain&& topFrameDomain, WebCore::LocalFrame&, WebCore::StorageAccessScope, WebCore::HasUserGestureOrNoUserGestureRequired, WTF::CompletionHandler<void(WebCore::RequestStorageAccessResult)>&&) final;
     bool hasPageLevelStorageAccess(const WebCore::RegistrableDomain& topLevelDomain, const WebCore::RegistrableDomain& resourceDomain) const final;
 
     void setLoginStatus(WebCore::RegistrableDomain&&, WebCore::IsLoggedIn, WTF::CompletionHandler<void()>&&) final;
@@ -449,6 +484,8 @@ private:
     void setUserIsInteracting(bool) final;
 
 #if ENABLE(WEB_AUTHN)
+    void showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData&, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&) final;
+    void dismissDigitalCredentialsChooser(WTF::CompletionHandler<void(bool)>&&) final;
     void setMockWebAuthenticationConfiguration(const WebCore::MockWebAuthenticationConfiguration&) final;
 #endif
 
@@ -469,6 +506,8 @@ private:
 #endif
     }
 
+    bool needsScrollGeometryUpdates() const final;
+
 #if ENABLE(TEXT_AUTOSIZING)
     void textAutosizingUsesIdempotentModeChanged() final;
 #endif
@@ -483,11 +522,11 @@ private:
     URL allowedQueryParametersForAdvancedPrivacyProtections(const URL&) const final;
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
-    void showMediaControlsContextMenu(WebCore::FloatRect&&, Vector<WebCore::MediaControlsContextMenuItem>&&, CompletionHandler<void(WebCore::MediaControlsContextMenuItem::ID)>&&) final;
+    void showMediaControlsContextMenu(WebCore::FloatRect&&, Vector<WebCore::MediaControlsContextMenuItem>&&, WebCore::HTMLMediaElement&, CompletionHandler<void(WebCore::MediaControlsContextMenuItem::ID)>&&) final;
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
-#if ENABLE(WEBXR) && !USE(OPENXR)
-    void enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::Instance::DeviceList&)>&&) final;
+#if ENABLE(WEBXR)
+    void enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&&) final;
     void requestPermissionOnXRSessionFeatures(const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList& /* granted */, const PlatformXR::Device::FeatureList& /* consentRequired */, const PlatformXR::Device::FeatureList& /* consentOptional */, const PlatformXR::Device::FeatureList& /* requiredFeaturesRequested */, const PlatformXR::Device::FeatureList& /* optionalFeaturesRequested */,  CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&&) final;
 #endif
 
@@ -500,8 +539,6 @@ private:
     void beginSystemPreview(const URL&, const WebCore::SecurityOriginData& topOrigin, const WebCore::SystemPreviewInfo&, CompletionHandler<void()>&&) final;
 #endif
 
-    void requestCookieConsent(CompletionHandler<void(WebCore::CookieConsentDecisionResult)>&&) final;
-    
     bool isUsingUISideCompositing() const;
 
     bool isInStableState() const final;
@@ -518,23 +555,34 @@ private:
     void proofreadingSessionShowDetailsForSuggestionWithIDRelativeToRect(const WebCore::WritingTools::TextSuggestionID&, WebCore::IntRect selectionBoundsInRootView) final;
 
     void proofreadingSessionUpdateStateForSuggestionWithID(WebCore::WritingTools::TextSuggestionState, const WebCore::WritingTools::TextSuggestionID&) final;
-#endif
 
-#if ENABLE(WRITING_TOOLS_UI)
     void removeTextAnimationForAnimationID(const WTF::UUID&) final;
 
     void removeInitialTextAnimationForActiveWritingToolsSession() final;
 
     void addInitialTextAnimationForActiveWritingToolsSession() final;
 
-    void removeTransparentMarkersForActiveWritingToolsSession() final;
+    void addSourceTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, bool finished, const WebCore::CharacterRange&, const String&, CompletionHandler<void(WebCore::TextAnimationRunMode)>&&) final;
 
-    void addSourceTextAnimationForActiveWritingToolsSession(const WebCore::CharacterRange&, const String&, CompletionHandler<void(WebCore::TextAnimationRunMode)>&&) final;
+    void addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<WebCore::CharacterRange>&, const String&) final;
 
-    void addDestinationTextAnimationForActiveWritingToolsSession(const std::optional<WebCore::CharacterRange>&, const String&) final;
+    void saveSnapshotOfTextPlaceholderForAnimation(const WebCore::SimpleRange&);
 
     void clearAnimationsForActiveWritingToolsSession() final;
+
+#if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
+    void addTextEffectForID(const WTF::UUID&, WebCore::TextEffectData&&, RefPtr<WebCore::TextIndicator>&&, RefPtr<WebCore::TextIndicator>&&) final;
+    void removeTextEffectForID(const WTF::UUID&) final;
 #endif
+#endif
+
+    WebCore::HTMLFrameOwnerElement* frameOwnerElementForFrameID(WebCore::FrameIdentifier) const final;
+
+    bool requiresScriptTrackingPrivacyProtections(const URL&, const WebCore::SecurityOrigin& topOrigin) const final;
+    bool shouldAllowScriptAccess(const URL&, const WebCore::SecurityOrigin& topOrigin, WebCore::ScriptTrackingPrivacyCategory) const final;
+    bool requiresConsistentPrivacyQuirkForDomain(const URL&) const final;
+
+    void setIsInRedo(bool) final;
 
     void hasActiveNowPlayingSessionChanged(bool) final;
 
@@ -542,17 +590,38 @@ private:
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(std::optional<WebCore::ImageBufferResourceLimits>)>&&) const final;
 #endif
 
+    void callAfterPendingSyntheticClick(CompletionHandler<void(WebCore::SyntheticClickResult)>&&) final;
+
+    void didDispatchClickEvent(const WebCore::PlatformMouseEvent&, WebCore::Node&) final;
+
+    void didProgrammaticallyClearTextFormControl(const WebCore::HTMLTextFormControlElement&) final;
+
+#if ENABLE(DAMAGE_TRACKING)
+    void resetDamageHistoryForTesting() final;
+    void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&& callback) const final;
+#endif
+
+    void setNeedsFixedContainerEdgesUpdate() final;
+
+    bool usePluginRendererScrollableArea(WebCore::LocalFrame&) const final;
+
+#if ENABLE(VIDEO)
+    void showCaptionDisplaySettings(WebCore::HTMLMediaElement&, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(WebCore::ExceptionOr<void>)>&&) final;
+#endif
+
+    void updateRemoteIntersectionObserversInOtherWebProcesses() final;
+
     mutable bool m_cachedMainFrameHasHorizontalScrollbar { false };
     mutable bool m_cachedMainFrameHasVerticalScrollbar { false };
 
-    WeakRef<WebPage> m_page;
+    WeakPtr<WebPage> m_page;
 };
 
 class AXRelayProcessSuspendedNotification {
 public:
     enum class AutomaticallySend : bool { No, Yes };
 
-    explicit AXRelayProcessSuspendedNotification(Ref<WebPage>, AutomaticallySend = AutomaticallySend::Yes);
+    explicit AXRelayProcessSuspendedNotification(WebPage&, AutomaticallySend = AutomaticallySend::Yes);
     ~AXRelayProcessSuspendedNotification();
 
     void sendProcessSuspendMessage(bool suspended);
@@ -561,4 +630,10 @@ private:
     AutomaticallySend m_automaticallySend;
 };
 
+RefPtr<API::Object> userDataFromJSONData(JSON::Value&);
+
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebChromeClient) \
+    static bool isType(const WebCore::ChromeClient& client) { return client.isWebChromeClient(); } \
+SPECIALIZE_TYPE_TRAITS_END()

@@ -28,9 +28,9 @@
 #if ENABLE(DFG_JIT)
 
 #include "DFGBasicBlock.h"
-#include "DFGBlockMapInlines.h"
 #include "DFGBlockSet.h"
 #include "DFGGraph.h"
+#include <wtf/IndexMap.h>
 #include <wtf/SingleRootGraph.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -38,11 +38,11 @@ namespace JSC { namespace DFG {
 
 class CFG {
     WTF_MAKE_NONCOPYABLE(CFG);
-    WTF_MAKE_TZONE_ALLOCATED(CFG);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(CFG);
 public:
     typedef BasicBlock* Node;
     typedef BlockSet Set;
-    template<typename T> using Map = BlockMap<T>;
+    template<typename T> using Map = IndexMap<BasicBlock*, T>;
     typedef BlockList List;
 
     CFG(Graph& graph)
@@ -65,12 +65,12 @@ public:
     }
 
     template<typename T>
-    Map<T> newMap() { return BlockMap<T>(m_graph); }
+    Map<T> newMap() { return IndexMap<BasicBlock*, T>(m_graph.numBlocks()); }
 
     DFG::Node::SuccessorsIterable successors(Node node) { return node->successors(); }
     PredecessorList& predecessors(Node node) { return node->predecessors; }
 
-    unsigned index(Node node) const { return node->index; }
+    unsigned index(Node node) const { return node->index(); }
     Node node(unsigned index) const { return m_graph.block(index); }
     unsigned numNodes() const { return m_graph.numBlocks(); }
     
@@ -96,17 +96,29 @@ public:
 
 using SSACFG = CFG;
 
-template <typename T, typename = typename std::enable_if<std::is_same<T, CPSCFG>::value>::type>
-CPSCFG& selectCFG(Graph& graph)
-{
-    return graph.ensureCPSCFG();
-}
+template<typename> struct CFGSelection;
 
-template <typename T, typename = typename std::enable_if<std::is_same<T, SSACFG>::value>::type>
-SSACFG& selectCFG(Graph& graph)
+template<>
+struct CFGSelection<CPSCFG> {
+    static CPSCFG& select(Graph& graph LIFETIME_BOUND)
+    {
+        return graph.ensureCPSCFG();
+    }
+};
+
+template<>
+struct CFGSelection<SSACFG> {
+    static SSACFG& select(Graph& graph LIFETIME_BOUND)
+    {
+        RELEASE_ASSERT(graph.m_ssaCFG);
+        return *graph.m_ssaCFG;
+    }
+};
+
+template<typename T>
+auto& selectCFG(Graph& graph LIFETIME_BOUND)
 {
-    RELEASE_ASSERT(graph.m_ssaCFG);
-    return *graph.m_ssaCFG;
+    return CFGSelection<T>::select(graph);
 }
 
 } } // namespace JSC::DFG

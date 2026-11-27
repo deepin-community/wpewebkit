@@ -28,11 +28,12 @@
 
 #if ENABLE(MEDIA_STREAM)
 
+#include "ScriptWrappableInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(MediaDeviceInfo);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaDeviceInfo);
 
 Ref<MediaDeviceInfo> MediaDeviceInfo::create(const String& label, const String& deviceId, const String& groupId, Kind kind)
 {
@@ -55,6 +56,7 @@ MediaDeviceInfo::Kind toMediaDeviceInfoKind(CaptureDevice::DeviceType type)
     case CaptureDevice::DeviceType::Speaker:
         return MediaDeviceInfo::Kind::Audiooutput;
     case CaptureDevice::DeviceType::Camera:
+    case CaptureDevice::DeviceType::Canvas:
     case CaptureDevice::DeviceType::Screen:
     case CaptureDevice::DeviceType::Window:
         return MediaDeviceInfo::Kind::Videoinput;

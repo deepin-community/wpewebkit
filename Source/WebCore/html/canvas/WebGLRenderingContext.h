@@ -35,13 +35,11 @@ namespace WebCore {
 class WebGLTimerQueryEXT;
 
 class WebGLRenderingContext final : public WebGLRenderingContextBase {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebGLRenderingContext);
+    WTF_MAKE_TZONE_ALLOCATED(WebGLRenderingContext);
 public:
     static std::unique_ptr<WebGLRenderingContext> create(CanvasBase&, WebGLContextAttributes&&);
 
     ~WebGLRenderingContext();
-
-    bool isWebGL1() const final { return true; }
 
     std::optional<WebGLExtensionAny> getExtension(const String&) final;
     std::optional<Vector<String>> getSupportedExtensions() final;
@@ -52,7 +50,6 @@ public:
 
     GCGLint maxDrawBuffers() final;
     GCGLint maxColorAttachments() final;
-    void initializeDefaultObjects() final;
 
     void addMembersToOpaqueRoots(JSC::AbstractSlotVisitor&) final;
 
@@ -63,9 +60,11 @@ protected:
 
 private:
     using WebGLRenderingContextBase::WebGLRenderingContextBase;
+    void initializeDefaultObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
+    void detachAndRemoveAllObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
 };
 
-WebCoreOpaqueRoot root(const WebGLExtension<WebGLRenderingContext>*);
+WebCoreOpaqueRoot NODELETE root(const WebGLExtension<WebGLRenderingContext>*);
 
 } // namespace WebCore
 

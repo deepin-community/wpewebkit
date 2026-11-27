@@ -29,31 +29,42 @@
 #if USE(SKIA)
 #include "FontRenderOptions.h"
 #include "GLContext.h"
+
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
-#include <skia/gpu/GrBackendSurface.h>
+#include <skia/core/SkExecutor.h>
+#include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
-#include <skia/gpu/gl/GrGLInterface.h>
-#include <skia/gpu/gl/GrGLTypes.h>
-#include <wtf/NeverDestroyed.h>
-#include <wtf/RunLoop.h>
-#include <wtf/ThreadSafeWeakPtr.h>
-#include <wtf/text/StringToIntegerConversion.h>
-#include <wtf/threads/BinarySemaphore.h>
-
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
-#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
-IGNORE_CLANG_WARNINGS_END
+#include <skia/gpu/ganesh/gl/GrGLInterface.h>
 
 #if USE(LIBEPOXY)
-#include <skia/gpu/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
+#include <epoxy/egl.h>
+#include <skia/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.h>
 #else
-#include <skia/gpu/gl/egl/GrGLMakeEGLInterface.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <skia/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h>
+#endif
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
+#include <wtf/MemoryPressureHandler.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/RAMSize.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/text/StringToIntegerConversion.h>
+
+#if USE(LIBDRM)
+#include <fcntl.h>
+#include <unistd.h>
+#include <wtf/unix/UnixFileDescriptor.h>
+#include <xf86drm.h>
 #endif
 
 namespace WebCore {
 
-#if PLATFORM(WPE)
+#if PLATFORM(GTK) || PLATFORM(WPE)
 #if CPU(X86) || CPU(X86_64)
 // On x86 ot x86_64 we need at least 8 samples for the antialiasing result to be similar
 // to non MSAA.
@@ -71,7 +82,7 @@ static const unsigned s_defaultSampleCount = 0;
 #if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
 static sk_sp<const GrGLInterface> skiaGLInterface()
 {
-    static NeverDestroyed<sk_sp<const GrGLInterface>> interface {
+    static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
 #if USE(LIBEPOXY)
         GrGLInterfaces::MakeEpoxyEGL()
 #else
@@ -79,12 +90,116 @@ static sk_sp<const GrGLInterface> skiaGLInterface()
 #endif
     };
 
-    return interface.get();
+    return grGLInterface.get();
 }
 
 static thread_local RefPtr<SkiaGLContext> s_skiaGLContext;
 
-unsigned initializeMSAASampleCount(GrDirectContext* grContext)
+#if USE(LIBDRM)
+static inline bool isNewIntelDevice()
+{
+    auto eglDisplay = eglGetCurrentDisplay();
+    if (eglDisplay == EGL_NO_DISPLAY)
+        return false;
+
+    if (!GLContext::isExtensionSupported(eglQueryString(nullptr, EGL_EXTENSIONS), "EGL_EXT_device_query"))
+        return false;
+
+    EGLDeviceEXT eglDevice;
+    if (!eglQueryDisplayAttribEXT(eglDisplay, EGL_DEVICE_EXT, reinterpret_cast<EGLAttrib*>(&eglDevice)))
+        return false;
+
+    if (!GLContext::isExtensionSupported(eglQueryDeviceStringEXT(eglDevice, EGL_EXTENSIONS), "EGL_EXT_device_drm"))
+        return false;
+
+    const char* device = eglQueryDeviceStringEXT(eglDevice, EGL_DRM_DEVICE_FILE_EXT);
+    if (!device || !*device)
+        return false;
+
+    auto fd = UnixFileDescriptor { open(device, O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
+    if (!fd)
+        return false;
+
+    drmDevicePtr drmDevice;
+    if (drmGetDevice2(fd.value(), 0, &drmDevice))
+        return false;
+
+    if (drmDevice->bustype != DRM_BUS_PCI) {
+        drmFreeDevice(&drmDevice);
+        return false;
+    }
+
+    auto vendorID = drmDevice->deviceinfo.pci->vendor_id;
+    auto deviceID = drmDevice->deviceinfo.pci->device_id;
+    drmFreeDevice(&drmDevice);
+
+    static constexpr uint32_t intelVendorID = 0x8086;
+    if (vendorID != intelVendorID)
+        return false;
+
+    // On pre-Ice Lake Intel GPUs MSAA performance is not acceptable.
+    uint32_t maskedDeviceID = deviceID & 0xFF00;
+    switch (maskedDeviceID) {
+    case 0x2900: // Broadwater
+    case 0x2A00: // Broadwater or Eaglelake
+    case 0x2E00: // Eaglelake
+    case 0x0000: // Ironlake
+    case 0x0100: // Ivybridge, Baytrail or Sandybridge
+    case 0x0F00: // Baytrail
+    case 0x0A00: // Apollolake or Haswell
+    case 0x0400: // Haswell
+    case 0x0C00: // Haswell
+    case 0x0D00: // Haswell
+    case 0x2200: // Cherrytrail
+    case 0x1600: // Broadwell
+    case 0x5A00: // Apollolake or Cannonlake
+    case 0x1900: // Skylake
+    case 0x1A00: // Apollolake
+    case 0x3100: // Geminilake
+    case 0x5900: // Amberlake or Kabylake
+    case 0x8700: // Kabylake or Coffeelake
+    case 0x3E00: // Whiskeylake or Coffeelake
+    case 0x9B00: // Cometlake
+        return false;
+    case 0x8A00: // Icelake
+    case 0x4500: // Elkhartlake
+    case 0x4E00: // Jasperlake
+    case 0x9A00: // Tigerlake
+    case 0x4c00: // Rocketlake
+    case 0x4900: // DG1
+    case 0x4600: // Alderlake
+    case 0x4F00: // Alchemist
+    case 0x5600: // Alchemist
+    case 0xA700: // Raptorlake
+    case 0x7D00: // Arrowlake or Meteorlake
+    case 0xB600: // Arrowlake or Meteorlake
+    case 0x6400: // Lunarlake
+    case 0xE200: // Battlemage
+    case 0xB000: // Pantherlake
+        return true;
+    default:
+        break;
+    }
+
+    return false;
+}
+#endif
+
+static bool shouldAllowMSAAOnNewIntel()
+{
+#if USE(LIBDRM)
+    static std::once_flag onceFlag;
+    static bool allowMSAAOnNewIntel;
+    std::call_once(onceFlag, [] {
+        allowMSAAOnNewIntel = isNewIntelDevice();
+    });
+    return allowMSAAOnNewIntel;
+#else
+    return false;
+#endif
+}
+
+static unsigned initializeMSAASampleCount(GrDirectContext* grContext)
 {
     static std::once_flag onceFlag;
     static int sampleCount = s_defaultSampleCount;
@@ -105,7 +220,7 @@ unsigned initializeMSAASampleCount(GrDirectContext* grContext)
         // knows there are bugs. The only way to know whether our sample count will work is trying to create a
         // surface with that value and check whether it works.
         auto imageInfo = SkImageInfo::Make(512, 512, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
-        SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
+        SkSurfaceProps properties = FontRenderOptions::singleton().createSurfaceProps();
         auto surface = SkSurfaces::RenderTarget(grContext, skgpu::Budgeted::kNo, imageInfo, sampleCount, kTopLeft_GrSurfaceOrigin, &properties);
 
         // If the creation of the surface failed, disable MSAA.
@@ -116,6 +231,32 @@ unsigned initializeMSAASampleCount(GrDirectContext* grContext)
     return sampleCount;
 }
 
+static constexpr size_t s_lowEndDeviceMemoryThresholdBytes = 2 * GB;
+static constexpr size_t s_highEndDeviceMemoryThresholdBytes = 4 * GB;
+
+static constexpr size_t s_lowEndDeviceGlyphCacheTextureMaximumBytes = 2 * MB;
+static constexpr size_t s_lowEndMaxResourceCacheBytes = 48 * MB;
+static constexpr size_t s_maxResourceCacheBytes = 80 * MB;
+
+static std::optional<size_t> glyphCacheTextureMaximumBytes()
+{
+    size_t memorySize = WTF::ramSize();
+    if (memorySize < s_lowEndDeviceMemoryThresholdBytes)
+        return s_lowEndDeviceGlyphCacheTextureMaximumBytes;
+    return std::nullopt;
+}
+
+static size_t initializeMaxResourceCacheBytes(GrDirectContext* grContext)
+{
+    size_t memorySize = WTF::ramSize();
+    if (memorySize < s_lowEndDeviceMemoryThresholdBytes)
+        grContext->setResourceCacheLimit(s_lowEndMaxResourceCacheBytes);
+    else if (memorySize < s_highEndDeviceMemoryThresholdBytes)
+        grContext->setResourceCacheLimit(s_maxResourceCacheBytes);
+    // Use GrDirectContext default (256MB) for high end devices.
+    return grContext->getResourceCacheLimit();
+}
+
 class SkiaGLContext : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<SkiaGLContext> {
 public:
     static Ref<SkiaGLContext> create(PlatformDisplay& display)
@@ -123,21 +264,28 @@ public:
         return adoptRef(*new SkiaGLContext(display));
     }
 
-    ~SkiaGLContext() = default;
-
-    void invalidate()
+    static Ref<SkiaGLContext> create(std::unique_ptr<GLContext>&& glContext)
     {
-        if (&RunLoop::current() == m_runLoop) {
-            invalidateOnCurrentThread();
-            return;
-        }
+        return adoptRef(*new SkiaGLContext(WTF::move(glContext)));
+    }
 
-        BinarySemaphore semaphore;
-        m_runLoop->dispatch([&semaphore, this] {
-            invalidateOnCurrentThread();
-            semaphore.signal();
+    ~SkiaGLContext()
+    {
+        auto glContext = WTF::move(m_skiaGLContext);
+        auto grContext = WTF::move(m_skiaGrContext);
+        if (!glContext)
+            return;
+
+        // The context of a thread is destroyed when the thread exits, which can happen while the main thread
+        // terminates the display. Once it is terminated, drop the Skia resources without calling into GL.
+        RefPtr display = glContext->display();
+        bool didRelease = display && display->runIfNotTerminated([&](EGLDisplay) {
+            glContext->makeContextCurrent();
+            grContext->releaseResourcesAndAbandonContext();
+            grContext = nullptr;
         });
-        semaphore.wait();
+        if (!didRelease)
+            grContext->abandonContext();
     }
 
     GLContext* skiaGLContext() const
@@ -157,40 +305,71 @@ public:
         return m_sampleCount;
     }
 
-private:
-    explicit SkiaGLContext(PlatformDisplay& display)
-        : m_runLoop(&RunLoop::current())
+    size_t maxResourceCacheBytes() const
     {
-        auto glContext = GLContext::createOffscreen(display);
-        if (!glContext || !glContext->makeContextCurrent())
+        return m_maxResourceCacheBytes;
+    }
+
+    void releaseUnusedResources(WTF::Critical critical)
+    {
+        Locker locker { m_lock };
+        if (!m_skiaGLContext)
             return;
 
-        // FIXME: add GrContextOptions, shader cache, etc.
-        if (auto grContext = GrDirectContexts::MakeGL(skiaGLInterface())) {
-            m_skiaGLContext = WTFMove(glContext);
-            m_skiaGrContext = WTFMove(grContext);
-            m_sampleCount = initializeMSAASampleCount(m_skiaGrContext.get());
+        GLContext::ScopedGLContextCurrent scopedCurrent(*m_skiaGLContext);
+        switch (critical) {
+        case Critical::No:
+            m_skiaGrContext->purgeUnlockedResources(GrPurgeResourceOptions::kScratchResourcesOnly);
+            break;
+        case Critical::Yes:
+            m_skiaGrContext->freeGpuResources();
+            break;
         }
     }
 
-    void invalidateOnCurrentThread()
+private:
+    explicit SkiaGLContext(PlatformDisplay& display)
+        : SkiaGLContext(GLContext::createOffscreen(display))
     {
-        Locker locker { m_lock };
-        m_skiaGrContext = nullptr;
-        m_skiaGLContext = nullptr;
     }
 
-    RunLoop* m_runLoop { nullptr };
+    explicit SkiaGLContext(std::unique_ptr<GLContext>&& glContext)
+    {
+        if (!glContext || !glContext->makeContextCurrent())
+            return;
+
+        // FIXME: Add shader cache.
+        GrContextOptions options;
+        options.fAllowMSAAOnNewIntel = shouldAllowMSAAOnNewIntel();
+        // Skia defaults this to true, which alters the texture2D() calls in all generated shaders,
+        // applying a so-called negative LOD bias, forcing texture2D() sampling into a LOD-computing
+        // lookup which is a slow-path in certain tiled GPUs (such as Vivante/etnaviv). Since we
+        // don't use any mipmapping, it's safe to disable that, and avoid performance hits.
+        options.fSharpenMipmappedTextures = false;
+        thread_local std::unique_ptr<SkExecutor> s_executor = SkExecutor::MakeFIFOThreadPool(2);
+        options.fExecutor = s_executor.get();
+        if (auto bytes = glyphCacheTextureMaximumBytes())
+            options.fGlyphCacheTextureMaximumBytes = *bytes;
+
+        if (auto grContext = GrDirectContexts::MakeGL(skiaGLInterface(), options)) {
+            m_skiaGLContext = WTF::move(glContext);
+            m_skiaGrContext = WTF::move(grContext);
+            m_sampleCount = initializeMSAASampleCount(m_skiaGrContext.get());
+            m_maxResourceCacheBytes = initializeMaxResourceCacheBytes(m_skiaGrContext.get());
+        }
+    }
+
     std::unique_ptr<GLContext> m_skiaGLContext WTF_GUARDED_BY_LOCK(m_lock);
     sk_sp<GrDirectContext> m_skiaGrContext WTF_GUARDED_BY_LOCK(m_lock);
     mutable Lock m_lock;
     unsigned m_sampleCount { 0 };
+    size_t m_maxResourceCacheBytes { 0 };
 };
 #endif
 
 GLContext* PlatformDisplay::skiaGLContext()
 {
-#if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
+#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
     if (!s_skiaGLContext) {
         s_skiaGLContext = SkiaGLContext::create(*this);
         m_skiaGLContexts.add(*s_skiaGLContext);
@@ -203,7 +382,31 @@ GLContext* PlatformDisplay::skiaGLContext()
 #endif
 }
 
-GrDirectContext* PlatformDisplay::skiaGrContext()
+void PlatformDisplay::makeSkiaGLContextCurrentIfExists()
+{
+#if PLATFORM(WIN)
+    auto* display = &sharedDisplay();
+#else
+    auto* display = sharedDisplayIfExists();
+    if (!display)
+        return;
+#endif
+    if (auto* glContext = display->skiaGLContext())
+        glContext->makeContextCurrent();
+}
+
+void PlatformDisplay::setSkiaGLContextForCurrentThread(std::unique_ptr<GLContext>&& glContext)
+{
+    if (!glContext) {
+        clearSkiaGLContext();
+        return;
+    }
+    ASSERT(!s_skiaGLContext);
+    s_skiaGLContext = SkiaGLContext::create(WTF::move(glContext));
+    m_skiaGLContexts.add(*s_skiaGLContext);
+}
+
+GrDirectContext* PlatformDisplay::skiaGrContext() const
 {
     RELEASE_ASSERT(s_skiaGLContext);
     return s_skiaGLContext->skiaGrContext();
@@ -211,15 +414,23 @@ GrDirectContext* PlatformDisplay::skiaGrContext()
 
 unsigned PlatformDisplay::msaaSampleCount() const
 {
-    return s_skiaGLContext->sampleCount();
+    return s_skiaGLContext ? s_skiaGLContext->sampleCount() : 0;
 }
 
-void PlatformDisplay::invalidateSkiaGLContexts()
+size_t PlatformDisplay::maxSkiaResourceCacheBytes() const
 {
-    auto contexts = WTFMove(m_skiaGLContexts);
-    contexts.forEach([](auto& context) {
-        context.invalidate();
-    });
+    return s_skiaGLContext ? s_skiaGLContext->maxResourceCacheBytes() : 0;
+}
+
+void PlatformDisplay::skiaReleaseUnusedResources(WTF::Critical critical)
+{
+    if (s_skiaGLContext)
+        s_skiaGLContext->releaseUnusedResources(critical);
+}
+
+void PlatformDisplay::clearSkiaGLContext()
+{
+    s_skiaGLContext = nullptr;
 }
 
 } // namespace WebCore

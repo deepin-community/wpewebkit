@@ -27,6 +27,7 @@
 #pragma once
 
 #include <limits>
+#include <wtf/HashFunctions.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -51,23 +52,17 @@ public:
 
     unsigned hash() const { return m_hash; }
 
-    const StringVector& rawStrings() const { return m_rawStrings; }
-    const OptionalStringVector& cookedStrings() const { return m_cookedStrings; }
+    const StringVector& rawStrings() const LIFETIME_BOUND { return m_rawStrings; }
+    const OptionalStringVector& cookedStrings() const LIFETIME_BOUND { return m_cookedStrings; }
 
     bool operator==(const TemplateObjectDescriptor& other) const { return m_hash == other.m_hash && m_rawStrings == other.m_rawStrings; }
-
-    struct Hasher {
-        static unsigned hash(const TemplateObjectDescriptor& key) { return key.hash(); }
-        static bool equal(const TemplateObjectDescriptor& a, const TemplateObjectDescriptor& b) { return a == b; }
-        static constexpr bool safeToCompareToEmptyOrDeleted = false;
-    };
 
     static unsigned calculateHash(const StringVector& rawStrings);
     ~TemplateObjectDescriptor();
 
     static Ref<TemplateObjectDescriptor> create(StringVector&& rawStrings, OptionalStringVector&& cookedStrings)
     {
-        return adoptRef(*new TemplateObjectDescriptor(WTFMove(rawStrings), WTFMove(cookedStrings)));
+        return adoptRef(*new TemplateObjectDescriptor(WTF::move(rawStrings), WTF::move(cookedStrings)));
     }
 
 private:
@@ -79,8 +74,8 @@ private:
 };
 
 inline TemplateObjectDescriptor::TemplateObjectDescriptor(StringVector&& rawStrings, OptionalStringVector&& cookedStrings)
-    : m_rawStrings(WTFMove(rawStrings))
-    , m_cookedStrings(WTFMove(cookedStrings))
+    : m_rawStrings(WTF::move(rawStrings))
+    , m_cookedStrings(WTF::move(cookedStrings))
     , m_hash(calculateHash(m_rawStrings))
 {
 }
@@ -97,23 +92,15 @@ inline TemplateObjectDescriptor::TemplateObjectDescriptor(EmptyValueTag)
 
 inline unsigned TemplateObjectDescriptor::calculateHash(const StringVector& rawStrings)
 {
-    SuperFastHash hasher;
-    for (const String& string : rawStrings) {
-        if (string.is8Bit())
-            hasher.addCharacters(string.span8());
-        else
-            hasher.addCharacters(string.span16());
-    }
-    return hasher.hash();
+    unsigned hash = WTF::stringHashingStartValue;
+    for (const String& string : rawStrings)
+        hash = pairIntHash(hash, string.hash());
+    return hash;
 }
 
 } // namespace JSC
 
 namespace WTF {
-template<typename> struct DefaultHash;
-
-template<> struct DefaultHash<JSC::TemplateObjectDescriptor> : JSC::TemplateObjectDescriptor::Hasher { };
-
 template<> struct HashTraits<JSC::TemplateObjectDescriptor> : CustomHashTraits<JSC::TemplateObjectDescriptor> {
 };
 

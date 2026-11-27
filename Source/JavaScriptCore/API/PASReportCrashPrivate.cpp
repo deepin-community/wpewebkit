@@ -23,19 +23,27 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "config.h"
 #include "PASReportCrashPrivate.h"
+#include <bmalloc/BPlatform.h>
+#include <wtf/Compiler.h>
 
-#ifdef __APPLE__
-#include <TargetConditionals.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+
+#if BENABLE(LIBPAS)
+#include <bmalloc/pas_probabilistic_guard_malloc_allocator.h>
 #include <bmalloc/pas_report_crash.h>
 #endif
 
-using namespace JSC;
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #ifdef __APPLE__
+
 kern_return_t PASReportCrashExtractResults(vm_address_t fault_address, mach_vm_address_t pas_dead_root, unsigned version, task_t task, pas_report_crash_pgm_report *report, crash_reporter_memory_reader_t crm_reader)
 {
-#if TARGET_OS_WATCH
+#if BENABLE(LIBPAS)
+    return pas_report_crash_extract_pgm_failure(fault_address, pas_dead_root, version, task, report, crm_reader);
+#endif
     UNUSED_PARAM(fault_address);
     UNUSED_PARAM(pas_dead_root);
     UNUSED_PARAM(version);
@@ -44,8 +52,5 @@ kern_return_t PASReportCrashExtractResults(vm_address_t fault_address, mach_vm_a
     UNUSED_PARAM(crm_reader);
 
     return KERN_FAILURE;
-#else
-    return pas_report_crash_extract_pgm_failure(fault_address, pas_dead_root, version, task, report, crm_reader);
-#endif
 }
 #endif /* __APPLE__ */

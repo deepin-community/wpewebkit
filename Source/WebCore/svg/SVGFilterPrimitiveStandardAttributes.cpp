@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006 Rob Buis <buis@kde.org>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
- * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,50 +23,56 @@
 #include "config.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
 
+#include "ContainerNodeInlines.h"
+#include "FEDisplacementMap.h"
 #include "FilterEffect.h"
 #include "LegacyRenderSVGResourceFilterPrimitive.h"
 #include "NodeName.h"
 #include "RenderSVGResourceFilterPrimitive.h"
 #include "SVGElementInlines.h"
+#include "SVGParsingError.h"
+#include "SVGPropertyOwnerRegistry.h"
+#include "Settings.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGFilterPrimitiveStandardAttributes);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFilterPrimitiveStandardAttributes);
 
 SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
-    : SVGElement(tagName, document, WTFMove(propertyRegistry))
+    : SVGElement(tagName, document, WTF::move(propertyRegistry))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGFilterPrimitiveStandardAttributes::m_x>();
         PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGFilterPrimitiveStandardAttributes::m_y>();
         PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGFilterPrimitiveStandardAttributes::m_width>();
         PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGFilterPrimitiveStandardAttributes::m_height>();
         PropertyRegistry::registerProperty<SVGNames::resultAttr, &SVGFilterPrimitiveStandardAttributes::m_result>();
-    });
+    }
 }
 
 void SVGFilterPrimitiveStandardAttributes::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
-    SVGParsingError parseError = NoError;
+    auto parseError = SVGParsingError::None;
 
     switch (name.nodeName()) {
     case AttributeNames::xAttr:
-        Ref { m_x }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError));
+        protect(m_x)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "0%"_s));
         break;
     case AttributeNames::yAttr:
-        Ref { m_y }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError));
+        protect(m_y)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "0%"_s));
         break;
     case AttributeNames::widthAttr:
-        Ref { m_width }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError));
+        protect(m_width)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "100%"_s));
         break;
     case AttributeNames::heightAttr:
-        Ref { m_height }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError));
+        protect(m_height)->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "100%"_s));
         break;
     case AttributeNames::resultAttr:
-        Ref { m_result }->setBaseValInternal(newValue);
+        protect(m_result)->setBaseValInternal(newValue);
         break;
     default:
         break;
@@ -96,12 +102,32 @@ RefPtr<FilterEffect> SVGFilterPrimitiveStandardAttributes::filterEffect(const Fi
 {
     if (!m_effect)
         m_effect = createFilterEffect(inputs, destinationContext);
+    if (RefPtr effect = m_effect)
+        updateTaintsOrigin(*effect, inputs);
     return m_effect;
+}
+
+void SVGFilterPrimitiveStandardAttributes::updateTaintsOrigin(FilterEffect& effect, const FilterEffectVector& inputs) const
+{
+    // §16.3: output is tainted if this primitive or any input is tainted.
+    bool taint = taintsOrigin() || std::ranges::any_of(inputs, [](auto& input) {
+        return input->taintsOrigin();
+    });
+    effect.setTaintsOrigin(taint);
+    // §16.4: feDisplacementMap pass-through when in2 is tainted.
+    if (auto* displacementMap = dynamicDowncast<FEDisplacementMap>(effect))
+        displacementMap->setIn2IsTainted(inputs.size() > 1 && inputs[1]->taintsOrigin());
 }
 
 void SVGFilterPrimitiveStandardAttributes::primitiveAttributeChanged(const QualifiedName& attribute)
 {
     RefPtr effect = m_effect;
+    // §16.3: a self-taint flip (e.g. flood-color toggled to/from currentColor) needs a graph
+    // rebuild so downstream taint propagation is redone.
+    if (effect && effect->taintsOrigin() != taintsOrigin()) {
+        markFilterEffectForRebuild();
+        return;
+    }
     if (effect && !setFilterEffectAttribute(*effect, attribute))
         return;
 
@@ -126,12 +152,12 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRepaint()
         return;
 
     if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
-        filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect.get());
+        filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
 
     if (auto* filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
-        filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect.get());
+        filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
 
@@ -140,11 +166,11 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRepaint()
 
 void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRebuild()
 {
+    m_effect = nullptr;
+
     CheckedPtr renderer = this->renderer();
     if (!renderer)
         return;
-
-    m_effect = nullptr;
 
     if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRebuild();
@@ -179,15 +205,15 @@ void SVGFilterPrimitiveStandardAttributes::childrenChanged(const ChildChange& ch
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGFilterPrimitiveStandardAttributes::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGFilterPrimitiveStandardAttributes::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
-        return createRenderer<RenderSVGResourceFilterPrimitive>(*this, WTFMove(style));
+        return createRenderer<RenderSVGResourceFilterPrimitive>(*this, WTF::move(style));
 
-    return createRenderer<LegacyRenderSVGResourceFilterPrimitive>(*this, WTFMove(style));
+    return createRenderer<LegacyRenderSVGResourceFilterPrimitive>(*this, WTF::move(style));
 }
 
-bool SVGFilterPrimitiveStandardAttributes::rendererIsNeeded(const RenderStyle& style)
+bool SVGFilterPrimitiveStandardAttributes::rendererIsNeeded(const Style::ComputedStyle& style)
 {
     if (parentNode() && (parentNode()->hasTagName(SVGNames::filterTag)))
         return SVGElement::rendererIsNeeded(style);

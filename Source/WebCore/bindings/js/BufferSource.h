@@ -29,8 +29,11 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <span>
-#include <variant>
-#include <wtf/RefPtr.h>
+#include <wtf/Compiler.h>
+#include <wtf/Platform.h>
+#include <wtf/Ref.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Variant.h>
 
 #if PLATFORM(COCOA) && defined(__OBJC__)
 #include <wtf/cocoa/SpanCocoa.h>
@@ -41,35 +44,51 @@ namespace WebCore {
 
 class BufferSource {
 public:
-    using VariantType = std::variant<RefPtr<JSC::ArrayBufferView>, RefPtr<JSC::ArrayBuffer>>;
+    using VariantType = Variant<Ref<JSC::ArrayBufferView>, Ref<JSC::ArrayBuffer>>;
 
-    BufferSource() { }
     BufferSource(VariantType&& variant)
-        : m_variant(WTFMove(variant))
-    { }
-    explicit BufferSource(std::span<const uint8_t> span)
-        : m_variant(JSC::ArrayBuffer::tryCreate(span)) { }
-
-    const VariantType& variant() const { return m_variant; }
-
-    size_t length() const
+        : m_variant(WTF::move(variant))
     {
-        return std::visit([](auto& buffer) {
-            return buffer ? buffer->byteLength() : 0;
-        }, m_variant);
     }
 
-    std::span<const uint8_t> span() const
+    BufferSource(const VariantType& variant)
+        : m_variant(variant)
     {
-        return std::visit([](auto& buffer) {
-            return buffer ? buffer->span() : std::span<const uint8_t> { };
-        }, m_variant);
     }
-    std::span<uint8_t> mutableSpan()
+
+    BufferSource(Ref<JSC::ArrayBufferView>&& buffer)
+        : m_variant(WTF::move(buffer))
     {
-        return std::visit([](auto& buffer) {
-            return buffer ? buffer->mutableSpan() : std::span<uint8_t> { };
-        }, m_variant);
+    }
+
+    BufferSource(Ref<JSC::ArrayBuffer>&& buffer)
+        : m_variant(WTF::move(buffer))
+    {
+    }
+
+    explicit BufferSource(std::span<const uint8_t> data)
+        : m_variant(JSC::ArrayBuffer::create(data))
+    {
+    }
+
+    const VariantType& variant() const
+    {
+        return m_variant;
+    }
+
+    size_t byteLength() const
+    {
+        return WTF::switchOn(m_variant, [](auto& buffer) { return buffer->byteLength(); });
+    }
+
+    std::span<const uint8_t> span() const LIFETIME_BOUND
+    {
+        return WTF::switchOn(m_variant, [](auto& buffer) { return buffer->span(); });
+    }
+
+    std::span<uint8_t> mutableSpan() LIFETIME_BOUND
+    {
+        return WTF::switchOn(m_variant, [](auto& buffer) { return buffer->mutableSpan(); });
     }
 
 private:
@@ -78,13 +97,13 @@ private:
 
 inline BufferSource toBufferSource(std::span<const uint8_t> data)
 {
-    return BufferSource(JSC::ArrayBuffer::tryCreate(data));
+    return BufferSource(JSC::ArrayBuffer::create(data));
 }
 
 #if PLATFORM(COCOA) && defined(__OBJC__)
 inline BufferSource toBufferSource(NSData *data)
 {
-    return BufferSource(JSC::ArrayBuffer::tryCreate(span(data)));
+    return BufferSource(JSC::ArrayBuffer::create(span(data)));
 }
 
 inline RetainPtr<NSData> toNSData(const BufferSource& data)

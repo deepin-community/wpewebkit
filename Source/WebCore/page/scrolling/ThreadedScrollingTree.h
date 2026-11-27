@@ -25,14 +25,16 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
 
-#include "ScrollingStateScrollingNode.h"
-#include "ScrollingStateTree.h"
-#include "ScrollingTree.h"
+#include <WebCore/ScrollingStateScrollingNode.h>
+#include <WebCore/ScrollingStateTree.h>
+#include <WebCore/ScrollingTree.h>
 #include <wtf/Condition.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -43,6 +45,7 @@ class AsyncScrollingCoordinator;
 // to the correct scrolling tree nodes or dispatching events back to the ScrollingCoordinator
 // object on the main thread if they can't be handled on the scrolling thread for various reasons.
 class ThreadedScrollingTree : public ScrollingTree {
+    WTF_MAKE_TZONE_ALLOCATED(ThreadedScrollingTree);
 public:
     virtual ~ThreadedScrollingTree();
 
@@ -58,14 +61,18 @@ public:
 
     void displayDidRefresh(PlatformDisplayID) override;
 
-    void didScheduleRenderingUpdate();
+    void NODELETE didScheduleRenderingUpdate();
     void willStartRenderingUpdate();
     virtual void didCompleteRenderingUpdate();
 
-    Lock& treeLock() WTF_RETURNS_LOCK(m_treeLock) { return m_treeLock; }
+    Lock& treeLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_treeLock) { return m_treeLock; }
 
     bool scrollAnimatorEnabled() const { return m_scrollAnimatorEnabled; }
     void removePendingScrollAnimationForNode(ScrollingNodeID) WTF_REQUIRES_LOCK(m_treeLock) final;
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    virtual TrackingType eventTrackingTypeForTouchEvent(const PlatformTouchEvent&) { return TrackingType::NotTracking; }
+#endif
 
 protected:
     explicit ThreadedScrollingTree(AsyncScrollingCoordinator&);
@@ -75,8 +82,12 @@ protected:
     void scrollingTreeNodeDidStopAnimatedScroll(ScrollingTreeScrollingNode&) override;
     void scrollingTreeNodeWillStartWheelEventScroll(ScrollingTreeScrollingNode&) override;
     void scrollingTreeNodeDidStopWheelEventScroll(ScrollingTreeScrollingNode&) override;
-    bool scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&) override WTF_REQUIRES_LOCK(m_treeLock);
+    void didHandleScrollRequestForNode(ScrollingNodeID, ScrollRequestType, FloatPoint, ShouldFireScrollEnd, Markable<ScrollRequestIdentifier>) override;
+
+    RequestsScrollHandling scrollingTreeNodeRequestsScroll(ScrollingNodeID, const RequestedScrollData&) override WTF_REQUIRES_LOCK(m_treeLock);
     bool scrollingTreeNodeRequestsKeyboardScroll(ScrollingNodeID, const RequestedKeyboardScrollData&) override WTF_REQUIRES_LOCK(m_treeLock);
+
+    void addPendingScrollUpdateWithDeferReason(ScrollUpdate&&, WheelEventTestMonitor::DeferReason);
 
 #if PLATFORM(MAC)
     void handleWheelEventPhase(ScrollingNodeID, PlatformWheelEventPhase) override;
@@ -106,14 +117,14 @@ private:
     void displayDidRefreshOnScrollingThread();
     void waitForRenderingUpdateCompletionOrTimeout() WTF_REQUIRES_LOCK(m_treeLock);
 
-    bool canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
+    bool NODELETE canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
 
     void scheduleDelayedRenderingUpdateDetectionTimer(Seconds) WTF_REQUIRES_LOCK(m_treeLock);
     void delayedRenderingUpdateDetectionTimerFired();
 
-    void hasNodeWithAnimatedScrollChanged(bool) final;
-    
-    bool isScrollingSynchronizedWithMainThread() final WTF_REQUIRES_LOCK(m_treeLock);
+    void hasNodeWithAnimatedScrollChanged(bool) override;
+
+    bool NODELETE isScrollingSynchronizedWithMainThread() final WTF_REQUIRES_LOCK(m_treeLock);
 
     void receivedWheelEventWithPhases(PlatformWheelEventPhase, PlatformWheelEventPhase) final;
     void deferWheelEventTestCompletionForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason) final;
@@ -122,7 +133,9 @@ private:
     void lockLayersForHitTesting() final WTF_ACQUIRES_LOCK(m_layerHitTestMutex);
     void unlockLayersForHitTesting() final WTF_RELEASES_LOCK(m_layerHitTestMutex);
 
-    void scrollingTreeNodeScrollUpdated(ScrollingTreeScrollingNode&, const ScrollUpdateType&);
+    void scrollingTreeNodeScrollUpdated(ScrollingTreeScrollingNode&, ScrollUpdateType);
+
+    void didAddPendingScrollUpdate() override;
 
     enum class SynchronizationState : uint8_t {
         Idle,

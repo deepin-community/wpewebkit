@@ -29,7 +29,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
-#include "ExceptionOr.h"
+#include "EventTargetInterfaces.h"
 #include "ScriptWrappable.h"
 #include "Timer.h"
 
@@ -38,21 +38,23 @@ namespace WebCore {
 class MediaStreamTrack;
 class RTCDTMFSenderBackend;
 class RTCRtpSender;
+template<typename> class ExceptionOr;
 
 class RTCDTMFSender final : public RefCounted<RTCDTMFSender>, public EventTarget, public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RTCDTMFSender);
+    WTF_MAKE_TZONE_ALLOCATED(RTCDTMFSender);
 public:
     static Ref<RTCDTMFSender> create(ScriptExecutionContext&, RTCRtpSender&, std::unique_ptr<RTCDTMFSenderBackend>&&);
     virtual ~RTCDTMFSender();
 
-    bool canInsertDTMF() const;
-    String toneBuffer() const;
-
-    ExceptionOr<void> insertDTMF(const String& tones, size_t duration, size_t interToneGap);
-
-    // ActiveDOMObject.
+    // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
+    bool canInsertDTMF() const;
+    String NODELETE toneBuffer() const;
+
+    ExceptionOr<void> insertDTMF(const String& tones, size_t duration, size_t interToneGap);
 
 private:
     RTCDTMFSender(ScriptExecutionContext&, RTCRtpSender&, std::unique_ptr<RTCDTMFSenderBackend>&&);
@@ -61,7 +63,7 @@ private:
     void stop() final;
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::RTCDTMFSender; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     bool virtualHasPendingActivity() const final { return m_isPendingPlayoutTask; }
 
     void refEventTarget() final { ref(); }
@@ -83,5 +85,7 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(RTCDTMFSender)
 
 #endif // ENABLE(WEB_RTC)

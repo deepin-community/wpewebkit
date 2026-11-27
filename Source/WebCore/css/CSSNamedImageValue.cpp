@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015, 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2015, 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,21 +27,25 @@
 #include "CSSNamedImageValue.h"
 
 #include "StyleNamedImage.h"
-#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
-CSSNamedImageValue::CSSNamedImageValue(String&& name)
-    : CSSValue { NamedImageClass }
-    , m_name { WTFMove(name) }
+CSSNamedImageValue::CSSNamedImageValue(CSS::CustomIdent&& name)
+    : CSSValue { ClassType::NamedImage }
+    , m_name { WTF::move(name) }
 {
 }
 
 CSSNamedImageValue::~CSSNamedImageValue() = default;
 
-String CSSNamedImageValue::customCSSText() const
+String CSSNamedImageValue::customCSSText(const CSS::SerializationContext& context) const
 {
-    return makeString("-webkit-named-image("_s, m_name, ')');
+    StringBuilder builder;
+    builder.append("-webkit-named-image("_s);
+    CSS::serializationForCSS(builder, context, m_name);
+    builder.append(')');
+    return builder.toString();
 }
 
 bool CSSNamedImageValue::equals(const CSSNamedImageValue& other) const
@@ -49,12 +53,12 @@ bool CSSNamedImageValue::equals(const CSSNamedImageValue& other) const
     return m_name == other.m_name;
 }
 
-RefPtr<StyleImage> CSSNamedImageValue::createStyleImage(Style::BuilderState&) const
+RefPtr<Style::Image> CSSNamedImageValue::createStyleImage(const Style::BuilderState& state) const
 {
     if (m_cachedStyleImage)
         return m_cachedStyleImage;
 
-    m_cachedStyleImage = StyleNamedImage::create(m_name);
+    m_cachedStyleImage = Style::NamedImage::create(Style::toStyle(m_name, state));
     return m_cachedStyleImage;
 }
 

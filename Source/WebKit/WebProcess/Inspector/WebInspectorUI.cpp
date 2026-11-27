@@ -26,20 +26,20 @@
 #include "config.h"
 #include "WebInspectorUI.h"
 
-#include "WebCoreArgumentCoders.h"
-#include "WebInspectorMessages.h"
+#include "WebInspectorBackendMessages.h"
 #include "WebInspectorUIProxyMessages.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/DOMWrapperWorld.h>
+#include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/ExceptionDetails.h>
 #include <WebCore/FloatRect.h>
-#include <WebCore/InspectorController.h>
 #include <WebCore/InspectorFrontendHost.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/Page.h>
+#include <WebCore/PageInspectorController.h>
 #include <WebCore/Settings.h>
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
@@ -56,7 +56,7 @@ Ref<WebInspectorUI> WebInspectorUI::create(WebPage& page)
 
 WebInspectorUI::WebInspectorUI(WebPage& page)
     : m_page(page)
-    , m_frontendAPIDispatcher(InspectorFrontendAPIDispatcher::create(*page.corePage()))
+    , m_frontendAPIDispatcher(InspectorFrontendAPIDispatcher::create(*protect(page.corePage())))
     , m_debuggableInfo(DebuggableInfoData::empty())
 {
 }
@@ -72,11 +72,11 @@ void WebInspectorUI::establishConnection(WebPageProxyIdentifier inspectedPageIde
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     if (!m_extensionController)
-        m_extensionController = makeUnique<WebInspectorUIExtensionController>(*this, m_page.identifier());
+        m_extensionController = WebInspectorUIExtensionController::create(*this, m_page->identifier());
 #endif
 
     m_frontendAPIDispatcher->reset();
-    m_frontendController = &m_page.corePage()->inspectorController();
+    m_frontendController = m_page->corePage()->inspectorController();
     m_frontendController->setInspectorFrontendClient(this);
 
     updateConnection();
@@ -86,27 +86,31 @@ void WebInspectorUI::establishConnection(WebPageProxyIdentifier inspectedPageIde
 
 void WebInspectorUI::updateConnection()
 {
-    if (m_backendConnection) {
-        m_backendConnection->invalidate();
+    RefPtr backendConnection = m_backendConnection;
+    if (backendConnection) {
+        backendConnection->invalidate();
         m_backendConnection = nullptr;
     }
     auto connectionIdentifiers = IPC::Connection::createConnectionIdentifierPair();
     if (!connectionIdentifiers)
         return;
 
-    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifiers->server);
-    m_backendConnection->open(*this);
+    backendConnection = IPC::Connection::createServerConnection(WTF::move(connectionIdentifiers->server));
+    m_backendConnection = backendConnection.copyRef();
+    backendConnection->open(*this);
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetFrontendConnection(WTFMove(connectionIdentifiers->client)), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetFrontendConnection(WTF::move(connectionIdentifiers->client)));
 }
 
 void WebInspectorUI::windowObjectCleared()
 {
-    if (m_frontendHost)
-        m_frontendHost->disconnectClient();
+    RefPtr frontendHost = m_frontendHost;
+    if (frontendHost)
+        frontendHost->disconnectClient();
 
-    m_frontendHost = InspectorFrontendHost::create(this, m_page.corePage());
-    m_frontendHost->addSelfToGlobalObjectInWorld(mainThreadNormalWorld());
+    frontendHost = InspectorFrontendHost::create(this, protect(RefPtr { m_page.get() }->corePage()).get());
+    m_frontendHost = frontendHost.copyRef();
+    frontendHost->addSelfToGlobalObjectInWorld(mainThreadNormalWorldSingleton());
 }
 
 void WebInspectorUI::frontendLoaded()
@@ -119,48 +123,44 @@ void WebInspectorUI::frontendLoaded()
     setDockSide(m_dockSide);
     setIsVisible(m_isVisible);
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::FrontendLoaded(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::FrontendLoaded());
 
     bringToFront();
 }
 
 void WebInspectorUI::startWindowDrag()
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::StartWindowDrag(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::StartWindowDrag());
 }
 
 void WebInspectorUI::moveWindowBy(float x, float y)
 {
-    FloatRect frameRect = m_page.corePage()->chrome().windowRect();
+    FloatRect frameRect = m_page->corePage()->chrome().windowRect();
     frameRect.move(x, y);
-    m_page.corePage()->chrome().setWindowRect(frameRect);
+    m_page->corePage()->chrome().setWindowRect(frameRect);
 }
 
 void WebInspectorUI::bringToFront()
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::BringToFront(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::BringToFront());
 }
 
 void WebInspectorUI::closeWindow()
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::DidClose(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::DidClose());
 
-    if (m_backendConnection) {
-        m_backendConnection->invalidate();
-        m_backendConnection = nullptr;
-    }
+    if (RefPtr backendConnection = std::exchange(m_backendConnection, nullptr))
+        backendConnection->invalidate();
 
-    if (m_frontendController) {
-        m_frontendController->setInspectorFrontendClient(nullptr);
-        m_frontendController = nullptr;
-    }
+    if (auto* frontendController = std::exchange(m_frontendController, nullptr).get())
+        frontendController->setInspectorFrontendClient(nullptr);
 
-    if (m_frontendHost)
-        m_frontendHost->disconnectClient();
+    if (RefPtr frontendHost = m_frontendHost)
+        frontendHost->disconnectClient();
 
-    m_inspectedPageIdentifier = { };
+    m_inspectedPageIdentifier = std::nullopt;
     m_underTest = false;
-    
+
 #if ENABLE(INSPECTOR_EXTENSIONS)
     m_extensionController = nullptr;
 #endif
@@ -168,27 +168,27 @@ void WebInspectorUI::closeWindow()
 
 void WebInspectorUI::reopen()
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::Reopen(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::Reopen());
 }
 
 void WebInspectorUI::resetState()
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::ResetState(), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::ResetState());
 }
 
 void WebInspectorUI::setForcedAppearance(WebCore::InspectorFrontendClient::Appearance appearance)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetForcedAppearance(appearance), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetForcedAppearance(appearance));
 }
 
 void WebInspectorUI::effectiveAppearanceDidChange(WebCore::InspectorFrontendClient::Appearance appearance)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::EffectiveAppearanceDidChange(appearance), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::EffectiveAppearanceDidChange(appearance));
 }
 
 WebCore::UserInterfaceLayoutDirection WebInspectorUI::userInterfaceLayoutDirection() const
 {
-    return m_page.corePage()->userInterfaceLayoutDirection();
+    return m_page->corePage()->userInterfaceLayoutDirection();
 }
 
 bool WebInspectorUI::supportsDockSide(DockSide dockSide)
@@ -207,19 +207,18 @@ bool WebInspectorUI::supportsDockSide(DockSide dockSide)
 
 void WebInspectorUI::requestSetDockSide(DockSide dockSide)
 {
-    auto& webProcess = WebProcess::singleton();
     switch (dockSide) {
     case DockSide::Undocked:
-        webProcess.parentProcessConnection()->send(Messages::WebInspectorUIProxy::Detach(), m_inspectedPageIdentifier);
+        sendToParentProcess(Messages::WebInspectorUIProxy::Detach());
         break;
     case DockSide::Right:
-        webProcess.parentProcessConnection()->send(Messages::WebInspectorUIProxy::AttachRight(), m_inspectedPageIdentifier);
+        sendToParentProcess(Messages::WebInspectorUIProxy::AttachRight());
         break;
     case DockSide::Left:
-        webProcess.parentProcessConnection()->send(Messages::WebInspectorUIProxy::AttachLeft(), m_inspectedPageIdentifier);
+        sendToParentProcess(Messages::WebInspectorUIProxy::AttachLeft());
         break;
     case DockSide::Bottom:
-        webProcess.parentProcessConnection()->send(Messages::WebInspectorUIProxy::AttachBottom(), m_inspectedPageIdentifier);
+        sendToParentProcess(Messages::WebInspectorUIProxy::AttachBottom());
         break;
     }
 }
@@ -272,68 +271,80 @@ void WebInspectorUI::updateFindString(const String& findString)
 
 void WebInspectorUI::changeAttachedWindowHeight(unsigned height)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetAttachedWindowHeight(height), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetAttachedWindowHeight(height));
 }
 
 void WebInspectorUI::changeAttachedWindowWidth(unsigned width)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetAttachedWindowWidth(width), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetAttachedWindowWidth(width));
 }
 
 void WebInspectorUI::changeSheetRect(const FloatRect& rect)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetSheetRect(rect), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetSheetRect(rect));
 }
 
 void WebInspectorUI::openURLExternally(const String& url)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::OpenURLExternally(url), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::OpenURLExternally(url));
 }
 
 void WebInspectorUI::revealFileExternally(const String& path)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::RevealFileExternally(path), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::RevealFileExternally(path));
 }
 
 void WebInspectorUI::save(Vector<InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::Save(WTFMove(saveDatas), forceSaveAs), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::Save(WTF::move(saveDatas), forceSaveAs));
 }
 
 void WebInspectorUI::load(const WTF::String& path, CompletionHandler<void(const String&)>&& completionHandler)
 {
-    WebProcess::singleton().parentProcessConnection()->sendWithAsyncReply(Messages::WebInspectorUIProxy::Load(path), WTFMove(completionHandler), m_inspectedPageIdentifier);
+    sendToParentProcessWithAsyncReply(Messages::WebInspectorUIProxy::Load(path), WTF::move(completionHandler));
 }
 
 void WebInspectorUI::pickColorFromScreen(CompletionHandler<void(const std::optional<WebCore::Color>&)>&& completionHandler)
 {
-    WebProcess::singleton().parentProcessConnection()->sendWithAsyncReply(Messages::WebInspectorUIProxy::PickColorFromScreen(), WTFMove(completionHandler), m_inspectedPageIdentifier);
+    sendToParentProcessWithAsyncReply(Messages::WebInspectorUIProxy::PickColorFromScreen(), WTF::move(completionHandler));
 }
 
 void WebInspectorUI::inspectedURLChanged(const String& urlString)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::InspectedURLChanged(urlString), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::InspectedURLChanged(urlString));
 }
 
 void WebInspectorUI::showCertificate(const CertificateInfo& certificateInfo)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::ShowCertificate(certificateInfo), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::ShowCertificate(certificateInfo));
 }
 
 void WebInspectorUI::setInspectorPageDeveloperExtrasEnabled(bool enabled)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetInspectorPageDeveloperExtrasEnabled(enabled), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetInspectorPageDeveloperExtrasEnabled(enabled));
+}
+
+void WebInspectorUI::setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor)
+{
+    m_pageZoomFactor = pageZoomFactor;
+    sendToParentProcess(Messages::WebInspectorUIProxy::SetPageAndTextZoomFactors(pageZoomFactor, textZoomFactor));
+}
+
+double WebInspectorUI::pageZoomFactor() const
+{
+    return m_pageZoomFactor;
 }
 
 #if ENABLE(INSPECTOR_TELEMETRY)
 bool WebInspectorUI::supportsDiagnosticLogging()
 {
-    return m_page.corePage()->settings().diagnosticLoggingEnabled();
+    auto* page = &m_page.get();
+    return page && page->corePage()->settings().diagnosticLoggingEnabled();
 }
 
 void WebInspectorUI::logDiagnosticEvent(const String& eventName, const DiagnosticLoggingClient::ValueDictionary& dictionary)
 {
-    m_page.corePage()->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
+    protect(protect(RefPtr { m_page.get() }->corePage())->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
 }
 
 void WebInspectorUI::setDiagnosticLoggingAvailable(bool available)
@@ -346,6 +357,11 @@ void WebInspectorUI::setDiagnosticLoggingAvailable(bool available)
 }
 #endif // ENABLE(INSPECTOR_TELEMETRY)
 
+void WebInspectorUI::systemAppearanceDidChange()
+{
+    m_frontendAPIDispatcher->dispatchCommandWithResultAsync("systemAppearanceDidChange"_s);
+}
+
 #if ENABLE(INSPECTOR_EXTENSIONS)
 bool WebInspectorUI::supportsWebExtensions()
 {
@@ -354,34 +370,26 @@ bool WebInspectorUI::supportsWebExtensions()
 
 void WebInspectorUI::didShowExtensionTab(const String& extensionID, const String& extensionTabID, const WebCore::FrameIdentifier& frameID)
 {
-    if (!m_extensionController)
-        return;
-
-    m_extensionController->didShowExtensionTab(extensionID, extensionTabID, frameID);
+    if (RefPtr extensionController = m_extensionController)
+        extensionController->didShowExtensionTab(extensionID, extensionTabID, frameID);
 }
 
 void WebInspectorUI::didHideExtensionTab(const String& extensionID, const String& extensionTabID)
 {
-    if (!m_extensionController)
-        return;
-
-    m_extensionController->didHideExtensionTab(extensionID, extensionTabID);
+    if (RefPtr extensionController = m_extensionController)
+        extensionController->didHideExtensionTab(extensionID, extensionTabID);
 }
 
 void WebInspectorUI::didNavigateExtensionTab(const String& extensionID, const String& extensionTabID, const URL& newURL)
 {
-    if (!m_extensionController)
-        return;
-
-    m_extensionController->didNavigateExtensionTab(extensionID, extensionTabID, newURL);
+    if (RefPtr extensionController = m_extensionController)
+        extensionController->didNavigateExtensionTab(extensionID, extensionTabID, newURL);
 }
 
 void WebInspectorUI::inspectedPageDidNavigate(const URL& newURL)
 {
-    if (!m_extensionController)
-        return;
-
-    m_extensionController->inspectedPageDidNavigate(newURL);
+    if (RefPtr extensionController = m_extensionController)
+        extensionController->inspectedPageDidNavigate(newURL);
 }
 #endif // ENABLE(INSPECTOR_EXTENSIONS)
 
@@ -442,7 +450,7 @@ void WebInspectorUI::pageUnpaused()
 
 void WebInspectorUI::sendMessageToBackend(const String& message)
 {
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SendMessageToBackend(message), m_inspectedPageIdentifier);
+    sendToParentProcess(Messages::WebInspectorUIProxy::SendMessageToBackend(message));
 }
 
 String WebInspectorUI::targetPlatformName() const
@@ -462,7 +470,7 @@ String WebInspectorUI::targetProductVersion() const
 
 WebCore::Page* WebInspectorUI::frontendPage()
 {
-    return m_page.corePage();
+    return m_page->corePage();
 }
 
 #if !PLATFORM(MAC) && !PLATFORM(GTK) && !PLATFORM(WIN) && !ENABLE(WPE_PLATFORM)

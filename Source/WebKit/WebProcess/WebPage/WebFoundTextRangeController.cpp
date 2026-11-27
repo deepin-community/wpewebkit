@@ -26,28 +26,46 @@
 #include "config.h"
 #include "WebFoundTextRangeController.h"
 
+#include "PluginView.h"
+#include "WebFrame.h"
 #include "WebPage.h"
+#include <WebCore/BoundaryPointInlines.h>
 #include <WebCore/CharacterRange.h>
+#include <WebCore/CueMatch.h>
 #include <WebCore/Document.h>
-#include <WebCore/DocumentInlines.h>
 #include <WebCore/DocumentMarkerController.h>
+#include <WebCore/DocumentMarkers.h>
+#include <WebCore/DocumentPage.h>
+#include <WebCore/DocumentQuirks.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/Editor.h>
+#include <WebCore/FindRevealAlgorithms.h>
 #include <WebCore/FocusController.h>
+#include <WebCore/Frame.h>
+#include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameSelection.h>
 #include <WebCore/GeometryUtilities.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/GraphicsLayer.h>
+#include <WebCore/HTMLMediaElement.h>
 #include <WebCore/ImageOverlay.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/PathUtilities.h>
 #include <WebCore/PlatformMouseEvent.h>
+#include <WebCore/RenderLayer.h>
+#include <WebCore/RenderObject.h>
 #include <WebCore/SimpleRange.h>
 #include <WebCore/TextIterator.h>
+#include <ranges>
 #include <wtf/Scope.h>
+#include <wtf/Seconds.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/TypeCasts.h>
+#include <wtf/ZippedRange.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -59,39 +77,126 @@ WebFoundTextRangeController::WebFoundTextRangeController(WebPage& webPage)
 {
 }
 
-void WebFoundTextRangeController::findTextRangesForStringMatches(const String& string, OptionSet<FindOptions> options, uint32_t maxMatchCount, CompletionHandler<void(Vector<WebFoundTextRange>&&)>&& completionHandler)
+static inline WebFoundTextRange createWebFoundTextRange(SimpleRange& simpleRange)
 {
-    auto result = m_webPage->corePage()->findTextMatches(string, core(options), maxMatchCount, false);
-    Vector<WebCore::SimpleRange> findMatches = WTFMove(result.ranges);
+    Ref document = simpleRange.startContainer().document();
+    RefPtr element = document->documentElement();
+    RefPtr frame = document->frame();
 
-    if (!findMatches.isEmpty())
+    // FIXME: We should get the character ranges at the same time as the SimpleRanges to avoid additional traversals.
+    CharacterRange range = characterRange(makeBoundaryPointBeforeNodeContents(*element), simpleRange, WebCore::findIteratorOptions());
+    return WebFoundTextRange {
+        WebFoundTextRange::DOMData {
+            range.location,
+            range.length },
+        frame->pathToFrame(),
+        0 // the order is set by the UI process
+    };
+}
+
+static inline bool NODELETE canConvertToWebFoundTextRange(SimpleRange& range)
+{
+    auto& document = range.startContainer().document();
+
+    auto* element = document.documentElement();
+    if (!element)
+        return false;
+
+    auto* frame = document.frame();
+    if (!frame)
+        return false;
+
+    return true;
+}
+
+#if ENABLE(PDF_PLUGIN)
+static inline Vector<WebFoundTextRange::PDFData> findPDFMatchesInFrame(Frame* frame, const String& string, OptionSet<FindOptions> options)
+{
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+    if (!localFrame)
+        return { };
+
+    RefPtr pluginView = WebPage::pluginViewForFrame(localFrame.get());
+    if (!pluginView)
+        return { };
+
+    return pluginView->findTextMatches(string, core(options));
+}
+#endif
+
+#if ENABLE(VIDEO)
+static Vector<WebFoundTextRange::CueData> findCueMatchesInFrame(Frame* frame, const String& string, OptionSet<FindOptions> options)
+{
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+    if (!localFrame)
+        return { };
+
+    RefPtr document = localFrame->document();
+    if (!document)
+        return { };
+
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return { };
+
+    Vector<WebFoundTextRange::CueData> cueMatches;
+    for (const auto& cueMatch : document->findCueMatches(string, core(options))) {
+        RefPtr mediaElement = cueMatch.mediaElement.get();
+        if (!mediaElement)
+            continue;
+        auto documentOffset = characterRange(makeBoundaryPointBeforeNodeContents(*documentElement), makeRangeSelectingNodeContents(*mediaElement), WebCore::findIteratorOptions()).location;
+        cueMatches.append(WebFoundTextRange::CueData { mediaElement->identifier(), documentOffset, Seconds(cueMatch.seekTime.toDouble()).millisecondsAs<uint64_t>() });
+    }
+    return cueMatches;
+}
+#endif
+
+void WebFoundTextRangeController::findTextRangesForStringMatches(const String& string, OptionSet<FindOptions> options, uint32_t maxMatchCount, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Vector<WebFoundTextRange>>&&)>&& completionHandler)
+{
+    auto matchingRanges = protect(protect(m_webPage.get())->corePage())->findTextMatches(string, core(options), maxMatchCount, false);
+    Vector<WebCore::SimpleRange> findMatches = WTF::move(matchingRanges.ranges);
+
+    if (findMatches.size() > 0)
         m_cachedFoundRanges.clear();
 
-    AtomString frameName;
-    uint64_t order = 0;
-    Vector<WebFoundTextRange> foundTextRanges;
-    for (auto& simpleRange : findMatches) {
-        Ref document = simpleRange.startContainer().document();
+    auto validSimpleRanges = findMatches | std::views::filter(canConvertToWebFoundTextRange);
+    auto webFoundTextRanges = validSimpleRanges | std::views::transform(createWebFoundTextRange);
 
-        RefPtr element = document->documentElement();
-        if (!element)
-            continue;
+    const auto createEmptyVector = []() {
+        return Vector<WebFoundTextRange> { };
+    };
 
-        auto currentFrameName = document->frame()->tree().uniqueName();
-        if (frameName != currentFrameName) {
-            frameName = currentFrameName;
-            order++;
-        }
-
-        // FIXME: We should get the character ranges at the same time as the SimpleRanges to avoid additional traversals.
-        auto range = characterRange(makeBoundaryPointBeforeNodeContents(*element), simpleRange, WebCore::findIteratorOptions());
-        auto foundTextRange = WebFoundTextRange { range.location, range.length, frameName.length() ? frameName : emptyAtom(), order };
-
-        m_cachedFoundRanges.add(foundTextRange, simpleRange);
-        foundTextRanges.append(foundTextRange);
+    HashMap<WebCore::FrameIdentifier, Vector<WebFoundTextRange>> frameMatches;
+    for (const auto& [foundTextRange, simpleRange] : WTF::zippedRange(webFoundTextRanges, validSimpleRanges)) {
+        m_cachedFoundRanges.add(foundTextRange, simpleRange.makeWeakSimpleRange());
+        const auto frameID = simpleRange.startContainer().document().frame()->frameID();
+        auto& matches = frameMatches.ensure(frameID, createEmptyVector).iterator->value;
+        matches.append(foundTextRange);
     }
 
-    completionHandler(WTFMove(foundTextRanges));
+#if ENABLE(PDF_PLUGIN)
+    for (RefPtr frame = m_webPage->corePage()->mainFrame(); frame; frame = frame->tree().traverseNext()) {
+        const auto frameID = frame->frameID();
+        for (const auto& pdfMatch : findPDFMatchesInFrame(frame.get(), string, options)) {
+            const auto foundTextRange = WebFoundTextRange { pdfMatch, frame->pathToFrame(), 0 }; // order set by UI process
+            auto& matches = frameMatches.ensure(frameID, createEmptyVector).iterator->value;
+            matches.append(foundTextRange);
+        }
+    }
+#endif
+
+#if ENABLE(VIDEO)
+    for (RefPtr frame = m_webPage->corePage()->mainFrame(); frame; frame = frame->tree().traverseNext()) {
+        const auto frameID = frame->frameID();
+        for (const auto& cueData : findCueMatchesInFrame(frame.get(), string, options)) {
+            const auto foundTextRange = WebFoundTextRange { cueData, frame->pathToFrame(), 0 };
+            auto& matches = frameMatches.ensure(frameID, createEmptyVector).iterator->value;
+            matches.append(foundTextRange);
+        }
+    }
+#endif
+
+    completionHandler(WTF::move(frameMatches));
 }
 
 void WebFoundTextRangeController::replaceFoundTextRangeWithString(const WebFoundTextRange& range, const String& string)
@@ -112,15 +217,31 @@ void WebFoundTextRangeController::replaceFoundTextRangeWithString(const WebFound
     OptionSet temporarySelectionOptions { WebCore::TemporarySelectionOption::DoNotSetFocus, WebCore::TemporarySelectionOption::IgnoreSelectionChanges };
     WebCore::TemporarySelectionChange selectionChange(*document, visibleSelection, temporarySelectionOptions);
 
-    frame->editor().replaceSelectionWithText(string, WebCore::Editor::SelectReplacement::Yes, WebCore::Editor::SmartReplace::No, WebCore::EditAction::InsertReplacement);
+    protect(frame->editor())->replaceSelectionWithText(string, WebCore::Editor::SelectReplacement::Yes, WebCore::Editor::SmartReplace::No, WebCore::EditAction::InsertReplacement);
 }
+
+#if ENABLE(VIDEO)
+RefPtr<WebCore::HTMLMediaElement> WebFoundTextRangeController::mediaElementForCueRange(const WebFoundTextRange& range) const
+{
+    auto* cueData = std::get_if<WebFoundTextRange::CueData>(&range.data);
+    if (!cueData)
+        return nullptr;
+
+    RefPtr document = documentForFoundTextRange(range);
+    if (!document)
+        return nullptr;
+
+    RefPtr<WebCore::HTMLMediaElement> result;
+    document->forEachMediaElement([&](WebCore::HTMLMediaElement& element) {
+        if (!result && element.identifier() == cueData->mediaElementIdentifier)
+            result = &element;
+    });
+    return result;
+}
+#endif
 
 void WebFoundTextRangeController::decorateTextRangeWithStyle(const WebFoundTextRange& range, FindDecorationStyle style)
 {
-    auto simpleRange = simpleRangeFromFoundTextRange(range);
-    if (!simpleRange)
-        return;
-
     auto currentStyleForRange = m_decoratedRanges.get(range);
     if (style == currentStyleForRange)
         return;
@@ -130,90 +251,182 @@ void WebFoundTextRangeController::decorateTextRangeWithStyle(const WebFoundTextR
     if (currentStyleForRange == FindDecorationStyle::Highlighted && range == m_highlightedRange) {
         m_textIndicator = nullptr;
         m_highlightedRange = { };
+
+        protect(protect(m_webPage.get())->corePage())->removeAllActiveTextMatches();
     }
 
-    if (style == FindDecorationStyle::Normal)
-        simpleRange->start.document().markers().removeMarkers(*simpleRange, WebCore::DocumentMarker::Type::TextMatch);
-    else if (style == FindDecorationStyle::Found)
-        simpleRange->start.document().markers().addMarker(*simpleRange, WebCore::DocumentMarker::Type::TextMatch);
-    else if (style == FindDecorationStyle::Highlighted) {
+    if (auto simpleRange = simpleRangeFromFoundTextRange(range)) {
+        switch (style) {
+        case FindDecorationStyle::Normal:
+            protect(protect(simpleRange->start.document())->markers())->removeMarkers(*simpleRange, WebCore::DocumentMarkerType::TextMatch);
+            break;
+        case FindDecorationStyle::Found: {
+            auto addedMarker = protect(protect(simpleRange->start.document())->markers())->addMarker(*simpleRange, WebCore::DocumentMarkerType::TextMatch);
+            if (!addedMarker)
+                m_unhighlightedFoundRanges.add(range);
+            break;
+        }
+        case FindDecorationStyle::Highlighted: {
+            m_highlightedRange = range;
+
+            protect(protect(simpleRange->start.document())->markers())->addMarker(*simpleRange, WebCore::DocumentMarkerType::ActiveTextMatch);
+
+            auto ancestorsRevealed = revealClosedDetailsAndHiddenUntilFoundAncestors(protect(simpleRange->startContainer()));
+
+            if (m_findPageOverlay)
+                setTextIndicatorWithRange(*simpleRange);
+            else
+                flashTextIndicatorAndUpdateSelectionWithRange(*simpleRange);
+
+            if (ancestorsRevealed) {
+                HashSet<WebFoundTextRange> rangesToRemove;
+                for (auto unhighlightedRange : m_unhighlightedFoundRanges) {
+                    if (auto unhighlightedSimpleRange = simpleRangeFromFoundTextRange(unhighlightedRange)) {
+                        auto addedMarker = protect(protect(unhighlightedSimpleRange->start.document())->markers())->addMarker(*unhighlightedSimpleRange, WebCore::DocumentMarkerType::TextMatch);
+                        if (addedMarker)
+                            rangesToRemove.add(unhighlightedRange);
+                    }
+                }
+                for (auto rangeToRemove : rangesToRemove)
+                    m_unhighlightedFoundRanges.remove(rangeToRemove);
+            }
+            break;
+        }
+        }
+    }
+
+#if ENABLE(PDF_PLUGIN)
+    if (style == FindDecorationStyle::Highlighted && std::holds_alternative<WebFoundTextRange::PDFData>(range.data)) {
         m_highlightedRange = range;
-
         if (m_findPageOverlay)
-            setTextIndicatorWithRange(*simpleRange);
+            setTextIndicatorWithPDFRange(m_highlightedRange);
         else
-            flashTextIndicatorAndUpdateSelectionWithRange(*simpleRange);
+            flashTextIndicatorAndUpdateSelectionWithPDFRange(m_highlightedRange);
     }
+#endif
 
-    if (m_findPageOverlay)
-        m_findPageOverlay->setNeedsDisplay();
+#if ENABLE(VIDEO)
+    if (style == FindDecorationStyle::Highlighted) {
+        if (auto* cueData = std::get_if<WebFoundTextRange::CueData>(&range.data)) {
+            m_highlightedRange = range;
+            if (RefPtr mediaElement = mediaElementForCueRange(range))
+                mediaElement->setCurrentTime(Seconds::fromMilliseconds(cueData->seekTimeMilliseconds).seconds());
+        }
+    }
+#endif
+
+    if (RefPtr findPageOverlay = m_findPageOverlay)
+        findPageOverlay->setNeedsDisplay();
 }
 
 void WebFoundTextRangeController::scrollTextRangeToVisible(const WebFoundTextRange& range)
 {
-    auto simpleRange = simpleRangeFromFoundTextRange(range);
-    if (!simpleRange)
-        return;
+    WTF::switchOn(range.data,
+        [&] (const WebKit::WebFoundTextRange::DOMData&) {
+            auto simpleRange = simpleRangeFromFoundTextRange(range);
+            if (!simpleRange)
+                return;
 
-    RefPtr document = documentForFoundTextRange(range);
-    if (!document)
-        return;
+            auto rects = WebCore::RenderObject::absoluteTextRects(*simpleRange);
+            if (rects.isEmpty())
+                return;
 
-    WebCore::VisibleSelection visibleSelection(*simpleRange);
-    OptionSet temporarySelectionOptions { WebCore::TemporarySelectionOption::DelegateMainFrameScroll, WebCore::TemporarySelectionOption::RevealSelectionBounds, WebCore::TemporarySelectionOption::DoNotSetFocus, WebCore::TemporarySelectionOption::UserTriggered };
+            CheckedPtr renderer = simpleRange->startContainer().renderer();
+            if (!renderer)
+                return;
 
-    if (document->isTopDocument())
-        temporarySelectionOptions.add(WebCore::TemporarySelectionOption::SmoothScroll);
+            WebCore::ScrollRectToVisibleOptions options;
+            RefPtr document = documentForFoundTextRange(range);
+            if (document && document->isTopDocument())
+                options.behavior = WebCore::ScrollBehavior::Smooth;
 
-    WebCore::TemporarySelectionChange selectionChange(*document, visibleSelection, temporarySelectionOptions);
+            WebCore::LocalFrameView::scrollRectToVisible(WebCore::LayoutRect(unionRect(rects)), *renderer, false, options);
+        },
+        [&] (const WebKit::WebFoundTextRange::PDFData& pdfData) {
+#if ENABLE(PDF_PLUGIN)
+            RefPtr frame = frameForFoundTextRange(range);
+            if (!frame)
+                return;
+
+            RefPtr pluginView = WebPage::pluginViewForFrame(frame.get());
+            if (!pluginView)
+                return;
+
+            pluginView->scrollToRevealTextMatch(pdfData);
+#else
+            UNUSED_PARAM(pdfData);
+#endif
+        },
+        [&] (const WebKit::WebFoundTextRange::CueData&) {
+#if ENABLE(VIDEO)
+            if (RefPtr mediaElement = mediaElementForCueRange(range))
+                mediaElement->scrollIntoViewIfNeeded();
+#endif
+        }
+    );
 }
 
 void WebFoundTextRangeController::clearAllDecoratedFoundText()
 {
-    m_cachedFoundRanges.clear();
+    clearCachedRanges();
     m_decoratedRanges.clear();
-    m_webPage->corePage()->unmarkAllTextMatches();
+    m_unhighlightedFoundRanges.clear();
+    RefPtr corePage = protect(m_webPage.get())->corePage();
+    corePage->unmarkAllTextMatches();
+    corePage->removeAllActiveTextMatches();
 
     m_highlightedRange = { };
     m_textIndicator = nullptr;
 
-    if (m_findPageOverlay)
-        m_findPageOverlay->setNeedsDisplay();
+    if (RefPtr findPageOverlay = m_findPageOverlay)
+        findPageOverlay->setNeedsDisplay();
 }
 
 void WebFoundTextRangeController::didBeginTextSearchOperation()
 {
-    if (m_findPageOverlay)
-        m_findPageOverlay->stopFadeOutAnimation();
+    if (RefPtr existingFindPageOverlay = m_findPageOverlay)
+        existingFindPageOverlay->stopFadeOutAnimation();
     else {
-        m_findPageOverlay = WebCore::PageOverlay::create(*this, WebCore::PageOverlay::OverlayType::Document);
-        m_webPage->corePage()->pageOverlayController().installPageOverlay(*m_findPageOverlay, WebCore::PageOverlay::FadeMode::Fade);
+        Ref findPageOverlay = WebCore::PageOverlay::create(*this, WebCore::PageOverlay::OverlayType::Document);
+        m_webPage->corePage()->pageOverlayController().installPageOverlay(findPageOverlay, WebCore::PageOverlay::FadeMode::Fade);
+        m_findPageOverlay = WTF::move(findPageOverlay);
     }
 
-    m_findPageOverlay->setNeedsDisplay();
+    protect(m_findPageOverlay)->setNeedsDisplay();
 }
 
-void WebFoundTextRangeController::addLayerForFindOverlay(CompletionHandler<void(WebCore::PlatformLayerIdentifier)>&& completionHandler)
+void WebFoundTextRangeController::addLayerForFindOverlay(CompletionHandler<void(std::optional<WebCore::PlatformLayerIdentifier>)>&& completionHandler)
 {
     if (!m_findPageOverlay) {
-        m_findPageOverlay = WebCore::PageOverlay::create(*this, WebCore::PageOverlay::OverlayType::Document, WebCore::PageOverlay::AlwaysTileOverlayLayer::Yes);
-        m_webPage->corePage()->pageOverlayController().installPageOverlay(*m_findPageOverlay, WebCore::PageOverlay::FadeMode::DoNotFade);
-        m_findPageOverlay->layer().setOpacity(0);
+        Ref findPageOverlay = WebCore::PageOverlay::create(*this, WebCore::PageOverlay::OverlayType::Document, WebCore::PageOverlay::AlwaysTileOverlayLayer::Yes);
+        m_webPage->corePage()->pageOverlayController().installPageOverlay(findPageOverlay, WebCore::PageOverlay::FadeMode::DoNotFade);
+        protect(findPageOverlay->layer())->setOpacity(0);
+        m_findPageOverlay = WTF::move(findPageOverlay);
     }
 
-    completionHandler(m_findPageOverlay->layer().primaryLayerID());
+    RefPtr findPageOverlay = m_findPageOverlay;
 
-    m_findPageOverlay->setNeedsDisplay();
+    completionHandler(protect(findPageOverlay->layer())->primaryLayerID());
+
+    findPageOverlay->setNeedsDisplay();
 }
 
 void WebFoundTextRangeController::removeLayerForFindOverlay()
 {
-    if (m_findPageOverlay)
-        m_webPage->corePage()->pageOverlayController().uninstallPageOverlay(*m_findPageOverlay, WebCore::PageOverlay::FadeMode::DoNotFade);
+    if (RefPtr findPageOverlay = m_findPageOverlay)
+        m_webPage->corePage()->pageOverlayController().uninstallPageOverlay(*findPageOverlay, WebCore::PageOverlay::FadeMode::DoNotFade);
 }
 
 void WebFoundTextRangeController::requestRectForFoundTextRange(const WebFoundTextRange& range, CompletionHandler<void(WebCore::FloatRect)>&& completionHandler)
 {
+#if ENABLE(VIDEO)
+    if (std::holds_alternative<WebFoundTextRange::CueData>(range.data)) {
+        RefPtr mediaElement = mediaElementForCueRange(range);
+        completionHandler(mediaElement ? WebCore::FloatRect { mediaElement->boundingBoxInRootViewCoordinates() } : WebCore::FloatRect { });
+        return;
+    }
+#endif
+
     auto simpleRange = simpleRangeFromFoundTextRange(range);
     if (!simpleRange) {
         completionHandler({ });
@@ -229,18 +442,30 @@ void WebFoundTextRangeController::redraw()
     if (!m_findPageOverlay)
         return;
 
-    auto setNeedsDisplay = makeScopeExit([findPageOverlay = RefPtr { m_findPageOverlay }] {
+    auto setNeedsDisplay = makeScopeExit([findPageOverlay = protect(m_findPageOverlay)] {
         findPageOverlay->setNeedsDisplay();
     });
 
-    if (!m_highlightedRange.length)
-        return;
+    WTF::switchOn(m_highlightedRange.data,
+        [&] (const WebKit::WebFoundTextRange::DOMData& domData) {
+            if (!domData.length)
+                return;
 
-    auto simpleRange = simpleRangeFromFoundTextRange(m_highlightedRange);
-    if (!simpleRange)
-        return;
+            if (auto simpleRange = simpleRangeFromFoundTextRange(m_highlightedRange))
+                setTextIndicatorWithRange(*simpleRange);
+        },
+        [&] (const WebKit::WebFoundTextRange::PDFData&) {
+            setTextIndicatorWithPDFRange(m_highlightedRange);
+        },
+        [&] (const WebKit::WebFoundTextRange::CueData&) {
+            // Cue matches have no text-indicator geometry, the video is revealed via scrollTextRangeToVisible.
+        }
+    );
+}
 
-    setTextIndicatorWithRange(*simpleRange);
+void WebFoundTextRangeController::clearCachedRanges()
+{
+    m_cachedFoundRanges.clear();
 }
 
 void WebFoundTextRangeController::willMoveToPage(WebCore::PageOverlay&, WebCore::Page* page)
@@ -297,7 +522,7 @@ void WebFoundTextRangeController::drawRect(WebCore::PageOverlay&, WebCore::Graph
     for (auto& path : foundFramePaths)
         graphicsContext.fillPath(path);
 
-    if (m_textIndicator && !m_textIndicator->selectionRectInRootViewCoordinates().isEmpty()) {
+    if (m_textIndicator) {
         RefPtr indicatorImage = m_textIndicator->contentImage();
         if (!indicatorImage)
             return;
@@ -330,9 +555,9 @@ RefPtr<WebCore::TextIndicator> WebFoundTextRangeController::createTextIndicatorF
         options.add({ WebCore::TextIndicatorOption::PaintAllContent, WebCore::TextIndicatorOption::PaintBackgrounds });
 
 #if PLATFORM(IOS_FAMILY)
-    if (RefPtr frame = m_webPage->corePage()->checkedFocusController()->focusedOrMainFrame()) {
+    if (RefPtr frame = m_webPage->corePage()->focusController().focusedOrMainFrame()) {
         frame->selection().setUpdateAppearanceEnabled(true);
-        frame->selection().updateAppearance();
+        protect(frame->selection())->updateAppearance();
         frame->selection().setUpdateAppearanceEnabled(false);
     }
 #endif
@@ -351,7 +576,36 @@ void WebFoundTextRangeController::flashTextIndicatorAndUpdateSelectionWithRange(
     document->selection().setSelection(WebCore::VisibleSelection(range), WebCore::FrameSelection::defaultSetSelectionOptions(WebCore::UserTriggered::Yes));
 
     if (auto textIndicator = createTextIndicatorForRange(range, WebCore::TextIndicatorPresentationTransition::Bounce))
-        m_webPage->setTextIndicator(textIndicator->data());
+        protect(m_webPage.get())->setTextIndicator(WTF::move(textIndicator));
+}
+
+RefPtr<WebCore::TextIndicator> WebFoundTextRangeController::createTextIndicatorForPDFRange(const WebFoundTextRange& range, WebCore::TextIndicatorPresentationTransition transition)
+{
+#if ENABLE(PDF_PLUGIN)
+    RefPtr frame = frameForFoundTextRange(range);
+    if (!frame)
+        return { };
+
+    RefPtr pluginView = WebPage::pluginViewForFrame(frame.get());
+    if (!pluginView)
+        return { };
+
+    if (auto* pdfData = std::get_if<WebFoundTextRange::PDFData>(&range.data))
+        return pluginView->textIndicatorForTextMatch(*pdfData, transition);
+#endif
+
+    return { };
+}
+
+void WebFoundTextRangeController::setTextIndicatorWithPDFRange(const WebFoundTextRange& range)
+{
+    m_textIndicator = createTextIndicatorForPDFRange(range, WebCore::TextIndicatorPresentationTransition::None);
+}
+
+void WebFoundTextRangeController::flashTextIndicatorAndUpdateSelectionWithPDFRange(const WebFoundTextRange& range)
+{
+    if (RefPtr textIndicator = createTextIndicatorForPDFRange(range, WebCore::TextIndicatorPresentationTransition::Bounce))
+        protect(m_webPage.get())->setTextIndicator(WTF::move(textIndicator));
 }
 
 Vector<WebCore::FloatRect> WebFoundTextRangeController::rectsForTextMatchesInRect(WebCore::IntRect clipRect)
@@ -360,16 +614,38 @@ Vector<WebCore::FloatRect> WebFoundTextRangeController::rectsForTextMatchesInRec
     Ref mainFrame = m_webPage->corePage()->mainFrame();
     RefPtr mainFrameView = mainFrame->virtualView();
     for (RefPtr<Frame> frame = mainFrame.ptr(); frame; frame = frame->tree().traverseNext()) {
-        auto* localFrame = dynamicDowncast<WebCore::LocalFrame>(*frame);
+        RefPtr localFrame = dynamicDowncast<WebCore::LocalFrame>(*frame);
         if (!localFrame)
             continue;
+
+#if ENABLE(PDF_PLUGIN)
+        if (RefPtr pluginView = WebPage::pluginViewForFrame(localFrame.get())) {
+            Vector<WebFoundTextRange::PDFData> foundRanges;
+
+            for (auto& [range, style] : m_decoratedRanges) {
+                if (style != FindDecorationStyle::Found)
+                    continue;
+
+                if (range.pathToFrame != frame->pathToFrame())
+                    continue;
+
+                if (auto* pdfData = std::get_if<WebFoundTextRange::PDFData>(&range.data))
+                    foundRanges.append(*pdfData);
+            }
+
+            rects.appendVector(pluginView->rectsForTextMatchesInRect(foundRanges, clipRect));
+
+            continue;
+        }
+#endif
+
         RefPtr document = localFrame->document();
         if (!document)
             continue;
 
-        for (auto rect : document->markers().renderedRectsForMarkers(WebCore::DocumentMarker::Type::TextMatch)) {
+        for (auto rect : protect(document->markers())->renderedRectsForMarkers(WebCore::DocumentMarkerType::TextMatch)) {
             if (!localFrame->isMainFrame())
-                rect = mainFrameView->windowToContents(localFrame->view()->contentsToWindow(enclosingIntRect(rect)));
+                rect = mainFrameView->windowToContents(protect(localFrame->view())->contentsToWindow(enclosingIntRect(rect)));
 
             if (rect.isEmpty() || !rect.intersects(clipRect))
                 continue;
@@ -381,17 +657,20 @@ Vector<WebCore::FloatRect> WebFoundTextRangeController::rectsForTextMatchesInRec
     return rects;
 }
 
+WebCore::LocalFrame* WebFoundTextRangeController::frameForFoundTextRange(const WebFoundTextRange& range) const
+{
+    Ref mainFrame = m_webPage.get()->corePage()->mainFrame();
+
+    if (range.pathToFrame.isEmpty())
+        return dynamicDowncast<WebCore::LocalFrame>(mainFrame.unsafePtr());
+
+    RefPtr foundFrame = protect(mainFrame->page())->findFrameByPath(range.pathToFrame);
+    return dynamicDowncast<WebCore::LocalFrame>(foundFrame.unsafeGet());
+}
+
 WebCore::Document* WebFoundTextRangeController::documentForFoundTextRange(const WebFoundTextRange& range) const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_webPage->corePage()->mainFrame());
-    if (!localMainFrame)
-        return nullptr;
-
-    auto& mainFrame = *localMainFrame;
-    if (range.frameIdentifier.isEmpty())
-        return mainFrame.document();
-
-    if (auto* frame = dynamicDowncast<WebCore::LocalFrame>(mainFrame.tree().findByUniqueName(AtomString { range.frameIdentifier }, mainFrame)))
+    if (RefPtr frame = frameForFoundTextRange(range))
         return frame->document();
 
     return nullptr;
@@ -399,14 +678,24 @@ WebCore::Document* WebFoundTextRangeController::documentForFoundTextRange(const 
 
 std::optional<WebCore::SimpleRange> WebFoundTextRangeController::simpleRangeFromFoundTextRange(WebFoundTextRange range)
 {
-    return m_cachedFoundRanges.ensure(range, [&] () -> std::optional<WebCore::SimpleRange> {
+    auto foundRange = m_cachedFoundRanges.ensure(range, [&] -> std::optional<WebCore::WeakSimpleRange> {
+        if (!std::holds_alternative<WebFoundTextRange::DOMData>(range.data))
+            return std::nullopt;
+
         RefPtr document = documentForFoundTextRange(range);
         if (!document)
             return std::nullopt;
 
         Ref documentElement = *document->documentElement();
-        return resolveCharacterRange(makeRangeSelectingNodeContents(documentElement), { range.location, range.length }, WebCore::findIteratorOptions());
+        auto domData = std::get<WebFoundTextRange::DOMData>(range.data);
+        auto simpleRange = resolveCharacterRange(makeRangeSelectingNodeContents(documentElement), { domData.location, domData.length }, WebCore::findIteratorOptions());
+        return simpleRange.makeWeakSimpleRange();
     }).iterator->value;
+
+    if (!foundRange)
+        return std::nullopt;
+
+    return makeSimpleRange(*foundRange);
 }
 
 } // namespace WebKit

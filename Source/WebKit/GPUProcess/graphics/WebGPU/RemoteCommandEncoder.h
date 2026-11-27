@@ -64,12 +64,12 @@ class RemoteCommandEncoder final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteCommandEncoder> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::CommandEncoder& commandEncoder, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteCommandEncoder(gpuConnectionToWebProcess, gpu, commandEncoder, objectHeap, WTFMove(streamConnection), identifier));
+        return adoptRef(*new RemoteCommandEncoder(gpuConnectionToWebProcess, gpu, commandEncoder, objectHeap, WTF::move(streamConnection), identifier));
     }
 
     virtual ~RemoteCommandEncoder();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -84,8 +84,6 @@ private:
     RemoteCommandEncoder& operator=(RemoteCommandEncoder&&) = delete;
 
     WebCore::WebGPU::CommandEncoder& backing() { return m_backing; }
-
-    RefPtr<IPC::Connection> connection() const;
 
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
@@ -137,9 +135,9 @@ private:
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::CommandEncoder> m_backing;
+    const Ref<WebCore::WebGPU::CommandEncoder> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;

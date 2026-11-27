@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "CachedHTMLCollectionInlines.h"
-#include "CollectionIndexCache.h"
+#include <WebCore/CachedHTMLCollectionInlines.h>
+#include <WebCore/CollectionIndexCache.h>
 
 namespace WebCore {
 
@@ -34,8 +34,10 @@ template <class Collection, class Iterator>
 inline unsigned CollectionIndexCache<Collection, Iterator>::nodeCount(const Collection& collection)
 {
     if (!m_nodeCountValid) {
-        if (!hasValidCache())
+        if (!hasValidCache()) {
             collection.willValidateIndexCache();
+            m_hasValidCache = true;
+        }
         m_nodeCount = computeNodeCountUpdatingListCache(collection);
         m_nodeCountValid = true;
     }
@@ -46,7 +48,7 @@ inline unsigned CollectionIndexCache<Collection, Iterator>::nodeCount(const Coll
 template <class Collection, class Iterator>
 unsigned CollectionIndexCache<Collection, Iterator>::computeNodeCountUpdatingListCache(const Collection& collection)
 {
-    auto current = collection.collectionBegin();
+    SUPPRESS_UNCOUNTED_LOCAL Iterator current = collection.collectionBegin();
     if (!current)
         return 0;
 
@@ -106,8 +108,10 @@ inline typename CollectionIndexCache<Collection, Iterator>::NodeType* Collection
         return &*m_current;
     }
 
-    if (!hasValidCache())
+    if (!hasValidCache()) {
         collection.willValidateIndexCache();
+        m_hasValidCache = true;
+    }
 
     unsigned traversedCount;
     collection.collectionTraverseForward(m_current, index - m_currentIndex, traversedCount);
@@ -152,8 +156,10 @@ inline typename CollectionIndexCache<Collection, Iterator>::NodeType* Collection
         return &*m_current;
     }
 
-    if (!hasValidCache())
+    if (!hasValidCache()) {
         collection.willValidateIndexCache();
+        m_hasValidCache = true;
+    }
 
     m_current = collection.collectionBegin();
     m_currentIndex = 0;
@@ -176,6 +182,7 @@ template <class Collection, class Iterator>
 void CollectionIndexCache<Collection, Iterator>::invalidate()
 {
     m_current = { };
+    m_hasValidCache = false;
     m_nodeCountValid = false;
     m_listValid = false;
     m_cachedList.shrink(0);

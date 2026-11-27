@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -65,7 +65,7 @@ public:
                                int quadCount,
                                const GrUserStencilSettings* = nullptr);
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     static uint32_t ClassID();
 #endif
 

@@ -26,10 +26,9 @@
 [
     EnabledBySetting=ServiceWorkersEnabled,
     Exposed=ServiceWorker,
-    JSCustomMarkFunction,
-    JSGenerateToJSObject,
+    JSCustomMarkFunction
 ] interface ExtendableMessageEvent : ExtendableEvent {
-    [Custom] constructor([AtomString] DOMString type, optional ExtendableMessageEventInit eventInitDict);
+    [Custom] constructor([AtomString] DOMString type, optional ExtendableMessageEventInit eventInitDict = {});
 
     readonly attribute any data;
     readonly attribute USVString origin;

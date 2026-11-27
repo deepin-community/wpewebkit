@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "WebGPURequestAdapterOptions.h"
+#include <WebCore/WebGPURequestAdapterOptions.h>
 #include <optional>
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -52,8 +53,6 @@ class Device;
 class ExternalTexture;
 class GPU;
 class GPUImpl;
-class GraphicsContext;
-class NativeImage;
 class PipelineLayout;
 class PresentationContext;
 class QuerySet;
@@ -73,13 +72,11 @@ class XRView;
 
 struct PresentationContextDescriptor;
 
-class GPU {
+class GPU : public AbstractRefCounted {
 public:
-    virtual ~GPU() = default;
+    WEBCORE_EXPORT virtual ~GPU() = default;
 
     virtual void requestAdapter(const RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&) = 0;
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
 
     virtual RefPtr<PresentationContext> createPresentationContext(const PresentationContextDescriptor&) = 0;
 
@@ -112,6 +109,9 @@ public:
     virtual bool isValid(const XRSubImage&) const = 0;
     virtual bool isValid(const XRProjectionLayer&) const = 0;
     virtual bool isValid(const XRView&) const = 0;
+
+    virtual bool isRemoteGPUProxy() const { return false; }
+    virtual bool isGPUImpl() const { return false; }
 
 protected:
     GPU() = default;

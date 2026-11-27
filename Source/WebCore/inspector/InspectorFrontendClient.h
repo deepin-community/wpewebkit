@@ -31,12 +31,12 @@
 
 #pragma once
 
-#include "CertificateInfo.h"
-#include "Color.h"
-#include "DiagnosticLoggingClient.h"
-#include "FrameIdentifier.h"
-#include "InspectorDebuggableType.h"
-#include "UserInterfaceLayoutDirection.h"
+#include <WebCore/CertificateInfo.h>
+#include <WebCore/Color.h>
+#include <WebCore/FrameIdentifier.h>
+#include <WebCore/InspectorDebuggableType.h>
+#include <WebCore/InspectorFrontendAPIDispatcher.h>
+#include <WebCore/UserInterfaceLayoutDirection.h>
 #include <wtf/Forward.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -50,6 +50,7 @@ using ExtensionTabID = String;
 
 namespace WebCore {
 class InspectorFrontendClient;
+struct DiagnosticLoggingDictionary;
 }
 
 namespace WTF {
@@ -60,7 +61,6 @@ template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::InspectorFro
 namespace WebCore {
 
 class FloatRect;
-class InspectorFrontendAPIDispatcher;
 class Page;
 
 enum class InspectorFrontendClientAppearance : uint8_t {
@@ -150,10 +150,13 @@ public:
 
     virtual void setInspectorPageDeveloperExtrasEnabled(bool) = 0;
 
+    virtual void setPageAndTextZoomFactors(double /* pageZoomFactor */, double /* textZoomFactor */) { }
+    virtual double pageZoomFactor() const { return 1.0; }
+
 #if ENABLE(INSPECTOR_TELEMETRY)
     virtual bool supportsDiagnosticLogging() { return false; }
     virtual bool diagnosticLoggingAvailable() { return false; }
-    virtual void logDiagnosticEvent(const String& /* eventName */, const DiagnosticLoggingClient::ValueDictionary&) { }
+    virtual void logDiagnosticEvent(const String& /* eventName */, const DiagnosticLoggingDictionary&) { }
 #endif
 
 #if ENABLE(INSPECTOR_EXTENSIONS)

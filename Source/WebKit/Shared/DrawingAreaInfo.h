@@ -29,26 +29,19 @@
 
 namespace WebKit {
 
-enum class DrawingAreaType : uint8_t {
-#if PLATFORM(COCOA)
-#if !PLATFORM(IOS_FAMILY)
+#if ENABLE(TILED_CA_DRAWING_AREA)
+enum class DrawingAreaType : bool {
     TiledCoreAnimation,
-#endif
     RemoteLayerTree,
-#elif USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
-    CoordinatedGraphics,
-#endif
-#if USE(GRAPHICS_LAYER_WC)
-    WC,
-#endif
 };
+#endif
     
 enum {
     ActivityStateChangeAsynchronous = 0
 };
-typedef uint64_t ActivityStateChangeID;
+using ActivityStateChangeID = uint64_t;
 
 struct DrawingAreaIdentifierType;
-using DrawingAreaIdentifier = LegacyNullableObjectIdentifier<DrawingAreaIdentifierType>;
+using DrawingAreaIdentifier = ObjectIdentifier<DrawingAreaIdentifierType>;
 
 } // namespace WebKit

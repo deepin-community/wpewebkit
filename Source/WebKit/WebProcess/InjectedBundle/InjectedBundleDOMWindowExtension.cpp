@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,7 +41,7 @@ namespace WebKit {
 using namespace WebCore;
 
 using ExtensionMap = HashMap<WeakRef<WebCore::DOMWindowExtension>, WeakRef<InjectedBundleDOMWindowExtension>>;
-static ExtensionMap& allExtensions()
+static ExtensionMap& NODELETE allExtensions()
 {
     static NeverDestroyed<ExtensionMap> map;
     return map;
@@ -59,7 +59,7 @@ InjectedBundleDOMWindowExtension* InjectedBundleDOMWindowExtension::get(DOMWindo
 }
 
 InjectedBundleDOMWindowExtension::InjectedBundleDOMWindowExtension(WebFrame* frame, InjectedBundleScriptWorld* world)
-    : m_coreExtension(DOMWindowExtension::create(frame->coreLocalFrame() ? frame->coreLocalFrame()->window() : nullptr, world->coreWorld()))
+    : m_coreExtension(DOMWindowExtension::create(frame->coreLocalFrame() ? protect(protect(frame->coreLocalFrame())->window()).get() : nullptr, protect(world->coreWorld()).get()))
 {
     allExtensions().add(m_coreExtension.get(), *this);
 }
@@ -73,10 +73,7 @@ InjectedBundleDOMWindowExtension::~InjectedBundleDOMWindowExtension()
 RefPtr<WebFrame> InjectedBundleDOMWindowExtension::frame() const
 {
     auto* frame = m_coreExtension->frame();
-    if (!frame)
-        return nullptr;
-
-    return WebFrame::fromCoreFrame(*frame);
+    return frame ? WebFrame::fromCoreFrame(*frame) : nullptr;
 }
 
 InjectedBundleScriptWorld* InjectedBundleDOMWindowExtension::world() const

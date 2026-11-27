@@ -50,10 +50,10 @@ public:
 
     // ScalableImageDecoder
     String filenameExtension() const override { return "jxl"_s; }
-    size_t frameCount() const override WTF_REQUIRES_LOCK(m_lock);
+    size_t decodeIfNeededAndGetFrameCount() const override;
     RepetitionCount repetitionCount() const override;
-    ScalableImageDecoderFrame* frameBufferAtIndex(size_t index) override WTF_REQUIRES_LOCK(m_lock);
-    void clearFrameBufferCache(size_t clearBeforeFrame) override WTF_REQUIRES_LOCK(m_lock);
+    ScalableImageDecoderFrame* frameBufferAtIndex(size_t index) override;
+    void clearDecodedPixelDataIfNeeded(size_t clearBeforeFrame) override;
 
     bool setFailed() override;
 
@@ -85,12 +85,12 @@ private:
 
     void decode(Query, size_t frameIndex, bool allDataReceived) WTF_REQUIRES_LOCK(m_lock);
     JxlDecoderStatus processInput(Query) WTF_REQUIRES_LOCK(m_lock);
-    static void imageOutCallback(void*, size_t x, size_t y, size_t numPixels, const void* pixels);
-    void imageOut(size_t x, size_t y, size_t numPixels, const uint8_t* pixels) WTF_REQUIRES_LOCK(m_lock);
+    static void imageOutCallback(void*, size_t x, size_t y, size_t numPixelsInRow, const void* pixels);
+    void imageOut(size_t x, size_t y, size_t numPixelsInRow, const uint8_t* pixels) WTF_REQUIRES_LOCK(m_lock);
 
     void clearColorTransform();
     void prepareColorTransform();
-    void maybePerformColorSpaceConversion(void* inputBuffer, void* outputBuffer, unsigned numberOfPixels);
+    void maybePerformColorSpaceConversion(std::span<uint8_t> inputBuffer, std::span<uint8_t> outputBuffer, unsigned numberOfPixels);
 #if USE(LCMS)
     LCMSProfilePtr tryDecodeICCColorProfile();
 #elif USE(CG)

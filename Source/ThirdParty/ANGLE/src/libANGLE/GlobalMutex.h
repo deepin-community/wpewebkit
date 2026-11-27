@@ -15,7 +15,6 @@ namespace egl
 namespace priv
 {
 class GlobalMutex;
-}  // namespace priv
 
 class [[nodiscard]] ScopedGlobalMutexLock final : angle::NonCopyable
 {
@@ -25,9 +24,12 @@ class [[nodiscard]] ScopedGlobalMutexLock final : angle::NonCopyable
 
 #if !defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
   private:
-    priv::GlobalMutex &mMutex;
+    GlobalMutex *mMutex;
 #endif
 };
+}  // namespace priv
+
+using ScopedGlobalEGLMutexLock = priv::ScopedGlobalMutexLock;
 
 // For Context protection where lock is optional. Works slower than ScopedGlobalMutexLock.
 class [[nodiscard]] ScopedOptionalGlobalMutexLock final : angle::NonCopyable

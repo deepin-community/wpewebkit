@@ -19,7 +19,7 @@ namespace
 
 void AppendMatrixElementArgument(TIntermSymbol *parameter,
                                  int colIndex,
-                                 int rowIndex,
+                                 uint32_t rowIndex,
                                  TIntermSequence *returnCtorArgs)
 {
     TIntermBinary *matColN =
@@ -249,9 +249,9 @@ class Rebuild : public TIntermRebuild
         TFunction *function = new TFunction(&mSymbolTable, ImmutableString(""),
                                             SymbolType::AngleInternal, &type, true);
 
-        for (size_t i = 0; i < arguments.size(); ++i)
+        for (TIntermNode *argument : arguments)
         {
-            TIntermTyped &arg = *arguments[i]->getAsTyped();
+            TIntermTyped &arg = *argument->getAsTyped();
             TType *argType    = new TType(arg.getBasicType(), arg.getPrecision(), EvqParamIn,
                                           arg.getNominalSize(), arg.getSecondarySize());
             TVariable *var    = CreateTempVariable(&mSymbolTable, argType);

@@ -30,17 +30,23 @@
 
 #pragma once
 
-#include "ScriptExecutionContext.h"
+#include <WebCore/ScriptExecutionContext.h>
+#include <wtf/AbstractCanMakeCheckedPtr.h>
 
 namespace WebCore {
 
+namespace IDBClient {
+class IDBConnectionProxy;
+}
+
 class CacheStorageConnection;
+class FileSystemStorageConnection;
 class StorageConnection;
 struct ReportingClient;
 
 // A proxy to talk to the loader context. Normally, the document on the main thread
 // provides loading services for the subordinate workers.
-class WorkerLoaderProxy {
+class WorkerLoaderProxy : public AbstractCanMakeCheckedPtr {
 public:
     virtual ~WorkerLoaderProxy() = default;
 
@@ -51,6 +57,10 @@ public:
     virtual RefPtr<CacheStorageConnection> createCacheStorageConnection() = 0;
 
     virtual RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() = 0;
+
+    virtual RefPtr<FileSystemStorageConnection> createFileSystemStorageConnection() = 0;
+
+    virtual RefPtr<IDBClient::IDBConnectionProxy> createIDBConnectionProxy() = 0;
 
     virtual ScriptExecutionContextIdentifier loaderContextIdentifier() const = 0;
 

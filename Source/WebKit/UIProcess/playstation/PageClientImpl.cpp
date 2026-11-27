@@ -58,12 +58,12 @@ uint64_t PageClientImpl::viewWidget()
 #endif
 
 // PageClient's pure virtual functions
-std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
+Ref<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
 #if USE(GRAPHICS_LAYER_WC)
-    return makeUnique<DrawingAreaProxyWC>(*m_view.page(), webProcessProxy);
+    return DrawingAreaProxyWC::create(*m_view.page(), webProcessProxy);
 #else
-    return makeUnique<DrawingAreaProxyCoordinatedGraphics>(*m_view.page(), webProcessProxy);
+    return DrawingAreaProxyCoordinatedGraphics::create(*m_view.page(), webProcessProxy);
 #endif
 }
 
@@ -72,7 +72,7 @@ void PageClientImpl::setViewNeedsDisplay(const WebCore::Region& region)
     m_view.setViewNeedsDisplay(region);
 }
 
-void PageClientImpl::requestScroll(const WebCore::FloatPoint& scrollPosition, const WebCore::IntPoint& scrollOrigin, WebCore::ScrollIsAnimated)
+void PageClientImpl::requestScroll(const WebCore::FloatPoint& scrollPosition, const WebCore::IntPoint& scrollOrigin, WebCore::ScrollIsAnimated, WebCore::InterruptScrollAnimation)
 {
 }
 
@@ -96,7 +96,7 @@ bool PageClientImpl::isViewFocused()
     return m_view.viewState().contains(WebCore::ActivityState::IsFocused);
 }
 
-bool PageClientImpl::isViewVisible()
+bool PageClientImpl::isActiveViewVisible()
 {
     return m_view.viewState().contains(WebCore::ActivityState::IsVisible);
 }
@@ -145,10 +145,6 @@ void PageClientImpl::setCursorHiddenUntilMouseMoves(bool)
 {
 }
 
-void PageClientImpl::didChangeViewportProperties(const WebCore::ViewportAttributes& attributes)
-{
-}
-
 void PageClientImpl::registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo)
 {
 }
@@ -185,6 +181,11 @@ WebCore::IntPoint PageClientImpl::screenToRootView(const WebCore::IntPoint& poin
     return point;
 }
 
+WebCore::IntPoint PageClientImpl::rootViewToScreen(const WebCore::IntPoint& point)
+{
+    return point;
+}
+
 WebCore::IntRect PageClientImpl::rootViewToScreen(const WebCore::IntRect& rect)
 {
     return rect;
@@ -206,7 +207,7 @@ void PageClientImpl::doneWithKeyEvent(const NativeWebKeyboardEvent& event, bool 
 }
 
 #if ENABLE(TOUCH_EVENTS)
-void PageClientImpl::doneWithTouchEvent(const NativeWebTouchEvent& event, bool wasEventHandled)
+void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& event, bool wasEventHandled)
 {
     notImplemented();
 }
@@ -246,6 +247,10 @@ WebFullScreenManagerProxyClient& PageClientImpl::fullScreenManagerProxyClient()
     return *(WebFullScreenManagerProxyClient*)this;
 }
 
+void PageClientImpl::setFullScreenClientForTesting(std::unique_ptr<WebFullScreenManagerProxyClient>&&)
+{
+}
+
 void PageClientImpl::closeFullScreenManager()
 {
     m_view.closeFullScreenManager();
@@ -256,24 +261,24 @@ bool PageClientImpl::isFullScreen()
     return m_view.isFullScreen();
 }
 
-void PageClientImpl::enterFullScreen()
+void PageClientImpl::enterFullScreen(WebCore::FloatSize, CompletionHandler<void(bool)>&& completionHandler)
 {
-    m_view.enterFullScreen();
+    m_view.enterFullScreen(WTF::move(completionHandler));
 }
 
-void PageClientImpl::exitFullScreen()
+void PageClientImpl::exitFullScreen(CompletionHandler<void()>&& completionHandler)
 {
-    m_view.exitFullScreen();
+    m_view.exitFullScreen(WTF::move(completionHandler));
 }
 
-void PageClientImpl::beganEnterFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame)
+void PageClientImpl::beganEnterFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame, CompletionHandler<void(bool)>&& completionHandler)
 {
-    m_view.beganEnterFullScreen(initialFrame, finalFrame);
+    m_view.beganEnterFullScreen(initialFrame, finalFrame, WTF::move(completionHandler));
 }
 
-void PageClientImpl::beganExitFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame)
+void PageClientImpl::beganExitFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame, CompletionHandler<void()>&& completionHandler)
 {
-    m_view.beganExitFullScreen(initialFrame, finalFrame);
+    m_view.beganExitFullScreen(initialFrame, finalFrame, WTF::move(completionHandler));
 }
 #endif
 
@@ -351,7 +356,7 @@ WebCore::UserInterfaceLayoutDirection PageClientImpl::userInterfaceLayoutDirecti
     return WebCore::UserInterfaceLayoutDirection::LTR;
 }
 
-void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
+void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, WebCore::FrameIdentifier, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
 {
     completionHandler(WebCore::DOMPasteAccessResponse::DeniedForGesture);
 }

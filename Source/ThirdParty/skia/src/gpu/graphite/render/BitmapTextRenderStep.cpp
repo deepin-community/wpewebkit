@@ -8,15 +8,28 @@
 #include "src/gpu/graphite/render/BitmapTextRenderStep.h"
 
 #include "include/core/SkM44.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSamplingOptions.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkTileMode.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "src/gpu/AtlasTypes.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "src/core/SkSLTypeShared.h"
 #include "src/gpu/graphite/AtlasProvider.h"
+#include "src/gpu/graphite/Attribute.h"
 #include "src/gpu/graphite/ContextUtils.h"
+#include "src/gpu/graphite/DrawOrder.h"
 #include "src/gpu/graphite/DrawParams.h"
-#include "src/gpu/graphite/DrawWriter.h"
+#include "src/gpu/graphite/DrawTypes.h"
 #include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/RecorderPriv.h"
+#include "src/gpu/graphite/TextureProxy.h"
+#include "src/gpu/graphite/geom/Geometry.h"
+#include "src/gpu/graphite/geom/SubRunData.h"
+#include "src/gpu/graphite/geom/Transform.h"
 #include "src/gpu/graphite/render/CommonDepthStencilSettings.h"
+#include "src/gpu/graphite/text/GlyphData.h"
 #include "src/gpu/graphite/text/TextAtlasManager.h"
 #include "src/sksl/SkSLString.h"
 #include "src/text/gpu/SubRunContainer.h"
@@ -31,43 +44,41 @@ namespace {
 // We are expecting to sample from up to 4 textures
 constexpr int kNumTextAtlasTextures = 4;
 
-std::string variant_name(skgpu::MaskFormat variant) {
+RenderStep::RenderStepID variant_id(skgpu::MaskFormat variant) {
     switch (variant) {
-        case skgpu::MaskFormat::kA8:
-            return "mask";
-        case skgpu::MaskFormat::kA565:
-            return "LCD";
-        case skgpu::MaskFormat::kARGB:
-            return "color";
-        default:
-            SkUNREACHABLE;
+        case skgpu::MaskFormat::kA8:   return RenderStep::RenderStepID::kBitmapText_Mask;
+        case skgpu::MaskFormat::kA565: return RenderStep::RenderStepID::kBitmapText_LCD;
+        case skgpu::MaskFormat::kARGB: return RenderStep::RenderStepID::kBitmapText_Color;
     }
+
+    SkUNREACHABLE;
 }
 
 }  // namespace
 
-BitmapTextRenderStep::BitmapTextRenderStep(skgpu::MaskFormat variant)
-        : RenderStep("BitmapTextRenderStep",
-                     variant_name(variant),
-                     Flags(variant),
-                     /*uniforms=*/{{"subRunDeviceMatrix", SkSLType::kFloat4x4},
-                                   {"deviceToLocal"     , SkSLType::kFloat4x4},
-                                   {"atlasSizeInv"      , SkSLType::kFloat2}},
+BitmapTextRenderStep::BitmapTextRenderStep(Layout layout, skgpu::MaskFormat variant)
+        : RenderStep(layout,
+                     variant_id(variant),
+                     Flags(variant) | Flags::kAppendInstances,
+                     /*uniforms=*/{{"maskToDevice", SkSLType::kFloat4x4},
+                                   {"localToDevice", SkSLType::kFloat4x4},
+                                   {"atlasSizeInv", SkSLType::kFloat2}},
                      PrimitiveType::kTriangleStrip,
-                     kDirectDepthGEqualPass,
-                     /*vertexAttrs=*/ {},
-                     /*instanceAttrs=*/
-                     {{"size", VertexAttribType::kUShort2, SkSLType::kUShort2},
+                     kDirectDepthLEqualPass,
+                     /*staticAttrs=*/ {},
+                     /*appendAttrs=*/
+                     {{{"size", VertexAttribType::kUShort2, SkSLType::kUShort2},
                       {"uvPos", VertexAttribType::kUShort2, SkSLType::kUShort2},
                       {"xyPos", VertexAttribType::kFloat2, SkSLType::kFloat2},
                       {"indexAndFlags", VertexAttribType::kUShort2, SkSLType::kUShort2},
                       {"strikeToSourceScale", VertexAttribType::kFloat, SkSLType::kFloat},
                       {"depth", VertexAttribType::kFloat, SkSLType::kFloat},
-                      {"ssboIndices", VertexAttribType::kUShort2, SkSLType::kUShort2}},
+                      {"ssboIndex", VertexAttribType::kUInt, SkSLType::kUInt}}},
+                     /*storageUniforms=*/{},
                      /*varyings=*/
-                     {{"textureCoords", SkSLType::kFloat2},
+                     {{{"textureCoords", SkSLType::kFloat2},
                       {"texIndex", SkSLType::kHalf},
-                      {"maskFormat", SkSLType::kHalf}}) {}
+                      {"maskFormat", SkSLType::kHalf}}}) {}
 
 BitmapTextRenderStep::~BitmapTextRenderStep() {}
 
@@ -85,15 +96,15 @@ SkEnumBitMask<RenderStep::Flags> BitmapTextRenderStep::Flags(skgpu::MaskFormat v
     }
 }
 
-std::string BitmapTextRenderStep::vertexSkSL() const {
+std::string BitmapTextRenderStep::vertexSkSL(const RootNodesInfo&) const {
     // Returns the body of a vertex function, which must define a float4 devPosition variable and
     // must write to an already-defined float2 stepLocalCoords variable.
     return "texIndex = half(indexAndFlags.x);"
            "maskFormat = half(indexAndFlags.y);"
            "float2 unormTexCoords;"
            "float4 devPosition = text_vertex_fn(float2(sk_VertexID >> 1, sk_VertexID & 1), "
-                                               "subRunDeviceMatrix, "
-                                               "deviceToLocal, "
+                                               "maskToDevice, "
+                                               "localToDevice, "
                                                "atlasSizeInv, "
                                                "float2(size), "
                                                "float2(uvPos), "
@@ -118,7 +129,7 @@ std::string BitmapTextRenderStep::texturesAndSamplersSkSL(
 }
 
 
-const char* BitmapTextRenderStep::fragmentColorSkSL() const {
+std::string BitmapTextRenderStep::fragmentColorSkSL(const RootNodesInfo&) const {
     // The returned SkSL must write its color into a 'half4 primitiveColor' variable
     // (defined in the calling code).
     static_assert(kNumTextAtlasTextures == 4);
@@ -143,22 +154,27 @@ const char* BitmapTextRenderStep::fragmentCoverageSkSL() const {
                                                     "int(maskFormat));";
 }
 
-void BitmapTextRenderStep::writeVertices(DrawWriter* dw,
-                                         const DrawParams& params,
-                                         skvx::ushort2 ssboIndices) const {
-    const SubRunData& subRunData = params.geometry().subRunData();
+bool BitmapTextRenderStep::usesUniformsInFragmentSkSL() const { return false; }
 
-    subRunData.subRun()->vertexFiller().fillInstanceData(dw,
-                                                         subRunData.startGlyphIndex(),
-                                                         subRunData.glyphCount(),
-                                                         subRunData.subRun()->instanceFlags(),
-                                                         ssboIndices,
-                                                         subRunData.subRun()->glyphs(),
-                                                         params.order().depthAsFloat());
+void BitmapTextRenderStep::writeVertices(DrawWriter* dw,
+                                         StorageContext* /*storageContext*/,
+                                         const DrawParams& params,
+                                         uint32_t ssboIndex) const {
+    const SubRunData& subRunData = params.geometry().subRunData();
+    auto& glyphData = subRunData.subRun()->glyphVector().accessBackendData<GlyphData>();
+    glyphData.fillInstanceData(subRunData.subRun()->vertexFiller(),
+                               subRunData.subRun()->glyphVector().accessBackendGlyphs<Glyph>(),
+                               dw,
+                               subRunData.startGlyphIndex(),
+                               subRunData.glyphCount(),
+                               subRunData.subRun()->instanceFlags(),
+                               ssboIndex,
+                               params.order().depthAsFloat());
 }
 
 void BitmapTextRenderStep::writeUniformsAndTextures(const DrawParams& params,
                                                     PipelineDataGatherer* gatherer) const {
+    SkDEBUGCODE(gatherer->checkRewind());
     SkDEBUGCODE(UniformExpectationsValidator uev(gatherer, this->uniforms());)
 
     const SubRunData& subRunData = params.geometry().subRunData();
@@ -166,25 +182,30 @@ void BitmapTextRenderStep::writeUniformsAndTextures(const DrawParams& params,
     Recorder* recorder = subRunData.recorder();
     const sk_sp<TextureProxy>* proxies =
             recorder->priv().atlasProvider()->textAtlasManager()->getProxies(
-                    subRunData.subRun()->maskFormat(), &numProxies);
+                    subRunData.resolvedMaskFormat(), &numProxies);
     SkASSERT(proxies && numProxies > 0);
 
     // write uniforms
-    gatherer->write(params.transform().matrix());  // subRunDeviceMatrix
-    gatherer->write(subRunData.deviceToLocal());
+    // TODO(b/238753996): The maskToDevice should be adjusted similar to CoverageMaskRenderStep so
+    // that the integer translation is pulled into the instance data and this uniform is less likely
+    // to change.
+    // TODO(b/307766179): Similarly, we should discard the local-to-device matrix uniform value (and
+    // just set identity) if the paint doesn't actually require local coords.
+    // TODO(b/351923375): Precompute the 3x3 inverse of the local-to-device since it's shared by all
+    // instances? We can derive it from the Transform's existing 4x4 inverse.
+    gatherer->write(subRunData.maskToDevice());
+    gatherer->write(params.transform().matrix()); // local-to-device
     SkV2 atlasDimensionsInverse = {1.f/proxies[0]->dimensions().width(),
                                    1.f/proxies[0]->dimensions().height()};
     gatherer->write(atlasDimensionsInverse);
 
     // write textures and samplers
-    const SkSamplingOptions kSamplingOptions(SkFilterMode::kNearest);
-    constexpr SkTileMode kTileModes[2] = { SkTileMode::kClamp, SkTileMode::kClamp };
     for (unsigned int i = 0; i < numProxies; ++i) {
-        gatherer->add(proxies[i], {kSamplingOptions, kTileModes});
+        gatherer->add(proxies[i], {SkFilterMode::kNearest, SkTileMode::kClamp});
     }
     // If the atlas has less than 4 active proxies we still need to set up samplers for the shader.
     for (unsigned int i = numProxies; i < kNumTextAtlasTextures; ++i) {
-        gatherer->add(proxies[0], {kSamplingOptions, kTileModes});
+        gatherer->add(proxies[0], {SkFilterMode::kNearest, SkTileMode::kClamp});
     }
 }
 

@@ -31,6 +31,8 @@
 #include "ModelProcessModelPlayerProxy.h"
 #include <wtf/TZoneMallocInlines.h>
 
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_modelConnectionToWebProcess->connection())
+
 namespace WebKit {
 
 using namespace WebCore;
@@ -47,6 +49,14 @@ ModelProcessModelPlayerManagerProxy::~ModelProcessModelPlayerManagerProxy()
     clear();
 }
 
+std::optional<SharedPreferencesForWebProcess> ModelProcessModelPlayerManagerProxy::sharedPreferencesForWebProcess() const
+{
+    if (!m_modelConnectionToWebProcess)
+        return std::nullopt;
+
+    return m_modelConnectionToWebProcess->sharedPreferencesForWebProcess();
+}
+
 void ModelProcessModelPlayerManagerProxy::clear()
 {
     auto proxies = std::exchange(m_proxies, { });
@@ -59,21 +69,40 @@ void ModelProcessModelPlayerManagerProxy::createModelPlayer(WebCore::ModelPlayer
 {
     ASSERT(RunLoop::isMain());
     ASSERT(m_modelConnectionToWebProcess);
-    ASSERT(!m_proxies.contains(identifier));
+    MESSAGE_CHECK(!m_proxies.contains(identifier));
 
-    auto proxy = ModelProcessModelPlayerProxy::create(*this, identifier, m_modelConnectionToWebProcess->protectedConnection());
-    m_proxies.add(identifier, WTFMove(proxy));
+    auto proxy = ModelProcessModelPlayerProxy::create(*this, identifier, protect(m_modelConnectionToWebProcess->connection()), m_modelConnectionToWebProcess->attributionTaskID(), m_modelConnectionToWebProcess->debugEntityMemoryLimit(), m_modelConnectionToWebProcess->debugImmersiveEntityMemoryLimit());
+    m_proxies.add(identifier, WTF::move(proxy));
 }
 
 void ModelProcessModelPlayerManagerProxy::deleteModelPlayer(WebCore::ModelPlayerIdentifier identifier)
 {
     ASSERT(RunLoop::isMain());
 
+    // The unload model timer (ModelProcess) can race the model element suspension (WebProcess).
+    // So the model player might already be gone.
+    if (!m_proxies.contains(identifier))
+        return;
+
     if (auto proxy = m_proxies.take(identifier))
         proxy->invalidate();
 
     if (m_modelConnectionToWebProcess)
         m_modelConnectionToWebProcess->modelProcess().tryExitIfUnusedAndUnderMemoryPressure();
+}
+
+void ModelProcessModelPlayerManagerProxy::unloadModelPlayer(WebCore::ModelPlayerIdentifier identifier)
+{
+    ASSERT(RunLoop::isMain());
+    MESSAGE_CHECK(m_proxies.contains(identifier));
+
+    deleteModelPlayer(identifier);
+    m_modelConnectionToWebProcess->didUnloadModelPlayer(identifier);
+}
+
+bool ModelProcessModelPlayerManagerProxy::hasModelPlayers() const
+{
+    return m_proxies.size();
 }
 
 void ModelProcessModelPlayerManagerProxy::didReceivePlayerMessage(IPC::Connection& connection, IPC::Decoder& decoder)
@@ -84,5 +113,7 @@ void ModelProcessModelPlayerManagerProxy::didReceivePlayerMessage(IPC::Connectio
 }
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK
 
 #endif // ENABLE(MODEL_PROCESS)

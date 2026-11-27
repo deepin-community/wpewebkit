@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022, 2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022, 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,10 @@
 
 #include "Document.h"
 #include "JSCSSStyleSheet.h"
-#include "JSDOMConvert.h"
+#include "JSDOMConvertInterface.h"
 #include "ShadowRoot.h"
 #include "TreeScope.h"
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 
 namespace WebCore {
 
@@ -53,20 +54,20 @@ bool CSSStyleSheetObservableArray::setValueAt(JSC::JSGlobalObject* lexicalGlobal
     RELEASE_ASSERT(index <= m_sheets.size());
 
     auto sheetConversionResult = convert<IDLInterface<CSSStyleSheet>>(*lexicalGlobalObject, value);
-    if (UNLIKELY(sheetConversionResult.hasException(scope)))
+    if (sheetConversionResult.hasException(scope)) [[unlikely]]
         return false;
 
-    if (auto exception = shouldThrowWhenAddingSheet(*sheetConversionResult.returnValue())) {
-        throwException(lexicalGlobalObject, scope, createDOMException(*lexicalGlobalObject, WTFMove(*exception)));
+    if (auto exception = shouldThrowWhenAddingSheet(protect(sheetConversionResult.returnValue()))) {
+        throwException(lexicalGlobalObject, scope, createDOMException(*lexicalGlobalObject, WTF::move(*exception)));
         return false;
     }
 
     if (index == m_sheets.size())
-        m_sheets.append(*sheetConversionResult.returnValue());
+        m_sheets.append(protect(sheetConversionResult.returnValue()));
     else
-        m_sheets[index] = *sheetConversionResult.returnValue();
+        m_sheets[index] = sheetConversionResult.returnValue();
 
-    didAddSheet(*sheetConversionResult.releaseReturnValue());
+    didAddSheet(sheetConversionResult.releaseReturnValue());
     return true;
 }
 
@@ -87,19 +88,19 @@ JSC::JSValue CSSStyleSheetObservableArray::valueAt(JSC::JSGlobalObject* lexicalG
 {
     if (index >= m_sheets.size())
         return JSC::jsUndefined();
-    return toJS(lexicalGlobalObject, JSC::jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), m_sheets[index]);
+    return toJS(lexicalGlobalObject, downcast<JSDOMGlobalObject>(lexicalGlobalObject), m_sheets[index]);
 }
 
 ExceptionOr<void> CSSStyleSheetObservableArray::setSheets(Vector<Ref<CSSStyleSheet>>&& sheets)
 {
     for (auto& sheet : sheets) {
         if (auto exception = shouldThrowWhenAddingSheet(sheet))
-            return WTFMove(*exception);
+            return WTF::move(*exception);
     }
 
     for (auto& sheet : m_sheets)
         willRemoveSheet(sheet);
-    m_sheets = WTFMove(sheets);
+    m_sheets = WTF::move(sheets);
     for (auto& sheet : m_sheets)
         didAddSheet(sheet);
 
@@ -110,7 +111,7 @@ std::optional<Exception> CSSStyleSheetObservableArray::shouldThrowWhenAddingShee
 {
     if (!sheet.wasConstructedByJS())
         return Exception { ExceptionCode::NotAllowedError, "Sheet needs to be constructed by JavaScript"_s };
-    auto* treeScope = this->treeScope();
+    RefPtr treeScope = this->treeScope();
     if (!treeScope || sheet.constructorDocument() != &treeScope->documentScope())
         return Exception { ExceptionCode::NotAllowedError, "Sheet constructor document doesn't match"_s };
     return std::nullopt;
@@ -128,13 +129,13 @@ TreeScope* CSSStyleSheetObservableArray::treeScope() const
 void CSSStyleSheetObservableArray::didAddSheet(CSSStyleSheet& sheet)
 {
     if (m_treeScope)
-        sheet.addAdoptingTreeScope(*m_treeScope);
+        sheet.addAdoptingTreeScope(*protect(m_treeScope));
 }
 
 void CSSStyleSheetObservableArray::willRemoveSheet(CSSStyleSheet& sheet)
 {
     if (m_treeScope)
-        sheet.removeAdoptingTreeScope(*m_treeScope);
+        sheet.removeAdoptingTreeScope(*protect(m_treeScope));
 }
 
 } // namespace WebCore

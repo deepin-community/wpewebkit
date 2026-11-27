@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
-#include "PropertySlot.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/PropertySlot.h>
 #include <wtf/Assertions.h>
 
 namespace JSC {
@@ -132,7 +132,7 @@ public:
 private:
     bool isCacheable() const { return m_cacheability == CachingAllowed; }
 
-    JSObject* m_base;
+    SUPPRESS_FORWARD_DECL_MEMBER JSObject* m_base;
     JSValue m_thisValue;
     PropertyOffset m_offset;
     bool m_isStrictMode : 1;

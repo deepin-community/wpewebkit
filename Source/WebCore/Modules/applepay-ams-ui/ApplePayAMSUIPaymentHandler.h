@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,6 @@
 
 #include "ApplePayAMSUIRequest.h"
 #include "ContextDestructionObserver.h"
-#include "ExceptionOr.h"
 #include "PaymentHandler.h"
 #include "PaymentRequest.h"
 #include <wtf/Function.h>
@@ -50,22 +49,28 @@ class Page;
 struct AddressErrors;
 struct PayerErrorFields;
 
+template<typename> class ExceptionOr;
+
 enum class PaymentComplete;
 
 class ApplePayAMSUIPaymentHandler final : public PaymentHandler, private ContextDestructionObserver {
 public:
     static ExceptionOr<void> validateData(Document&, JSC::JSValue);
     static bool handlesIdentifier(const PaymentRequest::MethodIdentifier&);
-    static bool hasActiveSession(Document&);
+    static bool NODELETE hasActiveSession(Document&);
 
     void finishSession(std::optional<bool>&&);
+
+    // ContextDestructionObserver.
+    void ref() const final { PaymentHandler::ref(); }
+    void deref() const final { PaymentHandler::deref(); }
 
 private:
     friend class PaymentHandler;
     explicit ApplePayAMSUIPaymentHandler(Document&, const PaymentRequest::MethodIdentifier&, PaymentRequest&);
 
-    Document& document() const;
-    Page& page() const;
+    Document& NODELETE document() const;
+    Page& NODELETE page() const;
 
     // PaymentHandler
     ExceptionOr<void> convertData(Document&, JSC::JSValue) final;
@@ -73,13 +78,13 @@ private:
     bool canAbortSession() final { return false; }
     void hide() final;
     void canMakePayment(Document&, Function<void(bool)>&& completionHandler) final;
-    ExceptionOr<void> detailsUpdated(PaymentRequest::UpdateReason, String&& error, AddressErrors&&, PayerErrorFields&&, JSC::JSObject* paymentMethodErrors) final;
-    ExceptionOr<void> merchantValidationCompleted(JSC::JSValue&&) final;
+    ExceptionOr<void> NODELETE detailsUpdated(PaymentRequest::UpdateReason, String&& error, AddressErrors&&, PayerErrorFields&&, JSC::JSObject* paymentMethodErrors) final;
+    ExceptionOr<void> NODELETE merchantValidationCompleted(JSC::JSValue&&) final;
     ExceptionOr<void> complete(Document&, std::optional<PaymentComplete>&&, String&& serializedData) final;
     ExceptionOr<void> retry(PaymentValidationErrors&&) final;
 
     PaymentRequest::MethodIdentifier m_identifier;
-    Ref<PaymentRequest> m_paymentRequest;
+    const Ref<PaymentRequest> m_paymentRequest;
     std::optional<ApplePayAMSUIRequest> m_applePayAMSUIRequest;
 };
 

@@ -25,11 +25,10 @@
 
 #pragma once
 
-#include "FontBaseline.h"
-#include "InlineIteratorLineBoxLegacyPath.h"
-#include "InlineIteratorLineBoxModernPath.h"
-#include "RenderBlockFlow.h"
-#include <variant>
+#include <WebCore/FontBaseline.h>
+#include <WebCore/InlineIteratorLineBoxLegacyPath.h>
+#include <WebCore/InlineIteratorLineBoxModernPath.h>
+#include <WebCore/RenderBlockFlow.h>
 
 namespace WebCore {
 
@@ -45,7 +44,7 @@ struct EndLineBoxIterator { };
 
 class LineBox {
 public:
-    using PathVariant = std::variant<
+    using PathVariant = Variant<
         LineBoxIteratorModernPath,
         LineBoxIteratorLegacyPath
     >;
@@ -72,7 +71,7 @@ public:
     float scrollableOverflowTop() const;
     float scrollableOverflowBottom() const;
 
-    const RenderStyle& style() const { return isFirst() ? formattingContextRoot().firstLineStyle() : formattingContextRoot().style(); }
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return isFirst() ? formattingContextRoot().firstLineStyle() : formattingContextRoot().style(); }
 
     bool hasEllipsis() const;
     enum AdjustedForSelection : bool { No, Yes };
@@ -81,7 +80,6 @@ public:
     RenderObject::HighlightState ellipsisSelectionState() const;
 
     const RenderBlockFlow& formattingContextRoot() const;
-    RenderFragmentContainer* containingFragment() const;
 
     bool isHorizontal() const;
     FontBaseline baselineType() const;
@@ -89,13 +87,20 @@ public:
     bool isFirst() const;
     bool isFirstAfterPageBreak() const;
 
-    LeafBoxIterator firstLeafBox() const;
-    LeafBoxIterator lastLeafBox() const;
+    bool hasBlockContent() const;
+    LeafBoxIterator blockLevelBox() const;
+
+    // Text-relative left/right
+    LeafBoxIterator lineLeftmostLeafBox() const;
+    LeafBoxIterator lineRightmostLeafBox() const;
+    // Coordinate-relative left/right
+    inline LeafBoxIterator logicalLeftmostLeafBox() const;
+    inline LeafBoxIterator logicalRightmostLeafBox() const;
 
     LineBoxIterator next() const;
     LineBoxIterator previous() const;
 
-    size_t lineIndex() const;
+    inline size_t lineIndex() const; // Defined in InlineIteratorLineBoxInlines.h
 
 private:
     friend class LineBoxIterator;
@@ -111,6 +116,7 @@ public:
     LineBoxIterator(const LineBox&);
 
     LineBoxIterator& operator++() { return traverseNext(); }
+    LineBoxIterator& operator--() { return traversePrevious(); }
     WEBCORE_EXPORT LineBoxIterator& traverseNext();
     LineBoxIterator& traversePrevious();
 
@@ -119,8 +125,8 @@ public:
     bool operator==(const LineBoxIterator&) const;
     bool operator==(EndLineBoxIterator) const { return atEnd(); }
 
-    const LineBox& operator*() const { return m_lineBox; }
-    const LineBox* operator->() const { return &m_lineBox; }
+    const LineBox& operator*() const LIFETIME_BOUND { return m_lineBox; }
+    const LineBox* operator->() const LIFETIME_BOUND { return &m_lineBox; }
 
     bool atEnd() const;
 
@@ -140,7 +146,7 @@ inline float contentStartInBlockDirection(const LineBox&);
 // -----------------------------------------------
 
 inline LineBox::LineBox(PathVariant&& path)
-    : m_pathVariant(WTFMove(path))
+    : m_pathVariant(WTF::move(path))
 {
 }
 
@@ -304,13 +310,6 @@ inline const RenderBlockFlow& LineBox::formattingContextRoot() const
     });
 }
 
-inline RenderFragmentContainer* LineBox::containingFragment() const
-{
-    return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.containingFragment();
-    });
-}
-
 inline bool LineBox::isFirstAfterPageBreak() const
 {
     return WTF::switchOn(m_pathVariant, [](const auto& path) {
@@ -323,10 +322,10 @@ inline bool LineBox::isFirst() const
     return !previous();
 }
 
-inline size_t LineBox::lineIndex() const
+inline bool LineBox::hasBlockContent() const
 {
     return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.lineIndex();
+        return path.hasBlockLevelBox();
     });
 }
 

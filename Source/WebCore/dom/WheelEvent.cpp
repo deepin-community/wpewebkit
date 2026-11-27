@@ -26,21 +26,21 @@
 
 #include "DataTransfer.h"
 #include "EventNames.h"
+#include "MouseEventTypes.h"
 #include "Node.h"
-#include "PlatformMouseEvent.h"
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WheelEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WheelEvent);
 
-inline static unsigned determineDeltaMode(const PlatformWheelEvent& event)
+inline static unsigned NODELETE determineDeltaMode(const PlatformWheelEvent& event)
 {
-    return event.granularity() == ScrollByPageWheelEvent ? WheelEvent::DOM_DELTA_PAGE : WheelEvent::DOM_DELTA_PIXEL;
+    return event.granularity() == PlatformWheelEventGranularity::ScrollByPageWheelEvent ? WheelEvent::DOM_DELTA_PAGE : WheelEvent::DOM_DELTA_PIXEL;
 }
 
-static double wheelDeltaToDelta(int wheelDelta)
+static double NODELETE wheelDeltaToDelta(int wheelDelta)
 {
     // Avoid returning negative zero.
     if (!wheelDelta)
@@ -64,8 +64,31 @@ inline WheelEvent::WheelEvent(const AtomString& type, const Init& initializer)
 }
 
 inline WheelEvent::WheelEvent(const PlatformWheelEvent& event, RefPtr<WindowProxy>&& view, IsCancelable isCancelable)
-    : MouseEvent(EventInterfaceType::WheelEvent, eventNames().wheelEvent, CanBubble::Yes, isCancelable, IsComposed::Yes, event.timestamp().approximateMonotonicTime(), WTFMove(view), 0,
-        event.globalPosition(), event.position() , 0, 0, event.modifiers(), MouseButton::Left, 0, nullptr, 0, SyntheticClickType::NoTap, { }, { }, IsSimulated::No, IsTrusted::Yes)
+    : MouseEvent(
+        EventInterfaceType::WheelEvent,
+        eventNames().wheelEvent,
+        CanBubble::Yes,
+        isCancelable,
+        IsComposed::Yes,
+        event.timestamp(),
+        WTF::move(view),
+        0,
+        event.globalPosition(),
+        event.position(),
+        0,
+        0,
+        event.modifiers(),
+        MouseButton::Left,
+        0,
+        nullptr,
+        0,
+        SyntheticClickType::NoTap,
+        { },
+        { },
+        std::nullopt,
+        IsSimulated::No,
+        IsTrusted::Yes
+    )
     , m_wheelDelta(event.wheelTicksX() * TickMultiplier, event.wheelTicksY() * TickMultiplier)
     , m_deltaX(-event.deltaX())
     , m_deltaY(-event.deltaY())
@@ -76,7 +99,7 @@ inline WheelEvent::WheelEvent(const PlatformWheelEvent& event, RefPtr<WindowProx
 
 Ref<WheelEvent> WheelEvent::create(const PlatformWheelEvent& event, RefPtr<WindowProxy>&& view, IsCancelable isCancelable)
 {
-    return adoptRef(*new WheelEvent(event, WTFMove(view), isCancelable));
+    return adoptRef(*new WheelEvent(event, WTF::move(view), isCancelable));
 }
 
 Ref<WheelEvent> WheelEvent::createForBindings()
@@ -87,11 +110,6 @@ Ref<WheelEvent> WheelEvent::createForBindings()
 Ref<WheelEvent> WheelEvent::create(const AtomString& type, const Init& initializer)
 {
     return adoptRef(*new WheelEvent(type, initializer));
-}
-
-bool WheelEvent::isWheelEvent() const
-{
-    return true;
 }
 
 } // namespace WebCore

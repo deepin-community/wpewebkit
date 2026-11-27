@@ -36,7 +36,7 @@
 namespace WebKit {
 
 FenceMonitor::FenceMonitor(Function<void()>&& callback)
-    : m_callback(WTFMove(callback))
+    : m_callback(WTF::move(callback))
 {
 }
 
@@ -73,7 +73,7 @@ GSourceFuncs FenceSource::sourceFuncs = {
 
 void FenceMonitor::ensureSource()
 {
-    if (LIKELY(m_source))
+    if (m_source) [[likely]]
         return;
 
     m_source = adoptGRef(g_source_new(&FenceSource::sourceFuncs, sizeof(FenceSource)));
@@ -108,7 +108,7 @@ void FenceMonitor::addFileDescriptor(UnixFileDescriptor&& fd)
         return;
     }
 
-    m_fd = WTFMove(fd);
+    m_fd = WTF::move(fd);
 
     ensureSource();
     auto& source = *reinterpret_cast<FenceSource*>(m_source.get());

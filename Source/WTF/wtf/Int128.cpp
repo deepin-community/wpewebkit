@@ -37,7 +37,7 @@ namespace {
 // For example:
 //   Given: 5 (decimal) == 101 (binary)
 //   Returns: 2
-static ALWAYS_INLINE int Fls128(UInt128Impl n) {
+static ALWAYS_INLINE int NODELETE Fls128(UInt128Impl n) {
   if (uint64_t hi = UInt128High64(n)) {
     ASSERT(hi != 0);
     return 127 - clz(hi);
@@ -50,7 +50,7 @@ static ALWAYS_INLINE int Fls128(UInt128Impl n) {
 // Long division/modulo for UInt128Impl implemented using the shift-subtract
 // division algorithm adapted from:
 // https://stackoverflow.com/questions/5386377/division-without-using
-static inline void DivModImpl(UInt128Impl dividend, UInt128Impl divisor, UInt128Impl* quotient_ret, UInt128Impl* remainder_ret) {
+static inline void NODELETE DivModImpl(UInt128Impl dividend, UInt128Impl divisor, UInt128Impl* quotient_ret, UInt128Impl* remainder_ret) {
   assert(divisor != 0);
 
   if (divisor > dividend) {
@@ -199,7 +199,7 @@ std::ostream& operator<<(std::ostream& os, UInt128Impl v) {
 
 namespace {
 
-static UInt128Impl UnsignedAbsoluteValue(Int128Impl v) {
+static UInt128Impl NODELETE UnsignedAbsoluteValue(Int128Impl v) {
   // Cast to UInt128Impl before possibly negating because -Int128Min() is undefined.
   return Int128High64(v) < 0 ? -UInt128Impl(v) : UInt128Impl(v);
 }
@@ -302,9 +302,11 @@ std::ostream& operator<<(std::ostream& os, Int128Impl v) {
 
 void printInternal(PrintStream& out, UInt128 value)
 {
-    auto vector = numberToStringUnsigned<Vector<LChar, 50>>(value);
+    auto vector = numberToStringUnsigned<Vector<Latin1Character, 50>>(value);
     vector.append('\0');
-    out.printf("%s", bitwise_cast<const char*>(vector.data()));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    out.printf("%s", std::bit_cast<const char*>(vector.span().data()));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 void printInternal(PrintStream& out, Int128 value)
@@ -318,9 +320,11 @@ void printInternal(PrintStream& out, Int128 value)
         positive = static_cast<UInt128>(0x8000'0000'0000'0000ULL) << 64;
     else
         positive = -value;
-    auto vector = numberToStringUnsigned<Vector<LChar, 50>>(positive);
+    auto vector = numberToStringUnsigned<Vector<Latin1Character, 50>>(positive);
     vector.append('\0');
-    out.printf("-%s", bitwise_cast<const char*>(vector.data()));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    out.printf("-%s", std::bit_cast<const char*>(vector.span().data()));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 }  // namespace WTF

@@ -37,7 +37,7 @@ namespace DRM {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Cursor);
 
 Cursor::Cursor(std::unique_ptr<Plane>&& plane, struct gbm_device* device, uint32_t cursorWidth, uint32_t cursorHeight)
-    : m_plane(WTFMove(plane))
+    : m_plane(WTF::move(plane))
     , m_device(device)
     , m_deviceWidth(cursorWidth)
     , m_deviceHeight(cursorHeight)
@@ -45,9 +45,7 @@ Cursor::Cursor(std::unique_ptr<Plane>&& plane, struct gbm_device* device, uint32
 {
 }
 
-Cursor::~Cursor()
-{
-}
+Cursor::~Cursor() = default;
 
 bool Cursor::tryEnsureBuffer()
 {
@@ -72,10 +70,10 @@ void Cursor::updateBuffer(const uint8_t* pixels, uint32_t width, uint32_t height
     RELEASE_ASSERT(width <= m_deviceWidth);
     RELEASE_ASSERT(height <= m_deviceHeight);
 
-    Vector<uint32_t> deviceBuffer(m_deviceWidth * m_deviceHeight);
+    Vector<uint32_t> deviceBuffer(FillWith { }, m_deviceWidth * m_deviceHeight, 0);
     for (uint32_t i = 0; i < height; ++i)
         memcpy(&deviceBuffer[i * m_deviceWidth], pixels + i * stride, stride);
-    gbm_bo_write(m_buffer->bufferObject(), deviceBuffer.data(), deviceBuffer.sizeInBytes());
+    gbm_bo_write(m_buffer->bufferObject(), deviceBuffer.span().data(), deviceBuffer.sizeInBytes());
 }
 
 void Cursor::setFromName(const char* name, double scale)
@@ -103,7 +101,7 @@ void Cursor::setFromName(const char* name, double scale)
         return;
 
     m_isHidden = false;
-    updateBuffer(reinterpret_cast<const uint8_t*>(cursor[0].pixels.data()), cursor[0].width, cursor[0].height, cursor[0].width * 4);
+    updateBuffer(reinterpret_cast<const uint8_t*>(cursor[0].pixels.span().data()), cursor[0].width, cursor[0].height, cursor[0].width * 4);
     m_hotspot.x = cursor[0].hotspotX;
     m_hotspot.y = cursor[0].hotspotY;
 }

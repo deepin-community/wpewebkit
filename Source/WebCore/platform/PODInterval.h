@@ -50,9 +50,9 @@ namespace WebCore {
 
 template<class T, class UserData> class PODIntervalBase {
 public:
-    const T& low() const { return m_low; }
-    const T& high() const { return m_high; }
-    const UserData& data() const { return m_data; }
+    const T& low() const LIFETIME_BOUND { return m_low; }
+    const T& high() const LIFETIME_BOUND { return m_high; }
+    const UserData& data() const LIFETIME_BOUND { return m_data; }
 
     bool overlaps(const T& low, const T& high) const
     {
@@ -64,14 +64,14 @@ public:
         return overlaps(other.m_low, other.m_high);
     }
 
-    const T& maxHigh() const { return m_maxHigh; }
+    const T& maxHigh() const LIFETIME_BOUND { return m_maxHigh; }
     void setMaxHigh(const T& maxHigh) { m_maxHigh = maxHigh; }
 
 protected:
     PODIntervalBase(const T& low, const T& high, UserData&& data)
         : m_low(low)
         , m_high(high)
-        , m_data(WTFMove(data))
+        , m_data(WTF::move(data))
         , m_maxHigh(high)
     {
     }
@@ -86,7 +86,7 @@ private:
 template<class T, class UserData> class PODInterval : public PODIntervalBase<T, UserData> {
 public:
     PODInterval(const T& low, const T& high, UserData&& data = { })
-        : PODIntervalBase<T, UserData>(low, high, WTFMove(data))
+        : PODIntervalBase<T, UserData>(low, high, WTF::move(data))
     {
     }
 
@@ -122,7 +122,7 @@ private:
 template<typename T, typename U, typename WeakPtrImpl> class PODInterval<T, WeakPtr<U, WeakPtrImpl>> : public PODIntervalBase<T, WeakPtr<U, WeakPtrImpl>> {
 public:
     PODInterval(const T& low, const T& high, WeakPtr<U, WeakPtrImpl>&& data)
-        : PODIntervalBase<T, WeakPtr<U, WeakPtrImpl>>(low, high, WTFMove(data))
+        : PODIntervalBase<T, WeakPtr<U, WeakPtrImpl>>(low, high, WTF::move(data))
     {
     }
 

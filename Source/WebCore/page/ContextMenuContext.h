@@ -28,8 +28,9 @@
 
 #if ENABLE(CONTEXT_MENUS)
 
-#include "HitTestResult.h"
-#include "Image.h"
+#include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/HitTestResult.h>
+#include <WebCore/Image.h>
 
 namespace WebCore {
 
@@ -58,13 +59,15 @@ public:
 
     Type type() const { return m_type; }
 
-    const HitTestResult& hitTestResult() const { return m_hitTestResult; }
+    const HitTestResult& hitTestResult() const LIFETIME_BOUND { return m_hitTestResult; }
     Event* event() const { return m_event.get(); }
 
     void setSelectedText(const String& selectedText) { m_selectedText = selectedText; }
-    const String& selectedText() const { return m_selectedText; }
+    const String& selectedText() const LIFETIME_BOUND { return m_selectedText; }
 
     bool hasEntireImage() const { return m_hasEntireImage; }
+    bool allowsFollowingLink() const { return m_allowsFollowingLink; }
+    bool allowsFollowingImageURL() const { return m_allowsFollowingImageURL; }
 
 #if ENABLE(SERVICE_CONTROLS)
     void setControlledImage(Image* controlledImage) { m_controlledImage = controlledImage; }
@@ -79,12 +82,19 @@ public:
     Image* potentialQRCodeViewportSnapshotImage() const { return m_potentialQRCodeViewportSnapshotImage.get(); }
 #endif
 
+#if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
+    void setMediaElementIdentifier(HTMLMediaElementIdentifier identifier) { m_mediaElementIdentifier = identifier; }
+    std::optional<HTMLMediaElementIdentifier> mediaElementIdentifier() const { return m_mediaElementIdentifier; }
+#endif
+
 private:
     Type m_type { Type::ContextMenu };
     HitTestResult m_hitTestResult;
     RefPtr<Event> m_event;
     String m_selectedText;
     bool m_hasEntireImage { false };
+    bool m_allowsFollowingLink { false };
+    bool m_allowsFollowingImageURL { false };
 
 #if ENABLE(SERVICE_CONTROLS)
     RefPtr<Image> m_controlledImage;
@@ -93,6 +103,10 @@ private:
 #if ENABLE(CONTEXT_MENU_QR_CODE_DETECTION)
     RefPtr<Image> m_potentialQRCodeNodeSnapshotImage;
     RefPtr<Image> m_potentialQRCodeViewportSnapshotImage;
+#endif
+
+#if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
+    Markable<HTMLMediaElementIdentifier> m_mediaElementIdentifier;
 #endif
 };
 

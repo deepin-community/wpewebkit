@@ -11,7 +11,10 @@
 #ifndef LIBANGLE_SURFACE_H_
 #define LIBANGLE_SURFACE_H_
 
+#include <array>
+#include <atomic>
 #include <memory>
+#include <utility>
 
 #include <EGL/egl.h>
 
@@ -21,6 +24,8 @@
 #include "libANGLE/Debug.h"
 #include "libANGLE/Error.h"
 #include "libANGLE/FramebufferAttachment.h"
+#include "libANGLE/Image.h"
+#include "libANGLE/ObjectMap.h"
 #include "libANGLE/RefCountObject.h"
 #include "libANGLE/formatutils.h"
 #include "libANGLE/renderer/SurfaceImpl.h"
@@ -52,7 +57,12 @@ struct SurfaceState final : private angle::NonCopyable
 
     bool isRobustResourceInitEnabled() const;
     bool hasProtectedContent() const;
-    EGLint getPreferredSwapInterval() const;
+
+    gl::OwnerImageIndex toOwnerIndex(const gl::ImageIndex &index) const
+    {
+        // Surfaces cannot be an EGL image sibling, so the translation is no-op.
+        return ImageSourceAttributes{}.toOwnerIndex(index);
+    }
 
     SurfaceID id;
 
@@ -66,6 +76,7 @@ struct SurfaceState final : private angle::NonCopyable
     SupportedTimestamps supportedTimestamps;
     bool directComposition;
     EGLenum swapBehavior;
+    EGLint swapInterval;
 };
 
 class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
@@ -84,7 +95,6 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
     Error prepareSwap(const gl::Context *context);
     Error swap(gl::Context *context);
     Error swapWithDamage(gl::Context *context, const EGLint *rects, EGLint n_rects);
-    Error swapWithFrameToken(gl::Context *context, EGLFrameTokenANGLE frameToken);
     Error postSubBuffer(const gl::Context *context,
                         EGLint x,
                         EGLint y,
@@ -100,11 +110,13 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
 
     EGLint isPostSubBufferSupported() const;
 
-    void setSwapInterval(EGLint interval);
+    void setRequestedSwapInterval(EGLint interval);
+    void setSwapInterval(const Display *display, EGLint interval);
     Error onDestroy(const Display *display);
 
     void setMipmapLevel(EGLint level);
     void setMultisampleResolve(EGLenum resolve);
+    void setRequestedSwapBehavior(EGLenum behavior);
     void setSwapBehavior(EGLenum behavior);
 
     void setFixedWidth(EGLint width);
@@ -112,21 +124,16 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
 
     const Config *getConfig() const;
 
-    // width and height can change with client window resizing
-    EGLint getWidth() const;
-    EGLint getHeight() const;
-    // Note: windows cannot be resized on Android.  The approach requires
-    // calling vkGetPhysicalDeviceSurfaceCapabilitiesKHR.  However, that is
-    // expensive; and there are troublesome timing issues for other parts of
-    // ANGLE (which cause test failures and crashes).  Therefore, a
-    // special-Android-only path is created just for the querying of EGL_WIDTH
-    // and EGL_HEIGHT.
-    // https://issuetracker.google.com/issues/153329980
-    egl::Error getUserWidth(const egl::Display *display, EGLint *value) const;
-    egl::Error getUserHeight(const egl::Display *display, EGLint *value) const;
+    // size can change with client window resizing
+    // Size must be resolved before the call either during state synchronization or explicitly.
+    gl::Extents getSize() const;
+    // Unresolved Surface size until render target is first accessed (e.g. after draw).
+    egl::Error getUserSize(const egl::Display *display, EGLint *width, EGLint *height) const;
     EGLint getPixelAspectRatio() const;
     EGLenum getRenderBuffer() const;
+    EGLenum getRequestedRenderBuffer() const;
     EGLenum getSwapBehavior() const;
+    EGLenum getRequestedSwapBehavior() const;
     TextureFormat getTextureFormat() const;
     EGLenum getTextureTarget() const;
     bool getLargestPbuffer() const;
@@ -152,17 +159,27 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
     EGLint getLuminanceOffset() const;
     EGLint getBitmapPixelSize() const;
     EGLAttribKHR getBitmapPointer() const;
+    egl::Error getCompressionRate(const egl::Display *display,
+                                  const gl::Context *context,
+                                  EGLint *rate);
     egl::Error lockSurfaceKHR(const egl::Display *display, const AttributeMap &attributes);
     egl::Error unlockSurfaceKHR(const egl::Display *display);
 
     bool isLocked() const;
-    bool isCurrentOnAnyContext() const { return mIsCurrentOnAnyContext; }
+    bool isCurrentOnAnyContext() const
+    {
+        mMutex.assertLocked();
+        return mCurrentRefCount > 0;
+    }
 
     gl::Texture *getBoundTexture() const { return mTexture; }
 
     EGLint isFixedSize() const;
 
     // FramebufferAttachmentObject implementation
+    // Explicitly resolves surface size to use before state synchronization (e.g. validation).
+    angle::Result ensureSizeResolved(const gl::Context *context) const override;
+    bool isAttachmentSpecified(const gl::ImageIndex &imageIndex) const override;
     gl::Extents getAttachmentSize(const gl::ImageIndex &imageIndex) const override;
     gl::Format getAttachmentFormat(GLenum binding, const gl::ImageIndex &imageIndex) const override;
     GLsizei getAttachmentSamples(const gl::ImageIndex &imageIndex) const override;
@@ -180,14 +197,22 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
 
     EGLint getOrientation() const { return mOrientation; }
 
-    bool directComposition() const { return mState.directComposition; }
+    bool directComposition() const
+    {
+        mMutex.assertLocked();
+        return mState.directComposition;
+    }
 
     gl::InitState initState(GLenum binding, const gl::ImageIndex &imageIndex) const override;
     void setInitState(GLenum binding,
                       const gl::ImageIndex &imageIndex,
                       gl::InitState initState) override;
 
-    bool isRobustResourceInitEnabled() const { return mRobustResourceInitialization; }
+    bool isRobustResourceInitEnabled() const
+    {
+        mMutex.assertLocked();
+        return mRobustResourceInitialization;
+    }
 
     const gl::Format &getBindTexImageFormat() const { return mColorFormat; }
 
@@ -218,18 +243,28 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
     Error getBufferAge(const gl::Context *context, EGLint *age);
 
     Error setRenderBuffer(EGLint renderBuffer);
+    void setRequestedRenderBuffer(EGLint requestedRenderBuffer);
 
-    bool bufferAgeQueriedSinceLastSwap() const { return mBufferAgeQueriedSinceLastSwap; }
-    void setDamageRegion(const EGLint *rects, EGLint n_rects);
-    bool isDamageRegionSet() const { return mIsDamageRegionSet; }
-
-    void addRef() { mRefCount++; }
-    void release()
+    bool bufferAgeQueriedSinceLastSwap() const
     {
-        ASSERT(mRefCount > 0);
-        mRefCount--;
+        mMutex.assertLocked();
+        return mBufferAgeQueriedSinceLastSwap;
     }
-    bool isReferenced() const { return mRefCount > 0; }
+    void setDamageRegion(const EGLint *rects, EGLint n_rects);
+    bool isDamageRegionSet() const
+    {
+        mMutex.assertLocked();
+        return mIsDamageRegionSet;
+    }
+
+    void addRef() const { mRefCount.fetch_add(1, std::memory_order_relaxed); }
+    void release() const
+    {
+        uint32_t prev = mRefCount.fetch_sub(1, std::memory_order_acq_rel);
+        ASSERT(prev > 0);
+    }
+    Error releaseRef(const Display *display);
+    uint32_t getRefCount() const { return mRefCount.load(std::memory_order_acquire); }
 
   protected:
     Surface(EGLint surfaceType,
@@ -243,12 +278,13 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
 
     // ANGLE-only method, used internally
     friend class gl::Texture;
+    friend class ScopedSurfaceLockAndRef;
     Error releaseTexImageFromTexture(const gl::Context *context);
 
     SurfaceState mState;
     rx::SurfaceImpl *mImplementation;
-    int mRefCount;
-    bool mDestroyed;
+    mutable std::atomic<uint32_t> mRefCount;
+    mutable angle::SimpleMutex mMutex;
 
     EGLint mType;
     EGLenum mBuftype;
@@ -274,8 +310,11 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
     TextureFormat mTextureFormat;
     EGLenum mTextureTarget;
 
-    EGLint mPixelAspectRatio;  // Display aspect ratio
-    EGLenum mRenderBuffer;     // Render buffer
+    EGLint mPixelAspectRatio;        // Display aspect ratio
+    EGLenum mRenderBuffer;           // Render buffer
+    EGLenum mRequestedRenderBuffer;  // Requested render buffer
+    EGLenum mRequestedSwapBehavior;
+    EGLint mRequestedSwapInterval;
 
     EGLint mOrientation;
 
@@ -288,23 +327,22 @@ class Surface : public LabeledObject, public gl::FramebufferAttachmentObject
 
     gl::Offset mTextureOffset;
 
-    bool mIsCurrentOnAnyContext;  // The surface is current to a context/client API
-    uint8_t *mLockBufferPtr;      // Memory owned by backend.
+    uint32_t mCurrentRefCount;  // The surface is current to a context/client API
+    uint8_t *mLockBufferPtr;    // Memory owned by backend.
     EGLint mLockBufferPitch;
 
     bool mBufferAgeQueriedSinceLastSwap;
     bool mIsDamageRegionSet;
 
   private:
-    Error getBufferAgeImpl(const gl::Context *context, EGLint *age) const;
-
     Error destroyImpl(const Display *display);
 
-    void postSwap(const gl::Context *context);
-    Error releaseRef(const Display *display);
+    void postSwap(const gl::Context *context, const rx::SurfaceSwapFeedback &feedback);
 
     // ObserverInterface implementation.
     void onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message) override;
+
+    Error updatePropertiesOnSwap(const gl::Context *context);
 
     gl::InitState mColorInitState;
     gl::InitState mDepthStencilInitState;
@@ -357,13 +395,16 @@ class PixmapSurface final : public Surface
     ~PixmapSurface() override;
 };
 
-class [[nodiscard]] ScopedSurfaceRef
+class [[nodiscard]] ScopedSurfaceRef final
 {
   public:
-    ScopedSurfaceRef(Surface *surface) : mSurface(surface)
+    ScopedSurfaceRef() = default;
+    ScopedSurfaceRef(const Display *display, Surface *surface)
+        : mDisplay(display), mSurface(surface)
     {
         if (mSurface)
         {
+            ASSERT(mDisplay != nullptr);
             mSurface->addRef();
         }
     }
@@ -371,12 +412,111 @@ class [[nodiscard]] ScopedSurfaceRef
     {
         if (mSurface)
         {
-            mSurface->release();
+            ANGLE_SWALLOW_ERR(mSurface->releaseRef(mDisplay));
         }
     }
+    ScopedSurfaceRef(const ScopedSurfaceRef &other)            = delete;
+    ScopedSurfaceRef &operator=(const ScopedSurfaceRef &other) = delete;
+    ScopedSurfaceRef(ScopedSurfaceRef &&other) noexcept
+        : mDisplay(other.mDisplay), mSurface(other.mSurface)
+    {
+        other.mDisplay = nullptr;
+        other.mSurface = nullptr;
+    }
+    ScopedSurfaceRef &operator=(ScopedSurfaceRef &&other) noexcept
+    {
+        std::swap(mDisplay, other.mDisplay);
+        std::swap(mSurface, other.mSurface);
+        return *this;
+    }
+
+    Surface *get() const { return mSurface; }
 
   private:
-    Surface *const mSurface;
+    const Display *mDisplay = nullptr;
+    Surface *mSurface       = nullptr;
+};
+
+class [[nodiscard]] ScopedSurfaceLockAndRef final
+{
+  public:
+    ScopedSurfaceLockAndRef() = default;
+    ScopedSurfaceLockAndRef(const Display *display, Surface *surface)
+        : ScopedSurfaceLockAndRef(ScopedSurfaceRef(display, surface))
+    {}
+    explicit ScopedSurfaceLockAndRef(ScopedSurfaceRef &&surfaceRef)
+        : mSurfaceRef(std::move(surfaceRef))
+    {
+        if (mSurfaceRef.get() != nullptr)
+        {
+            mLock = std::unique_lock<angle::SimpleMutex>(mSurfaceRef.get()->mMutex);
+        }
+    }
+    ScopedSurfaceLockAndRef(const ScopedSurfaceLockAndRef &other)            = delete;
+    ScopedSurfaceLockAndRef &operator=(const ScopedSurfaceLockAndRef &other) = delete;
+    ScopedSurfaceLockAndRef(ScopedSurfaceLockAndRef &&other) noexcept        = default;
+    ScopedSurfaceLockAndRef &operator=(ScopedSurfaceLockAndRef &&other) noexcept
+    {
+        std::swap(mSurfaceRef, other.mSurfaceRef);
+        std::swap(mLock, other.mLock);
+        return *this;
+    }
+
+    Surface *get() const { return mSurfaceRef.get(); }
+
+  private:
+    // Order is important: mLock must be unlocked before mSurfaceRef releases its reference (and
+    // potentially destroys the Surface).
+    ScopedSurfaceRef mSurfaceRef;
+    std::unique_lock<angle::SimpleMutex> mLock;
+};
+
+template <size_t N>
+class [[nodiscard]] ScopedSurfacesLockAndRef final
+{
+  public:
+    ScopedSurfacesLockAndRef() = default;
+    explicit ScopedSurfacesLockAndRef(std::array<ScopedSurfaceRef, N> &&surfaceRefs)
+    {
+        for (size_t i = 0; i < N; ++i)
+        {
+            mSurfaces[i] = surfaceRefs[i].get();
+        }
+
+        // Acquire surface locks in canonical Surface address order to avoid lock-order inversion
+        // when the same surfaces are passed in different orders across entry points.
+        for (size_t i = 1; i < N; ++i)
+        {
+            for (size_t j = i; j > 0 && reinterpret_cast<uintptr_t>(surfaceRefs[j].get()) <
+                                            reinterpret_cast<uintptr_t>(surfaceRefs[j - 1].get());
+                 --j)
+            {
+                std::swap(surfaceRefs[j], surfaceRefs[j - 1]);
+            }
+        }
+
+        size_t lockCount          = 0;
+        const Surface *lastLocked = nullptr;
+        for (size_t i = 0; i < N; ++i)
+        {
+            Surface *surface = surfaceRefs[i].get();
+            if (surface != nullptr && surface != lastLocked)
+            {
+                mLocks[lockCount++] = ScopedSurfaceLockAndRef(std::move(surfaceRefs[i]));
+                lastLocked          = surface;
+            }
+        }
+    }
+    ScopedSurfacesLockAndRef(const ScopedSurfacesLockAndRef &other)                = delete;
+    ScopedSurfacesLockAndRef &operator=(const ScopedSurfacesLockAndRef &other)     = delete;
+    ScopedSurfacesLockAndRef(ScopedSurfacesLockAndRef &&other) noexcept            = default;
+    ScopedSurfacesLockAndRef &operator=(ScopedSurfacesLockAndRef &&other) noexcept = default;
+
+    Surface *get(size_t index) const { return mSurfaces[index]; }
+
+  private:
+    std::array<ScopedSurfaceLockAndRef, N> mLocks;
+    std::array<Surface *, N> mSurfaces = {};
 };
 
 class SurfaceDeleter final
@@ -391,6 +531,30 @@ class SurfaceDeleter final
 };
 
 using SurfacePointer = std::unique_ptr<Surface, SurfaceDeleter>;
+
+class SurfaceMap final : public priv::ObjectMap<Surface, angle::SimpleMutex>
+{
+  public:
+    Surface *find(SurfaceID handle) const = delete;
+
+    void insert(SurfaceID handle, Surface *surface)
+    {
+        surface->addRef();
+        priv::ObjectMap<Surface, angle::SimpleMutex>::insert(handle, surface);
+    }
+
+    ScopedSurfaceLockAndRef getSurface(const Display *display, SurfaceID handle) const
+    {
+        return ScopedSurfaceLockAndRef(getSurfaceRef(display, handle));
+    }
+
+    ScopedSurfaceRef getSurfaceRef(const Display *display, SurfaceID handle) const
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mMutex);
+        auto iter = mObjects.find(handle.value);
+        return ScopedSurfaceRef(display, iter != mObjects.end() ? iter->second : nullptr);
+    }
+};
 
 }  // namespace egl
 

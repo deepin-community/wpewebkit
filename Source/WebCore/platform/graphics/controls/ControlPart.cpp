@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ControlPart.h"
 
-#include "ControlFactory.h"
 #include "FloatRoundedRect.h"
 #include "GraphicsContext.h"
 
@@ -39,7 +38,17 @@ ControlPart::ControlPart(StyleAppearance type)
 
 ControlFactory& ControlPart::controlFactory() const
 {
-    return m_controlFactory ? *m_controlFactory : ControlFactory::sharedControlFactory();
+    return m_overrideControlFactory ? *m_overrideControlFactory : ControlFactory::singleton();
+}
+
+void ControlPart::setOverrideControlFactory(RefPtr<ControlFactory>&& controlFactory)
+{
+    if (m_overrideControlFactory == controlFactory)
+        return;
+
+    m_overrideControlFactory = WTF::move(controlFactory);
+
+    m_platformControl = nullptr;
 }
 
 PlatformControl* ControlPart::platformControl() const

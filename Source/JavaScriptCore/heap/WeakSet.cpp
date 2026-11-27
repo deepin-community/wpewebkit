@@ -37,12 +37,23 @@ WeakSet::~WeakSet()
         remove();
     
     JSC::Heap& heap = *this->heap();
-    WeakBlock* next = nullptr;
-    for (WeakBlock* block = m_blocks.head(); block; block = next) {
-        next = block->next();
+    while (WeakBlock* block = m_blocks.removeHead())
         WeakBlock::destroy(heap, block);
-    }
-    m_blocks.clear();
+    ASSERT(m_blocks.isEmpty());
+}
+
+void WeakSet::lastChanceToFinalize()
+{
+    forEachBlock([](WeakBlock& block) {
+        block.lastChanceToFinalize();
+    });
+}
+
+void WeakSet::reap()
+{
+    forEachBlock([](WeakBlock& block) {
+        block.reap();
+    });
 }
 
 void WeakSet::sweep()

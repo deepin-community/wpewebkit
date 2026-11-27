@@ -43,14 +43,15 @@ egl::CacheGetResult MemoryShaderCache::getShader(const Context *context,
                                                  angle::JobResultExpectancy resultExpectancy)
 {
     // If caching is effectively disabled, don't bother calculating the hash.
-    if (!mBlobCache.isCachingEnabled())
+    if (!mBlobCache.isCachingEnabled(context))
     {
         return egl::CacheGetResult::NotFound;
     }
 
     angle::MemoryBuffer uncompressedData;
-    const egl::BlobCache::GetAndDecompressResult result = mBlobCache.getAndDecompress(
-        context->getScratchBuffer(), shaderHash, kMaxUncompressedShaderSize, &uncompressedData);
+    const egl::BlobCache::GetAndDecompressResult result =
+        mBlobCache.getAndDecompress(context, context->getScratchBuffer(), shaderHash,
+                                    kMaxUncompressedShaderSize, &uncompressedData);
     switch (result)
     {
         case egl::BlobCache::GetAndDecompressResult::DecompressFailure:
@@ -85,7 +86,7 @@ angle::Result MemoryShaderCache::putShader(const Context *context,
                                            const Shader *shader)
 {
     // If caching is effectively disabled, don't bother serializing the shader.
-    if (!mBlobCache.isCachingEnabled())
+    if (!mBlobCache.isCachingEnabled(context))
     {
         return angle::Result::Continue;
     }
@@ -93,8 +94,20 @@ angle::Result MemoryShaderCache::putShader(const Context *context,
     angle::MemoryBuffer serializedShader;
     ANGLE_TRY(shader->serialize(nullptr, &serializedShader));
 
+    if (serializedShader.size() > kMaxUncompressedShaderSize)
+    {
+        std::ostringstream warningMessage;
+        warningMessage << "Shader is too large to cache: ";
+        warningMessage << "shader size: " << serializedShader.size()
+                       << ", max size: " << kMaxUncompressedShaderSize;
+        ANGLE_PERF_WARNING(context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW, "%s",
+                           warningMessage.str().c_str());
+        return angle::Result::Continue;
+    }
+
     size_t compressedSize;
-    if (!mBlobCache.compressAndPut(shaderHash, std::move(serializedShader), &compressedSize))
+    if (!mBlobCache.compressAndPut(context, shaderHash, std::move(serializedShader),
+                                   &compressedSize))
     {
         ANGLE_PERF_WARNING(context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
                            "Error compressing shader binary data for insertion into cache.");

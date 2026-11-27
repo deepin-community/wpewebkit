@@ -39,14 +39,14 @@
 #include "LayoutState.h"
 #include "Logging.h"
 #include "RenderBlockFlow.h"
-#include "RenderStyleInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(FormattingContext);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FormattingContext);
 
 FormattingContext::FormattingContext(const ElementBox& formattingContextRoot, LayoutState& layoutState)
     : m_root(formattingContextRoot)
@@ -72,7 +72,7 @@ LayoutState& FormattingContext::layoutState()
 
 BoxGeometry& FormattingContext::geometryForBox(const Box& layoutBox, std::optional<EscapeReason>)
 {
-    return layoutState().ensureGeometryForBox(layoutBox);
+    return m_layoutState->ensureGeometryForBox(layoutBox);
 }
 
 const BoxGeometry& FormattingContext::geometryForBox(const Box& layoutBox, std::optional<EscapeReason> escapeReason) const
@@ -156,8 +156,8 @@ const BoxGeometry& FormattingContext::geometryForBox(const Box& layoutBox, std::
     };
 #endif
     ASSERT(isOkToAccessBoxGeometry());
-    ASSERT(layoutState().hasBoxGeometry(layoutBox));
-    return layoutState().geometryForBox(layoutBox);
+    ASSERT(m_layoutState->hasBoxGeometry(layoutBox));
+    return m_layoutState->geometryForBox(layoutBox);
 }
 
 const InitialContainingBlock& FormattingContext::initialContainingBlock(const Box& layoutBox)
@@ -181,7 +181,7 @@ const ElementBox& FormattingContext::containingBlock(const Box& layoutBox)
     // If the element has 'position: absolute', the containing block is established by the nearest ancestor with a
     // 'position' of 'absolute', 'relative' or 'fixed'.
     if (!layoutBox.isPositioned() || layoutBox.isInFlowPositioned()) {
-        auto* ancestor = &layoutBox.parent();
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
         for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
             if (ancestor->isContainingBlockForInFlow())
                 return *ancestor;
@@ -190,7 +190,7 @@ const ElementBox& FormattingContext::containingBlock(const Box& layoutBox)
     }
 
     if (layoutBox.isFixedPositioned()) {
-        auto* ancestor = &layoutBox.parent();
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
         for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
             if (ancestor->isContainingBlockForFixedPosition())
                 return *ancestor;
@@ -199,7 +199,7 @@ const ElementBox& FormattingContext::containingBlock(const Box& layoutBox)
     }
 
     if (layoutBox.isOutOfFlowPositioned()) {
-        auto* ancestor = &layoutBox.parent();
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
         for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
             if (ancestor->isContainingBlockForOutOfFlowPosition())
                 return *ancestor;

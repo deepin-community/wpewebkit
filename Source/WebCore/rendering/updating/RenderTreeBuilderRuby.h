@@ -26,6 +26,7 @@
 #pragma once
 
 #include "RenderTreeUpdater.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -34,18 +35,18 @@ class RenderObject;
 class RenderTreeBuilder;
 
 class RenderTreeBuilder::Ruby {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(Ruby);
 public:
     Ruby(RenderTreeBuilder&);
 
-    RenderElement& findOrCreateParentForStyleBasedRubyChild(RenderElement& parent, const RenderObject& child, RenderObject*& beforeChild);
+    CheckedRef<RenderElement> findOrCreateParentForStyleBasedRubyChild(RenderElement& parent, const RenderObject& child, RenderObject*& beforeChild);
     void attachForStyleBasedRuby(RenderElement& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 
 private:
     RenderTreeBuilder& m_builder;
 };
 
-RenderStyle createAnonymousStyleForRuby(const RenderStyle& parentStyle, DisplayType);
+Style::ComputedStyle createAnonymousStyleForRuby(const Style::ComputedStyle& parentStyle, Style::Display);
 
 }
 

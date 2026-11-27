@@ -28,14 +28,93 @@
 #include "NotImplemented.h"
 #include "RealtimeIncomingAudioSourceGStreamer.h"
 #include "RealtimeIncomingVideoSourceGStreamer.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/StringToIntegerConversion.h>
+
+GST_DEBUG_CATEGORY(webkit_webrtc_rtp_receiver_debug);
+#define GST_CAT_DEFAULT webkit_webrtc_rtp_receiver_debug
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerRtpReceiverBackend);
+
+GStreamerRtpReceiverBackend::GStreamerRtpReceiverBackend(GRefPtr<GstWebRTCRTPTransceiver>&& rtcTransceiver)
+    : m_rtcTransceiver(WTF::move(rtcTransceiver))
+{
+    static std::once_flag debugRegisteredFlag;
+    std::call_once(debugRegisteredFlag, [] {
+        GST_DEBUG_CATEGORY_INIT(webkit_webrtc_rtp_receiver_debug, "webkitwebrtcrtpreceiver", 0, "WebKit WebRTC RTP Receiver");
+    });
+
+    g_object_get(m_rtcTransceiver.get(), "receiver", &m_rtcReceiver.outPtr(), nullptr);
+}
+
+void GStreamerRtpReceiverBackend::tearDown()
+{
+    m_rtcReceiver = nullptr;
+    m_rtcTransceiver = nullptr;
+}
+
 RTCRtpParameters GStreamerRtpReceiverBackend::getParameters()
 {
-    notImplemented();
-    return { };
+    RTCRtpParameters parameters;
+    parameters.rtcp.reducedSize = true;
+
+    GRefPtr<GstCaps> caps;
+    g_object_get(m_rtcTransceiver.get(), "codec-preferences", &caps.outPtr(), nullptr);
+    if (!caps || gst_caps_is_any(caps.get()))
+        return parameters;
+
+    unsigned totalCodecs = gst_caps_get_size(caps.get());
+    for (unsigned i = 0; i < totalCodecs; i++) {
+        auto structure = gst_caps_get_structure(caps.get(), i);
+        RTCRtpCodecParameters codec;
+        if (auto pt = gstStructureGet<int>(structure, "payload"_s))
+            codec.payloadType = *pt;
+
+        auto media = gstStructureGetString(structure, "media"_s);
+        auto encodingName = gstStructureGetString(structure, "encoding-name"_s);
+        if (!media.isEmpty() && !encodingName.isEmpty())
+            codec.mimeType = makeString(media, '/', String(encodingName.span()).convertToASCIILowercase());
+
+        if (auto clockRate = gstStructureGet<uint64_t>(structure, "clock-rate"_s))
+            codec.clockRate = *clockRate;
+
+        if (auto channels = gstStructureGet<unsigned>(structure, "channels"_s))
+            codec.channels = *channels;
+
+        if (auto fmtpLine = gstStructureGetString(structure, "fmtp-line"_s))
+            codec.sdpFmtpLine = fmtpLine.span();
+
+        parameters.codecs.append(WTF::move(codec));
+
+        gstStructureForeach(structure, [&](auto id, const auto value) -> bool {
+            auto name = gstIdToString(id);
+            if (!name.startsWith("extmap-"_s))
+                return true;
+
+            auto extensionId = parseInteger<unsigned short>(name.substring(7));
+            if (!extensionId)
+                return true;
+
+            String uri;
+            if (G_VALUE_TYPE(value) == G_TYPE_STRING)
+                uri = String::fromLatin1(g_value_get_string(value));
+            else if (G_VALUE_TYPE(value) == GST_TYPE_ARRAY) {
+                if (gst_value_array_get_size(value) < 2)
+                    return true;
+
+                const auto uriValue = gst_value_array_get_value(value, 1);
+                uri = String::fromLatin1(g_value_get_string(uriValue));
+            }
+
+            parameters.headerExtensions.append({ uri, *extensionId });
+            return true;
+        });
+    }
+
+    return parameters;
 }
 
 Vector<RTCRtpContributingSource> GStreamerRtpReceiverBackend::getContributingSources() const
@@ -70,8 +149,10 @@ std::unique_ptr<RTCDtlsTransportBackend> GStreamerRtpReceiverBackend::dtlsTransp
     g_object_get(m_rtcReceiver.get(), "transport", &transport.outPtr(), nullptr);
     if (!transport)
         return nullptr;
-    return makeUnique<GStreamerDtlsTransportBackend>(WTFMove(transport));
+    return makeUnique<GStreamerDtlsTransportBackend>(WTF::move(transport));
 }
+
+#undef GST_CAT_DEFAULT
 
 } // namespace WebCore
 

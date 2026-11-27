@@ -27,23 +27,14 @@
 #include "config.h"
 #include "JSXPathResult.h"
 
-#include "JSNodeCustom.h"
-#include "WebCoreOpaqueRootInlines.h"
-#include "XPathValue.h"
-
 namespace WebCore {
 
 template<typename Visitor>
-void JSXPathResult::visitAdditionalChildren(Visitor& visitor)
+void JSXPathResult::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    auto& value = wrapped().value();
-    if (value.isNodeSet()) {
-        // FIXME: This looks like it might race, but I'm not sure.
-        for (auto& node : value.toNodeSet())
-            addWebCoreOpaqueRoot(visitor, node.get());
-    }
+    wrapped().visitAdditionalChildrenInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSXPathResult);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSXPathResult);
 
 } // namespace WebCore

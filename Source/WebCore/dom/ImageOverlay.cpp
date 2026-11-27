@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,12 @@
 
 #include "Blob.h"
 #include "CharacterRange.h"
+#include "ContainerNodeInlines.h"
 #include "DOMTokenList.h"
 #include "DOMURL.h"
-#include "Document.h"
+#include "DocumentEventLoop.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementChildIteratorInlines.h"
 #include "ElementRareData.h"
@@ -38,6 +41,7 @@
 #include "EventLoop.h"
 #include "FloatRect.h"
 #include "FloatSize.h"
+#include "FrameDestructionObserverInlines.h"
 #include "GeometryUtilities.h"
 #include "HTMLBRElement.h"
 #include "HTMLDivElement.h"
@@ -46,25 +50,27 @@
 #include "HTMLStyleElement.h"
 #include "ImageOverlayController.h"
 #include "MediaControlsHost.h"
-#include "Page.h"
 #include "RenderBoxInlines.h"
-#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
 #include "RenderText.h"
 #include "ShadowRoot.h"
 #include "SharedBuffer.h"
 #include "SimpleRange.h"
+#include "StyleZoomPrimitivesInlines.h"
 #include "Text.h"
 #include "TextIterator.h"
 #include "TextRecognitionResult.h"
 #include "TreeScopeInlines.h"
 #include "UserAgentStyleSheets.h"
 #include "VisibleSelection.h"
+#include <numeric>
 #include <wtf/Range.h>
 #include <wtf/Scope.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/unicode/CharacterNames.h>
 
 #if ENABLE(DATA_DETECTION)
 #include "DataDetection.h"
@@ -110,7 +116,7 @@ static const AtomString& imageOverlayBlockClass()
 bool hasOverlay(const HTMLElement& element)
 {
     RefPtr shadowRoot = element.shadowRoot();
-    if (LIKELY(!shadowRoot || shadowRoot->mode() != ShadowRootMode::UserAgent))
+    if (!shadowRoot || shadowRoot->mode() != ShadowRootMode::UserAgent) [[likely]]
         return false;
 
     return shadowRoot->hasElementWithId(imageOverlayElementIdentifier());
@@ -140,7 +146,7 @@ std::optional<CharacterRange> characterRange(const VisibleSelection& selection)
         return std::nullopt;
 
     std::optional<SimpleRange> imageOverlayRange;
-    for (Ref ancestor : ancestorsOfType<HTMLDivElement>(*selection.start().containerNode())) {
+    for (Ref ancestor : ancestorsOfType<HTMLDivElement>(protect(*selection.start().containerNode()))) {
         if (ancestor->getIdAttribute() == imageOverlayElementIdentifier()) {
             imageOverlayRange = makeRangeSelectingNodeContents(ancestor);
             break;
@@ -171,7 +177,7 @@ bool isInsideOverlay(const SimpleRange& range)
 bool isInsideOverlay(const Node& node)
 {
     RefPtr host = imageOverlayHost(node);
-    return host && host->protectedUserAgentShadowRoot()->contains(node);
+    return host && host->userAgentShadowRoot()->contains(node);
 }
 
 bool isOverlayText(const Node* node)
@@ -185,7 +191,7 @@ bool isOverlayText(const Node& node)
     if (!host)
         return false;
 
-    if (RefPtr overlay = host->protectedUserAgentShadowRoot()->getElementById(imageOverlayElementIdentifier()))
+    if (RefPtr overlay = protect(host->userAgentShadowRoot())->getElementById(imageOverlayElementIdentifier()))
         return node.isDescendantOf(*overlay);
 
     return false;
@@ -196,7 +202,7 @@ void removeOverlaySoonIfNeeded(HTMLElement& element)
     if (!hasOverlay(element))
         return;
 
-    element.protectedDocument()->checkedEventLoop()->queueTask(TaskSource::InternalAsyncTask, [weakElement = WeakPtr { element }] {
+    protect(protect(element.document())->eventLoop())->queueTask(TaskSource::InternalAsyncTask, [weakElement = WeakPtr { element }] {
         RefPtr element = weakElement.get();
         if (!element)
             return;
@@ -232,9 +238,9 @@ IntRect containerRect(HTMLElement& element)
 static void installImageOverlayStyleSheet(ShadowRoot& shadowRoot)
 {
     static MainThreadNeverDestroyed<const String> shadowStyle(StringImpl::createWithoutCopying(imageOverlayUserAgentStyleSheet));
-    Ref style = HTMLStyleElement::create(HTMLNames::styleTag, shadowRoot.protectedDocument(), false);
+    Ref style = HTMLStyleElement::create(HTMLNames::styleTag, protect(shadowRoot.document()), false);
     style->setTextContent(String { shadowStyle });
-    shadowRoot.appendChild(WTFMove(style));
+    shadowRoot.appendChild(WTF::move(style));
 }
 
 struct LineElements {
@@ -255,7 +261,6 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
     bool hadExistingElements = false;
     Elements elements;
     RefPtr<HTMLElement> mediaControlsContainer;
-#if ENABLE(MODERN_MEDIA_CONTROLS)
     mediaControlsContainer = ([&]() -> RefPtr<HTMLElement> {
         RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(element);
         if (!mediaElement)
@@ -270,16 +275,15 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
             return nullptr;
 
         auto& containerClass = controlsHost->mediaControlsContainerClassName();
-        for (Ref child : childrenOfType<HTMLDivElement>(*shadowRoot)) {
-            if (child->hasClassName(containerClass))
-                return &child.get();
+        for (auto& child : childrenOfType<HTMLDivElement>(*shadowRoot)) {
+            if (child.hasClassName(containerClass))
+                return &child;
         }
         return nullptr;
     })();
-#endif // ENABLE(MODERN_MEDIA_CONTROLS)
 
     if (RefPtr shadowRoot = element.shadowRoot()) {
-        if (CheckedPtr renderer = dynamicDowncast<RenderImage>(element.renderer()))
+        if (auto* renderer = dynamicDowncast<RenderImage>(element.renderer()))
             renderer->setHasImageOverlay();
 
         if (hasOverlay(element)) {
@@ -304,22 +308,21 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
             if (!childElement->hasClass())
                 continue;
 
-            auto& classes = childElement->classList();
-            if (classes.contains(imageOverlayDataDetectorClass())) {
+            if (childElement->hasClassName(imageOverlayDataDetectorClass())) {
                 elements.dataDetectors.append(childElement.get());
                 continue;
             }
 
-            if (classes.contains(imageOverlayBlockClass())) {
+            if (childElement->hasClassName(imageOverlayBlockClass())) {
                 elements.blocks.append(childElement.get());
                 continue;
             }
 
-            ASSERT(classes.contains(imageOverlayLineClass()));
+            ASSERT(childElement->hasClassName(imageOverlayLineClass()));
             Vector<Ref<HTMLElement>> lineChildren;
             for (Ref text : childrenOfType<HTMLDivElement>(childElement.get()))
                 lineChildren.append(text.get());
-            elements.lines.append({ childElement.get(), WTFMove(lineChildren), childrenOfType<HTMLBRElement>(childElement.get()).first() });
+            elements.lines.append({ childElement.get(), WTF::move(lineChildren), childrenOfType<HTMLBRElement>(childElement.get()).first() });
         }
 
         canUseExistingElements = ([&] {
@@ -345,7 +348,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
                     return false;
 
                 for (size_t childIndex = 0; childIndex < childResults.size(); ++childIndex) {
-                    if (childResults[childIndex].text != StringView(childTextElements[childIndex]->textContent()).trim(deprecatedIsSpaceOrNewline))
+                    if (childResults[childIndex].text != StringView(protect(childTextElements[childIndex])->textContent()).trim(deprecatedIsSpaceOrNewline))
                         return false;
                 }
             }
@@ -366,7 +369,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
         })();
 
         if (!canUseExistingElements) {
-            elements.root->removeChildren();
+            protect(elements.root)->removeChildren();
             elements = { elements.root, { }, { }, { } };
         }
     }
@@ -393,55 +396,55 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
         elements.lines.reserveInitialCapacity(result.lines.size());
         for (auto& line : result.lines) {
             Ref lineContainer = HTMLDivElement::create(document.get());
-            lineContainer->classList().add(imageOverlayLineClass());
-            elements.root->appendChild(lineContainer);
+            protect(lineContainer)->classList().add(imageOverlayLineClass());
+            protect(elements.root)->appendChild(lineContainer);
             LineElements lineElements { lineContainer, { }, { } };
             lineElements.children.reserveInitialCapacity(line.children.size());
             for (size_t childIndex = 0; childIndex < line.children.size(); ++childIndex) {
                 auto& child = line.children[childIndex];
                 Ref textContainer = HTMLDivElement::create(document.get());
-                textContainer->classList().add(imageOverlayTextClass());
+                protect(textContainer)->classList().add(imageOverlayTextClass());
                 lineContainer->appendChild(textContainer);
                 textContainer->appendChild(Text::create(document.get(), child.hasLeadingWhitespace ? makeString('\n', child.text) : String { child.text }));
-                lineElements.children.append(WTFMove(textContainer));
+                lineElements.children.append(WTF::move(textContainer));
             }
 
             if (line.hasTrailingNewline) {
                 Ref lineBreak = HTMLBRElement::create(document.get());
                 lineContainer->appendChild(lineBreak.get());
-                lineElements.lineBreak = WTFMove(lineBreak);
+                lineElements.lineBreak = WTF::move(lineBreak);
             }
 
-            elements.lines.append(WTFMove(lineElements));
+            elements.lines.append(WTF::move(lineElements));
         }
 
 #if ENABLE(DATA_DETECTION)
         elements.dataDetectors.reserveInitialCapacity(result.dataDetectors.size());
         for (auto& dataDetector : result.dataDetectors) {
             auto dataDetectorContainer = DataDetection::createElementForImageOverlay(document.get(), dataDetector);
-            dataDetectorContainer->classList().add(imageOverlayDataDetectorClass());
-            elements.root->appendChild(dataDetectorContainer);
-            elements.dataDetectors.append(WTFMove(dataDetectorContainer));
+            protect(dataDetectorContainer)->classList().add(imageOverlayDataDetectorClass());
+            protect(elements.root)->appendChild(dataDetectorContainer);
+            elements.dataDetectors.append(WTF::move(dataDetectorContainer));
         }
 #endif // ENABLE(DATA_DETECTION)
 
         elements.blocks.reserveInitialCapacity(result.blocks.size());
         for (auto& block : result.blocks) {
             Ref blockContainer = HTMLDivElement::create(document.get());
-            blockContainer->classList().add(imageOverlayBlockClass());
+            protect(blockContainer)->classList().add(imageOverlayBlockClass());
             auto lines = block.text.split(newlineCharacter);
-            for (auto&& textContent : WTFMove(lines)) {
+            for (auto&& textContent : WTF::move(lines)) {
                 if (blockContainer->hasChildNodes())
                     blockContainer->appendChild(HTMLBRElement::create(document.get()));
-                blockContainer->appendChild(Text::create(document.get(), WTFMove(textContent)));
+                blockContainer->appendChild(Text::create(document.get(), WTF::move(textContent)));
             }
 
             constexpr auto maxLineCountForCenterAlignedText = 2;
             if (lines.size() > maxLineCountForCenterAlignedText)
                 blockContainer->setInlineStyleProperty(CSSPropertyTextAlign, CSSValueStart);
 
-            elements.root->appendChild(blockContainer);
-            elements.blocks.append(WTFMove(blockContainer));
+            protect(elements.root)->appendChild(blockContainer);
+            elements.blocks.append(WTF::move(blockContainer));
         }
     }
 
@@ -565,8 +568,8 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
             FloatSize sizeBeforeTransform;
             if (CheckedPtr renderer = textContainer->renderBoxModelObject()) {
                 sizeBeforeTransform = {
-                    adjustLayoutUnitForAbsoluteZoom(renderer->offsetWidth(), *renderer).toFloat(),
-                    adjustLayoutUnitForAbsoluteZoom(renderer->offsetHeight(), *renderer).toFloat(),
+                    Style::adjustLayoutUnitForAbsoluteZoom(renderer->offsetWidth(), *renderer).toFloat(),
+                    Style::adjustLayoutUnitForAbsoluteZoom(renderer->offsetHeight(), *renderer).toFloat(),
                 };
             }
 
@@ -609,7 +612,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
 
     if (!result.dataDetectors.isEmpty()) {
         RefPtr page = document->page();
-        if (auto* overlayController = page ? page->imageOverlayControllerIfExists() : nullptr)
+        if (RefPtr overlayController = page ? page->imageOverlayControllerIfExists() : nullptr)
             overlayController->textRecognitionResultsChanged(element);
     }
 #endif // ENABLE(DATA_DETECTION)
@@ -652,7 +655,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
         auto blockContainer = elements.blocks[index];
         auto bounds = fitElementToQuad(blockContainer.get(), convertToContainerCoordinates(block.normalizedQuad), ConstrainHeight::No);
         setInlineStylesForBlock(blockContainer.get(), initialScaleForFontSize, bounds.size.height());
-        return FontSizeAdjustmentState { WTFMove(blockContainer), bounds.size };
+        return FontSizeAdjustmentState { WTF::move(blockContainer), bounds.size };
     });
 
     unsigned currentIteration = 0;
@@ -665,7 +668,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
                 continue;
 
             auto targetHeight = state.targetSize.height();
-            auto currentScore = box->contentHeight() / targetHeight;
+            auto currentScore = box->contentBoxHeight() / targetHeight;
             bool hasHorizontalOverflow = box->hasHorizontalOverflow();
             if (currentScore < minTargetScore && !hasHorizontalOverflow)
                 state.minScale = state.scale;
@@ -676,7 +679,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
                 continue;
             }
 
-            state.scale = (state.minScale + state.maxScale) / 2;
+            state.scale = std::midpoint(state.minScale, state.maxScale);
             setInlineStylesForBlock(state.container.get(), state.scale, targetHeight);
         }
 
@@ -687,7 +690,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
         if (++currentIteration > iterationLimit) {
             // Fall back to the largest font size that still vertically fits within the container.
             for (auto& state : elementsToAdjust)
-                state.container->setInlineStyleProperty(CSSPropertyFontSize, state.targetSize.height() * state.minScale, CSSUnitType::CSS_PX);
+                protect(state.container)->setInlineStyleProperty(CSSPropertyFontSize, state.targetSize.height() * state.minScale, CSSUnitType::CSS_PX);
             break;
         }
     }

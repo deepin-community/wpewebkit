@@ -27,6 +27,7 @@
 #define BMALLOC_HEAP_H
 
 #include "bmalloc_heap_ref.h"
+#include "bmalloc_heap_utils.h"
 #include "pas_allocation_mode.h"
 #include "pas_primitive_heap_ref.h"
 #include "pas_reallocate_free_mode.h"
@@ -41,6 +42,9 @@ PAS_API void* bmalloc_try_allocate_with_alignment(size_t size,
                                                   pas_allocation_mode allocation_mode);
 
 PAS_API void* bmalloc_try_allocate_zeroed(size_t size, pas_allocation_mode allocation_mode);
+PAS_API void* bmalloc_try_allocate_zeroed_with_alignment(size_t size,
+                                                         size_t alignment,
+                                                         pas_allocation_mode allocation_mode);
 
 PAS_API void* bmalloc_allocate(size_t size, pas_allocation_mode allocation_mode);
 PAS_API void* bmalloc_allocate_with_alignment(size_t size,
@@ -48,6 +52,9 @@ PAS_API void* bmalloc_allocate_with_alignment(size_t size,
                                               pas_allocation_mode allocation_mode);
 
 PAS_API void* bmalloc_allocate_zeroed(size_t size, pas_allocation_mode allocation_mode);
+PAS_API void* bmalloc_allocate_zeroed_with_alignment(size_t size,
+                                                     size_t alignment,
+                                                     pas_allocation_mode allocation_mode);
 
 PAS_API void* bmalloc_try_reallocate(void* old_ptr, size_t new_size,
                                      pas_allocation_mode allocation_mode,
@@ -126,6 +133,15 @@ PAS_API void* bmalloc_allocate_auxiliary_with_alignment(pas_primitive_heap_ref* 
                                                         size_t alignment,
                                                         pas_allocation_mode allocation_mode);
 
+PAS_API void* bmalloc_try_allocate_auxiliary_zeroed_with_alignment(pas_primitive_heap_ref* heap_ref,
+                                                            size_t size,
+                                                            size_t alignment,
+                                                            pas_allocation_mode allocation_mode);
+PAS_API void* bmalloc_allocate_auxiliary_zeroed_with_alignment(pas_primitive_heap_ref* heap_ref,
+                                                        size_t size,
+                                                        size_t alignment,
+                                                        pas_allocation_mode allocation_mode);
+
 PAS_API void* bmalloc_try_reallocate_auxiliary(void* old_ptr,
                                                pas_primitive_heap_ref* heap_ref,
                                                size_t new_size,
@@ -140,14 +156,6 @@ PAS_API void* bmalloc_reallocate_auxiliary(void* old_ptr,
 PAS_API pas_heap* bmalloc_auxiliary_heap_ref_get_heap(pas_primitive_heap_ref* heap_ref);
 
 PAS_API void bmalloc_deallocate(void*);
-
-PAS_API pas_heap* bmalloc_force_auxiliary_heap_into_reserved_memory(pas_primitive_heap_ref* heap_ref,
-                                                                    uintptr_t begin,
-                                                                    uintptr_t end);
-
-PAS_BAPI size_t bmalloc_heap_ref_get_type_size(pas_heap_ref* heap_ref);
-PAS_API pas_heap* bmalloc_get_heap(void* ptr);
-PAS_BAPI size_t bmalloc_get_allocation_size(void* ptr);
 
 PAS_END_EXTERN_C;
 

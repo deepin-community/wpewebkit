@@ -32,6 +32,7 @@
 #include "WebExtensionControllerMessages.h"
 #include "WebExtensionControllerProxyMessages.h"
 #include "WebFrame.h"
+#include "WebProcess.h"
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -40,9 +41,9 @@ namespace WebKit {
 
 using namespace WebCore;
 
-static HashMap<WebExtensionControllerIdentifier, WeakRef<WebExtensionControllerProxy>>& webExtensionControllerProxies()
+static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionControllerProxy>>& NODELETE webExtensionControllerProxies()
 {
-    static MainThreadNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakRef<WebExtensionControllerProxy>>> controllers;
+    static MainRunLoopNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionControllerProxy>>> controllers;
     return controllers;
 }
 
@@ -66,8 +67,8 @@ Ref<WebExtensionControllerProxy> WebExtensionControllerProxy::getOrCreate(const 
         }
 
         controller.m_testingMode = parameters.testingMode;
-        controller.m_extensionContexts = WTFMove(contexts);
-        controller.m_extensionContextBaseURLMap = WTFMove(baseURLMap);
+        controller.m_extensionContexts = WTF::move(contexts);
+        controller.m_extensionContextBaseURLMap = WTF::move(baseURLMap);
     };
 
     if (RefPtr controller = get(parameters.identifier)) {
@@ -91,6 +92,7 @@ WebExtensionControllerProxy::WebExtensionControllerProxy(const WebExtensionContr
 
 WebExtensionControllerProxy::~WebExtensionControllerProxy()
 {
+    webExtensionControllerProxies().remove(m_identifier);
     WebProcess::singleton().removeMessageReceiver(*this);
 }
 
@@ -104,11 +106,11 @@ void WebExtensionControllerProxy::load(const WebExtensionContextParameters& cont
 void WebExtensionControllerProxy::unload(WebExtensionContextIdentifier contextIdentifier)
 {
     m_extensionContextBaseURLMap.removeIf([&](auto& entry) {
-        return entry.value->identifier() == contextIdentifier;
+        return entry.value->unprivilegedIdentifier() == contextIdentifier;
     });
 
     m_extensionContexts.removeIf([&](auto& entry) {
-        return entry->identifier() == contextIdentifier;
+        return entry->unprivilegedIdentifier() == contextIdentifier;
     });
 }
 

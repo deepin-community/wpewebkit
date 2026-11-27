@@ -61,23 +61,24 @@ RuntimeArray::~RuntimeArray()
 
 void RuntimeArray::destroy(JSCell* cell)
 {
-    static_cast<RuntimeArray*>(cell)->RuntimeArray::~RuntimeArray();
+    // Cannot call jsCast() during destruction.
+    SUPPRESS_MEMORY_UNSAFE_CAST static_cast<RuntimeArray*>(cell)->RuntimeArray::~RuntimeArray();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(arrayLengthGetter, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
-    RuntimeArray* thisObject = jsDynamicCast<RuntimeArray*>(JSValue::decode(thisValue));
+    RuntimeArray* thisObject = dynamicDowncast<RuntimeArray>(JSValue::decode(thisValue));
     if (!thisObject)
         return throwVMTypeError(lexicalGlobalObject, scope);
     return JSValue::encode(jsNumber(thisObject->getLength()));
 }
 
-void RuntimeArray::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void RuntimeArray::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     Ref vm = lexicalGlobalObject->vm();
-    RuntimeArray* thisObject = jsCast<RuntimeArray*>(object);
+    RuntimeArray* thisObject = uncheckedDowncast<RuntimeArray>(object);
     unsigned length = thisObject->getLength();
     for (unsigned i = 0; i < length; ++i)
         propertyNames.add(Identifier::from(vm, i));
@@ -91,7 +92,7 @@ void RuntimeArray::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexical
 bool RuntimeArray::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyName propertyName, PropertySlot& slot)
 {
     Ref vm = lexicalGlobalObject->vm();
-    RuntimeArray* thisObject = jsCast<RuntimeArray*>(object);
+    RuntimeArray* thisObject = uncheckedDowncast<RuntimeArray>(object);
     if (propertyName == vm->propertyNames->length) {
         slot.setCacheableCustom(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, arrayLengthGetter);
         return true;
@@ -99,7 +100,7 @@ bool RuntimeArray::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexicalG
     
     std::optional<uint32_t> index = parseIndex(propertyName);
     if (index && index.value() < thisObject->getLength()) {
-        slot.setValue(thisObject, enumToUnderlyingType(PropertyAttribute::DontDelete),
+        slot.setValue(thisObject, std::to_underlying(PropertyAttribute::DontDelete),
             thisObject->getConcreteArray()->valueAt(lexicalGlobalObject, index.value()));
         return true;
     }
@@ -109,9 +110,9 @@ bool RuntimeArray::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexicalG
 
 bool RuntimeArray::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* lexicalGlobalObject, unsigned index, PropertySlot& slot)
 {
-    RuntimeArray* thisObject = jsCast<RuntimeArray*>(object);
+    RuntimeArray* thisObject = uncheckedDowncast<RuntimeArray>(object);
     if (index < thisObject->getLength()) {
-        slot.setValue(thisObject, enumToUnderlyingType(PropertyAttribute::DontDelete),
+        slot.setValue(thisObject, std::to_underlying(PropertyAttribute::DontDelete),
             thisObject->getConcreteArray()->valueAt(lexicalGlobalObject, index));
         return true;
     }
@@ -124,7 +125,7 @@ bool RuntimeArray::put(JSCell* cell, JSGlobalObject* lexicalGlobalObject, Proper
     Ref vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    RuntimeArray* thisObject = jsCast<RuntimeArray*>(cell);
+    RuntimeArray* thisObject = uncheckedDowncast<RuntimeArray>(cell);
     if (propertyName == vm->propertyNames->length) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Range error"_s));
         return false;
@@ -140,7 +141,7 @@ bool RuntimeArray::putByIndex(JSCell* cell, JSGlobalObject* lexicalGlobalObject,
 {
     auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
-    RuntimeArray* thisObject = jsCast<RuntimeArray*>(cell);
+    RuntimeArray* thisObject = uncheckedDowncast<RuntimeArray>(cell);
     if (index >= thisObject->getLength()) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Range error"_s));
         return false;
@@ -161,7 +162,7 @@ bool RuntimeArray::deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned)
 
 JSC::GCClient::IsoSubspace* RuntimeArray::subspaceForImpl(JSC::VM& vm)
 {
-    return &static_cast<JSVMClientData*>(vm.clientData)->runtimeArraySpace();
+    return &downcast<JSVMClientData>(vm.clientData)->runtimeArraySpace();
 }
 
 }

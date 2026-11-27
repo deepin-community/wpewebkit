@@ -27,7 +27,7 @@
 namespace WebCore {
 
 class SVGTitleElement final : public SVGElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGTitleElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGTitleElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGTitleElement);
 public:
     static Ref<SVGTitleElement> create(const QualifiedName&, Document&);
@@ -35,11 +35,11 @@ public:
 private:
     SVGTitleElement(const QualifiedName&, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void childrenChanged(const ChildChange&) final;
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
     bool supportsFocus() const final { return false; }
 };
 

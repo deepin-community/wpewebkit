@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,14 +27,19 @@
 #include "WebValidationMessageClient.h"
 
 #include "MessageSenderInlines.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
+#include <WebCore/DocumentView.h>
 #include <WebCore/Element.h>
 #include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameView.h>
+#include <WebCore/NodeDocument.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 using namespace WebCore;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebValidationMessageClient);
 
 WebValidationMessageClient::WebValidationMessageClient(WebPage& page)
     : m_page(page)
@@ -49,20 +54,26 @@ WebValidationMessageClient::~WebValidationMessageClient()
 
 void WebValidationMessageClient::documentDetached(Document& document)
 {
-    if (!m_currentAnchor)
+    RefPtr anchor = m_currentAnchor.get();
+    if (!anchor)
         return;
-    if (&m_currentAnchor->document() == &document)
-        hideValidationMessage(*m_currentAnchor);
+    if (&anchor->document() == &document)
+        hideValidationMessage(*anchor);
 }
 
-void WebValidationMessageClient::showValidationMessage(const Element& anchor, const String& message)
+void WebValidationMessageClient::showValidationMessage(const Element& anchor, String&& message)
 {
-    if (m_currentAnchor)
-        hideValidationMessage(*m_currentAnchor);
+    if (RefPtr currentAnchor = m_currentAnchor.get())
+        hideValidationMessage(*currentAnchor);
 
     m_currentAnchor = anchor;
     m_currentAnchorRect = anchor.boundingBoxInRootViewCoordinates();
-    Ref { *m_page }->send(Messages::WebPageProxy::ShowValidationMessage(m_currentAnchorRect, message));
+
+    std::optional<FrameIdentifier> rootFrameID;
+    if (RefPtr view = anchor.document().view())
+        rootFrameID = view->rootFrameID();
+
+    Ref { *m_page }->send(Messages::WebPageProxy::ShowValidationMessage(m_currentAnchorRect, WTF::move(message), rootFrameID));
 }
 
 void WebValidationMessageClient::hideValidationMessage(const Element& anchor)
@@ -94,13 +105,14 @@ bool WebValidationMessageClient::isValidationMessageVisible(const Element& ancho
 
 void WebValidationMessageClient::updateValidationBubbleStateIfNeeded()
 {
-    if (!m_currentAnchor)
+    RefPtr anchor = m_currentAnchor.get();
+    if (!anchor)
         return;
 
     // We currently hide the validation bubble if its position is outdated instead of trying
     // to update its position.
-    if (m_currentAnchorRect != m_currentAnchor->boundingBoxInRootViewCoordinates())
-        hideValidationMessage(*m_currentAnchor);
+    if (m_currentAnchorRect != anchor->boundingBoxInRootViewCoordinates())
+        hideValidationMessage(*anchor);
 }
 
 } // namespace WebKit

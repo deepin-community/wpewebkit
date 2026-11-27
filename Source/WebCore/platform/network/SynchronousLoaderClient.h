@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,7 @@ class SynchronousLoaderMessageQueue : public ThreadSafeRefCounted<SynchronousLoa
 public:
     static Ref<SynchronousLoaderMessageQueue> create() { return adoptRef(*new SynchronousLoaderMessageQueue); }
 
-    void append(std::unique_ptr<Function<void()>>&& task) { m_queue.append(WTFMove(task)); }
+    void append(std::unique_ptr<Function<void()>>&& task) { m_queue.append(WTF::move(task)); }
     void kill() { m_queue.kill(); }
     bool killed() const { return m_queue.killed(); }
     std::unique_ptr<Function<void()>> waitForMessage() { return m_queue.waitForMessage(); }
@@ -56,9 +56,9 @@ public:
     virtual ~SynchronousLoaderClient();
 
     void setAllowStoredCredentials(bool allow) { m_allowStoredCredentials = allow; }
-    const ResourceResponse& response() const { return m_response; }
-    Vector<uint8_t>& mutableData() { return m_data; }
-    const ResourceError& error() const { return m_error; }
+    const ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
+    Vector<uint8_t>& mutableData() LIFETIME_BOUND { return m_data; }
+    const ResourceError& error() const LIFETIME_BOUND { return m_error; }
     SynchronousLoaderMessageQueue& messageQueue() { return m_messageQueue.get(); }
 
     WEBCORE_EXPORT static ResourceError platformBadResponseError();
@@ -79,6 +79,6 @@ private:
     ResourceResponse m_response;
     Vector<uint8_t> m_data;
     ResourceError m_error;
-    Ref<SynchronousLoaderMessageQueue> m_messageQueue;
+    const Ref<SynchronousLoaderMessageQueue> m_messageQueue;
 };
 }

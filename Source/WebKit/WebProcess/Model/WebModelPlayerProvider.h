@@ -26,21 +26,29 @@
 #pragma once
 
 #include <WebCore/ModelPlayerProvider.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebKit {
 
 class WebPage;
 
 class WebModelPlayerProvider final : public WebCore::ModelPlayerProvider {
+    WTF_MAKE_TZONE_ALLOCATED(WebModelPlayerProvider);
 public:
-    WebModelPlayerProvider(WebPage&);
+    static Ref<WebModelPlayerProvider> create(WebPage&);
+
     virtual ~WebModelPlayerProvider();
 
 private:
-    // WebCore::ModelPlayerProvider overrides.
-    virtual RefPtr<WebCore::ModelPlayer> createModelPlayer(WebCore::ModelPlayerClient&) final;
+    WebModelPlayerProvider(WebPage&);
 
-    WebPage& m_page;
+    // WebCore::ModelPlayerProvider overrides.
+    bool isAvailable() const final;
+    RefPtr<WebCore::ModelPlayer> createModelPlayer(WebCore::ModelPlayerClient&) final;
+    void deleteModelPlayer(WebCore::ModelPlayer&) final;
+
+    WeakRef<WebPage> m_page;
 };
 
 }

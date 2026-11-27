@@ -26,7 +26,6 @@
 #pragma once
 
 #include "APIObject.h"
-#include "MessageReceiver.h"
 #include "WebContextSupplement.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/NotificationClient.h>
@@ -54,7 +53,7 @@ class WebProcessPool;
 class WebsiteDataStore;
 
 enum class WebNotificationIdentifierType;
-using WebNotificationIdentifier = LegacyNullableObjectIdentifier<WebNotificationIdentifierType>;
+using WebNotificationIdentifier = ObjectIdentifier<WebNotificationIdentifierType>;
 
 class WebNotificationManagerProxy : public API::ObjectImpl<API::Object::Type::NotificationManager>, public WebContextSupplement {
 public:
@@ -62,7 +61,7 @@ public:
 
     static Ref<WebNotificationManagerProxy> create(WebProcessPool*);
 
-    static WebNotificationManagerProxy& sharedServiceWorkerManager();
+    static WebNotificationManagerProxy& serviceWorkerManagerSingleton();
 
     virtual ~WebNotificationManagerProxy();
 
@@ -85,16 +84,15 @@ public:
     void providerDidUpdateNotificationPolicy(const API::SecurityOrigin*, bool allowed);
     void providerDidRemoveNotificationPolicies(API::Array* origins);
 
-    using API::Object::ref;
-    using API::Object::deref;
+    // WebContextSupplement.
+    void ref() const final { API::ObjectImpl<API::Object::Type::NotificationManager>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::NotificationManager>::deref(); }
 
 private:
     explicit WebNotificationManagerProxy(WebProcessPool*);
 
     // WebContextSupplement
     void processPoolDestroyed() override;
-    void refWebContextSupplement() override;
-    void derefWebContextSupplement() override;
 
     bool showImpl(WebPageProxy*, Ref<WebNotification>&&, RefPtr<WebCore::NotificationResources>&&);
 
@@ -105,3 +103,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebNotificationManagerProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::NotificationManager; }
+SPECIALIZE_TYPE_TRAITS_END()

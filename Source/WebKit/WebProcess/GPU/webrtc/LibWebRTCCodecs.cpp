@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,25 +35,26 @@
 #include "Logging.h"
 #include "RemoteVideoFrameObjectHeapProxy.h"
 #include "RemoteVideoFrameProxy.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/CVUtilities.h>
 #include <WebCore/LibWebRTCDav1dDecoder.h>
 #include <WebCore/LibWebRTCMacros.h>
+#include <WebCore/LibWebRTCVideoFrameUtilities.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/Page.h>
 #include <WebCore/PlatformMediaSessionManager.h>
+#include <WebCore/Settings.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #include <WebCore/VideoFrameCV.h>
 #include <wtf/MainThread.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/threads/BinarySemaphore.h>
 
-ALLOW_COMMA_BEGIN
-
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/webkit_sdk/WebKit/WebKitDecoder.h>
 #include <webrtc/webkit_sdk/WebKit/WebKitEncoder.h>
-
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #include <pal/cf/CoreMediaSoftLink.h>
 
@@ -62,24 +63,24 @@ using namespace WebCore;
 
 static webrtc::WebKitVideoDecoder createVideoDecoder(const webrtc::SdpVideoFormat& format)
 {
-    auto& codecs = WebProcess::singleton().libWebRTCCodecs();
+    Ref codecs = WebProcess::singleton().libWebRTCCodecs();
     auto codecString = String::fromUTF8(format.name);
 
     if (equalIgnoringASCIICase(codecString, "H264"_s))
-        return { codecs.createDecoder(VideoCodecType::H264), false };
+        return { codecs->createDecoder(WebCore::VideoCodecType::H264), false };
 
     if (equalIgnoringASCIICase(codecString, "H265"_s))
-        return { codecs.createDecoder(VideoCodecType::H265), false };
+        return { codecs->createDecoder(WebCore::VideoCodecType::H265), false };
 
 #if ENABLE(VP9)
-    if (equalIgnoringASCIICase(codecString, "VP9"_s) && codecs.isSupportingVP9HardwareDecoder())
-        return { codecs.createDecoder(VideoCodecType::VP9), false };
+    if (equalIgnoringASCIICase(codecString, "VP9"_s) && codecs->isSupportingVP9HardwareDecoder())
+        return { codecs->createDecoder(WebCore::VideoCodecType::VP9), false };
 #endif
 
 #if ENABLE(AV1)
     if (equalIgnoringASCIICase(codecString, "AV1"_s)) {
-        if (codecs.hasAV1HardwareDecoder())
-            return { codecs.createDecoder(VideoCodecType::AV1), false };
+        if (codecs->hasAV1HardwareDecoder())
+            return { codecs->createDecoder(WebCore::VideoCodecType::AV1), false };
         auto av1Decoder = createLibWebRTCDav1dDecoder().moveToUniquePtr();
         return { av1Decoder.release(), true };
     }
@@ -89,29 +90,29 @@ static webrtc::WebKitVideoDecoder createVideoDecoder(const webrtc::SdpVideoForma
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCCodecs);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(LibWebRTCCodecsDecoder, LibWebRTCCodecs::Decoder);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(LibWebRTCCodecsEncoder, LibWebRTCCodecs::Encoder);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCCodecs::Decoder);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCCodecs::Encoder);
 
-std::optional<VideoCodecType> LibWebRTCCodecs::videoCodecTypeFromWebCodec(const String& codec)
+std::optional<WebCore::VideoCodecType> LibWebRTCCodecs::videoCodecTypeFromWebCodec(const String& codec)
 {
     // WebCodecs is assuming case sensitive comparisons.
     if (codec.startsWith("avc1."_s))
-        return VideoCodecType::H264;
+        return WebCore::VideoCodecType::H264;
 
     if (codec.startsWith("vp09.0"_s)) {
         if (!isSupportingVP9HardwareDecoder())
             return { };
-        return VideoCodecType::VP9;
+        return WebCore::VideoCodecType::VP9;
     }
 
     if (codec.startsWith("av01."_s)) {
         if (!hasAV1HardwareDecoder())
             return { };
-        return VideoCodecType::AV1;
+        return WebCore::VideoCodecType::AV1;
     }
 
     if (codec.startsWith("hev1."_s) || codec.startsWith("hvc1."_s))
-        return VideoCodecType::H265;
+        return WebCore::VideoCodecType::H265;
 
     return { };
 }
@@ -133,56 +134,56 @@ void LibWebRTCCodecs::setHasAV1HardwareDecoder(bool hasAV1HardwareDecoder)
 }
 #endif
 
-std::optional<VideoCodecType> LibWebRTCCodecs::videoEncoderTypeFromWebCodec(const String& codec)
+std::optional<WebCore::VideoCodecType> LibWebRTCCodecs::videoEncoderTypeFromWebCodec(const String& codec)
 {
     // WebCodecs is assuming case sensitive comparisons.
     if (codec.startsWith("avc1."_s))
-        return VideoCodecType::H264;
+        return WebCore::VideoCodecType::H264;
 
     if (codec.startsWith("hev1."_s) || codec.startsWith("hvc1."_s))
-        return VideoCodecType::H265;
+        return WebCore::VideoCodecType::H265;
 
     return { };
 }
 
 static int32_t releaseVideoDecoder(webrtc::WebKitVideoDecoder::Value decoder)
 {
-    return WebProcess::singleton().libWebRTCCodecs().releaseDecoder(*static_cast<LibWebRTCCodecs::Decoder*>(decoder));
+    return protect(WebProcess::singleton().libWebRTCCodecs())->releaseDecoder(*static_cast<LibWebRTCCodecs::Decoder*>(decoder));
 }
 
-static int32_t decodeVideoFrame(webrtc::WebKitVideoDecoder::Value decoder, uint32_t timeStamp, const uint8_t* data, size_t size, uint16_t width,  uint16_t height)
+static int32_t decodeVideoFrame(webrtc::WebKitVideoDecoder::Value decoder, uint32_t timeStamp, const uint8_t* data, size_t size, uint16_t width,  uint16_t height, const webrtc::ColorSpace* colorSpace)
 {
-    return WebProcess::singleton().libWebRTCCodecs().decodeFrame(*static_cast<LibWebRTCCodecs::Decoder*>(decoder), timeStamp, { data, size }, width, height);
+    return protect(WebProcess::singleton().libWebRTCCodecs())->decodeWebRTCFrame(*static_cast<LibWebRTCCodecs::Decoder*>(decoder), timeStamp, unsafeMakeSpan(data, size), width, height, colorSpaceFromLibWebRTCColorSpace(colorSpace));
 }
 
 static int32_t registerDecodeCompleteCallback(webrtc::WebKitVideoDecoder::Value decoder, void* decodedImageCallback)
 {
-    WebProcess::singleton().libWebRTCCodecs().registerDecodeFrameCallback(*static_cast<LibWebRTCCodecs::Decoder*>(decoder), decodedImageCallback);
+    protect(WebProcess::singleton().libWebRTCCodecs())->registerDecodeFrameCallback(*static_cast<LibWebRTCCodecs::Decoder*>(decoder), decodedImageCallback);
     return 0;
 }
 
 static webrtc::WebKitVideoEncoder createVideoEncoder(const webrtc::SdpVideoFormat& format)
 {
     if (format.name == "H264" || format.name == "h264")
-        return WebProcess::singleton().libWebRTCCodecs().createEncoder(VideoCodecType::H264, format.parameters);
+        return protect(WebProcess::singleton().libWebRTCCodecs())->createEncoder(WebCore::VideoCodecType::H264, format.parameters);
 
     if (format.name == "H265" || format.name == "h265")
-        return WebProcess::singleton().libWebRTCCodecs().createEncoder(VideoCodecType::H265, format.parameters);
+        return protect(WebProcess::singleton().libWebRTCCodecs())->createEncoder(WebCore::VideoCodecType::H265, format.parameters);
 
     return nullptr;
 }
 
 static int32_t releaseVideoEncoder(webrtc::WebKitVideoEncoder encoder)
 {
-    return WebProcess::singleton().libWebRTCCodecs().releaseEncoder(*static_cast<LibWebRTCCodecs::Encoder*>(encoder));
+    return protect(WebProcess::singleton().libWebRTCCodecs())->releaseEncoder(*static_cast<LibWebRTCCodecs::Encoder*>(encoder));
 }
 
 static int32_t initializeVideoEncoder(webrtc::WebKitVideoEncoder encoder, const webrtc::VideoCodec& codec)
 {
-    return WebProcess::singleton().libWebRTCCodecs().initializeEncoder(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), codec.width, codec.height, codec.startBitrate, codec.maxBitrate, codec.minBitrate, codec.maxFramerate);
+    return protect(WebProcess::singleton().libWebRTCCodecs())->initializeEncoder(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), codec.width, codec.height, codec.startBitrate, codec.maxBitrate, codec.minBitrate, codec.maxFramerate);
 }
 
-static inline VideoFrame::Rotation toVideoRotation(webrtc::VideoRotation rotation)
+static inline VideoFrame::Rotation NODELETE toVideoRotation(webrtc::VideoRotation rotation)
 {
     switch (rotation) {
     case webrtc::kVideoRotation_0:
@@ -198,19 +199,19 @@ static inline VideoFrame::Rotation toVideoRotation(webrtc::VideoRotation rotatio
     return VideoFrame::Rotation::None;
 }
 
-static void createRemoteDecoder(LibWebRTCCodecs::Decoder& decoder, IPC::Connection& connection, bool useRemoteFrames, bool enableAdditionalLogging, Function<void(bool)>&& callback)
+static void createRemoteDecoder(LibWebRTCCodecs::Decoder& decoder, IPC::Connection& connection, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace> colorSpaceOverride, Function<void(bool)>&& callback)
 {
-    connection.sendWithAsyncReplyOnDispatcher(Messages::LibWebRTCCodecsProxy::CreateDecoder { decoder.identifier, decoder.type, decoder.codec, useRemoteFrames, enableAdditionalLogging }, WebProcess::singleton().libWebRTCCodecs().workQueue(), WTFMove(callback), 0);
+    connection.sendWithAsyncReplyOnDispatcher(Messages::LibWebRTCCodecsProxy::CreateDecoder { decoder.identifier, decoder.type, decoder.codec, useRemoteFrames, enableAdditionalLogging, WTF::move(colorSpaceOverride) }, WebProcess::singleton().libWebRTCCodecs().workQueue(), WTF::move(callback), 0);
 }
 
 static int32_t encodeVideoFrame(webrtc::WebKitVideoEncoder encoder, const webrtc::VideoFrame& frame, bool shouldEncodeAsKeyFrame)
 {
-    return WebProcess::singleton().libWebRTCCodecs().encodeFrame(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), frame, shouldEncodeAsKeyFrame);
+    return protect(WebProcess::singleton().libWebRTCCodecs())->encodeFrame(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), frame, shouldEncodeAsKeyFrame);
 }
 
 static int32_t registerEncodeCompleteCallback(webrtc::WebKitVideoEncoder encoder, void* encodedImageCallback)
 {
-    WebProcess::singleton().libWebRTCCodecs().registerEncodeFrameCallback(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), encodedImageCallback);
+    protect(WebProcess::singleton().libWebRTCCodecs())->registerEncodeFrameCallback(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), encodedImageCallback);
     return 0;
 }
 
@@ -218,7 +219,7 @@ static void setEncodeRatesCallback(webrtc::WebKitVideoEncoder encoder, const web
 {
     uint32_t bitRateInKbps = parameters.bitrate.get_sum_kbps();
     uint32_t frameRate = static_cast<uint32_t>(parameters.framerate_fps + 0.5);
-    WebProcess::singleton().libWebRTCCodecs().setEncodeRates(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), bitRateInKbps, frameRate);
+    protect(WebProcess::singleton().libWebRTCCodecs())->setEncodeRates(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), bitRateInKbps, frameRate);
 }
 
 Ref<LibWebRTCCodecs> LibWebRTCCodecs::create()
@@ -237,11 +238,7 @@ void LibWebRTCCodecs::initializeIfNeeded()
     static std::once_flag doInitializationOnce;
     std::call_once(doInitializationOnce, [] {
         callOnMainRunLoopAndWait([] {
-#if HAVE(AUDIT_TOKEN)
-            WebProcess::singleton().ensureGPUProcessConnection().auditToken();
-#else
-            WebProcess::singleton().ensureGPUProcessConnection();
-#endif
+            protect(WebProcess::singleton().ensureGPUProcessConnection())->waitForDidInitialize();
         });
     });
 }
@@ -254,12 +251,13 @@ void LibWebRTCCodecs::ensureGPUProcessConnectionOnMainThreadWithLock()
 
     Ref gpuConnection = WebProcess::singleton().ensureGPUProcessConnection();
     gpuConnection->addClient(*this);
-    m_connection = &gpuConnection->connection();
-    m_videoFrameObjectHeapProxy = &gpuConnection->videoFrameObjectHeapProxy();
-    m_connection->addWorkQueueMessageReceiver(Messages::LibWebRTCCodecs::messageReceiverName(), m_queue, *this);
+    Ref connection = gpuConnection->connection();
+    m_connection = connection.copyRef();
+    m_videoFrameObjectHeapProxy = gpuConnection->videoFrameObjectHeapProxy();
+    connection->addWorkQueueMessageReceiver(Messages::LibWebRTCCodecs::messageReceiverName(), m_queue, *this);
 
     if (m_loggingLevel)
-        m_connection->send(Messages::LibWebRTCCodecsProxy::SetRTCLoggingLevel { *m_loggingLevel }, 0);
+        connection->send(Messages::LibWebRTCCodecsProxy::SetRTCLoggingLevel { *m_loggingLevel }, 0);
 }
 
 // May be called on any thread.
@@ -271,20 +269,20 @@ void LibWebRTCCodecs::ensureGPUProcessConnectionAndDispatchToThread(Function<voi
 
     // Fast path when we already have a connection.
     if (m_connection) {
-        m_queue->dispatch(WTFMove(task));
+        m_queue->dispatch(WTF::move(task));
         return;
     }
 
     // We don't have a connection to the GPUProcess yet, we need to hop to the main thread to initiate it.
-    m_tasksToDispatchAfterEstablishingConnection.append(WTFMove(task));
+    m_tasksToDispatchAfterEstablishingConnection.append(WTF::move(task));
     if (m_tasksToDispatchAfterEstablishingConnection.size() != 1)
         return;
 
-    callOnMainRunLoop([this] {
+    callOnMainRunLoop([this, protectedThis = Ref { *this }] {
         Locker locker { m_connectionLock };
         ensureGPUProcessConnectionOnMainThreadWithLock();
         for (auto& task : std::exchange(m_tasksToDispatchAfterEstablishingConnection, { }))
-            m_queue->dispatch(WTFMove(task));
+            m_queue->dispatch(WTF::move(task));
     });
 }
 
@@ -312,12 +310,12 @@ void LibWebRTCCodecs::setCallbacks(bool useGPUProcess, bool useRemoteFrames)
     if (!useGPUProcess)
         return;
 
-    auto& libWebRTCCodecs = WebProcess::singleton().libWebRTCCodecs();
-    libWebRTCCodecs.m_useRemoteFrames = useRemoteFrames;
-    if (libWebRTCCodecs.m_useGPUProcess)
+    Ref libWebRTCCodecs = WebProcess::singleton().libWebRTCCodecs();
+    libWebRTCCodecs->m_useRemoteFrames = useRemoteFrames;
+    if (libWebRTCCodecs->m_useGPUProcess)
         return;
 
-    libWebRTCCodecs.m_useGPUProcess = useGPUProcess;
+    libWebRTCCodecs->m_useGPUProcess = useGPUProcess;
 
     webrtc::setVideoDecoderCallbacks(createVideoDecoder, releaseVideoDecoder, decodeVideoFrame, registerDecodeCompleteCallback);
     webrtc::setVideoEncoderCallbacks(createVideoEncoder, releaseVideoEncoder, initializeVideoEncoder, encodeVideoFrame, registerEncodeCompleteCallback, setEncodeRatesCallback);
@@ -331,45 +329,45 @@ void LibWebRTCCodecs::setWebRTCMediaPipelineAdditionalLoggingEnabled(bool enable
 }
 
 // May be called on any thread.
-LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoder(VideoCodecType type)
+LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoder(WebCore::VideoCodecType type)
 {
-    return createDecoderInternal(type, { }, [](auto*) { });
+    return createDecoderInternal(type, { }, std::nullopt, [](auto*) { });
 }
 
-void LibWebRTCCodecs::createDecoderAndWaitUntilReady(VideoCodecType type, const String& codec, Function<void(Decoder*)>&& callback)
+void LibWebRTCCodecs::createDecoderAndWaitUntilReady(WebCore::VideoCodecType type, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
 {
-    createDecoderInternal(type, codec, WTFMove(callback));
+    createDecoderInternal(type, codec, WTF::move(colorSpaceOverride), WTF::move(callback));
 }
 
-LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoderInternal(VideoCodecType type, const String& codec, Function<void(Decoder*)>&& callback)
+LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoderInternal(WebCore::VideoCodecType type, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
 {
-    auto decoder = makeUnique<Decoder>();
+    auto decoder = makeUnique<Decoder>(VideoDecoderIdentifier::generate());
     auto* result = decoder.get();
-    decoder->identifier = VideoDecoderIdentifier::generate();
     decoder->type = type;
     decoder->codec = codec.isolatedCopy();
+    decoder->colorSpaceOverride = WTF::move(colorSpaceOverride);
 
-    ensureGPUProcessConnectionAndDispatchToThread([this, decoder = WTFMove(decoder), callback = WTFMove(callback)]() mutable {
+    ensureGPUProcessConnectionAndDispatchToThread([this, protectedThis = Ref { *this }, decoder = WTF::move(decoder), callback = WTF::move(callback)]() mutable {
         assertIsCurrent(workQueue());
 
         {
             Locker locker { m_connectionLock };
-            createRemoteDecoder(*decoder, *protectedConnection(), m_useRemoteFrames, m_enableAdditionalLogging, [identifier = decoder->identifier, callback = WTFMove(callback)](bool result) mutable {
+            createRemoteDecoder(*decoder, *protect(m_connection), m_useRemoteFrames, m_enableAdditionalLogging, decoder->colorSpaceOverride, [identifier = decoder->identifier, callback = WTF::move(callback)](bool result) mutable {
                 if (!result) {
                     callback(nullptr);
                     return;
                 }
 
-                auto& codecs = WebProcess::singleton().libWebRTCCodecs();
-                assertIsCurrent(codecs.workQueue());
-                callback(codecs.m_decoders.get(identifier));
+                Ref codecs = WebProcess::singleton().libWebRTCCodecs();
+                assertIsCurrent(codecs->workQueue());
+                callback(codecs->m_decoders.get(identifier));
             });
 
             setDecoderConnection(*decoder, m_connection.get());
 
             auto decoderIdentifier = decoder->identifier;
             ASSERT(!m_decoders.contains(decoderIdentifier));
-            m_decoders.add(decoderIdentifier, WTFMove(decoder));
+            m_decoders.add(decoderIdentifier, WTF::move(decoder));
         }
     });
     return result;
@@ -384,13 +382,13 @@ int32_t LibWebRTCCodecs::releaseDecoder(Decoder& decoder)
         ASSERT(!decoder.decodedImageCallback);
     }
 #endif
-    ensureGPUProcessConnectionAndDispatchToThread([this, decoderIdentifier = decoder.identifier] {
+    ensureGPUProcessConnectionAndDispatchToThread([this, protectedThis = Ref { *this }, decoderIdentifier = decoder.identifier] {
         assertIsCurrent(workQueue());
 
         ASSERT(m_decoders.contains(decoderIdentifier));
         if (auto decoder = m_decoders.take(decoderIdentifier)) {
             Locker locker { m_connectionLock };
-            decoderConnection(*decoder)->send(Messages::LibWebRTCCodecsProxy::ReleaseDecoder { decoderIdentifier }, 0);
+            protect(decoderConnection(*decoder))->send(Messages::LibWebRTCCodecsProxy::ReleaseDecoder { decoderIdentifier }, 0);
             gpuProcessConnectionMayNoLongerBeNeeded();
         }
     });
@@ -398,17 +396,15 @@ int32_t LibWebRTCCodecs::releaseDecoder(Decoder& decoder)
 }
 
 // May be called on any thread.
-void LibWebRTCCodecs::flushDecoder(Decoder& decoder, Function<void()>&& callback)
+Ref<GenericPromise> LibWebRTCCodecs::flushDecoder(Decoder& decoder)
 {
     Locker locker { m_connectionLock };
-    if (!decoder.connection || decoder.hasError) {
-        callback();
-        return;
-    }
+    if (!decoder.connection || decoder.hasError)
+        return GenericPromise::createAndResolve();
 
-    decoder.connection->send(Messages::LibWebRTCCodecsProxy::FlushDecoder { decoder.identifier }, 0);
-    Locker flushLocker { decoder.flushCallbacksLock };
-    decoder.flushCallbacks.append(WTFMove(callback));
+    return Ref { *decoder.connection }->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::FlushDecoder { decoder.identifier }, 0)->whenSettled(workQueue(), [] (auto&&) {
+        return GenericPromise::createAndResolve();
+    });
 }
 
 void LibWebRTCCodecs::setDecoderFormatDescription(Decoder& decoder, std::span<const uint8_t> data, uint16_t width, uint16_t height)
@@ -418,32 +414,63 @@ void LibWebRTCCodecs::setDecoderFormatDescription(Decoder& decoder, std::span<co
     if (!decoder.connection)
         return;
 
-    decoder.connection->send(Messages::LibWebRTCCodecsProxy::SetDecoderFormatDescription { decoder.identifier, data, width, height }, 0);
+    Ref { *decoder.connection }->send(Messages::LibWebRTCCodecsProxy::SetDecoderFormatDescription { decoder.identifier, data, width, height }, 0);
 }
 
-static void sendFrameToDecode(LibWebRTCCodecs::Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
+Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::sendFrameToDecode(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
 {
-    if (decoder.type == VideoCodecType::VP9 && (width || height))
-        decoder.connection->send(Messages::LibWebRTCCodecsProxy::SetFrameSize { decoder.identifier, width, height }, 0);
+    if (decoder.type == WebCore::VideoCodecType::VP9 && (width || height))
+        Ref { *decoder.connection }->send(Messages::LibWebRTCCodecsProxy::SetFrameSize { decoder.identifier, width, height }, 0);
 
-    decoder.connection->send(Messages::LibWebRTCCodecsProxy::DecodeFrame { decoder.identifier, timeStamp, data }, 0);
+    return Ref { *decoder.connection }->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::DecodeFrame { decoder.identifier, timeStamp, data }, 0)->whenSettled(workQueue(), [] (auto&& result) mutable {
+        if (!result)
+            return FramePromise::createAndReject("Decoding task did not complete"_s);
+
+        if (!*result)
+            return FramePromise::createAndReject("Decoding task failed"_s);
+
+        return FramePromise::createAndResolve();
+    });
 }
 
-int32_t LibWebRTCCodecs::decodeFrame(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
+int32_t LibWebRTCCodecs::decodeWebRTCFrame(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpace)
+{
+    {
+        Locker locker { m_connectionLock };
+        if (colorSpace != decoder.colorSpaceOverride) {
+            decoder.colorSpaceOverride = colorSpace;
+            if (decoder.connection)
+                protect(decoder.connection)->send(Messages::LibWebRTCCodecsProxy::SetDecoderColorSpaceOverride { decoder.identifier, decoder.colorSpaceOverride }, 0);
+        }
+    }
+
+    auto promise = decodeFrameInternal(decoder, timeStamp, data, width, height);
+    return promise ? WEBRTC_VIDEO_CODEC_OK : WEBRTC_VIDEO_CODEC_ERROR;
+}
+
+Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrame(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data)
+{
+    auto promise = decodeFrameInternal(decoder, timeStamp, data, 0, 0);
+    return promise ? promise.releaseNonNull() : FramePromise::createAndReject("Decoding task did not complete"_s);
+}
+
+RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrameInternal(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
 {
     Locker locker { m_connectionLock };
     if (decoder.hasError) {
         decoder.hasError = false;
-        return WEBRTC_VIDEO_CODEC_ERROR;
+        return nullptr;
     }
 
     if (!decoder.connection) {
-        decoder.pendingFrames.append({ timeStamp, data, width, height });
-        return WEBRTC_VIDEO_CODEC_OK;
+        FramePromise::AutoRejectProducer producer;
+        auto promise = producer.promise();
+
+        decoder.pendingFrames.append({ timeStamp, data, width, height, WTF::move(producer) });
+        return promise;
     }
 
-    sendFrameToDecode(decoder, timeStamp, data, width, height);
-    return WEBRTC_VIDEO_CODEC_OK;
+    return sendFrameToDecode(decoder, timeStamp, data, width, height);
 }
 
 void LibWebRTCCodecs::registerDecodeFrameCallback(Decoder& decoder, void* decodedImageCallback)
@@ -460,7 +487,7 @@ void LibWebRTCCodecs::registerDecodedVideoFrameCallback(Decoder& decoder, Decode
 {
     Locker locker { decoder.decodedImageCallbackLock };
     ASSERT(!decoder.decodedImageCallback);
-    decoder.decoderCallback = WTFMove(callback);
+    decoder.decoderCallback = WTF::move(callback);
 }
 
 void LibWebRTCCodecs::failedDecoding(VideoDecoderIdentifier decoderIdentifier)
@@ -475,19 +502,6 @@ void LibWebRTCCodecs::failedDecoding(VideoDecoderIdentifier decoderIdentifier)
     }
 }
 
-void LibWebRTCCodecs::flushDecoderCompleted(VideoDecoderIdentifier decoderIdentifier)
-{
-    assertIsCurrent(workQueue());
-
-    auto* decoder = m_decoders.get(decoderIdentifier);
-    if (!decoder)
-        return;
-
-    Locker locker { decoder->flushCallbacksLock };
-    if (!decoder->flushCallbacks.isEmpty())
-        decoder->flushCallbacks.takeFirst()();
-}
-
 void LibWebRTCCodecs::completedDecoding(VideoDecoderIdentifier decoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RemoteVideoFrameProxy::Properties&& properties)
 {
     assertIsCurrent(workQueue());
@@ -498,7 +512,7 @@ void LibWebRTCCodecs::completedDecoding(VideoDecoderIdentifier decoderIdentifier
     // needs to be implemented.
     Ref<RemoteVideoFrameProxy> remoteVideoFrame = [&] {
         Locker locker { m_connectionLock };
-        return RemoteVideoFrameProxy::create(protectedConnection().releaseNonNull(), *protectedVideoFrameObjectHeapProxy(), WTFMove(properties));
+        return RemoteVideoFrameProxy::create(protect(m_connection).releaseNonNull(), *protect(m_videoFrameObjectHeapProxy), WTF::move(properties));
     }();
     // FIXME: Do error logging.
     auto* decoder = m_decoders.get(decoderIdentifier);
@@ -508,16 +522,18 @@ void LibWebRTCCodecs::completedDecoding(VideoDecoderIdentifier decoderIdentifier
         return;
     Locker locker { AdoptLock, decoder->decodedImageCallbackLock };
     if (decoder->decoderCallback) {
-        decoder->decoderCallback(WTFMove(remoteVideoFrame), timeStamp);
+        decoder->decoderCallback(WTF::move(remoteVideoFrame), timeStamp);
         return;
     }
     if (!decoder->decodedImageCallback)
         return;
-    auto& frame = remoteVideoFrame.leakRef(); // Balanced by the release callback of videoDecoderTaskComplete.
-    webrtc::videoDecoderTaskComplete(decoder->decodedImageCallback, timeStamp, timeStampNs / 1000, &frame,
+
+    auto frameSize = remoteVideoFrame->size();
+    // The leakRef() call is balanced by the release callback of videoDecoderTaskComplete.
+    webrtc::videoDecoderTaskComplete(decoder->decodedImageCallback, timeStamp, &remoteVideoFrame.leakRef(),
         [](auto* pointer) { return static_cast<RemoteVideoFrameProxy*>(pointer)->pixelBuffer(); },
         [](auto* pointer) { static_cast<RemoteVideoFrameProxy*>(pointer)->deref(); },
-        frame.size().width(), frame.size().height());
+        frameSize.width(), frameSize.height());
 }
 
 void LibWebRTCCodecs::completedDecodingCV(VideoDecoderIdentifier decoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RetainPtr<CVPixelBufferRef>&& pixelBuffer)
@@ -537,59 +553,73 @@ void LibWebRTCCodecs::completedDecodingCV(VideoDecoderIdentifier decoderIdentifi
     }
 
     if (decoder->decoderCallback) {
-        decoder->decoderCallback(VideoFrameCV::create(MediaTime { timeStampNs, 1000000000 }, false, VideoFrame::Rotation::None, WTFMove(pixelBuffer)), timeStamp);
+        decoder->decoderCallback(VideoFrameCV::create(MediaTime { timeStampNs, 1000000000 }, false, VideoFrame::Rotation::None, WTF::move(pixelBuffer)), timeStamp);
         return;
     }
 
     if (!decoder->decodedImageCallback)
         return;
 
-    webrtc::videoDecoderTaskComplete(decoder->decodedImageCallback, timeStamp, timeStampNs / 1000, pixelBuffer.get());
+    webrtc::videoDecoderTaskComplete(decoder->decodedImageCallback, timeStamp, pixelBuffer.get());
 }
 
-static inline webrtc::VideoCodecType toWebRTCCodecType(VideoCodecType type)
+static inline webrtc::VideoCodecType NODELETE toWebRTCCodecType(WebCore::VideoCodecType type)
 {
     switch (type) {
-    case VideoCodecType::H264:
+    case WebCore::VideoCodecType::H264:
         return webrtc::kVideoCodecH264;
-    case VideoCodecType::H265:
+    case WebCore::VideoCodecType::H265:
         return webrtc::kVideoCodecH265;
-    case VideoCodecType::VP9:
+    case WebCore::VideoCodecType::VP9:
         return webrtc::kVideoCodecVP9;
-    case VideoCodecType::AV1:
+    case WebCore::VideoCodecType::AV1:
         return webrtc::kVideoCodecAV1;
     }
 }
 
-LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoder(VideoCodecType type, const std::map<std::string, std::string>& parameters)
+LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoder(WebCore::VideoCodecType type, const std::map<std::string, std::string>& parameters)
 {
+    // Should be called from libwebrtc encoding thread.
+    ASSERT(!isMainRunLoop());
+    ASSERT(!workQueue().isCurrent());
+
     return createEncoderInternal(type, { }, parameters, true, true, VideoEncoderScalabilityMode::L1T1, [](auto*) { });
 }
 
 #if ENABLE(WEB_CODECS)
-void LibWebRTCCodecs::createEncoderAndWaitUntilInitialized(VideoCodecType type, const String& codec, const std::map<std::string, std::string>& parameters, const VideoEncoder::Config& config, Function<void(Encoder*)>&& callback)
+void LibWebRTCCodecs::createEncoderAndWaitUntilInitialized(WebCore::VideoCodecType type, const String& codec, const std::map<std::string, std::string>& parameters, const VideoEncoder::Config& config, Function<void(Encoder*)>&& callback)
 {
-    createEncoderInternal(type, codec, parameters, config.isRealtime, config.useAnnexB, config.scalabilityMode, [config, callback = WTFMove(callback)] (auto* encoder) {
+    createEncoderInternal(type, codec, parameters, config.isRealtime, config.useAnnexB, config.scalabilityMode, [config, callback = WTF::move(callback)] (auto* encoder) {
         if (encoder) {
             // Encoders use kbps bit rates.
-            WebProcess::singleton().libWebRTCCodecs().initializeEncoderInternal(*encoder, config.width, config.height, config.bitRate / 1000, 2 * config.bitRate / 1000, 0, config.frameRate);
-            WebProcess::singleton().libWebRTCCodecs().setEncodeRates(*encoder, config.bitRate / 1000, config.frameRate);
+            Ref libWebRTCCodecs = WebProcess::singleton().libWebRTCCodecs();
+            assertIsCurrent(libWebRTCCodecs->workQueue());
+            libWebRTCCodecs->initializeEncoder(*encoder, config.width, config.height, config.bitRate / 1000, 2 * config.bitRate / 1000, 0, config.frameRate);
+            libWebRTCCodecs->setEncodeRates(*encoder, config.bitRate / 1000, config.frameRate);
         }
         callback(encoder);
     });
 }
 #endif // ENABLE(WEB_CODECS)
 
+LibWebRTCCodecs::Encoder::PendingFrame::PendingFrame(std::unique_ptr<webrtc::VideoFrame>&& videoFrame, bool shouldEncodeAsKeyFrame)
+    : videoFrame(WTF::move(videoFrame))
+    , shouldEncodeAsKeyFrame(shouldEncodeAsKeyFrame)
+{
+}
+LibWebRTCCodecs::Encoder::PendingFrame::PendingFrame(PendingFrame&&) = default;
+LibWebRTCCodecs::Encoder::PendingFrame& LibWebRTCCodecs::Encoder::PendingFrame::operator=(PendingFrame&&) = default;
+LibWebRTCCodecs::Encoder::PendingFrame::~PendingFrame() = default;
+
 static void createRemoteEncoder(LibWebRTCCodecs::Encoder& encoder, IPC::Connection& connection, const Vector<std::pair<String, String>>& parameters, Function<void(bool)>&& callback)
 {
-    connection.sendWithAsyncReplyOnDispatcher(Messages::LibWebRTCCodecsProxy::CreateEncoder { encoder.identifier, encoder.type, encoder.codec, parameters, encoder.isRealtime, encoder.useAnnexB, encoder.scalabilityMode }, WebProcess::singleton().libWebRTCCodecs().workQueue(), WTFMove(callback), 0);
+    connection.sendWithAsyncReplyOnDispatcher(Messages::LibWebRTCCodecsProxy::CreateEncoder { encoder.identifier, encoder.type, encoder.codec, parameters, encoder.isRealtime, encoder.useAnnexB, encoder.scalabilityMode }, WebProcess::singleton().libWebRTCCodecs().workQueue(), WTF::move(callback), 0);
 }
 
-LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoderInternal(VideoCodecType type, const String& codec, const std::map<std::string, std::string>& formatParameters, bool isRealtime, bool useAnnexB, VideoEncoderScalabilityMode scalabilityMode, Function<void(Encoder*)>&& callback)
+LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoderInternal(WebCore::VideoCodecType type, const String& codec, const std::map<std::string, std::string>& formatParameters, bool isRealtime, bool useAnnexB, VideoEncoderScalabilityMode scalabilityMode, Function<void(Encoder*)>&& callback)
 {
-    auto encoder = makeUnique<Encoder>();
+    auto encoder = makeUnique<Encoder>(VideoEncoderIdentifier::generate());
     auto* result = encoder.get();
-    encoder->identifier = VideoEncoderIdentifier::generate();
     encoder->type = type;
     encoder->useAnnexB = useAnnexB;
     encoder->isRealtime = isRealtime;
@@ -600,7 +630,7 @@ LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoderInternal(VideoCodecType 
         return std::pair { String::fromUTF8(entry.first), String::fromUTF8(entry.second) };
     });
 
-    ensureGPUProcessConnectionAndDispatchToThread([this, encoder = WTFMove(encoder), parameters = WTFMove(parameters), callback = WTFMove(callback)]() mutable {
+    ensureGPUProcessConnectionAndDispatchToThread([this, protectedThis = Ref { *this }, encoder = WTF::move(encoder), parameters = WTF::move(parameters), callback = WTF::move(callback)]() mutable {
         assertIsCurrent(workQueue());
 
         auto connection = [&]() -> Ref<IPC::Connection> {
@@ -610,23 +640,23 @@ LibWebRTCCodecs::Encoder* LibWebRTCCodecs::createEncoderInternal(VideoCodecType 
 
         {
             Locker locker { m_encodersConnectionLock };
-            createRemoteEncoder(*encoder, connection.get(), parameters, [identifier = encoder->identifier, callback = WTFMove(callback)](bool result) mutable {
+            createRemoteEncoder(*encoder, connection.get(), parameters, [identifier = encoder->identifier, callback = WTF::move(callback)](bool result) mutable {
                 if (!result) {
                     callback(nullptr);
                     return;
                 }
 
-                auto& codecs = WebProcess::singleton().libWebRTCCodecs();
-                assertIsCurrent(codecs.workQueue());
-                callback(codecs.m_encoders.get(identifier));
+                Ref codecs = WebProcess::singleton().libWebRTCCodecs();
+                assertIsCurrent(codecs->workQueue());
+                callback(codecs->m_encoders.get(identifier));
             });
-            setEncoderConnection(*encoder, connection.ptr());
+            setEncoderConnection(*encoder, connection.copyRef());
         }
 
-        encoder->parameters = WTFMove(parameters);
+        encoder->parameters = WTF::move(parameters);
         auto encoderIdentifier = encoder->identifier;
         ASSERT(!m_encoders.contains(encoderIdentifier));
-        m_encoders.add(encoderIdentifier, WTFMove(encoder));
+        m_encoders.add(encoderIdentifier, WTF::move(encoder));
     });
     return result;
 }
@@ -639,14 +669,14 @@ int32_t LibWebRTCCodecs::releaseEncoder(Encoder& encoder)
         ASSERT(!encoder.encodedImageCallback);
     }
 #endif
-    ensureGPUProcessConnectionAndDispatchToThread([this, encoderIdentifier = encoder.identifier] {
+    ensureGPUProcessConnectionAndDispatchToThread([this, protectedThis = Ref { *this }, encoderIdentifier = encoder.identifier] {
         assertIsCurrent(workQueue());
 
         ASSERT(m_encoders.contains(encoderIdentifier));
         auto encoder = m_encoders.take(encoderIdentifier);
 
         Locker locker { m_encodersConnectionLock };
-        encoderConnection(*encoder)->send(Messages::LibWebRTCCodecsProxy::ReleaseEncoder { encoderIdentifier }, 0);
+        protect(encoderConnection(*encoder))->send(Messages::LibWebRTCCodecsProxy::ReleaseEncoder { encoderIdentifier }, 0);
 
         gpuProcessConnectionMayNoLongerBeNeeded();
     });
@@ -657,64 +687,78 @@ int32_t LibWebRTCCodecs::initializeEncoder(Encoder& encoder, uint16_t width, uin
 {
     ASSERT(!isMainRunLoop());
 
-    ensureGPUProcessConnectionAndDispatchToThread([this, encoderIdentifier = encoder.identifier, width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate]() mutable {
-        assertIsCurrent(workQueue());
+    Locker locker { m_encodersConnectionLock };
 
-        initializeEncoderInternal(*m_encoders.get(encoderIdentifier), width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate);
-    });
+    setEncoderInitializationData(encoder, EncoderInitializationData { width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate });
+    if (RefPtr connection = encoderConnection(encoder))
+        connection->send(Messages::LibWebRTCCodecsProxy::InitializeEncoder { encoder.identifier, width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate }, 0);
+
     return 0;
 }
 
-void LibWebRTCCodecs::initializeEncoderInternal(Encoder& encoder, uint16_t width, uint16_t height, unsigned startBitRate, unsigned maxBitRate, unsigned minBitRate, uint32_t maxFrameRate)
+template<typename Frame> RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::encodeFrameInternal(Encoder& encoder, const Frame& frame, bool shouldEncodeAsKeyFrame, WebCore::VideoFrame::Rotation rotation, MediaTime mediaTime, int64_t timestamp, std::optional<uint64_t> duration)
 {
-    assertIsCurrent(workQueue());
-
-    encoder.initializationData = EncoderInitializationData { width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate };
-
     Locker locker { m_encodersConnectionLock };
-    encoderConnection(encoder)->send(Messages::LibWebRTCCodecsProxy::InitializeEncoder { encoder.identifier, width, height, startBitRate, maxBitRate, minBitRate, maxFrameRate }, 0);
+    return encodeFrameInternalWithLock(encoder, frame, shouldEncodeAsKeyFrame, rotation, mediaTime, timestamp, duration);
 }
 
-template<typename Frame> int32_t LibWebRTCCodecs::encodeFrameInternal(Encoder& encoder, const Frame& frame, bool shouldEncodeAsKeyFrame, WebCore::VideoFrame::Rotation rotation, MediaTime mediaTime, int64_t timestamp, std::optional<uint64_t> duration, Function<void(bool)>&& callback)
+template<typename Frame> RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::encodeFrameInternalWithLock(Encoder& encoder, const Frame& frame, bool shouldEncodeAsKeyFrame, WebCore::VideoFrame::Rotation rotation, MediaTime mediaTime, int64_t timestamp, std::optional<uint64_t> duration)
 {
-    Locker locker { m_encodersConnectionLock };
-    auto* connection = encoderConnection(encoder);
-    if (!connection)
-        return WEBRTC_VIDEO_CODEC_ERROR;
+    RefPtr connection = encoderConnection(encoder);
+    ASSERT(connection);
+    if (!connection) {
+        RELEASE_LOG_ERROR(WebRTC, "No connection to encode frame");
+        return nullptr;
+    }
 
     auto buffer = encoder.sharedVideoFrameWriter.writeBuffer(frame,
-        [&](auto& semaphore) { encoder.connection->send(Messages::LibWebRTCCodecsProxy::SetSharedVideoFrameSemaphore { encoder.identifier, semaphore }, 0); },
-        [&](SharedMemory::Handle&& handle) { encoder.connection->send(Messages::LibWebRTCCodecsProxy::SetSharedVideoFrameMemory { encoder.identifier, WTFMove(handle) }, 0); });
+        [&](auto& semaphore) { connection->send(Messages::LibWebRTCCodecsProxy::SetSharedVideoFrameSemaphore { encoder.identifier, semaphore }, 0); },
+        [&](SharedMemory::Handle&& handle) { connection->send(Messages::LibWebRTCCodecsProxy::SetSharedVideoFrameMemory { encoder.identifier, WTF::move(handle) }, 0); });
     if (!buffer)
-        return WEBRTC_VIDEO_CODEC_ERROR;
+        return nullptr;
 
-    SharedVideoFrame sharedVideoFrame { mediaTime, false, rotation, WTFMove(*buffer) };
-    encoder.connection->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::EncodeFrame { encoder.identifier, WTFMove(sharedVideoFrame), timestamp, duration, shouldEncodeAsKeyFrame })->whenSettled(workQueue(), [callback = WTFMove(callback)] (auto&& result) mutable {
-        callback(result ? result.value() : false);
+    SharedVideoFrame sharedVideoFrame { mediaTime, false, rotation, { }, WTF::move(*buffer) };
+    auto promise = connection->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::EncodeFrame { encoder.identifier, WTF::move(sharedVideoFrame), timestamp, duration, shouldEncodeAsKeyFrame });
+    return promise->whenSettled(workQueue(), [] (auto&& result) mutable {
+        if (!result)
+            return FramePromise::createAndReject("Encoding task did not complete"_s);
+
+        if (!*result)
+            return FramePromise::createAndReject("Encoding task failed"_s);
+
+        return FramePromise::createAndResolve();
     });
-    return WEBRTC_VIDEO_CODEC_OK;
 }
 
 int32_t LibWebRTCCodecs::encodeFrame(Encoder& encoder, const webrtc::VideoFrame& frame, bool shouldEncodeAsKeyFrame)
 {
-    return encodeFrameInternal(encoder, frame, shouldEncodeAsKeyFrame, toVideoRotation(frame.rotation()), MediaTime::createWithDouble(Seconds::fromMicroseconds(frame.timestamp_us()).value()), frame.timestamp(), { }, [](auto) { });
-}
-
-int32_t LibWebRTCCodecs::encodeFrame(Encoder& encoder, const WebCore::VideoFrame& frame, int64_t timestamp, std::optional<uint64_t> duration, bool shouldEncodeAsKeyFrame, Function<void(bool)>&& callback)
-{
-    return encodeFrameInternal(encoder, frame, shouldEncodeAsKeyFrame, frame.rotation(), frame.presentationTime(), timestamp, duration, WTFMove(callback));
-}
-
-void LibWebRTCCodecs::flushEncoder(Encoder& encoder, Function<void()>&& callback)
-{
     Locker locker { m_encodersConnectionLock };
     RefPtr connection = encoderConnection(encoder);
     if (!connection) {
-        callback();
-        return;
+        encoder.pendingFrames.append(Encoder::PendingFrame { std::make_unique<webrtc::VideoFrame>(frame), shouldEncodeAsKeyFrame });
+        return WEBRTC_VIDEO_CODEC_OK;
     }
 
-    connection->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::FlushEncoder { encoder.identifier })->whenSettled(workQueue(), WTFMove(callback));
+    auto promise = encodeFrameInternalWithLock(encoder, frame, shouldEncodeAsKeyFrame, toVideoRotation(frame.rotation()), MediaTime::createWithDouble(Seconds::fromMicroseconds(frame.timestamp_us()).value()), frame.rtp_timestamp(), { });
+    return promise ? WEBRTC_VIDEO_CODEC_OK : WEBRTC_VIDEO_CODEC_ERROR;
+}
+
+Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::encodeFrame(Encoder& encoder, const WebCore::VideoFrame& frame, int64_t timestamp, std::optional<uint64_t> duration, bool shouldEncodeAsKeyFrame)
+{
+    auto promise = encodeFrameInternal(encoder, frame, shouldEncodeAsKeyFrame, frame.rotation(), frame.presentationTime(), timestamp, duration);
+    return promise ? promise.releaseNonNull() : FramePromise::createAndReject("Encoding task did not complete"_s);
+}
+
+Ref<GenericPromise> LibWebRTCCodecs::flushEncoder(Encoder& encoder)
+{
+    Locker locker { m_encodersConnectionLock };
+    RefPtr connection = encoderConnection(encoder);
+    if (!connection)
+        return GenericPromise::createAndResolve();
+
+    return connection->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::FlushEncoder { encoder.identifier })->whenSettled(workQueue(), [] (auto&&) {
+        return GenericPromise::createAndResolve();
+    });
 }
 
 void LibWebRTCCodecs::registerEncodeFrameCallback(Encoder& encoder, void* encodedImageCallback)
@@ -732,7 +776,7 @@ void LibWebRTCCodecs::registerEncodedVideoFrameCallback(Encoder& encoder, Encode
     Locker locker { encoder.encodedImageCallbackLock };
 
     ASSERT(!encoder.encodedImageCallback);
-    encoder.encoderCallback = WTFMove(callback);
+    encoder.encoderCallback = WTF::move(callback);
 }
 
 #if ENABLE(WEB_CODECS)
@@ -741,31 +785,31 @@ void LibWebRTCCodecs::registerEncoderDescriptionCallback(Encoder& encoder, Descr
     Locker locker { encoder.encodedImageCallbackLock };
 
     ASSERT(!encoder.encodedImageCallback);
-    encoder.descriptionCallback = WTFMove(callback);
+    encoder.descriptionCallback = WTF::move(callback);
 }
 #endif
 
-void LibWebRTCCodecs::setEncodeRates(Encoder& encoder, uint32_t bitRateInKbps, uint32_t frameRate)
+RefPtr<GenericPromise> LibWebRTCCodecs::setEncodeRates(Encoder& encoder, uint32_t bitRateInKbps, uint32_t frameRate)
 {
     Locker locker { m_encodersConnectionLock };
 
-    auto* connection = encoderConnection(encoder);
-    if (!connection) {
-        ensureGPUProcessConnectionAndDispatchToThread([this, hasSentInitialEncodeRates = &encoder.hasSentInitialEncodeRates, encoderIdentifier = encoder.identifier, bitRateInKbps, frameRate] {
-            assertIsCurrent(workQueue());
-            ASSERT(m_encoders.get(encoderIdentifier));
-
-            // hasSentInitialEncodeRates remains valid as encoder destruction goes through ensureGPUProcessConnectionAndDispatchToThread.
-            if (*hasSentInitialEncodeRates)
-                return;
-
-            Locker locker { m_connectionLock };
-            m_connection->send(Messages::LibWebRTCCodecsProxy::SetEncodeRates { encoderIdentifier, bitRateInKbps, frameRate }, 0);
-        });
-        return;
+    auto& data = encoderInitializationData(encoder);
+    ASSERT(data);
+    if (!data) {
+        RELEASE_LOG_ERROR(WebRTC, "Unexpected LibWebRTCCodecs::setEncodeRates call");
+        return nullptr;
     }
-    encoder.hasSentInitialEncodeRates = true;
-    connection->send(Messages::LibWebRTCCodecsProxy::SetEncodeRates { encoder.identifier, bitRateInKbps, frameRate }, 0);
+
+    data->startBitRate = bitRateInKbps;
+    data->maxFrameRate = frameRate;
+
+    RefPtr connection = encoderConnection(encoder);
+    if (!connection)
+        return nullptr;
+
+    return connection->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::SetEncodeRates { encoder.identifier, bitRateInKbps, frameRate })->whenSettled(workQueue(), [] (auto&&) {
+        return GenericPromise::createAndResolve();
+    });
 }
 
 void LibWebRTCCodecs::completedEncoding(VideoEncoderIdentifier identifier, std::span<const uint8_t> data, const webrtc::WebKitEncodedFrameInfo& info)
@@ -784,7 +828,7 @@ void LibWebRTCCodecs::completedEncoding(VideoEncoderIdentifier identifier, std::
 
     if (encoder->encoderCallback) {
         auto temporalIndex = info.temporalIndex >= 0 ? std::make_optional<unsigned>(info.temporalIndex) : std::nullopt;
-        encoder->encoderCallback({ data.data(), data.size() }, info.frameType == webrtc::VideoFrameType::kVideoFrameKey, info.timeStamp, info.duration, temporalIndex);
+        encoder->encoderCallback(data, info.frameType == webrtc::VideoFrameType::kVideoFrameKey, info.timeStamp, info.duration, temporalIndex);
         return;
     }
 
@@ -813,7 +857,7 @@ void LibWebRTCCodecs::setEncodingConfiguration(WebKit::VideoEncoderIdentifier id
         std::optional<Vector<uint8_t>> decoderDescriptionData;
         if (description.size())
             decoderDescriptionData = Vector<uint8_t> { description };
-        encoder->descriptionCallback(WebCore::VideoEncoderActiveConfiguration { { }, { }, { }, { }, { }, WTFMove(decoderDescriptionData), WTFMove(colorSpace) });
+        encoder->descriptionCallback(WebCore::VideoEncoderActiveConfiguration { { }, { }, { }, { }, { }, WTF::move(decoderDescriptionData), WTF::move(colorSpace) });
     }
 #endif
 }
@@ -825,7 +869,7 @@ CVPixelBufferPoolRef LibWebRTCCodecs::pixelBufferPool(size_t width, size_t heigh
         m_pixelBufferPoolWidth = 0;
         m_pixelBufferPoolHeight = 0;
         if (auto pool = WebCore::createIOSurfaceCVPixelBufferPool(width, height, type)) {
-            m_pixelBufferPool = WTFMove(*pool);
+            m_pixelBufferPool = WTF::move(*pool);
             m_pixelBufferPoolWidth = width;
             m_pixelBufferPoolHeight = height;
         }
@@ -833,27 +877,26 @@ CVPixelBufferPoolRef LibWebRTCCodecs::pixelBufferPool(size_t width, size_t heigh
     return m_pixelBufferPool.get();
 }
 
-void LibWebRTCCodecs::gpuProcessConnectionDidClose(GPUProcessConnection&)
+void LibWebRTCCodecs::clearConnection()
 {
     ASSERT(isMainRunLoop());
 
     Locker locker { m_connectionLock };
-    std::exchange(m_connection, nullptr)->removeWorkQueueMessageReceiver(Messages::LibWebRTCCodecs::messageReceiverName());
+    RefPtr connection = std::exchange(m_connection, nullptr);
+    if (!connection)
+        return;
+
+    connection->removeWorkQueueMessageReceiver(Messages::LibWebRTCCodecs::messageReceiverName());
     if (!m_needsGPUProcessConnection)
         return;
 
     ensureGPUProcessConnectionOnMainThreadWithLock();
-    m_queue->dispatch([this, connection = m_connection]() {
+    m_queue->dispatch([this, protectedThis = Ref { *this }, connection = m_connection]() {
         assertIsCurrent(workQueue());
         {
             Locker locker { m_connectionLock };
             for (auto& decoder : m_decoders.values()) {
-                {
-                    Locker locker { decoder->flushCallbacksLock };
-                    while (!decoder->flushCallbacks.isEmpty())
-                        decoder->flushCallbacks.takeFirst()();
-                }
-                createRemoteDecoder(*decoder, *connection, m_useRemoteFrames, m_enableAdditionalLogging, [](auto) { });
+                createRemoteDecoder(*decoder, *connection, m_useRemoteFrames, m_enableAdditionalLogging, decoder->colorSpaceOverride, [](auto) { });
                 setDecoderConnection(*decoder, connection.get());
             }
         }
@@ -865,10 +908,7 @@ void LibWebRTCCodecs::gpuProcessConnectionDidClose(GPUProcessConnection&)
         Locker locker { m_encodersConnectionLock };
         for (auto& encoder : m_encoders.values()) {
             createRemoteEncoder(*encoder, *connection, encoder->parameters, [](bool) { });
-            if (encoder->initializationData)
-                connection->send(Messages::LibWebRTCCodecsProxy::InitializeEncoder { encoder->identifier, encoder->initializationData->width, encoder->initializationData->height, encoder->initializationData->startBitRate, encoder->initializationData->maxBitRate, encoder->initializationData->minBitRate, encoder->initializationData->maxFrameRate }, 0);
-            setEncoderConnection(*encoder, connection.get());
-            encoder->sharedVideoFrameWriter = { };
+            setEncoderConnection(*encoder, *connection);
         }
     });
 }
@@ -878,8 +918,8 @@ void LibWebRTCCodecs::setLoggingLevel(WTFLogLevel level)
     m_loggingLevel = level;
 
     Locker locker { m_connectionLock };
-    if (m_connection)
-        m_connection->send(Messages::LibWebRTCCodecsProxy::SetRTCLoggingLevel(level), 0);
+    if (RefPtr connection = m_connection)
+        connection->send(Messages::LibWebRTCCodecsProxy::SetRTCLoggingLevel(level), 0);
 }
 
 IPC::Connection* LibWebRTCCodecs::encoderConnection(Encoder& encoder)
@@ -887,9 +927,27 @@ IPC::Connection* LibWebRTCCodecs::encoderConnection(Encoder& encoder)
     return encoder.connection.get();
 }
 
-void LibWebRTCCodecs::setEncoderConnection(Encoder& encoder, RefPtr<IPC::Connection>&& connection)
+void LibWebRTCCodecs::setEncoderConnection(Encoder& encoder, Ref<IPC::Connection>&& connection)
 {
-    encoder.connection = WTFMove(connection);
+    encoder.connection = WTF::move(connection);
+    encoder.sharedVideoFrameWriter = { };
+
+    if (auto& data = encoderInitializationData(encoder))
+        protect(encoder.connection)->send(Messages::LibWebRTCCodecsProxy::InitializeEncoder { encoder.identifier, data->width, data->height, data->startBitRate, data->maxBitRate, data->minBitRate, data->maxFrameRate }, 0);
+
+    auto frames = std::exchange(encoder.pendingFrames, { });
+    for (auto& frame : frames)
+        encodeFrameInternalWithLock(encoder, *frame.videoFrame, frame.shouldEncodeAsKeyFrame, toVideoRotation(frame.videoFrame->rotation()), MediaTime::createWithDouble(Seconds::fromMicroseconds(frame.videoFrame->timestamp_us()).value()), frame.videoFrame->rtp_timestamp(), { });
+}
+
+std::optional<LibWebRTCCodecs::EncoderInitializationData>& LibWebRTCCodecs::encoderInitializationData(Encoder& encoder)
+{
+    return encoder.initializationData;
+}
+
+void LibWebRTCCodecs::setEncoderInitializationData(Encoder& encoder, EncoderInitializationData&& data)
+{
+    encoder.initializationData.emplace(WTF::move(data));
 }
 
 IPC::Connection* LibWebRTCCodecs::decoderConnection(Decoder& decoder)
@@ -899,15 +957,10 @@ IPC::Connection* LibWebRTCCodecs::decoderConnection(Decoder& decoder)
 
 void LibWebRTCCodecs::setDecoderConnection(Decoder& decoder, RefPtr<IPC::Connection>&& connection)
 {
-    decoder.connection = WTFMove(connection);
+    decoder.connection = WTF::move(connection);
     auto frames = std::exchange(decoder.pendingFrames, { });
     for (auto& frame : frames)
-        sendFrameToDecode(decoder, frame.timeStamp, frame.data.span(), frame.width, frame.height);
-}
-
-inline RefPtr<RemoteVideoFrameObjectHeapProxy> LibWebRTCCodecs::protectedVideoFrameObjectHeapProxy() const
-{
-    return m_videoFrameObjectHeapProxy;
+        sendFrameToDecode(decoder, frame.timeStamp, frame.data.span(), frame.width, frame.height)->chainTo(WTF::move(frame.producer));
 }
 
 }

@@ -251,16 +251,27 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
 
         if ((value & SpecString) == SpecString)
             strOut.print("String");
+        else if ((value & SpecStringResolved) == SpecStringResolved)
+            strOut.print("StringResolved");
         else {
             if (value & SpecStringIdent)
                 strOut.print("StringIdent");
             else
                 isTop = false;
             
-            if (value & SpecStringVar)
+            if ((value & SpecStringVar) == SpecStringVar)
                 strOut.print("StringVar");
-            else
-                isTop = false;
+            else {
+                if (value & SpecStringResolvedVar)
+                    strOut.print("StringResolvedVar");
+                else
+                    isTop = false;
+
+                if (value & SpecStringUnresolvedVar)
+                    strOut.print("StringUnresolvedVar");
+                else
+                    isTop = false;
+            }
         }
 
         if (value & SpecSymbol)
@@ -356,7 +367,7 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
 
 // We don't expose this because we don't want anyone relying on the fact that this method currently
 // just returns string constants.
-static const char* speculationToAbbreviatedString(SpeculatedType prediction)
+static const char* NODELETE speculationToAbbreviatedString(SpeculatedType prediction)
 {
     if (isFinalObjectSpeculation(prediction))
         return "<Final>";
@@ -583,20 +594,21 @@ SpeculatedType speculationFromStructure(Structure* structure)
 SpeculatedType speculationFromCell(JSCell* cell)
 {
     // FIXME: rdar://69036888: remove isSanePointer checks when no longer needed.
-    if (UNLIKELY(!Integrity::isSanePointer(cell))) {
+    if (!Integrity::isSanePointer(cell)) [[unlikely]] {
         ASSERT_NOT_REACHED();
         return SpecNone;
     }
 
     if (cell->isString()) {
-        JSString* string = jsCast<JSString*>(cell);
+        JSString* string = uncheckedDowncast<JSString>(cell);
         if (const StringImpl* impl = string->tryGetValueImpl()) {
-            if (UNLIKELY(!Integrity::isSanePointer(impl))) {
+            if (!Integrity::isSanePointer(impl)) [[unlikely]] {
                 ASSERT_NOT_REACHED();
                 return SpecNone;
             }
             if (impl->isAtom())
                 return SpecStringIdent;
+            return SpecStringResolved;
         }
         return SpecString;
     }
@@ -719,11 +731,29 @@ std::optional<SpeculatedType> speculationFromJSType(JSType type)
     case DataViewType:
         return SpecDataViewObject;
     case JSMapIteratorType:
+        return SpecMapIteratorObject;
     case JSSetIteratorType:
-        return SpecObjectOther;
+        return SpecSetIteratorObject;
+#define JSC_DEFINE_TYPED_ARRAY_SPECULATION(type) \
+    case type##ArrayType: \
+        return Spec##type##Array;
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_DEFINE_TYPED_ARRAY_SPECULATION)
+#undef JSC_DEFINE_TYPED_ARRAY_SPECULATION
     default:
         return std::nullopt;
     }
+}
+
+std::optional<SpeculatedType> speculationFromJSTypeRange(JSTypeRange range)
+{
+    SpeculatedType result = SpecNone;
+    for (unsigned type = range.first; type <= range.last; ++type) {
+        std::optional<SpeculatedType> speculatedType = speculationFromJSType(static_cast<JSType>(type));
+        if (!speculatedType)
+            return std::nullopt;
+        result |= speculatedType.value();
+    }
+    return result;
 }
 
 SpeculatedType leastUpperBoundOfStrictlyEquivalentSpeculations(SpeculatedType type)
@@ -741,7 +771,7 @@ SpeculatedType leastUpperBoundOfStrictlyEquivalentSpeculations(SpeculatedType ty
     return type;
 }
 
-static inline SpeculatedType leastUpperBoundOfEquivalentSpeculations(SpeculatedType type)
+static inline SpeculatedType NODELETE leastUpperBoundOfEquivalentSpeculations(SpeculatedType type)
 {
     type = leastUpperBoundOfStrictlyEquivalentSpeculations(type);
 
@@ -778,7 +808,7 @@ bool valuesCouldBeEqual(SpeculatedType a, SpeculatedType b)
     return !!(a & b);
 }
 
-static SpeculatedType typeOfDoubleSumOrDifferenceOrProduct(SpeculatedType a, SpeculatedType b)
+static SpeculatedType NODELETE typeOfDoubleSumOrDifferenceOrProduct(SpeculatedType a, SpeculatedType b)
 {
     SpeculatedType result = a | b;
 
@@ -792,7 +822,7 @@ static SpeculatedType typeOfDoubleSumOrDifferenceOrProduct(SpeculatedType a, Spe
 
     // Impure NaN could become pure NaN during addition because addition may clear bits.
     if (result & SpecDoubleImpureNaN)
-        result |= SpecDoublePureNaN;
+        result |= SpecDoubleNaN;
     // Values could overflow, or fractions could become integers.
     if (result & SpecDoubleReal)
         result |= SpecDoubleReal;
@@ -813,7 +843,7 @@ SpeculatedType typeOfDoubleIncOrDec(SpeculatedType t)
 {
     // Impure NaN could become pure NaN during addition because addition may clear bits.
     if (t & SpecDoubleImpureNaN)
-        t |= SpecDoublePureNaN;
+        t |= SpecDoubleNaN;
     // Values could overflow, or fractions could become integers.
     if (t & SpecDoubleReal)
         t |= SpecDoubleReal;
@@ -825,7 +855,7 @@ SpeculatedType typeOfDoubleProduct(SpeculatedType a, SpeculatedType b)
     return typeOfDoubleSumOrDifferenceOrProduct(a, b);
 }
 
-static SpeculatedType polluteDouble(SpeculatedType value)
+static SpeculatedType NODELETE polluteDouble(SpeculatedType value)
 {
     // Impure NaN could become pure NaN because the operation could clear some bits.
     if (value & SpecDoubleImpureNaN)
@@ -847,7 +877,7 @@ SpeculatedType typeOfDoubleMinMax(SpeculatedType a, SpeculatedType b)
     SpeculatedType result = a | b;
     // Impure NaN could become pure NaN during addition because addition may clear bits.
     if (result & SpecDoubleImpureNaN)
-        result |= SpecDoublePureNaN;
+        result |= SpecDoubleNaN;
     return result;
 }
 
@@ -855,7 +885,9 @@ SpeculatedType typeOfDoubleNegation(SpeculatedType value)
 {
     // Changing bits can make pure NaN impure and vice versa:
     // 0xefff000000000000 (pure) - 0xffff000000000000 (impure)
-    if (value & SpecDoubleNaN)
+    // But we don't allow such pure NaN patterns. Thus we don't
+    // need any special handling for those pure NaNs
+    if (value & SpecDoubleImpureNaN)
         value |= SpecDoubleNaN;
     // We could get negative zero, which mixes SpecAnyIntAsDouble and SpecNotIntAsDouble.
     // We could also overflow a large negative int into something that is no longer
@@ -872,9 +904,8 @@ SpeculatedType typeOfDoubleAbs(SpeculatedType value)
 
 SpeculatedType typeOfDoubleRounding(SpeculatedType value)
 {
-    // Double Pure NaN can becomes impure when converted back from Float.
-    // and vice versa.
-    if (value & SpecDoubleNaN)
+    // Impure NaN can become pure when rounding but none of the pure NaNs we produce will convert to an impure NaN.
+    if (value & SpecDoubleImpureNaN)
         value |= SpecDoubleNaN;
     // We might lose bits, which leads to a value becoming integer-representable.
     if (value & SpecNonIntAsDouble)
@@ -906,6 +937,7 @@ SpeculatedType typeOfDoubleUnaryOp(SpeculatedType value)
 
 SpeculatedType speculationFromString(const char* speculation)
 {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     if (!strncmp(speculation, "SpecNone", strlen("SpecNone")))
         return SpecNone;
     if (!strncmp(speculation, "SpecFinalObject", strlen("SpecFinalObject")))
@@ -1043,6 +1075,7 @@ SpeculatedType speculationFromString(const char* speculation)
     if (!strncmp(speculation, "SpecCellCheck", strlen("SpecCellCheck")))
         return SpecCellCheck;
     RELEASE_ASSERT_NOT_REACHED();
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 } // namespace JSC

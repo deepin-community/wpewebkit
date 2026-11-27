@@ -29,31 +29,31 @@
 #include "HTMLMaybeFormAssociatedCustomElement.h"
 #include "ValidatedFormListedElement.h"
 #include "ValidityStateFlags.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class FormAssociatedCustomElement final : public ValidatedFormListedElement {
+    WTF_MAKE_TZONE_ALLOCATED(FormAssociatedCustomElement);
     WTF_MAKE_NONCOPYABLE(FormAssociatedCustomElement);
-    WTF_MAKE_FAST_ALLOCATED;
 public:
     static Ref<FormAssociatedCustomElement> create(HTMLMaybeFormAssociatedCustomElement&);
 
     FormAssociatedCustomElement(HTMLMaybeFormAssociatedCustomElement&);
     virtual ~FormAssociatedCustomElement();
 
-    bool isFormListedElement() const final { return true; }
-    bool isValidatedFormListedElement() const final { return true; }
-    bool isFormControlElement() const final { return false; }
+    bool NODELETE isFormListedElement() const final { return true; }
+    bool NODELETE isValidatedFormListedElement() const final { return true; }
 
-    FormAssociatedElement* asFormAssociatedElement() final { return this; }
-    FormListedElement* asFormListedElement() final { return this; }
-    ValidatedFormListedElement* asValidatedFormListedElement() final { return this; }
+    FormAssociatedElement* NODELETE asFormAssociatedElement() final { return this; }
+    FormListedElement* NODELETE asFormListedElement() final { return this; }
+    ValidatedFormListedElement* NODELETE asValidatedFormListedElement() final { return this; }
 
     HTMLElement& asHTMLElement() final { return *m_element.get(); }
     const HTMLElement& asHTMLElement() const final { return *m_element.get(); }
 
     void reset() final;
-    bool isEnumeratable() const final;
+    bool NODELETE isEnumeratable() const final;
 
     void setFormValue(CustomElementFormValue&& submissionValue, std::optional<CustomElementFormValue>&& state);
     ExceptionOr<void> setValidity(ValidityStateFlags, String&& message, HTMLElement* validationAnchor);
@@ -64,7 +64,7 @@ public:
     bool computeValidity() const final;
     bool appendFormData(DOMFormData&) final;
 
-    void willUpgrade();
+    void NODELETE willUpgrade();
     void didUpgrade();
 
     const AtomString& formControlType() const final;
@@ -84,6 +84,7 @@ private:
     void didChangeForm() final;
     void invalidateElementsCollectionCachesInAncestors();
 
+    bool customError() const final { return m_validityStateFlags.customError; }
     bool hasBadInput() const final { return m_validityStateFlags.badInput; }
     bool patternMismatch() const final { return m_validityStateFlags.patternMismatch; }
     bool rangeOverflow() const final { return m_validityStateFlags.rangeOverflow; }

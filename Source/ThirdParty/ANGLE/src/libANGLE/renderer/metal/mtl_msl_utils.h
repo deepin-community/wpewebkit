@@ -38,7 +38,7 @@ struct TranslatedShaderInfo
     // Translated Metal source code
     std::shared_ptr<const std::string> metalShaderSource;
     // Metal library compiled from source code above. Used by ProgramMtl.
-    AutoObjCPtr<id<MTLLibrary>> metalLibrary;
+    angle::ObjCPtr<id<MTLLibrary>> metalLibrary;
     std::array<SamplerBinding, kMaxGLSamplerBindings> actualSamplerBindings;
     std::array<int, kMaxShaderImages> actualImageBindings;
     std::array<uint32_t, kMaxGLUBOBindings> actualUBOBindings;
@@ -57,9 +57,6 @@ angle::Result MTLGetMSL(const angle::FeaturesMtl &features,
                         const gl::ShaderMap<std::string> &shaderSources,
                         const gl::ShaderMap<SharedCompiledShaderStateMtl> &shadersState,
                         gl::ShaderMap<TranslatedShaderInfo> *mslShaderInfoOut);
-
-// Get equivalent shadow compare mode that is used in translated msl shader.
-uint MslGetShaderShadowCompareMode(GLenum mode, GLenum func);
 }  // namespace mtl
 }  // namespace rx
 

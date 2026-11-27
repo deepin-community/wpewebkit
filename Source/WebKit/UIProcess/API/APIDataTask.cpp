@@ -37,38 +37,40 @@ DataTask::~DataTask() = default;
 
 void DataTask::setClient(Ref<DataTaskClient>&& client)
 {
-    m_client = WTFMove(client);
+    m_client = WTF::move(client);
 }
 
 void DataTask::cancel()
 {
-    if (m_networkProcess && m_sessionID)
-        m_networkProcess->cancelDataTask(m_identifier, *m_sessionID);
+    if (m_sessionID && m_identifier) {
+        if (RefPtr networkProcess = m_networkProcess.get())
+            networkProcess->cancelDataTask(*m_identifier, *m_sessionID);
+    }
     m_activity = nullptr;
 }
 
 void DataTask::networkProcessCrashed()
 {
     m_activity = nullptr;
-    m_client->didCompleteWithError(*this, WebCore::internalError(m_originalURL));
+    protect(client())->didCompleteWithError(*this, WebCore::internalError(m_originalURL));
 }
 
-DataTask::DataTask(WebKit::DataTaskIdentifier identifier, WeakPtr<WebKit::WebPageProxy>&& page, WTF::URL&& originalURL, bool shouldRunAtForegroundPriority)
+DataTask::DataTask(std::optional<WebKit::DataTaskIdentifier> identifier, WeakPtr<WebKit::WebPageProxy>&& page, WTF::URL&& originalURL, bool shouldRunAtForegroundPriority)
     : m_identifier(identifier)
-    , m_page(WTFMove(page))
-    , m_originalURL(WTFMove(originalURL))
-    , m_networkProcess(m_page ? WeakPtr { m_page->websiteDataStore().networkProcess() } : nullptr)
-    , m_sessionID(m_page ? std::optional<PAL::SessionID> { m_page->sessionID() } : std::nullopt)
+    , m_page(WTF::move(page))
+    , m_originalURL(WTF::move(originalURL))
+    , m_networkProcess(m_page ? WeakPtr { protect(this->page()->websiteDataStore())->networkProcess() } : nullptr)
+    , m_sessionID(m_page ? std::optional<PAL::SessionID> { this->page()->sessionID() } : std::nullopt)
     , m_client(DataTaskClient::create())
 {
     if (RefPtr networkProcess = m_networkProcess.get())
-        m_activity = shouldRunAtForegroundPriority ? networkProcess->throttler().foregroundActivity("WKDataTask"_s).moveToUniquePtr() : networkProcess->throttler().backgroundActivity("WKDataTask"_s).moveToUniquePtr();
+        m_activity = shouldRunAtForegroundPriority ? protect(networkProcess->throttler())->foregroundActivity("WKDataTask"_s) : protect(networkProcess->throttler())->backgroundActivity("WKDataTask"_s);
 }
 
 void DataTask::didCompleteWithError(WebCore::ResourceError&& error)
 {
     m_activity = nullptr;
-    m_client->didCompleteWithError(*this, WTFMove(error));
+    protect(client())->didCompleteWithError(*this, WTF::move(error));
 }
 
 } // namespace API

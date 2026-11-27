@@ -78,7 +78,7 @@ struct ProgramArgumentBufferEncoderMtl
 {
     void reset(ContextMtl *contextMtl);
 
-    mtl::AutoObjCPtr<id<MTLArgumentEncoder>> metalArgBufferEncoder;
+    angle::ObjCPtr<id<MTLArgumentEncoder>> metalArgBufferEncoder;
     mtl::BufferPool bufferPool;
 };
 
@@ -90,7 +90,7 @@ struct ProgramShaderObjVariantMtl
 {
     void reset(ContextMtl *contextMtl);
 
-    mtl::AutoObjCPtr<id<MTLFunction>> metalShader;
+    angle::ObjCPtr<id<MTLFunction>> metalShader;
     // UBO's argument buffer encoder. Used when number of UBOs used exceeds number of allowed
     // discrete slots, and thus needs to encode all into one argument buffer.
     ProgramArgumentBufferEncoderMtl uboArgBufferEncoder;
@@ -284,14 +284,16 @@ class ProgramExecutableMtl : public ProgramExecutableImpl
     // Scratch data:
     // Legalized buffers and their offsets. For example, uniform buffer's offset=1 is not a valid
     // offset, it will be converted to legal offset and the result is stored in this array.
-    std::vector<std::pair<mtl::BufferRef, uint32_t>> mLegalizedOffsetedUniformBuffers;
+    std::vector<mtl::BufferSlice> mLegalizedOffsetedUniformBuffers;
     // Stores the render stages usage of each uniform buffer. Only used if the buffers are encoded
     // into an argument buffer.
     std::vector<uint32_t> mArgumentBufferRenderStageUsages;
 
-    uint32_t mShadowCompareModes[mtl::kMaxShaderSamplers];
-
     gl::ShaderMap<std::unique_ptr<mtl::BufferPool>> mDefaultUniformBufferPools;
+
+    // A unique ID to identify this program executable across its lifetime. It's guaranteed that
+    // there is no duplicated ID ever even if the program is deleted.
+    Serial mProgramSerialId;
 };
 
 angle::Result CreateMslShaderLib(mtl::Context *context,

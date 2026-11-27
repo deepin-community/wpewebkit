@@ -23,22 +23,33 @@
 
 #if os(visionOS)
 
-import LinearMediaKit
-import WebKitSwift
+#if canImport(AVKit, _version: 1270)
+#if USE_APPLE_INTERNAL_SDK
+@_spi(LinearMediaKit) @_spi(LinearMediaKit_WebKitOnly) public import AVKit
+#else
+public import AVKit_SPI
+#endif
+#else
+@_spi(WebKitOnly) public import LinearMediaKit
+#endif
 
 // MARK: Objective-C Implementations
 
-@_objcImplementation extension WKSLinearMediaContentMetadata {
+@objc
+@implementation
+extension WKSLinearMediaContentMetadata {
     let title: String?
     let subtitle: String?
-    
+
     init(title: String?, subtitle: String?) {
         self.title = title
         self.subtitle = subtitle
     }
 }
 
-@_objcImplementation extension WKSLinearMediaTimeRange {
+@objc
+@implementation
+extension WKSLinearMediaTimeRange {
     let lowerBound: TimeInterval
     let upperBound: TimeInterval
 
@@ -48,11 +59,84 @@ import WebKitSwift
     }
 }
 
-@_objcImplementation extension WKSLinearMediaTrack {
+@objc
+@implementation
+extension WKSLinearMediaTrack {
     let localizedDisplayName: String
 
     init(localizedDisplayName: String) {
         self.localizedDisplayName = localizedDisplayName
+    }
+}
+
+@objc
+@implementation
+extension WKSLinearMediaSpatialVideoMetadata {
+    let width: Int32
+    let height: Int32
+    let horizontalFieldOfView: Int32
+    let stereoCameraBaseline: UInt32
+    let horizontalDisparityAdjustment: Int32
+
+    init(width: Int32, height: Int32, horizontalFieldOfView: Int32, stereoCameraBaseline: UInt32, horizontalDisparityAdjustment: Int32) {
+        self.width = width
+        self.height = height
+        self.horizontalFieldOfView = horizontalFieldOfView
+        self.stereoCameraBaseline = stereoCameraBaseline
+        self.horizontalDisparityAdjustment = horizontalDisparityAdjustment
+    }
+}
+
+@objc
+@implementation
+extension WKSPlayableViewControllerHost {
+    @nonobjc
+    private let base = PlayableViewController()
+
+    var viewController: UIViewController {
+        base
+    }
+
+    var automaticallyDockOnFullScreenPresentation: Bool {
+        get { base.automaticallyDockOnFullScreenPresentation }
+        set { base.automaticallyDockOnFullScreenPresentation = newValue }
+    }
+
+    var dismissFullScreenOnExitingDocking: Bool {
+        get { base.dismissFullScreenOnExitingDocking }
+        set { base.dismissFullScreenOnExitingDocking = newValue }
+    }
+
+    var environmentPickerButtonViewController: UIViewController? {
+        base.environmentPickerButtonViewController
+    }
+
+    @objc
+    var prefersAutoDimming: Bool {
+        get {
+            #if USE_APPLE_INTERNAL_SDK
+            base.prefersAutoDimming
+            #else
+            false
+            #endif
+        }
+        set {
+            base.prefersAutoDimming = newValue
+        }
+    }
+
+    @nonobjc
+    final var playable: (any Playable)? {
+        get {
+            #if USE_APPLE_INTERNAL_SDK
+            base.playable
+            #else
+            nil
+            #endif
+        }
+        set {
+            base.playable = newValue
+        }
     }
 }
 
@@ -99,7 +183,8 @@ extension WKSLinearMediaContentMode {
     }
 
     static var `default`: WKSLinearMediaContentMode {
-        .init(.default)
+        // `ContentMode.default` is invalid; workaround by using the value of it directly.
+        .init(.scaleAspectFit)
     }
 }
 
@@ -123,16 +208,22 @@ extension WKSLinearMediaContentType {
 }
 
 extension WKSLinearMediaPresentationState: CustomStringConvertible {
+    // FIXME: Objective-C interface type WKSLinearMediaPresentationState should not itself conform to a Swift protocol.
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
     public var description: String {
         switch self {
         case .inline:
-            return "inline"
+            "inline"
         case .enteringFullscreen:
-            return "enteringFullscreen"
+            "enteringFullscreen"
         case .fullscreen:
-            return "fullscreen"
+            "fullscreen"
         case .exitingFullscreen:
-            return "exitingFullscreen"
+            "exitingFullscreen"
+        case .enteringExternal:
+            "enteringExternal"
+        case .external:
+            "external"
         @unknown default:
             fatalError()
         }
@@ -156,7 +247,7 @@ extension WKSLinearMediaViewingMode: CustomStringConvertible {
             fatalError()
         }
     }
-    
+
     var viewingMode: ViewingMode? {
         switch self {
         case .none:
@@ -174,18 +265,20 @@ extension WKSLinearMediaViewingMode: CustomStringConvertible {
         }
     }
 
+    // FIXME: Objective-C interface type WKSLinearMediaViewingMode should not itself conform to a Swift protocol.
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
     public var description: String {
         switch self {
         case .none:
-            return "none"
+            "none"
         case .mono:
-            return "mono"
+            "mono"
         case .stereo:
-            return "stereo"
+            "stereo"
         case .immersive:
-            return "immersive"
+            "immersive"
         case .spatial:
-            return "spatial"
+            "spatial"
         @unknown default:
             fatalError()
         }
@@ -204,17 +297,29 @@ extension WKSLinearMediaFullscreenBehaviors {
 
 extension WKSLinearMediaTimeRange {
     var closedRange: ClosedRange<TimeInterval> {
-        return lowerBound...upperBound
+        lowerBound...upperBound
     }
 
     var range: Range<TimeInterval> {
-        return lowerBound..<upperBound
+        lowerBound..<upperBound
     }
 }
 
-#if canImport(LinearMediaKit, _version: 205)
-extension WKSLinearMediaTrack: @retroactive Track {
+@_spi(Internal)
+extension WKSLinearMediaTrack: Track {
 }
-#endif
+
+extension WKSLinearMediaSpatialVideoMetadata {
+    var metadata: SpatialVideoMetadata {
+        .init(
+            width: self.width,
+            height: self.height,
+            horizontalFOVDegrees: Float(self.horizontalFieldOfView) / 1000.0,
+            baseline: Float(self.stereoCameraBaseline),
+            disparityAdjustment: Float(self.horizontalDisparityAdjustment) / 10000.0,
+            isRecommendedForImmersive: true
+        )
+    }
+}
 
 #endif // os(visionOS)

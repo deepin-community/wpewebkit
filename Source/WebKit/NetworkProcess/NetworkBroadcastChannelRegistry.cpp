@@ -27,6 +27,7 @@
 #include "NetworkBroadcastChannelRegistry.h"
 
 #include "Logging.h"
+#include "NetworkConnectionToWebProcess.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
 #include "WebBroadcastChannelRegistryMessages.h"
@@ -46,14 +47,22 @@ static bool isValidClientOrigin(const WebCore::ClientOrigin& clientOrigin)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkBroadcastChannelRegistry);
 
+Ref<NetworkBroadcastChannelRegistry> NetworkBroadcastChannelRegistry::create(NetworkProcess& networkProcess)
+{
+    return adoptRef(*new NetworkBroadcastChannelRegistry(networkProcess));
+}
+
 NetworkBroadcastChannelRegistry::NetworkBroadcastChannelRegistry(NetworkProcess& networkProcess)
     : m_networkProcess(networkProcess)
 {
 }
 
+NetworkBroadcastChannelRegistry::~NetworkBroadcastChannelRegistry() = default;
+
 void NetworkBroadcastChannelRegistry::registerChannel(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name)
 {
     MESSAGE_CHECK(isValidClientOrigin(origin), connection);
+    MESSAGE_CHECK(!name.isNull(), connection);
 
     auto& channelsForOrigin = m_broadcastChannels.ensure(origin, [] { return NameToConnectionIdentifiersMap { }; }).iterator->value;
     auto& connectionIdentifiersForName = channelsForOrigin.ensure(name, [] { return Vector<IPC::Connection::UniqueID> { }; }).iterator->value;
@@ -64,6 +73,7 @@ void NetworkBroadcastChannelRegistry::registerChannel(IPC::Connection& connectio
 void NetworkBroadcastChannelRegistry::unregisterChannel(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name)
 {
     MESSAGE_CHECK(isValidClientOrigin(origin), connection);
+    MESSAGE_CHECK(!name.isNull(), connection);
 
     auto channelsForOriginIterator = m_broadcastChannels.find(origin);
     ASSERT(channelsForOriginIterator != m_broadcastChannels.end());
@@ -81,6 +91,7 @@ void NetworkBroadcastChannelRegistry::unregisterChannel(IPC::Connection& connect
 void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, const WebCore::ClientOrigin& origin, const String& name, WebCore::MessageWithMessagePorts&& message, CompletionHandler<void()>&& completionHandler)
 {
     MESSAGE_CHECK_COMPLETION(isValidClientOrigin(origin), connection, completionHandler());
+    MESSAGE_CHECK_COMPLETION(!name.isNull(), connection, completionHandler());
 
     auto channelsForOriginIterator = m_broadcastChannels.find(origin);
     ASSERT(channelsForOriginIterator != m_broadcastChannels.end());
@@ -91,7 +102,7 @@ void NetworkBroadcastChannelRegistry::postMessage(IPC::Connection& connection, c
     if (connectionIdentifiersForNameIterator == channelsForOriginIterator->value.end())
         return completionHandler();
 
-    auto callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
+    auto callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
     for (auto& connectionID : connectionIdentifiersForNameIterator->value) {
         // Only dispatch the post the messages to BroadcastChannels outside the source process.
         if (connectionID == connection.uniqueID())
@@ -122,6 +133,14 @@ void NetworkBroadcastChannelRegistry::removeConnection(IPC::Connection& connecti
     }
     for (auto& originToRemove : originsToRemove)
         m_broadcastChannels.remove(originToRemove);
+}
+
+std::optional<SharedPreferencesForWebProcess> NetworkBroadcastChannelRegistry::sharedPreferencesForWebProcess(const IPC::Connection& connection) const
+{
+    auto* webProcessConnection = m_networkProcess->webProcessConnection(connection);
+    if (!webProcessConnection)
+        return std::nullopt;
+    return webProcessConnection->sharedPreferencesForWebProcess();
 }
 
 #undef MESSAGE_CHECK

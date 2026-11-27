@@ -32,7 +32,7 @@
 
 using CGColorSpaceRef = struct CGColorSpace*;
 using CVPixelBufferPoolRef = struct __CVPixelBufferPool*;
-using CVPixelBufferRef = struct __CVBuffer*;
+typedef struct CF_BRIDGED_TYPE(id) __CVBuffer *CVPixelBufferRef;
 
 namespace WebCore {
 class ProcessIdentity;
@@ -56,4 +56,5 @@ WEBCORE_EXPORT void setOwnershipIdentityForCVPixelBuffer(CVPixelBufferRef, const
 
 WEBCORE_EXPORT RetainPtr<CVPixelBufferRef> createBlackPixelBuffer(size_t width, size_t height, bool shouldUseIOSurface = false);
 
+WEBCORE_EXPORT RetainPtr<CGImageRef> createImageFrom32BGRAPixelBuffer(RetainPtr<CVPixelBufferRef>&&, CGColorSpaceRef);
 }

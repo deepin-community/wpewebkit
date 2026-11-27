@@ -28,8 +28,10 @@
 #if USE(SKIA)
 
 #include "HbUniquePtr.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkFont.h>
 #include <skia/core/SkTypeface.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
@@ -47,6 +49,8 @@ public:
     void glyphWidths(unsigned count, const hb_codepoint_t* glyphs, unsigned glyphStride, hb_position_t* advances, unsigned advanceStride);
     void glyphExtents(hb_codepoint_t, hb_glyph_extents_t*);
 
+    bool isColorBitmapFont() const { return m_isColorBitmapFont; }
+
     ~SkiaHarfBuzzFont();
 
 private:
@@ -57,6 +61,7 @@ private:
     SkTypefaceID m_uniqueID { 0 };
     HbUniquePtr<hb_font_t> m_font;
     SkFont m_scaledFont;
+    bool m_isColorBitmapFont { false };
 };
 
 } // namespace WebCore

@@ -31,9 +31,13 @@
 #include "DrawingAreaProxy.h"
 #include "EditingRange.h"
 #include "EditorState.h"
+#include "NativeWebMouseEvent.h"
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
 #include <WebCore/CompositionUnderline.h>
+#include <WebCore/DoublePoint.h>
+#include <WebCore/DragData.h>
+#include <WebCore/SelectionData.h>
 
 using namespace WebKit;
 
@@ -47,10 +51,6 @@ View::View()
 
 View::~View()
 {
-#if USE(ATK)
-    if (m_accessible)
-        webkitWebViewAccessibleSetWebView(m_accessible.get(), nullptr);
-#endif
     m_pageProxy->close();
 }
 
@@ -70,7 +70,7 @@ void View::setClient(std::unique_ptr<API::ViewClient>&& client)
     if (!client)
         m_client = makeUnique<API::ViewClient>();
     else
-        m_client = WTFMove(client);
+        m_client = WTF::move(client);
 }
 
 void View::frameDisplayed()
@@ -80,6 +80,9 @@ void View::frameDisplayed()
 
 void View::willStartLoad()
 {
+#if ENABLE(DRAG_SUPPORT)
+    m_dragData = std::nullopt;
+#endif
     m_client->willStartLoad(*this);
 }
 
@@ -90,7 +93,7 @@ void View::didChangePageID()
 
 void View::didReceiveUserMessage(UserMessage&& message, CompletionHandler<void(UserMessage&&)>&& completionHandler)
 {
-    m_client->didReceiveUserMessage(*this, WTFMove(message), WTFMove(completionHandler));
+    m_client->didReceiveUserMessage(*this, WTF::move(message), WTF::move(completionHandler));
 }
 
 WebKitWebResourceLoadManager* View::webResourceLoadManager()
@@ -110,7 +113,7 @@ WebKitInputMethodContext* View::inputMethodContext() const
 
 void View::setInputMethodState(std::optional<InputMethodState>&& state)
 {
-    m_inputMethodFilter.setState(WTFMove(state));
+    m_inputMethodFilter.setState(WTF::move(state));
 }
 
 void View::selectionDidChange()
@@ -121,6 +124,16 @@ void View::selectionDidChange()
         m_inputMethodFilter.notifySurrounding(editorState.postLayoutData->surroundingContext, editorState.postLayoutData->surroundingContextCursorPosition,
             editorState.postLayoutData->surroundingContextSelectionPosition);
     }
+}
+
+void View::themeColorDidChange()
+{
+    m_client->themeColorDidChange();
+}
+
+void View::pageScaleFactorDidChange()
+{
+    m_client->pageScaleFactorDidChange(*this);
 }
 
 void View::setSize(const WebCore::IntSize& size)
@@ -135,37 +148,52 @@ void View::close()
     m_pageProxy->close();
 }
 
-#if USE(ATK)
-WebKitWebViewAccessible* View::accessible() const
-{
-    if (!m_accessible)
-        m_accessible = webkitWebViewAccessibleNew(const_cast<View*>(this));
-    return m_accessible.get();
-}
-#endif
-
 #if ENABLE(FULLSCREEN_API)
 bool View::isFullScreen() const
 {
     return m_fullscreenState == WebFullScreenManagerProxy::FullscreenState::EnteringFullscreen || m_fullscreenState == WebFullScreenManagerProxy::FullscreenState::InFullscreen;
 }
 
-void View::willEnterFullScreen()
+void View::willEnterFullScreen(CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(m_fullscreenState == WebFullScreenManagerProxy::FullscreenState::NotInFullscreen);
-    if (auto* fullScreenManagerProxy = page().fullScreenManager())
-        fullScreenManagerProxy->willEnterFullScreen();
+    completionHandler(true);
     m_fullscreenState = WebFullScreenManagerProxy::FullscreenState::EnteringFullscreen;
 }
 
-void View::willExitFullScreen()
+void View::willExitFullScreen(CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(m_fullscreenState == WebFullScreenManagerProxy::FullscreenState::EnteringFullscreen || m_fullscreenState == WebFullScreenManagerProxy::FullscreenState::InFullscreen);
 
-    if (auto* fullScreenManagerProxy = page().fullScreenManager())
-        fullScreenManagerProxy->willExitFullScreen();
+    completionHandler();
     m_fullscreenState = WebFullScreenManagerProxy::FullscreenState::ExitingFullscreen;
 }
 #endif // ENABLE(FULLSCREEN_API)
+
+#if ENABLE(DRAG_SUPPORT)
+void View::setDragData(WebCore::SelectionData&& selectionData, OptionSet<WebCore::DragOperation> dragOperationMask)
+{
+    m_dragData = WTF::move(selectionData);
+    m_dragMask = dragOperationMask;
+}
+
+bool View::updateDrag(const WebKit::NativeWebMouseEvent& event)
+{
+    if (!m_dragData || (event.type() != WebKit::WebEventType::MouseMove && event.type() != WebKit::WebEventType::MouseUp))
+        return false;
+
+    auto clientPosition = WebCore::roundedIntPoint(event.position());
+    auto globalPosition = WebCore::roundedIntPoint(event.globalPosition());
+    WebCore::DragData dragData(&m_dragData.value(), clientPosition, globalPosition, m_dragMask);
+    page().dragUpdated(dragData);
+    if (event.type() == WebKit::WebEventType::MouseUp) {
+        page().performDragOperation(dragData, { }, { }, { });
+        auto dragOperation = page().currentDragOperation();
+        page().dragEnded(clientPosition, globalPosition, dragOperation ? OptionSet<WebCore::DragOperation> { *dragOperation } : OptionSet<WebCore::DragOperation> { });
+        m_dragData = std::nullopt;
+    }
+    return true;
+}
+#endif // ENABLE(DRAG_SUPPORT)
 
 } // namespace WKWPE

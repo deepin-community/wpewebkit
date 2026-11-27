@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,13 +27,14 @@
 #include "AbortController.h"
 
 #include "AbortSignal.h"
-#include "DOMException.h"
-#include "JSDOMException.h"
+#include "JSAbortController.h"
+#include "JSValueInWrappedObjectInlines.h"
+#include "ScriptWrappableInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(AbortController);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortController);
 
 Ref<AbortController> AbortController::create(ScriptExecutionContext& context)
 {
@@ -47,18 +48,9 @@ AbortController::AbortController(ScriptExecutionContext& context)
 
 AbortController::~AbortController() = default;
 
-AbortSignal& AbortController::signal()
+void AbortController::abort(JSC::JSValue reason)
 {
-    return m_signal.get();
-}
-
-void AbortController::abort(JSDOMGlobalObject& globalObject, JSC::JSValue reason)
-{
-    ASSERT(reason);
-    if (reason.isUndefined())
-        reason = toJS(&globalObject, &globalObject, DOMException::create(ExceptionCode::AbortError));
-
-    protectedSignal()->signalAbort(reason);
+    m_signal->signalAbort(reason);
 }
 
 WebCoreOpaqueRoot AbortController::opaqueRoot()
@@ -66,9 +58,12 @@ WebCoreOpaqueRoot AbortController::opaqueRoot()
     return root(&signal());
 }
 
-Ref<AbortSignal> AbortController::protectedSignal() const
+template<typename Visitor>
+void JSAbortController::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    return m_signal;
+    wrapped().signal().reason().visitInGCThread(visitor);
 }
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAbortController);
 
 }

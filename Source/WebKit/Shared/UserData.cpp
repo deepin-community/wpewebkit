@@ -34,7 +34,6 @@
 #include "APIGeometry.h"
 #include "APINumber.h"
 #include "APIPageHandle.h"
-#include "APISerializedScriptValue.h"
 #include "APIString.h"
 #include "APIURL.h"
 #include "APIURLRequest.h"
@@ -42,7 +41,6 @@
 #include "APIUserContentURLPattern.h"
 #include "ArgumentCoders.h"
 #include "Encoder.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebImage.h"
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/CheckedArithmetic.h>
@@ -52,7 +50,7 @@ namespace WebKit {
 UserData::UserData() = default;
 
 UserData::UserData(RefPtr<API::Object>&& object)
-    : m_object(WTFMove(object))
+    : m_object(WTF::move(object))
 {
 }
 
@@ -60,10 +58,8 @@ UserData::~UserData() = default;
 
 static bool shouldTransform(const API::Object& object, const UserData::Transformer& transformer)
 {
-    if (object.type() == API::Object::Type::Array) {
-        const auto& array = static_cast<const API::Array&>(object);
-
-        for (const auto& element : array.elements()) {
+    if (auto* array = dynamicDowncast<API::Array>(object)) {
+        for (const auto& element : array->elements()) {
             if (!element)
                 continue;
 
@@ -72,10 +68,8 @@ static bool shouldTransform(const API::Object& object, const UserData::Transform
         }
     }
 
-    if (object.type() == API::Object::Type::Dictionary) {
-        const auto& dictionary = static_cast<const API::Dictionary&>(object);
-
-        for (const auto& keyValuePair : dictionary.map()) {
+    if (RefPtr dictionary = dynamicDowncast<API::Dictionary>(object)) {
+        for (const auto& keyValuePair : dictionary->map()) {
             if (!keyValuePair.value)
                 continue;
 
@@ -90,18 +84,18 @@ static bool shouldTransform(const API::Object& object, const UserData::Transform
 static RefPtr<API::Object> transformGraph(API::Object& object, const UserData::Transformer& transformer)
 {
     if (object.type() == API::Object::Type::Array) {
-        auto& array = static_cast<API::Array&>(object);
+        auto& array = downcast<API::Array>(object);
 
         auto elements = array.elements().map([&](auto& element) -> RefPtr<API::Object> {
             if (!element)
                 return nullptr;
             return transformGraph(*element, transformer);
         });
-        return API::Array::create(WTFMove(elements));
+        return API::Array::create(WTF::move(elements));
     }
 
     if (object.type() == API::Object::Type::Dictionary) {
-        auto& dictionary = static_cast<API::Dictionary&>(object);
+        auto& dictionary = downcast<API::Dictionary>(object);
 
         API::Dictionary::MapType map;
         for (const auto& keyValuePair : dictionary.map()) {
@@ -111,7 +105,7 @@ static RefPtr<API::Object> transformGraph(API::Object& object, const UserData::T
             else
                 map.add(keyValuePair.key, transformGraph(*value, transformer));
         }
-        return API::Dictionary::create(WTFMove(map));
+        return API::Dictionary::create(WTF::move(map));
     }
 
     return transformer.transformObject(object);

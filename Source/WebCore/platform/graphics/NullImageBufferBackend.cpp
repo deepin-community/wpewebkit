@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 #include "config.h"
 #include "NullImageBufferBackend.h"
 
+#include "NativeImage.h"
 #include "PixelBuffer.h"
 #include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
@@ -41,7 +42,19 @@ NullImageBufferBackend::~NullImageBufferBackend() = default;
 
 NullGraphicsContext& NullImageBufferBackend::context()
 {
-    return m_context;
+    if (!m_context)
+        m_context = makeUnique<NullGraphicsContext>();
+    return *m_context;
+}
+
+void NullImageBufferBackend::releaseGraphicsContext()
+{
+    m_context = nullptr;
+}
+
+bool NullImageBufferBackend::hasGraphicsContext() const
+{
+    return !!m_context;
 }
 
 RefPtr<NativeImage> NullImageBufferBackend::copyNativeImage()
@@ -59,7 +72,7 @@ void NullImageBufferBackend::getPixelBuffer(const IntRect&, PixelBuffer& destina
     destination.zeroFill();
 }
 
-void NullImageBufferBackend::putPixelBuffer(const PixelBuffer&, const IntRect&, const IntPoint&, AlphaPremultiplication)
+void NullImageBufferBackend::putPixelBuffer(const PixelBufferSourceView&, const IntRect&, const IntPoint&, AlphaPremultiplication)
 {
 }
 

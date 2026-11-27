@@ -37,7 +37,7 @@ class IntlSegmenter final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
 
-    static constexpr bool needsDestruction = true;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
     static void destroy(JSCell* cell)
     {
@@ -61,8 +61,6 @@ public:
 
     JSValue segment(JSGlobalObject*, JSValue) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
-
-    static JSObject* createSegmentDataObject(JSGlobalObject*, JSString*, int32_t startIndex, int32_t endIndex, UBreakIterator&, Granularity);
 
 private:
     IntlSegmenter(VM&, Structure*);

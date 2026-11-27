@@ -26,6 +26,7 @@
 #include "SVGNames.h"
 #include "SVGPathByteStream.h"
 #include "SVGPathSegImpl.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -33,7 +34,7 @@ class SVGPathSegList;
 class SVGPoint;
 
 class SVGPathElement final : public SVGGeometryElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGPathElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGPathElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGPathElement);
 public:
     static Ref<SVGPathElement> create(const QualifiedName&, Document&);
@@ -92,10 +93,10 @@ public:
     ExceptionOr<Ref<SVGPoint>> getPointAtLength(float distance) const final;
     unsigned getPathSegAtLength(float distance) const;
 
-    FloatRect getBBox(StyleUpdateStrategy = AllowStyleUpdate) final;
+    FloatRect getBBox(StyleUpdateStrategy = StyleUpdateStrategy::Allow) final;
 
-    Ref<SVGPathSegList>& pathSegList() { return m_pathSegList->baseVal(); }
-    RefPtr<SVGPathSegList>& animatedPathSegList() { return m_pathSegList->animVal(); }
+    SVGPathSegList& pathSegList() { return m_pathSegList->baseVal(); }
+    SVGPathSegList& animatedPathSegList() { return m_pathSegList->animVal(); }
 
     const SVGPathByteStream& pathByteStream() const;
     Path path() const;
@@ -105,10 +106,10 @@ public:
 
     static void clearCache();
 
+    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGPathElement, SVGGeometryElement>;
+
 private:
     SVGPathElement(const QualifiedName&, Document&);
-
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGPathElement, SVGGeometryElement>;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void svgAttributeChanged(const QualifiedName&) final;
@@ -116,10 +117,10 @@ private:
     bool isValid() const final { return SVGTests::isValid(); }
     bool supportsMarkers() const final { return true; }
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
 
-    Node::InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    Node::NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
 
     void invalidateMPathDependencies();
 
@@ -127,7 +128,7 @@ private:
     void collectExtraStyleForPresentationalHints(MutableStyleProperties&) override;
     void collectDPresentationalHint(MutableStyleProperties&);
 
-    Ref<SVGAnimatedPathSegList> m_pathSegList { SVGAnimatedPathSegList::create(this) };
+    const Ref<SVGAnimatedPathSegList> m_pathSegList { SVGAnimatedPathSegList::create(this) };
 };
 
 } // namespace WebCore

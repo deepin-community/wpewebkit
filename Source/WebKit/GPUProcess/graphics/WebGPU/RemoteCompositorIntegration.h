@@ -70,12 +70,12 @@ class RemoteCompositorIntegration final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteCompositorIntegration> create(WebCore::WebGPU::CompositorIntegration& compositorIntegration, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteCompositorIntegration(compositorIntegration, objectHeap, WTFMove(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteCompositorIntegration(compositorIntegration, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteCompositorIntegration();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -91,21 +91,20 @@ private:
 
     WebCore::WebGPU::CompositorIntegration& backing() { return m_backing; }
 
-    RefPtr<IPC::Connection> connection() const;
-
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
     void destruct();
     void paintCompositedResultsToCanvas(WebCore::RenderingResourceIdentifier, uint32_t, CompletionHandler<void()>&&);
 
 #if PLATFORM(COCOA)
-    void recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
+    void recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 #endif
 
-    void prepareForDisplay(CompletionHandler<void(bool)>&&);
+    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(bool)>&&);
+    void updateContentsHeadroom(float);
 
-    Ref<WebCore::WebGPU::CompositorIntegration> m_backing;
+    const Ref<WebCore::WebGPU::CompositorIntegration> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

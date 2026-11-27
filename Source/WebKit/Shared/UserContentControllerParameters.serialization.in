@@ -20,12 +20,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-struct WebKit::UserContentControllerParameters {
+[DebugDecodingFailure] struct WebKit::UserContentControllerParameters {
     WebKit::UserContentControllerIdentifier identifier;
-    Vector<std::pair<WebKit::ContentWorldIdentifier, String>> userContentWorlds;
     Vector<WebKit::WebUserScriptData> userScripts;
     Vector<WebKit::WebUserStyleSheetData> userStyleSheets;
     Vector<WebKit::WebScriptMessageHandlerData> messageHandlers;
+    Vector<WebKit::WebJSBufferData> buffers;
 #if ENABLE(CONTENT_EXTENSIONS)
     Vector<std::pair<WebKit::WebCompiledContentRuleListData, URL>> contentRuleLists;
 #endif

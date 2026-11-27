@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,15 +34,16 @@ class FilterEffect;
 class SVGFilterPrimitiveStandardAttributes;
 
 class RenderSVGResourceFilterPrimitive final : public RenderSVGHiddenContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGResourceFilterPrimitive);
+    WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceFilterPrimitive);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceFilterPrimitive);
 public:
-    RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes&, RenderStyle&&);
-    SVGFilterPrimitiveStandardAttributes& filterPrimitiveElement() const;
+    RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes&, Style::ComputedStyle&&);
+    SVGFilterPrimitiveStandardAttributes& NODELETE filterPrimitiveElement() const;
 
     void markFilterEffectForRepaint(FilterEffect*);
     void markFilterEffectForRebuild();
 
-    void styleDidChange(StyleDifference, const RenderStyle*) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
 };
 
 } // namespace WebCore

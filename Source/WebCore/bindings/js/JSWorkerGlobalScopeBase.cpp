@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
- * Copyright (C) 2009 Google Inc. All Rights Reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +32,7 @@
 #include "EventLoop.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGuardedObject.h"
-#include "JSMicrotaskCallback.h"
+#include "JSExecState.h"
 #include "JSTrustedScript.h"
 #include "TrustedType.h"
 #include "WorkerGlobalScope.h"
@@ -41,6 +41,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSGlobalProxy.h>
+#include <JavaScriptCore/JSMicrotaskDispatcher.h>
 #include <JavaScriptCore/Microtask.h>
 #include <wtf/Language.h>
 
@@ -55,7 +56,6 @@ const GlobalObjectMethodTable* JSWorkerGlobalScopeBase::globalObjectMethodTable(
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        &queueMicrotaskToEventLoop,
         &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule,
         &moduleLoaderResolve,
@@ -78,13 +78,14 @@ const GlobalObjectMethodTable* JSWorkerGlobalScopeBase::globalObjectMethodTable(
         deriveShadowRealmGlobalObject,
         codeForEval,
         canCompileStrings,
+        trustedScriptStructure,
     };
     return &table;
 };
 
-JSWorkerGlobalScopeBase::JSWorkerGlobalScopeBase(JSC::VM& vm, JSC::Structure* structure, RefPtr<WorkerGlobalScope>&& impl)
+JSWorkerGlobalScopeBase::JSWorkerGlobalScopeBase(JSC::VM& vm, JSC::Structure* structure, Ref<WorkerGlobalScope>&& impl)
     : JSDOMGlobalObject(vm, structure, normalWorld(vm), globalObjectMethodTable())
-    , m_wrapped(WTFMove(impl))
+    , m_wrapped(WTF::move(impl))
 {
 }
 
@@ -99,7 +100,7 @@ void JSWorkerGlobalScopeBase::finishCreation(VM& vm, JSGlobalProxy* proxy)
 template<typename Visitor>
 void JSWorkerGlobalScopeBase::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSWorkerGlobalScopeBase* thisObject = jsCast<JSWorkerGlobalScopeBase*>(cell);
+    JSWorkerGlobalScopeBase* thisObject = uncheckedDowncast<JSWorkerGlobalScopeBase>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_proxy);
@@ -109,12 +110,13 @@ DEFINE_VISIT_CHILDREN(JSWorkerGlobalScopeBase);
 
 void JSWorkerGlobalScopeBase::destroy(JSCell* cell)
 {
-    static_cast<JSWorkerGlobalScopeBase*>(cell)->JSWorkerGlobalScopeBase::~JSWorkerGlobalScopeBase();
+    // We cannot rely on jsCast() during JSObject destruction.
+    SUPPRESS_MEMORY_UNSAFE_CAST static_cast<JSWorkerGlobalScopeBase*>(cell)->JSWorkerGlobalScopeBase::~JSWorkerGlobalScopeBase();
 }
 
-ScriptExecutionContext* JSWorkerGlobalScopeBase::scriptExecutionContext() const
+JSC::Structure* JSWorkerGlobalScopeBase::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return m_wrapped.get();
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
 }
 
 bool JSWorkerGlobalScopeBase::supportsRichSourceInfo(const JSGlobalObject* object)
@@ -134,45 +136,19 @@ bool JSWorkerGlobalScopeBase::shouldInterruptScriptBeforeTimeout(const JSGlobalO
 
 RuntimeFlags JSWorkerGlobalScopeBase::javaScriptRuntimeFlags(const JSGlobalObject* object)
 {
-    const JSWorkerGlobalScopeBase *thisObject = jsCast<const JSWorkerGlobalScopeBase*>(object);
-    return thisObject->m_wrapped->thread().runtimeFlags();
+    const JSWorkerGlobalScopeBase* thisObject = uncheckedDowncast<JSWorkerGlobalScopeBase>(object);
+    return thisObject->m_wrapped->thread()->runtimeFlags();
 }
 
 JSC::ScriptExecutionStatus JSWorkerGlobalScopeBase::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
 {
     ASSERT_UNUSED(owner, globalObject == owner);
-    return jsCast<JSWorkerGlobalScopeBase*>(globalObject)->scriptExecutionContext()->jscScriptExecutionStatus();
+    return uncheckedDowncast<JSWorkerGlobalScopeBase>(globalObject)->wrapped().jscScriptExecutionStatus();
 }
 
-void JSWorkerGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject, JSC::JSString* source)
+void JSWorkerGlobalScopeBase::reportViolationForUnsafeEval(JSC::JSGlobalObject* globalObject, const String& source)
 {
     return JSGlobalObject::reportViolationForUnsafeEval(globalObject, source);
-}
-
-String JSWorkerGlobalScopeBase::codeForEval(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
-{
-    VM& vm = globalObject->vm();
-
-    if (auto* script = JSTrustedScript::toWrapped(vm, value))
-        return script->toString();
-
-    return nullString();
-}
-
-bool JSWorkerGlobalScopeBase::canCompileStrings(JSC::JSGlobalObject* globalObject, JSC::CompilationType compilationType, String codeString, JSC::JSValue bodyArgument)
-{
-    return JSDOMGlobalObject::canCompileStrings(globalObject, compilationType, codeString, bodyArgument);
-}
-
-void JSWorkerGlobalScopeBase::queueMicrotaskToEventLoop(JSGlobalObject& object, Ref<JSC::Microtask>&& task)
-{
-    JSWorkerGlobalScopeBase& thisObject = static_cast<JSWorkerGlobalScopeBase&>(object);
-
-    auto callback = JSMicrotaskCallback::create(thisObject, WTFMove(task));
-    auto& context = thisObject.wrapped();
-    context.eventLoop().queueMicrotask([callback = WTFMove(callback)]() mutable {
-        callback->call();
-    });
 }
 
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject*, WorkerGlobalScope& workerGlobalScope)
@@ -182,7 +158,7 @@ JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject*, WorkerGlob
 
 JSValue toJS(JSGlobalObject*, WorkerGlobalScope& workerGlobalScope)
 {
-    auto* script = workerGlobalScope.script();
+    CheckedPtr script = workerGlobalScope.script();
     if (!script)
         return jsNull();
     auto* contextWrapper = script->globalScopeWrapper();

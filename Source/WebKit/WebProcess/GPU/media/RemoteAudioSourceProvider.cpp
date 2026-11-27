@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,10 @@
 #include "GPUProcessConnection.h"
 #include "Logging.h"
 #include "RemoteAudioSourceProviderManager.h"
+#include "WebProcess.h"
+#include <WebCore/MediaPlayer.h>
+
+// Include after MediaPlayer.h: the generated header uses WebCore::MediaPlayer.
 #include "RemoteMediaPlayerProxyMessages.h"
 
 namespace WebCore {
@@ -45,7 +49,7 @@ using namespace WebCore;
 Ref<RemoteAudioSourceProvider> RemoteAudioSourceProvider::create(WebCore::MediaPlayerIdentifier identifier, WTF::LoggerHelper& helper)
 {
     auto provider = adoptRef(*new RemoteAudioSourceProvider(identifier, helper));
-    provider->m_gpuProcessConnection.get()->audioSourceProviderManager().addProvider(provider.copyRef());
+    protect(provider->m_gpuProcessConnection.get()->audioSourceProviderManager())->addProvider(provider.copyRef());
     return provider;
 }
 
@@ -66,26 +70,25 @@ RemoteAudioSourceProvider::RemoteAudioSourceProvider(MediaPlayerIdentifier ident
 #endif
 }
 
-RemoteAudioSourceProvider::~RemoteAudioSourceProvider()
-{
-}
+RemoteAudioSourceProvider::~RemoteAudioSourceProvider() = default;
 
 void RemoteAudioSourceProvider::close()
 {
     ASSERT(isMainRunLoop());
-    if (auto gpuProcessConnection = m_gpuProcessConnection.get())
-        gpuProcessConnection->audioSourceProviderManager().removeProvider(m_identifier);
+    if (RefPtr gpuProcessConnection = m_gpuProcessConnection.get())
+        protect(gpuProcessConnection->audioSourceProviderManager())->removeProvider(m_identifier);
 }
 
 void RemoteAudioSourceProvider::hasNewClient(AudioSourceProviderClient* client)
 {
-    if (auto gpuProcessConnection = m_gpuProcessConnection.get())
+    if (RefPtr gpuProcessConnection = m_gpuProcessConnection.get())
         gpuProcessConnection->connection().send(Messages::RemoteMediaPlayerProxy::SetShouldEnableAudioSourceProvider { !!client }, m_identifier);
 }
 
-void RemoteAudioSourceProvider::audioSamplesAvailable(const PlatformAudioData& data, const AudioStreamDescription& description, size_t size)
+void RemoteAudioSourceProvider::audioSamplesAvailable(const AudioStreamDescription& description, bool needsFlush)
 {
-    receivedNewAudioSamples(data, description, size);
+    if (needsFlush)
+        setNeedsFlush();
 }
 
 #if !RELEASE_LOG_DISABLED

@@ -28,24 +28,32 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#include "WebExtensionControllerMessages.h"
 #include "WebExtensionControllerParameters.h"
 #include "WebExtensionControllerProxyMessages.h"
 #include "WebPageProxy.h"
-#include <wtf/BlockPtr.h>
+#include "WebProcessPool.h"
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 
+#if PLATFORM(COCOA)
+#include <wtf/BlockPtr.h>
+#include <wtf/darwin/DispatchExtras.h>
+#endif
+
 namespace WebKit {
 
+#if PLATFORM(COCOA)
 constexpr auto freshlyCreatedTimeout = 5_s;
+#endif
 
-static HashMap<WebExtensionControllerIdentifier, WeakRef<WebExtensionController>>& webExtensionControllers()
+static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionController>>& NODELETE webExtensionControllers()
 {
-    static MainThreadNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakRef<WebExtensionController>>> controllers;
+    static MainRunLoopNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionController>>> controllers;
     return controllers;
 }
 
-WebExtensionController* WebExtensionController::get(WebExtensionControllerIdentifier identifier)
+RefPtr<WebExtensionController> WebExtensionController::get(WebExtensionControllerIdentifier identifier)
 {
     return webExtensionControllers().get(identifier);
 }
@@ -62,38 +70,59 @@ WebExtensionController::WebExtensionController(Ref<WebExtensionControllerConfigu
     // should be fired for any loaded extensions during a brief time window. Start a timer
     // when the first extension is about to be loaded.
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(freshlyCreatedTimeout.seconds() * NSEC_PER_SEC)), dispatch_get_main_queue(), makeBlockPtr([this, weakThis = WeakPtr { *this }] {
+#if PLATFORM(COCOA)
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(freshlyCreatedTimeout.seconds() * NSEC_PER_SEC)), mainDispatchQueueSingleton(), makeBlockPtr([this, weakThis = WeakPtr { *this }] {
         if (!weakThis)
             return;
 
         m_freshlyCreated = false;
     }).get());
+#endif
 }
 
 WebExtensionController::~WebExtensionController()
 {
+    webExtensionControllers().remove(identifier());
+
+    for (Ref pool : m_processPools)
+        pool->removeMessageReceiver(Messages::WebExtensionController::messageReceiverName(), identifier());
+
     unloadAll();
 }
 
-WebExtensionControllerParameters WebExtensionController::parameters() const
+WebExtensionControllerParameters WebExtensionController::parameters(const API::PageConfiguration& pageConfiguration) const
 {
-    WebExtensionControllerParameters parameters;
-
-    parameters.identifier = identifier();
-    parameters.testingMode = inTestingMode();
-    parameters.contextParameters = WTF::map(extensionContexts(), [](auto& context) {
-        return context->parameters();
-    });
-
-    return parameters;
+    return {
+        .identifier = identifier(),
+        .testingMode = inTestingMode(),
+        .contextParameters = WTF::map(extensionContexts(), [&](auto& context) {
+            bool isForThisExtension = context->isURLForThisExtension(pageConfiguration.requiredWebExtensionBaseURL());
+            auto includePrivilegedIdentifier = isForThisExtension ? WebExtensionContext::IncludePrivilegedIdentifier::Yes : WebExtensionContext::IncludePrivilegedIdentifier::No;
+            return context->parameters(includePrivilegedIdentifier);
+        })
+    };
 }
 
 WebExtensionController::WebProcessProxySet WebExtensionController::allProcesses() const
 {
-    WebProcessProxySet processes;
-    for (auto& page : m_pages)
-        processes.add(page.legacyMainFrameProcess());
-    return processes;
+    WebProcessProxySet result;
+
+    for (Ref page : m_pages) {
+        page->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+            result.addVoid(webProcess);
+        });
+    }
+
+    return result;
+}
+
+bool WebExtensionController::markDidRemoveStaleExtensionWebsiteData()
+{
+    if (m_didRemoveStaleExtensionWebsiteData)
+        return false;
+
+    m_didRemoveStaleExtensionWebsiteData = true;
+    return true;
 }
 
 } // namespace WebKit

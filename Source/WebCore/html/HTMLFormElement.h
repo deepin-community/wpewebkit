@@ -23,10 +23,10 @@
 
 #pragma once
 
-#include "FormState.h"
-#include "FormSubmission.h"
-#include "HTMLElement.h"
-#include "RadioButtonGroups.h"
+#include <WebCore/FormState.h>
+#include <WebCore/FormSubmission.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/RadioButtonGroups.h>
 #include <memory>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
@@ -42,7 +42,7 @@ class HTMLImageElement;
 class ValidatedFormListedElement;
 
 class HTMLFormElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLFormElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLFormElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLFormElement);
 public:
     static Ref<HTMLFormElement> create(Document&);
@@ -54,18 +54,16 @@ public:
     Vector<Ref<Element>> namedElements(const AtomString&);
     bool isSupportedPropertyName(const AtomString&);
 
-    bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
-    WEBCORE_EXPORT unsigned length() const;
+    bool isSupportedPropertyIndex(unsigned index) { return index < length(); }
+    WEBCORE_EXPORT unsigned length();
     HTMLElement* item(unsigned index);
-    std::optional<std::variant<RefPtr<RadioNodeList>, RefPtr<Element>>> namedItem(const AtomString&);
-    Vector<AtomString> supportedPropertyNames() const;
+    std::optional<Variant<Ref<RadioNodeList>, Ref<Element>>> namedItem(const AtomString&);
+    Vector<AtomString> NODELETE supportedPropertyNames() const;
 
     String enctype() const { return m_attributes.encodingType(); }
-    WEBCORE_EXPORT void setEnctype(const AtomString&);
 
     bool shouldAutocomplete() const;
 
-    WEBCORE_EXPORT void setAutocomplete(const AtomString&);
     WEBCORE_EXPORT const AtomString& autocomplete() const;
 
     void registerFormListedElement(FormListedElement&);
@@ -85,25 +83,23 @@ public:
 
     void submitImplicitly(Event&, bool fromImplicitSubmissionTrigger);
 
-    String name() const;
+    String NODELETE name() const;
 
-    bool noValidate() const;
+    bool NODELETE noValidate() const;
 
     String acceptCharset() const { return m_attributes.acceptCharset(); }
     void setAcceptCharset(const String&);
 
     WEBCORE_EXPORT String action() const;
-    WEBCORE_EXPORT void setAction(const AtomString&);
-
     WEBCORE_EXPORT String method() const;
-    WEBCORE_EXPORT void setMethod(const AtomString&);
+    bool isMethodPost() const { return method() == "post"_s; }
 
     DOMTokenList& relList();
 
     AtomString target() const final;
     AtomString effectiveTarget(const Event*, HTMLFormControlElement* submitter) const;
 
-    bool wasUserSubmitted() const;
+    bool NODELETE wasUserSubmitted() const;
 
     HTMLFormControlElement* findSubmitter(const Event*) const;
 
@@ -113,28 +109,29 @@ public:
     WEBCORE_EXPORT bool checkValidity();
     bool reportValidity();
 
-    RadioButtonGroups& radioButtonGroups() { return m_radioButtonGroups; }
+    RadioButtonGroups& radioButtonGroups() LIFETIME_BOUND { return m_radioButtonGroups; }
 
-    WEBCORE_EXPORT const Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>& unsafeListedElements() const;
+    WEBCORE_EXPORT const Vector<WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>>& NODELETE unsafeListedElements() const;
     WEBCORE_EXPORT Vector<Ref<FormListedElement>> copyListedElementsVector() const;
     Vector<Ref<ValidatedFormListedElement>> copyValidatedListedElementsVector() const;
-    const Vector<WeakPtr<HTMLImageElement, WeakPtrImplWithEventTargetData>>& imageElements() const { return m_imageElements; }
+    const Vector<WeakPtr<HTMLImageElement, WeakPtrImplWithEventTargetData>>& imageElements() const LIFETIME_BOUND { return m_imageElements; }
 
     StringPairVector textFieldValues() const;
 
     static HTMLFormElement* findClosestFormAncestor(const Element&);
     
     RefPtr<DOMFormData> constructEntryList(RefPtr<HTMLFormControlElement>&&, Ref<DOMFormData>&&, StringPairVector*);
+    const FormSubmission::Attributes& attributes() const LIFETIME_BOUND { return m_attributes; }
     
 private:
     HTMLFormElement(const QualifiedName&, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void finishParsingChildren() final;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
 
     void resumeFromDocumentSuspension() final;
 
@@ -152,7 +149,7 @@ private:
     // Validates each of the controls, and stores controls of which 'invalid'
     // event was not canceled to the specified vector. Returns true if there
     // are any invalid controls in this form.
-    bool checkInvalidControlsAndCollectUnhandled(Vector<RefPtr<ValidatedFormListedElement>>&);
+    bool checkInvalidControlsAndCollectUnhandled(Vector<Ref<ValidatedFormListedElement>>&);
 
     RefPtr<HTMLElement> elementFromPastNamesMap(const AtomString&) const;
     void addToPastNamesMap(FormAssociatedElement&, const AtomString& pastName);
@@ -178,7 +175,8 @@ private:
     Vector<WeakPtr<HTMLImageElement, WeakPtrImplWithEventTargetData>> m_imageElements;
     WeakHashSet<HTMLElement, WeakPtrImplWithEventTargetData> m_invalidFormControls;
     WeakPtr<FormSubmission> m_plannedFormSubmission;
-    std::unique_ptr<DOMTokenList> m_relList;
+    const std::unique_ptr<DOMTokenList> m_relList;
+    RefPtr<HTMLFormControlsCollection> m_controlsCollection;
 
     unsigned m_listedElementsBeforeIndex { 0 };
     unsigned m_listedElementsAfterIndex { 0 };

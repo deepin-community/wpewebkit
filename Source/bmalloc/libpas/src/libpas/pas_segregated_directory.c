@@ -20,20 +20,21 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "pas_config.h"
+#include "pas_segregated_view_kind.h"
 
 #if LIBPAS_ENABLED
 
 #include "pas_segregated_directory.h"
 
+#include "pas_heap_lock.h"
 #include "pas_log.h"
 #include "pas_page_sharing_pool.h"
 #include "pas_segregated_directory_inlines.h"
-#include "pas_segregated_heap.h"
-#include "pas_segregated_size_directory_inlines.h"
+#include "pas_segregated_page.h"
 
 PAS_API void pas_segregated_directory_construct(
     pas_segregated_directory* directory,
@@ -50,7 +51,7 @@ pas_segregated_directory_get_data_slow(pas_segregated_directory* directory,
                                        pas_lock_hold_mode heap_lock_hold_mode)
 {
     pas_segregated_directory_data* result;
-    
+
     pas_heap_lock_lock_conditionally(heap_lock_hold_mode);
 
     result = pas_segregated_directory_data_ptr_load(&directory->data);
@@ -71,7 +72,7 @@ pas_segregated_directory_get_data_slow(pas_segregated_directory* directory,
 
         pas_segregated_directory_data_ptr_store(&directory->data, result);
     }
-    
+
     pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
 
     return result;
@@ -79,8 +80,8 @@ pas_segregated_directory_get_data_slow(pas_segregated_directory* directory,
 
 uint64_t pas_segregated_directory_get_use_epoch(pas_segregated_directory* directory)
 {
-    static const bool verbose = false;
-    
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_SEGREGATED_HEAPS);
+
     uintptr_t last_empty_plus_one;
     size_t index;
 
@@ -94,9 +95,6 @@ uint64_t pas_segregated_directory_get_use_epoch(pas_segregated_directory* direct
             continue;
 
         view = pas_segregated_directory_get(directory, index);
-
-        if (pas_segregated_view_is_partial(view))
-            continue;
 
         /* So long as we hold the ownership lock and is_owned is true, page header is alive. */
         if (pas_segregated_view_lock_ownership_lock_if_owned(view)) {
@@ -144,8 +142,8 @@ pas_page_sharing_participant_payload*
 pas_segregated_directory_get_sharing_payload(pas_segregated_directory* directory,
                                              pas_lock_hold_mode heap_lock_hold_mode)
 {
-    static const bool verbose = false;
-    
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_SEGREGATED_HEAPS);
+
     pas_segregated_directory_data* data;
     pas_segregated_directory_sharing_payload_ptr* payload_ptr;
     uintptr_t encoded_payload;
@@ -174,33 +172,33 @@ pas_segregated_directory_get_sharing_payload(pas_segregated_directory* directory
         } else {
             payload = (pas_page_sharing_participant_payload*)(
                 encoded_payload & ~PAS_SEGREGATED_DIRECTORY_SHARING_PAYLOAD_IS_INITIALIZED_BIT);
-            
+
             payload = pas_immortal_heap_allocate(
                 sizeof(pas_page_sharing_participant_payload),
                 "pas_segregated_directory_data/sharing_payload",
                 pas_object_allocation);
-            
+
             pas_page_sharing_participant_payload_construct(payload);
 
             pas_segregated_directory_sharing_payload_ptr_store(payload_ptr, (uintptr_t)payload);
 
             if (verbose)
                 pas_log("Adding directory participant to pool\n");
-            
+
             pas_page_sharing_pool_add(
                 &pas_physical_page_sharing_pool,
                 pas_page_sharing_participant_create(
                     directory,
                     pas_page_sharing_participant_kind_select_for_segregated_directory(
                         directory->directory_kind)));
-            
+
             pas_fence();
 
             pas_segregated_directory_sharing_payload_ptr_store(
                 payload_ptr,
                 (uintptr_t)payload | PAS_SEGREGATED_DIRECTORY_SHARING_PAYLOAD_IS_INITIALIZED_BIT);
         }
-        
+
         pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
     }
 
@@ -282,10 +280,10 @@ bool pas_segregated_directory_view_did_become_empty_at_index(
     pas_segregated_directory* directory,
     size_t index)
 {
-    static const bool verbose = false;
-    
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_SEGREGATED_HEAPS);
+
     bool did_add_first_empty;
-    
+
     if (verbose)
         pas_log("%p: page at index %zu became empty!\n", directory, index);
 
@@ -351,7 +349,7 @@ num_empty_views_should_consider_view_parallel(
     data = config->arg;
 
     data->result += (size_t)__builtin_popcount(segment.empty_bits);
-    
+
     return 0;
 }
 
@@ -395,30 +393,21 @@ void pas_segregated_directory_append(
 {
     pas_segregated_directory_data* data;
     pas_compact_atomic_segregated_view encoded_view;
-    
+    pas_segregated_view_kind kind;
+
     pas_heap_lock_assert_held();
     PAS_ASSERT(pas_segregated_directory_size(directory) == index);
 
     PAS_ASSERT(view);
 
-    switch (pas_segregated_view_get_kind(view)) {
-    case pas_segregated_exclusive_view_kind:
-    case pas_segregated_ineligible_exclusive_view_kind:
-    case pas_segregated_partial_view_kind:
-        PAS_ASSERT(directory->directory_kind == pas_segregated_size_directory_kind);
-        break;
-    case pas_segregated_shared_view_kind:
-        PAS_ASSERT(directory->directory_kind == pas_segregated_shared_page_directory_kind);
-        break;
-    default:
-        PAS_ASSERT(!"Bad view kind");
-    }
+    kind = pas_segregated_view_get_kind(view);
+    PAS_ASSERT(kind == pas_segregated_exclusive_view_kind || kind == pas_segregated_ineligible_exclusive_view_kind);
 
     if (pas_segregated_view_kind_can_become_empty(pas_segregated_view_get_kind(view))) {
         /* Ideally, we'd start sharing once things actually become empty. But starting sharing
            means holding the heap lock, and we cannot contend for the heap lock if we're in the
            free path. */
-        
+
         if (pas_segregated_directory_can_do_sharing(directory))
             pas_segregated_directory_start_sharing_if_necessary(directory, pas_lock_is_held);
     }
@@ -478,8 +467,7 @@ size_t pas_segregated_directory_num_empty_granules(
 
         view = pas_segregated_directory_get(directory, index);
 
-        if (!pas_segregated_view_is_some_exclusive(view)
-            && !pas_segregated_view_is_shared(view))
+        if (!pas_segregated_view_is_some_exclusive(view))
             continue;
 
         if (!pas_segregated_view_lock_ownership_lock_if_owned(view))

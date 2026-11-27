@@ -60,7 +60,7 @@ namespace WGSL {
     }
 
 #define ENUM_DEFINE_PARSE_ENTRY_(__type, __name, __string, ...) \
-    { #__string, __type::__name },
+    { #__string##_s, __type::__name },
 
 #define ENUM_DEFINE_PARSE_ENTRY(__name) \
     ENUM_DEFINE_PARSE_ENTRY_ LPAREN __name, CONTINUATION
@@ -68,10 +68,9 @@ namespace WGSL {
 #define ENUM_DEFINE_PARSE(__name) \
     const __name* parse##__name(const String& __string) \
     { \
-        static constexpr std::pair<ComparableASCIILiteral, __name> __entries[] { \
+        static constexpr SortedArrayMap __map { WTF::toArray<std::pair<ComparableASCIILiteral, __name>>({ \
             EXPAND(ENUM_##__name(ENUM_DEFINE_PARSE_ENTRY LPAREN __name RPAREN)) \
-        }; \
-        static constexpr SortedArrayMap __map { __entries }; \
+        }) }; \
         return __map.tryGet(__string); \
     }
 
@@ -87,11 +86,15 @@ ENUM_DEFINE(InterpolationType);
 ENUM_DEFINE(InterpolationSampling);
 ENUM_DEFINE(ShaderStage);
 ENUM_DEFINE(SeverityControl);
+ENUM_DEFINE(TriggeringRule);
 ENUM_DEFINE(Builtin);
 ENUM_DEFINE(Extension);
 ENUM_DEFINE(LanguageFeature);
 
 #undef ENUM_DEFINE
+#undef ENUM_DEFINE_PARSE
+#undef ENUM_DEFINE_PARSE_ENTRY
+#undef ENUM_DEFINE_PARSE_ENTRY_
 #undef ENUM_DEFINE_PRINT_INTERNAL
 #undef ENUM_DEFINE_TO_STRING
 #undef ENUM_DEFINE_TO_STRING_CASE

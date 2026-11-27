@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2007, 2008 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2009 Google, Inc.  All rights reserved.
+ * Copyright (C) 2009 Google, Inc. All rights reserved.
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) 2020, 2021, 2022 Igalia S.L.
  *
@@ -29,12 +29,14 @@
 #include "HitTestRequest.h"
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderTreeBuilder.h"
 #include "RenderView.h"
 #include "SVGContainerLayout.h"
 #include "SVGLayerTransformUpdater.h"
+#include "SVGRenderSupport.h"
 #include "SVGVisitedRendererTracking.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StackStats.h>
@@ -42,15 +44,15 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderSVGContainer);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGContainer);
 
-RenderSVGContainer::RenderSVGContainer(Type type, Document& document, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
-    : RenderSVGModelObject(type, document, WTFMove(style), svgFlags | SVGModelObjectFlag::IsContainer)
+RenderSVGContainer::RenderSVGContainer(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+    : RenderSVGModelObject(type, document, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
 
-RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, RenderStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
-    : RenderSVGModelObject(type, element, WTFMove(style), svgFlags | SVGModelObjectFlag::IsContainer)
+RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+    : RenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
 
@@ -88,8 +90,13 @@ void RenderSVGContainer::layoutChildren()
     containerLayout.layoutChildren(selfNeedsLayout());
 
     SVGBoundingBoxComputation boundingBoxComputation(*this);
-    m_objectBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::objectBoundingBoxDecoration, &m_objectBoundingBoxValid);
+    // objectBoundingBox / strokeBoundingBox are recomputed lazily (see
+    // updateSVGTransformDependentBoundingBoxesIfNeeded). Layout only needs the without-transform
+    // box below for currentSVGLayoutRect, so just mark them dirty rather than pay a full subtree
+    // walk that is usually never read before the next layout.
+    m_transformDependentBoundingBoxesDirty = true;
     m_strokeBoundingBox = std::nullopt;
+    m_cachedVisualOverflowRect = std::nullopt;
 
     if (auto objectBoundingBoxWithoutTransformations = overridenObjectBoundingBoxWithoutTransformations())
         m_objectBoundingBoxWithoutTransformations = objectBoundingBoxWithoutTransformations.value();
@@ -103,8 +110,14 @@ void RenderSVGContainer::layoutChildren()
     containerLayout.positionChildrenRelativeToContainer();
 }
 
+void RenderSVGContainer::updateSVGTransformDependentBoundingBoxesIfNeeded() const
+{
+    SVGBoundingBoxComputation::recomputeTransformDependentBoundingBoxes(*this, m_transformDependentBoundingBoxesDirty, m_objectBoundingBox, m_strokeBoundingBox, &m_objectBoundingBoxValid);
+}
+
 FloatRect RenderSVGContainer::strokeBoundingBox() const
 {
+    updateSVGTransformDependentBoundingBoxesIfNeeded();
     if (!m_strokeBoundingBox) {
         // Initialize m_strokeBoundingBox before calling computeDecoratedBoundingBox, since recursively referenced markers can cause us to re-enter here.
         m_strokeBoundingBox = FloatRect { };
@@ -116,8 +129,21 @@ FloatRect RenderSVGContainer::strokeBoundingBox() const
 
 void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline };
-    if (!shouldPaintSVGRenderer(paintInfo, relevantPaintPhases))
+    if (paintInfo.phase != PaintPhase::EventRegion && paintInfo.context().paintingDisabled())
+        return;
+
+    static constexpr OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline, PaintPhase::EventRegion };
+    if (!relevantPaintPhases.contains(paintInfo.phase))
+        return;
+
+    if (!paintInfo.shouldPaintWithinRoot(*this))
+        return;
+
+    if (style().display() == Style::DisplayType::None)
+        return;
+
+    // Children can override with "visibility: visible", per SVG spec.
+    if (paintInfo.phase != PaintPhase::Foreground && style().usedVisibility() == Visibility::Hidden)
         return;
 
     if (paintInfo.phase == PaintPhase::ClippingMask) {
@@ -137,11 +163,39 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
         return;
 
     if (paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline) {
+        // Children's outlines are painted per-child during the Foreground phase, so later
+        // DOM siblings paint on top of earlier siblings' outlines.
         paintSVGOutline(paintInfo, adjustedPaintOffset);
         return;
     }
 
-    ASSERT(paintInfo.phase == PaintPhase::Foreground);
+    ASSERT(paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::EventRegion);
+
+    // With a self-painting layer, children are painted by paintChildrenInDOMOrderForSVG().
+    if (hasSelfPaintingLayer())
+        return;
+
+    PaintInfo childPaintInfo(paintInfo);
+    GraphicsContextStateSaver stateSaver(childPaintInfo.context());
+
+    // For layer-backed containers, clipping is handled by RenderLayer::calculateClipRects().
+    if (isRenderSVGViewportContainer() && SVGRenderSupport::isOverflowHidden(*this))
+        childPaintInfo.context().clip(FloatRect(overflowClipRect(adjustedPaintOffset)));
+
+    childPaintInfo.updateSubtreePaintRootForChildren(this);
+    for (CheckedRef child : childrenOfType<RenderElement>(*this)) {
+        if (child->hasSelfPaintingLayer())
+            continue;
+
+        child->paint(childPaintInfo, adjustedPaintOffset);
+
+        if (paintInfo.phase == PaintPhase::Foreground) {
+            // Paint each child's outline immediately so later DOM siblings paint on top of it.
+            PaintInfo outlinePaintInfo(childPaintInfo);
+            outlinePaintInfo.phase = PaintPhase::Outline;
+            child->paint(outlinePaintInfo, adjustedPaintOffset);
+        }
+    }
 }
 
 bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
@@ -173,24 +227,42 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
         return false;
 
 
-    for (auto* child = lastChild(); child; child = child->previousSibling()) {
+    for (CheckedPtr child = lastChild(); child; child = child->previousSibling()) {
         if (!child->hasLayer() && child->nodeAtPoint(request, result, locationInContainer, adjustedLocation, hitTestAction)) {
             updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
-            if (result.addNodeToListBasedTestResult(child->protectedNode().get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
+            if (result.addNodeToListBasedTestResult(protect(child->node()).get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
                 return true;
         }
     }
 
     // Accessibility wants to return SVG containers, if appropriate.
-    if (request.type() & HitTestRequest::Type::AccessibilityHitTest && m_objectBoundingBox.contains(localPoint)) {
+    if (request.type() & HitTestRequest::Type::AccessibilityHitTest && objectBoundingBox().contains(localPoint)) {
         updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
-        if (result.addNodeToListBasedTestResult(protectedNodeForHitTest().get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
+        if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
             return true;
     }
 
-    // Spec: Only graphical elements can be targeted by the mouse, period.
+    // pointer-events=bounding-box makes it possible for containers to be direct targets.
+    if (style().pointerEvents() == PointerEvents::BoundingBox) {
+        if (!isObjectBoundingBoxValid())
+            return false;
+        if (objectBoundingBox().contains(localPoint)) {
+            updateHitTestResult(result, LayoutPoint(localPoint));
+            return true;
+        }
+    }
     // 16.4: "If there are no graphics elements whose relevant graphics content is under the pointer (i.e., there is no target element), the event is not dispatched."
     return false;
+}
+
+void RenderSVGContainer::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* container) const
+{
+    if (needsHasSVGTransformFlags())
+        return RenderSVGModelObject::addFocusRingRects(rects, additionalOffset, container);
+    auto repaintBoundingBox = enclosingLayoutRect(repaintRectInLocalCoordinates());
+    if (repaintBoundingBox.size().isEmpty())
+        return;
+    rects.append(repaintBoundingBox);
 }
 
 }

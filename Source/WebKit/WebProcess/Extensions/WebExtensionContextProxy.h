@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,17 +40,18 @@
 
 OBJC_CLASS JSValue;
 OBJC_CLASS NSDictionary;
-OBJC_CLASS _WKWebExtensionLocalization;
 
 namespace WebKit {
 
 class WebExtensionAPINamespace;
 class WebExtensionAPIStorage;
+class WebExtensionAPIWebPageNamespace;
 class WebExtensionControllerProxy;
 class WebExtensionMatchPattern;
 class WebFrame;
 
 struct WebExtensionAlarmParameters;
+struct WebExtensionFrameParameters;
 struct WebExtensionTabParameters;
 struct WebExtensionWindowParameters;
 
@@ -59,50 +60,63 @@ class WebExtensionContextProxy final : public RefCounted<WebExtensionContextProx
     WTF_MAKE_NONCOPYABLE(WebExtensionContextProxy);
 
 public:
-    static RefPtr<WebExtensionContextProxy> get(WebExtensionContextIdentifier);
+    static RefPtr<WebExtensionContextProxy> NODELETE get(WebExtensionContextIdentifier);
     static Ref<WebExtensionContextProxy> getOrCreate(const WebExtensionContextParameters&, WebExtensionControllerProxy&, WebPage* = nullptr);
 
     ~WebExtensionContextProxy();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     using WeakFrameSet = WeakHashSet<WebFrame>;
     using TabWindowIdentifierPair = std::pair<std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>>;
     using WeakPageTabWindowMap = WeakHashMap<WebPage, TabWindowIdentifierPair>;
     using PermissionsMap = WebExtensionContext::PermissionsMap;
 
-    WebExtensionContextIdentifier identifier() const { return m_identifier; }
-    WebExtensionControllerProxy* extensionControllerProxy() const;
+    WebExtensionContextIdentifier identifier() const { return m_privilegedIdentifier ? *m_privilegedIdentifier : m_unprivilegedIdentifier; }
+    WebExtensionContextIdentifier unprivilegedIdentifier() const { return m_unprivilegedIdentifier; }
+    Markable<WebExtensionContextIdentifier> privilegedIdentifier() const { return m_privilegedIdentifier; }
+
+    WebExtensionControllerProxy* NODELETE extensionControllerProxy() const;
 
     bool operator==(const WebExtensionContextProxy& other) const { return (this == &other); }
 
-    const URL& baseURL() const { return m_baseURL; }
-    const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
+    const URL& baseURL() const LIFETIME_BOUND { return m_baseURL; }
+    const String& uniqueIdentifier() const LIFETIME_BOUND { return m_uniqueIdentifier; }
 
+    bool isURLForThisExtension(const URL&) const;
+
+#if PLATFORM(COCOA)
     NSDictionary *manifest() const { return m_manifest.get(); }
 
     double manifestVersion() const { return m_manifestVersion; }
     bool supportsManifestVersion(double version) const { return manifestVersion() >= version; }
-
-    _WKWebExtensionLocalization *localization() const { return m_localization.get(); }
+#endif
+    RefPtr<WebExtensionLocalization> localization() const { return m_localization; }
 
     bool isSessionStorageAllowedInContentScripts() const { return m_isSessionStorageAllowedInContentScripts; }
 
-    bool inTestingMode() const;
+    PAL::SessionID defaultSessionID() const { return m_defaultSessionID; }
+
+    bool NODELETE inTestingMode() const;
 
     bool hasDOMWrapperWorld(WebExtensionContentWorldType contentWorldType) const { return contentWorldType != WebExtensionContentWorldType::ContentScript || hasContentScriptWorld(); }
-    WebCore::DOMWrapperWorld& toDOMWrapperWorld(WebExtensionContentWorldType) const;
+    Ref<WebCore::DOMWrapperWorld> toDOMWrapperWorld(WebExtensionContentWorldType) const;
 
-    static WebCore::DOMWrapperWorld& mainWorld() { return WebCore::mainThreadNormalWorld(); }
+    static WebCore::DOMWrapperWorld& mainWorldSingleton() { return WebCore::mainThreadNormalWorldSingleton(); }
 
     bool hasContentScriptWorld() const { return !!m_contentScriptWorld; }
     WebCore::DOMWrapperWorld& contentScriptWorld() const { RELEASE_ASSERT(hasContentScriptWorld()); return *m_contentScriptWorld; }
-    void setContentScriptWorld(WebCore::DOMWrapperWorld* world) { m_contentScriptWorld = world; }
+    void setContentScriptWorld(WebCore::DOMWrapperWorld&);
 
     void addFrameWithExtensionContent(WebFrame&);
 
-    std::optional<WebExtensionTabIdentifier> tabIdentifier(WebPage&) const;
+    void didEncounterScriptError(const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber, WebExtensionContentWorldType);
 
-    RefPtr<WebPage> backgroundPage() const;
-    void setBackgroundPage(WebPage&);
+    std::optional<WebExtensionTabIdentifier> NODELETE tabIdentifier(WebPage&) const;
+
+    RefPtr<WebPage> NODELETE backgroundPage() const;
+    void NODELETE setBackgroundPage(WebPage&);
 
     bool isUnsupportedAPI(const String& propertyPath, const ASCIILiteral& propertyName) const;
 
@@ -112,7 +126,7 @@ public:
     void addInspectorPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
 
     void addInspectorBackgroundPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
-    bool isInspectorBackgroundPage(WebPage&) const;
+    bool NODELETE isInspectorBackgroundPage(WebPage&) const;
 
     Inspector::ExtensionAppearance inspectorAppearance() const { return m_inspectorAppearance; }
     void setInspectorAppearance(Inspector::ExtensionAppearance appearance) { m_inspectorAppearance = appearance; }
@@ -124,9 +138,10 @@ public:
     Vector<Ref<WebPage>> tabPages(std::optional<WebExtensionTabIdentifier> = std::nullopt, std::optional<WebExtensionWindowIdentifier> = std::nullopt) const;
     void addTabPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
 
-    void enumerateFramesAndNamespaceObjects(const Function<void(WebFrame&, WebExtensionAPINamespace&)>&, WebCore::DOMWrapperWorld& = mainWorld());
+    void enumerateFramesAndNamespaceObjects(NOESCAPE const Function<void(WebFrame&, WebExtensionAPINamespace&)>&, Ref<WebCore::DOMWrapperWorld>&& = mainWorldSingleton());
+    void enumerateFramesAndWebPageNamespaceObjects(NOESCAPE const Function<void(WebFrame&, WebExtensionAPIWebPageNamespace&)>&);
 
-    void enumerateNamespaceObjects(const Function<void(WebExtensionAPINamespace&)>& function, WebCore::DOMWrapperWorld& = mainWorld())
+    void enumerateNamespaceObjects(NOESCAPE const Function<void(WebExtensionAPINamespace&)>& function)
     {
         enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
             function(namespaceObject);
@@ -136,7 +151,7 @@ public:
 private:
     explicit WebExtensionContextProxy(const WebExtensionContextParameters&);
 
-    static _WKWebExtensionLocalization *parseLocalization(API::Data&, const URL& baseURL);
+    static RefPtr<WebExtensionLocalization> parseLocalization(RefPtr<API::Data>, const URL& baseURL);
 
     // Action
     void dispatchActionClickedEvent(const std::optional<WebExtensionTabParameters>&);
@@ -150,6 +165,11 @@ private:
 
     // Cookies
     void dispatchCookiesChangedEvent();
+
+#if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
+    // DeclarativeNetRequest
+    void dispatchOnRuleMatchedDebugEvent(const WebCore::ContentRuleListMatchedRule&);
+#endif
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     // DevTools
@@ -174,37 +194,42 @@ private:
     void dispatchPermissionsEvent(WebExtensionEventListenerType, HashSet<String> permissions, HashSet<String> origins);
 
     // Port
-    void dispatchPortMessageEvent(std::optional<WebKit::WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const String& messageJSON);
+    void dispatchPortMessageEvent(std::optional<WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const String& messageJSON, bool userGesture);
     void dispatchPortDisconnectEvent(WebExtensionPortChannelIdentifier);
 
     // Runtime
-    void internalDispatchRuntimeMessageEvent(WebExtensionContentWorldType, const String& messageJSON, std::optional<WebExtensionFrameIdentifier>, const WebExtensionMessageSenderParameters&, CompletionHandler<void(String&& replyJSON)>&&);
-    void internalDispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, std::optional<WebExtensionFrameIdentifier>, const WebExtensionMessageSenderParameters&, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
-    void dispatchRuntimeMessageEvent(WebExtensionContentWorldType, const String& messageJSON, std::optional<WebExtensionFrameIdentifier>, const WebExtensionMessageSenderParameters&, CompletionHandler<void(String&& replyJSON)>&&);
-    void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, std::optional<WebExtensionFrameIdentifier>, const WebExtensionMessageSenderParameters&, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
+    void internalDispatchRuntimeMessageEvent(WebExtensionContentWorldType, const String& messageJSON, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(String&& replyJSON)>&&);
+    void internalDispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
+    void dispatchRuntimeMessageEvent(WebExtensionContentWorldType, const String& messageJSON, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(String&& replyJSON)>&&);
+    void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
     void dispatchRuntimeInstalledEvent(WebExtensionContext::InstallReason, String previousVersion);
     void dispatchRuntimeStartupEvent();
 
     // Storage
-    void setStorageAccessLevel(bool);
-    void dispatchStorageChangedEvent(const String& onChangedJSON, WebExtensionDataType, WebExtensionContentWorldType);
+    void NODELETE setStorageAccessLevel(bool);
+    void dispatchStorageChangedEvent(const Vector<String>& onChangedJSON, WebExtensionDataType, WebExtensionContentWorldType);
 
     // Tabs
     void dispatchTabsCreatedEvent(const WebExtensionTabParameters&);
     void dispatchTabsUpdatedEvent(const WebExtensionTabParameters&, const WebExtensionTabParameters& changedParameters);
     void dispatchTabsReplacedEvent(WebExtensionTabIdentifier replacedTabIdentifier, WebExtensionTabIdentifier newTabIdentifier);
-    void dispatchTabsDetachedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier oldWindowIdentifier, size_t oldIndex);
-    void dispatchTabsMovedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, size_t oldIndex, size_t newIndex);
-    void dispatchTabsAttachedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier newWindowIdentifier, size_t newIndex);
+    void dispatchTabsDetachedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier oldWindowIdentifier, uint64_t oldIndex);
+    void dispatchTabsMovedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, uint64_t oldIndex, uint64_t newIndex);
+    void dispatchTabsAttachedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier newWindowIdentifier, uint64_t newIndex);
     void dispatchTabsActivatedEvent(WebExtensionTabIdentifier previousActiveTabIdentifier, WebExtensionTabIdentifier newActiveTabIdentifier, WebExtensionWindowIdentifier);
     void dispatchTabsHighlightedEvent(const Vector<WebExtensionTabIdentifier>&, WebExtensionWindowIdentifier);
     void dispatchTabsRemovedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, WebExtensionContext::WindowIsClosing);
 
+    // Test
+    void dispatchTestMessageEvent(const String& message, const String& argumentJSON, WebExtensionContentWorldType);
+    void dispatchTestStartedEvent(const String& argumentJSON, WebExtensionContentWorldType);
+    void dispatchTestFinishedEvent(const String& argumentJSON, WebExtensionContentWorldType);
+
     // Web Navigation
-    void dispatchWebNavigationEvent(WebExtensionEventListenerType, WebExtensionTabIdentifier, WebExtensionFrameIdentifier, WebExtensionFrameIdentifier parentFrameID, const URL&, WallTime);
+    void dispatchWebNavigationEvent(WebExtensionEventListenerType, WebExtensionTabIdentifier, const WebExtensionFrameParameters&, WallTime);
 
     // Web Request
-    void resourceLoadDidSendRequest(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceRequest&, const ResourceLoadInfo&);
+    void resourceLoadDidSendRequest(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceRequest&, const ResourceLoadInfo&, const std::optional<IPC::FormDataReference>&);
     void resourceLoadDidPerformHTTPRedirection(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceResponse&, const ResourceLoadInfo&, const WebCore::ResourceRequest& newRequest);
     void resourceLoadDidReceiveChallenge(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::AuthenticationChallenge&, const ResourceLoadInfo&);
     void resourceLoadDidReceiveResponse(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceResponse&, const ResourceLoadInfo&);
@@ -216,15 +241,19 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    WebExtensionContextIdentifier m_identifier;
+    WebExtensionContextIdentifier m_unprivilegedIdentifier;
+    Markable<WebExtensionContextIdentifier> m_privilegedIdentifier;
     WeakPtr<WebExtensionControllerProxy> m_extensionControllerProxy;
     URL m_baseURL;
     String m_uniqueIdentifier;
     HashSet<String> m_unsupportedAPIs;
-    RetainPtr<_WKWebExtensionLocalization> m_localization;
+    RefPtr<WebExtensionLocalization> m_localization;
+#if PLATFORM(COCOA)
     RetainPtr<NSDictionary> m_manifest;
+#endif
     double m_manifestVersion { 0 };
     bool m_isSessionStorageAllowedInContentScripts { false };
+    PAL::SessionID m_defaultSessionID { PAL::SessionID::defaultSessionID() };
     mutable PermissionsMap m_grantedPermissions;
     mutable WallTime m_nextGrantedPermissionsExpirationDate { WallTime::nan() };
     RefPtr<WebCore::DOMWrapperWorld> m_contentScriptWorld;

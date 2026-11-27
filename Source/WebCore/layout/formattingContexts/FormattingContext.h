@@ -25,16 +25,15 @@
 
 #pragma once
 
-#include "FormattingConstraints.h"
-#include "LayoutElementBox.h"
-#include "LayoutUnit.h"
-#include "LayoutUnits.h"
+#include <WebCore/FormattingConstraints.h>
+#include <WebCore/LayoutElementBox.h>
+#include <WebCore/LayoutUnit.h>
+#include <WebCore/LayoutUnits.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class LayoutSize;
-struct Length;
 
 namespace Layout {
 
@@ -47,7 +46,7 @@ struct IntrinsicWidthConstraints;
 class LayoutState;
 
 class FormattingContext {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(FormattingContext);
+    WTF_MAKE_TZONE_ALLOCATED(FormattingContext);
 public:
     virtual ~FormattingContext();
 
@@ -57,8 +56,8 @@ public:
 
     const ElementBox& root() const { return m_root; }
 
-    LayoutState& layoutState();
-    const LayoutState& layoutState() const { return const_cast<FormattingContext&>(*this).layoutState(); }
+    LayoutState& NODELETE layoutState() LIFETIME_BOUND;
+    const LayoutState& layoutState() const LIFETIME_BOUND { return const_cast<FormattingContext&>(*this).layoutState(); }
 
     enum class EscapeReason {
         TableQuirkNeedsGeometryFromEstablishedFormattingContext,
@@ -69,15 +68,15 @@ public:
         BodyStretchesToViewportQuirk,
         TableNeedsAccessToTableWrapper
     };
-    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const;
-    BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt);
+    const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const LIFETIME_BOUND;
+    BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) LIFETIME_BOUND;
 
     bool isBlockFormattingContext() const { return root().establishesBlockFormattingContext(); }
     bool isTableFormattingContext() const { return root().establishesTableFormattingContext(); }
     bool isTableWrapperBlockFormattingContext() const { return isBlockFormattingContext() && root().isTableWrapperBox(); }
     bool isFlexFormattingContext() const { return root().establishesFlexFormattingContext(); }
 
-    static const InitialContainingBlock& initialContainingBlock(const Box&);
+    static const InitialContainingBlock& NODELETE initialContainingBlock(const Box&);
     static const ElementBox& containingBlock(const Box&);
 #if ASSERT_ENABLED
     static const ElementBox& formattingContextRoot(const Box&);
@@ -91,8 +90,8 @@ protected:
 #endif
 
 private:
-    CheckedRef<const ElementBox> m_root;
-    LayoutState& m_layoutState;
+    const CheckedRef<const ElementBox> m_root;
+    const CheckedRef<LayoutState> m_layoutState;
 };
 
 }

@@ -10,32 +10,47 @@
 #include <regex>
 #include "GLSLANG/ShaderLang.h"
 #include "angle_gl.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "tests/test_utils/compiler_test.h"
 
 using namespace sh;
 
-class MSLVertexOutputTest : public MatchOutputCodeTest
+class MSLOutputTestBase : public MatchOutputCodeTest
 {
   public:
-    MSLVertexOutputTest() : MatchOutputCodeTest(GL_VERTEX_SHADER, SH_MSL_METAL_OUTPUT)
+    MSLOutputTestBase(GLenum shaderType) : MatchOutputCodeTest(shaderType, SH_MSL_METAL_OUTPUT)
     {
-        ShCompileOptions defaultCompileOptions = {};
-        defaultCompileOptions.validateAST      = true;
-        setDefaultCompileOptions(defaultCompileOptions);
+        setDefaultCompileOptions(defaultOptions());
+    }
+    static ShCompileOptions defaultOptions()
+    {
+        ShCompileOptions options = {};
+        // Default options that are forced for MSL output.
+        options.rescopeGlobalVariables             = true;
+        options.simplifyLoopConditions             = true;
+        options.initializeUninitializedLocals      = true;
+        options.separateCompoundStructDeclarations = true;
+        options.removeInactiveVariables            = true;
+        options.retainInactiveFragmentOutputs      = true;
+        // The tests also test that validation succeeds. This should be also the
+        // default forced option, but currently MSL backend does not generate
+        // valid trees. Once validateAST is forced, move to above hunk.
+        options.validateAST = true;
+        return options;
     }
 };
 
-class MSLOutputTest : public MatchOutputCodeTest
+class MSLOutputTest : public MSLOutputTestBase
 {
   public:
-    MSLOutputTest() : MatchOutputCodeTest(GL_FRAGMENT_SHADER, SH_MSL_METAL_OUTPUT)
-    {
-        ShCompileOptions defaultCompileOptions       = {};
-        defaultCompileOptions.rescopeGlobalVariables = true;
-        defaultCompileOptions.validateAST            = true;
-        setDefaultCompileOptions(defaultCompileOptions);
-    }
+    MSLOutputTest() : MSLOutputTestBase(GL_FRAGMENT_SHADER) {}
+};
+
+class MSLVertexOutputTest : public MSLOutputTestBase
+{
+  public:
+    MSLVertexOutputTest() : MSLOutputTestBase(GL_VERTEX_SHADER) {}
 };
 
 // Test that having dynamic indexing of a vector inside the right hand side of logical or doesn't
@@ -890,6 +905,55 @@ void main(){
     compile(kShader);
 }
 
+// Tests that rewriting varyings for per-element element access does not cause crash.
+// Test for a clash between a[0] and a_0. Both could be clashing at a_0.
+TEST_F(MSLVertexOutputTest, VaryingRewriteUnderscoreNoCrash)
+{
+    const char kShader[] = R"(precision mediump float;
+varying mat2 a_0;
+varying mat3 a[1];
+void main(){
+    a_0 = mat2(0,1,2,3);
+    a[0] = mat3(0,1,2,3,4,5,6,7,8);
+    gl_Position = vec4(1);
+})";
+    compile(kShader);
+}
+
+// Tests that rewriting varyings for per-element element access does not cause crash.
+// ES3 variant.
+// Test for a clash between a[0] and a_0. Both could be clashing at a_0.
+TEST_F(MSLVertexOutputTest, VaryingRewriteUnderscoreNoCrash2)
+{
+    const char kShader[] = R"(#version 300 es
+precision mediump float;
+out mat2 a_0;
+out mat3 a[1];
+void main(){
+    a_0 = mat2(0,1,2,3);
+    a[0] = mat3(0,1,2,3,4,5,6,7,8);
+})";
+    compile(kShader);
+}
+
+// Tests that rewriting varyings for per-element element access does not cause crash.
+// Test for a clash between a_[0] and a._0. Both could be clashing at a__0.
+TEST_F(MSLVertexOutputTest, VaryingRewriteUnderscoreNoCrash3)
+{
+    const char kShader[] = R"(#version 300 es
+precision mediump float;
+out mat3 a_[1];
+struct s {
+    mat2 _0;
+};
+out s a;
+void main(){
+    a._0 = mat2(0,1,2,3);
+    a_[0] = mat3(0,1,2,3,4,5,6,7,8);
+})";
+    compile(kShader);
+}
+
 // Tests that rewriting attributes for per-element element access does not cause crash.
 // At the time of writing a_ would be confused with a due to matrixes being flattened
 // for fragment inputs, and the new variables would be given semantic names separated
@@ -920,4 +984,204 @@ TEST_F(MSLVertexOutputTest, VertexIDIvecNoCrash)
     const char kShader[] = R"(#version 300 es
 void main(){ivec2 xy=ivec2((+gl_VertexID));gl_Position=vec4((xy), 0,1);})";
     compile(kShader);
+}
+
+TEST_F(MSLVertexOutputTest, StructEqualityNoCrash)
+{
+    const char kShader[] = R"(#version 300 es
+struct S{mediump vec2 i;};S a,b;void main(){if (a==b){}})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, StructAndVarDeclarationNoCrash)
+{
+    const char kShader[] = R"(#version 300 es
+void main(){struct S{mediump vec4 v;};S a;a=a,1;})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, StructAndVarDeclarationSeparationNoCrash)
+{
+    const char kShader[] = R"(#version 300 es
+void main(){struct S{mediump vec4 v;}a;a=a,1;})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, StructAndVarDeclarationSeparationNoCrash2)
+{
+    const char kShader[] = R"(#version 300 es
+void main(){struct S{mediump vec4 v;}a,b;a=b,1;})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, StructAndVarDeclarationSeparationNoCrash3)
+{
+    const char kShader[] = R"(#version 300 es
+ void main(){struct S1{mediump vec4 v;}l;struct S2{S1 s1;}s2;s2=s2,l=l,1;})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, MultisampleInterpolationNoCrash)
+{
+    getResources()->OES_shader_multisample_interpolation = 1;
+    const char kShader[]                                 = R"(#version 300 es
+#extension GL_OES_shader_multisample_interpolation : require
+precision highp float;
+in float i; out vec4 c; void main() { c = vec4(interpolateAtOffset(i, vec2(i))); })";
+    compile(kShader);
+}
+
+TEST_F(MSLVertexOutputTest, ClipCullDistanceNoCrash)
+{
+    getResources()->ANGLE_clip_cull_distance = 1;
+    const char kShader[]                     = R"(#version 300 es
+#extension GL_ANGLE_clip_cull_distance : require
+void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); gl_ClipDistance[1] = 1.0;})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, UnnamedOutParameterNoCrash)
+{
+    const char kShader[] = R"(void f(out int){}void main(){int a;f(a);})";
+    compile(kShader);
+}
+
+TEST_F(MSLOutputTest, ExplicitBoolCastsNoCrash)
+{
+    ShCompileOptions options     = defaultOptions();
+    const char kShader[]         = R"(
+precision mediump float;
+void main(){vec2 c;bvec2 U=bvec2(c.xx);if (U.x) gl_FragColor = vec4(1);})";
+    compile(kShader, options);
+}
+
+// The following tests check that the SeparateCompoundExpressions step during MSL shader translation
+// handles comma expressions correctly when at least one of the operands is a function call.
+TEST_F(MSLOutputTest, CommaOpTwoFunctionCallsWithGlobalsNoCrash)
+{
+    ShCompileOptions options = defaultOptions();
+    const char kShader[]     = R"(
+int g;
+void F(int v) { g = v; }
+void main() { F(g), F(g); })";
+    compile(kShader, options);
+}
+
+TEST_F(MSLOutputTest, CommaOpLeftFunctionCallWithGlobalsNoCrash)
+{
+    ShCompileOptions options = defaultOptions();
+    const char kShader[]     = R"(
+int g;
+void F(int v) { g = v; }
+void main() { F(g), F(1); })";
+    compile(kShader, options);
+}
+
+TEST_F(MSLOutputTest, CommaOpRightFunctionCallWithGlobalsNoCrash)
+{
+    ShCompileOptions options = defaultOptions();
+    const char kShader[]     = R"(
+int g;
+void F(int v) { g = v; }
+void main() { F(1), F(g); })";
+    compile(kShader, options);
+}
+
+// Tests that uint assignment operators use the expected functions.
+TEST_F(MSLOutputTest, UintAssignmentOperators)
+{
+    const std::string &shaderString = R"(#version 300 es
+precision highp float;
+in vec4 i;
+out vec4 o;
+void main() {
+    ivec4 ii = ivec4(i);
+    ii += 2;
+    ii -= 3;
+    ii *= 4;
+    ii /= 5;
+    ii %= 6;
+    ii &= 7;
+    ii |= 8;
+    ii ^= 9;
+    ii <<= 10;
+    ii >>= 11;
+    ii++;
+    ++ii;
+    ii--;
+    --ii;
+    o = vec4(ii);
+})";
+    const char expected[] =
+        R"(void ANGLE__0_main(thread ANGLE_FragmentOut & ANGLE_fragmentOut, thread ANGLE_FragmentIn & ANGLE_fragmentIn)
+{
+  metal::int4 _uii = ANGLE_ftoi<metal::int4>(ANGLE_fragmentIn._ui);
+  _uii = ANGLE_addInt(_uii, 2);
+  _uii = ANGLE_subInt(_uii, 3);
+  _uii = ANGLE_imul(_uii, 4);
+  _uii = ANGLE_div(_uii, 5);
+  _uii = ANGLE_imod(_uii, 6);
+  _uii &= 7;
+  _uii |= 8;
+  _uii ^= 9;
+  _uii = ANGLE_ilshift(_uii, 10);
+  _uii = ANGLE_rshift(_uii, 11);
+  ANGLE_postIncrementInt(_uii);
+  ANGLE_preIncrementInt(_uii);
+  ANGLE_postDecrementInt(_uii);
+  ANGLE_preDecrementInt(_uii);
+  ANGLE_fragmentOut._uo = metal::float4(_uii);
+})";
+    compile(shaderString);
+    EXPECT_THAT(outputCode(SH_MSL_METAL_OUTPUT), testing::HasSubstr(expected));
+}
+
+// Tests that some uint assignment operators use the swizzle ref helper if the swizzle is in lvalue
+// position in the generated code.
+TEST_F(MSLOutputTest, UintSwizzleAssignmentOperators)
+{
+    const std::string &shaderString = R"(#version 300 es
+precision highp float;
+in vec4 i;
+out vec4 o;
+void main() {
+    ivec4 ii = ivec4(i);
+    ii.x += 2;
+    ii.y -= 3;
+    ii.z *= 4;
+    ii.w /= 5;
+    ii.x %= 6;
+    ii.y &= 7;
+    ii.y |= 8;
+    ii.z ^= 9;
+    ii.y <<= 10;
+    ii.z >>= 11;
+    ii.x++;
+    ++ii.y;
+    ii.x--;
+    --ii.y;
+    o = vec4(ii);
+})";
+    const char expected[] =
+        R"(void ANGLE__0_main(thread ANGLE_FragmentOut & ANGLE_fragmentOut, thread ANGLE_FragmentIn & ANGLE_fragmentIn)
+{
+  metal::int4 _uii = ANGLE_ftoi<metal::int4>(ANGLE_fragmentIn._ui);
+  _uii.x = ANGLE_addInt(_uii.x, 2);
+  _uii.y = ANGLE_subInt(_uii.y, 3);
+  _uii.z = ANGLE_imul(_uii.z, 4);
+  _uii.w = ANGLE_div(_uii.w, 5);
+  _uii.x = ANGLE_imod(_uii.x, 6);
+  _uii.y = (_uii.y & 7);
+  _uii.y = (_uii.y | 8);
+  _uii.z = (_uii.z ^ 9);
+  _uii.y = ANGLE_ilshift(_uii.y, 10);
+  _uii.z = ANGLE_rshift(_uii.z, 11);
+  ANGLE_postIncrementInt(ANGLE_swizzle_ref(_uii, 0u));
+  ANGLE_preIncrementInt(ANGLE_swizzle_ref(_uii, 1u));
+  ANGLE_postDecrementInt(ANGLE_swizzle_ref(_uii, 0u));
+  ANGLE_preDecrementInt(ANGLE_swizzle_ref(_uii, 1u));
+  ANGLE_fragmentOut._uo = metal::float4(_uii);
+})";
+    compile(shaderString);
+    EXPECT_THAT(outputCode(SH_MSL_METAL_OUTPUT), testing::HasSubstr(expected));
 }

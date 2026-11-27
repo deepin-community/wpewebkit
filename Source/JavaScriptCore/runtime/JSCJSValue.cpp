@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2001 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2020 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -27,7 +27,7 @@
 #include "BooleanConstructor.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
-#include "JSBigInt.h"
+#include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "NumberObject.h"
 #include "NumberPrototype.h"
@@ -36,6 +36,11 @@
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
+
+bool JSValue::isHeapBigIntSlow() const
+{
+    return isHeapBigInt();
+}
 
 double JSValue::toIntegerPreserveNaN(JSGlobalObject* globalObject) const
 {
@@ -220,7 +225,7 @@ bool JSValue::putToPrimitive(JSGlobalObject* globalObject, PropertyName property
     // Check if there are any setters or getters in the prototype chain
     JSObject* obj = synthesizePrototype(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !obj);
-    if (UNLIKELY(!obj))
+    if (!obj) [[unlikely]]
         return false;
     RELEASE_AND_RETURN(scope, obj->methodTable()->put(obj, globalObject, propertyName, value, slot));
 }
@@ -234,17 +239,17 @@ bool JSValue::putToPrimitiveByIndex(JSGlobalObject* globalObject, unsigned prope
         PutPropertySlot slot(*this, shouldThrow);
         return putToPrimitive(globalObject, Identifier::from(vm, propertyName), value, slot);
     }
-    
+
     JSObject* prototype = synthesizePrototype(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !prototype);
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return false;
     bool putResult = false;
     bool success = prototype->attemptToInterceptPutByIndexOnHoleForPrototype(globalObject, *this, propertyName, value, shouldThrow, putResult);
     RETURN_IF_EXCEPTION(scope, false);
     if (success)
         return putResult;
-    
+
     return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 }
 
@@ -270,12 +275,14 @@ void JSValue::dumpInContextAssumingStructure(
 #if USE(JSVALUE64)
         out.printf("Double: %lld, %lf", (long long)reinterpretDoubleToInt64(asDouble()), asDouble());
 #else
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         union {
             double asDouble;
             uint32_t asTwoInt32s[2];
         } u;
         u.asDouble = asDouble();
         out.printf("Double: %08x:%08x, %lf", u.asTwoInt32s[1], u.asTwoInt32s[0], asDouble());
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
     } else if (isCell()) {
         if (structure->classInfoForCells()->isSubClassOf(JSString::info())) {
@@ -298,16 +305,19 @@ void JSValue::dumpInContextAssumingStructure(
             out.print(",length:(", string->length(), ")");
             out.print(": ", impl);
         } else if (structure->classInfoForCells()->isSubClassOf(RegExp::info()))
-            out.print("RegExp: ", *jsCast<RegExp*>(asCell()));
+            out.print("RegExp: ", *uncheckedDowncast<RegExp>(asCell()));
         else if (structure->classInfoForCells()->isSubClassOf(Symbol::info()))
             out.print("Symbol: ", RawPointer(asCell()));
         else if (structure->classInfoForCells()->isSubClassOf(Structure::info()))
-            out.print("Structure: ", inContext(*jsCast<Structure*>(asCell()), context));
+            out.print("Structure: ", inContext(*uncheckedDowncast<Structure>(asCell()), context));
         else if (isHeapBigInt())
-            out.print("BigInt[heap-allocated]: addr=", RawPointer(asCell()), ", length=", jsCast<JSBigInt*>(asCell())->length(), ", sign=", jsCast<JSBigInt*>(asCell())->sign());
+            out.print("BigInt[heap-allocated]: addr=", RawPointer(asCell()), ", length=", uncheckedDowncast<JSBigInt>(asCell())->length(), ", sign=", uncheckedDowncast<JSBigInt>(asCell())->sign());
         else if (structure->classInfoForCells()->isSubClassOf(JSObject::info())) {
             out.print("Object: ", RawPointer(asCell()));
-            out.print(" with butterfly ", RawPointer(asObject(asCell())->butterfly()), "(base=", RawPointer(asObject(asCell())->butterfly()->base(structure)), ")");
+            auto* butterfly = asObject(asCell())->butterfly();
+            out.print(" with butterfly ", RawPointer(butterfly));
+            if (butterfly)
+                out.print("(base=", RawPointer(butterfly->base(structure)), ")");
             out.print(" (Structure ", inContext(*structure, context), ")");
         } else {
             out.print("Cell: ", RawPointer(asCell()));
@@ -381,7 +391,7 @@ JSString* JSValue::toStringSlowCase(JSGlobalObject* globalObject, bool returnEmp
             return jsEmptyString(vm);
         return nullptr;
     };
-    
+
     ASSERT(!isString());
     if (isInt32())
         return int32ToString(vm, asInt32(), 10);
@@ -435,11 +445,26 @@ WTF::String JSValue::toWTFStringForConsole(JSGlobalObject* globalObject) const
     RETURN_IF_EXCEPTION(scope, { });
     if (isString())
         return tryMakeString('"', result.data, '"');
-    if (jsDynamicCast<JSArray*>(*this))
+    if (is<JSArray>(*this))
         return tryMakeString('[', result.data, ']');
-    if (jsDynamicCast<JSBigInt*>(*this))
+    if (is<JSBigInt>(*this))
         return tryMakeString(result.data, 'n');
     return result;
+}
+
+bool JSValue::isGetterSetterSlow() const
+{
+    return isGetterSetter();
+}
+
+bool JSValue::isCustomGetterSetterSlow() const
+{
+    return isCustomGetterSetter();
+}
+
+bool JSValue::isStringSlow() const
+{
+    return isString();
 }
 
 } // namespace JSC

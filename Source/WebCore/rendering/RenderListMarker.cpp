@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2003-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Andrew Wellington (proton@wiretapped.net)
  * Copyright (C) 2010 Daniel Bates (dbates@intudata.com)
  *
@@ -25,18 +25,32 @@
 #include "config.h"
 #include "RenderListMarker.h"
 
+#include "CSSCounterStyleDescriptors.h"
 #include "CSSCounterStyleRegistry.h"
+#include "CSSFontSelector.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "FontCascade.h"
+#include "FontCascadeInlines.h"
+#include "FontCascadeDescription.h"
 #include "GraphicsContext.h"
-#include "ListStyleType.h"
+#include "PaintInfoInlines.h"
+#include "RenderBlockFlow.h"
+#include "RenderBlockInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderLayer.h"
 #include "RenderListItem.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
+#include "RenderObjectInlines.h"
 #include "RenderView.h"
+#include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
+#include "StyleContent.h"
+#include "StyleListStyleType.h"
 #include "StyleScope.h"
+#include "TextUtil.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -44,58 +58,81 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderListMarker);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderListMarker);
 
-constexpr int cMarkerPadding = 7;
-
-RenderListMarker::RenderListMarker(RenderListItem& listItem, RenderStyle&& style)
-    : RenderBox(Type::ListMarker, listItem.document(), WTFMove(style))
+RenderListMarker::RenderListMarker(RenderListItem& listItem, Style::ComputedStyle&& style)
+    : RenderBox(Type::ListMarker, listItem.document(), WTF::move(style))
     , m_listItem(listItem)
 {
     setInline(true);
-    setReplacedOrInlineBlock(true); // pretend to be replaced
+    setBlockLevelReplacedOrAtomicInline(true); // pretend to be replaced
     ASSERT(isRenderListMarker());
 }
 
-RenderListMarker::~RenderListMarker()
-{
-    // Do not add any code here. Add it to willBeDestroyed() instead.
-}
+// Do not add any code in below destructor. Add it to willBeDestroyed() instead.
+RenderListMarker::~RenderListMarker() = default;
 
 void RenderListMarker::willBeDestroyed()
 {
     if (m_image)
-        m_image->removeClient(*this);
+        protect(m_image)->removeClient(*this);
     RenderBox::willBeDestroyed();
 }
 
-void RenderListMarker::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
+static Style::Difference NODELETE adjustedStyleDifference(Style::Difference diff, const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
 {
-    if (oldStyle && diff < StyleDifference::Layout) {
-        auto& style = this->style();
-        // FIXME: Preferably we do this at RenderStyle::changeRequiresLayout but checking against pseudo(::marker) is not sufficient.
-        auto needsLayout = style.listStylePosition() != oldStyle->listStylePosition() || style.listStyleType() != oldStyle->listStyleType() || style.isDisplayInlineType() != oldStyle->isDisplayInlineType();
-        diff = needsLayout ? StyleDifference::Layout : diff;
-    }
+    if (diff >= Style::DifferenceResult::Layout)
+        return diff;
+    // FIXME: Preferably we do this at Style::ComputedStyle::changeRequiresLayout but checking against pseudo(::marker) is not sufficient.
+    auto needsLayout =
+           oldStyle.listStylePosition() != newStyle.listStylePosition()
+        || oldStyle.listStyleType() != newStyle.listStyleType()
+        || oldStyle.display().isInlineType() != newStyle.display().isInlineType();
+    return needsLayout ? Style::DifferenceResult::Layout : diff;
+}
+
+void RenderListMarker::styleWillChange(Style::Difference diff, const Style::ComputedStyle& newStyle)
+{
+    RenderBox::styleWillChange(adjustedStyleDifference(diff, style(), newStyle), newStyle);
+}
+
+void RenderListMarker::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
+{
+    if (oldStyle)
+        diff = adjustedStyleDifference(diff, *oldStyle, style());
     RenderBox::styleDidChange(diff, oldStyle);
 
-    if (m_image != style().listStyleImage()) {
+    if (RefPtr newImage = style().listStyleImage().tryStyleImage(); m_image != newImage) {
         if (m_image)
-            m_image->removeClient(*this);
-        m_image = style().listStyleImage();
+            protect(m_image)->removeClient(*this);
+        m_image = WTF::move(newImage);
         if (m_image)
-            m_image->addClient(*this);
+            protect(m_image)->addClient(*this);
     }
 }
 
 bool RenderListMarker::isImage() const
 {
-    return m_image && !m_image->errorOccurred();
+    // `content` supersedes list-style-image (css-lists-3 §3.3), so a marker with generated content
+    // is never treated as an image marker (affects inline margins, baseline, and layout attributes).
+    return m_image && !protect(m_image)->errorOccurred() && !hasContent();
+}
+
+bool RenderListMarker::hasContent() const
+{
+    return document().settings().cssMarkerContentEnabled() && style().content().isData();
+}
+
+RenderBlockFlow* RenderListMarker::contentContainer() const
+{
+    // When the marker has generated content, its sole child is the anonymous
+    // inline-block box holding that content (created by RenderTreeBuilder::List).
+    return dynamicDowncast<RenderBlockFlow>(firstChild());
 }
 
 LayoutRect RenderListMarker::localSelectionRect()
 {
-    return LayoutRect(LayoutPoint(), size());
+    return LayoutRect(LayoutPoint(), borderBoxSize());
 }
 
 static String reversed(StringView string)
@@ -103,46 +140,60 @@ static String reversed(StringView string)
     auto length = string.length();
     if (length <= 1)
         return string.toString();
-    UChar* characters;
+    std::span<char16_t> characters;
     auto result = String::createUninitialized(length, characters);
     for (unsigned i = 0; i < length; ++i)
-        *characters++ = string[length - i - 1];
+        characters[i] = string[length - i - 1];
     return result;
 }
 
-struct RenderListMarker::TextRunWithUnderlyingString {
+struct TextRunWithUnderlyingString {
     TextRun textRun;
     String underlyingString;
     operator const TextRun&() const { return textRun; }
 };
 
-auto RenderListMarker::textRun() const -> TextRunWithUnderlyingString
+static FontCascade disclosureMarkerFontCascade(const Style::ComputedStyle& style, Document& document)
 {
-    ASSERT(!m_textWithSuffix.isEmpty());
+    auto fontDescription = FontCascadeDescription { style.fontDescription() };
+    fontDescription.setFamilies({ { "system-ui"_s, FontFamilyKind::Generic } });
+    auto fontCascade = FontCascade(WTF::move(fontDescription));
+    fontCascade.update(&document.fontSelector());
+    return fontCascade;
+}
+
+static auto textRunForContent(ListMarkerTextContent textContent, const Style::ComputedStyle& style) -> TextRunWithUnderlyingString
+{
+    ASSERT(!textContent.isEmpty());
 
     // Since the bidi algorithm doesn't run on this text, we instead reorder the characters here.
     // We use u_charDirection to figure out if the marker text is RTL and assume the suffix matches the surrounding direction.
     String textForRun;
-    if (m_textIsLeftToRightDirection) {
-        if (style().isLeftToRightDirection())
-            textForRun = m_textWithSuffix;
+    if (textContent.textDirection == TextDirection::LTR) {
+        if (style.writingMode().isBidiLTR())
+            textForRun = textContent.textWithSuffix;
         else
-            textForRun = makeString(reversed(StringView(m_textWithSuffix).substring(m_textWithoutSuffixLength)), m_textWithSuffix.left(m_textWithoutSuffixLength));
+            textForRun = makeString(reversed(textContent.suffix()), textContent.textWithoutSuffix());
     } else {
-        if (!style().isLeftToRightDirection())
-            textForRun = reversed(m_textWithSuffix);
+        if (!style.writingMode().isBidiLTR())
+            textForRun = reversed(textContent.textWithSuffix);
         else
-            textForRun = makeString(reversed(StringView(m_textWithSuffix).left(m_textWithoutSuffixLength)), m_textWithSuffix.substring(m_textWithoutSuffixLength));
+            textForRun = makeString(reversed(textContent.textWithoutSuffix()), textContent.suffix());
     }
-    auto textRun = RenderBlock::constructTextRun(textForRun, style());
-    return { WTFMove(textRun), WTFMove(textForRun) };
+    auto textRun = RenderBlock::constructTextRun(textForRun, style);
+    return { WTF::move(textRun), WTF::move(textForRun) };
+}
+
+void RenderListMarker::paintDisclosureMarker(GraphicsContext& context, const FloatRect& markerRect)
+{
+    auto systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
+    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + systemUIFontCascade.metricsOfPrimaryFont().ascent() };
+    textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), protect(document())->deviceScaleFactor(), writingMode().isLogicalLeftInlineStart());
+    context.drawText(systemUIFontCascade, textRunForContent(m_textContent, style()), textOrigin);
 }
 
 void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (paintInfo.phase != PaintPhase::Foreground && paintInfo.phase != PaintPhase::Accessibility)
-        return;
-
     if (style().usedVisibility() != Visibility::Visible)
         return;
 
@@ -152,7 +203,29 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
     if (!paintInfo.rect.intersects(overflowRect))
         return;
 
-    LayoutRect box(boxOrigin, size());
+    if (CheckedPtr container = contentContainer()) {
+        if (paintInfo.phase == PaintPhase::Accessibility) {
+            paintInfo.accessibilityRegionContext()->takeBounds(*this, LayoutRect(boxOrigin, borderBoxSize()));
+            return;
+        }
+
+        if (paintInfo.phase == PaintPhase::Foreground && selectionState() != HighlightState::None) {
+            LayoutRect selectionRect = localSelectionRect();
+            selectionRect.moveBy(boxOrigin);
+            paintInfo.context().fillRect(snappedIntRect(selectionRect), m_listItem->selectionBackgroundColor());
+        }
+
+        // Paint the generated-content subtree as an atomic inline: paintAsInlineBlock fans out all
+        // sub-phases for Foreground and forwards Selection/EventRegion/TextClip to the child's paint().
+        container->paintAsInlineBlock(paintInfo, boxOrigin);
+        return;
+    }
+
+    // The bespoke bullet/text/image painting below only applies to the foreground and accessibility phases.
+    if (paintInfo.phase != PaintPhase::Foreground && paintInfo.phase != PaintPhase::Accessibility)
+        return;
+
+    LayoutRect box(boxOrigin, borderBoxSize());
 
     auto markerRect = relativeMarkerRect();
     markerRect.moveBy(boxOrigin);
@@ -168,23 +241,23 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
     GraphicsContext& context = paintInfo.context();
 
     if (isImage()) {
-        if (RefPtr<Image> markerImage = m_image->image(this, markerRect.size()))
-            context.drawImage(*markerImage, markerRect);
+        if (RefPtr markerImage = protect(m_image)->image(this, markerRect.size(), context))
+            context.drawImage(*markerImage, markerRect, { imageOrientation() });
         if (selectionState() != HighlightState::None) {
-            LayoutRect selRect = localSelectionRect();
-            selRect.moveBy(boxOrigin);
-            context.fillRect(snappedIntRect(selRect), m_listItem->selectionBackgroundColor());
+            LayoutRect selectionRect = localSelectionRect();
+            selectionRect.moveBy(boxOrigin);
+            context.fillRect(snappedIntRect(selectionRect), m_listItem->selectionBackgroundColor());
         }
         return;
     }
 
     if (selectionState() != HighlightState::None) {
-        LayoutRect selRect = localSelectionRect();
-        selRect.moveBy(boxOrigin);
-        context.fillRect(snappedIntRect(selRect), m_listItem->selectionBackgroundColor());
+        LayoutRect selectionRect = localSelectionRect();
+        selectionRect.moveBy(boxOrigin);
+        context.fillRect(snappedIntRect(selectionRect), m_listItem->selectionBackgroundColor());
     }
 
-    auto color = style().visitedDependentColorWithColorFilter(CSSPropertyColor);
+    auto color = style().visitedDependentTextFillColorApplyingColorFilter();
     context.setStrokeColor(color);
     context.setStrokeStyle(StrokeStyle::SolidStroke);
     context.setStrokeThickness(1.0f);
@@ -203,11 +276,12 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
         context.fillRect(markerRect);
         return;
     }
-    if (m_textWithSuffix.isEmpty())
+
+    if (m_textContent.isEmpty())
         return;
 
     GraphicsContextStateSaver stateSaver(context, false);
-    if (!style().isHorizontalWritingMode()) {
+    if (!writingMode().isHorizontal()) {
         markerRect.moveBy(-boxOrigin);
         markerRect = markerRect.transposedRect();
         markerRect.moveBy(FloatPoint(box.x(), box.y() - logicalHeight()));
@@ -217,9 +291,14 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
         context.translate(-markerRect.x(), -markerRect.maxY());
     }
 
-    FloatPoint textOrigin = FloatPoint(markerRect.x(), markerRect.y() + style().metricsOfPrimaryFont().intAscent());
-    textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), document().deviceScaleFactor(), style().isLeftToRightDirection());
-    context.drawText(style().fontCascade(), textRun(), textOrigin);
+    if (isDisclosureMarker()) {
+        paintDisclosureMarker(context, markerRect);
+        return;
+    }
+
+    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + style().fontCascade().metricsOfPrimaryFont().ascent() };
+    textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), protect(document())->deviceScaleFactor(), writingMode().isLogicalLeftInlineStart());
+    context.drawText(style().fontCascade(), textRunForContent(m_textContent, style()), textOrigin);
 }
 
 RenderBox* RenderListMarker::parentBox(RenderBox& box)
@@ -228,7 +307,7 @@ RenderBox* RenderListMarker::parentBox(RenderBox& box)
     CheckedPtr multiColumnFlow = dynamicDowncast<RenderMultiColumnFlow>(m_listItem->enclosingFragmentedFlow());
     if (!multiColumnFlow)
         return box.parentBox();
-    auto* placeholder = multiColumnFlow->findColumnSpannerPlaceholder(&box);
+    auto* placeholder = multiColumnFlow->findColumnSpannerPlaceholder(box);
     return placeholder ? placeholder->parentBox() : box.parentBox();
 };
 
@@ -241,37 +320,77 @@ void RenderListMarker::layout()
     for (auto* ancestor = parentBox(*this); ancestor && ancestor != m_listItem.get(); ancestor = parentBox(*ancestor))
         blockOffset += ancestor->logicalTop();
 
-    m_lineLogicalOffsetForListItem = m_listItem->logicalLeftOffsetForLine(blockOffset, 0_lu);
-    m_lineOffsetForListItem = style().isLeftToRightDirection() ? m_lineLogicalOffsetForListItem : m_listItem->logicalRightOffsetForLine(blockOffset, 0_lu);
+    m_lineLogicalOffsetForListItem = m_listItem->logicalLeftOffsetForLine(blockOffset);
+    m_lineOffsetForListItem = writingMode().isLogicalLeftInlineStart() ? m_lineLogicalOffsetForListItem : m_listItem->logicalRightOffsetForLine(blockOffset);
 
-    if (isImage()) {
-        updateMarginsAndContent();
-        setWidth(m_image->imageSize(this, style().usedZoom()).width());
-        setHeight(m_image->imageSize(this, style().usedZoom()).height());
+    if (CheckedPtr container = contentContainer()) {
+        updateInlineMarginsAndContent();
+        layoutContentContainer(*container);
+    } else if (isImage()) {
+        updateInlineMarginsAndContent();
+        RefPtr image = m_image;
+        setBorderBoxWidth(image->imageSize(this, style().usedZoom()).width());
+        setBorderBoxHeight(image->imageSize(this, style().usedZoom()).height());
+        m_layoutBounds = { borderBoxHeight(), 0 };
     } else {
-        setLogicalWidth(minPreferredLogicalWidth());
+        setLogicalWidth(minContentLogicalWidthContribution());
         setLogicalHeight(style().metricsOfPrimaryFont().intHeight());
+        m_layoutBounds = layoutBoundForTextContent(textWithSuffix());
     }
 
     setMarginStart(0);
     setMarginEnd(0);
 
-    Length startMargin = style().marginStart();
-    Length endMargin = style().marginEnd();
-    if (startMargin.isFixed())
-        setMarginStart(LayoutUnit(startMargin.value()));
-    if (endMargin.isFixed())
-        setMarginEnd(LayoutUnit(endMargin.value()));
+    if (auto fixedStartMargin = style().marginStart().tryFixed())
+        setMarginStart(LayoutUnit(fixedStartMargin->resolveZoom(style().usedZoomForLength())));
+    if (auto fixedEndMargin = style().marginEnd().tryFixed())
+        setMarginEnd(LayoutUnit(fixedEndMargin->resolveZoom(style().usedZoomForLength())));
 
     clearNeedsLayout();
+}
+
+void RenderListMarker::layoutContentContainer(RenderBlockFlow& container)
+{
+    // The marker participates in its list item's line as a single atomic inline. Lay its
+    // generated-content subtree out at its max-content (shrink-to-fit) width, like an
+    // inline-block, then adopt the resulting size and baseline.
+    auto contentLogicalWidth = container.maxContentLogicalWidthContribution();
+    container.setOverridingBorderBoxLogicalWidth(contentLogicalWidth);
+    container.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    container.layoutIfNeeded();
+    container.clearOverridingBorderBoxLogicalWidth();
+
+    setLogicalWidth(container.logicalWidth());
+    setLogicalHeight(container.logicalHeight());
+
+    // The inline formatting context aligns the marker box on the marker's primary-font baseline
+    // (like a text marker; see InlineLineBoxBuilder), then we paint the content box at the marker
+    // box origin. Offset the content box along the block axis so its own first-line baseline lands
+    // on that font baseline — otherwise the content's line-box half-leading shifts it off the list
+    // item's baseline. Logical setters keep this correct in vertical writing modes.
+    auto markerAscent = LayoutUnit { style().metricsOfPrimaryFont().ascent() };
+    auto contentBaseline = container.firstLineBaseline().value_or(container.logicalHeight());
+    container.setLogicalTop(markerAscent - contentBaseline);
+
+    m_layoutBounds = { contentBaseline, container.logicalHeight() - contentBaseline };
+
+    // The content box can extend outside the marker's border box (its baseline offset may be
+    // negative, or the content taller than the marker font), so record its overflow. The marker
+    // overrides layout() and otherwise reports no overflow, which would clip/mis-repaint the content.
+    clearOverflow();
+    addLayoutOverflow({ container.location(), container.borderBoxSize() });
+    auto contentVisualOverflow = container.visualOverflowRect();
+    contentVisualOverflow.moveBy(container.location());
+    addVisualOverflow(contentVisualOverflow);
 }
 
 void RenderListMarker::imageChanged(WrappedImagePtr o, const IntRect* rect)
 {
     if (parent()) {
-        if (m_image && o == m_image->data()) {
-            if (width() != m_image->imageSize(this, style().usedZoom()).width() || height() != m_image->imageSize(this, style().usedZoom()).height() || m_image->errorOccurred())
-                setNeedsLayoutAndPrefWidthsRecalc();
+        RefPtr image = m_image;
+        if (image && o == image->data()) {
+            if (borderBoxWidth() != image->imageSize(this, style().usedZoom()).width() || borderBoxHeight() != image->imageSize(this, style().usedZoom()).height() || image->errorOccurred())
+                setNeedsLayoutAndInvalidateContentLogicalWidths();
             else
                 repaint();
         }
@@ -279,137 +398,173 @@ void RenderListMarker::imageChanged(WrappedImagePtr o, const IntRect* rect)
     RenderBox::imageChanged(o, rect);
 }
 
-void RenderListMarker::updateMarginsAndContent()
+void RenderListMarker::updateInlineMarginsAndContent()
 {
     // FIXME: It's messy to use the preferredLogicalWidths dirty bit for this optimization, also unclear if this is premature optimization.
-    if (preferredLogicalWidthsDirty())
+    if (hasInvalidContentLogicalWidths())
         updateContent();
-    updateMargins();
+    updateInlineMargins();
 }
 
 void RenderListMarker::updateContent()
 {
+    if (hasContent()) {
+        // css-lists-3 §3.3: `content` (not normal) supersedes list-style-image/type. The generated
+        // content lives in the anonymous inline-block contentContainer(); the marker has no text/image.
+        m_textContent = { };
+        return;
+    }
+
     if (isImage()) {
-        // FIXME: This is a somewhat arbitrary width.  Generated images for markers really won't become particularly useful
-        // until we support the CSS3 marker pseudoclass to allow control over the width and height of the marker box.
+        // FIXME: This is a somewhat arbitrary width.
         LayoutUnit bulletWidth = style().metricsOfPrimaryFont().intAscent() / 2_lu;
         LayoutSize defaultBulletSize(bulletWidth, bulletWidth);
         LayoutSize imageSize = calculateImageIntrinsicDimensions(m_image.get(), defaultBulletSize, ScaleByUsedZoom::No);
-        m_image->setContainerContextForRenderer(*this, imageSize, style().usedZoom());
-        m_textWithSuffix = emptyString();
-        m_textWithoutSuffixLength = 0;
-        m_textIsLeftToRightDirection = true;
+        protect(m_image)->setContainerContextForRenderer(*this, imageSize, style().usedZoom());
+        m_textContent = {
+            .textWithSuffix = emptyString(),
+            .textWithoutSuffixLength = 0,
+            .textDirection = TextDirection::LTR,
+        };
         return;
     }
 
-    auto styleType = style().listStyleType();
-    switch (styleType.type) {
-    case ListStyleType::Type::String:
-        m_textWithSuffix = styleType.identifier;
-        m_textWithoutSuffixLength = m_textWithSuffix.length();
+    auto contentTextDirection = [&](auto content) {
+        if (!content.length())
+            return TextDirection::LTR;
         // FIXME: Depending on the string value, we may need the real bidi algorithm. (rdar://106139180)
-        m_textIsLeftToRightDirection = u_charDirection(m_textWithSuffix[0]) != U_RIGHT_TO_LEFT;
-        break;
-    case ListStyleType::Type::CounterStyle: {
-        auto counter = counterStyle();
-        ASSERT(counter);
-        auto text = makeString(counter->prefix().text, counter->text(m_listItem->value(), makeTextFlow(style().writingMode(), style().direction())));
-        m_textWithSuffix = makeString(text, counter->suffix().text);
-        m_textWithoutSuffixLength = text.length();
-        m_textIsLeftToRightDirection = u_charDirection(text[0]) != U_RIGHT_TO_LEFT;
-        break;
-    }
-    case ListStyleType::Type::None:
-        m_textWithSuffix = " "_s;
-        m_textWithoutSuffixLength = 0;
-        m_textIsLeftToRightDirection = true;
-        break;
-    }
+        // Also we may need to start checking for the entire content for directionality (and whether we need to check for additional
+        // directionality characters like U_RIGHT_TO_LEFT_EMBEDDING).
+        auto bidiCategory = u_charDirection(content[0]);
+        if (bidiCategory != U_RIGHT_TO_LEFT && bidiCategory != U_RIGHT_TO_LEFT_ARABIC)
+            return TextDirection::LTR;
+        return TextDirection::RTL;
+    };
+
+    WTF::switchOn(style().listStyleType(),
+        [&](const CSS::Keyword::None&) {
+            m_textContent = {
+                .textWithSuffix = " "_s,
+                .textWithoutSuffixLength = 0,
+                .textDirection = TextDirection::LTR,
+            };
+        },
+        [&](const Style::String& identifier) {
+            m_textContent = {
+                .textWithSuffix = identifier.value,
+                .textWithoutSuffixLength = identifier.value.length(),
+                .textDirection = contentTextDirection(StringView { identifier.value }),
+            };
+        },
+        [&](const Style::CounterStyle&) {
+            auto counter = counterStyle();
+            ASSERT(counter);
+
+            auto text = makeString(counter->prefix().text, counter->text(m_listItem->value(), writingMode()));
+            m_textContent = {
+                .textWithSuffix = makeString(text, counter->suffix().text),
+                .textWithoutSuffixLength = text.length(),
+                .textDirection = contentTextDirection(text),
+            };
+        }
+    );
 }
 
-void RenderListMarker::computePreferredLogicalWidths()
+void RenderListMarker::computeIntrinsicLogicalWidthContributions()
 {
-    ASSERT(preferredLogicalWidthsDirty());
+    ASSERT(hasInvalidContentLogicalWidths());
     updateContent();
 
-    if (isImage()) {
-        LayoutSize imageSize = LayoutSize(m_image->imageSize(this, style().usedZoom()));
-        m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = style().isHorizontalWritingMode() ? imageSize.width() : imageSize.height();
-        setPreferredLogicalWidthsDirty(false);
-        updateMargins();
+    if (CheckedPtr container = contentContainer()) {
+        // The marker is non-wrapping, so its min- and max-content widths are both the
+        // content's max-content width.
+        auto logicalWidth = container->maxContentLogicalWidthContribution();
+        m_minContentLogicalWidthContribution = logicalWidth;
+        m_maxContentLogicalWidthContribution = logicalWidth;
+        clearContentLogicalWidthsInvalidation();
+        updateInlineMargins();
         return;
     }
 
-    const FontCascade& font = style().fontCascade();
+    if (isImage()) {
+        LayoutSize imageSize = LayoutSize(protect(m_image)->imageSize(this, style().usedZoom()));
+        m_maxContentLogicalWidthContribution = writingMode().isHorizontal() ? imageSize.width() : imageSize.height();
+        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
+        clearContentLogicalWidthsInvalidation();
+        updateInlineMargins();
+        return;
+    }
+
+    std::optional<FontCascade> systemUIFontCascade;
+    // Use system-ui font for disclosure triangles
+    if (isDisclosureMarker())
+        systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
+
+    auto& font = systemUIFontCascade ? *systemUIFontCascade : style().fontCascade();
 
     LayoutUnit logicalWidth;
     if (widthUsesMetricsOfPrimaryFont())
         logicalWidth = (font.metricsOfPrimaryFont().intAscent() * 2 / 3 + 1) / 2 + 2;
-    else if (!m_textWithSuffix.isEmpty())
-            logicalWidth = font.width(textRun());
+    else if (!m_textContent.isEmpty())
+        logicalWidth = font.width(textRunForContent(m_textContent, style()));
 
-    m_minPreferredLogicalWidth = logicalWidth;
-    m_maxPreferredLogicalWidth = logicalWidth;
+    m_minContentLogicalWidthContribution = logicalWidth;
+    m_maxContentLogicalWidthContribution = logicalWidth;
 
-    setPreferredLogicalWidthsDirty(false);
+    clearContentLogicalWidthsInvalidation();
 
-    updateMargins();
+    updateInlineMargins();
 }
 
-void RenderListMarker::updateMargins()
+void RenderListMarker::updateInlineMargins()
 {
+    constexpr int markerPadding = 7;
     const FontMetrics& fontMetrics = style().metricsOfPrimaryFont();
 
-    LayoutUnit marginStart;
-    LayoutUnit marginEnd;
-
-    if (isInside()) {
+    auto marginsForInsideMarker = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
         if (isImage())
-            marginEnd = cMarkerPadding;
-        else if (widthUsesMetricsOfPrimaryFont()) {
-                marginStart = -1;
-                marginEnd = fontMetrics.intAscent() - minPreferredLogicalWidth() + 1;
-        }
-    } else if (isImage()) {
-        marginStart = -minPreferredLogicalWidth() - cMarkerPadding;
-        marginEnd = cMarkerPadding;
-    } else {
+            return { 0, markerPadding };
+
+        if (widthUsesMetricsOfPrimaryFont())
+            return { -1, fontMetrics.intAscent() - minContentLogicalWidthContribution() + 1 };
+
+        return { };
+    };
+
+    auto marginsForOutsideMarker = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
+        if (isImage())
+            return { -minContentLogicalWidthContribution() - markerPadding, markerPadding };
+
         int offset = fontMetrics.intAscent() * 2 / 3;
-        if (widthUsesMetricsOfPrimaryFont()) {
-            marginStart = -offset - cMarkerPadding - 1;
-            marginEnd = offset + cMarkerPadding + 1 - minPreferredLogicalWidth();
-        } else if (style().listStyleType().type == ListStyleType::Type::String) {
-            if (!m_textWithSuffix.isEmpty())
-                marginStart = -minPreferredLogicalWidth();
-        } else {
-            if (!m_textWithSuffix.isEmpty()) {
-                marginStart = -minPreferredLogicalWidth() - offset / 2;
-                marginEnd = offset / 2;
-            }
-        }
-    }
+        if (widthUsesMetricsOfPrimaryFont())
+            return { -offset - markerPadding - 1, offset + markerPadding + 1 - minContentLogicalWidthContribution() };
 
-    mutableStyle().setMarginStart(Length(marginStart, LengthType::Fixed));
-    mutableStyle().setMarginEnd(Length(marginEnd, LengthType::Fixed));
-}
+        if (m_textContent.isEmpty() && !contentContainer())
+            return { };
 
-LayoutUnit RenderListMarker::lineHeight(bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
-{
-    if (!isImage())
-        return m_listItem->lineHeight(firstLine, direction, PositionOfInteriorLineBoxes);
-    return RenderBox::lineHeight(firstLine, direction, linePositionMode);
-}
+        return { -minContentLogicalWidthContribution(), 0 };
+    };
 
-LayoutUnit RenderListMarker::baselinePosition(FontBaseline baselineType, bool firstLine, LineDirectionMode direction, LinePositionMode linePositionMode) const
-{
-    if (!isImage())
-        return m_listItem->baselinePosition(baselineType, firstLine, direction, PositionOfInteriorLineBoxes);
-    return RenderBox::baselinePosition(baselineType, firstLine, direction, linePositionMode);
+    auto [marginStart, marginEnd] = isInside() ? marginsForInsideMarker() : marginsForOutsideMarker();
+    auto zoom = style().usedZoomForLength().value;
+
+    mutableStyle().setMarginStart(Style::MarginEdge::Fixed { marginStart / zoom });
+    mutableStyle().setMarginEnd(Style::MarginEdge::Fixed { marginEnd / zoom });
 }
 
 bool RenderListMarker::isInside() const
 {
-    return m_listItem->notInList() || style().listStylePosition() == ListStylePosition::Inside;
+    return style().listStylePosition() == ListStylePosition::Inside;
+}
+
+bool RenderListMarker::isDisclosureMarker() const
+{
+    auto counter = counterStyle();
+    if (!counter)
+        return false;
+    auto system = counter->system();
+    return system == CSSCounterStyleDescriptors::System::DisclosureClosed
+        || system == CSSCounterStyleDescriptors::System::DisclosureOpen;
 }
 
 const RenderListItem* RenderListMarker::listItem() const
@@ -417,28 +572,45 @@ const RenderListItem* RenderListMarker::listItem() const
     return m_listItem.get();
 }
 
+Node* RenderListMarker::nodeForHitTest() const
+{
+    return m_listItem ? m_listItem->element() : nullptr;
+}
+
 FloatRect RenderListMarker::relativeMarkerRect()
 {
     if (isImage())
-        return FloatRect(0, 0, m_image->imageSize(this, style().usedZoom()).width(), m_image->imageSize(this, style().usedZoom()).height());
+        return { 0.f, 0.f, protect(m_image)->imageSize(this, style().usedZoom()).width(), protect(m_image)->imageSize(this, style().usedZoom()).height() };
 
     FloatRect relativeRect;
     if (widthUsesMetricsOfPrimaryFont()) {
-        // FIXME: Are these particular rounding rules necessary?
-        const FontMetrics& fontMetrics = style().metricsOfPrimaryFont();
-        int ascent = fontMetrics.intAscent();
-        int bulletWidth = (ascent * 2 / 3 + 1) / 2;
-        relativeRect = FloatRect(1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth);
+        auto& fontMetrics = style().metricsOfPrimaryFont();
+        auto ascent = fontMetrics.ascent();
+        auto bulletWidth = (ascent * 2 / 3 + 1) / 2;
+        relativeRect = { 1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth };
     } else {
-        if (m_textWithSuffix.isEmpty())
-            return FloatRect();
-        auto& font = style().fontCascade();
-        relativeRect = FloatRect(0, 0, font.width(textRun()), font.metricsOfPrimaryFont().intHeight());
+        if (m_textContent.isEmpty())
+            return { };
+
+        // Use system-ui font for disclosure triangles
+        if (isDisclosureMarker()) {
+            auto systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
+            auto& fontMetrics = style().metricsOfPrimaryFont();
+            auto& systemUIFontMetrics = systemUIFontCascade.metricsOfPrimaryFont();
+            auto width = systemUIFontCascade.width(textRunForContent(m_textContent, style()));
+            auto height = systemUIFontMetrics.height();
+            // Center vertically within the original font metrics
+            auto yOffset = (fontMetrics.height() - height) / 2.0f;
+            relativeRect = { 0.f, yOffset, width, height };
+        } else {
+            auto& font = style().fontCascade();
+            relativeRect = { 0.f, 0.f, font.width(textRunForContent(m_textContent, style())), font.metricsOfPrimaryFont().height() };
+        }
     }
 
-    if (!style().isHorizontalWritingMode()) {
+    if (!writingMode().isHorizontal()) {
         relativeRect = relativeRect.transposedRect();
-        relativeRect.setX(width() - relativeRect.x() - relativeRect.width());
+        relativeRect.setX(borderBoxWidth() - relativeRect.x() - relativeRect.width());
     }
 
     return relativeRect;
@@ -447,24 +619,60 @@ FloatRect RenderListMarker::relativeMarkerRect()
 LayoutRect RenderListMarker::selectionRectForRepaint(const RenderLayerModelObject*, bool)
 {
     ASSERT(!needsLayout());
-
-    return LayoutRect();
+    return { };
 }
 
-StringView RenderListMarker::textWithoutSuffix() const
+RefPtr<CSSRegisteredCounterStyle> RenderListMarker::counterStyle() const
 {
-    return StringView { m_textWithSuffix }.left(m_textWithoutSuffixLength);
-}
-
-RefPtr<CSSCounterStyle> RenderListMarker::counterStyle() const
-{
-    return document().counterStyleRegistry().resolvedCounterStyle(style().listStyleType());
+    auto counterStyle = style().listStyleType().tryCounterStyle();
+    if (!counterStyle)
+        return nullptr;
+    return document().counterStyleRegistry().resolvedCounterStyle(*counterStyle);
 }
 
 bool RenderListMarker::widthUsesMetricsOfPrimaryFont() const
 {
-    auto listType = style().listStyleType();
+    // `content` supersedes list-style-type, so a content marker never draws a bullet glyph.
+    if (hasContent())
+        return false;
+    auto& listType = style().listStyleType();
     return listType.isCircle() || listType.isDisc() || listType.isSquare();
+}
+
+std::pair<float, float> RenderListMarker::layoutBoundForTextContent(String text) const
+{
+    // FIXME: This should be part of InlineBoxBuilder (webkit.org/b/294342)
+    // This is essentially what we do in LineBoxBuilder::enclosingAscentDescentWithFallbackFonts.
+    auto ascentAndDescent = [&] (auto& fontMetrics) {
+        auto ascent = fontMetrics.ascent();
+        auto descent = fontMetrics.descent();
+        auto halfLeading = (fontMetrics.lineSpacing() - (ascent + descent)) / 2.f;
+        return std::pair<float, float> { ascent + halfLeading, descent + halfLeading };
+    };
+    auto& style = this->style();
+    auto& metricsOfPrimaryFont = style.metricsOfPrimaryFont();
+    auto primaryFontHeight = metricsOfPrimaryFont.height();
+
+    if (style.lineHeight().isNormal()) {
+        auto maxAscentAndDescent = ascentAndDescent(metricsOfPrimaryFont);
+
+        for (Ref fallbackFont : Layout::TextUtil::fallbackFontsForText(text, style, Layout::TextUtil::IncludeHyphen::No)) {
+            auto& fontMetrics = fallbackFont->fontMetrics();
+            if (primaryFontHeight >= fontMetrics.height()) {
+                // FIXME: Figure out why certain symbols (e.g. disclosure-open) would initiate fallback fonts with just slightly different (subpixel) metrics.
+                // This is mainly about preserving legacy behavior.
+                continue;
+            }
+            auto ascentDescent = ascentAndDescent(fontMetrics);
+            maxAscentAndDescent.first = std::max(maxAscentAndDescent.first, ascentDescent.first);
+            maxAscentAndDescent.second = std::max(maxAscentAndDescent.second, ascentDescent.second);
+        }
+        return { maxAscentAndDescent.first, maxAscentAndDescent.second };
+    }
+
+    auto primaryFontAscentAndDescent = ascentAndDescent(metricsOfPrimaryFont);
+    auto halfLeading = (style.computedLineHeight() - (primaryFontAscentAndDescent.first + primaryFontAscentAndDescent.second)) / 2.f;
+    return { primaryFontAscentAndDescent.first + halfLeading, primaryFontAscentAndDescent.second + halfLeading };
 }
 
 } // namespace WebCore

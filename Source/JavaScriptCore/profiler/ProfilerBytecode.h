@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
+#include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/JSONValues.h>
 #include <wtf/text/CString.h>
 
@@ -53,7 +53,7 @@ public:
     
     unsigned bytecodeIndex() const { return m_bytecodeIndex; }
     OpcodeID opcodeID() const { return m_opcodeID; }
-    const CString& description() const { return m_description; }
+    const CString& description() const LIFETIME_BOUND { return m_description; }
     
     Ref<JSON::Value> toJSON(Dumper&) const;
 private:

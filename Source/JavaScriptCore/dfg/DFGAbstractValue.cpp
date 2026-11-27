@@ -31,6 +31,8 @@
 #include "DFGGraph.h"
 #include "JSCJSValueInlines.h"
 #include "TrackedReferences.h"
+#include <wtf/AlignedStorage.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace DFG {
 
@@ -52,13 +54,11 @@ void AbstractValue::set(Graph& graph, const FrozenValue& value, StructureClobber
 {
     if (!!value && value.value().isCell()) {
         Structure* structure = value.structure();
-        StructureRegistrationResult result;
-        RegisteredStructure registeredStructure = graph.registerStructure(structure, result);
-        if (result == StructureRegisteredAndWatched) {
-            m_structure = registeredStructure;
+        if (graph.tryWatch(structure)) {
+            m_structure = graph.registerStructure(structure);
             if (clobberState == StructuresAreClobbered) {
                 m_arrayModes = ALL_ARRAY_MODES;
-                m_structure.clobber();
+                m_structure.clobber(graph);
             } else
                 m_arrayModes = arrayModesFromStructure(structure);
         } else {
@@ -144,6 +144,11 @@ void AbstractValue::fixTypeForRepresentation(Graph& graph, NodeFlags representat
         if (m_type & SpecAnyIntAsDouble) {
             // AnyIntAsDouble can produce i32 or i52. SpecAnyIntAsDouble doesn't bound the magnitude of the value.
             m_type &= ~SpecAnyIntAsDouble;
+            m_type |= SpecInt52Any;
+        }
+
+        if (m_type & SpecNonIntAsDouble) {
+            m_type &= ~SpecNonIntAsDouble;
             m_type |= SpecInt52Any;
         }
 
@@ -310,11 +315,11 @@ FiltrationResult AbstractValue::filterSlow(SpeculatedType type)
     return normalizeClarity();
 }
 
-FiltrationResult AbstractValue::fastForwardToAndFilterSlow(AbstractValueClobberEpoch newEpoch, SpeculatedType type)
+FiltrationResult AbstractValue::fastForwardToAndFilterSlow(Graph& graph, AbstractValueClobberEpoch newEpoch, SpeculatedType type)
 {
     if (newEpoch != m_effectEpoch)
-        fastForwardToSlow(newEpoch);
-    
+        fastForwardToSlow(graph, newEpoch);
+
     return filterSlow(type);
 }
 
@@ -524,20 +529,18 @@ void AbstractValue::validateReferences(const TrackedReferences& trackedReference
 #if USE(JSVALUE64) && !defined(NDEBUG)
 void AbstractValue::ensureCanInitializeWithZeros()
 {
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    std::aligned_storage<sizeof(AbstractValue), alignof(AbstractValue)>::type zeroFilledStorage;
-    ALLOW_DEPRECATED_DECLARATIONS_END
-    memset(static_cast<void*>(&zeroFilledStorage), 0, sizeof(AbstractValue));
+    AlignedStorage<AbstractValue> zeroFilledStorage;
+    zeroBytes(*zeroFilledStorage);
     ASSERT(*this == *static_cast<AbstractValue*>(static_cast<void*>(&zeroFilledStorage)));
 }
 #endif
 
-void AbstractValue::fastForwardToSlow(AbstractValueClobberEpoch newEpoch)
+void AbstractValue::fastForwardToSlow(Graph& graph, AbstractValueClobberEpoch newEpoch)
 {
     ASSERT(newEpoch != m_effectEpoch);
     
     if (newEpoch.clobberEpoch() != m_effectEpoch.clobberEpoch())
-        clobberStructures();
+        clobberStructures(graph);
     if (newEpoch.structureClobberState() == StructuresAreWatched)
         m_structure.observeInvalidationPoint();
     

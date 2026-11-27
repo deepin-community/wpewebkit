@@ -46,19 +46,21 @@ void TargetedElementRequest::setPoint(WebCore::FloatPoint point)
 
 void TargetedElementRequest::setSelectors(WebCore::TargetedElementSelectors&& selectors)
 {
-    m_request.data = WTFMove(selectors);
+    m_request.data = WTF::move(selectors);
 }
 
 void TargetedElementRequest::setSearchText(WTF::String&& searchText)
 {
-    m_request.data = WTFMove(searchText);
+    m_request.data = WTF::move(searchText);
 }
 
 WebCore::TargetedElementRequest TargetedElementRequest::makeRequest(const WebKit::WebPageProxy& page) const
 {
     auto request = m_request;
-    if (std::holds_alternative<WebCore::FloatPoint>(m_request.data))
-        request.data = page.protectedPageClient()->webViewToRootView(point());
+    if (std::holds_alternative<WebCore::FloatPoint>(m_request.data)) {
+        if (RefPtr pageClient = page.pageClient())
+            request.data = pageClient->webViewToRootView(point());
+    }
     return request;
 }
 

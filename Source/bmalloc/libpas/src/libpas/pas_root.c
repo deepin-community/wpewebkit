@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (c) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,7 @@
 #include "pas_config.h"
 
 #if LIBPAS_ENABLED
-
+#include "pas_zero_memory.h"
 #include "pas_root.h"
 
 #include "pas_all_heaps.h"
@@ -39,13 +39,13 @@
 #include "pas_large_sharing_pool.h"
 #include "pas_payload_reservation_page_list.h"
 #include "pas_probabilistic_guard_malloc_allocator.h"
+#include "pas_report_crash_pgm_report.h"
 #include "pas_scavenger.h"
 #include "pas_thread_local_cache_layout.h"
 #include "pas_thread_local_cache_node.h"
 
 #if PAS_OS(DARWIN)
 #include <mach/mach_init.h>
-#include <mach/vm_param.h>
 #endif
 
 static bool count_static_heaps_callback(pas_heap* heap, void* arg)
@@ -116,16 +116,10 @@ void pas_root_construct(pas_root* root)
     for (index = root->num_static_heaps; index--;)
         PAS_ASSERT(root->static_heaps[index]);
 
-    root->large_map_hashtable_instance = &pas_large_map_hashtable_instance;
-    root->large_map_hashtable_instance_in_flux_stash = &pas_large_map_hashtable_instance_in_flux_stash;
-    root->small_large_map_hashtable_instance = &pas_small_large_map_hashtable_instance;
-    root->small_large_map_hashtable_instance_in_flux_stash =
-        &pas_small_large_map_hashtable_instance_in_flux_stash;
-    root->tiny_large_map_hashtable_instance = &pas_tiny_large_map_hashtable_instance;
-    root->tiny_large_map_hashtable_instance_in_flux_stash =
-        &pas_tiny_large_map_hashtable_instance_in_flux_stash;
-    root->tiny_large_map_second_level_hashtable_in_flux_stash_instance =
-        &pas_tiny_large_map_second_level_hashtable_in_flux_stash_instance;
+    root->large_maps = pas_large_maps;
+    root->num_large_map_variants = PAS_NUM_LARGE_MAP_VARIANTS;
+
+    root->probabilistic_guard_malloc_has_been_used = &pas_probabilistic_guard_malloc_has_been_used;
 
     root->pas_pgm_hash_map_instance = &pas_pgm_hash_map;
     root->pas_pgm_hash_map_instance_in_flux_stash = &pas_pgm_hash_map_in_flux_stash;
@@ -145,6 +139,9 @@ void pas_root_construct(pas_root* root)
 
     root->baseline_allocator_table = &pas_baseline_allocator_table;
     root->num_baseline_allocators = PAS_NUM_BASELINE_ALLOCATORS;
+#ifdef __APPLE__
+    root->pas_crash_report_version = pas_crash_report_version;
+#endif
 }
 
 pas_root* pas_root_create(void)
@@ -395,14 +392,6 @@ pas_root* pas_root_ensure_for_libmalloc_enumeration(void)
 }
 
 #define PAS_SYSTEM_COMPACT_POINTER_SIZE 4
-
-#if PAS_CPU(ADDRESS64)
-#if PAS_ARM64 && PAS_OS(DARWIN) && !PAS_PLATFORM(IOS_FAMILY_SIMULATOR)
-#if MACH_VM_MAX_ADDRESS_RAW < (1ULL << 36)
-#define PAS_HAVE_36BIT_ADDRESS 1
-#endif
-#endif
-#endif // PAS_CPU(ADDRESS64)
 
 static inline vm_address_t decode_system_compact_pointer(pas_root* root, uint32_t value)
 {

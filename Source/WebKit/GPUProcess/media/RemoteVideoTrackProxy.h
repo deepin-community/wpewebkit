@@ -33,6 +33,7 @@
 #include <WebCore/TrackBase.h>
 #include <WebCore/VideoTrackPrivate.h>
 #include <wtf/Ref.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -49,6 +50,7 @@ struct VideoTrackPrivateRemoteConfiguration;
 class RemoteVideoTrackProxy final
     : public ThreadSafeRefCounted<RemoteVideoTrackProxy, WTF::DestructionThread::Main>
     , private WebCore::VideoTrackPrivateClient {
+    WTF_MAKE_TZONE_ALLOCATED(RemoteVideoTrackProxy);
 public:
     static Ref<RemoteVideoTrackProxy> create(GPUConnectionToWebProcess& connectionToWebProcess, WebCore::VideoTrackPrivate& trackPrivate, WebCore::MediaPlayerIdentifier mediaPlayerIdentifier)
     {
@@ -56,6 +58,10 @@ public:
     }
 
     virtual ~RemoteVideoTrackProxy();
+
+    // WebCore::VideoTrackPrivateClient.
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
     WebCore::TrackID id() const { return m_trackPrivate->id(); };
     void setSelected(bool selected)
@@ -74,15 +80,15 @@ private:
 
     // TrackPrivateBaseClient
     void idChanged(WebCore::TrackID) final;
-    void labelChanged(const AtomString&) final;
-    void languageChanged(const AtomString&) final;
+    void labelChanged(const String&) final;
+    void languageChanged(const String&) final;
     void willRemove() final;
 
     VideoTrackPrivateRemoteConfiguration configuration();
     void updateConfiguration();
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_connectionToWebProcess;
-    Ref<WebCore::VideoTrackPrivate> m_trackPrivate;
+    const Ref<WebCore::VideoTrackPrivate> m_trackPrivate;
     WebCore::TrackID m_id;
     WebCore::MediaPlayerIdentifier m_mediaPlayerIdentifier;
     bool m_selected { false };

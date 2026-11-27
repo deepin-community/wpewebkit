@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,30 +25,31 @@
 #if !HAVE(ARM_NEON_INTRINSICS)
 
 #include "FilterEffectApplier.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class FEComposite;
 
 class FECompositeSoftwareArithmeticApplier final : public FilterEffectConcreteApplier<FEComposite> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FECompositeSoftwareArithmeticApplier);
     using Base = FilterEffectConcreteApplier<FEComposite>;
 
 public:
     FECompositeSoftwareArithmeticApplier(const FEComposite&);
 
 private:
-    static uint8_t clampByte(int);
+    static uint8_t NODELETE clampByte(int);
 
     template <int b1, int b4>
-    static inline void computePixels(unsigned char* source, unsigned char* destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
+    static inline void NODELETE computePixels(std::span<unsigned char> source, std::span<unsigned char> destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
 
     template <int b1, int b4>
-    static inline void computePixelsUnclamped(unsigned char* source, unsigned char* destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
+    static inline void NODELETE computePixelsUnclamped(std::span<unsigned char> source, std::span<unsigned char> destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
 
-    static inline void applyPlatform(unsigned char* source, unsigned char* destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
+    static inline void applyPlatform(std::span<unsigned char> source, std::span<unsigned char> destination, int pixelArrayLength, float k1, float k2, float k3, float k4);
 
-    bool apply(const Filter&, const FilterImageVector& inputs, FilterImage& result) const final;
+    bool apply(const Filter&, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const final;
 };
 
 } // namespace WebCore

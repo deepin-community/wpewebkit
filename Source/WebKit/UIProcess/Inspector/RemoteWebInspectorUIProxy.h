@@ -85,6 +85,9 @@ public:
 
     ~RemoteWebInspectorUIProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void setClient(RemoteWebInspectorUIProxyClient* client) { m_client = client; }
 
     bool isUnderTest() const { return false; }
@@ -109,7 +112,7 @@ public:
     NSWindow *window() const { return m_window.get(); }
     WKWebView *webView() const;
 
-    const WebCore::FloatRect& sheetRect() const { return m_sheetRect; }
+    const WebCore::FloatRect& sheetRect() const LIFETIME_BOUND { return m_sheetRect; }
 
     void didBecomeActive();
 #endif
@@ -129,7 +132,6 @@ public:
 
 private:
     RemoteWebInspectorUIProxy();
-    RefPtr<WebPageProxy> protectedInspectorPage();
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -143,13 +145,14 @@ private:
     void save(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
     void load(const String& path, CompletionHandler<void(const String&)>&&);
     void pickColorFromScreen(CompletionHandler<void(const std::optional<WebCore::Color>&)>&&);
-    void setSheetRect(const WebCore::FloatRect&);
+    void NODELETE setSheetRect(const WebCore::FloatRect&);
     void setForcedAppearance(WebCore::InspectorFrontendClient::Appearance);
     void startWindowDrag();
     void openURLExternally(const String& url);
     void revealFileExternally(const String& path);
     void showCertificate(const WebCore::CertificateInfo&);
     void setInspectorPageDeveloperExtrasEnabled(bool);
+    void setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor);
     void sendMessageToBackend(const String& message);
 
     void createFrontendPageAndWindow();
@@ -163,7 +166,7 @@ private:
     void platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
     void platformLoad(const String& path, CompletionHandler<void(const String&)>&&);
     void platformPickColorFromScreen(CompletionHandler<void(const std::optional<WebCore::Color>&)>&&);
-    void platformSetSheetRect(const WebCore::FloatRect&);
+    void NODELETE platformSetSheetRect(const WebCore::FloatRect&);
     void platformSetForcedAppearance(WebCore::InspectorFrontendClient::Appearance);
     void platformStartWindowDrag();
     void platformOpenURLExternally(const String& url);

@@ -37,9 +37,12 @@
 #include "WKBundleAPICast.h"
 #include "WebPage.h"
 #include <WebCore/ContextMenu.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 using namespace WebCore;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InjectedBundlePageContextMenuClient);
 
 InjectedBundlePageContextMenuClient::InjectedBundlePageContextMenuClient(const WKBundlePageContextMenuClientBase* client)
 {
@@ -57,7 +60,7 @@ bool InjectedBundlePageContextMenuClient::getCustomMenuFromDefaultItems(WebPage&
 
     WKArrayRef newMenuWK = nullptr;
     WKTypeRef userDataToPass = nullptr;
-    m_client.getContextMenuFromDefaultMenu(toAPI(&page), toAPI(&InjectedBundleHitTestResult::create(hitTestResult).get()), toAPI(API::Array::create(WTFMove(defaultMenuItems)).ptr()), &newMenuWK, &userDataToPass, m_client.base.clientInfo);
+    m_client.getContextMenuFromDefaultMenu(toAPI(&page), toAPI(&InjectedBundleHitTestResult::create(hitTestResult).get()), toAPI(API::Array::create(WTF::move(defaultMenuItems)).ptr()), &newMenuWK, &userDataToPass, m_client.base.clientInfo);
     RefPtr<API::Array> array = adoptRef(toImpl(newMenuWK));
     userData = adoptRef(toImpl(userDataToPass));
     
@@ -68,7 +71,7 @@ bool InjectedBundlePageContextMenuClient::getCustomMenuFromDefaultItems(WebPage&
     
     size_t size = array->size();
     for (size_t i = 0; i < size; ++i) {
-        WebContextMenuItem* item = array->at<WebContextMenuItem>(i);
+        RefPtr item = array->at<WebContextMenuItem>(i);
         if (!item) {
             LOG(ContextMenu, "New menu entry at index %i is not a WebContextMenuItem", (int)i);
             continue;

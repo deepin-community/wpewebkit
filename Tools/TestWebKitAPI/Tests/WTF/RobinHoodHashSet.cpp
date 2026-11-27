@@ -25,11 +25,11 @@
 
 #include "config.h"
 
-#include "Counters.h"
+#include "Helpers/Counters.h"
 #include "DeletedAddressOfOperator.h"
 #include "MoveOnly.h"
 #include "RefLogger.h"
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <functional>
 #include <wtf/DataLog.h>
 #include <wtf/RefPtr.h>
@@ -52,7 +52,7 @@ struct RobinHoodHash : public DefaultHash<T> {
 
 static constexpr unsigned capacityForSize(unsigned size)
 {
-    unsigned capacity = WTF::roundUpToPowerOfTwo(size);
+    unsigned capacity = roundUpToPowerOfTwo(size);
     if (size * 100 >= capacity * 95)
         return capacity * 2;
     return capacity;
@@ -106,7 +106,7 @@ TEST(WTF_RobinHoodHashSet, MoveOnly)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i + 1);
-        hashSet.add(WTFMove(moveOnly));
+        hashSet.add(WTF::move(moveOnly));
     }
 
     for (size_t i = 0; i < 100; ++i)
@@ -147,7 +147,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrKey)
     MemoryCompactLookupOnlyRobinHoodHashSet<std::unique_ptr<ConstructorDestructorCounter>, RobinHoodHash<std::unique_ptr<ConstructorDestructorCounter>>> set;
 
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
-    set.add(WTFMove(uniquePtr));
+    set.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -164,7 +164,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrKey_FindUsingRawPointer)
 
     auto uniquePtr = makeUniqueWithoutFastMallocCheck<int>(5);
     int* ptr = uniquePtr.get();
-    set.add(WTFMove(uniquePtr));
+    set.add(WTF::move(uniquePtr));
 
     auto it = set.find(ptr);
     ASSERT_TRUE(it != set.end());
@@ -178,7 +178,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrKey_ContainsUsingRawPointer)
 
     auto uniquePtr = makeUniqueWithoutFastMallocCheck<int>(5);
     int* ptr = uniquePtr.get();
-    set.add(WTFMove(uniquePtr));
+    set.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(true, set.contains(ptr));
 }
@@ -190,7 +190,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrKey_RemoveUsingRawPointer)
     MemoryCompactLookupOnlyRobinHoodHashSet<std::unique_ptr<ConstructorDestructorCounter>, RobinHoodHash<std::unique_ptr<ConstructorDestructorCounter>>> set;
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
     ConstructorDestructorCounter* ptr = uniquePtr.get();
-    set.add(WTFMove(uniquePtr));
+    set.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -210,7 +210,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrKey_TakeUsingRawPointer)
 
     auto uniquePtr = makeUnique<ConstructorDestructorCounter>();
     ConstructorDestructorCounter* ptr = uniquePtr.get();
-    set.add(WTFMove(uniquePtr));
+    set.add(WTF::move(uniquePtr));
 
     EXPECT_EQ(1u, ConstructorDestructorCounter::constructionCount);
     EXPECT_EQ(0u, ConstructorDestructorCounter::destructionCount);
@@ -297,7 +297,7 @@ TEST(WTF_RobinHoodHashSet, CopyCapacityIsNotOnBoundary)
 }
 
 struct DerefObserver {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DerefObserver);
     NEVER_INLINE void ref()
     {
         ++count;
@@ -357,7 +357,7 @@ TEST(WTF_RobinHoodHashSet, UniquePtrNotZeroedBeforeDestructor)
     const DestructorObserver* observerAddress = observer.get();
 
     MemoryCompactLookupOnlyRobinHoodHashSet<std::unique_ptr<DestructorObserver>, RobinHoodHash<std::unique_ptr<DestructorObserver>>> set;
-    auto addResult = set.add(WTFMove(observer));
+    auto addResult = set.add(WTF::move(observer));
 
     EXPECT_TRUE(addResult.isNewEntry);
     EXPECT_TRUE(observedBucket == nullptr);
@@ -381,7 +381,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
 
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
     }
 
     ASSERT_STREQ("ref(a) deref(a) ", takeLogStr().c_str());
@@ -403,7 +403,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
 
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
         set.remove(&a);
     }
 
@@ -415,7 +415,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
 
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
 
         auto aOut = set.take(&a);
         ASSERT_TRUE(static_cast<bool>(aOut));
@@ -430,7 +430,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
 
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
 
         auto aOut = set.takeAny();
         ASSERT_TRUE(static_cast<bool>(aOut));
@@ -451,7 +451,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
 
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
 
         ASSERT_TRUE(set.contains(&a));
     }
@@ -464,7 +464,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
             // FIXME: All of these RefLogger objects leak. No big deal for a test I guess.
             Ref<RefLogger> ref = adoptRef(*new RefLogger("a"));
             auto* pointer = ref.ptr();
-            set.add(WTFMove(ref));
+            set.add(WTF::move(ref));
             ASSERT_TRUE(set.contains(pointer));
         }
     }
@@ -475,7 +475,7 @@ TEST(WTF_RobinHoodHashSet, Ref)
 
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set;
         Ref<RefLogger> ref(a);
-        set.add(WTFMove(ref));
+        set.add(WTF::move(ref));
         MemoryCompactLookupOnlyRobinHoodHashSet<Ref<RefLogger>, RobinHoodHash<Ref<RefLogger>>> set2(set);
     }
     ASSERT_STREQ("ref(a) ref(a) deref(a) deref(a) ", takeLogStr().c_str());

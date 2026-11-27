@@ -14,12 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <array>
 #include <limits>
+#include <ostream>
 
 #include <anglebase/numerics/safe_math.h>
 
 #include "common/debug.h"
 #include "common/platform.h"
+#include "common/span.h"
+#include "common/span_util.h"
 
 namespace angle
 {
@@ -41,19 +45,23 @@ inline constexpr bool isPow2(T x)
 }
 
 template <typename T>
-inline int log2(T x)
+inline constexpr int log2(T x)
 {
     static_assert(std::is_integral<T>::value, "log2 must be called on an integer type.");
     int r = 0;
     while ((x >> r) > 1)
+    {
         r++;
+    }
     return r;
 }
 
 inline unsigned int ceilPow2(unsigned int x)
 {
     if (x != 0)
+    {
         x--;
+    }
     x |= x >> 1;
     x |= x >> 2;
     x |= x >> 4;
@@ -120,6 +128,13 @@ inline T clamp(T x, MIN min, MAX max)
 }
 
 template <typename T>
+inline bool isOutsideOfBounds(T value, T min, T max)
+{
+    // Since NaNs fail all comparison tests, a NaN value will return true (out of bounds).
+    return !(value >= min && value <= max);
+}
+
+template <typename T>
 T clampForBitCount(T value, size_t bitCount)
 {
     static_assert(std::numeric_limits<T>::is_integer, "T must be an integer.");
@@ -180,7 +195,8 @@ destType bitCast(const sourceType &source)
 {
     size_t copySize = std::min(sizeof(destType), sizeof(sourceType));
     destType output;
-    memcpy(&output, &source, copySize);
+    angle::SpanMemcpy(angle::byte_span_from_ref(output).first(copySize),
+                      angle::byte_span_from_ref(source).first(copySize));
     return output;
 }
 
@@ -516,11 +532,23 @@ inline float normalizedToFloat(T input)
     {
         // float has only a 23 bit mantissa, so we need to do the calculation in double precision
         constexpr double inverseMax = 1.0 / std::numeric_limits<T>::max();
+        if constexpr (std::is_signed<T>::value)
+        {
+            static_assert(static_cast<float>(std::numeric_limits<T>::min() * inverseMax) == -1.0f);
+        }
         return static_cast<float>(input * inverseMax);
     }
     else
     {
         constexpr float inverseMax = 1.0f / std::numeric_limits<T>::max();
+        if constexpr (std::is_signed<T>::value)
+        {
+            // If the input is signed and equals to the type's min value, the multiplication result
+            // would be less than -1. This step is not needed for int32_t because the difference is
+            // not representable with single-precision floats in that case. For the best codegen,
+            // std::max with the first constant parameter must be used here.
+            return std::max(-1.0f, input * inverseMax);
+        }
         return input * inverseMax;
     }
 }
@@ -529,18 +557,53 @@ template <unsigned int inputBitCount, typename T>
 inline float normalizedToFloat(T input)
 {
     static_assert(std::numeric_limits<T>::is_integer, "T must be an integer.");
-    static_assert(inputBitCount < (sizeof(T) * 8), "T must have more bits than inputBitCount.");
-    ASSERT((input & ~((1 << inputBitCount) - 1)) == 0);
+    static_assert(inputBitCount > 0u && inputBitCount < 32u);
+    if constexpr (std::is_signed<T>::value)
+    {
+        static_assert(inputBitCount > 1 && inputBitCount < sizeof(T) * 8 - 1);
+    }
+    else
+    {
+        static_assert(inputBitCount < sizeof(T) * 8);
+    }
 
-    if (inputBitCount > 23)
+    // Account for the sign bit
+    constexpr uint32_t effectiveBitCount =
+        std::is_unsigned<T>::value ? inputBitCount : inputBitCount - 1u;
+
+    constexpr T maxValue = static_cast<T>((1u << effectiveBitCount) - 1u);
+
+    // Ensure that the input value fits in the declared number of bits.
+    ASSERT(input <= maxValue);
+    if constexpr (std::is_signed<T>::value)
+    {
+        ASSERT(input >= -maxValue - 1);
+    }
+
+    if constexpr (effectiveBitCount > 23)
     {
         // float has only a 23 bit mantissa, so we need to do the calculation in double precision
-        constexpr double inverseMax = 1.0 / ((1 << inputBitCount) - 1);
+        constexpr double inverseMax = 1.0 / maxValue;
+        if constexpr (std::is_signed<T>::value)
+        {
+            if constexpr (effectiveBitCount < 25)
+            {
+                return std::max(-1.0f, static_cast<float>(input * inverseMax));
+            }
+            else
+            {
+                static_assert(static_cast<float>((-maxValue - 1) * inverseMax) == -1.0f);
+            }
+        }
         return static_cast<float>(input * inverseMax);
     }
     else
     {
-        constexpr float inverseMax = 1.0f / ((1 << inputBitCount) - 1);
+        constexpr float inverseMax = 1.0f / maxValue;
+        if constexpr (std::is_signed<T>::value)
+        {
+            return std::max(-1.0f, input * inverseMax);
+        }
         return input * inverseMax;
     }
 }
@@ -715,9 +778,14 @@ class Range
     Range() {}
     Range(T lo, T hi) : mLow(lo), mHigh(hi) {}
 
+    bool operator==(const Range<T> &other) const
+    {
+        return mLow == other.mLow && mHigh == other.mHigh;
+    }
+
     T length() const { return (empty() ? 0 : (mHigh - mLow)); }
 
-    bool intersects(Range<T> other)
+    bool intersects(const Range<T> &other) const
     {
         if (mLow <= other.mLow)
         {
@@ -726,6 +794,33 @@ class Range
         else
         {
             return mLow < other.mHigh;
+        }
+    }
+
+    bool intersectsOrContinuous(const Range<T> &other) const
+    {
+        ASSERT(!empty());
+        ASSERT(!other.empty());
+        if (mLow <= other.mLow)
+        {
+            return mHigh >= other.mLow;
+        }
+        else
+        {
+            return mLow <= other.mHigh;
+        }
+    }
+
+    void merge(const Range<T> &other)
+    {
+        if (mLow > other.mLow)
+        {
+            mLow = other.mLow;
+        }
+
+        if (mHigh < other.mHigh)
+        {
+            mHigh = other.mHigh;
         }
     }
 
@@ -781,28 +876,42 @@ typedef Range<unsigned int> RangeUI;
 static_assert(std::is_trivially_copyable<RangeUI>(),
               "RangeUI should be trivial copyable so that we can memcpy");
 
+// Inclusive vertex index range [start(), end()].
 struct IndexRange
 {
     struct Undefined
     {};
     IndexRange(Undefined) {}
-    IndexRange() : IndexRange(0, 0, 0) {}
-    IndexRange(size_t start_, size_t end_, size_t vertexIndexCount_)
-        : start(start_), end(end_), vertexIndexCount(vertexIndexCount_)
+    IndexRange() = default;
+    IndexRange(uint32_t start, uint32_t end) : mStart(start), mEnd(end) { ASSERT(mStart <= mEnd); }
+    bool isEmpty() const { return mStart > mEnd; }
+    uint32_t start() const
     {
-        ASSERT(start <= end);
+        ASSERT(!isEmpty());
+        return mStart;
+    }
+    uint32_t end() const
+    {
+        ASSERT(!isEmpty());
+        return mEnd;
     }
 
     // Number of vertices in the range.
-    size_t vertexCount() const { return (end - start) + 1; }
+    // Range: [0, 0] == 1
+    // Range: [0, 0xFFFFFFFF] == 0x100000000 (needs size_t).
+    size_t vertexCount() const
+    {
+        // Note: unsigned underflow ok on isEmpty() == true.
+        return static_cast<size_t>(mEnd) - mStart + 1u;
+    }
 
-    // Inclusive range of indices that are not primitive restart
-    size_t start;
-    size_t end;
-
-    // Number of non-primitive restart indices
-    size_t vertexIndexCount;
+  private:
+    uint32_t mStart{1};
+    uint32_t mEnd{0};
+    friend bool operator==(const IndexRange &a, const IndexRange &b) noexcept = default;
 };
+
+std::ostream &operator<<(std::ostream &s, const IndexRange &a);
 
 // Combine a floating-point value representing a mantissa (x) and an integer exponent (exp) into a
 // floating-point value. As in GLSL ldexp() built-in.
@@ -896,24 +1005,16 @@ inline int8_t ToPackedSnorm8(float f)
 // unsigned integer starting from the least significant bits.
 inline uint32_t PackUnorm4x8(float f1, float f2, float f3, float f4)
 {
-    uint8_t bits[4];
-    bits[0]         = priv::ToPackedUnorm8(f1);
-    bits[1]         = priv::ToPackedUnorm8(f2);
-    bits[2]         = priv::ToPackedUnorm8(f3);
-    bits[3]         = priv::ToPackedUnorm8(f4);
-    uint32_t result = 0u;
-    for (int i = 0; i < 4; ++i)
-    {
-        int shift = i * 8;
-        result |= (static_cast<uint32_t>(bits[i]) << shift);
-    }
-    return result;
+    return static_cast<uint32_t>(priv::ToPackedUnorm8(f1)) |
+           (static_cast<uint32_t>(priv::ToPackedUnorm8(f2)) << 8) |
+           (static_cast<uint32_t>(priv::ToPackedUnorm8(f3)) << 16) |
+           (static_cast<uint32_t>(priv::ToPackedUnorm8(f4)) << 24);
 }
 
 // Unpacks 4 normalized unsigned floating-point values from a single 32-bit unsigned integer into f.
 // Works similarly to unpackUnorm2x16. The floats are unpacked starting from the least significant
 // bits.
-inline void UnpackUnorm4x8(uint32_t u, float *f)
+inline void UnpackUnorm4x8(uint32_t u, angle::Span<float, 4> f)
 {
     for (int i = 0; i < 4; ++i)
     {
@@ -928,24 +1029,16 @@ inline void UnpackUnorm4x8(uint32_t u, float *f)
 // significant bits.
 inline uint32_t PackSnorm4x8(float f1, float f2, float f3, float f4)
 {
-    int8_t bits[4];
-    bits[0]         = priv::ToPackedSnorm8(f1);
-    bits[1]         = priv::ToPackedSnorm8(f2);
-    bits[2]         = priv::ToPackedSnorm8(f3);
-    bits[3]         = priv::ToPackedSnorm8(f4);
-    uint32_t result = 0u;
-    for (int i = 0; i < 4; ++i)
-    {
-        int shift = i * 8;
-        result |= ((static_cast<uint32_t>(bits[i]) & 0xFF) << shift);
-    }
-    return result;
+    return (static_cast<uint32_t>(priv::ToPackedSnorm8(f1)) & 0xFF) |
+           ((static_cast<uint32_t>(priv::ToPackedSnorm8(f2)) & 0xFF) << 8) |
+           ((static_cast<uint32_t>(priv::ToPackedSnorm8(f3)) & 0xFF) << 16) |
+           ((static_cast<uint32_t>(priv::ToPackedSnorm8(f4)) & 0xFF) << 24);
 }
 
 // Unpacks 4 normalized signed floating-point values from a single 32-bit unsigned integer into f.
 // Works similarly to unpackSnorm2x16. The floats are unpacked starting from the least significant
 // bits, and clamped to the range -1.0 to 1.0.
-inline void UnpackSnorm4x8(uint32_t u, float *f)
+inline void UnpackSnorm4x8(uint32_t u, angle::Span<float, 4> f)
 {
     for (int i = 0; i < 4; ++i)
     {
@@ -1405,7 +1498,7 @@ template <typename T>
 constexpr T roundUpPow2(const T value, const T alignment)
 {
     ASSERT(gl::isPow2(alignment));
-    return (value + alignment - 1) & ~(alignment - 1);
+    return (value + (alignment - 1)) & ~(alignment - 1);
 }
 
 template <typename T>
@@ -1413,6 +1506,15 @@ constexpr T roundDownPow2(const T value, const T alignment)
 {
     ASSERT(gl::isPow2(alignment));
     return value & ~(alignment - 1);
+}
+
+template <typename T>
+angle::CheckedNumeric<T> CheckedRoundUpPow2(const T value, const T alignment)
+{
+    ASSERT(gl::isPow2(alignment));
+    angle::CheckedNumeric<T> checkedValue(value);
+    angle::CheckedNumeric<T> checkedAlignment(alignment);
+    return (checkedValue + checkedAlignment - 1) & ~(checkedAlignment - 1);
 }
 
 template <typename T>
@@ -1426,6 +1528,12 @@ angle::CheckedNumeric<T> CheckedRoundUp(const T value, const T alignment)
 inline constexpr unsigned int UnsignedCeilDivide(unsigned int value, unsigned int divisor)
 {
     unsigned int divided = value / divisor;
+    return (divided + ((value % divisor == 0) ? 0 : 1));
+}
+
+inline constexpr uint64_t UnsignedCeilDivide64(uint64_t value, uint64_t divisor)
+{
+    uint64_t divided = value / divisor;
     return (divided + ((value % divisor == 0) ? 0 : 1));
 }
 
@@ -1469,12 +1577,8 @@ inline uint16_t RotR16(uint16_t x, int8_t r)
 #    define ANGLE_ROTL64(x, y) ::rx::RotL64(x, y)
 #    define ANGLE_ROTR16(x, y) ::rx::RotR16(x, y)
 
-#endif  // namespace rx
+#endif  // defined(_MSC_VER)
 
-constexpr unsigned int Log2(unsigned int bytes)
-{
-    return bytes == 1 ? 0 : (1 + Log2(bytes / 2));
-}
 }  // namespace rx
 
 #endif  // COMMON_MATHUTIL_H_

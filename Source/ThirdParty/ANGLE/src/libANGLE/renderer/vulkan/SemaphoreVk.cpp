@@ -79,10 +79,10 @@ angle::Result SemaphoreVk::wait(gl::Context *context,
             BufferVk *bufferVk             = vk::GetImpl(buffer);
             vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
 
-            vk::CommandBufferAccess access;
+            vk::CommandResources resources;
             vk::OutsideRenderPassCommandBuffer *commandBuffer;
-            access.onBufferExternalAcquireRelease(&bufferHelper);
-            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+            resources.onBufferExternalAcquireRelease(&bufferHelper);
+            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(resources, &commandBuffer));
 
             // Queue ownership transfer.
             bufferHelper.acquireFromExternal(vk::kExternalDeviceQueueIndex,
@@ -99,13 +99,13 @@ angle::Result SemaphoreVk::wait(gl::Context *context,
         {
             TextureVk *textureVk   = vk::GetImpl(textureBarrier.texture);
             vk::ImageHelper &image = textureVk->getImage();
-            vk::ImageLayout layout =
-                vk::GetImageLayoutFromGLImageLayout(contextVk, textureBarrier.layout);
+            vk::ImageAccess imageAccess =
+                vk::GetImageAccessFromGLImageLayout(contextVk, textureBarrier.layout);
 
-            vk::CommandBufferAccess access;
+            vk::CommandResources resources;
             vk::OutsideRenderPassCommandBuffer *commandBuffer;
-            access.onExternalAcquireRelease(&image);
-            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+            resources.onExternalAcquireRelease(&image);
+            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(resources, &commandBuffer));
 
             // Image should not be accessed while unowned. Emulated formats may have staged updates
             // to clear the image after initialization.
@@ -113,7 +113,7 @@ angle::Result SemaphoreVk::wait(gl::Context *context,
 
             // Queue ownership transfer and layout transition.
             image.acquireFromExternal(contextVk, vk::kExternalDeviceQueueIndex,
-                                      contextVk->getDeviceQueueIndex(), layout, commandBuffer);
+                                      contextVk->getDeviceQueueIndex(), imageAccess, commandBuffer);
         }
     }
 
@@ -126,7 +126,6 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
                                   const gl::TextureBarrierVector &textureBarriers)
 {
     ContextVk *contextVk   = vk::GetImpl(context);
-    vk::Renderer *renderer = contextVk->getRenderer();
 
     if (!bufferBarriers.empty())
     {
@@ -137,10 +136,10 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
             vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
 
             ANGLE_TRY(contextVk->onBufferReleaseToExternal(bufferHelper));
-            vk::CommandBufferAccess access;
+            vk::CommandResources resources;
             vk::OutsideRenderPassCommandBuffer *commandBuffer;
-            access.onBufferExternalAcquireRelease(&bufferHelper);
-            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+            resources.onBufferExternalAcquireRelease(&bufferHelper);
+            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(resources, &commandBuffer));
 
             // Queue ownership transfer.
             bufferHelper.releaseToExternal(vk::kExternalDeviceQueueIndex, commandBuffer);
@@ -155,27 +154,28 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
         {
             TextureVk *textureVk   = vk::GetImpl(textureBarrier.texture);
             vk::ImageHelper &image = textureVk->getImage();
-            vk::ImageLayout layout =
-                vk::GetImageLayoutFromGLImageLayout(contextVk, textureBarrier.layout);
+            vk::ImageAccess imageAccess =
+                vk::GetImageAccessFromGLImageLayout(contextVk, textureBarrier.layout);
 
             // Don't transition to Undefined layout.  If external wants to transition the image away
             // from Undefined after this operation, it's perfectly fine to keep the layout as is in
             // ANGLE.  Note that vk::ImageHelper doesn't expect transitions to Undefined.
-            if (layout == vk::ImageLayout::Undefined)
+            if (imageAccess == vk::ImageAccess::Undefined)
             {
-                layout = image.getCurrentImageLayout();
+                imageAccess = image.getCurrentImageAccess();
             }
 
-            ANGLE_TRY(textureVk->ensureImageInitialized(contextVk, ImageMipLevels::EnabledLevels));
+            ANGLE_TRY(textureVk->ensureImageAndReadViewsInitialized(contextVk,
+                                                                    ImageMipLevels::EnabledLevels));
 
             ANGLE_TRY(contextVk->onImageReleaseToExternal(image));
-            vk::CommandBufferAccess access;
+            vk::CommandResources resources;
             vk::OutsideRenderPassCommandBuffer *commandBuffer;
-            access.onExternalAcquireRelease(&image);
-            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+            resources.onExternalAcquireRelease(&image);
+            ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(resources, &commandBuffer));
 
             // Queue ownership transfer and layout transition.
-            image.releaseToExternal(contextVk, vk::kExternalDeviceQueueIndex, layout,
+            image.releaseToExternal(contextVk, vk::kExternalDeviceQueueIndex, imageAccess,
                                     commandBuffer);
         }
     }
@@ -186,21 +186,8 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
         ANGLE_TRY(contextVk->syncExternalMemory());
     }
 
-    ANGLE_TRY(contextVk->flushImpl(&mSemaphore, nullptr,
-                                   RenderPassClosureReason::ExternalSemaphoreSignal));
-
-    // The external has asked for the semaphore to be signaled.  It will wait on this semaphore and
-    // so we must ensure that the above flush (resulting in vkQueueSubmit) has actually been
-    // submitted (as opposed to simply being scheduled as a task for another thread).  Per the
-    // Vulkan spec:
-    //
-    // > ... when a semaphore wait operation is submitted to a queue:
-    // >
-    // > - A binary semaphore must be signaled, or have an associated semaphore signal operation
-    // >   that is pending execution.
-    //
-    return renderer->waitForQueueSerialToBeSubmittedToDevice(
-        contextVk, contextVk->getLastSubmittedQueueSerial());
+    return contextVk->flushAndSubmitCommands(&mSemaphore, nullptr,
+                                             QueueSubmitReason::ExternalSemaphoreSignal);
 }
 
 angle::Result SemaphoreVk::importOpaqueFd(ContextVk *contextVk, GLint fd)
@@ -209,7 +196,7 @@ angle::Result SemaphoreVk::importOpaqueFd(ContextVk *contextVk, GLint fd)
 
     if (!mSemaphore.valid())
     {
-        mSemaphore.init(renderer->getDevice());
+        mSemaphore.init(renderer->getDevice(), VK_SEMAPHORE_TYPE_BINARY);
     }
 
     ASSERT(mSemaphore.valid());
@@ -221,7 +208,8 @@ angle::Result SemaphoreVk::importOpaqueFd(ContextVk *contextVk, GLint fd)
     importSemaphoreFdInfo.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
     importSemaphoreFdInfo.fd         = fd;
 
-    ANGLE_VK_TRY(contextVk, vkImportSemaphoreFdKHR(renderer->getDevice(), &importSemaphoreFdInfo));
+    ANGLE_VK_TRY(contextVk,
+                 VK_CALL(vkImportSemaphoreFdKHR, renderer->getDevice(), &importSemaphoreFdInfo));
 
     return angle::Result::Continue;
 }
@@ -232,7 +220,7 @@ angle::Result SemaphoreVk::importZirconEvent(ContextVk *contextVk, GLuint handle
 
     if (!mSemaphore.valid())
     {
-        mSemaphore.init(renderer->getDevice());
+        mSemaphore.init(renderer->getDevice(), VK_SEMAPHORE_TYPE_BINARY);
     }
 
     ASSERT(mSemaphore.valid());
@@ -249,10 +237,11 @@ angle::Result SemaphoreVk::importZirconEvent(ContextVk *contextVk, GLuint handle
     // TODO(spang): Add vkImportSemaphoreZirconHandleFUCHSIA to volk.
     static PFN_vkImportSemaphoreZirconHandleFUCHSIA vkImportSemaphoreZirconHandleFUCHSIA =
         reinterpret_cast<PFN_vkImportSemaphoreZirconHandleFUCHSIA>(
-            vkGetInstanceProcAddr(renderer->getInstance(), "vkImportSemaphoreZirconHandleFUCHSIA"));
+            VK_CALL(vkGetInstanceProcAddr, renderer->getInstance(),
+                    "vkImportSemaphoreZirconHandleFUCHSIA"));
 
-    ANGLE_VK_TRY(contextVk, vkImportSemaphoreZirconHandleFUCHSIA(renderer->getDevice(),
-                                                                 &importSemaphoreZirconHandleInfo));
+    ANGLE_VK_TRY(contextVk, VK_CALL(vkImportSemaphoreZirconHandleFUCHSIA, renderer->getDevice(),
+                                    &importSemaphoreZirconHandleInfo));
 
     return angle::Result::Continue;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,7 @@
 
 namespace WebKit {
 
-FrameLoadState::~FrameLoadState()
-{
-}
+FrameLoadState::~FrameLoadState() = default;
 
 void FrameLoadState::addObserver(FrameLoadStateObserver& observer)
 {
@@ -44,15 +42,17 @@ void FrameLoadState::removeObserver(FrameLoadStateObserver& observer)
     ASSERT_UNUSED(result, result);
 }
 
-void FrameLoadState::didStartProvisionalLoad(const URL& url)
+void FrameLoadState::didStartProvisionalLoad(URL&& url)
 {
     ASSERT(m_provisionalURL.isEmpty());
 
     m_state = State::Provisional;
-    m_provisionalURL = url;
+    m_provisionalURL = WTF::move(url);
+    const URL& urlForObserver = m_provisionalURL;
 
-    m_observers.forEach([&url](FrameLoadStateObserver& observer) {
-        observer.didReceiveProvisionalURL(url);
+    forEachObserver([&urlForObserver](FrameLoadStateObserver& observer) {
+        observer.didReceiveProvisionalURL(urlForObserver);
+        observer.didStartProvisionalLoad(urlForObserver);
     });
 }
 
@@ -61,26 +61,27 @@ void FrameLoadState::didSuspend()
     m_state = State::Finished;
     m_provisionalURL = { };
 
-    m_observers.forEach([](FrameLoadStateObserver& observer) {
+    forEachObserver([](FrameLoadStateObserver& observer) {
         observer.didCancelProvisionalLoad();
     });
 }
 
-void FrameLoadState::didExplicitOpen(const URL& url)
+void FrameLoadState::didExplicitOpen(URL&& url)
 {
     ASSERT(!url.isNull());
     m_provisionalURL = { };
-    setURL(url);
+    setURL(WTF::move(url));
 }
 
-void FrameLoadState::didReceiveServerRedirectForProvisionalLoad(const URL& url)
+void FrameLoadState::didReceiveServerRedirectForProvisionalLoad(URL&& url)
 {
     ASSERT(m_state == State::Provisional);
 
-    m_provisionalURL = url;
+    m_provisionalURL = WTF::move(url);
+    const URL& urlForObserver = m_provisionalURL;
 
-    m_observers.forEach([&url](FrameLoadStateObserver& observer) {
-        observer.didReceiveProvisionalURL(url);
+    forEachObserver([&urlForObserver](FrameLoadStateObserver& observer) {
+        observer.didReceiveProvisionalURL(urlForObserver);
     });
 }
 
@@ -92,22 +93,24 @@ void FrameLoadState::didFailProvisionalLoad()
     m_provisionalURL = { };
     m_unreachableURL = m_lastUnreachableURL;
 
-    m_observers.forEach([](FrameLoadStateObserver& observer) {
+    forEachObserver([&](FrameLoadStateObserver& observer) {
         observer.didCancelProvisionalLoad();
+        observer.didFailProvisionalLoad(m_unreachableURL);
     });
 }
 
 void FrameLoadState::didCommitLoad()
 {
-    ASSERT(m_state == State::Provisional);
+    // State might be set to Finished in didFailProvisionalLoad with content filter error,
+    // but the load might commit with replacement data from content fitler.
+    ASSERT(m_state == State::Provisional || m_state == State::Finished);
 
     m_state = State::Committed;
-    ASSERT(!m_provisionalURL.isNull());
-    m_url = m_provisionalURL.isNull() ? aboutBlankURL() : m_provisionalURL;
-    m_provisionalURL = { };
+    m_url = m_provisionalURL.isNull() ? aboutBlankURL() : std::exchange(m_provisionalURL, { });
 
-    m_observers.forEach([](FrameLoadStateObserver& observer) {
+    forEachObserver([&](FrameLoadStateObserver& observer) {
         observer.didCommitProvisionalLoad();
+        observer.didCommitProvisionalLoad(m_isMainFrame);
     });
 }
 
@@ -118,8 +121,8 @@ void FrameLoadState::didFinishLoad()
 
     m_state = State::Finished;
 
-    m_observers.forEach([](FrameLoadStateObserver& observer) {
-        observer.didFinishLoad();
+    forEachObserver([&](FrameLoadStateObserver& observer) {
+        observer.didFinishLoad(m_isMainFrame, m_url);
     });
 }
 
@@ -129,20 +132,24 @@ void FrameLoadState::didFailLoad()
     ASSERT(m_provisionalURL.isEmpty());
 
     m_state = State::Finished;
+    forEachObserver([&](FrameLoadStateObserver& observer) {
+        observer.didFailLoad(m_url);
+    });
 }
 
-void FrameLoadState::didSameDocumentNotification(const URL& url)
+void FrameLoadState::didSameDocumentNotification(URL&& url)
 {
     ASSERT(!url.isNull());
-    setURL(url.isNull() ? aboutBlankURL() : url);
+    setURL(url.isNull() ? URL { aboutBlankURL() } : WTF::move(url));
 }
 
-void FrameLoadState::setURL(const URL& url)
+void FrameLoadState::setURL(URL&& url)
 {
-    m_url = url;
-    m_observers.forEach([&url](FrameLoadStateObserver& observer) {
+    m_url = WTF::move(url);
+    const URL& urlForObserver = m_url;
+    forEachObserver([&urlForObserver](FrameLoadStateObserver& observer) {
         observer.didCancelProvisionalLoad();
-        observer.didReceiveProvisionalURL(url);
+        observer.didReceiveProvisionalURL(urlForObserver);
         observer.didCommitProvisionalLoad();
     });
 }
@@ -151,6 +158,13 @@ void FrameLoadState::setUnreachableURL(const URL& unreachableURL)
 {
     m_lastUnreachableURL = m_unreachableURL;
     m_unreachableURL = unreachableURL;
+}
+
+void FrameLoadState::forEachObserver(NOESCAPE const Function<void(FrameLoadStateObserver&)>& callback)
+{
+    m_observers.forEach([&callback](FrameLoadStateObserver& observer) {
+        callback(observer);
+    });
 }
 
 } // namespace WebKit

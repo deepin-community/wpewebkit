@@ -32,7 +32,7 @@ namespace WebCore {
 
 AncestorSubgridIterator::AncestorSubgridIterator() = default;
 
-AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, GridTrackSizingDirection direction)
+AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, Style::GridTrackSizingDirection direction)
     : m_firstAncestorSubgrid(firstAncestorSubgrid)
     , m_direction(direction)
 {
@@ -40,7 +40,7 @@ AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid>
 }
 
 
-AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestorSubgrid, GridTrackSizingDirection direction)
+AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestorSubgrid, Style::GridTrackSizingDirection direction)
     : m_firstAncestorSubgrid(firstAncestorSubgrid)
     , m_currentAncestorSubgrid(currentAncestorSubgrid)
     , m_direction(direction)
@@ -48,7 +48,7 @@ AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid>
     ASSERT_IMPLIES(firstAncestorSubgrid, firstAncestorSubgrid->isSubgrid(direction));
 }
 
-AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestorSubgrid, std::optional<GridTrackSizingDirection> direction)
+AncestorSubgridIterator::AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestorSubgrid, std::optional<Style::GridTrackSizingDirection> direction)
     : m_firstAncestorSubgrid(firstAncestorSubgrid)
     , m_currentAncestorSubgrid(currentAncestorSubgrid)
     , m_direction(direction)
@@ -70,8 +70,8 @@ AncestorSubgridIterator& AncestorSubgridIterator::operator++()
     ASSERT(m_firstAncestorSubgrid && m_currentAncestorSubgrid && m_direction);
 
     if (m_firstAncestorSubgrid && m_currentAncestorSubgrid && m_direction) {
-        auto nextAncestor = RenderTraversal::findAncestorOfType<RenderGrid>(*m_currentAncestorSubgrid);
-        m_currentAncestorSubgrid = (nextAncestor && nextAncestor->isSubgrid(GridLayoutFunctions::flowAwareDirectionForGridItem(*nextAncestor, *m_firstAncestorSubgrid, m_direction.value()))) ? nextAncestor : nullptr;
+        CheckedPtr nextAncestor = RenderTraversal::findAncestorOfType<RenderGrid>(*m_currentAncestorSubgrid);
+        m_currentAncestorSubgrid = (nextAncestor && nextAncestor->isSubgrid(GridLayoutFunctions::flowAwareDirectionForGridItem(*nextAncestor, *m_firstAncestorSubgrid, m_direction.value()))) ? nextAncestor.get() : nullptr;
     }
     return *this;
 }
@@ -87,11 +87,11 @@ bool AncestorSubgridIterator::operator==(const AncestorSubgridIterator& other) c
     return m_currentAncestorSubgrid == other.m_currentAncestorSubgrid && m_firstAncestorSubgrid == other.m_firstAncestorSubgrid && m_direction == other.m_direction;
 }
 
-AncestorSubgridIterator ancestorSubgridsOfGridItem(const RenderBox& gridItem,  const GridTrackSizingDirection direction)
+AncestorSubgridIterator ancestorSubgridsOfGridItem(const RenderBox& gridItem,  const Style::GridTrackSizingDirection direction)
 {
     ASSERT(gridItem.parent()->isRenderGrid());
-    if (const auto* gridItemParent = dynamicDowncast<RenderGrid>(gridItem.parent()); gridItemParent && gridItemParent->isSubgrid(direction))
-        return AncestorSubgridIterator(gridItemParent, direction);
+    if (CheckedPtr gridItemParent = dynamicDowncast<RenderGrid>(gridItem.parent()); gridItemParent && gridItemParent->isSubgrid(direction))
+        return AncestorSubgridIterator(gridItemParent.get(), direction);
     return AncestorSubgridIterator();
 }
 

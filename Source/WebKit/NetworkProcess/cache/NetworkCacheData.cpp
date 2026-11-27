@@ -28,6 +28,8 @@
 
 #include <fcntl.h>
 #include <wtf/FileSystem.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/StdLibExtras.h>
 
 #if !OS(WINDOWS)
@@ -39,45 +41,48 @@
 namespace WebKit {
 namespace NetworkCache {
 
+#if !USE(GLIB) && USE(CURL)
+Data::Data(Vector<uint8_t>&& data)
+    : Data(Variant<Vector<uint8_t>, FileSystem::MappedFileData> { WTF::move(data) })
+{
+}
+#elif !PLATFORM(COCOA)
+Data::Data(Vector<uint8_t>&& data)
+    : Data(data.span())
+{
+}
+#endif
+
 Data Data::mapToFile(const String& path) const
 {
-    FileSystem::PlatformFileHandle handle;
-    auto applyData = [&](const Function<bool(std::span<const uint8_t>)>& applier) {
+    FileSystem::FileHandle handle;
+    auto applyData = [&](NOESCAPE const Function<bool(std::span<const uint8_t>)>& applier) {
         apply(applier);
     };
-    auto mappedFile = FileSystem::mapToFile(path, size(), WTFMove(applyData), &handle);
+    auto mappedFile = FileSystem::mapToFile(path, size(), WTF::move(applyData), &handle);
     if (!mappedFile)
         return { };
-    return Data::adoptMap(WTFMove(mappedFile), handle);
+    return Data::adoptMap(WTF::move(mappedFile), WTF::move(handle));
 }
 
 Data mapFile(const String& path)
 {
-    auto file = FileSystem::openFile(path, FileSystem::FileOpenMode::Read);
-    if (!FileSystem::isHandleValid(file))
+    auto handle = FileSystem::openFile(path, FileSystem::FileOpenMode::Read);
+    if (!handle)
         return { };
-    auto size = FileSystem::fileSize(file);
-    if (!size) {
-        FileSystem::closeFile(file);
-        return { };
-    }
-    return adoptAndMapFile(file, 0, *size);
-}
 
-Data adoptAndMapFile(FileSystem::PlatformFileHandle handle, size_t offset, size_t size)
-{
-    if (!size) {
-        FileSystem::closeFile(handle);
+    auto size = handle.size();
+    if (!size)
+        return { };
+
+    if (!*size)
         return Data::empty();
-    }
-    bool success;
-    FileSystem::MappedFileData mappedFile(handle, FileSystem::FileOpenMode::Read, FileSystem::MappedFileMode::Private, success);
-    if (!success) {
-        FileSystem::closeFile(handle);
-        return { };
-    }
 
-    return Data::adoptMap(WTFMove(mappedFile), handle);
+    auto mappedFile = handle.map(FileSystem::MappedFileMode::Private);
+    if (!mappedFile)
+        return { };
+
+    return Data::adoptMap(WTF::move(*mappedFile), WTF::move(handle));
 }
 
 SHA1::Digest computeSHA1(const Data& data, const Salt& salt)

@@ -27,9 +27,9 @@
 
 #if ENABLE(WEB_AUTHN)
 
-#include "Document.h"
-#include "IDLTypes.h"
-#include "JSDOMPromiseDeferredForward.h"
+#include <WebCore/Document.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMPromiseDeferredForward.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -53,7 +53,7 @@ public:
 
     virtual Type credentialType() const = 0;
 
-    const String& id() const { return m_id; }
+    const String& id() const LIFETIME_BOUND { return m_id; }
     String type() const;
     Discovery discovery() const { return m_discovery; }
 

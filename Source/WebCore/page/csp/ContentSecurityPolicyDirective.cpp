@@ -27,12 +27,13 @@
 #include "ContentSecurityPolicyDirective.h"
 
 #include "ContentSecurityPolicyDirectiveList.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-ContentSecurityPolicyDirective::~ContentSecurityPolicyDirective()
-{
-}
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ContentSecurityPolicyDirective);
+
+ContentSecurityPolicyDirective::~ContentSecurityPolicyDirective() = default;
 
 bool ContentSecurityPolicyDirective::isDefaultSrc() const
 {

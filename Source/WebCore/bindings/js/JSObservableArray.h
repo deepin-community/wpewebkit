@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022, 2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022, 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSDOMBinding.h"
+#include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/ArrayPrototype.h>
 
 namespace JSC {
@@ -45,7 +45,7 @@ class JSObservableArray final : public JSArray {
 public:
     using Base = JSArray;
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -60,7 +60,7 @@ public:
         // We need to pass in the right global object for "array".
         Structure* domStructure = WebCore::deprecatedGetDOMStructure<JSObservableArray>(lexicalGlobalObject);
         JSObservableArray* observableArray = new (NotNull, allocateCell<JSObservableArray>(vm)) JSObservableArray(vm, domStructure);
-        observableArray->finishCreation(vm, WTFMove(array));
+        observableArray->finishCreation(vm, WTF::move(array));
         return observableArray;
     }
 
@@ -68,7 +68,7 @@ public:
     static void destroy(JSCell*);
 
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool throwException);
-    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
@@ -88,16 +88,13 @@ public:
         return globalObject.arrayPrototype();
     }
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), NonArray);
-    }
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
 private:
     JSObservableArray(VM&, Structure*);
     void finishCreation(VM&, Ref<ObservableArray>&&);
 
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
+    static JSC::GCClient::IsoSubspace* NODELETE subspaceForImpl(JSC::VM&);
 
     RefPtr<ObservableArray> m_array;
 };

@@ -25,10 +25,23 @@
 
 #pragma once
 
-#include "Site.h"
-#include <wtf/RefCounted.h>
+#include "EnhancedSecurity.h"
+#include "LoadedWebArchive.h"
+#include "WebProcessProxy.h"
+#include <WebCore/BrowsingContextGroupIdentifier.h>
+#include <WebCore/OriginKeyed.h>
+#include <WebCore/SecurityOriginData.h>
+#include <WebCore/Site.h>
+#include <wtf/CompletionHandler.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakListHashSet.h>
+
+namespace API {
+class PageConfiguration;
+class WebsitePolicies;
+}
 
 namespace IPC {
 class Connection;
@@ -41,37 +54,71 @@ class ProvisionalPageProxy;
 class RemotePageProxy;
 class WebPageProxy;
 class WebPreferences;
-class WebProcessProxy;
+class WebProcessPool;
 
-class BrowsingContextGroup : public RefCounted<BrowsingContextGroup>, public CanMakeWeakPtr<BrowsingContextGroup> {
+enum class IsMainFrame : bool;
+
+enum class BrowsingContextGroupUpdate : uint8_t { None, AddProcess, AddProcessAndInjectBrowsingContext };
+
+class BrowsingContextGroup : public RefCountedAndCanMakeWeakPtr<BrowsingContextGroup> {
 public:
     static Ref<BrowsingContextGroup> create() { return adoptRef(*new BrowsingContextGroup()); }
     ~BrowsingContextGroup();
 
-    Ref<FrameProcess> ensureProcessForSite(const Site&, WebProcessProxy&, const WebPreferences&);
-    Ref<FrameProcess> ensureProcessForConnection(IPC::Connection&, WebPageProxy&, const WebPreferences&);
-    FrameProcess* processForSite(const Site&);
+    WebCore::BrowsingContextGroupIdentifier identifier() const { return m_identifier; }
+
+    void sharedProcessForSite(WebsiteDataStore&, API::WebsitePolicies*, const WebPreferences&, const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, API::PageConfiguration&, IsMainFrame, CompletionHandler<void(FrameProcess*)>&&);
+    Ref<FrameProcess> ensureProcessForSite(const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy&, const WebPreferences&, LoadedWebArchive = LoadedWebArchive::No, BrowsingContextGroupUpdate = BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
+    RefPtr<FrameProcess> processForSite(const WebCore::Site&);
     void addFrameProcess(FrameProcess&);
+    void addFrameProcessAndInjectPageContextIf(FrameProcess&, Function<bool(WebPageProxy&)>);
+    bool addFrameProcessWithoutInjectingPageContext(FrameProcess&);
     void removeFrameProcess(FrameProcess&);
+    void processDidTerminate(WebPageProxy&, WebProcessProxy&);
 
     void addPage(WebPageProxy&);
+    void addRemotePage(WebPageProxy&, Ref<RemotePageProxy>&&);
     void removePage(WebPageProxy&);
-    void forEachRemotePage(const WebPageProxy&, Function<void(RemotePageProxy&)>&&) const;
+    void closeRemotePagesForPage(WebPageProxy&);
+    bool hasMultiplePages() const;
+    void forEachRemotePage(const WebPageProxy&, Function<void(RemotePageProxy&)>&&);
 
-    RemotePageProxy* remotePageInProcess(const WebPageProxy&, const WebProcessProxy&);
+    RefPtr<RemotePageProxy> remotePageInProcess(const WebPageProxy&, const WebProcessProxy&);
 
-    std::unique_ptr<RemotePageProxy> takeRemotePageInProcessForProvisionalPage(const WebPageProxy&, const WebProcessProxy&);
-    void transitionPageToRemotePage(WebPageProxy&, const Site& openerSite);
-    void transitionProvisionalPageToRemotePage(ProvisionalPageProxy&, const Site& provisionalNavigationFailureSite);
+    RefPtr<RemotePageProxy> takeRemotePageInProcessForProvisionalPage(const WebPageProxy&, const WebProcessProxy&);
+    void transitionPageToRemotePage(WebPageProxy&, const WebCore::Site& openerSite);
+    void transitionProvisionalPageToRemotePage(ProvisionalPageProxy&, const WebCore::Site& provisionalNavigationFailureSite);
 
-    bool hasRemotePages(const WebPageProxy&);
+    bool NODELETE hasRemotePages(const WebPageProxy&);
+
+    WebCore::OriginKeyed resolveAgentClusterKeying(const WebCore::SecurityOriginData&, WebCore::OriginKeyed requested);
+
+    void clearBrowsingContextGroupForTesting();
 
 private:
     BrowsingContextGroup();
 
-    HashMap<Site, WeakPtr<FrameProcess>> m_processMap;
-    WeakListHashSet<WebPageProxy> m_pages;
-    WeakHashMap<WebPageProxy, HashSet<std::unique_ptr<RemotePageProxy>>> m_remotePages;
-};
+    WebCore::BrowsingContextGroupIdentifier m_identifier { WebCore::BrowsingContextGroupIdentifier::generate() };
 
+    WeakPtr<FrameProcess> m_sharedProcess;
+    HashSet<WebCore::Site> m_sharedProcessSites;
+    WeakHashSet<WebPageProxy> m_pagesInSharedProcess;
+
+    HashMap<WebCore::Site, WeakPtr<FrameProcess>> m_processMap;
+    WeakListHashSet<WebPageProxy> m_pages;
+    WeakHashMap<WebPageProxy, HashSet<Ref<RemotePageProxy>>> m_remotePages;
+
+    HashMap<WebCore::SecurityOriginData, WebCore::OriginKeyed> m_historicalAgentClusterKeyMap;
+} SWIFT_SHARED_REFERENCE(refBrowsingContextGroup, derefBrowsingContextGroup);
+
+}
+
+inline void refBrowsingContextGroup(WebKit::BrowsingContextGroup* WTF_NONNULL obj)
+{
+    obj->ref();
+}
+
+inline void derefBrowsingContextGroup(WebKit::BrowsingContextGroup* WTF_NONNULL obj)
+{
+    obj->deref();
 }

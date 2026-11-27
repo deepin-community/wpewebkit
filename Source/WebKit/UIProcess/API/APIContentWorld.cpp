@@ -27,6 +27,8 @@
 #include "APIContentWorld.h"
 
 #include "ContentWorldShared.h"
+#include "WebProcessMessages.h"
+#include "WebProcessProxy.h"
 #include "WebUserContentControllerProxy.h"
 #include <wtf/HashMap.h>
 #include <wtf/WeakRef.h>
@@ -34,13 +36,18 @@
 
 namespace API {
 
-static HashMap<WTF::String, WeakRef<ContentWorld>>& sharedWorldNameMap()
+OptionSet<WebKit::ContentWorldOption> ContentWorld::defaultOptions()
+{
+    return WebKit::ContentWorldOption::Inspectable;
+}
+
+static HashMap<WTF::String, WeakRef<ContentWorld>>& NODELETE sharedWorldNameMap()
 {
     static NeverDestroyed<HashMap<WTF::String, WeakRef<ContentWorld>>> sharedMap;
     return sharedMap;
 }
 
-static HashMap<WebKit::ContentWorldIdentifier, WeakRef<ContentWorld>>& sharedWorldIdentifierMap()
+static HashMap<WebKit::ContentWorldIdentifier, WeakRef<ContentWorld>>& NODELETE sharedWorldIdentifierMap()
 {
     static NeverDestroyed<HashMap<WebKit::ContentWorldIdentifier, WeakRef<ContentWorld>>> sharedMap;
     return sharedMap;
@@ -48,51 +55,64 @@ static HashMap<WebKit::ContentWorldIdentifier, WeakRef<ContentWorld>>& sharedWor
 
 ContentWorld* ContentWorld::worldForIdentifier(WebKit::ContentWorldIdentifier identifier)
 {
+    if (identifier == WebKit::pageContentWorldIdentifier())
+        return &pageContentWorldSingleton();
     return sharedWorldIdentifierMap().get(identifier);
 }
 
-ContentWorld::ContentWorld(const WTF::String& name)
-    : m_name(name)
+static WebKit::ContentWorldIdentifier generateIdentifier()
 {
     static std::once_flag once;
     std::call_once(once, [] {
         // To make sure we don't use our shared pageContentWorld identifier for this
         // content world we're about to make, burn through one identifier.
         auto identifier = WebKit::ContentWorldIdentifier::generate();
-        ASSERT_UNUSED(identifier, identifier.toUInt64() >= WebKit::pageContentWorldIdentifier().toUInt64());
+        ASSERT_UNUSED(identifier, identifier.object().toUInt64() >= WebKit::pageContentWorldIdentifier().object().toUInt64());
     });
+    return WebKit::ContentWorldIdentifier::generate();
+}
 
-    m_identifier = WebKit::ContentWorldIdentifier::generate();
+ContentWorld::ContentWorld(const WTF::String& name, OptionSet<WebKit::ContentWorldOption> options)
+    : m_identifier(generateIdentifier())
+    , m_name(name)
+    , m_options(options)
+{
     auto addResult = sharedWorldIdentifierMap().add(m_identifier, *this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
 ContentWorld::ContentWorld(WebKit::ContentWorldIdentifier identifier)
     : m_identifier(identifier)
+    , m_options(defaultOptions())
 {
     ASSERT(m_identifier == WebKit::pageContentWorldIdentifier());
 }
 
-Ref<ContentWorld> ContentWorld::sharedWorldWithName(const WTF::String& name)
+Ref<ContentWorld> ContentWorld::sharedWorldWithName(const WTF::String& name, OptionSet<WebKit::ContentWorldOption> options)
 {
     RefPtr<ContentWorld> newContentWorld;
     auto result = sharedWorldNameMap().ensure(name, [&] {
-        newContentWorld = adoptRef(*new ContentWorld(name));
+        newContentWorld = adoptRef(*new ContentWorld(name, options));
         return WeakRef { *newContentWorld };
     });
     return newContentWorld ? newContentWorld.releaseNonNull() : Ref { result.iterator->value.get() };
 }
 
-ContentWorld& ContentWorld::pageContentWorld()
+Ref<ContentWorld> ContentWorld::createNamelessWorld(OptionSet<WebKit::ContentWorldOption> options)
 {
-    static NeverDestroyed<RefPtr<ContentWorld>> world(adoptRef(new ContentWorld(WebKit::pageContentWorldIdentifier())));
-    return *world.get();
+    return adoptRef(*new ContentWorld(nullString(), options));
 }
 
-ContentWorld& ContentWorld::defaultClientWorld()
+ContentWorld& ContentWorld::pageContentWorldSingleton()
 {
-    static NeverDestroyed<RefPtr<ContentWorld>> world(adoptRef(new ContentWorld(WTF::String { })));
-    return *world.get();
+    static NeverDestroyed<Ref<ContentWorld>> world(adoptRef(*new ContentWorld(WebKit::pageContentWorldIdentifier())));
+    return world.get();
+}
+
+ContentWorld& ContentWorld::defaultClientWorldSingleton()
+{
+    static NeverDestroyed<Ref<ContentWorld>> world(adoptRef(*new ContentWorld(WTF::String { }, defaultOptions())));
+    return world.get();
 }
 
 ContentWorld::~ContentWorld()
@@ -107,20 +127,14 @@ ContentWorld::~ContentWorld()
         ASSERT_UNUSED(taken, taken.get() == this);
     }
 
-    for (Ref proxy : m_associatedContentControllerProxies)
-        proxy->contentWorldDestroyed(*this);
+    for (Ref process : m_processes)
+        process->send(Messages::WebProcess::ContentWorldDestroyed(m_identifier), 0);
 }
 
-void ContentWorld::addAssociatedUserContentControllerProxy(WebKit::WebUserContentControllerProxy& proxy)
+WebKit::ContentWorldData ContentWorld::worldDataForProcess(WebKit::WebProcessProxy& process) const
 {
-    auto addResult = m_associatedContentControllerProxies.add(proxy);
-    ASSERT_UNUSED(addResult, addResult.isNewEntry);
-}
-
-void ContentWorld::userContentControllerProxyDestroyed(WebKit::WebUserContentControllerProxy& proxy)
-{
-    bool removed = m_associatedContentControllerProxies.remove(proxy);
-    ASSERT_UNUSED(removed, removed);
+    m_processes.add(process);
+    return { m_identifier, m_name, m_options };
 }
 
 } // namespace API

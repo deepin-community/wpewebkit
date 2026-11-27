@@ -31,6 +31,7 @@
 #include "MessageSenderInlines.h"
 #include "WebPageMessages.h"
 #include "WebPageProxyInternals.h"
+#include "WebProcessProxy.h"
 
 namespace WebKit {
 
@@ -60,17 +61,20 @@ void WebPageProxy::Internals::didResumeSpeaking(WebCore::PlatformSpeechSynthesis
 
 void WebPageProxy::Internals::speakingErrorOccurred(WebCore::PlatformSpeechSynthesisUtterance&)
 {
-    page.legacyMainFrameProcess().send(Messages::WebPage::SpeakingErrorOccurred(), page.webPageIDInMainFrameProcess());
+    Ref protectedPage = page.get();
+    protect(protectedPage->legacyMainFrameProcess())->send(Messages::WebPage::SpeakingErrorOccurred(), protectedPage->webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::Internals::boundaryEventOccurred(WebCore::PlatformSpeechSynthesisUtterance&, WebCore::SpeechBoundary speechBoundary, unsigned charIndex, unsigned charLength)
 {
-    page.legacyMainFrameProcess().send(Messages::WebPage::BoundaryEventOccurred(speechBoundary == WebCore::SpeechBoundary::SpeechWordBoundary, charIndex, charLength), page.webPageIDInMainFrameProcess());
+    Ref protectedPage = page.get();
+    protect(protectedPage->legacyMainFrameProcess())->send(Messages::WebPage::BoundaryEventOccurred(speechBoundary == WebCore::SpeechBoundary::SpeechWordBoundary, charIndex, charLength), protectedPage->webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::Internals::voicesDidChange()
 {
-    page.legacyMainFrameProcess().send(Messages::WebPage::VoicesDidChange(), page.webPageIDInMainFrameProcess());
+    Ref protectedPage = page.get();
+    protect(protectedPage->legacyMainFrameProcess())->send(Messages::WebPage::VoicesDidChange(), protectedPage->webPageIDInMainFrameProcess());
 }
 
 } // namespace WebKit

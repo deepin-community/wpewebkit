@@ -63,6 +63,8 @@ public:
     void clearPrivateClickMeasurementForRegistrableDomain(WebCore::RegistrableDomain&&, CompletionHandler<void()>&&) final;
     void clearSentAttribution(WebCore::PrivateClickMeasurement&& attributionToClear, WebCore::PCM::AttributionReportEndpoint) final;
 
+    void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&) final;
+
     void close(CompletionHandler<void()>&&) final;
 
 private:
@@ -71,8 +73,8 @@ private:
     void postTask(Function<void()>&&) const;
     void postTaskReply(Function<void()>&&) const;
 
-    std::unique_ptr<Database> m_database;
-    Ref<SuspendableWorkQueue> m_queue;
+    RefPtr<Database> m_database;
+    const Ref<SuspendableWorkQueue> m_queue;
 };
 
 } // namespace PCM

@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2009 Google, Inc.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2015 Google, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -27,27 +28,29 @@ namespace WebCore {
 class SVGGraphicsElement;
 
 class LegacyRenderSVGTransformableContainer final : public LegacyRenderSVGContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRenderSVGTransformableContainer);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGTransformableContainer);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGTransformableContainer);
 public:
-    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, RenderStyle&&);
+    LegacyRenderSVGTransformableContainer(SVGGraphicsElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGTransformableContainer();
 
-    const AffineTransform& localToParentTransform() const override { return m_localTransform; }
+    const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
     bool didTransformToRootUpdate() override { return m_didTransformToRootUpdate; }
 
+    const FloatSize& additionalTranslation() const LIFETIME_BOUND { return m_additionalTranslation; }
+
 private:
-    SVGGraphicsElement& graphicsElement();
+    SVGGraphicsElement& NODELETE graphicsElement();
 
     void element() const = delete;
     bool calculateLocalTransform() override;
     AffineTransform localTransform() const override { return m_localTransform; }
 
-    bool m_needsTransformUpdate : 1;
-    bool m_didTransformToRootUpdate : 1;
+    bool m_needsTransformUpdate : 1 { true };
+    bool m_didTransformToRootUpdate : 1 { false };
     AffineTransform m_localTransform;
-    FloatSize m_lastTranslation;
+    FloatSize m_additionalTranslation;
     FloatRect m_lastTransformReferenceBoxRect;
 };
 

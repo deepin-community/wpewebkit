@@ -27,6 +27,7 @@
 
 #include "Connection.h"
 #include "MessageSender.h"
+#include "ServiceWorkerTimingInfo.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebResourceInterceptController.h"
 #include <WebCore/FrameIdentifier.h>
@@ -66,18 +67,18 @@ public:
         WebCore::ResourceLoaderIdentifier resourceID;
     };
 
-    static Ref<WebResourceLoader> create(Ref<WebCore::ResourceLoader>&&, const TrackingParameters&);
+    static Ref<WebResourceLoader> create(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&);
 
     ~WebResourceLoader();
 
-    void didReceiveWebResourceLoaderMessage(IPC::Connection&, IPC::Decoder&);
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
     WebCore::ResourceLoader* resourceLoader() const { return m_coreLoader.get(); }
 
     void detachFromCoreLoader();
 
 private:
-    WebResourceLoader(Ref<WebCore::ResourceLoader>&&, const TrackingParameters&);
+    WebResourceLoader(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&);
 
     // IPC::MessageSender
     IPC::Connection* messageSenderConnection() const override;
@@ -86,13 +87,15 @@ private:
     void willSendRequest(WebCore::ResourceRequest&&, IPC::FormDataReference&& requestBody, WebCore::ResourceResponse&&, CompletionHandler<void(WebCore::ResourceRequest&&, bool)>&&);
     void didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent);
     void didReceiveResponse(WebCore::ResourceResponse&&, PrivateRelayed, bool needsContinueDidReceiveResponseMessage, std::optional<WebCore::NetworkLoadMetrics>&&);
-    void didReceiveData(IPC::SharedBufferReference&& data, uint64_t encodedDataLength);
+    void didReceiveData(IPC::SharedBufferReference&& data, uint64_t bytesTransferredOverNetwork);
     void didFinishResourceLoad(WebCore::NetworkLoadMetrics&&);
     void didFailResourceLoad(const WebCore::ResourceError&);
     void didFailServiceWorkerLoad(const WebCore::ResourceError&);
     void serviceWorkerDidNotHandle();
+    void updateResultingClientIdentifier(WTF::UUID currentIdentifier, WTF::UUID newIdentifier);
+
     void didBlockAuthenticationChallenge();
-    void setWorkerStart(MonotonicTime value) { m_workerStart = value; }
+    void setServiceWorkerTimingInfo(ServiceWorkerTimingInfo&& info) { m_serviceWorkerTimingInfo = WTF::move(info); }
 
     void stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(const WebCore::ResourceResponse&);
 
@@ -103,13 +106,17 @@ private:
 #endif
 
 #if ENABLE(CONTENT_FILTERING)
-    void contentFilterDidBlockLoad(const WebCore::ContentFilterUnblockHandler&, String&& unblockRequestDeniedScript, const WebCore::ResourceError&, const URL& blockedPageURL, WebCore::SubstituteData&&);
+    void contentFilterDidBlockLoad(WebCore::ContentFilterUnblockHandler&&, String&& unblockRequestDeniedScript, const WebCore::ResourceError&, const URL& blockedPageURL, WebCore::SubstituteData&&);
 #endif
-    
+
+    size_t NODELETE calculateBytesTransferredOverNetworkDelta(size_t bytesTransferredOverNetwork);
+    void updateNetworkLoadMetrics(WebCore::NetworkLoadMetrics&);
+
     RefPtr<WebCore::ResourceLoader> m_coreLoader;
-    TrackingParameters m_trackingParameters;
+    const std::optional<TrackingParameters> m_trackingParameters;
     WebResourceInterceptController m_interceptController;
     size_t m_numBytesReceived { 0 };
+    size_t m_bytesTransferredOverNetwork { 0 };
 
 #if ASSERT_ENABLED
     bool m_isProcessingNetworkResponse { false };
@@ -117,8 +124,8 @@ private:
 
     Seconds timeSinceLoadStart() const { return MonotonicTime::now() - m_loadStart; }
 
-    MonotonicTime m_loadStart;
-    MonotonicTime m_workerStart;
+    const MonotonicTime m_loadStart;
+    std::optional<ServiceWorkerTimingInfo> m_serviceWorkerTimingInfo;
 };
 
 } // namespace WebKit

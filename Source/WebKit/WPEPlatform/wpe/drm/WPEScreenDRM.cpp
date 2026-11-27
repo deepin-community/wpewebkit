@@ -26,23 +26,59 @@
 #include "config.h"
 #include "WPEScreenDRM.h"
 
+#include "WPEDisplayDRMPrivate.h"
 #include "WPEScreenDRMPrivate.h"
+#include "WPEScreenSyncObserverDRM.h"
+#include <fcntl.h>
+#include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
+#include <xf86drm.h>
 
 /**
  * WPEScreenDRM:
  *
+ * A [class@WPEPlatform.Screen] implementation for DRM/KMS.
+ *
+ * [class@ScreenDRM] is the [class@WPEPlatform.Screen] implementation used by
+ * [class@DisplayDRM]. Each instance represents a DRM connector and its
+ * associated mode.
  */
 struct _WPEScreenDRMPrivate {
     std::unique_ptr<WPE::DRM::Crtc> crtc;
     drmModeModeInfo mode;
+    GRefPtr<WPEScreenSyncObserver> syncObserver;
+    struct {
+        uint32_t bufferID;
+        uint32_t frameBufferID;
+    } dumb;
 };
 WEBKIT_DEFINE_FINAL_TYPE(WPEScreenDRM, wpe_screen_drm, WPE_TYPE_SCREEN, WPEScreen)
 
 static void wpeScreenDRMInvalidate(WPEScreen* screen)
 {
+    WPE_SCREEN_CLASS(wpe_screen_drm_parent_class)->invalidate(screen);
+
     auto* priv = WPE_SCREEN_DRM(screen)->priv;
     priv->crtc = nullptr;
+    priv->syncObserver = nullptr;
+}
+
+static WPEScreenSyncObserver* wpeScreenDRMGetSyncObserver(WPEScreen* screen)
+{
+    auto* priv = WPE_SCREEN_DRM(screen)->priv;
+    if (!priv->syncObserver && priv->crtc) {
+        if (auto* device = wpeDisplayDRMGetDisplayDevice(WPE_DISPLAY_DRM(wpe_display_get_primary()))) {
+            const char* filename = wpe_drm_device_get_primary_node(device);
+            if (auto fd = UnixFileDescriptor(open(filename, O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt)) {
+                priv->syncObserver = adoptGRef(wpeScreenSyncObserverDRMCreate(WTF::move(fd), priv->crtc->index()));
+                if (priv->syncObserver)
+                    g_debug("WPEScreenDRM: Created WPEScreenSyncObserverDRM for device %s with CRTC index %u", filename, priv->crtc->index());
+                else
+                    g_debug("WPEScreenDRM: Failed to create a WPEScreenSyncObserverDRM for device %s with CRTC index %u", filename, priv->crtc->index());
+            }
+        }
+    }
+    return priv->syncObserver.get();
 }
 
 static void wpeScreenDRMDispose(GObject* object)
@@ -59,22 +95,16 @@ static void wpe_screen_drm_class_init(WPEScreenDRMClass* screenDRMClass)
 
     WPEScreenClass* screenClass = WPE_SCREEN_CLASS(screenDRMClass);
     screenClass->invalidate = wpeScreenDRMInvalidate;
+    screenClass->get_sync_observer = wpeScreenDRMGetSyncObserver;
 }
 
 WPEScreen* wpeScreenDRMCreate(std::unique_ptr<WPE::DRM::Crtc>&& crtc, const WPE::DRM::Connector& connector)
 {
     auto* screen = WPE_SCREEN(g_object_new(WPE_TYPE_SCREEN_DRM, "id", crtc->id(), nullptr));
     auto* priv = WPE_SCREEN_DRM(screen)->priv;
-    priv->crtc = WTFMove(crtc);
+    priv->crtc = WTF::move(crtc);
 
-    double scale = 1;
-    if (const char* scaleString = getenv("WPE_DRM_SCALE"))
-        scale = g_ascii_strtod(scaleString, nullptr);
-
-    wpe_screen_set_position(screen, priv->crtc->x() / scale, priv->crtc->y() / scale);
-    wpe_screen_set_size(screen, priv->crtc->width() / scale, priv->crtc->height() / scale);
     wpe_screen_set_physical_size(screen, connector.widthMM(), connector.heightMM());
-    wpe_screen_set_scale(screen, scale);
 
     if (const auto& mode = priv->crtc->currentMode())
         priv->mode = mode.value();
@@ -115,22 +145,99 @@ drmModeModeInfo* wpeScreenDRMGetMode(WPEScreenDRM* screen)
     return &screen->priv->mode;
 }
 
-const WPE::DRM::Crtc wpeScreenDRMGetCrtc(WPEScreenDRM* screen)
+WPE::DRM::Crtc& wpeScreenDRMGetCrtc(WPEScreenDRM* screen)
 {
     return *screen->priv->crtc;
 }
 
-/**
- * wpe_screen_drm_get_crtc_index: (skip)
- * @screen: a #WPEScreenDRM
- *
- * Get the DRM CRTC index of @screen
- *
- * Returns: the CRTC index
- */
-guint wpe_screen_drm_get_crtc_index(WPEScreenDRM* screen)
+double wpeScreenDRMGuessScale(WPEScreenDRM* screen)
 {
-    g_return_val_if_fail(WPE_IS_SCREEN_DRM(screen), 0);
+    // - If the screen does not have physical size values, use 1x.
+    // - If the screen is at least 1200px tall and has 192dpi, use 2x.
+    // - Otherwise, use 1x.
+    //
+    // This is a simplistic approach to choose the scale factor depending
+    // on its characteristics, but works reasonably well for many devices.
+    // In particular, this logic keeps 1x (no scaling) all the way up to
+    // and including FullHD/1080p screens, regardless of their pixel density,
+    // as it is very rare that "high DPI" screens have appropriate sizes to
+    // apply a higher scaling factor.
+    //
+    // Note that, for the sake of simplicity, this never uses fractional
+    // scaling, and checks the resolution of the current mode instead of
+    // the preferred/maximum resolution (which woule have been better).
 
-    return screen->priv->crtc->index();
+    static constexpr uint32_t minimum2xScaleDPI = 2 * 96;
+    static constexpr uint32_t minimum2xPixelHeight = 1200;
+    static constexpr float mmPerInch = 25.4;
+
+    const auto pixelWidth = screen->priv->mode.hdisplay;
+    const auto pixelHeight = screen->priv->mode.vdisplay;
+
+    if (pixelHeight < minimum2xPixelHeight)
+        return 1.0;
+
+    const auto physicalWidth = wpe_screen_get_physical_width(WPE_SCREEN(screen));
+    const auto physicalHeight = wpe_screen_get_physical_height(WPE_SCREEN(screen));
+
+    if (physicalWidth <= 0 || physicalHeight <= 0)
+        return 1.0;
+
+    const auto horizontalDPI = static_cast<float>(pixelWidth) / (physicalWidth / mmPerInch);
+    const auto verticalDPI = static_cast<float>(pixelHeight) / (physicalHeight / mmPerInch);
+
+    if (horizontalDPI <= minimum2xScaleDPI || verticalDPI <= minimum2xScaleDPI)
+        return 1.0;
+
+    return 2.0;
+}
+
+void wpeScreenDRMCreateDumbBufferIfNeeded(WPEScreenDRM* screen, int fd, uint32_t connectorID)
+{
+    auto* priv = screen->priv;
+    if (priv->crtc->bufferID())
+        return;
+
+    // We need to ensure the CRTC has a buffer for the vblank monitor to work.
+    constexpr uint32_t bitsPerPixel = 32;
+    constexpr uint8_t depth = 24;
+    uint32_t handle, pitch;
+    uint64_t size;
+    auto ret = drmModeCreateDumbBuffer(fd, priv->mode.hdisplay, priv->mode.vdisplay, bitsPerPixel, 0, &handle, &pitch, &size);
+    if (ret) {
+        drmError(ret, "drmModeCreateDumbBuffer");
+        return;
+    }
+
+    uint32_t frameBufferID;
+    ret = drmModeAddFB(fd, priv->mode.hdisplay, priv->mode.vdisplay, depth, bitsPerPixel, pitch, handle, &frameBufferID);
+    if (ret) {
+        drmError(ret, "drmModeAddFB");
+        drmModeDestroyDumbBuffer(fd, handle);
+    }
+
+    ret = drmModeSetCrtc(fd, priv->crtc->id(), frameBufferID, 0, 0, &connectorID, 1, &priv->mode);
+    if (ret) {
+        drmError(ret, "drmModeSetCrtc");
+        drmModeRmFB(fd, frameBufferID);
+        drmModeDestroyDumbBuffer(fd, handle);
+        return;
+    }
+
+    priv->crtc->setCurrentMode(&priv->mode);
+
+    priv->dumb.bufferID = handle;
+    priv->dumb.frameBufferID = frameBufferID;
+}
+
+void wpeScreenDRMDestroyDumbBufferIfNeeded(WPEScreenDRM* screen, int fd)
+{
+    auto* priv = screen->priv;
+    if (!priv->dumb.bufferID)
+        return;
+
+    drmModeRmFB(fd, priv->dumb.frameBufferID);
+    drmModeDestroyDumbBuffer(fd, priv->dumb.bufferID);
+    priv->dumb.bufferID = 0;
+    priv->dumb.frameBufferID = 0;
 }

@@ -38,7 +38,14 @@ class ErrorCallback : public RefCounted<ErrorCallback>, public ActiveDOMCallback
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual CallbackResult<void> handleEvent(DOMException&) = 0;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    virtual bool isJSErrorCallback() const { return false; }
+
+    virtual CallbackResult<void> invoke(DOMException&) = 0;
+    virtual CallbackResult<void> invokeRethrowingException(DOMException&) = 0;
 
     // Helper to post callback task.
     void scheduleCallback(ScriptExecutionContext&, Ref<DOMException>&&);

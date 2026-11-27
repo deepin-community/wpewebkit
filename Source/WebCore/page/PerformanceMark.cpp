@@ -28,6 +28,7 @@
 
 #include "DOMWrapperWorld.h"
 #include "Document.h"
+#include "ExceptionOr.h"
 #include "LocalDOMWindow.h"
 #include "MessagePort.h"
 #include "Performance.h"
@@ -45,10 +46,10 @@ static double performanceNow(ScriptExecutionContext& scriptExecutionContext)
     // the ScriptExecutionContext to avoid this.
 
     if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext)) {
-        if (auto window = document->domWindow())
-            return window->performance().now();
+        if (RefPtr window = document->window())
+            return protect(window->performance())->now();
     } else if (RefPtr workerGlobal = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext))
-        return workerGlobal->performance().now();
+        return protect(workerGlobal->performance())->now();
 
     return 0;
 }
@@ -78,7 +79,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& g
     }
 
     Vector<Ref<MessagePort>> ignoredMessagePorts;
-    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts);
+    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts, SerializationForStorage::No);
     if (serializedDetail.hasException())
         return serializedDetail.releaseException();
 
@@ -87,7 +88,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& g
 
 PerformanceMark::PerformanceMark(const String& name, double startTime, Ref<SerializedScriptValue>&& serializedDetail)
     : PerformanceEntry(name, startTime, startTime)
-    , m_serializedDetail(WTFMove(serializedDetail))
+    , m_serializedDetail(WTF::move(serializedDetail))
 {
 }
 

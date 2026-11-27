@@ -31,6 +31,7 @@
 #include "PlatformMediaSession.h"
 #include "PlatformStrategies.h"
 #include <gio/gio.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/GUniquePtr.h>
 
 // https://specifications.freedesktop.org/mpris-spec/latest/
@@ -112,20 +113,28 @@ static const char s_mprisInterface[] =
 
 namespace WebCore {
 
-std::unique_ptr<PlatformMediaSessionManager> PlatformMediaSessionManager::create()
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSessionManagerGLib);
+
+RefPtr<PlatformMediaSessionManager> PlatformMediaSessionManager::create(PageIdentifier pageIdentifier)
 {
     GUniqueOutPtr<GError> error;
-    auto mprisInterface = adoptGRef(g_dbus_node_info_new_for_xml(s_mprisInterface, &error.outPtr()));
+    GRefPtr mprisInterface = adoptGRef(g_dbus_node_info_new_for_xml(s_mprisInterface, &error.outPtr()));
     if (!mprisInterface) {
         g_warning("Failed at parsing XML Interface definition: %s", error->message);
         return nullptr;
     }
-    return makeUnique<MediaSessionManagerGLib>(WTFMove(mprisInterface));
+    return MediaSessionManagerGLib::create(WTF::move(mprisInterface), pageIdentifier);
 }
 
-MediaSessionManagerGLib::MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&& mprisInterface)
-    : m_mprisInterface(WTFMove(mprisInterface))
-    , m_nowPlayingManager(platformStrategies()->mediaStrategy().createNowPlayingManager())
+Ref<MediaSessionManagerGLib> MediaSessionManagerGLib::create(GRefPtr<GDBusNodeInfo>&& mprisInterface, PageIdentifier pageIdentifier)
+{
+    return adoptRef(*new MediaSessionManagerGLib(WTF::move(mprisInterface), pageIdentifier));
+}
+
+MediaSessionManagerGLib::MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&& mprisInterface, PageIdentifier pageIdentifier)
+    : PlatformMediaSessionManager(pageIdentifier)
+    , m_mprisInterface(WTF::move(mprisInterface))
+    , m_nowPlayingManager(platformStrategies()->mediaStrategy()->createNowPlayingManager())
 {
 }
 
@@ -135,7 +144,7 @@ void MediaSessionManagerGLib::beginInterruption(PlatformMediaSession::Interrupti
 {
     if (type == PlatformMediaSession::InterruptionType::SystemInterruption) {
         forEachSession([] (auto& session) {
-            session.clearHasPlayedAudiblySinceLastInterruption();
+            session.setHasPlayedAudiblySinceLastInterruption(false);
         });
     }
 
@@ -154,34 +163,40 @@ void MediaSessionManagerGLib::scheduleSessionStatusUpdate()
     });
 }
 
-bool MediaSessionManagerGLib::sessionWillBeginPlayback(PlatformMediaSession& session)
+void MediaSessionManagerGLib::sessionWillBeginPlayback(PlatformMediaSessionInterface& session, CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (!PlatformMediaSessionManager::sessionWillBeginPlayback(session))
-        return false;
+    PlatformMediaSessionManager::sessionWillBeginPlayback(session, [weakThis = ThreadSafeWeakPtr { *this }, completionHandler = WTF::move(completionHandler)](bool willBegin) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !willBegin) {
+            completionHandler(false);
+            return;
+        }
 
-    scheduleSessionStatusUpdate();
-    return true;
+        protectedThis->scheduleSessionStatusUpdate();
+        completionHandler(true);
+    });
 }
 
-void MediaSessionManagerGLib::sessionDidEndRemoteScrubbing(PlatformMediaSession&)
+void MediaSessionManagerGLib::sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&)
 {
     scheduleSessionStatusUpdate();
 }
 
-void MediaSessionManagerGLib::addSession(PlatformMediaSession& platformSession)
+void MediaSessionManagerGLib::addSession(PlatformMediaSessionInterface& platformSession)
 {
     auto identifier = platformSession.mediaSessionIdentifier();
     auto session = MediaSessionGLib::create(*this, identifier);
     if (!session)
         return;
 
-    m_sessions.add(identifier, WTFMove(session));
+    session->setMprisRegistrationEligibility(MediaSessionGLib::MprisRegistrationEligiblilty::Eligible);
+    m_sessions.add(identifier, WTF::move(session));
     m_nowPlayingManager->addClient(*this);
 
     PlatformMediaSessionManager::addSession(platformSession);
 }
 
-void MediaSessionManagerGLib::removeSession(PlatformMediaSession& session)
+void MediaSessionManagerGLib::removeSession(PlatformMediaSessionInterface& session)
 {
     PlatformMediaSessionManager::removeSession(session);
 
@@ -192,7 +207,7 @@ void MediaSessionManagerGLib::removeSession(PlatformMediaSession& session)
     scheduleSessionStatusUpdate();
 }
 
-void MediaSessionManagerGLib::setCurrentSession(PlatformMediaSession& session)
+void MediaSessionManagerGLib::setCurrentSession(PlatformMediaSessionInterface& session)
 {
     PlatformMediaSessionManager::setCurrentSession(session);
 
@@ -200,7 +215,7 @@ void MediaSessionManagerGLib::setCurrentSession(PlatformMediaSession& session)
     m_nowPlayingManager->updateSupportedCommands();
 }
 
-void MediaSessionManagerGLib::sessionWillEndPlayback(PlatformMediaSession& session, DelayCallingUpdateNowPlaying delayCallingUpdateNowPlaying)
+void MediaSessionManagerGLib::sessionWillEndPlayback(PlatformMediaSessionInterface& session, DelayCallingUpdateNowPlaying delayCallingUpdateNowPlaying)
 {
     PlatformMediaSessionManager::sessionWillEndPlayback(session, delayCallingUpdateNowPlaying);
 
@@ -218,7 +233,7 @@ void MediaSessionManagerGLib::sessionWillEndPlayback(PlatformMediaSession& sessi
     }
 }
 
-void MediaSessionManagerGLib::sessionStateChanged(PlatformMediaSession& platformSession)
+void MediaSessionManagerGLib::sessionStateChanged(PlatformMediaSessionInterface& platformSession)
 {
     PlatformMediaSessionManager::sessionStateChanged(platformSession);
 
@@ -229,7 +244,7 @@ void MediaSessionManagerGLib::sessionStateChanged(PlatformMediaSession& platform
     session->playbackStatusChanged(platformSession);
 }
 
-void MediaSessionManagerGLib::clientCharacteristicsChanged(PlatformMediaSession& platformSession, bool)
+void MediaSessionManagerGLib::clientCharacteristicsChanged(PlatformMediaSessionInterface& platformSession, bool)
 {
     ALWAYS_LOG(LOGIDENTIFIER, platformSession.logIdentifier());
     if (m_isSeeking) {
@@ -262,21 +277,17 @@ RemoteCommandListener::RemoteCommandsSet MediaSessionManagerGLib::supportedComma
     return m_nowPlayingManager->supportedCommands();
 }
 
-void MediaSessionManagerGLib::setPrimarySessionIfNeeded(PlatformMediaSession& platformSession)
+void MediaSessionManagerGLib::setPrimarySessionIfNeeded(PlatformMediaSessionInterface& platformSession)
 {
-    if (PlatformMediaSessionManager::currentSession() != &platformSession)
+    if (PlatformMediaSessionManager::currentSession().get() != &platformSession)
         return;
 
-    auto session = m_sessions.get(platformSession.mediaSessionIdentifier());
-    ASSERT(session);
-    if (!session)
-        return;
-
-    session->setMprisRegistrationEligibility(MediaSessionGLib::MprisRegistrationEligiblilty::Eligible);
+    if (auto session = m_sessions.get(platformSession.mediaSessionIdentifier()))
+        session->setMprisRegistrationEligibility(MediaSessionGLib::MprisRegistrationEligiblilty::Eligible);
     unregisterAllOtherSessions(platformSession);
 }
 
-void MediaSessionManagerGLib::unregisterAllOtherSessions(PlatformMediaSession& platformSession)
+void MediaSessionManagerGLib::unregisterAllOtherSessions(PlatformMediaSessionInterface& platformSession)
 {
     ALWAYS_LOG(LOGIDENTIFIER, platformSession.logIdentifier());
     for (auto& [sessionId, session] : m_sessions) {
@@ -306,9 +317,13 @@ void MediaSessionManagerGLib::updateNowPlayingInfo()
         m_lastUpdatedNowPlayingTitle = emptyString();
         m_lastUpdatedNowPlayingDuration = NAN;
         m_lastUpdatedNowPlayingElapsedTime = NAN;
-        m_lastUpdatedNowPlayingInfoUniqueIdentifier = { };
+        m_lastUpdatedNowPlayingInfoUniqueIdentifier = std::nullopt;
         return;
     }
+
+    auto session = m_sessions.get(platformSession->mediaSessionIdentifier());
+    if (!session)
+        return;
 
     auto nowPlayingInfo = platformSession->nowPlayingInfo();
     if (!nowPlayingInfo)
@@ -317,7 +332,7 @@ void MediaSessionManagerGLib::updateNowPlayingInfo()
     m_haveEverRegisteredAsNowPlayingApplication = true;
 
     if (m_nowPlayingManager->setNowPlayingInfo(*nowPlayingInfo))
-        ALWAYS_LOG(LOGIDENTIFIER, "title = \"", nowPlayingInfo->metadata.title, "\", isPlaying = ", nowPlayingInfo->isPlaying, ", duration = ", nowPlayingInfo->duration, ", now = ", nowPlayingInfo->currentTime, ", id = ", nowPlayingInfo->uniqueIdentifier.toUInt64(), ", registered = ", m_registeredAsNowPlayingApplication, ", src = \"", nowPlayingInfo->metadata.artwork ? nowPlayingInfo->metadata.artwork->src : String(), "\"");
+        ALWAYS_LOG(LOGIDENTIFIER, "title = \"", nowPlayingInfo->metadata.title, "\", isPlaying = ", nowPlayingInfo->isPlaying, ", duration = ", nowPlayingInfo->duration, ", now = ", nowPlayingInfo->currentTime, ", id = ", (nowPlayingInfo->uniqueIdentifier ? nowPlayingInfo->uniqueIdentifier->toUInt64() : 0), ", registered = ", m_registeredAsNowPlayingApplication, ", src = \"", nowPlayingInfo->metadata.artwork ? nowPlayingInfo->metadata.artwork->src : String(), "\"");
 
     if (!m_registeredAsNowPlayingApplication) {
         m_registeredAsNowPlayingApplication = true;
@@ -339,7 +354,6 @@ void MediaSessionManagerGLib::updateNowPlayingInfo()
 
     m_nowPlayingActive = nowPlayingInfo->allowsNowPlayingControlsVisibility;
 
-    auto session = m_sessions.get(platformSession->mediaSessionIdentifier());
     session->updateNowPlaying(*nowPlayingInfo);
 }
 

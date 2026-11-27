@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Ericsson AB. All rights reserved.
- * Copyright (C) 2013-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Nokia Corporation and/or its subsidiary(-ies).
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,15 +34,15 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include "ActiveDOMObject.h"
-#include "CaptureDevice.h"
-#include "IDLTypes.h"
-#include "MediaAccessDenialReason.h"
-#include "MediaConstraints.h"
-#include "MediaStreamPrivate.h"
-#include "MediaStreamTrack.h"
-#include "MediaStreamRequest.h"
-#include "UserMediaRequestIdentifier.h"
+#include <WebCore/ActiveDOMObject.h>
+#include <WebCore/CaptureDevice.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/MediaAccessDenialReason.h>
+#include <WebCore/MediaConstraints.h>
+#include <WebCore/MediaStreamPrivate.h>
+#include <WebCore/MediaStreamRequest.h>
+#include <WebCore/MediaStreamTrack.h>
+#include <WebCore/UserMediaRequestIdentifier.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Identified.h>
 #include <wtf/ObjectIdentifier.h>
@@ -57,13 +57,12 @@ template<typename IDLType> class DOMPromiseDeferred;
 
 class UserMediaRequest : public RefCounted<UserMediaRequest>, public ActiveDOMObject, public Identified<UserMediaRequestIdentifier> {
 public:
-    using TrackConstraints = std::variant<bool, MediaTrackConstraints>;
-    static Ref<UserMediaRequest> create(Document&, MediaStreamRequest&&, TrackConstraints&&, TrackConstraints&&, DOMPromiseDeferred<IDLInterface<MediaStream>>&&);
-    virtual ~UserMediaRequest();
-
-    // ActiveDOMObject.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
+
+    using TrackConstraints = Variant<bool, MediaTrackConstraints>;
+    static Ref<UserMediaRequest> create(Document&, MediaStreamRequest&&, TrackConstraints&&, TrackConstraints&&, DOMPromiseDeferred<IDLInterface<MediaStream>>&&);
+    virtual ~UserMediaRequest();
 
     void start();
 
@@ -72,17 +71,17 @@ public:
 
     WEBCORE_EXPORT void deny(MediaAccessDenialReason, const String& errorMessage = emptyString(), MediaConstraintType = MediaConstraintType::Unknown);
 
-    const Vector<String>& audioDeviceUIDs() const { return m_audioDeviceUIDs; }
-    const Vector<String>& videoDeviceUIDs() const { return m_videoDeviceUIDs; }
+    const Vector<String>& audioDeviceUIDs() const LIFETIME_BOUND { return m_audioDeviceUIDs; }
+    const Vector<String>& videoDeviceUIDs() const LIFETIME_BOUND { return m_videoDeviceUIDs; }
 
-    const MediaConstraints& audioConstraints() const { return m_request.audioConstraints; }
-    const MediaConstraints& videoConstraints() const { return m_request.videoConstraints; }
+    const MediaConstraints& audioConstraints() const LIFETIME_BOUND { return m_request.audioConstraints; }
+    const MediaConstraints& videoConstraints() const LIFETIME_BOUND { return m_request.videoConstraints; }
 
     WEBCORE_EXPORT SecurityOrigin* userMediaDocumentOrigin() const;
     WEBCORE_EXPORT SecurityOrigin* topLevelDocumentOrigin() const;
-    WEBCORE_EXPORT Document* document() const;
+    WEBCORE_EXPORT Document* NODELETE document() const;
 
-    const MediaStreamRequest& request() const { return m_request; }
+    const MediaStreamRequest& request() const LIFETIME_BOUND { return m_request; }
 
 private:
     UserMediaRequest(Document&, MediaStreamRequest&&, TrackConstraints&&, TrackConstraints&&, DOMPromiseDeferred<IDLInterface<MediaStream>>&&);
@@ -93,7 +92,7 @@ private:
     Vector<String> m_videoDeviceUIDs;
     Vector<String> m_audioDeviceUIDs;
 
-    UniqueRef<DOMPromiseDeferred<IDLInterface<MediaStream>>> m_promise;
+    const UniqueRef<DOMPromiseDeferred<IDLInterface<MediaStream>>> m_promise;
     CompletionHandler<void()> m_allowCompletionHandler;
     MediaStreamRequest m_request;
     TrackConstraints m_audioConstraints;

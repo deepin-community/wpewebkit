@@ -81,7 +81,7 @@ Exception* ThrowScope::throwException(JSGlobalObject* globalObject, Exception* e
 
 Exception* ThrowScope::throwException(JSGlobalObject* globalObject, JSValue error)
 {
-    if (!error.isCell() || error.isObject() || !jsDynamicCast<Exception*>(error.asCell()))
+    if (!error.isCell() || error.isObject() || !is<Exception>(error.asCell()))
         m_vm.verifyExceptionCheckNeedIsSatisfied(m_recursionDepth, m_location);
     
     return m_vm.throwException(globalObject, error);
@@ -93,7 +93,7 @@ void ThrowScope::simulateThrow()
     m_vm.m_simulatedThrowPointLocation = m_location;
     m_vm.m_simulatedThrowPointRecursionDepth = m_recursionDepth;
     m_vm.m_needExceptionCheck = true;
-    if (UNLIKELY(Options::dumpSimulatedThrows()))
+    if (Options::dumpSimulatedThrows()) [[unlikely]]
         m_vm.m_nativeStackTraceOfLastSimulatedThrow = StackTrace::captureStackTrace(Options::unexpectedExceptionStackTraceLimit());
 }
 

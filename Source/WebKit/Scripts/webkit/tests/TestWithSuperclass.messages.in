@@ -20,10 +20,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+[
+    ExceptionForDispatchedFrom,
+    ExceptionForDispatchedTo,
+    ExceptionForEnabledBy
+]
 messages -> TestWithSuperclass : WebPageBase {
     LoadURL(String url)
 #if ENABLE(TEST_FEATURE)
     TestAsyncMessage(enum:bool WebKit::TestTwoStateEnum twoStateEnum) -> (uint64_t result) MainThreadCallback
+    TestAsyncMessageAnyThread(enum:bool WebKit::TestTwoStateEnum twoStateEnum) -> (uint64_t result) AnyThread
     TestAsyncMessageWithNoArguments() -> ()
     TestAsyncMessageWithMultipleArguments() -> (bool flag, uint64_t value)
     TestAsyncMessageWithConnection(int value) -> (bool flag)

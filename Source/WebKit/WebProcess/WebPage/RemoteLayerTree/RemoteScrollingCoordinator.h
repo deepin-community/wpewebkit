@@ -29,6 +29,7 @@
 
 #include "MessageReceiver.h"
 #include <WebCore/AsyncScrollingCoordinator.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace IPC {
 class Decoder;
@@ -42,11 +43,15 @@ class RemoteScrollingCoordinatorTransaction;
 class RemoteScrollingUIState;
 
 class RemoteScrollingCoordinator final : public WebCore::AsyncScrollingCoordinator, public IPC::MessageReceiver {
+    WTF_MAKE_TZONE_ALLOCATED(RemoteScrollingCoordinator);
 public:
     static Ref<RemoteScrollingCoordinator> create(WebPage* page)
     {
         return adoptRef(*new RemoteScrollingCoordinator(page));
     }
+
+    void ref() const final { WebCore::AsyncScrollingCoordinator::ref(); }
+    void deref() const final { WebCore::AsyncScrollingCoordinator::deref(); }
 
     RemoteScrollingCoordinatorTransaction buildTransaction(WebCore::FrameIdentifier);
 
@@ -73,10 +78,11 @@ private:
     // ScrollingCoordinator
     bool coordinatesScrollingForFrameView(const WebCore::LocalFrameView&) const override;
     void scheduleTreeStateCommit() override;
+    void willSendScrollPositionRequest(WebCore::ScrollingNodeID, WebCore::RequestedScrollData&) override;
 
-    bool isRubberBandInProgress(WebCore::ScrollingNodeID) const final;
-    bool isUserScrollInProgress(WebCore::ScrollingNodeID) const final;
-    bool isScrollSnapInProgress(WebCore::ScrollingNodeID) const final;
+    bool isRubberBandInProgress(std::optional<WebCore::ScrollingNodeID>) const final;
+    bool isUserScrollInProgress(std::optional<WebCore::ScrollingNodeID>) const final;
+    bool isScrollSnapInProgress(std::optional<WebCore::ScrollingNodeID>) const final;
 
     void setScrollPinningBehavior(WebCore::ScrollPinningBehavior) override;
     
@@ -86,8 +92,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     
     // Respond to UI process changes.
-    void scrollPositionChangedForNode(WebCore::ScrollingNodeID, const WebCore::FloatPoint& scrollPosition, std::optional<WebCore::FloatPoint> layoutViewportOrigin, bool syncLayerPosition, CompletionHandler<void()>&&);
-    void animatedScrollDidEndForNode(WebCore::ScrollingNodeID);
+    void scrollUpdateForNode(WebCore::ScrollUpdate&&, CompletionHandler<void()>&&);
     void currentSnapPointIndicesChangedForNode(WebCore::ScrollingNodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical);
 
     void receivedWheelEventWithPhases(WebCore::PlatformWheelEventPhase phase, WebCore::PlatformWheelEventPhase momentumPhase);
@@ -100,9 +105,17 @@ private:
 
     WeakPtr<WebPage> m_webPage;
 
+    WebCore::PageIdentifier m_pageIdentifier;
+
     HashSet<WebCore::ScrollingNodeID> m_nodesWithActiveRubberBanding;
     HashSet<WebCore::ScrollingNodeID> m_nodesWithActiveScrollSnap;
     HashSet<WebCore::ScrollingNodeID> m_nodesWithActiveUserScrolls;
+
+    struct PendingScrollResponseInfo {
+        Markable<WebCore::ScrollRequestIdentifier> identifier;
+        bool pendingScrollEnd { false };
+    };
+    HashMap<WebCore::ScrollingNodeID, PendingScrollResponseInfo> m_scrollRequestsPendingResponse;
 
     NodeAndGestureState m_currentWheelGestureInfo;
 

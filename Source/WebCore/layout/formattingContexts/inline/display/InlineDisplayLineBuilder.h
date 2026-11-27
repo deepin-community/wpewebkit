@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "InlineDisplayLine.h"
+#include "BlockLayoutState.h"
 #include "InlineFormattingContext.h"
 #include "InlineLineBuilder.h"
+#include <WebCore/InlineDisplayLine.h>
 
 namespace WebCore {
 namespace Layout {
@@ -41,8 +42,9 @@ public:
 
     InlineDisplay::Line build(const LineLayoutResult&, const LineBox&, bool lineIsFullyTruncatedInBlockDirection) const;
 
-    static std::optional<FloatRect> trailingEllipsisVisualRectAfterTruncation(LineEndingEllipsisPolicy, const InlineDisplay::Line&, InlineDisplay::Boxes&, bool isLastLineWithInlineContent);
-    static void addLineClampTrailingLinkBoxIfApplicable(const InlineFormattingContext&, const InlineLayoutState&, InlineDisplay::Content&);
+    static std::optional<InlineDisplay::Line::Ellipsis> applyEllipsisIfNeeded(LineEndingTruncationPolicy, InlineDisplay::Line&, std::span<InlineDisplay::Box>, bool isLegacyLineClamp);
+    static void addLegacyLineClampTrailingLinkBoxIfApplicable(const InlineFormattingContext&, const InlineLayoutState&, InlineDisplay::Content&);
+    static bool hasTrailingLineWithBlockContent(const InlineDisplay::Lines&);
 
 private:
     struct EnclosingLineGeometry {
@@ -51,9 +53,9 @@ private:
     };
     EnclosingLineGeometry collectEnclosingLineGeometry(const LineLayoutResult&, const LineBox&, const InlineRect& lineBoxRect) const;
 
-    const ConstraintsForInlineContent& constraints() const { return m_constraints; }
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
-    InlineFormattingContext& formattingContext() { return m_inlineFormattingContext; }
+    const ConstraintsForInlineContent& constraints() const LIFETIME_BOUND { return m_constraints; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
+    InlineFormattingContext& formattingContext() LIFETIME_BOUND { return m_inlineFormattingContext; }
     const Box& root() const { return formattingContext().root(); }
 
 private:

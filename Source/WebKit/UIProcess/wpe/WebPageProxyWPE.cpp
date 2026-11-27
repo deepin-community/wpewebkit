@@ -26,11 +26,16 @@
 #include "config.h"
 #include "WebPageProxy.h"
 
+#include "DrawingAreaMessages.h"
+#include "DrawingAreaProxy.h"
 #include "EditorState.h"
 #include "InputMethodState.h"
 #include "PageClientImpl.h"
+#include "UserMessage.h"
 #include "WebProcessProxy.h"
 #include <WebCore/PlatformEvent.h>
+#include <wtf/CallbackAggregator.h>
+#include <wtf/glib/GSpanExtras.h>
 
 #if USE(ATK)
 #include <atk/atk.h>
@@ -40,11 +45,11 @@
 #include <wpe/wpe-platform.h>
 #endif
 
-#if USE(GBM)
-#include "DMABufRendererBufferFormat.h"
+#if USE(GBM) || OS(ANDROID)
+#include "RendererBufferFormat.h"
 #endif
 
-#if USE(GBM) && ENABLE(WPE_PLATFORM)
+#if ENABLE(WPE_PLATFORM) && (USE(GBM) || OS(ANDROID))
 #include "MessageSenderInlines.h"
 #include "WebPageMessages.h"
 #endif
@@ -55,22 +60,38 @@ void WebPageProxy::platformInitialize()
 {
 }
 
+#if USE(LIBWPE)
 struct wpe_view_backend* WebPageProxy::viewBackend()
 {
-    return static_cast<PageClientImpl&>(pageClient()).viewBackend();
+    RefPtr pageClient = this->pageClient();
+    return pageClient ? static_cast<PageClientImpl&>(*pageClient).viewBackend() : nullptr;
 }
+#endif
 
 #if ENABLE(WPE_PLATFORM)
 WPEView* WebPageProxy::wpeView() const
 {
-    return static_cast<PageClientImpl&>(pageClient()).wpeView();
+    RefPtr pageClient = this->pageClient();
+    return pageClient ? static_cast<PageClientImpl&>(*pageClient).wpeView() : nullptr;
 }
 #endif
 
 void WebPageProxy::bindAccessibilityTree(const String& plugID)
 {
+    RefPtr pageClient = this->pageClient();
+    if (!pageClient)
+        return;
+
+#if ENABLE(WPE_PLATFORM)
+    if (auto* view = wpeView()) {
+        if (auto* accessible = wpe_view_get_accessible(view))
+            wpe_view_accessible_bind(accessible, plugID.utf8().data());
+        return;
+    }
+#endif
+
 #if USE(ATK)
-    auto* accessible = static_cast<PageClientImpl&>(pageClient()).accessible();
+    auto* accessible = static_cast<PageClientImpl&>(*pageClient).accessible();
     atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().data()));
     atk_object_notify_state_change(accessible, ATK_STATE_TRANSIENT, FALSE);
 #else
@@ -80,72 +101,84 @@ void WebPageProxy::bindAccessibilityTree(const String& plugID)
 
 void WebPageProxy::didUpdateEditorState(const EditorState&, const EditorState& newEditorState)
 {
-    if (!newEditorState.shouldIgnoreSelectionChanges)
-        pageClient().selectionDidChange();
+    if (!newEditorState.shouldIgnoreSelectionChanges) {
+        if (RefPtr pageClient = this->pageClient())
+            pageClient->selectionDidChange();
+    }
 }
 
 void WebPageProxy::sendMessageToWebViewWithReply(UserMessage&& message, CompletionHandler<void(UserMessage&&)>&& completionHandler)
 {
-    static_cast<PageClientImpl&>(pageClient()).sendMessageToWebView(WTFMove(message), WTFMove(completionHandler));
+    RefPtr pageClient = this->pageClient();
+    if (!pageClient)
+        return completionHandler({ });
+    static_cast<PageClientImpl&>(*pageClient).sendMessageToWebView(WTF::move(message), WTF::move(completionHandler));
 }
 
 void WebPageProxy::sendMessageToWebView(UserMessage&& message)
 {
-    sendMessageToWebViewWithReply(WTFMove(message), [](UserMessage&&) { });
+    sendMessageToWebViewWithReply(WTF::move(message), [](UserMessage&&) { });
 }
 
 void WebPageProxy::setInputMethodState(std::optional<InputMethodState>&& state)
 {
-    static_cast<PageClientImpl&>(pageClient()).setInputMethodState(WTFMove(state));
+    if (RefPtr pageClient = this->pageClient())
+        static_cast<PageClientImpl&>(*pageClient).setInputMethodState(WTF::move(state));
 }
 
-#if USE(GBM)
-Vector<DMABufRendererBufferFormat> WebPageProxy::preferredBufferFormats() const
+#if USE(GBM) || OS(ANDROID)
+Vector<RendererBufferFormat> WebPageProxy::preferredBufferFormats() const
 {
 #if ENABLE(WPE_PLATFORM)
     auto* view = wpeView();
     if (!view)
         return { };
 
-    auto* formats = wpe_view_get_preferred_dma_buf_formats(view);
+    auto* formats = wpe_view_get_preferred_buffer_formats(view);
     if (!formats)
         return { };
 
-    Vector<DMABufRendererBufferFormat> dmabufFormats;
-    const char* mainDevice = wpe_buffer_dma_buf_formats_get_device(formats);
-    auto groupCount = wpe_buffer_dma_buf_formats_get_n_groups(formats);
+#if USE(GBM)
+    WPEDRMDevice* mainDevice = wpe_buffer_formats_get_device(formats);
+#endif
+
+    Vector<RendererBufferFormat> bufferFormats;
+    auto groupCount = wpe_buffer_formats_get_n_groups(formats);
     for (unsigned i = 0; i < groupCount; ++i) {
-        DMABufRendererBufferFormat dmabufFormat;
-        switch (wpe_buffer_dma_buf_formats_get_group_usage(formats, i)) {
-        case WPE_BUFFER_DMA_BUF_FORMAT_USAGE_RENDERING:
-            dmabufFormat.usage = DMABufRendererBufferFormat::Usage::Rendering;
+        RendererBufferFormat bufferFormat;
+        switch (wpe_buffer_formats_get_group_usage(formats, i)) {
+        case WPE_BUFFER_FORMAT_USAGE_RENDERING:
+            bufferFormat.usage = RendererBufferFormat::Usage::Rendering;
             break;
-        case WPE_BUFFER_DMA_BUF_FORMAT_USAGE_MAPPING:
-            dmabufFormat.usage = DMABufRendererBufferFormat::Usage::Mapping;
+        case WPE_BUFFER_FORMAT_USAGE_MAPPING:
+            bufferFormat.usage = RendererBufferFormat::Usage::Mapping;
             break;
-        case WPE_BUFFER_DMA_BUF_FORMAT_USAGE_SCANOUT:
-            dmabufFormat.usage = DMABufRendererBufferFormat::Usage::Scanout;
+        case WPE_BUFFER_FORMAT_USAGE_SCANOUT:
+            bufferFormat.usage = RendererBufferFormat::Usage::Scanout;
             break;
         }
-        const char* targetDevice = wpe_buffer_dma_buf_formats_get_group_device(formats, i);
-        dmabufFormat.drmDevice = targetDevice ? targetDevice : mainDevice;
-        auto formatsCount = wpe_buffer_dma_buf_formats_get_group_n_formats(formats, i);
-        dmabufFormat.formats.reserveInitialCapacity(formatsCount);
+
+#if USE(GBM)
+        WPEDRMDevice* targetDevice = wpe_buffer_formats_get_group_device(formats, i);
+        if (!targetDevice)
+            targetDevice = mainDevice;
+        if (targetDevice)
+            bufferFormat.drmDevice = { CString(wpe_drm_device_get_primary_node(targetDevice)), CString(wpe_drm_device_get_render_node(targetDevice)) };
+#endif
+
+        auto formatsCount = wpe_buffer_formats_get_group_n_formats(formats, i);
+        bufferFormat.formats.reserveInitialCapacity(formatsCount);
         for (unsigned j = 0; j < formatsCount; ++j) {
-            DMABufRendererBufferFormat::Format format;
-            format.fourcc = wpe_buffer_dma_buf_formats_get_format_fourcc(formats, i, j);
-            auto* modifiers = wpe_buffer_dma_buf_formats_get_format_modifiers(formats, i, j);
-            format.modifiers.reserveInitialCapacity(modifiers->len);
-            for (unsigned k = 0; k < modifiers->len; ++k) {
-                auto* modifier = &g_array_index(modifiers, guint64, k);
-                format.modifiers.append(*modifier);
-            }
-            dmabufFormat.formats.append(WTFMove(format));
+            auto* modifiers = wpe_buffer_formats_get_format_modifiers(formats, i, j);
+            bufferFormat.formats.append({
+                .fourcc = wpe_buffer_formats_get_format_fourcc(formats, i, j),
+                .modifiers = unsafeMakeSpan(reinterpret_cast<uint64_t*>(modifiers->data), modifiers->len),
+            });
         }
-        dmabufFormats.append(WTFMove(dmabufFormat));
+        bufferFormats.append(WTF::move(bufferFormat));
     }
 
-    return dmabufFormats;
+    return bufferFormats;
 #else
     return { };
 #endif
@@ -161,7 +194,7 @@ void WebPageProxy::preferredBufferFormatsDidChange()
     legacyMainFrameProcess().send(Messages::WebPage::PreferredBufferFormatsDidChange(preferredBufferFormats()), webPageIDInMainFrameProcess());
 }
 #endif
-#endif
+#endif // USE(GBM) || OS(ANDROID)
 
 OptionSet<WebCore::PlatformEvent::Modifier> WebPageProxy::currentStateOfModifierKeys()
 {
@@ -170,10 +203,7 @@ OptionSet<WebCore::PlatformEvent::Modifier> WebPageProxy::currentStateOfModifier
     if (!view)
         return { };
 
-    auto* keymap = wpe_display_get_keymap(wpe_view_get_display(view), nullptr);
-    if (!keymap)
-        return { };
-
+    auto* keymap = wpe_display_get_keymap(wpe_view_get_display(view));
     OptionSet<WebCore::PlatformEvent::Modifier> modifiers;
     auto wpeModifiers = wpe_keymap_get_modifiers(keymap);
     if (wpeModifiers & WPE_MODIFIER_KEYBOARD_CONTROL)
@@ -200,7 +230,20 @@ void WebPageProxy::callAfterNextPresentationUpdate(CompletionHandler<void()>&& c
     }
 
 #if USE(COORDINATED_GRAPHICS)
-    static_cast<PageClientImpl&>(pageClient()).callAfterNextPresentationUpdate(WTFMove(callback));
+    Ref aggregator = CallbackAggregator::create([weakThis = WeakPtr { *this }, callback = WTF::move(callback)]() mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return callback();
+
+        if (RefPtr pageClient = protectedThis->pageClient())
+            static_cast<PageClientImpl&>(*pageClient).callAfterNextPresentationUpdate(WTF::move(callback));
+        else
+            callback();
+    });
+    auto drawingAreaIdentifier = m_drawingArea->identifier();
+    forEachWebContentProcess([&] (auto& process, auto) {
+        process.sendWithAsyncReply(Messages::DrawingArea::DispatchAfterEnsuringDrawing(), [aggregator] { }, drawingAreaIdentifier);
+    });
 #else
     callback();
 #endif

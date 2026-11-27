@@ -52,7 +52,7 @@ RemoteBufferProxy::~RemoteBufferProxy()
 
 void RemoteBufferProxy::mapAsync(WebCore::WebGPU::MapModeFlags mapModeFlags, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> size, CompletionHandler<void(bool)>&& callback)
 {
-    auto sendResult = sendWithAsyncReply(Messages::RemoteBuffer::MapAsync(mapModeFlags, offset, size), [callback = WTFMove(callback), mapModeFlags, protectedThis = Ref { *this }](auto success) mutable {
+    auto sendResult = sendWithAsyncReply(Messages::RemoteBuffer::MapAsync(mapModeFlags, offset, size), [callback = WTF::move(callback), mapModeFlags, protectedThis = protect(*this)](auto success) mutable {
         if (!success)
             return callback(false);
         protectedThis->m_mapModeFlags = mapModeFlags;
@@ -61,18 +61,19 @@ void RemoteBufferProxy::mapAsync(WebCore::WebGPU::MapModeFlags mapModeFlags, Web
     UNUSED_PARAM(sendResult);
 }
 
-static bool offsetOrSizeExceedsBounds(size_t dataSize, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> requestedSize)
+static bool NODELETE offsetOrSizeExceedsBounds(size_t dataSize, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> requestedSize)
 {
     return offset >= dataSize || (requestedSize.has_value() && requestedSize.value() + offset > dataSize);
 }
 
-void RemoteBufferProxy::getMappedRange(WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> size, Function<void(std::span<uint8_t>)>&& callback)
+void RemoteBufferProxy::getMappedRange(WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> size, NOESCAPE const Function<void(std::span<uint8_t>)>& callback)
 {
     // FIXME: Implement error handling.
     auto sendResult = sendSync(Messages::RemoteBuffer::GetMappedRange(offset, size));
     auto [data] = sendResult.takeReplyOr(std::nullopt);
 
-    if (!data || !data->data() || offsetOrSizeExceedsBounds(data->size(), offset, size)) {
+    offset = 0;
+    if (!data || !data->span().data() || offsetOrSizeExceedsBounds(data->size(), offset, size)) {
         callback({ });
         return;
     }
@@ -85,19 +86,20 @@ std::span<uint8_t> RemoteBufferProxy::getBufferContents()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void RemoteBufferProxy::copy(std::span<const uint8_t> span, size_t offset)
+void RemoteBufferProxy::copyFrom(std::span<const uint8_t> span, size_t offset)
 {
     if (!m_mapModeFlags.contains(WebCore::WebGPU::MapMode::Write))
         return;
 
-    auto sharedMemory = WebCore::SharedMemory::copySpan(span);
-    std::optional<WebCore::SharedMemoryHandle> handle;
-    if (sharedMemory)
-        handle = sharedMemory->createHandle(WebCore::SharedMemory::Protection::ReadOnly);
-    auto sendResult = sendWithAsyncReply(Messages::RemoteBuffer::Copy(WTFMove(handle), offset), [sharedMemory = sharedMemory.copyRef(), handleHasValue = handle.has_value()](auto) mutable {
-        RELEASE_ASSERT(sharedMemory.get() || !handleHasValue);
-    });
-    UNUSED_VARIABLE(sendResult);
+    if (span.size() > maxCrossProcessResourceCopySize) {
+        auto handle = WebCore::SharedMemoryHandle::createCopy(span, WebCore::SharedMemory::Protection::ReadOnly);
+        auto sendResult = sendWithAsyncReply(Messages::RemoteBuffer::Copy(WTF::move(handle), offset), [](auto) {
+        });
+        UNUSED_VARIABLE(sendResult);
+    } else {
+        auto sendResult = send(Messages::RemoteBuffer::CopyWithCopy(span, offset));
+        UNUSED_VARIABLE(sendResult);
+    }
 }
 
 void RemoteBufferProxy::unmap()
@@ -111,6 +113,12 @@ void RemoteBufferProxy::unmap()
 void RemoteBufferProxy::destroy()
 {
     auto sendResult = send(Messages::RemoteBuffer::Destroy());
+    UNUSED_VARIABLE(sendResult);
+}
+
+void RemoteBufferProxy::generateAValidationError()
+{
+    auto sendResult = send(Messages::RemoteBuffer::GenerateAValidationError());
     UNUSED_VARIABLE(sendResult);
 }
 

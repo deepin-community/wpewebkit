@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(JIT)
 
-#include "GPRInfo.h"
-#include "MacroAssembler.h"
+#include <JavaScriptCore/GPRInfo.h>
+#include <JavaScriptCore/MacroAssembler.h>
 #include <wtf/WeakRandom.h>
 
 namespace JSC {
@@ -73,7 +75,7 @@ public:
     
     bool advance(MacroAssembler&);
     
-    MacroAssembler::JumpList& fallThrough() { return m_fallThrough; }
+    MacroAssembler::JumpList& fallThrough() LIFETIME_BOUND { return m_fallThrough; }
     
 private:
     void build(unsigned start, bool hardStart, unsigned end);
@@ -87,7 +89,7 @@ private:
         {
         }
         
-        bool operator<(const Case& other) const
+        bool NODELETE operator<(const Case& other) const
         {
             return value < other.value;
         }

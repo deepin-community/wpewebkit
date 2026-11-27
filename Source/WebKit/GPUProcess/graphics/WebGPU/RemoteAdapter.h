@@ -58,12 +58,12 @@ class RemoteAdapter final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteAdapter> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::Adapter& adapter, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteAdapter(gpuConnectionToWebProcess, gpu, adapter, objectHeap, WTFMove(streamConnection), identifier));
+        return adoptRef(*new RemoteAdapter(gpuConnectionToWebProcess, gpu, adapter, objectHeap, WTF::move(streamConnection), identifier));
     }
 
     virtual ~RemoteAdapter();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -84,9 +84,9 @@ private:
     void requestDevice(const WebGPU::DeviceDescriptor&, WebGPUIdentifier, WebGPUIdentifier queueIdentifier, CompletionHandler<void(WebGPU::SupportedFeatures&&, WebGPU::SupportedLimits&&)>&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::Adapter> m_backing;
+    const Ref<WebCore::WebGPU::Adapter> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;

@@ -25,10 +25,15 @@
 
 #pragma once
 
-#include "LayoutUnit.h"
-#include "RenderLayerModelObject.h"
-#include "Timer.h"
+#include <WebCore/AnchorPositionEvaluator.h>
+#include <WebCore/LayoutUnit.h>
+#include <WebCore/RenderLayerModelObject.h>
+#include <WebCore/SubtreeScrollbarChangesState.h>
+#include <WebCore/Timer.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/SegmentedVector.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
@@ -49,8 +54,14 @@ class LayoutState;
 class LayoutTree;
 }
 
+namespace LayoutIntegration {
+class InlineContent;
+}
+
+enum class LayoutOptions : uint8_t;
+
 struct UpdateScrollInfoAfterLayoutTransaction {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(UpdateScrollInfoAfterLayoutTransaction);
 
     UpdateScrollInfoAfterLayoutTransaction();
     ~UpdateScrollInfoAfterLayoutTransaction();
@@ -59,15 +70,17 @@ struct UpdateScrollInfoAfterLayoutTransaction {
     SingleThreadWeakHashSet<RenderBlock> blocks;
 };
 
-class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext> {
-    WTF_MAKE_FAST_ALLOCATED;
+class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+    WTF_MAKE_TZONE_ALLOCATED(LocalFrameViewLayoutContext);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LocalFrameViewLayoutContext);
 public:
     LocalFrameViewLayoutContext(LocalFrameView&);
     ~LocalFrameViewLayoutContext();
 
-    WEBCORE_EXPORT void layout();
-    bool needsLayout() const;
+    WEBCORE_EXPORT void layout(bool canDeferUpdateLayerPositions = false);
+    bool NODELETE needsLayout(OptionSet<LayoutOptions> layoutOptions = { }) const;
+
+    void interleavedLayout();
 
     // We rely on the side-effects of layout, like compositing updates, to update state in various subsystems
     // whose dependencies are poorly defined. This call triggers such updates.
@@ -77,8 +90,8 @@ public:
     void scheduleSubtreeLayout(RenderElement& layoutRoot);
     void unscheduleLayout();
 
-    void disableSetNeedsLayout();
-    void enableSetNeedsLayout();
+    void NODELETE disableSetNeedsLayout();
+    void NODELETE enableSetNeedsLayout();
 
     enum class LayoutPhase : uint8_t {
         OutsideLayout,
@@ -94,12 +107,19 @@ public:
     bool isInRenderTreeLayout() const { return layoutPhase() == LayoutPhase::InRenderTreeLayout; }
     bool inPaintableState() const { return layoutPhase() != LayoutPhase::InRenderTreeLayout && layoutPhase() != LayoutPhase::InViewSizeAdjust && (layoutPhase() != LayoutPhase::InPostLayout || inAsynchronousTasks()); }
 
-    bool needsSkippedContentLayout() const { return m_needsSkippedContentLayout; }
-    void setNeedsSkippedContentLayout(bool needsSkippedContentLayout) { m_needsSkippedContentLayout = needsSkippedContentLayout; }
+    bool isSkippedContentForLayout(const RenderElement&) const;
+    bool isSkippedContentRootForLayout(const RenderBox&) const;
 
-    unsigned layoutCount() const { return m_layoutCount; }
+    bool NODELETE isPercentHeightResolveDisabledFor(const RenderBox& flexItem);
 
-    RenderElement* subtreeLayoutRoot() const;
+    struct TextBoxTrim {
+        bool trimFirstFormattedLine { false };
+        SingleThreadWeakPtr<const RenderBlockFlow> lastFormattedLineRoot;
+    };
+    std::optional<TextBoxTrim> textBoxTrim() const { return m_textBoxTrim; }
+    void setTextBoxTrim(std::optional<TextBoxTrim> textBoxTrim) { m_textBoxTrim = textBoxTrim; }
+
+    RenderElement* NODELETE subtreeLayoutRoot() const;
     void clearSubtreeLayoutRoot() { m_subtreeLayoutRoot.clear(); }
     void convertSubtreeLayoutToFullLayout();
 
@@ -111,8 +131,23 @@ public:
     bool needsFullRepaint() const { return m_needsFullRepaint; }
 
     void flushPostLayoutTasks();
+    void didLayout(bool canDeferUpdateLayerPositions);
 
-    RenderLayoutState* layoutState() const PURE_FUNCTION;
+    void NODELETE requestUpdateLayerPositions(bool needsFullRepaint = false);
+    void flushUpdateLayerPositions();
+    void markForUpdateLayerPositionsAfterSVGTransformChange();
+
+    // LBSE: batches synchronous transform-attribute mutations (SMIL, DOM) so the
+    // transform-refresh + delta-repaint runs once per renderer per frame.
+    void addPendingSVGTransformAttributeUpdate(RenderLayerModelObject&);
+    void flushPendingSVGTransformAttributeUpdatesIfNeeded();
+
+    bool updateCompositingLayersAfterStyleChange();
+    void updateCompositingLayersAfterLayout();
+    // Returns true if a pending compositing layer update was done.
+    bool updateCompositingLayersAfterLayoutIfNeeded();
+
+    RenderLayoutState* NODELETE layoutState() const LIFETIME_BOUND PURE_FUNCTION;
     // Returns true if layoutState should be used for its cached offset and clip.
     bool isPaintOffsetCacheEnabled() const { return !m_paintOffsetCacheDisableCount && layoutState(); }
 #ifndef NDEBUG
@@ -121,38 +156,69 @@ public:
     // layoutDelta is used transiently during layout to store how far an object has moved from its
     // last layout location, in order to repaint correctly.
     // If we're doing a full repaint m_layoutState will be 0, but in that case layoutDelta doesn't matter.
-    LayoutSize layoutDelta() const;
-    void addLayoutDelta(const LayoutSize& delta);
+    LayoutSize NODELETE layoutDelta() const;
+    void NODELETE addLayoutDelta(const LayoutSize& delta);
 #if ASSERT_ENABLED
     bool layoutDeltaMatches(const LayoutSize& delta);
 #endif
     using LayoutStateStack = Vector<std::unique_ptr<RenderLayoutState>>;
 
-    const Layout::LayoutState* layoutFormattingState() const { return m_layoutState.get(); }
+    bool immediateRendererDestructionEnabledForTesting() const { return m_immediateRendererDestructionEnabledForTesting; }
+    void setImmediateRendererDestructionEnabledForTesting(bool enabled) { m_immediateRendererDestructionEnabledForTesting = enabled; }
 
-    UpdateScrollInfoAfterLayoutTransaction& updateScrollInfoAfterLayoutTransaction();
-    UpdateScrollInfoAfterLayoutTransaction* updateScrollInfoAfterLayoutTransactionIfExists() { return m_updateScrollInfoAfterLayoutTransaction.get(); }
+    std::optional<SubtreeScrollbarChangesState>& subtreeScrollbarChangesState() { return m_subtreeScrollbarChangesState; }
+    const std::optional<SubtreeScrollbarChangesState>& subtreeScrollbarChangesState() const { return m_subtreeScrollbarChangesState; }
+    void setSubtreeScrollbarChangesState(std::optional<SubtreeScrollbarChangesState>);
+
+    UpdateScrollInfoAfterLayoutTransaction& updateScrollInfoAfterLayoutTransaction() LIFETIME_BOUND;
+    UpdateScrollInfoAfterLayoutTransaction* NODELETE updateScrollInfoAfterLayoutTransactionIfExists() LIFETIME_BOUND { return m_updateScrollInfoAfterLayoutTransaction.get(); }
     void setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox&, RenderBlock& container);
     Vector<SingleThreadWeakPtr<RenderBox>> takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBlock&);
 
-    RenderElement::LayoutIdentifier layoutIdentifier() const { return m_layoutIdentifier; }
+    void startTrackingLayoutUpdates() { m_layoutUpdateCount = 0; }
+    unsigned layoutUpdateCount() const { return m_layoutUpdateCount; }
+
+    void startTrackingRenderLayerPositionUpdates() { m_renderLayerPositionUpdateCount = 0; }
+    unsigned renderLayerPositionUpdateCount() const { return m_renderLayerPositionUpdateCount; }
+
+    bool addToDetachedRendererList(RenderPtr<RenderObject>&& renderer) const { return m_detachedRendererList.append(WTF::move(renderer)); }
+    void deleteDetachedRenderersNow() const { m_detachedRendererList.clear(); }
+
+    void detachInlineContent(std::unique_ptr<LayoutIntegration::InlineContent>&&) const;
+    void deleteDetachedInlineContentNow() const;
+
+    Vector<AnchorScrollAdjuster>& anchorScrollAdjusters() LIFETIME_BOUND { return m_anchorScrollAdjusters; }
+    const AnchorScrollAdjuster* anchorScrollAdjusterFor(const RenderBox& anchored) const LIFETIME_BOUND;
+    AnchorScrollAdjuster::Diff registerAnchorScrollAdjuster(AnchorScrollAdjuster&&);
+    void unregisterAnchorScrollAdjusterFor(const RenderBox& anchored, bool clearAnchorScrollAdjustment = true); // If clearAnchorScrollAdjustment is true, removes the layer's anchorScrollAdjustment; otherwise sets it to zero.
+    void invalidateAnchorDependenciesForScroller(const RenderBox& scroller);
+    void removeScrollerFromAnchorScrollAdjusters(const RenderBox& scroller);
+
+    bool repaintsBlocked() const { return m_repaintsBlocked; }
 
 private:
-    friend class LayoutScope;
+    friend class LayoutFrameScope;
     friend class LayoutStateMaintainer;
     friend class LayoutStateDisabler;
     friend class SubtreeLayoutStateMaintainer;
+    friend class FlexPercentResolveDisabler;
+    friend class ContentVisibilityOverrideScope;
+    friend class RepaintBlocker;
 
-    void performLayout();
-    bool canPerformLayout() const;
+    bool NODELETE needsLayoutInternal() const;
+
+    void performLayout(bool canDeferUpdateLayerPositions);
+    bool NODELETE canPerformLayout() const;
     bool isLayoutSchedulingEnabled() const { return m_layoutSchedulingIsEnabled; }
+
+    bool hasPendingUpdateLayerPositions() const { return !!m_pendingUpdateLayerPositions; }
 
     void layoutTimerFired();
     void runPostLayoutTasks();
-    void runOrScheduleAsynchronousTasks();
+    void runOrScheduleAsynchronousTasks(bool canDeferUpdateLayerPositions);
     bool inAsynchronousTasks() const { return m_inAsynchronousTasks; }
 
-    void setSubtreeLayoutRoot(RenderElement&);
+    void NODELETE setSubtreeLayoutRoot(RenderElement&);
 
 #if ENABLE(TEXT_AUTOSIZING)
     void applyTextSizingIfNeeded(RenderElement& layoutRoot);
@@ -173,37 +239,109 @@ private:
     void disablePaintOffsetCache() { m_paintOffsetCacheDisableCount++; }
     void enablePaintOffsetCache() { ASSERT(m_paintOffsetCacheDisableCount > 0); m_paintOffsetCacheDisableCount--; }
 
-    LocalFrame& frame() const;
-    Ref<LocalFrame> protectedFrame();
-    LocalFrameView& view() const;
-    Ref<LocalFrameView> protectedView() const;
-    RenderView* renderView() const;
-    Document* document() const;
+    bool isVisiblityHiddenIgnored() const { return m_visiblityHiddenIsIgnored; }
+    void setIsVisiblityHiddenIgnored(bool ignored) { m_visiblityHiddenIsIgnored = ignored; }
+
+    bool isVisiblityAutoIgnored() const { return m_visiblityAutoIsIgnored; }
+    void setIsVisiblityAutoIgnored(bool ignored) { m_visiblityAutoIsIgnored = ignored; }
+
+    bool isRevealedWhenFoundIgnored() const { return m_revealedWhenFoundIgnored; }
+    void setIsRevealedWhenFoundIgnored(bool ignored) { m_revealedWhenFoundIgnored = ignored; }
+
+    void disablePercentHeightResolveFor(const RenderBox& flexItem);
+    void enablePercentHeightResolveFor(const RenderBox& flexItem);
+
+    void allowRepaints() { m_repaintsBlocked = false; }
+    void blockRepaints() { m_repaintsBlocked = true; }
+
+    LocalFrame& NODELETE frame() const;
+    LocalFrameView& NODELETE view() const;
+    RenderView* NODELETE renderView() const;
+    Document* NODELETE document() const;
 
     SingleThreadWeakRef<LocalFrameView> m_frameView;
     Timer m_layoutTimer;
     Timer m_postLayoutTaskTimer;
     SingleThreadWeakPtr<RenderElement> m_subtreeLayoutRoot;
-    // Note that arithmetic overflow is perfectly acceptable as long as we use this only for repaint optimization.
-    RenderElement::LayoutIdentifier m_layoutIdentifier : 12 { 0 };
 
     bool m_layoutSchedulingIsEnabled { true };
     bool m_firstLayout { true };
     bool m_needsFullRepaint { true };
     bool m_inAsynchronousTasks { false };
     bool m_setNeedsLayoutWasDeferred { false };
-    bool m_needsSkippedContentLayout { false };
+    bool m_visiblityHiddenIsIgnored { false };
+    bool m_visiblityAutoIsIgnored { false };
+    bool m_revealedWhenFoundIgnored { false };
+    bool m_updateCompositingLayersIsPending { false };
+    bool m_repaintsBlocked { false };
     LayoutPhase m_layoutPhase { LayoutPhase::OutsideLayout };
     enum class LayoutNestedState : uint8_t  { NotInLayout, NotNested, Nested };
     LayoutNestedState m_layoutNestedState { LayoutNestedState::NotInLayout };
-    unsigned m_layoutCount { 0 };
     unsigned m_disableSetNeedsLayoutCount { 0 };
     unsigned m_paintOffsetCacheDisableCount { 0 };
+    unsigned m_layoutUpdateCount { 0 };
+    unsigned m_renderLayerPositionUpdateCount { 0 };
     LayoutStateStack m_layoutStateStack;
-    std::unique_ptr<Layout::LayoutTree> m_layoutTree;
-    std::unique_ptr<Layout::LayoutState> m_layoutState;
     std::unique_ptr<UpdateScrollInfoAfterLayoutTransaction> m_updateScrollInfoAfterLayoutTransaction;
     SingleThreadWeakHashMap<RenderBlock, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
+    SingleThreadWeakHashSet<RenderBox> m_percentHeightIgnoreList;
+    Vector<AnchorScrollAdjuster> m_anchorScrollAdjusters;
+    std::optional<TextBoxTrim> m_textBoxTrim;
+    std::optional<SubtreeScrollbarChangesState> m_subtreeScrollbarChangesState;
+    bool m_immediateRendererDestructionEnabledForTesting { false };
+
+    struct UpdateLayerPositions {
+        void merge(const UpdateLayerPositions& other)
+        {
+            needsFullRepaint |= other.needsFullRepaint;
+        }
+
+        bool needsFullRepaint { false };
+    };
+    std::optional<UpdateLayerPositions> m_pendingUpdateLayerPositions;
+
+    // Vector + per-renderer dedup flag chosen over WeakHashSet - ~10x cheaper on the
+    // LBSE MotionMark/Suits rAF hot path (hash + weak-ptr lookup vs. a bit check).
+    Vector<SingleThreadWeakPtr<RenderLayerModelObject>> m_pendingSVGTransformAttributeUpdates;
+
+    struct RepaintRectEnvironment {
+        float m_deviceScaleFactor { 0 };
+        bool m_printing { false };
+        bool m_useFixedLayout { false };
+
+        bool operator==(const RepaintRectEnvironment&) const = default;
+    };
+    RepaintRectEnvironment m_lastRepaintRectEnvironment;
+
+    class DetachedRendererList {
+    public:
+        bool append(RenderPtr<RenderObject>&&);
+        void clear() { m_renderers.clear(); }
+
+    private:
+        SegmentedVector<std::unique_ptr<RenderObject>, 50> m_renderers;
+    };
+    mutable DetachedRendererList m_detachedRendererList;
+
+    class DetachedInlineContentList {
+    public:
+        ~DetachedInlineContentList();
+        void append(std::unique_ptr<LayoutIntegration::InlineContent>&&);
+        void clear();
+
+    private:
+        Vector<std::unique_ptr<LayoutIntegration::InlineContent>> m_inlineContent;
+    };
+    mutable DetachedInlineContentList m_detachedInlineContent;
+};
+
+class RepaintBlocker {
+public:
+    explicit RepaintBlocker(Document&);
+    ~RepaintBlocker();
+
+private:
+    const Ref<Document> m_document;
 };
 
 } // namespace WebCore

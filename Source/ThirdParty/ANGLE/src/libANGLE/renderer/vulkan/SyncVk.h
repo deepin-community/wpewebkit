@@ -61,15 +61,17 @@ class SyncHelperInterface : angle::NonCopyable
 
     virtual void releaseToRenderer(Renderer *renderer) = 0;
 
-    virtual angle::Result clientWait(Context *context,
+    virtual angle::Result clientWait(ErrorContext *context,
                                      ContextVk *contextVk,
                                      bool flushCommands,
                                      uint64_t timeout,
                                      MapVkResultToApiType mappingFunction,
                                      void *outResult)                                          = 0;
     virtual angle::Result serverWait(ContextVk *contextVk)                                     = 0;
-    virtual angle::Result getStatus(Context *context, ContextVk *contextVk, bool *signaledOut) = 0;
-    virtual angle::Result dupNativeFenceFD(Context *context, int *fdOut) const                 = 0;
+    virtual angle::Result getStatus(ErrorContext *context,
+                                    ContextVk *contextVk,
+                                    bool *signaledOut)                                         = 0;
+    virtual angle::Result dupNativeFenceFD(ErrorContext *context, int *fdOut) const            = 0;
 };
 
 // Implementation of fence types - glFenceSync, and EGLSync(EGL_SYNC_FENCE_KHR).
@@ -87,15 +89,17 @@ class SyncHelper final : public vk::Resource, public SyncHelperInterface
 
     void releaseToRenderer(Renderer *renderer) override;
 
-    angle::Result clientWait(Context *context,
+    angle::Result clientWait(ErrorContext *context,
                              ContextVk *contextVk,
                              bool flushCommands,
                              uint64_t timeout,
                              MapVkResultToApiType mappingFunction,
                              void *resultOut) override;
     angle::Result serverWait(ContextVk *contextVk) override;
-    angle::Result getStatus(Context *context, ContextVk *contextVk, bool *signaledOut) override;
-    angle::Result dupNativeFenceFD(Context *context, int *fdOut) const override
+    angle::Result getStatus(ErrorContext *context,
+                            ContextVk *contextVk,
+                            bool *signaledOut) override;
+    angle::Result dupNativeFenceFD(ErrorContext *context, int *fdOut) const override
     {
         return angle::Result::Stop;
     }
@@ -106,7 +110,7 @@ class SyncHelper final : public vk::Resource, public SyncHelperInterface
 
   private:
     angle::Result submitSyncIfDeferred(ContextVk *contextVk, RenderPassClosureReason reason);
-    angle::Result prepareForClientWait(Context *context,
+    angle::Result prepareForClientWait(ErrorContext *context,
                                        ContextVk *contextVk,
                                        bool flushCommands,
                                        uint64_t timeout,
@@ -126,18 +130,20 @@ class SyncHelperNativeFence final : public SyncHelperInterface
 
     void releaseToRenderer(Renderer *renderer) override;
 
-    angle::Result clientWait(Context *context,
+    angle::Result clientWait(ErrorContext *context,
                              ContextVk *contextVk,
                              bool flushCommands,
                              uint64_t timeout,
                              MapVkResultToApiType mappingFunction,
                              void *resultOut) override;
     angle::Result serverWait(ContextVk *contextVk) override;
-    angle::Result getStatus(Context *context, ContextVk *contextVk, bool *signaledOut) override;
-    angle::Result dupNativeFenceFD(Context *context, int *fdOut) const override;
+    angle::Result getStatus(ErrorContext *context,
+                            ContextVk *contextVk,
+                            bool *signaledOut) override;
+    angle::Result dupNativeFenceFD(ErrorContext *context, int *fdOut) const override;
 
   private:
-    angle::Result prepareForClientWait(Context *context,
+    angle::Result prepareForClientWait(ErrorContext *context,
                                        ContextVk *contextVk,
                                        bool flushCommands,
                                        uint64_t timeout,
@@ -178,23 +184,24 @@ class EGLSyncVk final : public EGLSyncImpl
     EGLSyncVk();
     ~EGLSyncVk() override;
 
-    void onDestroy(const egl::Display *display) override;
+    void onDestroy(const egl::ThreadSafeDisplay *display) override;
 
-    egl::Error initialize(const egl::Display *display,
+    egl::Error initialize(const egl::ThreadSafeDisplay *display,
                           const gl::Context *context,
                           EGLenum type,
                           const egl::AttributeMap &attribs) override;
-    egl::Error clientWait(const egl::Display *display,
+    egl::Error clientWait(const egl::ThreadSafeDisplay *display,
                           const gl::Context *context,
                           EGLint flags,
                           EGLTime timeout,
                           EGLint *outResult) override;
-    egl::Error serverWait(const egl::Display *display,
+    egl::Error serverWait(const egl::ThreadSafeDisplay *display,
                           const gl::Context *context,
                           EGLint flags) override;
-    egl::Error getStatus(const egl::Display *display, EGLint *outStatus) override;
+    egl::Error getStatus(const egl::ThreadSafeDisplay *display, EGLint *outStatus) override;
 
-    egl::Error dupNativeFenceFD(const egl::Display *display, EGLint *fdOut) const override;
+    egl::Error dupNativeFenceFD(const egl::ThreadSafeDisplay *display,
+                                EGLint *fdOut) const override;
 
   private:
     // SyncHelper or SyncHelperNativeFence decided at run-time.

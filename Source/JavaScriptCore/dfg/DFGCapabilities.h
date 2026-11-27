@@ -34,8 +34,8 @@ namespace JSC { namespace DFG {
 #if ENABLE(DFG_JIT)
 // Fast check functions; if they return true it is still necessary to
 // check opcodes.
-bool isSupported();
-bool isSupportedForInlining(CodeBlock*);
+bool NODELETE isSupported();
+bool NODELETE isSupportedForInlining(CodeBlock*);
 bool mightCompileEval(CodeBlock*);
 bool mightCompileProgram(CodeBlock*);
 bool mightCompileFunctionForCall(CodeBlock*);
@@ -43,7 +43,7 @@ bool mightCompileFunctionForConstruct(CodeBlock*);
 bool mightInlineFunctionForCall(JITType, CodeBlock*);
 bool mightInlineFunctionForClosureCall(JITType, CodeBlock*);
 bool mightInlineFunctionForConstruct(JITType, CodeBlock*);
-bool canUseOSRExitFuzzing(CodeBlock*);
+bool NODELETE canUseOSRExitFuzzing(CodeBlock*);
 #else // ENABLE(DFG_JIT)
 inline bool mightCompileEval(CodeBlock*) { return false; }
 inline bool mightCompileProgram(CodeBlock*) { return false; }
@@ -125,17 +125,17 @@ inline CapabilityLevel inlineFunctionForConstructCapabilityLevel(JITType jitType
 
 inline bool mightInlineFunctionFor(JITType jitType, CodeBlock* codeBlock, CodeSpecializationKind kind)
 {
-    if (kind == CodeForCall)
+    if (kind == CodeSpecializationKind::CodeForCall)
         return mightInlineFunctionForCall(jitType, codeBlock);
-    ASSERT(kind == CodeForConstruct);
+    ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     return mightInlineFunctionForConstruct(jitType, codeBlock);
 }
 
 inline bool mightCompileFunctionFor(CodeBlock* codeBlock, CodeSpecializationKind kind)
 {
-    if (kind == CodeForCall)
+    if (kind == CodeSpecializationKind::CodeForCall)
         return mightCompileFunctionForCall(codeBlock);
-    ASSERT(kind == CodeForConstruct);
+    ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     return mightCompileFunctionForConstruct(codeBlock);
 }
 
@@ -147,13 +147,13 @@ inline bool mightInlineFunction(JITType jitType, CodeBlock* codeBlock)
 inline CapabilityLevel inlineFunctionForCapabilityLevel(JITType jitType, CodeBlock* codeBlock, CodeSpecializationKind kind, bool isClosureCall)
 {
     if (isClosureCall) {
-        if (kind != CodeForCall)
+        if (kind != CodeSpecializationKind::CodeForCall)
             return CannotCompile;
         return inlineFunctionForClosureCallCapabilityLevel(jitType, codeBlock);
     }
-    if (kind == CodeForCall)
+    if (kind == CodeSpecializationKind::CodeForCall)
         return inlineFunctionForCallCapabilityLevel(jitType, codeBlock);
-    ASSERT(kind == CodeForConstruct);
+    ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     return inlineFunctionForConstructCapabilityLevel(jitType, codeBlock);
 }
 

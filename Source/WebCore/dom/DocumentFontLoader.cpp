@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2021 Metrological Group B.V.
  * Copyright (C) 2021 Igalia S.L.
- * Copyright (C) 2007, 2008, 2011, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
  *           (C) 2007, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,15 +30,18 @@
 
 #include "CSSFontSelector.h"
 #include "CachedFont.h"
-#include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "CachedResourceRequestInitiatorTypes.h"
-#include "DocumentInlines.h"
+#include "DocumentResourceLoader.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "LocalFrame.h"
+#include <wtf/Borrow.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentFontLoader);
 
 DocumentFontLoader::DocumentFontLoader(Document& document)
     : m_document(document)
@@ -51,16 +54,27 @@ DocumentFontLoader::~DocumentFontLoader()
     stopLoadingAndClearFonts();
 }
 
-CachedFont* DocumentFontLoader::cachedFont(URL&& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource loadedFromOpaqueSource)
+void DocumentFontLoader::ref() const
+{
+    m_document->ref();
+}
+
+void DocumentFontLoader::deref() const
+{
+    m_document->deref();
+}
+
+RefPtr<CachedFont> DocumentFontLoader::cachedFont(URL&& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource loadedFromOpaqueSource)
 {
     ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
     options.contentSecurityPolicyImposition = isInitiatingElementInUserAgentShadowTree ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
     options.loadedFromOpaqueSource = loadedFromOpaqueSource;
     options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
 
-    CachedResourceRequest request(ResourceRequest(WTFMove(url)), options);
+    CachedResourceRequest request(ResourceRequest(WTF::move(url)), options);
     request.setInitiatorType(cachedResourceRequestInitiatorTypes().css);
-    return m_document->protectedCachedResourceLoader()->requestFont(WTFMove(request), isSVG).value_or(nullptr).get();
+    auto result = protect(protect(m_document)->cachedResourceLoader())->requestFont(WTF::move(request), isSVG);
+    return result ? RefPtr { WTF::move(result.value()) } : nullptr;
 }
 
 void DocumentFontLoader::beginLoadingFontSoon(CachedFont& font)
@@ -72,7 +86,7 @@ void DocumentFontLoader::beginLoadingFontSoon(CachedFont& font)
     // Increment the request count now, in order to prevent didFinishLoad from being dispatched
     // after this font has been requested but before it began loading. Balanced by
     // decrementRequestCount() in fontLoadingTimerFired() and in stopLoadingAndClearFonts().
-    m_document->protectedCachedResourceLoader()->incrementRequestCount(font);
+    protect(m_document)->cachedResourceLoader().incrementRequestCount(font);
 
     if (!m_isFontLoadingSuspended && !m_fontLoadingTimer.isActive())
         m_fontLoadingTimer.startOneShot(0_s);
@@ -83,29 +97,33 @@ void DocumentFontLoader::loadPendingFonts()
     if (m_isFontLoadingSuspended)
         return;
 
-    Vector<CachedResourceHandle<CachedFont>> fontsToBeginLoading;
-    fontsToBeginLoading.swap(m_fontsToBeginLoading);
+    Vector<Ref<CachedFont>> fontsToBeginLoading = WTF::map(m_fontsToBeginLoading, [](auto& font) {
+        return Ref { *font };
+    });
+    m_fontsToBeginLoading.clear();
 
-    Ref cachedResourceLoader = m_document->cachedResourceLoader();
+    Ref cachedResourceLoader = protect(m_document)->cachedResourceLoader();
     for (auto& fontHandle : fontsToBeginLoading) {
         fontHandle->beginLoadIfNeeded(cachedResourceLoader);
         // Balances incrementRequestCount() in beginLoadingFontSoon().
-        cachedResourceLoader->decrementRequestCount(*fontHandle);
+        cachedResourceLoader->decrementRequestCount(fontHandle);
     }
 }
 
 void DocumentFontLoader::fontLoadingTimerFired()
 {
+    Ref protectedThis { *this };
     loadPendingFonts();
 
     // FIXME: Use SubresourceLoader instead.
     // Call FrameLoader::loadDone before FrameLoader::subresourceLoadDone to match the order in SubresourceLoader::notifyDone.
-    m_document->protectedCachedResourceLoader()->loadDone(LoadCompletionType::Finish);
+    Ref document = m_document.get();
+    protect(document->cachedResourceLoader())->loadDone(LoadCompletionType::Finish);
     // Ensure that if the request count reaches zero, the frame loader will know about it.
     // New font loads may be triggered by layout after the document load is complete but before we have dispatched
     // didFinishLoading for the frame. Make sure the delegate is always dispatched by checking explicitly.
-    if (RefPtr frame = m_document->frame())
-        frame->checkedLoader()->checkLoadComplete();
+    if (RefPtr frame = document->frame())
+        frame->loader().checkLoadComplete();
 }
 
 void DocumentFontLoader::stopLoadingAndClearFonts()
@@ -114,13 +132,14 @@ void DocumentFontLoader::stopLoadingAndClearFonts()
         return;
 
     m_fontLoadingTimer.stop();
-    Ref cachedResourceLoader = m_document->cachedResourceLoader();
-    for (auto& fontHandle : m_fontsToBeginLoading) {
+    Ref document = m_document.get();
+    Ref cachedResourceLoader = document->cachedResourceLoader();
+    for (CachedResourceHandle fontHandle : borrow(m_fontsToBeginLoading).get()) {
         // Balances incrementRequestCount() in beginLoadingFontSoon().
         cachedResourceLoader->decrementRequestCount(*fontHandle);
     }
     m_fontsToBeginLoading.clear();
-    if (RefPtr fontSelector = m_document->fontSelectorIfExists())
+    if (RefPtr fontSelector = document->fontSelectorIfExists())
         fontSelector->clearFonts();
 
     m_isFontLoadingSuspended = true;

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "DownloadID.h"
+#include "NetworkProcessProxy.h"
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RetainPtr.h>
@@ -35,15 +36,6 @@
 #if PLATFORM(IOS_FAMILY)
 #include <objc/objc.h>
 #endif
-
-namespace WebKit {
-class DownloadProxyMap;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::DownloadProxyMap> : std::true_type { };
-}
 
 namespace API {
 class DownloadClient;
@@ -56,7 +48,6 @@ class ResourceRequest;
 namespace WebKit {
 
 class DownloadProxy;
-class NetworkProcessProxy;
 class ProcessAssertion;
 class WebPageProxy;
 class WebsiteDataStore;
@@ -65,29 +56,30 @@ struct FrameInfoData;
 class DownloadProxyMap : public CanMakeWeakPtr<DownloadProxyMap> {
     WTF_MAKE_TZONE_ALLOCATED(DownloadProxyMap);
     WTF_MAKE_NONCOPYABLE(DownloadProxyMap);
-
 public:
     explicit DownloadProxyMap(NetworkProcessProxy&);
     ~DownloadProxyMap();
 
-    Ref<DownloadProxy> createDownloadProxy(WebsiteDataStore&, Ref<API::DownloadClient>&&, const WebCore::ResourceRequest&, const FrameInfoData&, WebPageProxy* originatingPage);
+    Ref<DownloadProxy> createDownloadProxy(WebsiteDataStore&, Ref<API::DownloadClient>&&, const WebCore::ResourceRequest&, const std::optional<FrameInfoData>&, WebPageProxy* originatingPage);
     void downloadFinished(DownloadProxy&);
 
     bool isEmpty() const { return m_downloads.isEmpty(); }
     void invalidate();
 
-private:
-    Ref<NetworkProcessProxy> protectedProcess();
+    void NODELETE ref() const;
+    void deref() const;
 
-    void platformCreate();
-    void platformDestroy();
+private:
+    NetworkProcessProxy& process() const { return m_process; }
+
+    void NODELETE platformCreate();
+    void NODELETE platformDestroy();
 
     WeakRef<NetworkProcessProxy> m_process;
-    HashMap<DownloadID, RefPtr<DownloadProxy>> m_downloads;
+    HashMap<DownloadID, Ref<DownloadProxy>> m_downloads;
 
     bool m_shouldTakeAssertion { false };
     RefPtr<ProcessAssertion> m_downloadUIAssertion;
-    RefPtr<ProcessAssertion> m_downloadNetworkingAssertion;
 };
 
 } // namespace WebKit

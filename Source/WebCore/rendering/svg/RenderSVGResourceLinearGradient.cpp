@@ -24,15 +24,16 @@
 
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGResourceLinearGradientInlines.h"
+#include "RenderObjectNode.h"
 #include "SVGElementTypeHelpers.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderSVGResourceLinearGradient);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceLinearGradient);
 
-RenderSVGResourceLinearGradient::RenderSVGResourceLinearGradient(SVGLinearGradientElement& element, RenderStyle&& style)
-    : RenderSVGResourceGradient(Type::SVGResourceLinearGradient, element, WTFMove(style))
+RenderSVGResourceLinearGradient::RenderSVGResourceLinearGradient(SVGLinearGradientElement& element, Style::ComputedStyle&& style)
+    : RenderSVGResourceGradient(Type::SVGResourceLinearGradient, element, WTF::move(style))
 {
 }
 
@@ -48,10 +49,10 @@ void RenderSVGResourceLinearGradient::collectGradientAttributesIfNeeded()
 
     auto attributes = LinearGradientAttributes { };
     if (linearGradientElement->collectGradientAttributes(attributes))
-        m_attributes = WTFMove(attributes);
+        m_attributes = WTF::move(attributes);
 }
 
-RefPtr<Gradient> RenderSVGResourceLinearGradient::createGradient(const RenderStyle& style)
+RefPtr<Gradient> RenderSVGResourceLinearGradient::createGradient(const Style::ComputedStyle& style)
 {
     if (!m_attributes)
         return nullptr;
@@ -62,11 +63,10 @@ RefPtr<Gradient> RenderSVGResourceLinearGradient::createGradient(const RenderSty
 
     return Gradient::create(
         Gradient::LinearData { startPoint, endPoint },
-        { ColorInterpolationMethod::SRGB { }, AlphaPremultiplication::Unpremultiplied },
+        gradientColorInterpolationMethod(),
         platformSpreadMethodFromSVGType(m_attributes->spreadMethod()),
         stopsByApplyingColorFilter(m_attributes->stops(), style),
-        RenderingResourceIdentifier::generate()
-    );
+        false);
 }
 
 }

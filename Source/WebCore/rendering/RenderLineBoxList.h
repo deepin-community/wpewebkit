@@ -28,11 +28,11 @@
 
 #pragma once
 
-#include "RenderObject.h"
+#include <WebCore/LegacyInlineFlowBox.h>
+#include <WebCore/RenderObject.h>
 
 namespace WebCore {
 
-class LegacyInlineFlowBox;
 class RenderBlockFlow;
 
 class RenderLineBoxList {
@@ -47,8 +47,8 @@ public:
     ~RenderLineBoxList();
 #endif
 
-    LegacyInlineFlowBox* firstLegacyLineBox() const { return m_firstLineBox; }
-    LegacyInlineFlowBox* lastLegacyLineBox() const { return m_lastLineBox; }
+    LegacyInlineFlowBox* firstLegacyLineBox() const LIFETIME_BOUND { return m_firstLineBox; }
+    LegacyInlineFlowBox* lastLegacyLineBox() const LIFETIME_BOUND { return m_lastLineBox; }
 
     void checkConsistency() const;
 
@@ -57,22 +57,13 @@ public:
     void deleteLineBoxTree();
     void deleteLineBoxes();
 
-    void extractLineBox(LegacyInlineFlowBox*);
-    void attachLineBox(LegacyInlineFlowBox*);
-    void removeLineBox(LegacyInlineFlowBox*);
+    void NODELETE removeLineBox(LegacyInlineFlowBox*);
     
     void dirtyLineBoxes();
     void dirtyLineFromChangedChild(RenderBoxModelObject& parent);
     void shiftLinesBy(LayoutUnit shiftX, LayoutUnit shiftY);
 
-    void paint(RenderBoxModelObject*, PaintInfo&, const LayoutPoint&) const;
-    bool hitTest(RenderBoxModelObject*, const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) const;
-
 private:
-    bool anyLineIntersectsRect(RenderBoxModelObject*, const LayoutRect&, const LayoutPoint&, bool usePrintRect = false) const;
-    bool lineIntersectsDirtyRect(RenderBoxModelObject*, LegacyInlineFlowBox*, const PaintInfo&, const LayoutPoint&) const;
-    bool rangeIntersectsRect(RenderBoxModelObject*, LayoutUnit logicalTop, LayoutUnit logicalBottom, const LayoutRect&, const LayoutPoint&) const;
-
     // For block flows, each box represents the root inline box for a line in the paragraph.
     // For inline flows, each box represents a portion of that inline.
     LegacyInlineFlowBox* m_firstLineBox;

@@ -29,8 +29,8 @@
     ReturnsPromiseWhenCallbackIsOmitted,
 ] interface WebExtensionAPIAction {
 
-    [RaisesException] void getTitle([Optional, NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
-    [RaisesException] void setTitle([NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
+    [RaisesStringException] void getTitle([Optional, NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
+    [RaisesStringException] void setTitle([NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
 
     [RaisesException] void getBadgeText([Optional, NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
     [RaisesException] void setBadgeText([NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
@@ -46,7 +46,7 @@
 
     [RaisesException] void setPopup([NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
     [RaisesException] void getPopup([Optional, NSDictionary=NullAllowed] any details, [Optional, CallbackHandler] function callback);
-    [RaisesException, NeedsPage] void openPopup([Optional, NSDictionary=NullAllowed] any options, [Optional, CallbackHandler] function callback);
+    [RaisesException, NeedsPageIdentifier] void openPopup([Optional, NSDictionary=NullAllowed] any options, [Optional, CallbackHandler] function callback);
 
     readonly attribute WebExtensionAPIEvent onClicked;
 

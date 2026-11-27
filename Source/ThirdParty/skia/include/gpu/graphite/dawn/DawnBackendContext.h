@@ -11,7 +11,15 @@
 #include "include/core/SkTypes.h"
 #include "webgpu/webgpu_cpp.h"  // NO_G3_REWRITE
 
+#include <memory>
+
+class SkContext;
+struct SkContextOptions;
+
 namespace skgpu::graphite {
+
+class Context;
+struct ContextOptions;
 
 /**
  * WebGPU needs to allow the main thread loop to run to detect GPU progress. Dawn native has a
@@ -63,6 +71,15 @@ struct SK_API DawnBackendContext {
 #endif
 };
 
+namespace ContextFactory {
+SK_API std::unique_ptr<Context> MakeDawn(const DawnBackendContext&, const ContextOptions&);
+} // namespace ContextFactory
+
 } // namespace skgpu::graphite
+
+namespace SkContexts {
+std::unique_ptr<SkContext> MakeGraphite(const skgpu::graphite::DawnBackendContext& dawnContext,
+                                        const SkContextOptions& options);
+}  // namespace SkContexts
 
 #endif // skgpu_graphite_DawnBackendContext_DEFINED

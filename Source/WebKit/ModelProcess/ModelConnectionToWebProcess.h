@@ -32,7 +32,9 @@
 #include "MessageReceiverMap.h"
 #include "ModelConnectionToWebProcessMessages.h"
 #include "ScopedActiveMessageReceiveQueue.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/ModelPlayerIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
@@ -66,17 +68,23 @@ class ModelConnectionToWebProcess
     : public ThreadSafeRefCounted<ModelConnectionToWebProcess, WTF::DestructionThread::Main>
     , public CanMakeWeakPtr<ModelConnectionToWebProcess>
     , IPC::Connection::Client {
+    WTF_MAKE_NONCOPYABLE(ModelConnectionToWebProcess);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModelConnectionToWebProcess);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ModelConnectionToWebProcess);
 public:
-    static Ref<ModelConnectionToWebProcess> create(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&);
+    static Ref<ModelConnectionToWebProcess> create(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&, const std::optional<String>&);
     virtual ~ModelConnectionToWebProcess();
 
-    using CanMakeWeakPtr<ModelConnectionToWebProcess>::weakPtrFactory;
-    using CanMakeWeakPtr<ModelConnectionToWebProcess>::WeakValueType;
-    using CanMakeWeakPtr<ModelConnectionToWebProcess>::WeakPtrImplType;
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
+    USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<ModelConnectionToWebProcess>);
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
+    void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&& sharedPreferencesForWebProcess) { m_sharedPreferencesForWebProcess = WTF::move(sharedPreferencesForWebProcess); }
 
     IPC::Connection& connection() { return m_connection.get(); }
-    Ref<IPC::Connection> protectedConnection() { return m_connection; }
-    IPC::MessageReceiverMap& messageReceiverMap() { return m_messageReceiverMap; }
+    IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
     ModelProcess& modelProcess() { return m_modelProcess.get(); }
     WebCore::ProcessIdentifier webProcessIdentifier() const { return m_webProcessIdentifier; }
 
@@ -84,18 +92,25 @@ public:
 
     ModelProcessModelPlayerManagerProxy& modelProcessModelPlayerManagerProxy() { return m_modelProcessModelPlayerManagerProxy.get(); }
 
-    Logger& logger();
+    Logger& NODELETE logger();
 
-    const WebCore::ProcessIdentity& webProcessIdentity() const { return m_webProcessIdentity; }
+    const WebCore::ProcessIdentity& webProcessIdentity() const LIFETIME_BOUND { return m_webProcessIdentity; }
 
+    void didUnloadModelPlayer(WebCore::ModelPlayerIdentifier);
     bool allowsExitUnderMemoryPressure() const;
 
     void lowMemoryHandler(WTF::Critical, WTF::Synchronous);
 
     static uint64_t objectCountForTesting() { return gObjectCountForTesting; }
 
+    bool isAlwaysOnLoggingAllowed() const;
+
+    const std::optional<String> attributionTaskID() const { return m_attributionTaskID; };
+    std::optional<int> debugEntityMemoryLimit() const;
+    std::optional<int> debugImmersiveEntityMemoryLimit() const;
+
 private:
-    ModelConnectionToWebProcess(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&);
+    ModelConnectionToWebProcess(ModelProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, ModelProcessConnectionParameters&&, const std::optional<String>&);
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
     void createVisibilityPropagationContextForPage(WebPageProxyIdentifier, WebCore::PageIdentifier, bool canShowWhileLocked);
@@ -106,16 +121,16 @@ private:
 
     // IPC::Connection::Client
     void didClose(IPC::Connection&) final;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfObjectFailingDecoding) final;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) final;
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
     bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     static uint64_t gObjectCountForTesting;
 
-    UniqueRef<ModelProcessModelPlayerManagerProxy> m_modelProcessModelPlayerManagerProxy;
+    Ref<ModelProcessModelPlayerManagerProxy> m_modelProcessModelPlayerManagerProxy;
 
     RefPtr<Logger> m_logger;
 
@@ -134,8 +149,12 @@ private:
 #endif
 
 #if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
+    const Ref<IPCTester> m_ipcTester;
 #endif
+
+    std::optional<String> m_attributionTaskID;
+
+    SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
 };
 
 } // namespace WebKit

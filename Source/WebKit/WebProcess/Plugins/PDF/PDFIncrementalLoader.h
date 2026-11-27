@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@ OBJC_CLASS PDFDocument;
 
 namespace WebCore {
 class NetscapePlugInStreamLoader;
+class SharedBuffer;
 }
 
 namespace WebKit {
@@ -48,7 +49,7 @@ class PDFPluginBase;
 class PDFPluginStreamLoaderClient;
 
 enum class ByteRangeRequestIdentifierType { };
-using ByteRangeRequestIdentifier = LegacyNullableObjectIdentifier<ByteRangeRequestIdentifierType>;
+using ByteRangeRequestIdentifier = ObjectIdentifier<ByteRangeRequestIdentifierType>;
 using DataRequestCompletionHandler = Function<void(std::span<const uint8_t>)>;
 
 enum class CheckValidRanges : bool;
@@ -79,7 +80,7 @@ public:
 
     // Only public for the callbacks
     size_t dataProviderGetBytesAtPosition(std::span<uint8_t> buffer, off_t position);
-    void dataProviderGetByteRanges(CFMutableArrayRef buffers, const CFRange* ranges, size_t count);
+    void dataProviderGetByteRanges(CFMutableArrayRef buffers, std::span<const CFRange> ranges);
 
 private:
     PDFIncrementalLoader(PDFPluginBase&);
@@ -91,7 +92,7 @@ private:
 
     void appendAccumulatedDataToDataBuffer(ByteRangeRequest&);
 
-    std::span<const uint8_t> dataSpanForRange(uint64_t position, size_t count, CheckValidRanges) const;
+    void dataSpanForRange(uint64_t position, size_t count, CheckValidRanges, CompletionHandler<void(std::span<const uint8_t>)>&&) const;
     uint64_t availableDataSize() const;
 
     void getResourceBytesAtPosition(size_t count, off_t position, DataRequestCompletionHandler&&);
@@ -99,11 +100,11 @@ private:
 
     void unconditionalCompleteOutstandingRangeRequests();
 
-    ByteRangeRequest* byteRangeRequestForStreamLoader(WebCore::NetscapePlugInStreamLoader&);
+    ByteRangeRequest* NODELETE byteRangeRequestForStreamLoader(WebCore::NetscapePlugInStreamLoader&);
     void forgetStreamLoader(WebCore::NetscapePlugInStreamLoader&);
     void cancelAndForgetStreamLoader(WebCore::NetscapePlugInStreamLoader&);
 
-    ByteRangeRequestIdentifier identifierForLoader(WebCore::NetscapePlugInStreamLoader*);
+    std::optional<ByteRangeRequestIdentifier> NODELETE identifierForLoader(WebCore::NetscapePlugInStreamLoader&);
     void removeOutstandingByteRangeRequest(ByteRangeRequestIdentifier);
 
 
@@ -145,10 +146,10 @@ private:
     RetainPtr<PDFDocument> m_backgroundThreadDocument;
     RefPtr<Thread> m_pdfThread;
 
-    Ref<PDFPluginStreamLoaderClient> m_streamLoaderClient;
+    const Ref<PDFPluginStreamLoaderClient> m_streamLoaderClient;
 
     struct RequestData;
-    std::unique_ptr<RequestData> m_requestData;
+    const UniqueRef<RequestData> m_requestData;
 
     ThreadSafeWeakHashSet<SemaphoreWrapper> m_dataSemaphores WTF_GUARDED_BY_LOCK(m_wasPDFThreadTerminationRequestedLock);
 

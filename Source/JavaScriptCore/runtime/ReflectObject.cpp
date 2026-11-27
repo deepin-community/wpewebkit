@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,8 +47,6 @@ static JSC_DECLARE_HOST_FUNCTION(reflectObjectSetPrototypeOf);
 
 namespace JSC {
 
-const ASCIILiteral ReflectOwnKeysNonObjectArgumentError { "Reflect.ownKeys requires the first argument be an object"_s };
-
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ReflectObject);
 
 const ClassInfo ReflectObject::s_info = { "Reflect"_s, &Base::s_info, &reflectObjectTable, nullptr, CREATE_METHOD_TABLE(ReflectObject) };
@@ -95,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
     if (!target.isObject())
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the first argument be a constructor"_s));
 
-    auto constructData = JSC::getConstructData(target);
+    auto constructData = JSC::getConstructDataInline(target);
     if (constructData.type == CallData::Type::None)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the first argument be a constructor"_s));
 
@@ -107,7 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
     }
 
     MarkedArgumentBuffer arguments;
-    JSObject* argumentsObject = jsDynamicCast<JSObject*>(callFrame->argument(1));
+    JSObject* argumentsObject = dynamicDowncast<JSObject>(callFrame->argument(1));
     if (!argumentsObject)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the second argument be an object"_s));
 
@@ -116,7 +114,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
         return true;
     });
     RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
-    if (UNLIKELY(arguments.hasOverflowed())) {
+    if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return encodedJSValue();
     }
@@ -139,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDefineProperty, (JSGlobalObject* globalObj
     PropertyDescriptor descriptor;
     bool success = toPropertyDescriptor(globalObject, callFrame->argument(2), descriptor);
     EXCEPTION_ASSERT(!scope.exception() == success);
-    if (UNLIKELY(!success))
+    if (!success) [[unlikely]]
         return encodedJSValue();
     ASSERT((descriptor.attributes() & PropertyAttribute::Accessor) || (!descriptor.isAccessorDescriptor()));
     scope.assertNoException();
@@ -175,7 +173,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectGetPrototypeOf, (JSGlobalObject* globalObj
     JSValue target = callFrame->argument(0);
     if (!target.isObject())
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.getPrototypeOf requires the first argument be an object"_s));
-    RELEASE_AND_RETURN(scope, JSValue::encode(asObject(target)->getPrototype(vm, globalObject)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(asObject(target)->getPrototype(globalObject)));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.isextensible

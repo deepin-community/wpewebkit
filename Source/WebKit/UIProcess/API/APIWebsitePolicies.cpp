@@ -39,7 +39,7 @@ namespace API {
 
 WebsitePolicies::WebsitePolicies()
 #if PLATFORM(COCOA)
-    : m_lockdownModeObserver(makeUnique<WebKit::WebPagePreferencesLockdownModeObserver>(*this))
+    : m_lockdownModeObserver(makeUniqueWithoutRefCountedCheck<WebKit::WebPagePreferencesLockdownModeObserver, WebKit::LockdownModeObserver>(*this))
 #endif
 {
 }
@@ -51,9 +51,7 @@ Ref<WebsitePolicies> WebsitePolicies::copy() const
     policies->setWebsiteDataStore(m_websiteDataStore.get());
     policies->setUserContentController(m_userContentController.get());
     policies->setLockdownModeEnabled(m_lockdownModeEnabled);
-#if PLATFORM(COCOA)
-    policies->m_lockdownModeObserver = makeUnique<WebKit::WebPagePreferencesLockdownModeObserver>(policies);
-#endif
+    policies->setIsEnhancedSecurityEnabled(m_isEnhancedSecurityEnabled);
     return policies;
 }
 
@@ -61,17 +59,20 @@ WebsitePolicies::~WebsitePolicies() = default;
 
 void WebsitePolicies::setWebsiteDataStore(RefPtr<WebKit::WebsiteDataStore>&& websiteDataStore)
 {
-    m_websiteDataStore = WTFMove(websiteDataStore);
+    m_websiteDataStore = WTF::move(websiteDataStore);
 }
 
 void WebsitePolicies::setUserContentController(RefPtr<WebKit::WebUserContentControllerProxy>&& controller)
 {
-    m_userContentController = WTFMove(controller);
+    m_userContentController = WTF::move(controller);
 }
 
-WebKit::WebsitePoliciesData WebsitePolicies::data()
+WebKit::WebsitePoliciesData WebsitePolicies::dataForProcess(WebKit::WebProcessProxy& process) const
 {
-    return m_data;
+    auto data = m_data;
+    if (RefPtr controller = m_userContentController)
+        data.userContentControllerParameters = controller->parametersForProcess(process);
+    return data;
 }
 
 bool WebsitePolicies::lockdownModeEnabled() const
@@ -79,5 +80,14 @@ bool WebsitePolicies::lockdownModeEnabled() const
     return m_lockdownModeEnabled ? *m_lockdownModeEnabled : WebKit::lockdownModeEnabledBySystem();
 }
 
+const WebCore::ResourceRequest& WebsitePolicies::alternateRequest() const
+{
+    return m_data.alternateRequest;
 }
 
+void WebsitePolicies::setAlternateRequest(WebCore::ResourceRequest&& request)
+{
+    m_data.alternateRequest = WTF::move(request);
+}
+
+}

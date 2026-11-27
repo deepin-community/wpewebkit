@@ -11,6 +11,7 @@
 #endif
 
 #include "compiler/translator/Symbol.h"
+#include "common/unsafe_buffers.h"
 
 #include "compiler/translator/ImmutableStringBuilder.h"
 #include "compiler/translator/SymbolTable.h"
@@ -27,8 +28,6 @@ constexpr const ImmutableString kImageStoreName("imageStore");
 constexpr const ImmutableString kImageSizeName("imageSize");
 constexpr const ImmutableString kImageAtomicExchangeName("imageAtomicExchange");
 constexpr const ImmutableString kAtomicCounterName("atomicCounter");
-
-static const char kFunctionMangledNameSeparator = '(';
 
 }  // anonymous namespace
 
@@ -123,35 +122,33 @@ TStructure::TStructure(TSymbolTable *symbolTable,
                        const ImmutableString &name,
                        const TFieldList *fields,
                        SymbolType symbolType)
-    : TSymbol(symbolTable, name, symbolType, SymbolClass::Struct), TFieldListCollection(fields)
+    : TSymbol(symbolTable, name, symbolType, SymbolClass::Struct),
+      TFieldListCollection(fields),
+      mAtGlobalScope(false),
+      mImplementingInterfaceBlock(false)
 {}
-
-void TStructure::createSamplerSymbols(const char *namePrefix,
-                                      const TString &apiNamePrefix,
-                                      TVector<const TVariable *> *outputSymbols,
-                                      TMap<const TVariable *, TString> *outputSymbolsToAPINames,
-                                      TSymbolTable *symbolTable) const
-{
-    ASSERT(containsSamplers());
-    for (const auto *field : *mFields)
-    {
-        const TType *fieldType = field->type();
-        if (IsSampler(fieldType->getBasicType()) || fieldType->isStructureContainingSamplers())
-        {
-            std::stringstream fieldName = sh::InitializeStream<std::stringstream>();
-            fieldName << namePrefix << "_" << field->name();
-            TString fieldApiName = apiNamePrefix + ".";
-            fieldApiName += field->name().data();
-            fieldType->createSamplerSymbols(ImmutableString(fieldName.str()), fieldApiName,
-                                            outputSymbols, outputSymbolsToAPINames, symbolTable);
-        }
-    }
-}
 
 void TStructure::setName(const ImmutableString &name)
 {
     ImmutableString *mutableName = const_cast<ImmutableString *>(&mName);
     *mutableName                 = name;
+
+    // If this was a nameless struct, currently it's only given an empty name such that one is
+    // generated for it.  Where the name matters (shader input and output variables), the nameless
+    // struct remains nameless.  This can change in the future such that those structs can also be
+    // given a name: http://anglebug.com/545212084
+    if (mSymbolType == SymbolType::Empty)
+    {
+        ASSERT(name.empty());
+        mSymbolType = SymbolType::AngleInternal;
+    }
+}
+
+void TStructure::forceGeneratedName() const
+{
+    ASSERT(mSymbolType == SymbolType::Empty);
+    ASSERT(mName == "");
+    const_cast<TStructure *>(this)->mSymbolType = SymbolType::AngleInternal;
 }
 
 TInterfaceBlock::TInterfaceBlock(TSymbolTable *symbolTable,
@@ -163,7 +160,8 @@ TInterfaceBlock::TInterfaceBlock(TSymbolTable *symbolTable,
     : TSymbol(symbolTable, name, symbolType, SymbolClass::InterfaceBlock, extension),
       TFieldListCollection(fields),
       mBlockStorage(layoutQualifier.blockStorage),
-      mBinding(layoutQualifier.binding)
+      mBinding(layoutQualifier.binding),
+      mIsDefaultUniformBlock(false)
 {
     ASSERT(name != nullptr);
 }
@@ -177,7 +175,8 @@ TInterfaceBlock::TInterfaceBlock(TSymbolTable *symbolTable,
     : TSymbol(symbolTable, name, symbolType, SymbolClass::InterfaceBlock, extensions),
       TFieldListCollection(fields),
       mBlockStorage(layoutQualifier.blockStorage),
-      mBinding(layoutQualifier.binding)
+      mBinding(layoutQualifier.binding),
+      mIsDefaultUniformBlock(false)
 {
     ASSERT(name != nullptr);
 }
@@ -224,13 +223,15 @@ void TFunction::shareParameters(const TFunction &parametersSource)
 
 ImmutableString TFunction::buildMangledName() const
 {
+    constexpr char kFunctionMangledNameSeparator = '(';
+
     ImmutableString name = this->name();
     std::string newName(name.data(), name.length());
     newName += kFunctionMangledNameSeparator;
 
     for (size_t i = 0u; i < mParamCount; ++i)
     {
-        newName += mParameters[i]->getType().getMangledName();
+        newName += ANGLE_UNSAFE_TODO(mParameters[i])->getType().getMangledName();
     }
     return ImmutableString(newName);
 }

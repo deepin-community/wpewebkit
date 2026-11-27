@@ -67,12 +67,12 @@ class RemoteQueue final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteQueue> create(WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteQueue(queue, objectHeap, WTFMove(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteQueue(queue, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteQueue();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -100,12 +100,23 @@ private:
         std::optional<WebCore::SharedMemoryHandle>&&,
         CompletionHandler<void(bool)>&&);
 
+    void writeBufferWithCopy(
+        WebGPUIdentifier,
+        WebCore::WebGPU::Size64 bufferOffset,
+        Vector<uint8_t>&&);
+
     void writeTexture(
         const WebGPU::ImageCopyTexture& destination,
         std::optional<WebCore::SharedMemoryHandle>&&,
         const WebGPU::ImageDataLayout&,
         const WebGPU::Extent3D& size,
         CompletionHandler<void(bool)>&&);
+
+    void writeTextureWithCopy(
+        const WebGPU::ImageCopyTexture& destination,
+        Vector<uint8_t>&&,
+        const WebGPU::ImageDataLayout&,
+        const WebGPU::Extent3D& size);
 
     void copyExternalImageToTexture(
         const WebGPU::ImageCopyExternalImage& source,
@@ -115,9 +126,9 @@ private:
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::Queue> m_backing;
+    const Ref<WebCore::WebGPU::Queue> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
 };

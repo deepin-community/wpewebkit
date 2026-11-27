@@ -32,11 +32,13 @@
 #include "LLIntData.h"
 #include "Opcode.h"
 #include "Options.h"
+#include "WebAssemblyBuiltin.h"
 
 #if HAVE(DLADDR)
-#include <cxxabi.h>
 #include <dlfcn.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -44,8 +46,8 @@ namespace JSC {
 
 LazyNeverDestroyed<JITOperationList> jitOperationList;
 
-extern const JITOperationAnnotation startOfJITOperationsInJSC __asm("section$start$__DATA_CONST$__jsc_ops");
-extern const JITOperationAnnotation endOfJITOperationsInJSC __asm("section$end$__DATA_CONST$__jsc_ops");
+extern const JITOperationAnnotation startOfJITOperationsInJSC __asm__("section$start$__DATA_CONST$__jsc_ops");
+extern const JITOperationAnnotation endOfJITOperationsInJSC __asm__("section$end$__DATA_CONST$__jsc_ops");
 
 void JITOperationList::initialize()
 {
@@ -95,7 +97,7 @@ void JITOperationList::populatePointersInJavaScriptCore()
         if (Options::useJIT())
             jitOperationList->addPointers(&startOfJITOperationsInJSC, &endOfJITOperationsInJSC);
 #if ENABLE(JIT_OPERATION_DISASSEMBLY)
-        if (UNLIKELY(Options::needDisassemblySupport()))
+        if (Options::needDisassemblySupport()) [[unlikely]]
             populateDisassemblyLabelsInJavaScriptCore();
 #endif
     });
@@ -110,58 +112,77 @@ LLINT_DECLARE_ROUTINE_VALIDATE(llint_function_for_construct_arity_check);
 LLINT_DECLARE_ROUTINE_VALIDATE(llint_eval_prologue);
 LLINT_DECLARE_ROUTINE_VALIDATE(llint_program_prologue);
 LLINT_DECLARE_ROUTINE_VALIDATE(llint_module_program_prologue);
-LLINT_DECLARE_ROUTINE_VALIDATE(wasm_function_prologue_trampoline);
-LLINT_DECLARE_ROUTINE_VALIDATE(wasm_function_prologue);
-LLINT_DECLARE_ROUTINE_VALIDATE(wasm_function_prologue_simd_trampoline);
-LLINT_DECLARE_ROUTINE_VALIDATE(wasm_function_prologue_simd);
 LLINT_DECLARE_ROUTINE_VALIDATE(llint_throw_during_call_trampoline);
 LLINT_DECLARE_ROUTINE_VALIDATE(llint_handle_uncaught_exception);
 LLINT_DECLARE_ROUTINE_VALIDATE(checkpoint_osr_exit_trampoline);
 LLINT_DECLARE_ROUTINE_VALIDATE(checkpoint_osr_exit_from_inlined_call_trampoline);
+LLINT_DECLARE_ROUTINE_VALIDATE(array_sort_comparator_return_trampoline);
 LLINT_DECLARE_ROUTINE_VALIDATE(normal_osr_exit_trampoline);
 LLINT_DECLARE_ROUTINE_VALIDATE(fuzzer_return_early_from_loop_hint);
-LLINT_DECLARE_ROUTINE_VALIDATE(js_to_wasm_wrapper_entry_crash_for_simd_parameters);
 LLINT_DECLARE_ROUTINE_VALIDATE(js_to_wasm_wrapper_entry);
-LLINT_DECLARE_ROUTINE_VALIDATE(wasm_to_wasm_wrapper_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(wasm_to_wasm_ipint_wrapper_entry);
 LLINT_DECLARE_ROUTINE_VALIDATE(wasm_to_js_wrapper_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_trampoline);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_catch_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_catch_all_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_table_catch_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_table_catch_ref_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_table_catch_all_entry);
+LLINT_DECLARE_ROUTINE_VALIDATE(ipint_table_catch_allref_entry);
 
 #if ENABLE(JIT_OPERATION_VALIDATION)
-#define LLINT_OP_EXTRAS(validateLabel) bitwise_cast<void*>(validateLabel)
+#define LLINT_OP_EXTRAS(validateLabel) reinterpret_cast<void*>(validateLabel)
 #else // ENABLE(JIT_OPERATION_DISASSEMBLY)
 #define LLINT_OP_EXTRAS(validateLabel)
 #endif
 
 #define LLINT_ROUTINE(functionName) { \
-        bitwise_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
+        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
         LLINT_OP_EXTRAS(LLINT_ROUTINE_VALIDATE(functionName)) \
     },
 
 #define LLINT_OP(name) { \
-        bitwise_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
+        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_VALIDATE(name)) \
     }, { \
-        bitwise_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        std::bit_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE16_VALIDATE(name)) \
     }, { \
-        bitwise_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        std::bit_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE32_VALIDATE(name)) \
     },
 
 #define LLINT_RETURN_LOCATION(name, ...) \
     LLINT_OP(name##_return_location)
 
-struct LLIntOperations {
-    const JITOperationAnnotation* operations;
-    size_t numberOfOperations;
-};
+#if ENABLE(JIT_OPERATION_VALIDATION) && !ENABLE(JIT_CAGE)
+// In this configuration the validation function is a static constexpr equal to the original function.
+// It is not visible here and does not produce a linkable symbol.
+#define BUILTIN_WASM_ENTRY_VALIDATE_NAME(setName, builtinName) BUILTIN_WASM_ENTRY_NAME(setName, builtinName)
+#else
+#define BUILTIN_WASM_ENTRY_VALIDATE_NAME(setName, builtinName) CONCAT(BUILTIN_WASM_ENTRY_NAME(setName, builtinName), Validate)
+#endif
 
-static LLIntOperations llintOperations()
+#define DECLARE_WASM_BUILTIN_ENTRY(setName, builtinName, signature) \
+    extern "C" EncodedJSValue BUILTIN_WASM_ENTRY_NAME(setName, builtinName)(); \
+    extern "C" EncodedJSValue BUILTIN_WASM_ENTRY_VALIDATE_NAME(setName, builtinName)();
+
+FOR_EACH_WASM_BUILTIN(DECLARE_WASM_BUILTIN_ENTRY)
+
+#undef DECLARE_WASM_BUILTIN_ENTRY
+
+#define WASM_BUILTIN_RECORD(setName, builtinName, signature) { \
+        std::bit_cast<void*>(&BUILTIN_WASM_ENTRY_NAME(setName, builtinName)), \
+        LLINT_OP_EXTRAS(BUILTIN_WASM_ENTRY_VALIDATE_NAME(setName, builtinName)) \
+    },
+
+static std::span<const JITOperationAnnotation> llintOperations()
 {
-    static const JITOperationAnnotation* operations = nullptr;
-    static size_t numberOfOperations = 0;
+    static std::span<const JITOperationAnnotation> operations;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
-        static const JITOperationAnnotation operationsStorage[] = {
+        static const auto operationsStorage = WTF::toArray<JITOperationAnnotation>({
             LLINT_ROUTINE(llint_function_for_call_prologue)
             LLINT_ROUTINE(llint_function_for_construct_prologue)
             LLINT_ROUTINE(llint_function_for_call_arity_check)
@@ -169,41 +190,45 @@ static LLIntOperations llintOperations()
             LLINT_ROUTINE(llint_eval_prologue)
             LLINT_ROUTINE(llint_program_prologue)
             LLINT_ROUTINE(llint_module_program_prologue)
-            LLINT_ROUTINE(wasm_function_prologue_trampoline)
-            LLINT_ROUTINE(wasm_function_prologue)
-            LLINT_ROUTINE(wasm_function_prologue_simd_trampoline)
-            LLINT_ROUTINE(wasm_function_prologue_simd)
             LLINT_ROUTINE(llint_throw_during_call_trampoline)
             LLINT_ROUTINE(llint_handle_uncaught_exception)
             LLINT_ROUTINE(checkpoint_osr_exit_trampoline)
             LLINT_ROUTINE(checkpoint_osr_exit_from_inlined_call_trampoline)
+            LLINT_ROUTINE(array_sort_comparator_return_trampoline)
             LLINT_ROUTINE(normal_osr_exit_trampoline)
             LLINT_ROUTINE(fuzzer_return_early_from_loop_hint)
             LLINT_ROUTINE(js_to_wasm_wrapper_entry)
-            LLINT_ROUTINE(js_to_wasm_wrapper_entry_crash_for_simd_parameters)
-            LLINT_ROUTINE(wasm_to_wasm_wrapper_entry)
+            LLINT_ROUTINE(wasm_to_wasm_ipint_wrapper_entry)
             LLINT_ROUTINE(wasm_to_js_wrapper_entry)
+            LLINT_ROUTINE(ipint_trampoline)
+            LLINT_ROUTINE(ipint_entry)
+            LLINT_ROUTINE(ipint_catch_entry)
+            LLINT_ROUTINE(ipint_catch_all_entry)
+            LLINT_ROUTINE(ipint_table_catch_entry)
+            LLINT_ROUTINE(ipint_table_catch_ref_entry)
+            LLINT_ROUTINE(ipint_table_catch_all_entry)
+            LLINT_ROUTINE(ipint_table_catch_allref_entry)
+
+            FOR_EACH_WASM_BUILTIN(WASM_BUILTIN_RECORD)
 
             LLINT_OP(op_catch)
-            LLINT_OP(wasm_catch)
-            LLINT_OP(wasm_catch_all)
             LLINT_OP(llint_generic_return_point)
 
             FOR_EACH_LLINT_OPCODE_WITH_RETURN(LLINT_RETURN_LOCATION)
 
             JSC_JS_GATE_OPCODES(LLINT_RETURN_LOCATION)
             JSC_WASM_GATE_OPCODES(LLINT_RETURN_LOCATION)
-        };
+        });
         operations = operationsStorage;
-        numberOfOperations = std::size(operationsStorage);
     });
-    return { operations, numberOfOperations };
+    return operations;
 }
 
 #undef LLINT_ROUTINE
 #undef LLINT_OP
 #undef LLINT_RETURN_LOCATION
 #undef LLINT_OP_EXTRAS
+#undef WASM_BUILTIN_RECORD
 
 #if ENABLE(JIT_OPERATION_VALIDATION)
 
@@ -213,10 +238,10 @@ void JITOperationList::populatePointersInJavaScriptCoreForLLInt()
     std::call_once(onceKey, [] {
         if (Options::useJIT()) {
             auto list = llintOperations();
-            jitOperationList->addPointers(list.operations, list.operations + list.numberOfOperations);
+            jitOperationList->addPointers(list.data(), list.data() + list.size());
         }
 #if ENABLE(JIT_OPERATION_DISASSEMBLY)
-        if (UNLIKELY(Options::needDisassemblySupport()))
+        if (Options::needDisassemblySupport()) [[unlikely]]
             JITOperationList::populateDisassemblyLabelsInJavaScriptCoreForLLInt();
 #endif
     });
@@ -264,14 +289,14 @@ void JITOperationList::populateDisassemblyLabelsInJavaScriptCoreForLLInt()
     std::call_once(onceKey, [] {
         if (Options::useJIT()) {
             auto list = llintOperations();
-            addDisassemblyLabels(list.operations, list.operations + list.numberOfOperations);
+            addDisassemblyLabels(list.data(), list.data() + list.size());
         }
     });
 }
 
 void JITOperationList::populateDisassemblyLabelsInEmbedder(const JITOperationAnnotation* beginOperations, const JITOperationAnnotation* endOperations)
 {
-    if (LIKELY(!Options::needDisassemblySupport()))
+    if (!Options::needDisassemblySupport()) [[likely]]
         return;
     if (Options::useJIT())
         addDisassemblyLabels(beginOperations, endOperations);
@@ -280,5 +305,7 @@ void JITOperationList::populateDisassemblyLabelsInEmbedder(const JITOperationAnn
 #endif // ENABLE(JIT_OPERATION_DISASSEMBLY)
 
 #endif // ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace JSC

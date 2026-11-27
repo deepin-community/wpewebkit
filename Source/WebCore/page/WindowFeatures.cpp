@@ -42,13 +42,9 @@ static std::optional<bool> boolFeature(const DialogFeaturesMap&, ASCIILiteral ke
 static std::optional<float> floatFeature(const DialogFeaturesMap&, ASCIILiteral key, float min, float max);
 
 // https://html.spec.whatwg.org/#feature-separator
-static bool isSeparator(UChar character, FeatureMode mode)
+static bool NODELETE isSeparator(char16_t character)
 {
-    if (mode == FeatureMode::Viewport)
-        return character == ' ' || character == '\t' || character == '\n' || character == '\r' || character == '=' || character == ',';
-
-    // FIXME: this should be isASCIIWhitespace
-    return isUnicodeCompatibleASCIIWhitespace(character) || character == '=' || character == ',';
+    return isASCIIWhitespace(character) || character == '=' || character == ',';
 }
 
 WindowFeatures parseWindowFeatures(StringView featuresString)
@@ -68,32 +64,32 @@ WindowFeatures parseWindowFeatures(StringView featuresString)
 // Window: https://html.spec.whatwg.org/#concept-window-open-features-tokenize
 // Viewport: https://developer.apple.com/library/content/documentation/AppleApplications/Reference/SafariHTMLRef/Articles/MetaTags.html#//apple_ref/doc/uid/TP40008193-SW6
 // FIXME: We should considering aligning Viewport feature parsing with Window features parsing.
-void processFeaturesString(StringView features, FeatureMode mode, const Function<void(StringView type, StringView value)>& callback)
+void processFeaturesString(StringView features, FeatureMode mode, NOESCAPE const Function<void(StringView type, StringView value)>& callback)
 {
     unsigned length = features.length();
     for (unsigned i = 0; i < length; ) {
         // Skip to first non-separator.
-        while (i < length && isSeparator(features[i], mode))
+        while (i < length && isSeparator(features[i]))
             ++i;
         unsigned keyBegin = i;
 
         // Skip to first separator.
-        while (i < length && !isSeparator(features[i], mode))
+        while (i < length && !isSeparator(features[i]))
             i++;
         unsigned keyEnd = i;
 
         // Skip to first '=', but don't skip past a ',' or a non-separator.
-        while (i < length && features[i] != '=' && features[i] != ',' && (mode == FeatureMode::Viewport || isSeparator(features[i], mode)))
+        while (i < length && features[i] != '=' && features[i] != ',' && (mode == FeatureMode::Viewport || isSeparator(features[i])))
             ++i;
 
         // Skip to first non-separator, but don't skip past a ','.
-        if (mode == FeatureMode::Viewport || (i < length && isSeparator(features[i], mode))) {
-            while (i < length && isSeparator(features[i], mode) && features[i] != ',')
+        if (mode == FeatureMode::Viewport || (i < length && isSeparator(features[i]))) {
+            while (i < length && isSeparator(features[i]) && features[i] != ',')
                 ++i;
             unsigned valueBegin = i;
 
             // Skip to first separator.
-            while (i < length && !isSeparator(features[i], mode))
+            while (i < length && !isSeparator(features[i]))
                 ++i;
             unsigned valueEnd = i;
             callback(features.substring(keyBegin, keyEnd - keyBegin), features.substring(valueBegin, valueEnd - valueBegin));
@@ -106,7 +102,7 @@ OptionSet<DisabledAdaptations> parseDisabledAdaptations(StringView disabledAdapt
 {
     OptionSet<DisabledAdaptations> disabledAdaptations;
     for (auto name : disabledAdaptationsString.split(',')) {
-        auto trimmedName = name.trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        auto trimmedName = name.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
         if (equalIgnoringASCIICase(trimmedName, watchAdaptationName()))
             disabledAdaptations.add(DisabledAdaptations::Watch);
     }
@@ -251,16 +247,16 @@ static DialogFeaturesMap parseDialogFeaturesMap(StringView string)
         if (separatorPosition == notFound)
             separatorPosition = colonPosition;
 
-        auto key = featureString.left(separatorPosition).trim(isUnicodeCompatibleASCIIWhitespace<UChar>).toString();
+        auto key = featureString.left(separatorPosition).trim(isUnicodeCompatibleASCIIWhitespace<char16_t>).toString();
 
         // Null string for value indicates key without value.
         String value;
         if (separatorPosition != notFound) {
-            auto valueView = featureString.substring(separatorPosition + 1).trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+            auto valueView = featureString.substring(separatorPosition + 1).trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
             value = valueView.left(valueView.find(' ')).toString();
         }
 
-        features.set(WTFMove(key), WTFMove(value));
+        features.set(WTF::move(key), WTF::move(value));
     }
 
     return features;

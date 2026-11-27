@@ -38,7 +38,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAudioHardwareListenerProxy);
 
 RemoteAudioHardwareListenerProxy::RemoteAudioHardwareListenerProxy(GPUConnectionToWebProcess& gpuConnection, RemoteAudioHardwareListenerIdentifier&& identifier)
     : m_gpuConnection(gpuConnection)
-    , m_identifier(WTFMove(identifier))
+    , m_identifier(WTF::move(identifier))
     , m_listener(WebCore::AudioHardwareListener::create(*this))
 {
     audioOutputDeviceChanged();
@@ -48,19 +48,19 @@ RemoteAudioHardwareListenerProxy::~RemoteAudioHardwareListenerProxy() = default;
 
 void RemoteAudioHardwareListenerProxy::audioHardwareDidBecomeActive()
 {
-    if (auto connection = m_gpuConnection.get())
+    if (RefPtr connection = m_gpuConnection.get())
         connection->connection().send(Messages::RemoteAudioHardwareListener::AudioHardwareDidBecomeActive(), m_identifier);
 }
 
 void RemoteAudioHardwareListenerProxy::audioHardwareDidBecomeInactive()
 {
-    if (auto connection = m_gpuConnection.get())
+    if (RefPtr connection = m_gpuConnection.get())
         connection->connection().send(Messages::RemoteAudioHardwareListener::AudioHardwareDidBecomeInactive(), m_identifier);
 }
 
 void RemoteAudioHardwareListenerProxy::audioOutputDeviceChanged()
 {
-    auto connection = m_gpuConnection.get();
+    RefPtr connection = m_gpuConnection.get();
     if (!connection)
         return;
 

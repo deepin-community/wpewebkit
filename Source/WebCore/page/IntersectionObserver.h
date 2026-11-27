@@ -26,12 +26,14 @@
 #pragma once
 
 #include "Document.h"
+#include "FloatRect.h"
 #include "GCReachableRef.h"
 #include "IntersectionObserverCallback.h"
-#include "LengthBox.h"
-#include "ReducedResolutionSeconds.h"
-#include <variant>
-#include <wtf/RefCounted.h>
+#include "IntersectionObserverMarginBox.h"
+#include <wtf/Lock.h>
+#include <wtf/ReducedResolutionSeconds.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -46,6 +48,7 @@ namespace WebCore {
 class ContainerNode;
 class Document;
 class Element;
+class FrameView;
 class IntersectionObserverEntry;
 
 struct IntersectionObserverRegistration {
@@ -54,7 +57,7 @@ struct IntersectionObserverRegistration {
 };
 
 struct IntersectionObserverData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(IntersectionObserverData);
 
     // IntersectionObservers for which the node that owns this IntersectionObserverData is the root.
     // An IntersectionObserver is only owned by a JavaScript wrapper. ActiveDOMObject::virtualHasPendingActivity
@@ -65,28 +68,44 @@ struct IntersectionObserverData {
     Vector<IntersectionObserverRegistration> registrations;
 };
 
-class IntersectionObserver : public RefCounted<IntersectionObserver>, public CanMakeWeakPtr<IntersectionObserver> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(IntersectionObserver);
+enum class IncludeObscuredInsets : bool { No, Yes };
+
+class IntersectionObserver : public RefCountedAndCanMakeWeakPtr<IntersectionObserver> {
+    WTF_MAKE_TZONE_ALLOCATED(IntersectionObserver);
 public:
     struct Init {
-        std::optional<std::variant<RefPtr<Element>, RefPtr<Document>>> root;
+        std::optional<Variant<Ref<Element>, Ref<Document>>> root;
         String rootMargin;
-        std::variant<double, Vector<double>> threshold;
+        String scrollMargin;
+        Variant<double, Vector<double>> threshold;
     };
 
-    static ExceptionOr<Ref<IntersectionObserver>> create(Document&, Ref<IntersectionObserverCallback>&&, Init&&);
+    static ExceptionOr<Ref<IntersectionObserver>> create(Document&, Ref<IntersectionObserverCallback>&&, Init&&, IncludeObscuredInsets = IncludeObscuredInsets::No);
 
     ~IntersectionObserver();
 
-    Document* trackingDocument() const { return m_root ? &m_root->document() : m_implicitRootDocument.get(); }
+    // Local: root is in the same process as the observer.
+    // Remote: root is in different process as the observer.
+    // Only situation where this applies is an observer created in a cross-site frame,
+    // where the top document and frame is of different origin.
+    enum class Type : bool { Local, Remote };
+    Type type() const { return m_type; }
+
+    Document* NODELETE trackingDocument() const;
 
     ContainerNode* root() const { return m_root.get(); }
     String rootMargin() const;
-    const LengthBox& rootMarginBox() const { return m_rootMargin; }
-    const Vector<double>& thresholds() const { return m_thresholds; }
-    const Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>>& observationTargets() const { return m_observationTargets; }
-    bool hasObservationTargets() const { return m_observationTargets.size(); }
-    bool isObserving(const Element&) const;
+    String scrollMargin() const;
+    const IntersectionObserverMarginBox& rootMarginBox() const LIFETIME_BOUND { return m_rootMargin; }
+    const IntersectionObserverMarginBox& scrollMarginBox() const LIFETIME_BOUND { return m_scrollMargin; }
+    const Vector<double>& thresholds() const LIFETIME_BOUND { return m_thresholds; }
+    Vector<Ref<Element>> observationTargets() const;
+    bool hasObservationTargets() const
+    {
+        Locker locker { m_observationTargetsLock };
+        return !m_observationTargets.isEmptyIgnoringNullReferences();
+    }
+    bool NODELETE isObserving(const Element&) const;
 
     void observe(Element&);
     void unobserve(Element&);
@@ -102,24 +121,40 @@ public:
     void rootDestroyed();
 
     enum class NeedNotify : bool { No, Yes };
-    NeedNotify updateObservations(Document&);
+    NeedNotify updateObservations(const Frame&);
 
     std::optional<ReducedResolutionSeconds> nowTimestamp() const;
 
     void appendQueuedEntry(Ref<IntersectionObserverEntry>&&);
     void notify();
 
-    IntersectionObserverCallback* callbackConcurrently() { return m_callback.get(); }
+    IntersectionObserverCallback& callbackConcurrently() { return m_callback; }
     bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&) const;
 
 private:
-    IntersectionObserver(Document&, Ref<IntersectionObserverCallback>&&, ContainerNode* root, LengthBox&& parsedRootMargin, Vector<double>&& thresholds);
+    IntersectionObserver(Document&, Ref<IntersectionObserverCallback>&&, ContainerNode* root, IntersectionObserverMarginBox&& parsedRootMargin, IntersectionObserverMarginBox&& parsedScrollMargin, Vector<double>&& thresholds, IncludeObscuredInsets);
 
     bool removeTargetRegistration(Element&);
     void removeAllTargets();
 
+    Vector<GCReachableRef<Element>> takeTargetsWaitingForFirstObservation();
+    Vector<Ref<Element>> takeAllTargets();
+
+    bool hasPendingTargets() const
+    {
+        Locker locker { m_observationTargetsLock };
+        return !m_pendingTargets.isEmpty();
+    }
+
+    bool hasTargetsWaitingForFirstObservation() const
+    {
+        Locker locker { m_observationTargetsLock };
+        return !m_targetsWaitingForFirstObservation.isEmpty();
+    }
+
     struct IntersectionObservationState {
         FloatRect rootBounds;
+        // "Absolute" means in the absolute coordinate system of the target's frame.
         std::optional<FloatRect> absoluteIntersectionRect; // Only computed if intersecting.
         std::optional<FloatRect> absoluteTargetRect; // Only computed if first observation, or intersecting.
         std::optional<FloatRect> absoluteRootBounds; // Only computed if observationChanged.
@@ -130,18 +165,25 @@ private:
         bool observationChanged { false };
     };
 
-    IntersectionObservationState computeIntersectionState(const IntersectionObserverRegistration&, LocalFrameView&, Element& target, bool applyRootMargin) const;
+    enum class ApplyRootMargin : bool { No, Yes };
+    IntersectionObservationState computeIntersectionState(const IntersectionObserverRegistration&, FrameView&, Element& target, ApplyRootMargin) const;
+
+    Type m_type { Type::Local };
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_implicitRootDocument;
     WeakPtr<ContainerNode, WeakPtrImplWithEventTargetData> m_root;
-    LengthBox m_rootMargin;
+    IntersectionObserverMarginBox m_rootMargin;
+    IntersectionObserverMarginBox m_scrollMargin;
     Vector<double> m_thresholds;
-    RefPtr<IntersectionObserverCallback> m_callback;
-    Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_observationTargets;
-    Vector<GCReachableRef<Element>> m_pendingTargets;
-    Vector<Ref<IntersectionObserverEntry>> m_queuedEntries;
-    Vector<GCReachableRef<Element>> m_targetsWaitingForFirstObservation;
-};
+    const Ref<IntersectionObserverCallback> m_callback;
 
+    mutable Lock m_observationTargetsLock;
+    WeakListHashSet<Element, WeakPtrImplWithEventTargetData> m_observationTargets WTF_GUARDED_BY_LOCK(m_observationTargetsLock);
+    Vector<GCReachableRef<Element>> m_pendingTargets WTF_GUARDED_BY_LOCK(m_observationTargetsLock);
+    Vector<GCReachableRef<Element>> m_targetsWaitingForFirstObservation WTF_GUARDED_BY_LOCK(m_observationTargetsLock);
+
+    Vector<Ref<IntersectionObserverEntry>> m_queuedEntries;
+    IncludeObscuredInsets m_includeObscuredInsets { IncludeObscuredInsets::No };
+};
 
 } // namespace WebCore

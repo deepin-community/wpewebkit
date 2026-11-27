@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include <numbers>
 #include <wtf/text/AtomString.h>
 
 namespace TestWebKitAPI {
@@ -35,6 +36,13 @@ TEST(WTF, AtomStringCreationFromLiteral)
     ASSERT_EQ(strlen("Template Literal"), stringWithTemplate.length());
     ASSERT_TRUE(stringWithTemplate == "Template Literal"_s);
     ASSERT_TRUE(stringWithTemplate.string().is8Bit());
+
+    ASCIILiteral literal("Source literal");
+    AtomString stringFromLiteral(literal);
+    ASSERT_EQ(strlen("Source literal"), stringFromLiteral.length());
+    ASSERT_TRUE(stringFromLiteral == "Source literal"_s);
+    ASSERT_TRUE(stringFromLiteral.string().is8Bit());
+    ASSERT_TRUE(std::bit_cast<uintptr_t>(stringFromLiteral.impl()->span8().data()) == std::bit_cast<uintptr_t>(literal.span().data()));
 }
 
 TEST(WTF, AtomStringCreationFromLiteralUniqueness)
@@ -62,6 +70,17 @@ static inline const char* testAtomStringNumber(double number)
     return testBuffer;
 }
 
+TEST(WTF, AtomStringCreationFromNullASCIILiteral)
+{
+    AtomString stringFromNull { ASCIILiteral() };
+    ASSERT_TRUE(stringFromNull.isNull());
+    ASSERT_TRUE(stringFromNull.isEmpty());
+
+    AtomString stringFromEmpty(""_s);
+    ASSERT_FALSE(stringFromEmpty.isNull());
+    ASSERT_TRUE(stringFromEmpty.isEmpty());
+}
+
 TEST(WTF, AtomStringNumberDouble)
 {
     using Limits = std::numeric_limits<double>;
@@ -78,8 +97,8 @@ TEST(WTF, AtomStringNumberDouble)
     EXPECT_STREQ("-1.7976931348623157e+308", testAtomStringNumber(Limits::lowest()));
     EXPECT_STREQ("1.7976931348623157e+308", testAtomStringNumber(Limits::max()));
 
-    EXPECT_STREQ("3.141592653589793", testAtomStringNumber(piDouble));
-    EXPECT_STREQ("3.1415927410125732", testAtomStringNumber(piFloat));
+    EXPECT_STREQ("3.141592653589793", testAtomStringNumber(std::numbers::pi));
+    EXPECT_STREQ("3.1415927410125732", testAtomStringNumber(std::numbers::pi_v<float>));
     EXPECT_STREQ("1.5707963267948966", testAtomStringNumber(piOverTwoDouble));
     EXPECT_STREQ("1.5707963705062866", testAtomStringNumber(piOverTwoFloat));
     EXPECT_STREQ("0.7853981633974483", testAtomStringNumber(piOverFourDouble));

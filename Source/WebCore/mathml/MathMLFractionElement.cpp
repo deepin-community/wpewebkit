@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2025 Apple Inc. All rights reserved.
  * Copyright (C) 2016 Igalia S.L. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,15 +30,17 @@
 
 #if ENABLE(MATHML)
 
+#include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "NodeName.h"
 #include "RenderMathMLFraction.h"
+#include "RenderObjectInlines.h"
 #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(MathMLFractionElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MathMLFractionElement);
 
 using namespace MathMLNames;
 
@@ -86,17 +89,17 @@ MathMLFractionElement::FractionAlignment MathMLFractionElement::cachedFractionAl
         return alignment.value();
 
     if (document().settings().coreMathMLEnabled()) {
-        alignment = FractionAlignmentCenter;
+        alignment = FractionAlignment::Center;
         return alignment.value();
     }
 
     auto& value = attributeWithoutSynchronization(name);
     if (equalLettersIgnoringASCIICase(value, "left"_s))
-        alignment = FractionAlignmentLeft;
+        alignment = FractionAlignment::Left;
     else if (equalLettersIgnoringASCIICase(value, "right"_s))
-        alignment = FractionAlignmentRight;
+        alignment = FractionAlignment::Right;
     else
-        alignment = FractionAlignmentCenter;
+        alignment = FractionAlignment::Center;
     return alignment.value();
 }
 
@@ -112,27 +115,36 @@ MathMLFractionElement::FractionAlignment MathMLFractionElement::denominatorAlign
 
 void MathMLFractionElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
+    bool affectsLayout = false;
     switch (name.nodeName()) {
     case AttributeNames::linethicknessAttr:
         m_lineThickness = std::nullopt;
+        affectsLayout = true;
         break;
     case AttributeNames::numalignAttr:
         m_numeratorAlignment = std::nullopt;
+        affectsLayout = true;
         break;
     case AttributeNames::denomalignAttr:
         m_denominatorAlignment = std::nullopt;
+        affectsLayout = true;
         break;
     default:
         break;
     }
 
+    if (affectsLayout) {
+        if (CheckedPtr renderer = this->renderer())
+            renderer->setNeedsLayoutAndInvalidateContentLogicalWidths();
+    }
+
     MathMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-RenderPtr<RenderElement> MathMLFractionElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLFractionElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     ASSERT(hasTagName(MathMLNames::mfracTag));
-    return createRenderer<RenderMathMLFraction>(*this, WTFMove(style));
+    return createRenderer<RenderMathMLFraction>(*this, WTF::move(style));
 }
 
 }

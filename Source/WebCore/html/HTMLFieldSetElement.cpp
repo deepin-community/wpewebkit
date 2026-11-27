@@ -41,12 +41,12 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLFieldSetElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLFieldSetElement);
 
 using namespace HTMLNames;
 
-inline HTMLFieldSetElement::HTMLFieldSetElement(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
-    : HTMLFormControlElement(tagName, document, form)
+inline HTMLFieldSetElement::HTMLFieldSetElement(const QualifiedName& tagName, Document& document)
+    : HTMLFormControlElement(tagName, document)
 {
     ASSERT(hasTagName(fieldsetTag));
 }
@@ -57,20 +57,17 @@ HTMLFieldSetElement::~HTMLFieldSetElement()
         document().removeDisabledFieldsetElement();
 }
 
-Ref<HTMLFieldSetElement> HTMLFieldSetElement::create(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
+Ref<HTMLFieldSetElement> HTMLFieldSetElement::create(const QualifiedName& tagName, Document& document)
 {
-    return adoptRef(*new HTMLFieldSetElement(tagName, document, form));
+    return adoptRef(*new HTMLFieldSetElement(tagName, document));
 }
 
 bool HTMLFieldSetElement::isDisabledFormControl() const
 {
-    if (document().settings().sendMouseEventsToDisabledFormControlsEnabled()) {
-        // The fieldset element itself should never be considered disabled, it is
-        // only supposed to affect its descendants:
-        // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-disabled
-        return false;
-    }
-    return HTMLFormControlElement::isDisabledFormControl();
+    // The fieldset element itself should never be considered disabled, it is
+    // only supposed to affect its descendants:
+    // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-disabled
+    return false;
 }
 
 // https://html.spec.whatwg.org/#concept-element-disabled
@@ -90,11 +87,12 @@ static void updateFromControlElementsAncestorDisabledStateUnder(HTMLElement& sta
     it.dropAssertions();
 
     while (it != range.end()) {
-        if (auto* listedElement = it->asValidatedFormListedElement())
+        Ref element = *it;
+        if (RefPtr listedElement = element->asValidatedFormListedElement())
             listedElement->setDisabledByAncestorFieldset(isDisabled);
 
         // Don't call setDisabledByAncestorFieldset() on form controls inside disabled fieldsets.
-        if (is<HTMLFieldSetElement>(*it) && it->hasAttributeWithoutSynchronization(disabledAttr))
+        if (is<HTMLFieldSetElement>(element) && element->hasAttributeWithoutSynchronization(disabledAttr))
             it.traverseNextSkippingChildren();
         else
             it.traverseNext();
@@ -182,10 +180,10 @@ const AtomString& HTMLFieldSetElement::formControlType() const
     return fieldset;
 }
 
-RenderPtr<RenderElement> HTMLFieldSetElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLFieldSetElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
-    // Fieldsets should make a block flow if display: inline or table types are set.
-    return RenderElement::createFor(*this, WTFMove(style), { RenderElement::ConstructBlockLevelRendererFor::Inline, RenderElement::ConstructBlockLevelRendererFor::TableOrTablePart });
+    // Fieldsets should make a block flow if display: inline, table types, or deprecated flex types are set.
+    return RenderElement::createFor(*this, WTF::move(style), { RenderElement::ConstructBlockLevelRendererFor::Inline, RenderElement::ConstructBlockLevelRendererFor::TableOrTablePart, RenderElement::ConstructBlockLevelRendererFor::DeprecatedFlexBox });
 }
 
 HTMLLegendElement* HTMLFieldSetElement::legend() const
@@ -195,7 +193,7 @@ HTMLLegendElement* HTMLFieldSetElement::legend() const
 
 Ref<HTMLCollection> HTMLFieldSetElement::elements()
 {
-    return ensureRareData().ensureNodeLists().addCachedCollection<GenericCachedHTMLCollection<CollectionTypeTraits<CollectionType::FieldSetElements>::traversalType>>(*this, CollectionType::FieldSetElements);
+    return ensureRareData().ensureNodeLists().addCachedCollection<HTMLFieldSetElementsCollection>(*this);
 }
 
 void HTMLFieldSetElement::addInvalidDescendant(const HTMLElement& invalidFormControlElement)

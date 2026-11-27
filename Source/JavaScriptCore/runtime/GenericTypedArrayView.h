@@ -25,8 +25,10 @@
 
 #pragma once
 
-#include "ArrayBuffer.h"
-#include "ArrayBufferView.h"
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/ArrayBufferView.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -47,7 +49,10 @@ public:
     static RefPtr<GenericTypedArrayView> tryCreateUninitialized(size_t length);
     
     typename Adaptor::Type* data() const { return static_cast<typename Adaptor::Type*>(baseAddress()); }
-    
+
+    std::span<const typename Adaptor::Type> typedSpan() const { return unsafeMakeSpan(data(), length()); }
+    std::span<typename Adaptor::Type> typedMutableSpan() { return unsafeMakeSpan(data(), length()); }
+
     bool set(GenericTypedArrayView<Adaptor>* array, size_t offset)
     {
         return setImpl(array, offset * sizeof(typename Adaptor::Type));
@@ -117,4 +122,40 @@ private:
     GenericTypedArrayView(RefPtr<ArrayBuffer>&&, size_t byteOffset, std::optional<size_t> length);
 };
 
+template<typename Adaptor>
+GenericTypedArrayView<Adaptor>::GenericTypedArrayView(RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length)
+    : ArrayBufferView(Adaptor::typeValue, WTF::move(buffer), byteOffset, length ? std::optional { length.value() * sizeof(typename Adaptor::Type) } : std::nullopt)
+{
+#if ASSERT_ENABLED
+    if (length)
+        ASSERT((length.value() / sizeof(typename Adaptor::Type)) < std::numeric_limits<size_t>::max());
+#endif
+}
+
+template<typename Adaptor>
+RefPtr<GenericTypedArrayView<Adaptor>> GenericTypedArrayView<Adaptor>::tryCreate(RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length)
+{
+    if (!buffer)
+        return nullptr;
+
+    ASSERT(length || buffer->isResizableOrGrowableShared());
+
+    if (!ArrayBufferView::verifySubRangeLength(buffer->byteLength(), byteOffset, length.value_or(0), sizeof(typename Adaptor::Type)))
+        return nullptr;
+
+    if (!verifyByteOffsetAlignment(byteOffset, sizeof(typename Adaptor::Type)))
+        return nullptr;
+
+    return adoptRef(new GenericTypedArrayView(WTF::move(buffer), byteOffset, length));
+}
+
+template<typename Adaptor>
+Ref<GenericTypedArrayView<Adaptor>> GenericTypedArrayView<Adaptor>::create(Ref<ArrayBuffer>&& buffer)
+{
+    auto length = buffer->byteLength();
+    return adoptRef(*new GenericTypedArrayView(WTF::move(buffer), 0, length));
+}
+
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

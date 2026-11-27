@@ -36,55 +36,54 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebNavigationState);
 
-WebNavigationState::WebNavigationState()
+WebNavigationState::WebNavigationState(WebPageProxy& page)
+    : m_page(page)
 {
 }
 
-WebNavigationState::~WebNavigationState()
-{
-}
+WebNavigationState::~WebNavigationState() = default;
 
 Ref<API::Navigation> WebNavigationState::createLoadRequestNavigation(WebCore::ProcessIdentifier processID, ResourceRequest&& request, RefPtr<WebBackForwardListItem>&& currentItem)
 {
-    auto navigation = API::Navigation::create(processID, WTFMove(request), WTFMove(currentItem));
+    Ref navigation = API::Navigation::create(processID, WTF::move(request), WTF::move(currentItem));
 
-    m_navigations.set(navigation->navigationID(), navigation.ptr());
+    m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
 
-Ref<API::Navigation> WebNavigationState::createBackForwardNavigation(WebCore::ProcessIdentifier processID, Ref<WebBackForwardListItem>&& targetItem, RefPtr<WebBackForwardListItem>&& currentItem, FrameLoadType frameLoadType)
+Ref<API::Navigation> WebNavigationState::createBackForwardNavigation(WebCore::ProcessIdentifier processID, Ref<WebBackForwardListFrameItem>&& targetFrameItem, RefPtr<WebBackForwardListItem>&& currentItem, FrameLoadType frameLoadType)
 {
-    auto navigation = API::Navigation::create(processID, WTFMove(targetItem), WTFMove(currentItem), frameLoadType);
+    Ref navigation = API::Navigation::create(processID, WTF::move(targetFrameItem), WTF::move(currentItem), frameLoadType);
 
-    m_navigations.set(navigation->navigationID(), navigation.ptr());
+    m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
 
 Ref<API::Navigation> WebNavigationState::createReloadNavigation(WebCore::ProcessIdentifier processID, RefPtr<WebBackForwardListItem>&& currentAndTargetItem)
 {
-    auto navigation = API::Navigation::create(processID, WTFMove(currentAndTargetItem));
+    Ref navigation = API::Navigation::create(processID, WTF::move(currentAndTargetItem));
 
-    m_navigations.set(navigation->navigationID(), navigation.ptr());
+    m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
 
 Ref<API::Navigation> WebNavigationState::createLoadDataNavigation(WebCore::ProcessIdentifier processID, std::unique_ptr<API::SubstituteData>&& substituteData)
 {
-    auto navigation = API::Navigation::create(processID, WTFMove(substituteData));
+    Ref navigation = API::Navigation::create(processID, WTF::move(substituteData));
 
-    m_navigations.set(navigation->navigationID(), navigation.ptr());
+    m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
 
 Ref<API::Navigation> WebNavigationState::createSimulatedLoadWithDataNavigation(WebCore::ProcessIdentifier processID, WebCore::ResourceRequest&& request, std::unique_ptr<API::SubstituteData>&& substituteData, RefPtr<WebBackForwardListItem>&& currentItem)
 {
-    auto navigation = API::Navigation::create(processID, WTFMove(request), WTFMove(substituteData), WTFMove(currentItem));
+    Ref navigation = API::Navigation::create(processID, WTF::move(request), WTF::move(substituteData), WTF::move(currentItem));
 
-    m_navigations.set(navigation->navigationID(), navigation.ptr());
+    m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
@@ -122,6 +121,16 @@ void WebNavigationState::clearNavigationsFromProcess(WebCore::ProcessIdentifier 
     }
     for (auto navigationID : navigationIDsToRemove)
         m_navigations.remove(navigationID);
+}
+
+void WebNavigationState::ref() const
+{
+    m_page->ref();
+}
+
+void WebNavigationState::deref() const
+{
+    m_page->deref();
 }
 
 } // namespace WebKit

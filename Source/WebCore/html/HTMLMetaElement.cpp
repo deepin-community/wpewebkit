@@ -25,11 +25,13 @@
 #include "HTMLMetaElement.h"
 
 #include "Attribute.h"
-#include "CSSParser.h"
+#include "CSSPropertyParserConsumer+Color.h"
 #include "Color.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLHeadElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
@@ -40,14 +42,14 @@
 #include "MediaQueryParserContext.h"
 #include "NodeName.h"
 #include "Quirks.h"
-#include "RenderStyle.h"
 #include "Settings.h"
+#include "StyleComputedStyle.h"
 #include "StyleResolveForDocument.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLMetaElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLMetaElement);
 
 using namespace HTMLNames;
 
@@ -76,31 +78,27 @@ static bool isNameColorScheme(const AtomString& nameValue)
 
 bool HTMLMetaElement::mediaAttributeMatches()
 {
-    auto& document = this->document();
+    Ref document = this->document();
 
     if (!m_mediaQueryList) {
         auto mediaText = attributeWithoutSynchronization(mediaAttr).convertToASCIILowercase();
-        m_mediaQueryList = MQ::MediaQueryParser::parse(mediaText, { document });
+        m_mediaQueryList = MQ::MediaQueryParser::parse(mediaText, document->cssParserContext());
     }
 
-    std::optional<RenderStyle> documentStyle;
-    if (document.hasLivingRenderTree())
-        documentStyle = Style::resolveForDocument(document);
-
     AtomString mediaType;
-    if (auto* frame = document.frame()) {
-        if (auto* frameView = frame->view())
+    if (RefPtr frame = document->frame()) {
+        if (RefPtr frameView = frame->view())
             mediaType = frameView->mediaType();
     }
 
-    auto evaluator = MQ::MediaQueryEvaluator { mediaType, document, documentStyle ? &*documentStyle : nullptr };
+    auto evaluator = MQ::MediaQueryEvaluator { mediaType, document };
     return evaluator.evaluate(*m_mediaQueryList);
 }
 
 const Color& HTMLMetaElement::contentColor()
 {
     if (!m_contentColor)
-        m_contentColor = CSSParser::parseColorWithoutContext(content());
+        m_contentColor = CSSPropertyParserHelpers::deprecatedParseColorRawWithoutContext(content());
     return *m_contentColor;
 }
 
@@ -113,7 +111,7 @@ void HTMLMetaElement::attributeChanged(const QualifiedName& name, const AtomStri
         process(oldValue);
         if (isInDocumentTree()) {
             if (equalLettersIgnoringASCIICase(oldValue, "theme-color"_s) && !equalLettersIgnoringASCIICase(newValue, "theme-color"_s))
-                document().metaElementThemeColorChanged(*this);
+                protect(document())->metaElementThemeColorChanged(*this);
         }
         break;
     case AttributeNames::contentAttr:
@@ -132,28 +130,28 @@ void HTMLMetaElement::attributeChanged(const QualifiedName& name, const AtomStri
     }
 }
 
-Node::InsertedIntoAncestorResult HTMLMetaElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLMetaElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
-    return InsertedIntoAncestorResult::Done;
+        return NeedsPostConnectionSteps::Yes;
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLMetaElement::didFinishInsertingNode()
+void HTMLMetaElement::postConnectionSteps()
 {
     process();
 }
 
-void HTMLMetaElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLMetaElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 
     if (removalType.disconnectedFromDocument && equalLettersIgnoringASCIICase(name(), "theme-color"_s))
-        oldParentOfRemovedTree.document().metaElementThemeColorChanged(*this);
+        protect(oldParentOfRemovedTree.document())->metaElementThemeColorChanged(*this);
 #if ENABLE(DARK_MODE_CSS)
     else if (removalType.disconnectedFromDocument && isNameColorScheme(name()))
-        oldParentOfRemovedTree.document().metaElementColorSchemeChanged();
+        protect(oldParentOfRemovedTree.document())->metaElementColorSchemeChanged();
 #endif
 }
 
@@ -164,9 +162,10 @@ void HTMLMetaElement::process(const AtomString& oldValue)
         return;
 
     const AtomString& nameValue = attributeWithoutSynchronization(nameAttr);
+    Ref document = this->document();
 #if ENABLE(DARK_MODE_CSS)
     if (isNameColorScheme(nameValue) || (!oldValue.isNull() && isNameColorScheme(oldValue)))
-        document().metaElementColorSchemeChanged();
+        document->metaElementColorSchemeChanged();
 #else
     UNUSED_PARAM(oldValue);
 #endif
@@ -182,27 +181,27 @@ void HTMLMetaElement::process(const AtomString& oldValue)
     // tree (changing a meta tag while it's not in the tree shouldn't have any effect
     // on the document)
     if (!httpEquivValue.isNull())
-        document().processMetaHttpEquiv(httpEquivValue, contentValue, isDescendantOf(document().head()));
+        document->processMetaHttpEquiv(httpEquivValue, contentValue, isDescendantOf(document->head()));
     
     if (nameValue.isNull())
         return;
 
     if (equalLettersIgnoringASCIICase(nameValue, "viewport"_s))
-        document().processViewport(contentValue, ViewportArguments::Type::ViewportMeta);
-    else if (document().settings().disabledAdaptationsMetaTagEnabled() && equalLettersIgnoringASCIICase(nameValue, "disabled-adaptations"_s))
-        document().processDisabledAdaptations(contentValue);
+        document->processViewport(contentValue, ViewportArguments::Type::ViewportMeta);
+    else if (document->settings().disabledAdaptationsMetaTagEnabled() && equalLettersIgnoringASCIICase(nameValue, "disabled-adaptations"_s))
+        document->processDisabledAdaptations(contentValue);
     else if (equalLettersIgnoringASCIICase(nameValue, "theme-color"_s))
-        document().metaElementThemeColorChanged(*this);
+        document->metaElementThemeColorChanged(*this);
 #if PLATFORM(IOS_FAMILY)
     else if (equalLettersIgnoringASCIICase(nameValue, "format-detection"_s))
-        document().processFormatDetection(contentValue);
+        document->processFormatDetection(contentValue);
     else if (equalLettersIgnoringASCIICase(nameValue, "apple-mobile-web-app-orientations"_s))
-        document().processWebAppOrientations();
+        document->processWebAppOrientations();
 #endif
     else if (equalLettersIgnoringASCIICase(nameValue, "referrer"_s))
-        document().processReferrerPolicy(contentValue, ReferrerPolicySource::MetaTag);
+        document->processReferrerPolicy(contentValue, ReferrerPolicySource::MetaTag);
     else if (equalLettersIgnoringASCIICase(nameValue, "confluence-request-time"_s))
-        document().quirks().setNeedsToCopyUserSelectNoneQuirk();
+        document->quirks().setNeedsToCopyUserSelectNoneQuirk();
 }
 
 const AtomString& HTMLMetaElement::content() const

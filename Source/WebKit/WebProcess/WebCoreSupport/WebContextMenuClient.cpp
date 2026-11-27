@@ -30,9 +30,12 @@
 
 #include "WebContextMenu.h"
 #include "WebPage.h"
+#include <WebCore/DocumentPage.h>
 #include <WebCore/Editor.h>
+#include <WebCore/FrameInlines.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/Page.h>
 #include <WebCore/UserGestureIndicator.h>
@@ -46,7 +49,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebContextMenuClient);
 void WebContextMenuClient::downloadURL(const URL&)
 {
     // This is handled in the UI process.
-    ASSERT_NOT_REACHED();
 }
 
 #if !PLATFORM(COCOA)
@@ -95,7 +97,7 @@ void WebContextMenuClient::stopSpeaking()
 
 void WebContextMenuClient::showContextMenu()
 {
-    m_page->contextMenu().show();
+    protect(protect(m_page.get())->contextMenu())->show();
 }
 
 #endif

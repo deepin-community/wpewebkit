@@ -35,15 +35,6 @@
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakPtr.h>
 
-namespace WebKit {
-class BackgroundFetchLoad;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::BackgroundFetchLoad> : std::true_type { };
-}
-
 namespace WebCore {
 class ResourceRequest;
 struct BackgroundFetchRequest;
@@ -56,14 +47,26 @@ namespace WebKit {
 class NetworkLoadChecker;
 class NetworkProcess;
 
-class BackgroundFetchLoad final : public WebCore::BackgroundFetchRecordLoader, public NetworkDataTaskClient {
+class BackgroundFetchLoad final : public RefCounted<BackgroundFetchLoad>, public WebCore::BackgroundFetchRecordLoader, public NetworkDataTaskClient {
     WTF_MAKE_TZONE_ALLOCATED(BackgroundFetchLoad);
 public:
-    BackgroundFetchLoad(NetworkProcess&, PAL::SessionID, WebCore::BackgroundFetchRecordLoaderClient&, const WebCore::BackgroundFetchRequest&, size_t responseDataSize, const WebCore::ClientOrigin&);
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    static Ref<BackgroundFetchLoad> create(NetworkProcess& networkProcess, PAL::SessionID sessionID,
+        WebCore::BackgroundFetchRecordLoaderClient& backgroundFetchRecordLoaderClient,
+        const WebCore::BackgroundFetchRequest& backgroundFetchRequest, size_t responseDataSize,
+        const WebCore::ClientOrigin& clientOrigin)
+    {
+        return adoptRef(*new BackgroundFetchLoad(networkProcess, sessionID, backgroundFetchRecordLoaderClient, backgroundFetchRequest, responseDataSize, clientOrigin));
+    }
+
     ~BackgroundFetchLoad();
 
 private:
-    const URL& currentURL() const;
+    BackgroundFetchLoad(NetworkProcess&, PAL::SessionID, WebCore::BackgroundFetchRecordLoaderClient&, const WebCore::BackgroundFetchRequest&, size_t responseDataSize, const WebCore::ClientOrigin&);
+
+    const URL& NODELETE currentURL() const;
 
     // NetworkDataTaskClient
     void willPerformHTTPRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, RedirectCompletionHandler&&) final;
@@ -87,10 +90,9 @@ private:
     PAL::SessionID m_sessionID;
     WeakPtr<WebCore::BackgroundFetchRecordLoaderClient> m_client;
     WebCore::ResourceRequest m_request;
-    NetworkResourceLoadParameters m_parameters;
     RefPtr<NetworkDataTask> m_task;
-    UniqueRef<NetworkLoadChecker> m_networkLoadChecker;
-    Vector<RefPtr<WebCore::BlobDataFileReference>> m_blobFiles;
+    const Ref<NetworkLoadChecker> m_networkLoadChecker;
+    Vector<Ref<WebCore::BlobDataFileReference>> m_blobFiles;
 };
 
 }

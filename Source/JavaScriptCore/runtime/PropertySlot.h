@@ -20,18 +20,21 @@
 
 #pragma once
 
-#include "DOMAnnotation.h"
-#include "DisallowVMEntry.h"
-#include "GetVM.h"
-#include "JSCJSValue.h"
-#include "PropertyName.h"
-#include "PropertyOffset.h"
-#include "ScopeOffset.h"
+#include <JavaScriptCore/DOMAnnotation.h>
+#include <JavaScriptCore/DisallowVMEntry.h>
+#include <JavaScriptCore/GetVM.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCPtrTag.h>
+#include <JavaScriptCore/PropertyName.h>
+#include <JavaScriptCore/PropertyOffset.h>
+#include <JavaScriptCore/ScopeOffset.h>
+#include <JavaScriptCore/Watchpoint.h>
 #include <wtf/Assertions.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/FunctionPtr.h>
 
 namespace JSC {
+
 class GetterSetter;
 class JSObject;
 class JSModuleEnvironment;
@@ -62,10 +65,14 @@ enum class PropertyAttribute : unsigned {
     DOMAttribute      = 1 << 14, // property is a simple DOM attribute - only used by static hashtables
     DOMJITAttribute   = 1 << 15, // property is a DOM JIT attribute - only used by static hashtables
     DOMJITFunction    = 1 << 16, // property is a DOM JIT function - only used by static hashtables
+
+    LastAttribute = DOMJITFunction,
+
     BuiltinOrFunction = Builtin | Function, // helper only used by static hashtables
     BuiltinOrFunctionOrLazyProperty = Builtin | Function | CellProperty | ClassStructure | PropertyCallback, // helper only used by static hashtables
     BuiltinOrFunctionOrAccessorOrLazyProperty = Builtin | Function | Accessor | CellProperty | ClassStructure | PropertyCallback, // helper only used by static hashtables
     BuiltinOrFunctionOrAccessorOrLazyPropertyOrConstant = Builtin | Function | Accessor | CellProperty | ClassStructure | PropertyCallback | ConstantInteger // helper only used by static hashtables
+
 };
 
 static constexpr unsigned operator| (PropertyAttribute a, PropertyAttribute b) { return static_cast<unsigned>(a) | static_cast<unsigned>(b); }
@@ -132,7 +139,7 @@ public:
 
     JSValue getValue(JSGlobalObject*, PropertyName) const;
     JSValue getValue(JSGlobalObject*, uint64_t propertyName) const;
-    JSValue getPureResult() const;
+    JSValue NODELETE getPureResult() const;
 
     bool isCacheable() const { return isUnset() || m_cacheability == CachingAllowed; }
     bool isUnset() const { return m_propertyType == TypeUnset; }
@@ -265,9 +272,9 @@ public:
         ASSERT(attributes == attributesForStructure(attributes));
         
         ASSERT(getValue);
-        assertIsTaggedWith<GetValueFuncPtrTag>(bitwise_cast<void*>(getValue));
+        assertIsTaggedWith<GetValueFuncPtrTag>(std::bit_cast<void*>(getValue));
         m_data.custom.getValue = getValue;
-        assertIsNullOrTaggedWith<PutValueFuncPtrTag>(bitwise_cast<void*>(putValue));
+        assertIsNullOrTaggedWith<PutValueFuncPtrTag>(std::bit_cast<void*>(putValue));
         m_data.custom.putValue = putValue;
         m_attributes = attributes;
 

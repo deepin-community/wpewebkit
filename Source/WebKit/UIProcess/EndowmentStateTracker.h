@@ -27,31 +27,27 @@
 
 #if PLATFORM(IOS_FAMILY)
 
+#import <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#import <wtf/Forward.h>
+#import <wtf/HashSet.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakHashSet.h>
 
-OBJC_CLASS NSSet;
+OBJC_CLASS RBSProcessHandle;
 OBJC_CLASS RBSProcessMonitor;
-
-namespace WebKit {
-class EndowmentStateTrackerClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::EndowmentStateTrackerClient> : std::true_type { };
-}
+OBJC_CLASS RBSProcessState;
 
 namespace WebKit {
 
 class WebPageProxy;
 
-class EndowmentStateTrackerClient : public CanMakeWeakPtr<EndowmentStateTrackerClient> {
+class EndowmentStateTrackerClient : public AbstractRefCountedAndCanMakeWeakPtr<EndowmentStateTrackerClient> {
 public:
     virtual ~EndowmentStateTrackerClient() = default;
     virtual void isUserFacingChanged(bool) { }
     virtual void isVisibleChanged(bool) { }
+    virtual void visibilityEndowmentEnvironmentsChanged(const HashSet<String>&) { }
 };
 
 class EndowmentStateTracker {
@@ -61,11 +57,16 @@ public:
 
     bool isVisible() const { return ensureState().isVisible; }
     bool isUserFacing() const { return ensureState().isUserFacing; }
+    const HashSet<String>& visibilityEndowmentEnvironments() const { return ensureState().visibilityEnvironments; }
 
     void addClient(EndowmentStateTrackerClient&);
     void removeClient(EndowmentStateTrackerClient&);
 
     static bool isApplicationForeground(pid_t);
+
+#if ENABLE(ENDOWMENT_BASED_APPLICATION_STATE_TRACKING)
+    void setStateForTesting(bool isUserFacing, bool isVisible);
+#endif
 
 private:
     friend class NeverDestroyed<EndowmentStateTracker>;
@@ -74,10 +75,12 @@ private:
     void registerMonitorIfNecessary();
 
     struct State {
-        bool isUserFacing;
-        bool isVisible;
+        bool isUserFacing { false };
+        bool isVisible { false };
+        HashSet<String> visibilityEnvironments;
     };
-    static State stateFromEndowments(NSSet *endowments);
+    static State stateFromProcessState(RBSProcessState *);
+    static State stateForHandle(RBSProcessHandle *);
     const State& ensureState() const;
     void setState(State&&);
 

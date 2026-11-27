@@ -26,6 +26,7 @@
 #include "config.h"
 #include "SplitTextNodeContainingElementCommand.h"
 
+#include "ContainerNodeInlines.h"
 #include "Element.h"
 #include "ElementInlines.h"
 #include "RenderElement.h"
@@ -36,7 +37,7 @@ namespace WebCore {
 
 SplitTextNodeContainingElementCommand::SplitTextNodeContainingElementCommand(Ref<Text>&& text, int offset)
     : CompositeEditCommand(text->document())
-    , m_text(WTFMove(text))
+    , m_text(WTF::move(text))
     , m_offset(offset)
 {
     ASSERT(m_text->length() > 0);
@@ -49,12 +50,16 @@ void SplitTextNodeContainingElementCommand::doApply()
     splitTextNode(m_text, m_offset);
 
     RefPtr parent = m_text->parentElement();
-    if (!parent || !parent->parentElement() || !parent->parentElement()->hasEditableStyle())
+    if (!parent)
+        return;
+
+    RefPtr parentParent = parent->parentElement();
+    if (!parentParent || !parentParent->hasEditableStyle())
         return;
 
     bool parentRendererIsNoneOrNotInline = false;
     {
-        CheckedPtr parentRenderer = parent->renderer();
+        auto* parentRenderer = parent->renderer();
         parentRendererIsNoneOrNotInline = !parentRenderer || !parentRenderer->isInline();
     }
     if (parentRendererIsNoneOrNotInline) {
@@ -62,7 +67,7 @@ void SplitTextNodeContainingElementCommand::doApply()
         RefPtr firstChild = parent->firstChild();
         if (!is<Element>(firstChild))
             return;
-        parent = downcast<Element>(WTFMove(firstChild));
+        parent = downcast<Element>(WTF::move(firstChild));
     }
 
     splitElement(*parent, m_text);

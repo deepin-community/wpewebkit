@@ -34,10 +34,12 @@
 
 #include "BaseButtonInputType.h"
 #include "IntPoint.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class ImageInputType final : public BaseButtonInputType {
+    WTF_MAKE_TZONE_ALLOCATED(ImageInputType);
 public:
     static Ref<ImageInputType> create(HTMLInputElement& element)
     {
@@ -50,7 +52,7 @@ private:
     const AtomString& formControlType() const final;
     bool isFormDataAppendable() const final;
     bool appendFormData(DOMFormData&) const final;
-    RenderPtr<RenderElement> createInputRenderer(RenderStyle&&) final;
+    RenderPtr<RenderElement> createInputRenderer(Style::ComputedStyle&&) final;
     void handleDOMActivateEvent(Event&) final;
     void attributeChanged(const QualifiedName&) final;
     void attach() final;

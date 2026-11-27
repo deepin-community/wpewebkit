@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -81,26 +81,26 @@ void HTMLFormattingElementList::swapTo(Ref<Element> oldElement, HTMLStackItem&& 
     ASSERT(!contains(newItem.element()));
     if (!bookmark.hasBeenMoved()) {
         ASSERT(&bookmark.mark().element() == oldElement.ptr());
-        bookmark.mark().replaceElement(WTFMove(newItem));
+        bookmark.mark().replaceElement(WTF::move(newItem));
         return;
     }
     size_t index = &bookmark.mark() - &first();
     ASSERT_WITH_SECURITY_IMPLICATION(index <= size());
-    m_entries.insert(index, WTFMove(newItem));
+    m_entries.insert(index, WTF::move(newItem));
     remove(oldElement);
 }
 
 void HTMLFormattingElementList::append(HTMLStackItem&& item)
 {
     ensureNoahsArkCondition(item);
-    m_entries.append(WTFMove(item));
+    m_entries.append(WTF::move(item));
 }
 
 void HTMLFormattingElementList::remove(Element& element)
 {
     size_t index = m_entries.reverseFind(&element);
     if (index != notFound)
-        m_entries.remove(index);
+        m_entries.removeAt(index);
 }
 
 void HTMLFormattingElementList::removeUpdatingBookmark(Element& element, Bookmark& bookmark)
@@ -109,11 +109,13 @@ void HTMLFormattingElementList::removeUpdatingBookmark(Element& element, Bookmar
     if (index != notFound) {
         size_t bookmarkIndex = &bookmark.mark() - &first();
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(bookmarkIndex <= size());
-        m_entries.remove(index);
+        m_entries.removeAt(index);
         // Removing an element from the list can change the position of the bookmarked
         // item. Update the address pointed by the bookmark, when needed.
-        if (bookmarkIndex > index)
-            bookmark.m_mark--;
+        if (bookmarkIndex > index) {
+            auto span = m_entries.mutableSpan();
+            bookmark.m_mark = span.subspan(bookmark.m_mark - span.data() - 1).data();
+        }
     }
 }
 
@@ -133,7 +135,7 @@ void HTMLFormattingElementList::clearToLastMarker()
     }
 }
 
-static bool itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
+static bool NODELETE itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
 {
     if (a.elementName() != b.elementName())
         return false;
@@ -208,7 +210,7 @@ void HTMLFormattingElementList::ensureNoahsArkCondition(HTMLStackItem& newItem)
     // however, that we will spin the loop more than once because of how the
     // formatting element list gets permuted.
     for (size_t i = kNoahsArkCapacity - 1; i < candidates.size(); ++i)
-        remove(candidates[i]->protectedElement());
+        remove(protect(candidates[i]->element()));
 }
 
 #if ENABLE(TREE_DEBUGGING)

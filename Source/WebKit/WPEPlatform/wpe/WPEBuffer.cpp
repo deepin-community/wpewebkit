@@ -26,17 +26,36 @@
 #include "config.h"
 #include "WPEBuffer.h"
 
+#include "WPEBufferPrivate.h"
+#include <wtf/StdLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GSpanExtras.h>
+#include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/unix/UnixFileDescriptor.h>
 
 /**
  * WPEBuffer:
  *
+ * A buffer to be rendered on a [class@View].
+ *
+ * [class@Buffer] is an abstract class that represents a buffer produced by the
+ * web engine and handed to a [class@View] for display through
+ * [method@View.render_buffer]. The WPE platform library provides three
+ * concrete implementations: [class@BufferDMABuf], [class@BufferSHM] and
+ * #WPEBufferAndroid.
+ *
+ * [class@Buffer] offers helpers to import a buffer's contents as an EGL image
+ * with [method@Buffer.import_to_egl_image] or as pixels in memory with
+ * [method@Buffer.import_to_pixels], as well as rendering and release
+ * fences for use when the display supports explicit sync.
  */
 struct _WPEBufferPrivate {
-    GRefPtr<WPEView> view;
+    GWeakPtr<WPEDisplay> display;
     int width;
     int height;
+    UnixFileDescriptor renderingFence;
+    UnixFileDescriptor releaseFence;
 
     struct {
         gpointer data;
@@ -58,22 +77,22 @@ G_DEFINE_QUARK(wpe-buffer-error-quark, wpe_buffer_error)
 enum {
     PROP_0,
 
-    PROP_VIEW,
+    PROP_DISPLAY,
     PROP_WIDTH,
     PROP_HEIGHT,
 
     N_PROPERTIES
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 static void wpeBufferSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {
     auto* buffer = WPE_BUFFER(object);
 
     switch (propId) {
-    case PROP_VIEW:
-        buffer->priv->view = WPE_VIEW(g_value_get_object(value));
+    case PROP_DISPLAY:
+        buffer->priv->display.reset(WPE_DISPLAY(g_value_get_object(value)));
         break;
     case PROP_WIDTH:
         buffer->priv->width = g_value_get_int(value);
@@ -91,8 +110,8 @@ static void wpeBufferGetProperty(GObject* object, guint propId, GValue* value, G
     auto* buffer = WPE_BUFFER(object);
 
     switch (propId) {
-    case PROP_VIEW:
-        g_value_set_object(value, wpe_buffer_get_view(buffer));
+    case PROP_DISPLAY:
+        g_value_set_object(value, wpe_buffer_get_display(buffer));
         break;
     case PROP_WIDTH:
         g_value_set_int(value, wpe_buffer_get_width(buffer));
@@ -120,15 +139,15 @@ static void wpe_buffer_class_init(WPEBufferClass* bufferClass)
     objectClass->dispose = wpeBufferDispose;
 
     /**
-     * WPEBuffer:view:
+     * WPEBuffer:display:
      *
-     * The #WPEView of the buffer.
+     * The #WPEDisplay of the buffer.
      */
-    sObjProperties[PROP_VIEW] =
+    sObjProperties[PROP_DISPLAY] =
         g_param_spec_object(
-            "view",
+            "display",
             nullptr, nullptr,
-            WPE_TYPE_VIEW,
+            WPE_TYPE_DISPLAY,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
     /**
@@ -155,22 +174,22 @@ static void wpe_buffer_class_init(WPEBufferClass* bufferClass)
             0, G_MAXINT, 0,
             static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 }
 
 /**
- * wpe_buffer_get_view:
+ * wpe_buffer_get_display:
  * @buffer: a #WPEBuffer
  *
- * Get the #WPEView of @buffer
+ * Get the #WPEDisplay of @buffer
  *
- * Returns: (transfer none): a #WPEView
+ * Returns: (transfer none) (nullable): a #WPEDisplay or %NULL
  */
-WPEView* wpe_buffer_get_view(WPEBuffer* buffer)
+WPEDisplay* wpe_buffer_get_display(WPEBuffer* buffer)
 {
     g_return_val_if_fail(WPE_IS_BUFFER(buffer), nullptr);
 
-    return buffer->priv->view.get();
+    return buffer->priv->display.get();
 }
 
 /**
@@ -231,7 +250,7 @@ void wpe_buffer_set_user_data(WPEBuffer* buffer, gpointer userData, GDestroyNoti
  * wpe_buffer_get_user_data:
  * @buffer: a #WPEBuffer
  *
- * Get user data previously set with wpe_buffer_set_user_data.
+ * Get user data previously set with wpe_buffer_set_user_data().
  *
  * Returns: (nullable): the @buffer user data, or %NULL
  */
@@ -247,7 +266,7 @@ gpointer wpe_buffer_get_user_data(WPEBuffer* buffer)
  * @buffer: a #WPEBuffer
  * @error: return location for error or %NULL to ignore
  *
- * Import @buffer into a EGL image.
+ * Import @buffer into an EGL image.
  *
  * Returns: (transfer none): an EGL image, or %NULL in case of error
  */
@@ -263,12 +282,28 @@ gpointer wpe_buffer_import_to_egl_image(WPEBuffer* buffer, GError** error)
     return wpeBufferClass->import_to_egl_image(buffer, error);
 }
 
+GRefPtr<GBytes> wpeBufferCopyPixelsWithoutRowPadding(std::span<const uint8_t> pixels, size_t width, size_t height, size_t stride)
+{
+    auto rowSize = width * 4;
+    if (!height || stride < rowSize || pixels.size() < stride * (height - 1) + rowSize)
+        return nullptr;
+
+    auto data = GMallocSpan<uint8_t>::malloc(rowSize * height);
+    for (size_t y = 0; y < height; ++y)
+        memcpySpan(data.mutableSpan().subspan(y * rowSize, rowSize), pixels.subspan(y * stride, rowSize));
+    auto bytes = data.leakSpan();
+    return adoptGRef(g_bytes_new_take(bytes.data(), bytes.size()));
+}
+
 /**
  * wpe_buffer_import_to_pixels:
  * @buffer: a #WPEBuffer
  * @error: return location for error or %NULL to ignore
  *
- * Import @buffer into a pixels buffer.
+ * Import @buffer into a pixels buffer. The rows of the returned data are not padded, so
+ * each row is the @buffer width multiplied by 4 bytes. The returned data is owned by the
+ * @buffer and it might not be a copy, so if you are not going to use it immediately or need
+ * to modify the data, you should make a copy.
  *
  * Returns: (transfer none): a #GBytes with the pixels data, or %NULL in case of error
  */
@@ -282,4 +317,103 @@ GBytes* wpe_buffer_import_to_pixels(WPEBuffer* buffer, GError** error)
         return nullptr;
     }
     return wpeBufferClass->import_to_pixels(buffer, error);
+}
+
+/**
+ * wpe_buffer_set_rendering_fence:
+ * @buffer: a #WPEBuffer
+ * @fd: a file descriptor, or -1
+ *
+ * Set the rendering fence file descriptor to use for the @buffer. The fence
+ * will be used to wait before rendering the buffer when the display supports
+ * explicit sync, see wpe_display_use_explicit_sync().
+ * The buffer takes the ownership of the file descriptor.
+ */
+void wpe_buffer_set_rendering_fence(WPEBuffer* buffer, int fd)
+{
+    g_return_if_fail(WPE_IS_BUFFER(buffer));
+
+    if (buffer->priv->renderingFence.value() == fd)
+        return;
+
+    buffer->priv->renderingFence = UnixFileDescriptor { fd, UnixFileDescriptor::Adopt };
+}
+
+/**
+ * wpe_buffer_get_rendering_fence:
+ * @buffer: a #WPEBuffer
+ *
+ * Get the rendering fence file descriptor of @buffer.
+ *
+ * Returns: a file descriptor, or -1
+ */
+int wpe_buffer_get_rendering_fence(WPEBuffer* buffer)
+{
+    g_return_val_if_fail(WPE_IS_BUFFER(buffer), -1);
+
+    return buffer->priv->renderingFence.value();
+}
+
+/**
+ * wpe_buffer_take_rendering_fence:
+ * @buffer: a #WPEBuffer
+ *
+ * Get the rendering fence file descriptor of @buffer and set it to -1.
+ *
+ * Returns: a file descriptor, or -1
+ */
+int wpe_buffer_take_rendering_fence(WPEBuffer* buffer)
+{
+    g_return_val_if_fail(WPE_IS_BUFFER(buffer), -1);
+
+    return buffer->priv->renderingFence.release();
+}
+
+ /**
+ * wpe_buffer_set_release_fence:
+ * @buffer: a #WPEBuffer
+ * @fd: a file descriptor, or -1
+ *
+ * Set the release fence file descriptor to use for the @buffer. The fence
+ * will be used to wait before releasing the buffer to be destroyed or reused.
+ * The buffer takes the ownership of the file descriptor.
+ */
+void wpe_buffer_set_release_fence(WPEBuffer* buffer, int fd)
+{
+    g_return_if_fail(WPE_IS_BUFFER(buffer));
+
+    if (buffer->priv->releaseFence.value() == fd)
+        return;
+
+    buffer->priv->releaseFence = UnixFileDescriptor { fd, UnixFileDescriptor::Adopt };
+}
+
+/**
+ * wpe_buffer_get_release_fence:
+ * @buffer: a #WPEBuffer
+ *
+ * Get the release fence file descriptor of @buffer.
+ *
+ * Returns: a file descriptor, or -1
+ */
+int wpe_buffer_get_release_fence(WPEBuffer* buffer)
+{
+    g_return_val_if_fail(WPE_IS_BUFFER(buffer), -1);
+
+    return buffer->priv->releaseFence.value();
+}
+
+/**
+ * wpe_buffer_take_release_fence:
+ * @buffer: a #WPEBuffer
+ *
+ * Get the release fence file descriptor of @buffer and set it to -1.
+ *
+ * Returns: a file descriptor, or -1
+ */
+int wpe_buffer_take_release_fence(WPEBuffer* buffer)
+{
+    g_return_val_if_fail(WPE_IS_BUFFER(buffer), -1);
+
+    return buffer->priv->releaseFence.release();
 }

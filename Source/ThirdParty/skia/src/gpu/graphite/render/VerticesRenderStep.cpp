@@ -7,14 +7,29 @@
 
 #include "src/gpu/graphite/render/VerticesRenderStep.h"
 
+#include "include/core/SkColor.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkVertices.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkSLTypeShared.h"
 #include "src/core/SkVertState.h"
 #include "src/core/SkVerticesPriv.h"
+#include "src/gpu/BufferWriter.h"
+#include "src/gpu/graphite/Attribute.h"
+#include "src/gpu/graphite/DrawOrder.h"
 #include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/DrawTypes.h"
 #include "src/gpu/graphite/DrawWriter.h"
 #include "src/gpu/graphite/PipelineData.h"
+#include "src/gpu/graphite/geom/Geometry.h"
+#include "src/gpu/graphite/geom/Transform.h"
 #include "src/gpu/graphite/render/CommonDepthStencilSettings.h"
+
+#include <cstdint>
 
 namespace skgpu::graphite {
 
@@ -27,7 +42,7 @@ static constexpr Attribute kTexCoordAttr =
 static constexpr Attribute kColorAttr =
         {"vertColor", VertexAttribType::kUByte4_norm, SkSLType::kHalf4};
 static constexpr Attribute kSsboIndexAttr =
-        {"ssboIndices", VertexAttribType::kUShort2, SkSLType::kUShort2};
+        {"ssboIndex", VertexAttribType::kUInt, SkSLType::kUInt};
 
 static constexpr Attribute kAttributePositionOnly[] =
         {kPositionAttr, kSsboIndexAttr};
@@ -53,68 +68,69 @@ static constexpr SkSpan<const Varying> kVaryings[2] = {
         /*color*/ kVaryingColor
     };
 
-std::string variant_name(PrimitiveType type, bool hasColor, bool hasTexCoords) {
-    SkASSERT(type == PrimitiveType::kTriangles || type == PrimitiveType::kTriangleStrip);
-    std::string name = (type == PrimitiveType::kTriangles ? "tris" : "tristrips");
+RenderStep::RenderStepID variant_id(bool hasColor, bool hasTexCoords) {
     if (hasColor) {
-        name += "-color";
+        if (hasTexCoords) {
+            return RenderStep::RenderStepID::kVertices_PosColorTexCoords;
+        } else {
+            return RenderStep::RenderStepID::kVertices_PosColor;
+        }
+    } else {
+        if (hasTexCoords) {
+            return RenderStep::RenderStepID::kVertices_PosTexCoords;
+        } else {
+            return RenderStep::RenderStepID::kVertices_Pos;
+        }
     }
-    if (hasTexCoords) {
-        name += "-texCoords";
-    }
-    return name;
 }
 
 }  // namespace
 
-VerticesRenderStep::VerticesRenderStep(PrimitiveType type, bool hasColor, bool hasTexCoords)
-        : RenderStep("VerticesRenderStep",
-                     variant_name(type, hasColor, hasTexCoords),
-                     hasColor ? Flags::kEmitsPrimitiveColor | Flags::kPerformsShading
-                              : Flags::kPerformsShading,
+VerticesRenderStep::VerticesRenderStep(Layout layout, bool hasColor, bool hasTexCoords)
+        : RenderStep(layout,
+                     variant_id(hasColor, hasTexCoords),
+                     (hasColor ? Flags::kEmitsPrimitiveColor : Flags::kNone) |
+                     Flags::kPerformsShading | Flags::kAppendVertices,
                      /*uniforms=*/{{"localToDevice", SkSLType::kFloat4x4},
                                    {"depth", SkSLType::kFloat}},
-                     type,
-                     kDirectDepthGEqualPass,
-                     /*vertexAttrs=*/  kAttributes[2*hasTexCoords + hasColor],
-                     /*instanceAttrs=*/{},
-                     /*varyings=*/     kVaryings[hasColor])
+                     PrimitiveType::kTriangles,
+                     kDirectDepthLEqualPass,
+                     /*staticAttrs=*/ {},
+                     /*appendAttrs=*/kAttributes[2*hasTexCoords + hasColor],
+                     /*storageUniforms=*/{},
+                     /*varyings=*/   kVaryings[hasColor])
         , fHasColor(hasColor)
         , fHasTexCoords(hasTexCoords) {}
 
 VerticesRenderStep::~VerticesRenderStep() {}
 
-std::string VerticesRenderStep::vertexSkSL() const {
+std::string VerticesRenderStep::vertexSkSL(const RootNodesInfo&) const {
     if (fHasColor && fHasTexCoords) {
-        return R"(
-            color = half4(vertColor.bgr * vertColor.a, vertColor.a);
-            float4 devPosition = localToDevice * float4(position, 0.0, 1.0);
-            devPosition.z = depth;
-            stepLocalCoords = texCoords;
-        )";
+        return
+            "color = half4(vertColor.bgr * vertColor.a, vertColor.a);\n"
+            "float4 devPosition = localToDevice * float4(position, 0.0, 1.0);\n"
+            "devPosition.z = depth;\n"
+            "stepLocalCoords = texCoords;\n";
     } else if (fHasTexCoords) {
-        return R"(
-            float4 devPosition = localToDevice * float4(position, 0.0, 1.0);
-            devPosition.z = depth;
-            stepLocalCoords = texCoords;
-        )";
+        return
+            "float4 devPosition = localToDevice * float4(position, 0.0, 1.0);\n"
+            "devPosition.z = depth;\n"
+            "stepLocalCoords = texCoords;\n";
     } else if (fHasColor) {
-        return R"(
-            color = half4(vertColor.bgr * vertColor.a, vertColor.a);
-            float4 devPosition = localToDevice * float4(position, 0.0, 1.0);
-            devPosition.z = depth;
-            stepLocalCoords = position;
-        )";
+        return
+            "color = half4(vertColor.bgr * vertColor.a, vertColor.a);\n"
+            "float4 devPosition = localToDevice * float4(position, 0.0, 1.0);\n"
+            "devPosition.z = depth;\n"
+            "stepLocalCoords = position;\n";
     } else {
-        return R"(
-            float4 devPosition = localToDevice * float4(position, 0.0, 1.0);
-            devPosition.z = depth;
-            stepLocalCoords = position;
-        )";
+        return
+            "float4 devPosition = localToDevice * float4(position, 0.0, 1.0);\n"
+            "devPosition.z = depth;\n"
+            "stepLocalCoords = position;\n";
     }
 }
 
-const char* VerticesRenderStep::fragmentColorSkSL() const {
+std::string VerticesRenderStep::fragmentColorSkSL(const RootNodesInfo&) const {
     if (fHasColor) {
         return "primitiveColor = color;\n";
     } else {
@@ -123,8 +139,9 @@ const char* VerticesRenderStep::fragmentColorSkSL() const {
 }
 
 void VerticesRenderStep::writeVertices(DrawWriter* writer,
+                                       StorageContext* /*storageContext*/,
                                        const DrawParams& params,
-                                       skvx::ushort2 ssboIndices) const {
+                                       uint32_t ssboIndex) const {
     SkVerticesPriv info(params.geometry().vertices()->priv());
     const int vertexCount = info.vertexCount();
     const int indexCount = info.indexCount();
@@ -156,19 +173,19 @@ void VerticesRenderStep::writeVertices(DrawWriter* writer,
                                                               : SK_ColorTRANSPARENT)
                         << VertexWriter::If(fHasTexCoords, texCoords ? texCoords[state.f0]
                                                                      : SkPoint{0.f, 0.f})
-                        << ssboIndices
+                        << ssboIndex
                         << positions[state.f1]
                         << VertexWriter::If(fHasColor, colors ? colors[state.f1]
                                                               : SK_ColorTRANSPARENT)
                         << VertexWriter::If(fHasTexCoords, texCoords ? texCoords[state.f1]
                                                                      : SkPoint{0.f, 0.f})
-                        << ssboIndices
+                        << ssboIndex
                         << positions[state.f2]
                         << VertexWriter::If(fHasColor, colors ? colors[state.f2]
                                                               : SK_ColorTRANSPARENT)
                         << VertexWriter::If(fHasTexCoords, texCoords ? texCoords[state.f2]
                                                                      : SkPoint{0.f, 0.f})
-                        << ssboIndices;
+                        << ssboIndex;
     }
 }
 
@@ -176,6 +193,7 @@ void VerticesRenderStep::writeUniformsAndTextures(const DrawParams& params,
                                                   PipelineDataGatherer* gatherer) const {
     // Vertices are transformed on the GPU. Store PaintDepth as a uniform to avoid copying the
     // same depth for each vertex.
+    SkDEBUGCODE(gatherer->checkRewind());
     SkDEBUGCODE(UniformExpectationsValidator uev(gatherer, this->uniforms());)
     gatherer->write(params.transform().matrix());
     gatherer->write(params.order().depthAsFloat());

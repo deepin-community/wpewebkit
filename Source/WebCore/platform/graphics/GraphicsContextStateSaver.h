@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,12 +25,13 @@
 
 #pragma once
 
-#include "GraphicsContext.h"
+#include <WebCore/GraphicsContext.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 class GraphicsContextStateSaver {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(GraphicsContextStateSaver);
 public:
     GraphicsContextStateSaver(GraphicsContext& context, bool saveAndRestore = true)
         : m_context(context)
@@ -60,7 +61,7 @@ public:
         m_saveAndRestore = false;
     }
     
-    GraphicsContext* context() const { return &m_context; }
+    GraphicsContext* context() const LIFETIME_BOUND { return &m_context; }
 
 private:
     GraphicsContext& m_context;

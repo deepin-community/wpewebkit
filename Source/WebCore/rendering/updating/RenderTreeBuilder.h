@@ -42,14 +42,16 @@ public:
     // FIXME: Remove.
     static RenderTreeBuilder* current() { return s_current; }
 
-    static bool isRebuildRootForChildren(const RenderElement&);
+    const RenderView& view() const { return m_view; }
+
+    static bool NODELETE isRebuildRootForChildren(const RenderElement&);
 
     void attach(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild = nullptr);
 
     enum class IsInternalMove : bool { No, Yes };
     enum class WillBeDestroyed : bool { No, Yes };
     enum class CanCollapseAnonymousBlock : bool { No, Yes };
-    RenderPtr<RenderObject> detach(RenderElement&, RenderObject&, WillBeDestroyed, CanCollapseAnonymousBlock = CanCollapseAnonymousBlock::Yes) WARN_UNUSED_RETURN;
+    [[nodiscard]] RenderPtr<RenderObject> detach(RenderElement&, RenderObject&, WillBeDestroyed, CanCollapseAnonymousBlock = CanCollapseAnonymousBlock::Yes);
 
     enum class TearDownType : uint8_t {
         Root,                          // destroy root renderer
@@ -64,24 +66,21 @@ public:
 
     void updateAfterDescendants(RenderElement&);
     void destroyAndCleanUpAnonymousWrappers(RenderObject& child, const RenderElement* destroyRoot);
-    void normalizeTreeAfterStyleChange(RenderElement&, RenderStyle& oldStyle);
-
-    bool hasBrokenContinuation() const { return m_hasBrokenContinuation; }
+    void normalizeTreeAfterStyleChange(RenderElement&, Style::ComputedStyle& oldStyle);
 
 private:
-    static void markBoxForRelayoutAfterSplit(RenderBox&);
+    static void markBoxForRelayoutAfterSplit(RenderBoxModelObject&);
 
     void attachInternal(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild);
 
     void childFlowStateChangesAndAffectsParentBlock(RenderElement& child);
     void childFlowStateChangesAndNoLongerAffectsParentBlock(RenderElement& child);
-    void attachIgnoringContinuation(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild = nullptr);
     void attachToRenderGrid(RenderGrid& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild = nullptr);
     void attachToRenderElement(RenderElement& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild = nullptr);
     void attachToRenderElementInternal(RenderElement& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild = nullptr);
 
-    RenderPtr<RenderObject> detachFromRenderElement(RenderElement& parent, RenderObject& child, WillBeDestroyed) WARN_UNUSED_RETURN;
-    RenderPtr<RenderObject> detachFromRenderGrid(RenderGrid& parent, RenderObject& child, WillBeDestroyed) WARN_UNUSED_RETURN;
+    [[nodiscard]] RenderPtr<RenderObject> detachFromRenderElement(RenderElement& parent, RenderObject& child, WillBeDestroyed);
+    [[nodiscard]] RenderPtr<RenderObject> detachFromRenderGrid(RenderGrid& parent, RenderObject& child, WillBeDestroyed);
 
     void move(RenderBoxModelObject& from, RenderBoxModelObject& to, RenderObject& child, RenderObject* beforeChild, NormalizeAfterInsertion);
     // Move all of the kids from |startChild| up to but excluding |endChild|. 0 can be passed as the |endChild| to denote
@@ -94,13 +93,13 @@ private:
 
     void removeFloatingObjects(RenderBlock&);
 
-    RenderObject* splitAnonymousBoxesAroundChild(RenderBox& parent, RenderObject& originalBeforeChild);
+    RenderObject* splitAnonymousBoxesAroundChild(RenderBoxModelObject& parent, RenderObject& originalBeforeChild);
     void createAnonymousWrappersForInlineContent(RenderBlock& parent, RenderObject* insertionPoint = nullptr);
     void removeAnonymousWrappersForInlineChildrenIfNeeded(RenderElement& parent);
 
     void reportVisuallyNonEmptyContent(const RenderElement& parent, const RenderObject& child);
 
-    void setHasBrokenContinuation() { m_hasBrokenContinuation = true; }
+    static RenderPtr<RenderBox> createAnonymousBoxWithSameTypeAndWithStyle(const RenderBox&, const Style::ComputedStyle&);
 
     class FirstLetter;
     class List;
@@ -115,43 +114,39 @@ private:
 #if ENABLE(MATHML)
     class MathML;
 #endif
-    class Continuation;
 
-    FirstLetter& firstLetterBuilder() { return *m_firstLetterBuilder; }
-    List& listBuilder() { return *m_listBuilder; }
-    MultiColumn& multiColumnBuilder() { return *m_multiColumnBuilder; }
-    Table& tableBuilder() { return *m_tableBuilder; }
-    Ruby& rubyBuilder() { return *m_rubyBuilder; }
-    FormControls& formControlsBuilder() { return *m_formControlsBuilder; }
-    Block& blockBuilder() { return *m_blockBuilder; }
-    BlockFlow& blockFlowBuilder() { return *m_blockFlowBuilder; }
-    Inline& inlineBuilder() { return *m_inlineBuilder; }
-    SVG& svgBuilder() { return *m_svgBuilder; }
+    FirstLetter& firstLetterBuilder() LIFETIME_BOUND { return m_firstLetterBuilder; }
+    List& listBuilder() LIFETIME_BOUND { return m_listBuilder; }
+    MultiColumn& multiColumnBuilder() LIFETIME_BOUND { return m_multiColumnBuilder; }
+    Table& tableBuilder() LIFETIME_BOUND { return m_tableBuilder; }
+    Ruby& rubyBuilder() LIFETIME_BOUND { return m_rubyBuilder; }
+    FormControls& formControlsBuilder() LIFETIME_BOUND { return m_formControlsBuilder; }
+    Block& blockBuilder() LIFETIME_BOUND { return m_blockBuilder; }
+    BlockFlow& blockFlowBuilder() LIFETIME_BOUND { return m_blockFlowBuilder; }
+    Inline& inlineBuilder() LIFETIME_BOUND { return m_inlineBuilder; }
+    SVG& svgBuilder() LIFETIME_BOUND { return m_svgBuilder; }
 #if ENABLE(MATHML)
-    MathML& mathMLBuilder() { return *m_mathMLBuilder; }
+    MathML& mathMLBuilder() LIFETIME_BOUND { return m_mathMLBuilder; }
 #endif
-    Continuation& continuationBuilder() { return *m_continuationBuilder; }
 
     WidgetHierarchyUpdatesSuspensionScope m_widgetHierarchyUpdatesSuspensionScope;
     RenderView& m_view;
     RenderTreeBuilder* m_previous { nullptr };
     static RenderTreeBuilder* s_current;
 
-    std::unique_ptr<FirstLetter> m_firstLetterBuilder;
-    std::unique_ptr<List> m_listBuilder;
-    std::unique_ptr<MultiColumn> m_multiColumnBuilder;
-    std::unique_ptr<Table> m_tableBuilder;
-    std::unique_ptr<Ruby> m_rubyBuilder;
-    std::unique_ptr<FormControls> m_formControlsBuilder;
-    std::unique_ptr<Block> m_blockBuilder;
-    std::unique_ptr<BlockFlow> m_blockFlowBuilder;
-    std::unique_ptr<Inline> m_inlineBuilder;
-    std::unique_ptr<SVG> m_svgBuilder;
+    const UniqueRef<FirstLetter> m_firstLetterBuilder;
+    const UniqueRef<List> m_listBuilder;
+    const UniqueRef<MultiColumn> m_multiColumnBuilder;
+    const UniqueRef<Table> m_tableBuilder;
+    const UniqueRef<Ruby> m_rubyBuilder;
+    const UniqueRef<FormControls> m_formControlsBuilder;
+    const UniqueRef<Block> m_blockBuilder;
+    const UniqueRef<BlockFlow> m_blockFlowBuilder;
+    const UniqueRef<Inline> m_inlineBuilder;
+    const UniqueRef<SVG> m_svgBuilder;
 #if ENABLE(MATHML)
-    std::unique_ptr<MathML> m_mathMLBuilder;
+    const UniqueRef<MathML> m_mathMLBuilder;
 #endif
-    std::unique_ptr<Continuation> m_continuationBuilder;
-    bool m_hasBrokenContinuation { false };
     IsInternalMove m_internalMovesType { IsInternalMove::No };
     TearDownType m_tearDownType { TearDownType::Root };
     CheckedPtr<const RenderElement> m_subtreeDestroyRoot;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2022 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,11 +36,15 @@
 #include "FunctionOverrides.h"
 #include "IsoCellSetInlines.h"
 #include "Parser.h"
-#include "SourceProvider.h"
+#include "SourceProfiler.h"
 #include "Structure.h"
 #include "UnlinkedFunctionCodeBlock.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(UnlinkedFunctionExecutable::ClassElementDefinition);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(UnlinkedFunctionExecutable::RareData);
 
 static_assert(sizeof(UnlinkedFunctionExecutable) <= 128, "UnlinkedFunctionExecutable should fit in a 128-byte cell to keep allocated blocks count to only one after initializing JSGlobalObject.");
 
@@ -68,7 +72,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
 
-    UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, EvalContextType::FunctionEvalContext), codeGenerationMode);
+    UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
@@ -81,7 +85,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     return result;
 }
 
-UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* structure, const SourceCode& parentSource, FunctionMetadataNode* node, UnlinkedFunctionKind kind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, JSParserScriptMode scriptMode, RefPtr<TDZEnvironmentLink> parentScopeTDZVariables, std::optional<Vector<Identifier>>&& generatorOrAsyncWrapperFunctionParameterNames, std::optional<PrivateNameEnvironment> parentPrivateNameEnvironment, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinDefaultClassConstructor)
+UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* structure, const SourceCode& parentSource, FunctionMetadataNode* node, UnlinkedFunctionKind kind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, JSParserScriptMode scriptMode, RefPtr<TDZEnvironmentLink> parentScopeTDZVariables, std::optional<Vector<Identifier>>&& generatorOrAsyncWrapperFunctionParameterNames, std::optional<PrivateNameEnvironment> parentPrivateNameEnvironment, DerivedContextType derivedContextType, EvalContextType evalContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinDefaultClassConstructor)
     : Base(vm, structure)
     , m_firstLineOffset(node->firstLine() - parentSource.firstLine().oneBasedInt())
     , m_isGeneratedFromCache(false)
@@ -102,6 +106,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_unlinkedFunctionEnd(node->startStartOffset() + node->source().length() - 1)
     , m_needsClassFieldInitializer(static_cast<unsigned>(needsClassFieldInitializer))
     , m_parameterCount(node->parameterCount())
+    , m_singletonHasBeenInvalidated(false)
     , m_privateBrandRequirement(static_cast<unsigned>(privateBrandRequirement))
     , m_features(0)
     , m_constructorKind(static_cast<unsigned>(node->constructorKind()))
@@ -111,6 +116,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_functionMode(static_cast<unsigned>(node->functionMode()))
     , m_derivedContextType(static_cast<unsigned>(derivedContextType))
     , m_inlineAttribute(static_cast<unsigned>(inlineAttribute))
+    , m_evalContextType(static_cast<unsigned>(evalContextType))
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
     , m_name(node->ident())
@@ -125,17 +131,18 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     ASSERT(m_superBinding == static_cast<unsigned>(node->superBinding()));
     ASSERT(m_derivedContextType == static_cast<unsigned>(derivedContextType));
     ASSERT(m_inlineAttribute == static_cast<unsigned>(inlineAttribute));
+    ASSERT(m_evalContextType == static_cast<unsigned>(evalContextType));
     ASSERT(m_privateBrandRequirement == static_cast<unsigned>(privateBrandRequirement));
     ASSERT(!(m_isBuiltinDefaultClassConstructor && constructorKind() == ConstructorKind::None));
     ASSERT(!m_needsClassFieldInitializer || (isClassConstructorFunction() || derivedContextType == DerivedContextType::DerivedConstructorContext));
     if (!node->classSource().isNull())
         setClassSource(node->classSource());
     if (parentScopeTDZVariables)
-        ensureRareData().m_parentScopeTDZVariables = WTFMove(parentScopeTDZVariables);
+        ensureRareData().m_parentScopeTDZVariables = WTF::move(parentScopeTDZVariables);
     if (generatorOrAsyncWrapperFunctionParameterNames)
-        ensureRareData().m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(WTFMove(generatorOrAsyncWrapperFunctionParameterNames.value()));
+        ensureRareData().m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(WTF::move(generatorOrAsyncWrapperFunctionParameterNames.value()));
     if (parentPrivateNameEnvironment)
-        ensureRareData().m_parentPrivateNameEnvironment = WTFMove(*parentPrivateNameEnvironment);
+        ensureRareData().m_parentPrivateNameEnvironment = WTF::move(*parentPrivateNameEnvironment);
 }
 
 UnlinkedFunctionExecutable::~UnlinkedFunctionExecutable()
@@ -152,7 +159,7 @@ void UnlinkedFunctionExecutable::destroy(JSCell* cell)
 template<typename Visitor>
 void UnlinkedFunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    UnlinkedFunctionExecutable* thisObject = jsCast<UnlinkedFunctionExecutable*>(cell);
+    UnlinkedFunctionExecutable* thisObject = uncheckedDowncast<UnlinkedFunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -189,14 +196,19 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
     SourceCode source = linkedSourceCode(passedParentSource);
     FunctionOverrides::OverrideInfo overrideInfo;
     bool hasFunctionOverride = false;
-    if (UNLIKELY(Options::functionOverrides()))
+    if (Options::functionOverrides()) [[unlikely]]
         hasFunctionOverride = FunctionOverrides::initializeOverrideFor(source, overrideInfo);
 
+    if (SourceProfiler::g_profilerHook) [[unlikely]]
+        SourceProfiler::profile(SourceProfiler::Type::Function, source);
+
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
+    if (m_singletonHasBeenInvalidated)
+        result->singleton().invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
     if (overrideLineNumber)
         result->setOverrideLineNumber(*overrideLineNumber);
 
-    if (UNLIKELY(hasFunctionOverride))
+    if (hasFunctionOverride) [[unlikely]]
         result->overrideInfo(overrideInfo);
 
     return result;
@@ -230,11 +242,11 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (m_isCached)
         decodeCachedCodeBlocks(vm);
     switch (specializationKind) {
-    case CodeForCall:
+    case CodeSpecializationKind::CodeForCall:
         if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
             return codeBlock;
         break;
-    case CodeForConstruct:
+    case CodeSpecializationKind::CodeForConstruct:
         if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get())
             return codeBlock;
         break;
@@ -249,10 +261,10 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         return nullptr;
 
     switch (specializationKind) {
-    case CodeForCall:
+    case CodeSpecializationKind::CodeForCall:
         m_unlinkedCodeBlockForCall.set(vm, this, result);
         break;
-    case CodeForConstruct:
+    case CodeSpecializationKind::CodeForConstruct:
         m_unlinkedCodeBlockForConstruct.set(vm, this, result);
         break;
     }
@@ -267,7 +279,7 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_decoder);
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
-    RefPtr<Decoder> decoder = WTFMove(m_decoder);
+    RefPtr<Decoder> decoder = WTF::move(m_decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 

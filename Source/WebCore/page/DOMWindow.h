@@ -25,10 +25,12 @@
 
 #pragma once
 
-#include "EventTarget.h"
-#include "GlobalWindowIdentifier.h"
-#include "ImageBitmap.h"
-#include "ScrollTypes.h"
+#include <WebCore/DocumentEnums.h>
+#include <WebCore/EventTarget.h>
+#include <WebCore/EventTargetInterfaces.h>
+#include <WebCore/GlobalWindowIdentifier.h>
+#include <WebCore/ImageBitmap.h>
+#include <WebCore/ScrollTypes.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
@@ -48,6 +50,7 @@ class Element;
 class EventListener;
 class FloatRect;
 class Frame;
+class FrameConsoleClient;
 class HTMLFrameOwnerElement;
 class History;
 class IdleRequestCallback;
@@ -61,8 +64,8 @@ class Navigator;
 class Node;
 class NodeList;
 class Page;
-class PageConsoleClient;
 class Performance;
+class PushManager;
 class RequestAnimationFrameCallback;
 class RequestIdleCallback;
 class ScheduledAction;
@@ -89,19 +92,19 @@ struct StructuredSerializeOptions;
 struct WindowFeatures;
 struct WindowPostMessageOptions;
 
+enum class IncludeTargetOrigin : bool { No, Yes };
 enum class SetLocationLocking : bool { LockHistoryBasedOnGestureState, LockHistoryAndBackForwardList };
 enum class NavigationHistoryBehavior : uint8_t;
 
 using IntDegrees = int32_t;
 
 class DOMWindow : public RefCounted<DOMWindow>, public EventTarget {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(DOMWindow);
+    WTF_MAKE_TZONE_ALLOCATED(DOMWindow);
 public:
     virtual ~DOMWindow();
 
-    const GlobalWindowIdentifier& identifier() const { return m_identifier; }
-    virtual Frame* frame() const = 0;
-    RefPtr<Frame> protectedFrame() const;
+    const GlobalWindowIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
+    virtual Frame* NODELETE frame() const = 0;
 
     enum class DOMWindowType : bool { Local, Remote };
     bool isLocalDOMWindow() const { return m_type == DOMWindowType::Local; }
@@ -111,21 +114,20 @@ public:
     using RefCounted::deref;
 
     WEBCORE_EXPORT Location& location();
-    virtual void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, SetLocationLocking = SetLocationLocking::LockHistoryBasedOnGestureState) = 0;
+    virtual void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, SetLocationLocking = SetLocationLocking::LockHistoryBasedOnGestureState, CanNavigateState = CanNavigateState::Unchecked) = 0;
 
-    bool closed() const;
+    bool NODELETE closed() const;
     WEBCORE_EXPORT void close();
     void close(Document&);
     virtual void closePage() = 0;
 
-    PageConsoleClient* console() const;
-    CheckedPtr<PageConsoleClient> checkedConsole() const;
+    FrameConsoleClient* NODELETE console() const;
 
     WindowProxy* opener() const;
-    Document* documentIfLocal();
+    WEBCORE_EXPORT Document* NODELETE documentIfLocal();
 
-    WindowProxy* top() const;
-    WindowProxy* parent() const;
+    WindowProxy* NODELETE top() const;
+    WindowProxy* NODELETE parent() const;
     unsigned length() const;
     void focus(LocalDOMWindow& incumbentWindow);
     void blur();
@@ -167,6 +169,7 @@ public:
     ExceptionOr<String> origin() const;
     ExceptionOr<bool> isSecureContext() const;
     ExceptionOr<bool> crossOriginIsolated() const;
+    ExceptionOr<bool> originAgentCluster() const;
     ExceptionOr<void> print();
     ExceptionOr<void> stop();
     ExceptionOr<Performance&> performance() const;
@@ -216,7 +219,21 @@ public:
     ExceptionOr<String> btoa(const String&);
     ExceptionOr<String> atob(const String&);
 
+#if ENABLE(DECLARATIVE_WEB_PUSH)
+    ExceptionOr<PushManager&> pushManager();
+#endif
+
+    // FIXME: When this LocalDOMWindow is no longer the active LocalDOMWindow (i.e.,
+    // when its document is no longer the document that is displayed in its
+    // frame), we would like to zero out m_frame to avoid being confused
+    // by the document that is currently active in m_frame.
+    bool isCurrentlyDisplayedInFrame() const;
+    void printErrorMessage(const String&) const;
+    String crossDomainAccessErrorMessage(const LocalDOMWindow& activeWindow, IncludeTargetOrigin);
+    bool isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const URL&);
+
 protected:
+    bool passesSetLocationSecurityChecks(const LocalDOMWindow& activeWindow, const URL& completedURL, CanNavigateState& navigationState);
     explicit DOMWindow(GlobalWindowIdentifier&&, DOMWindowType);
 
     ExceptionOr<RefPtr<SecurityOrigin>> createTargetOriginForPostMessage(const String&, Document&);
@@ -231,6 +248,8 @@ private:
     const DOMWindowType m_type;
 };
 
-WebCoreOpaqueRoot root(DOMWindow*);
+WebCoreOpaqueRoot NODELETE root(DOMWindow*);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(DOMWindow)

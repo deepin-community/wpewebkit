@@ -32,6 +32,7 @@
 #include "WebGPUDeviceImpl.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore::WebGPU {
 
@@ -45,56 +46,17 @@ static String adapterName(WGPUAdapter adapter)
 static Ref<SupportedFeatures> supportedFeatures(const Vector<WGPUFeatureName>& features)
 {
     Vector<String> result;
-    for (auto feature : features) {
-        switch (feature) {
-        case WGPUFeatureName_Undefined:
-            continue;
-        case WGPUFeatureName_DepthClipControl:
-            result.append("depth-clip-control"_s);
-            break;
-        case WGPUFeatureName_Depth32FloatStencil8:
-            result.append("depth32float-stencil8"_s);
-            break;
-        case WGPUFeatureName_TimestampQuery:
-            result.append("timestamp-query"_s);
-            break;
-        case WGPUFeatureName_TextureCompressionBC:
-            result.append("texture-compression-bc"_s);
-            break;
-        case WGPUFeatureName_TextureCompressionETC2:
-            result.append("texture-compression-etc2"_s);
-            break;
-        case WGPUFeatureName_TextureCompressionASTC:
-            result.append("texture-compression-astc"_s);
-            break;
-        case WGPUFeatureName_IndirectFirstInstance:
-            result.append("indirect-first-instance"_s);
-            break;
-        case WGPUFeatureName_ShaderF16:
-            result.append("shader-f16"_s);
-            break;
-        case WGPUFeatureName_RG11B10UfloatRenderable:
-            result.append("rg11b10ufloat-renderable"_s);
-            break;
-        case WGPUFeatureName_BGRA8UnormStorage:
-            result.append("bgra8unorm-storage"_s);
-            break;
-        case WGPUFeatureName_Float32Filterable:
-            result.append("float32-filterable"_s);
-            break;
-        case WGPUFeatureName_Force32:
-            ASSERT_NOT_REACHED();
-            continue;
-        }
-    }
-    return SupportedFeatures::create(WTFMove(result));
+    for (auto feature : features)
+        result.append(wgpuAdapterFeatureName(feature));
+
+    return SupportedFeatures::create(WTF::move(result));
 }
 
 static Ref<SupportedFeatures> supportedFeatures(WGPUAdapter adapter)
 {
     auto featureCount = wgpuAdapterEnumerateFeatures(adapter, nullptr);
     Vector<WGPUFeatureName> features(featureCount);
-    wgpuAdapterEnumerateFeatures(adapter, features.data());
+    wgpuAdapterEnumerateFeatures(adapter, features.mutableSpan().data());
 
     return supportedFeatures(features);
 }
@@ -102,9 +64,21 @@ static Ref<SupportedFeatures> supportedFeatures(WGPUAdapter adapter)
 static Ref<SupportedLimits> supportedLimits(WGPUAdapter adapter)
 {
     WGPUSupportedLimits limits;
-    limits.nextInChain = nullptr;
     auto result = wgpuAdapterGetLimits(adapter, &limits);
     ASSERT_UNUSED(result, result);
+
+    // https://www.w3.org/TR/webgpu/#devices
+    // maxStorageBuffersPerShaderStage = max(perStage, inVertex, inFragment)
+    // Then set inVertex and inFragment equal to the per-stage value.
+    auto& lm = limits.limits;
+    lm.maxStorageBuffersPerShaderStage = std::max({ lm.maxStorageBuffersPerShaderStage, lm.maxStorageBuffersInVertexStage, lm.maxStorageBuffersInFragmentStage });
+    lm.maxStorageBuffersInVertexStage = lm.maxStorageBuffersPerShaderStage;
+    lm.maxStorageBuffersInFragmentStage = lm.maxStorageBuffersPerShaderStage;
+
+    lm.maxStorageTexturesPerShaderStage = std::max({ lm.maxStorageTexturesPerShaderStage, lm.maxStorageTexturesInVertexStage, lm.maxStorageTexturesInFragmentStage });
+    lm.maxStorageTexturesInVertexStage = lm.maxStorageTexturesPerShaderStage;
+    lm.maxStorageTexturesInFragmentStage = lm.maxStorageTexturesPerShaderStage;
+
     return SupportedLimits::create(
         limits.limits.maxTextureDimension1D,
         limits.limits.maxTextureDimension2D,
@@ -128,7 +102,6 @@ static Ref<SupportedLimits> supportedLimits(WGPUAdapter adapter)
         limits.limits.maxBufferSize,
         limits.limits.maxVertexAttributes,
         limits.limits.maxVertexBufferArrayStride,
-        limits.limits.maxInterStageShaderComponents,
         limits.limits.maxInterStageShaderVariables,
         limits.limits.maxColorAttachments,
         limits.limits.maxColorAttachmentBytesPerSample,
@@ -137,7 +110,11 @@ static Ref<SupportedLimits> supportedLimits(WGPUAdapter adapter)
         limits.limits.maxComputeWorkgroupSizeX,
         limits.limits.maxComputeWorkgroupSizeY,
         limits.limits.maxComputeWorkgroupSizeZ,
-        limits.limits.maxComputeWorkgroupsPerDimension);
+        limits.limits.maxComputeWorkgroupsPerDimension,
+        limits.limits.maxStorageBuffersInFragmentStage,
+        limits.limits.maxStorageTexturesInFragmentStage,
+        limits.limits.maxStorageBuffersInVertexStage,
+        limits.limits.maxStorageTexturesInVertexStage);
 }
 
 static bool isFallbackAdapter(WGPUAdapter adapter)
@@ -147,16 +124,32 @@ static bool isFallbackAdapter(WGPUAdapter adapter)
     return properties.adapterType == WGPUAdapterType_CPU;
 }
 
+static uint32_t subgroupMinSize(WGPUAdapter adapter)
+{
+    WGPUAdapterProperties properties;
+    wgpuAdapterGetProperties(adapter, &properties);
+    return properties.subgroupMinSize;
+}
+
+static uint32_t subgroupMaxSize(WGPUAdapter adapter)
+{
+    WGPUAdapterProperties properties;
+    wgpuAdapterGetProperties(adapter, &properties);
+    return properties.subgroupMaxSize;
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AdapterImpl);
+
 AdapterImpl::AdapterImpl(WebGPUPtr<WGPUAdapter>&& adapter, ConvertToBackingContext& convertToBackingContext)
-    : Adapter(adapterName(adapter.get()), supportedFeatures(adapter.get()), supportedLimits(adapter.get()), WebGPU::isFallbackAdapter(adapter.get()))
-    , m_backing(WTFMove(adapter))
+    : Adapter(adapterName(adapter.get()), supportedFeatures(adapter.get()), supportedLimits(adapter.get()), WebGPU::isFallbackAdapter(adapter.get()), WebGPU::subgroupMinSize(adapter.get()), WebGPU::subgroupMaxSize(adapter.get()))
+    , m_backing(WTF::move(adapter))
     , m_convertToBackingContext(convertToBackingContext)
 {
 }
 
 AdapterImpl::~AdapterImpl() = default;
 
-static bool setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
+static bool NODELETE setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
 {
     CheckedUint32 narrowed = i;
     if (narrowed.hasOverflowed())
@@ -168,7 +161,7 @@ static bool setMaxIntegerValue(uint32_t& limitValue, uint64_t i)
     return true;
 }
 
-static bool setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
+static bool NODELETE setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
 {
     if (i > limitValue)
         limitValue = i;
@@ -176,7 +169,7 @@ static bool setMaxIntegerValue(uint64_t& limitValue, uint64_t i)
     return true;
 }
 
-static bool setAlignmentIntegerValue(uint32_t& limitValue, uint64_t i, uint32_t supportedAlignment)
+static bool NODELETE setAlignmentIntegerValue(uint32_t& limitValue, uint64_t i, uint32_t supportedAlignment)
 {
     CheckedUint32 narrowed = i;
     if (narrowed.hasOverflowed())
@@ -206,6 +199,15 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
     auto features = descriptor.requiredFeatures.map([&convertToBackingContext = m_convertToBackingContext.get()](auto featureName) {
         return convertToBackingContext.convertToBacking(featureName);
     });
+
+    if (features.contains(WGPUFeatureName_TextureFormatsTier2) && !features.contains(WGPUFeatureName_TextureFormatsTier1))
+        features.append(WGPUFeatureName_TextureFormatsTier1);
+
+    if (features.contains(WGPUFeatureName_TextureFormatsTier1) && !features.contains(WGPUFeatureName_RG11B10UfloatRenderable))
+        features.append(WGPUFeatureName_RG11B10UfloatRenderable);
+
+    if (!features.contains(WGPUFeatureName_CoreFeaturesAndLimits))
+        features.append(WGPUFeatureName_CoreFeaturesAndLimits);
 
     auto limits = wgpuDefaultLimits();
 
@@ -251,7 +253,6 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
         SET_MAX_VALUE(maxBufferSize)
         SET_MAX_VALUE(maxVertexAttributes)
         SET_MAX_VALUE(maxVertexBufferArrayStride)
-        SET_MAX_VALUE(maxInterStageShaderComponents)
         SET_MAX_VALUE(maxInterStageShaderVariables)
         SET_MAX_VALUE(maxColorAttachments)
         SET_MAX_VALUE(maxColorAttachmentBytesPerSample)
@@ -261,6 +262,10 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
         SET_MAX_VALUE(maxComputeWorkgroupSizeY)
         SET_MAX_VALUE(maxComputeWorkgroupSizeZ)
         SET_MAX_VALUE(maxComputeWorkgroupsPerDimension)
+        SET_MAX_VALUE(maxStorageBuffersInFragmentStage)
+        SET_MAX_VALUE(maxStorageTexturesInFragmentStage)
+        SET_MAX_VALUE(maxStorageBuffersInVertexStage)
+        SET_MAX_VALUE(maxStorageTexturesInVertexStage)
         else {
             callback(nullptr);
             return;
@@ -270,17 +275,15 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
 #undef SET_MAX_VALUE
     }
 
-    WGPURequiredLimits requiredLimits { nullptr, WTFMove(limits) };
+    WGPURequiredLimits requiredLimits { .limits = WTF::move(limits) };
 
     WGPUDeviceDescriptor backingDescriptor {
-        .nextInChain = nullptr,
         .label = label.data(),
-        .requiredFeatureCount = static_cast<uint32_t>(features.size()),
-        .requiredFeatures = features.data(),
+        .requiredFeatureCount = features.size(),
+        .requiredFeatures = features.size() ? features.span().data() : nullptr,
         .requiredLimits = &requiredLimits,
         .defaultQueue = {
-            { },
-            "queue"
+            .label = "queue"
         },
         .deviceLostCallback = nullptr,
         .deviceLostUserdata = nullptr,
@@ -308,7 +311,6 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
         limits.maxBufferSize,
         limits.maxVertexAttributes,
         limits.maxVertexBufferArrayStride,
-        limits.maxInterStageShaderComponents,
         limits.maxInterStageShaderVariables,
         limits.maxColorAttachments,
         limits.maxColorAttachmentBytesPerSample,
@@ -317,11 +319,15 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
         limits.maxComputeWorkgroupSizeX,
         limits.maxComputeWorkgroupSizeY,
         limits.maxComputeWorkgroupSizeZ,
-        limits.maxComputeWorkgroupsPerDimension);
+        limits.maxComputeWorkgroupsPerDimension,
+        limits.maxStorageBuffersInFragmentStage,
+        limits.maxStorageTexturesInFragmentStage,
+        limits.maxStorageBuffersInVertexStage,
+        limits.maxStorageTexturesInVertexStage);
 
     auto requestedFeatures = supportedFeatures(features);
-    auto blockPtr = makeBlockPtr([protectedThis = Ref { *this }, convertToBackingContext = m_convertToBackingContext.copyRef(), callback = WTFMove(callback), requestedLimits, requestedFeatures](WGPURequestDeviceStatus status, WGPUDevice device, const char*) mutable {
-        callback(DeviceImpl::create(adoptWebGPU(device), status == WGPURequestDeviceStatus_Success ? WTFMove(requestedFeatures) : SupportedFeatures::create({ }), WTFMove(requestedLimits), convertToBackingContext));
+    auto blockPtr = makeBlockPtr([protectedThis = protect(*this), convertToBackingContext = m_convertToBackingContext.copyRef(), callback = WTF::move(callback), requestedLimits, requestedFeatures](WGPURequestDeviceStatus status, WGPUDevice device, const char*) mutable {
+        callback(DeviceImpl::create(adoptWebGPU(device), status == WGPURequestDeviceStatus_Success ? WTF::move(requestedFeatures) : SupportedFeatures::create({ }), WTF::move(requestedLimits), convertToBackingContext));
     });
     wgpuAdapterRequestDevice(m_backing.get(), &backingDescriptor, &requestDeviceCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in requestDeviceCallback().
 }

@@ -25,13 +25,15 @@
 
 #pragma once
 
-#include "AuthenticationClient.h"
-#include "ResourceLoaderOptions.h"
-#include "StoredCredentialsPolicy.h"
+#include <WebCore/AuthenticationClient.h>
+#include <WebCore/ResourceLoaderOptions.h>
+#include <WebCore/StoredCredentialsPolicy.h>
 #include <wtf/Box.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 
 #if PLATFORM(COCOA)
@@ -98,6 +100,8 @@ public:
     void receivedRequestToPerformDefaultHandling(const AuthenticationChallenge&) override;
     void receivedChallengeRejection(const AuthenticationChallenge&) override;
 
+    virtual bool isBlobResourceHandle() const { return false; }
+
 #if PLATFORM(COCOA)
     bool tryHandlePasswordBasedAuthentication(const AuthenticationChallenge&);
 #endif
@@ -107,7 +111,7 @@ public:
 #endif
 
 #if PLATFORM(COCOA)
-    WEBCORE_EXPORT NSURLConnection *connection() const;
+    WEBCORE_EXPORT NSURLConnection *NODELETE connection() const;
     id makeDelegate(bool, RefPtr<SynchronousLoaderMessageQueue>&&);
     id delegate();
     void releaseDelegate();
@@ -118,46 +122,48 @@ public:
     void unschedule(WTF::SchedulePair&);
 #endif
 
-    bool shouldContentSniff() const;
+    bool NODELETE shouldContentSniff() const;
     static bool shouldContentSniffURL(const URL&);
 
-    ContentEncodingSniffingPolicy contentEncodingSniffingPolicy() const;
+    ContentEncodingSniffingPolicy NODELETE contentEncodingSniffingPolicy() const;
 
-    WEBCORE_EXPORT static void forceContentSniffing();
+    WEBCORE_EXPORT static void NODELETE forceContentSniffing();
 
-    bool hasAuthenticationChallenge() const;
+    bool NODELETE hasAuthenticationChallenge() const;
     void clearAuthentication();
     WEBCORE_EXPORT virtual void cancel();
 
-    NetworkLoadMetrics* networkLoadMetrics();
+    NetworkLoadMetrics* NODELETE networkLoadMetrics();
     void setNetworkLoadMetrics(Box<NetworkLoadMetrics>&&);
 
-    MonotonicTime startTimeBeforeRedirects() const;
-    bool failsTAOCheck() const;
+    MonotonicTime NODELETE startTimeBeforeRedirects() const;
+    bool NODELETE failsTAOCheck() const;
     void checkTAO(const ResourceResponse&);
-    bool hasCrossOriginRedirect() const;
-    void markAsHavingCrossOriginRedirect();
-    uint16_t redirectCount() const;
-    void incrementRedirectCount();
+    bool NODELETE hasCrossOriginRedirect() const;
+    void NODELETE markAsHavingCrossOriginRedirect();
+    uint16_t NODELETE redirectCount() const;
+    void NODELETE incrementRedirectCount();
 
     // The client may be 0, in which case no callbacks will be made.
-    WEBCORE_EXPORT ResourceHandleClient* client() const;
-    WEBCORE_EXPORT void clearClient();
+    WEBCORE_EXPORT ResourceHandleClient* NODELETE client() const;
+    WEBCORE_EXPORT void NODELETE clearClient();
 
     WEBCORE_EXPORT void setDefersLoading(bool);
 
-    WEBCORE_EXPORT ResourceRequest& firstRequest();
-    const String& lastHTTPMethod() const;
+    WEBCORE_EXPORT ResourceRequest& NODELETE firstRequest();
+    WEBCORE_EXPORT const ResourceRequest& firstRequest() const;
+    const String& NODELETE lastHTTPMethod() const;
 
     void failureTimerFired();
 
-    NetworkingContext* context() const;
+    NetworkingContext* NODELETE context() const;
 
-    using RefCounted<ResourceHandle>::ref;
-    using RefCounted<ResourceHandle>::deref;
+    // AuthenticationClient.
+    void ref() const override { RefCounted::ref(); }
+    void deref() const override { RefCounted::deref(); }
 
 #if PLATFORM(COCOA)
-    WEBCORE_EXPORT static CFStringRef synchronousLoadRunLoopMode();
+    WEBCORE_EXPORT static CFStringRef NODELETE synchronousLoadRunLoopMode();
 #endif
 
     typedef Ref<ResourceHandle> (*BuiltinConstructor)(const ResourceRequest& request, ResourceHandleClient* client);
@@ -182,9 +188,6 @@ private:
 
     bool start();
     static void platformLoadResourceSynchronously(NetworkingContext*, const ResourceRequest&, StoredCredentialsPolicy, SecurityOrigin*, ResourceError&, ResourceResponse&, Vector<uint8_t>& data);
-
-    void refAuthenticationClient() override { ref(); }
-    void derefAuthenticationClient() override { deref(); }
 
 #if PLATFORM(COCOA)
     enum class SchedulingBehavior { Asynchronous, Synchronous };

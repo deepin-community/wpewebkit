@@ -35,16 +35,20 @@ class GStreamerQuirkRialto final : public GStreamerQuirk {
 public:
     GStreamerQuirkRialto();
     const ASCIILiteral identifier() const final { return "Rialto"_s; }
+    bool isPlatformSupported() const final;
 
     void configureElement(GstElement*, const OptionSet<ElementRuntimeCharacteristics>&) final;
     GstElement* createAudioSink() final;
     GstElement* createWebAudioSink() final;
     std::optional<bool> isHardwareAccelerated(GstElementFactory*) final;
-    bool shouldParseIncomingLibWebRTCBitStream() const final { return false; }
+    Vector<String> disallowedWebAudioDecoders() const final { return m_disallowedWebAudioDecoders; }
     unsigned getAdditionalPlaybinFlags() const { return getGstPlayFlag("text") | getGstPlayFlag("native-audio") | getGstPlayFlag("native-video"); }
+    bool needsCustomInstantRateChange() const final { return true; }
+    std::optional<GstState> eosMediaPlayerState() const final { return GST_STATE_PAUSED; }
 
 private:
     GRefPtr<GstCaps> m_sinkCaps;
+    Vector<String> m_disallowedWebAudioDecoders;
 };
 
 } // namespace WebCore

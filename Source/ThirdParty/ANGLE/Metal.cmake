@@ -86,17 +86,19 @@ set(metal_backend_sources
     "src/libANGLE/renderer/metal/mtl_state_cache.mm"
     "src/libANGLE/renderer/metal/mtl_utils.h"
     "src/libANGLE/renderer/metal/mtl_utils.mm"
-    "src/libANGLE/renderer/metal/process.cpp"
-    "src/libANGLE/renderer/metal/process.h"
     "src/libANGLE/renderer/metal/renderermtl_utils.cpp"
     "src/libANGLE/renderer/metal/renderermtl_utils.h"
     "src/libANGLE/renderer/metal/shaders/constants.h"
     "src/libANGLE/renderer/metal/shaders/mtl_internal_shaders_src_autogen.h"
     "src/libANGLE/renderer/metal/shaders/rewrite_indices_shared.h"
 )
-# We can build the ANGLE internal shaders at build-time if we have access to the Mac SDK in the "build" dir.
-# Building internal shaders for iOS is not supported. The Chromium Mac SDK does not have all the required files.
-# This is also an issue when cross-compiling for mac.
+# We can build the ANGLE internal shaders at build-time if we have access to the
+# Mac SDK in the "build" dir. Building internal shaders for iOS is not
+# supported by default. The Chromium Mac SDK does not have all the required
+# files. This is also an issue when cross-compiling for mac. Providing an
+# explicit Metal toolchain via "angle_metal_toolchain_dir" opts in to
+# precompiling the internal shaders anyway, which enables prebuilt internal
+# shaders for iOS as well.
 
 set(metal_internal_shader_compilation_supported
 )

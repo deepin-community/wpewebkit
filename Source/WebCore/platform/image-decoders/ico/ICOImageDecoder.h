@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, Google Inc. All rights reserved.
+ * Copyright (c) 2008-2009 Google Inc. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -50,7 +50,7 @@ public:
     IntSize size() const final;
     IntSize frameSizeAtIndex(size_t, SubsamplingLevel) const final;
     bool setSize(const IntSize&) final;
-    size_t frameCount() const final;
+    size_t decodeIfNeededAndGetFrameCount() const final;
     ScalableImageDecoderFrame* frameBufferAtIndex(size_t) final;
     // CAUTION: setFailed() deletes all readers and decoders. Be careful to
     // avoid accessing deleted memory, especially when calling this from

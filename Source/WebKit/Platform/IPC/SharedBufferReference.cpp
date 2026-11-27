@@ -28,13 +28,11 @@
 
 #include "Decoder.h"
 #include "Encoder.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/SharedMemory.h>
 
 namespace IPC {
 
 using namespace WebCore;
-using namespace WebKit;
 
 #if !USE(UNIX_DOMAIN_SOCKETS)
 SharedBufferReference::SharedBufferReference(std::optional<SerializableBuffer>&& serializableBuffer)
@@ -50,12 +48,15 @@ SharedBufferReference::SharedBufferReference(std::optional<SerializableBuffer>&&
     if (!serializableBuffer->handle)
         return;
 
-    auto sharedMemoryBuffer = SharedMemory::map(WTFMove(*serializableBuffer->handle), SharedMemory::Protection::ReadOnly);
+    if (auto ledger = serializableBuffer->ledger)
+        serializableBuffer->handle->takeOwnershipOfMemory(*ledger);
+
+    auto sharedMemoryBuffer = SharedMemory::map(WTF::move(*serializableBuffer->handle), SharedMemory::Protection::ReadOnly);
     if (!sharedMemoryBuffer || sharedMemoryBuffer->size() < serializableBuffer->size)
         return;
 
     m_size = serializableBuffer->size;
-    m_memory = WTFMove(sharedMemoryBuffer);
+    m_memory = WTF::move(sharedMemoryBuffer);
 }
 
 auto SharedBufferReference::serializableBuffer() const -> std::optional<SerializableBuffer>
@@ -63,9 +64,11 @@ auto SharedBufferReference::serializableBuffer() const -> std::optional<Serializ
     if (isNull())
         return std::nullopt;
     if (!m_size)
-        return SerializableBuffer { 0, std::nullopt };
-    auto sharedMemoryBuffer = m_memory ? m_memory : SharedMemory::copyBuffer(*m_buffer.copyRef());
-    return SerializableBuffer { m_size, sharedMemoryBuffer->createHandle(SharedMemory::Protection::ReadOnly) };
+        return SerializableBuffer { 0, std::nullopt, std::nullopt };
+    auto sharedMemoryBuffer = m_memory ? m_memory : SharedMemory::copyBuffer(protect(*m_buffer));
+    if (!sharedMemoryBuffer)
+        return std::nullopt;
+    return SerializableBuffer { m_size, sharedMemoryBuffer->createHandle(SharedMemory::Protection::ReadOnly), m_ledger };
 }
 #endif
 
@@ -82,7 +85,7 @@ RefPtr<WebCore::SharedBuffer> SharedBufferReference::unsafeBuffer() const
     return nullptr;
 }
 
-std::span<const uint8_t> SharedBufferReference::span() const
+std::span<const uint8_t> SharedBufferReference::span() const LIFETIME_BOUND
 {
 #if !USE(UNIX_DOMAIN_SOCKETS)
     RELEASE_ASSERT_WITH_MESSAGE(isEmpty() || (!m_buffer && m_memory), "Must only be called on IPC's receiver side");
@@ -94,7 +97,7 @@ std::span<const uint8_t> SharedBufferReference::span() const
         return { };
 
     if (!m_buffer->isContiguous())
-        m_buffer = m_buffer->makeContiguous();
+        m_buffer = protect(m_buffer)->makeContiguous();
 
     return downcast<SharedBuffer>(m_buffer.get())->span().first(m_size);
 }

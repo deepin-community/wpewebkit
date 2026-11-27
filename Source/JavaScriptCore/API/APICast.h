@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2022, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,15 +25,21 @@
 
 #pragma once
 
-#include "Integrity.h"
-#include "JSAPIValueWrapper.h"
-#include "JSCJSValue.h"
-#include "JSCJSValueInlines.h"
-#include "HeapCellInlines.h"
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/Integrity.h>
+#include <JavaScriptCore/JSAPIValueWrapper.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC {
     class CallFrame;
-    class PropertyNameArray;
+    class PropertyNameArrayBuilder;
     class VM;
     class JSObject;
     class JSValue;
@@ -74,11 +80,11 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, JSValueRef v)
         return JSC::jsNull();
     JSC::JSValue result;
     if (jsCell->isAPIValueWrapper())
-        result = JSC::jsCast<JSC::JSAPIValueWrapper*>(jsCell)->value();
+        result = uncheckedDowncast<JSC::JSAPIValueWrapper>(jsCell)->value();
     else
         result = jsCell;
 #else
-    JSC::JSValue result = bitwise_cast<JSC::JSValue>(v);
+    JSC::JSValue result = std::bit_cast<JSC::JSValue>(v);
 #endif
     if (!result)
         return JSC::jsNull();
@@ -92,7 +98,13 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, JSValueRef v)
 #if CPU(ADDRESS64)
 inline JSC::JSValue toJS(JSValueRef value)
 {
-    return JSC::Integrity::audit(bitwise_cast<JSC::JSValue>(value));
+    return JSC::Integrity::audit(std::bit_cast<JSC::JSValue>(value));
+}
+#else
+inline JSC::JSValue toJS(JSValueRef value)
+{
+    JSC::JSGlobalObject* unused = nullptr;
+    return toJS(unused, value);
 }
 #endif
 
@@ -105,13 +117,19 @@ inline JSC::JSValue toJSForGC(JSC::JSGlobalObject* globalObject, JSValueRef v)
         return JSC::JSValue();
     JSC::JSValue result = jsCell;
 #else
-    JSC::JSValue result = bitwise_cast<JSC::JSValue>(v);
+    JSC::JSValue result = std::bit_cast<JSC::JSValue>(v);
 #endif
     if (result && result.isCell()) {
         JSC::Integrity::audit(result.asCell());
         RELEASE_ASSERT(result.asCell()->methodTable());
     }
     return result;
+}
+
+inline JSC::JSValue toJSForGC(JSValueRef value)
+{
+    JSC::JSGlobalObject* unused = nullptr;
+    return toJSForGC(unused, value);
 }
 
 // Used in JSObjectGetPrivate as that may be called during finalization
@@ -128,9 +146,9 @@ inline JSC::JSObject* toJS(JSObjectRef o)
     return object;
 }
 
-inline JSC::PropertyNameArray* toJS(JSPropertyNameAccumulatorRef a)
+inline JSC::PropertyNameArrayBuilder* toJS(JSPropertyNameAccumulatorRef a)
 {
-    return reinterpret_cast<JSC::PropertyNameArray*>(a);
+    return reinterpret_cast<JSC::PropertyNameArrayBuilder*>(a);
 }
 
 inline JSC::VM* toJS(JSContextGroupRef g)
@@ -149,7 +167,7 @@ inline JSValueRef toRef(JSC::VM& vm, JSC::JSValue v)
     return reinterpret_cast<JSValueRef>(v.asCell());
 #else
     UNUSED_PARAM(vm);
-    return bitwise_cast<JSValueRef>(JSC::Integrity::audit(v));
+    return std::bit_cast<JSValueRef>(JSC::Integrity::audit(v));
 #endif
 }
 
@@ -159,9 +177,9 @@ inline JSValueRef toRef(JSC::JSGlobalObject* globalObject, JSC::JSValue v)
 }
 
 #if CPU(ADDRESS64)
-inline JSValueRef toRef(JSC::JSValue v)
+inline JSValueRef toRefWithoutGlobalObject(JSC::JSValue v)
 {
-    return bitwise_cast<JSValueRef>(JSC::Integrity::audit(v));
+    return std::bit_cast<JSValueRef>(JSC::Integrity::audit(v));
 }
 #endif
 
@@ -185,9 +203,9 @@ inline JSGlobalContextRef toGlobalRef(JSC::JSGlobalObject* globalObject)
     return reinterpret_cast<JSGlobalContextRef>(JSC::Integrity::audit(globalObject));
 }
 
-inline JSPropertyNameAccumulatorRef toRef(JSC::PropertyNameArray* l)
+inline JSPropertyNameAccumulatorRef toRef(JSC::PropertyNameArrayBuilder* propertyNameArrayBuilder)
 {
-    return reinterpret_cast<JSPropertyNameAccumulatorRef>(l);
+    return reinterpret_cast<JSPropertyNameAccumulatorRef>(propertyNameArrayBuilder);
 }
 
 inline JSContextGroupRef toRef(JSC::VM* g)

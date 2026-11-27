@@ -44,38 +44,46 @@ namespace WebKit {
 
 void TestWithSuperclass::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    Ref protectedThis { *this };
-    if (decoder.messageName() == Messages::TestWithSuperclass::LoadURL::name())
-        return IPC::handleMessage<Messages::TestWithSuperclass::LoadURL>(connection, decoder, this, &TestWithSuperclass::loadURL);
+    if (decoder.messageName() == Messages::TestWithSuperclass::LoadURL::name()) {
+        IPC::handleMessage<Messages::TestWithSuperclass::LoadURL>(connection, decoder, this, &TestWithSuperclass::loadURL);
+        return;
+    }
 #if ENABLE(TEST_FEATURE)
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessage::name())
-        return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessage>(connection, decoder, this, &TestWithSuperclass::testAsyncMessage);
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments::name())
-        return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithNoArguments);
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments::name())
-        return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithMultipleArguments);
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithConnection::name())
-        return IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithConnection>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithConnection);
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessage::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessage>(connection, decoder, this, &TestWithSuperclass::testAsyncMessage);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageAnyThread::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageAnyThread>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageAnyThread);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithNoArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithNoArguments);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArguments>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithMultipleArguments);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestAsyncMessageWithConnection::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSuperclass::TestAsyncMessageWithConnection>(connection, decoder, this, &TestWithSuperclass::testAsyncMessageWithConnection);
+        return;
+    }
 #endif
     WebPageBase::didReceiveMessage(connection, decoder);
 }
 
-bool TestWithSuperclass::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)
+void TestWithSuperclass::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)
 {
-    Ref protectedThis { *this };
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestSyncMessage::name())
-        return IPC::handleMessageSynchronous<Messages::TestWithSuperclass::TestSyncMessage>(connection, decoder, replyEncoder, this, &TestWithSuperclass::testSyncMessage);
-    if (decoder.messageName() == Messages::TestWithSuperclass::TestSynchronousMessage::name())
-        return IPC::handleMessageSynchronous<Messages::TestWithSuperclass::TestSynchronousMessage>(connection, decoder, replyEncoder, this, &TestWithSuperclass::testSynchronousMessage);
-    UNUSED_PARAM(connection);
-    UNUSED_PARAM(decoder);
-    UNUSED_PARAM(replyEncoder);
-#if ENABLE(IPC_TESTING_API)
-    if (connection.ignoreInvalidMessageForTesting())
-        return false;
-#endif // ENABLE(IPC_TESTING_API)
-    ASSERT_NOT_REACHED_WITH_MESSAGE("Unhandled synchronous message %s to %" PRIu64, description(decoder.messageName()).characters(), decoder.destinationID());
-    return false;
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestSyncMessage::name()) {
+        IPC::handleMessageSynchronous<Messages::TestWithSuperclass::TestSyncMessage>(connection, decoder, replyEncoder, this, &TestWithSuperclass::testSyncMessage);
+        return;
+    }
+    if (decoder.messageName() == Messages::TestWithSuperclass::TestSynchronousMessage::name()) {
+        IPC::handleMessageSynchronous<Messages::TestWithSuperclass::TestSynchronousMessage>(connection, decoder, replyEncoder, this, &TestWithSuperclass::testSynchronousMessage);
+        return;
+    }
+    WebPageBase::didReceiveSyncMessage(connection, decoder, replyEncoder);
 }
 
 } // namespace WebKit
@@ -96,6 +104,14 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::Tes
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessage>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessage::ReplyArguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThread::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThread::ReplyArguments>(globalObject, decoder);
 }
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
@@ -138,6 +154,28 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName
 {
     return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestSynchronousMessage::ReplyArguments>(globalObject, decoder);
 }
+#if ENABLE(TEST_FEATURE)
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThreadReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageAnyThreadReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArgumentsReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageWithNoArgumentsReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithMultipleArgumentsReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageWithMultipleArgumentsReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithConnectionReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSuperclass::TestAsyncMessageWithConnectionReply::Arguments>(globalObject, decoder);
+}
+#endif
 
 }
 

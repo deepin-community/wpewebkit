@@ -32,8 +32,7 @@
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <array>
-#include <mutex>
-#include <wtf/IteratorRange.h>
+#include <ranges>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSRandomSource.h>
@@ -43,7 +42,7 @@ namespace WTF {
 namespace {
 
 class ARC4Stream {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ARC4Stream);
 public:
     ARC4Stream();
 
@@ -53,7 +52,7 @@ public:
 };
 
 class ARC4RandomNumberGenerator {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ARC4RandomNumberGenerator);
 public:
     ARC4RandomNumberGenerator() = default;
 
@@ -62,10 +61,10 @@ public:
     void randomValues(std::span<uint8_t>);
 
 private:
-    inline void addRandomData(std::span<const uint8_t, 128>);
+    inline void NODELETE addRandomData(std::span<const uint8_t, 128>);
     void stir() WTF_REQUIRES_LOCK(m_lock);
     void stirIfNeeded() WTF_REQUIRES_LOCK(m_lock);
-    inline uint8_t getByte() WTF_REQUIRES_LOCK(m_lock);
+    inline uint8_t NODELETE getByte() WTF_REQUIRES_LOCK(m_lock);
 
     Lock m_lock;
     ARC4Stream m_stream;
@@ -140,23 +139,16 @@ void ARC4RandomNumberGenerator::randomValues(std::span<uint8_t> buffer)
 {
     Locker locker { m_lock };
 
-    for (auto& byte : WTF::makeReversedRange(buffer)) {
+    for (auto& byte : buffer | std::views::reverse) {
         m_count--;
         stirIfNeeded();
         byte = getByte();
     }
 }
 
-ARC4RandomNumberGenerator& sharedRandomNumberGenerator()
+ARC4RandomNumberGenerator& NODELETE sharedRandomNumberGenerator()
 {
-    static LazyNeverDestroyed<ARC4RandomNumberGenerator> randomNumberGenerator;
-    static std::once_flag onceFlag;
-    std::call_once(
-        onceFlag,
-        [] {
-            randomNumberGenerator.construct();
-        });
-
+    static NeverDestroyed<ARC4RandomNumberGenerator> randomNumberGenerator;
     return randomNumberGenerator;
 }
 

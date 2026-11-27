@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "ScreenDataOverrides.h"
+#include <WebCore/PlatformVideoColorSpace.h>
+#include <WebCore/ScreenDataOverrides.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 namespace WebCore {
@@ -123,9 +124,21 @@ struct VPCodecConfigurationRecord {
     uint8_t colorPrimaries { VPConfigurationColorPrimaries::BT_709_6 };
     uint8_t transferCharacteristics { VPConfigurationTransferCharacteristics::BT_709_6 };
     uint8_t matrixCoefficients { VPConfigurationMatrixCoefficients::BT_709_6 };
+
+    // Additional information parsed from bitstream
+    uint16_t frameWidth { 0 };
+    uint16_t frameHeight { 0 };
 };
 
 WEBCORE_EXPORT std::optional<VPCodecConfigurationRecord> parseVPCodecParameters(StringView codecString);
 WEBCORE_EXPORT String createVPCodecParametersString(const VPCodecConfigurationRecord&);
+std::optional<VPCodecConfigurationRecord> createVPCodecConfigurationRecordFromVPCC(std::span<const uint8_t>);
+void NODELETE setConfigurationColorSpaceFromVP9ColorSpace(VPCodecConfigurationRecord&, uint8_t);
+
+enum class VPXCodec : uint8_t { Vp8, Vp9 };
+std::optional<VPCodecConfigurationRecord> vpCodecConfigurationRecordFromVPXByteStream(VPXCodec, std::span<const uint8_t>);
+Vector<uint8_t> vpcCFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord&);
+
+PlatformVideoColorSpace NODELETE colorSpaceFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord&);
 
 }

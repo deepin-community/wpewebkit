@@ -25,13 +25,13 @@ SurfaceGL::~SurfaceGL() {}
 egl::Error SurfaceGL::getSyncValues(EGLuint64KHR *ust, EGLuint64KHR *msc, EGLuint64KHR *sbc)
 {
     UNREACHABLE();
-    return egl::EglBadSurface();
+    return egl::Error(EGL_BAD_SURFACE);
 }
 
 egl::Error SurfaceGL::getMscRate(EGLint *numerator, EGLint *denominator)
 {
     UNIMPLEMENTED();
-    return egl::EglBadAccess();
+    return egl::Error(EGL_BAD_ACCESS);
 }
 
 angle::Result SurfaceGL::initializeContents(const gl::Context *context,
@@ -70,17 +70,6 @@ angle::Result SurfaceGL::initializeContents(const gl::Context *context,
 bool SurfaceGL::hasEmulatedAlphaChannel() const
 {
     return false;
-}
-
-egl::Error SurfaceGL::attachToFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer)
-{
-    return egl::NoError();
-}
-
-egl::Error SurfaceGL::detachFromFramebuffer(const gl::Context *context,
-                                            gl::Framebuffer *framebuffer)
-{
-    return egl::NoError();
 }
 
 }  // namespace rx

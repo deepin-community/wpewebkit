@@ -28,30 +28,37 @@
 
 #include "Document.h"
 #include "InstrumentingAgents.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 using namespace Inspector;
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorWorkerAgent);
+
 InspectorWorkerAgent::InspectorWorkerAgent(WebAgentContext& context)
     : InspectorAgentBase("Worker"_s, context)
-    , m_frontendDispatcher(makeUnique<Inspector::WorkerFrontendDispatcher>(context.frontendRouter))
+    , m_pageChannel(PageChannel::create(*this))
+    , m_frontendDispatcher(makeUniqueRef<Inspector::WorkerFrontendDispatcher>(context.frontendRouter))
     , m_backendDispatcher(Inspector::WorkerBackendDispatcher::create(context.backendDispatcher, this))
 {
 }
 
-InspectorWorkerAgent::~InspectorWorkerAgent() = default;
-
-void InspectorWorkerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+InspectorWorkerAgent::~InspectorWorkerAgent()
 {
-    m_instrumentingAgents.setPersistentWorkerAgent(this);
+    m_pageChannel->detachFromParentAgent();
+}
+
+void InspectorWorkerAgent::didCreateFrontendAndBackend()
+{
+    Ref { m_instrumentingAgents.get() }->setPersistentWorkerAgent(this);
 }
 
 void InspectorWorkerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    m_instrumentingAgents.setPersistentWorkerAgent(nullptr);
+    Ref { m_instrumentingAgents.get() }->setPersistentWorkerAgent(nullptr);
 
-    disable();
+    std::ignore = disable();
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::enable()
@@ -80,7 +87,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::disable()
 
 Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::initialized(const String& workerId)
 {
-    RefPtr proxy = m_connectedProxies.get(workerId).get();
+    RefPtr proxy = m_connectedProxies.get(workerId);
     if (!proxy)
         return makeUnexpected("Missing worker for given workerId"_s);
 
@@ -94,23 +101,13 @@ Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::sendMessageToWork
     if (!m_enabled)
         return makeUnexpected("Worker domain must be enabled"_s);
 
-    RefPtr proxy = m_connectedProxies.get(workerId).get();
+    RefPtr proxy = m_connectedProxies.get(workerId);
     if (!proxy)
         return makeUnexpected("Missing worker for given workerId"_s);
 
     proxy->sendMessageToWorkerInspectorController(message);
 
     return { };
-}
-
-void InspectorWorkerAgent::sendMessageFromWorkerToFrontend(WorkerInspectorProxy& proxy, String&& message)
-{
-    m_frontendDispatcher->dispatchMessageFromWorker(proxy.identifier(), WTFMove(message));
-}
-
-bool InspectorWorkerAgent::shouldWaitForDebuggerOnStart() const
-{
-    return m_enabled;
 }
 
 void InspectorWorkerAgent::workerStarted(WorkerInspectorProxy& proxy)
@@ -144,7 +141,7 @@ void InspectorWorkerAgent::disconnectFromAllWorkerInspectorProxies()
 
 void InspectorWorkerAgent::connectToWorkerInspectorProxy(WorkerInspectorProxy& proxy)
 {
-    proxy.connectToWorkerInspectorController(*this);
+    proxy.connectToWorkerInspectorController(m_pageChannel);
 
     m_connectedProxies.set(proxy.identifier(), proxy);
 
@@ -158,6 +155,31 @@ void InspectorWorkerAgent::disconnectFromWorkerInspectorProxy(WorkerInspectorPro
     m_connectedProxies.remove(proxy.identifier());
 
     proxy.disconnectFromWorkerInspectorController();
+}
+
+Ref<InspectorWorkerAgent::PageChannel> InspectorWorkerAgent::PageChannel::create(InspectorWorkerAgent& parentAgent)
+{
+    return adoptRef(*new PageChannel(parentAgent));
+}
+
+InspectorWorkerAgent::PageChannel::PageChannel(InspectorWorkerAgent& parentAgent)
+    : m_parentAgent(&parentAgent)
+{
+}
+
+void InspectorWorkerAgent::PageChannel::detachFromParentAgent()
+{
+    Locker locker { m_parentAgentLock };
+
+    m_parentAgent = nullptr;
+}
+
+void InspectorWorkerAgent::PageChannel::sendMessageFromWorkerToFrontend(WorkerInspectorProxy& proxy, String&& message)
+{
+    Locker locker { m_parentAgentLock };
+
+    if (CheckedPtr parentAgent = m_parentAgent)
+        parentAgent->frontendDispatcher().dispatchMessageFromWorker(proxy.identifier(), WTF::move(message));
 }
 
 } // namespace Inspector

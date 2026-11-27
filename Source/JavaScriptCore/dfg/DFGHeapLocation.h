@@ -35,17 +35,22 @@ namespace JSC { namespace DFG {
 
 enum LocationKind {
     InvalidLocationKind,
-    
+
     ArrayLengthLoc,
     ArrayMaskLoc,
     VectorLengthLoc,
     ButterflyLoc,
+    DataViewByteLengthLoc,
+    DataViewByteLengthAsInt52Loc,
     CheckTypeInfoFlagsLoc,
+    CheckPrivateBrandLoc,
     OverridesHasInstanceLoc,
     ClosureVariableLoc,
+    ClosureVariableDoubleLoc,
     DirectArgumentsLoc,
     GetterLoc,
     GlobalVariableLoc,
+    GlobalVariableDoubleLoc,
     EnumeratorNextUpdateIndexAndModeLoc,
     HasIndexedPropertyLoc,
     IndexedPropertyDoubleLoc,
@@ -55,15 +60,18 @@ enum LocationKind {
     IndexedPropertyInt32Loc,
     IndexedPropertyInt32OutOfBoundsSaneChainLoc,
     IndexedPropertyInt52Loc,
-    IndexedPropertyJSOutOfBoundsSaneChainLoc,
+    IndexedPropertyInt52OutOfBoundsSaneChainLoc,
     IndexedPropertyJSLoc,
+    IndexedPropertyJSOutOfBoundsSaneChainLoc,
     IndexedPropertyStorageLoc,
     InvalidationPointLoc,
     IsCallableLoc,
     IsConstructorLoc,
+    ArrayIsArrayLoc,
     TypeOfIsObjectLoc,
     TypeOfIsFunctionLoc,
     NamedPropertyLoc,
+    NamedPropertyDoubleLoc,
     RegExpObjectLastIndexLoc,
     SetterLoc,
     StructureLoc,
@@ -88,6 +96,8 @@ enum LocationKind {
     MapIterationEntryLoc,
     MapIterationEntryKeyLoc,
     MapIterationEntryValueLoc,
+    MapOrSetSizeLoc,
+    GetRegExpFlagLoc,
     MapEntryKeyLoc,
     MapEntryValueLoc,
     LoadMapValueLoc,
@@ -154,9 +164,9 @@ public:
         return m_kind
             + m_heap.hash()
             + m_index.hash()
-            + static_cast<unsigned>(bitwise_cast<uintptr_t>(m_base))
-            + static_cast<unsigned>(bitwise_cast<uintptr_t>(m_descriptor))
-            + static_cast<unsigned>(bitwise_cast<uintptr_t>(m_extraState));
+            + static_cast<unsigned>(std::bit_cast<uintptr_t>(m_base))
+            + static_cast<unsigned>(std::bit_cast<uintptr_t>(m_descriptor))
+            + static_cast<unsigned>(std::bit_cast<uintptr_t>(m_extraState));
     }
     
     friend bool operator==(const HeapLocation&, const HeapLocation&) = default;
@@ -165,7 +175,9 @@ public:
     {
         return m_heap.isHashTableDeletedValue();
     }
-    
+
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
+
     void dump(PrintStream& out) const;
     
 private:
@@ -176,14 +188,6 @@ private:
     Node* m_descriptor;
     void* m_extraState { nullptr };
 };
-
-struct HeapLocationHash {
-    static unsigned hash(const HeapLocation& key) { return key.hash(); }
-    static bool equal(const HeapLocation& a, const HeapLocation& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
-
-LocationKind indexedPropertyLocForResultType(NodeFlags);
 
 inline LocationKind indexedPropertyLocForResultType(NodeFlags canonicalResultRepresentation)
 {
@@ -208,14 +212,25 @@ inline LocationKind indexedPropertyLocForResultType(NodeFlags canonicalResultRep
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+inline LocationKind indexedPropertyLocToOutOfBoundsSaneChain(LocationKind location)
+{
+    switch (location) {
+    case IndexedPropertyInt32Loc:
+        return IndexedPropertyInt32OutOfBoundsSaneChainLoc;
+    case IndexedPropertyInt52Loc:
+        return IndexedPropertyInt52OutOfBoundsSaneChainLoc;
+    case IndexedPropertyDoubleLoc:
+        return IndexedPropertyDoubleOutOfBoundsSaneChainLoc;
+    case IndexedPropertyJSLoc:
+        return IndexedPropertyJSOutOfBoundsSaneChainLoc;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 } } // namespace JSC::DFG
 
 namespace WTF {
-
-void printInternal(PrintStream&, JSC::DFG::LocationKind);
-
-template<typename T> struct DefaultHash;
-template<> struct DefaultHash<JSC::DFG::HeapLocation> : JSC::DFG::HeapLocationHash { };
 
 template<typename T> struct HashTraits;
 template<> struct HashTraits<JSC::DFG::HeapLocation> : SimpleClassHashTraits<JSC::DFG::HeapLocation> {

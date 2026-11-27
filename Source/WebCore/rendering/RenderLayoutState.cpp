@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007, 2013 Apple Inc.  All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,30 +27,28 @@
 #include "RenderLayoutState.h"
 
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
-#include "RenderStyleInlines.h"
 #include "RenderView.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayoutState);
+
 RenderLayoutState::RenderLayoutState(RenderElement& renderer)
-    : m_clipped(false)
-    , m_isPaginated(false)
-    , m_pageLogicalHeightChanged(false)
 #if ASSERT_ENABLED
-    , m_layoutDeltaXSaturated(false)
-    , m_layoutDeltaYSaturated(false)
-    , m_blockStartTrimming(Vector<bool>(0))
-    , m_renderer(&renderer)
+    : m_renderer(&renderer)
 #endif
 {
     if (RenderElement* container = renderer.container()) {
-        FloatPoint absContentPoint = container->localToAbsolute(FloatPoint(), UseTransforms);
+        FloatPoint absContentPoint = container->localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms);
         m_paintOffset = LayoutSize(absContentPoint.x(), absContentPoint.y());
 
         if (container->hasNonVisibleOverflow()) {
@@ -66,17 +64,9 @@ RenderLayoutState::RenderLayoutState(RenderElement& renderer)
     }
 }
 
-RenderLayoutState::RenderLayoutState(const LocalFrameViewLayoutContext::LayoutStateStack& layoutStateStack, RenderBox& renderer, const LayoutSize& offset, LayoutUnit pageLogicalHeight, bool pageLogicalHeightChanged, std::optional<LineClamp> lineClamp, std::optional<TextBoxTrim> textBoxTrim)
-    : m_clipped(false)
-    , m_isPaginated(false)
-    , m_pageLogicalHeightChanged(false)
-#if ASSERT_ENABLED
-    , m_layoutDeltaXSaturated(false)
-    , m_layoutDeltaYSaturated(false)
-#endif
-    , m_blockStartTrimming(Vector<bool>(0))
-    , m_lineClamp(lineClamp)
-    , m_textBoxTrim(textBoxTrim)
+RenderLayoutState::RenderLayoutState(const LocalFrameViewLayoutContext::LayoutStateStack& layoutStateStack, RenderBox& renderer, const LayoutSize& offset, LayoutUnit pageLogicalHeight, bool pageLogicalHeightChanged, std::optional<LineClamp> lineClamp, std::optional<LegacyLineClamp> legacyLineClamp)
+    : m_lineClamp(lineClamp)
+    , m_legacyLineClamp(legacyLineClamp)
 #if ASSERT_ENABLED
     , m_renderer(&renderer)
 #endif
@@ -93,7 +83,7 @@ void RenderLayoutState::computeOffsets(const RenderLayoutState& ancestor, Render
 {
     bool fixed = renderer.isFixedPositioned();
     if (fixed) {
-        FloatPoint fixedOffset = renderer.view().localToAbsolute(FloatPoint(), IsFixed);
+        FloatPoint fixedOffset = renderer.view().localToAbsolute(FloatPoint(), MapCoordinatesMode::IsFixed);
         m_paintOffset = LayoutSize(fixedOffset.x(), fixedOffset.y()) + offset;
     } else
         m_paintOffset = ancestor.paintOffset() + offset;
@@ -113,10 +103,18 @@ void RenderLayoutState::computeOffsets(const RenderLayoutState& ancestor, Render
     if (renderer.hasNonVisibleOverflow())
         m_paintOffset -= toLayoutSize(renderer.scrollPosition());
 
-    m_layoutDelta = ancestor.layoutDelta();
+    // A repaint container (own backing store, a full-layer filter, or a fragmented flow) is the origin
+    // of its own repaint coordinate space, so a delta accumulated in the ancestor space must not leak
+    // into the subtree; reset it here and let in-container repositions accumulate onto the fresh value.
+    auto isRepaintContainer = [&] {
+        if (CheckedPtr layer = renderer.layer())
+            return compositedWithOwnBackingStore(*layer) || layer->requiresFullLayerImageForFilters();
+        return renderer.isRenderFragmentedFlow();
+    }();
+    m_layoutDeltaForRepaint = isRepaintContainer ? LayoutSize() : ancestor.layoutDelta();
 #if ASSERT_ENABLED
-    m_layoutDeltaXSaturated = ancestor.m_layoutDeltaXSaturated;
-    m_layoutDeltaYSaturated = ancestor.m_layoutDeltaYSaturated;
+    m_layoutDeltaForRepaintXSaturated = isRepaintContainer ? false : ancestor.m_layoutDeltaForRepaintXSaturated;
+    m_layoutDeltaForRepaintYSaturated = isRepaintContainer ? false : ancestor.m_layoutDeltaForRepaintYSaturated;
 #endif
 }
 
@@ -145,7 +143,7 @@ void RenderLayoutState::computePaginationInformation(const LocalFrameViewLayoutC
     // We can compare this later on to figure out what part of the page we're actually on.
     if (pageLogicalHeight || renderer.isRenderFragmentedFlow()) {
         m_pageLogicalHeight = pageLogicalHeight;
-        bool isFlipped = renderer.style().isFlippedBlocksWritingMode();
+        bool isFlipped = renderer.writingMode().isBlockFlipped();
         m_pageOffset = LayoutSize(m_layoutOffset.width() + (!isFlipped ? renderer.borderLeft() + renderer.paddingLeft() : renderer.borderRight() + renderer.paddingRight()), m_layoutOffset.height() + (!isFlipped ? renderer.borderTop() + renderer.paddingTop() : renderer.borderBottom() + renderer.paddingBottom()));
         m_pageLogicalHeightChanged = pageLogicalHeightChanged;
         m_isPaginated = true;
@@ -167,14 +165,14 @@ void RenderLayoutState::computePaginationInformation(const LocalFrameViewLayoutC
     if (ancestor)
         propagateLineGridInfo(*ancestor, renderer);
 
-    if (lineGrid() && (lineGrid()->style().writingMode() == renderer.style().writingMode())) {
+    if (lineGrid() && (lineGrid()->writingMode().computedWritingMode() == renderer.writingMode().computedWritingMode())) {
         if (CheckedPtr columnFlow = dynamicDowncast<RenderMultiColumnFlow>(renderer))
             computeLineGridPaginationOrigin(*columnFlow);
     }
 
     // If we have a new grid to track, then add it to our set.
-    if (renderer.style().lineGrid() != RenderStyle::initialLineGrid()) {
-        if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(renderer))
+    if (!renderer.style().lineGrid().isNone()) {
+        if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(renderer))
             establishLineGrid(layoutStateStack, *blockFlow);
     }
 }
@@ -263,17 +261,17 @@ void RenderLayoutState::establishLineGrid(const LocalFrameViewLayoutContext::Lay
 
 void RenderLayoutState::addLayoutDelta(LayoutSize delta)
 {
-    m_layoutDelta += delta;
+    m_layoutDeltaForRepaint += delta;
 #if ASSERT_ENABLED
-    m_layoutDeltaXSaturated |= m_layoutDelta.width() == LayoutUnit::max() || m_layoutDelta.width() == LayoutUnit::min();
-    m_layoutDeltaYSaturated |= m_layoutDelta.height() == LayoutUnit::max() || m_layoutDelta.height() == LayoutUnit::min();
+    m_layoutDeltaForRepaintXSaturated |= m_layoutDeltaForRepaint.width() == LayoutUnit::max() || m_layoutDeltaForRepaint.width() == LayoutUnit::min();
+    m_layoutDeltaForRepaintYSaturated |= m_layoutDeltaForRepaint.height() == LayoutUnit::max() || m_layoutDeltaForRepaint.height() == LayoutUnit::min();
 #endif
 }
 
 #if ASSERT_ENABLED
 bool RenderLayoutState::layoutDeltaMatches(LayoutSize delta) const
 {
-    return (delta.width() == m_layoutDelta.width() || m_layoutDeltaXSaturated) && (delta.height() == m_layoutDelta.height() || m_layoutDeltaYSaturated);
+    return (delta.width() == m_layoutDeltaForRepaint.width() || m_layoutDeltaForRepaintXSaturated) && (delta.height() == m_layoutDeltaForRepaint.height() || m_layoutDeltaForRepaintYSaturated);
 }
 #endif
 
@@ -336,18 +334,34 @@ SubtreeLayoutStateMaintainer::~SubtreeLayoutStateMaintainer()
     }
 }
 
-ContentVisibilityForceLayoutScope::ContentVisibilityForceLayoutScope(RenderView& layoutRoot, const Element* context)
+FlexPercentResolveDisabler::FlexPercentResolveDisabler(LocalFrameViewLayoutContext& layoutContext, const RenderBox& flexItem)
+    : m_layoutContext(layoutContext)
+    , m_flexItem(flexItem)
 {
-    if (context) {
-        m_context = &layoutRoot.frameView().layoutContext();
-        m_context->setNeedsSkippedContentLayout(true);
-    }
+    m_layoutContext->disablePercentHeightResolveFor(flexItem);
 }
 
-ContentVisibilityForceLayoutScope::~ContentVisibilityForceLayoutScope()
+FlexPercentResolveDisabler::~FlexPercentResolveDisabler()
 {
-    if (m_context)
-        m_context->setNeedsSkippedContentLayout(false);
+    m_layoutContext->enablePercentHeightResolveFor(m_flexItem);
+}
+
+ContentVisibilityOverrideScope::ContentVisibilityOverrideScope(LocalFrameViewLayoutContext& layoutContext, OptionSet<OverrideType> overrideTypes)
+    : m_layoutContext(layoutContext)
+{
+    if (overrideTypes.contains(OverrideType::Hidden))
+        layoutContext.setIsVisiblityHiddenIgnored(true);
+    if (overrideTypes.contains(OverrideType::Auto))
+        layoutContext.setIsVisiblityAutoIgnored(true);
+    if (overrideTypes.contains(OverrideType::RevealedWhenFound))
+        layoutContext.setIsRevealedWhenFoundIgnored(true);
+}
+
+ContentVisibilityOverrideScope::~ContentVisibilityOverrideScope()
+{
+    m_layoutContext->setIsVisiblityHiddenIgnored(false);
+    m_layoutContext->setIsVisiblityAutoIgnored(false);
+    m_layoutContext->setIsRevealedWhenFoundIgnored(false);
 }
 
 } // namespace WebCore

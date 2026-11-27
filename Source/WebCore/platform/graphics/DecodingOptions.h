@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "IntSize.h"
+#include <WebCore/IntSize.h>
 #include <optional>
 
 namespace WebCore {
@@ -36,10 +36,17 @@ enum class DecodingMode : uint8_t {
     Asynchronous
 };
 
+enum class DecodingDestination : uint8_t {
+    Base,
+    BaseAndGainMap,
+    ShouldDecodeToHDR
+};
+
 class DecodingOptions {
 public:
-    DecodingOptions(DecodingMode decodingMode = DecodingMode::Synchronous, const std::optional<IntSize>& sizeForDrawing = std::nullopt)
+    DecodingOptions(DecodingMode decodingMode = DecodingMode::Synchronous, DecodingDestination decodingDestination = DecodingDestination::Base, const std::optional<IntSize>& sizeForDrawing = std::nullopt)
         : m_decodingMode(decodingMode)
+        , m_decodingDestination(decodingDestination)
         , m_sizeForDrawing(sizeForDrawing)
     {
     }
@@ -51,12 +58,23 @@ public:
     bool isSynchronous() const { return m_decodingMode == DecodingMode::Synchronous; }
     bool isAsynchronous() const { return m_decodingMode == DecodingMode::Asynchronous; }
 
+    DecodingDestination decodingDestination() const { return m_decodingDestination; }
+
     std::optional<IntSize> sizeForDrawing() const { return m_sizeForDrawing; }
     bool hasFullSize() const { return !m_sizeForDrawing; }
     bool hasSizeForDrawing() const { return !!m_sizeForDrawing; }
 
     bool isCompatibleWith(const DecodingOptions& other) const
     {
+        if (decodingDestination() != other.decodingDestination()) {
+            // This is the only exception. A fully decoded HDR image is compatible
+            // with DecodingDestination::BaseAndGainMap request.
+            if (decodingDestination() != DecodingDestination::ShouldDecodeToHDR)
+                return false;
+            if (other.decodingDestination() != DecodingDestination::BaseAndGainMap)
+                return false;
+        }
+
         if (isAuto() || other.isAuto())
             return false;
 
@@ -71,6 +89,7 @@ public:
 
 private:
     DecodingMode m_decodingMode;
+    DecodingDestination m_decodingDestination;
     std::optional<IntSize> m_sizeForDrawing;
 };
 

@@ -31,8 +31,11 @@
 // renaming of more LibWebRTC-prefixed files in WebKit.
 // https://bugs.webkit.org/show_bug.cgi?id=243774
 
+#include <wtf/Compiler.h>
+
 #if USE(LIBWEBRTC)
 
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 
 #if PLATFORM(COCOA)
@@ -61,19 +64,26 @@ using LibWebRTCProviderBase = WebCore::LibWebRTCProvider;
 #endif
 
 class LibWebRTCProvider final : public LibWebRTCProviderBase {
+    WTF_MAKE_TZONE_ALLOCATED(LibWebRTCProvider);
 public:
     explicit LibWebRTCProvider(WebPage&);
     ~LibWebRTCProvider();
 
 private:
-    std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, WebCore::ScriptExecutionContextIdentifier, bool /* isFirstParty */, WebCore::RegistrableDomain&&) final;
+    bool isLibWebRTCProvider() const final { return true; }
 
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(WebCore::ScriptExecutionContextIdentifier, webrtc::PeerConnectionObserver&, rtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&) final;
+    void clearCodecsConnectionForTesting() final;
+
+    std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */, WebCore::ScriptExecutionContextIdentifier, bool /* isFirstParty */, WebCore::RegistrableDomain&&, bool /* enableServiceClass */) final;
+
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(WebCore::ScriptExecutionContextIdentifier, webrtc::PeerConnectionObserver&, webrtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&) final;
 
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
     bool isSupportingVP9HardwareDecoder() const final;
     void setVP9HardwareSupportForTesting(std::optional<bool>) final;
+    bool isSupportingAV1HardwareDecoder() const final;
 #endif
+
     void disableNonLocalhostConnections() final;
     void startedNetworkThread() final;
     RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
@@ -107,3 +117,9 @@ inline UniqueRef<LibWebRTCProvider> createLibWebRTCProvider(WebPage&)
 #endif // USE(LIBWEBRTC)
 
 } // namespace WebKit
+
+#if USE(LIBWEBRTC)
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::LibWebRTCProvider) \
+static bool isType(const WebCore::WebRTCProvider& provider) { return provider.isLibWebRTCProvider(); } \
+SPECIALIZE_TYPE_TRAITS_END()
+#endif

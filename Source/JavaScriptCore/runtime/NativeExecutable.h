@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "ExecutableBase.h"
-#include "ImplementationVisibility.h"
+#include <JavaScriptCore/ExecutableBase.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
 
 namespace JSC {
 
@@ -37,7 +37,7 @@ public:
     typedef ExecutableBase Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
 
-    static NativeExecutable* create(VM&, Ref<JSC::JITCode>&& callThunk, TaggedNativeFunction, Ref<JSC::JITCode>&& constructThunk, TaggedNativeFunction constructor, ImplementationVisibility, const String& name);
+    static NativeExecutable* create(VM&, Ref<JSC::JITCode>&& callThunk, TaggedNativeFunction, Ref<JSC::JITCode>&& constructThunk, TaggedNativeFunction constructor, ImplementationVisibility, unsigned length, const String& name);
 
     static void destroy(JSCell*);
     
@@ -47,24 +47,24 @@ public:
         return &vm.nativeExecutableSpace();
     }
 
-    CodeBlockHash hashFor(CodeSpecializationKind) const;
+    CodeBlockHash NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
     TaggedNativeFunction constructor() const { return m_constructor; }
         
     TaggedNativeFunction nativeFunctionFor(CodeSpecializationKind kind)
     {
-        if (kind == CodeForCall)
+        if (kind == CodeSpecializationKind::CodeForCall)
             return function();
-        ASSERT(kind == CodeForConstruct);
+        ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
         return constructor();
     }
         
     static constexpr ptrdiff_t offsetOfNativeFunctionFor(CodeSpecializationKind kind)
     {
-        if (kind == CodeForCall)
+        if (kind == CodeSpecializationKind::CodeForCall)
             return OBJECT_OFFSETOF(NativeExecutable, m_function);
-        ASSERT(kind == CodeForConstruct);
+        ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
         return OBJECT_OFFSETOF(NativeExecutable, m_constructor);
     }
 
@@ -73,7 +73,9 @@ public:
         
     DECLARE_INFO;
 
-    const String& name() const { return m_name; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    JSString* nameJSString(VM&) const;
+    unsigned length() const { return m_length; }
 
     const DOMJIT::Signature* signatureFor(CodeSpecializationKind) const;
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
@@ -86,12 +88,11 @@ public:
         return m_asString.get();
     }
 
-    JSString* asStringConcurrently() const { return m_asString.get(); }
+    JSString* asStringConcurrently() const LIFETIME_BOUND { return m_asString.get(); }
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
-
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
-    void finishCreation(VM&, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, const String& name);
+    void finishCreation(VM&, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, unsigned length, const String& name);
 
     JSString* toStringSlow(JSGlobalObject*);
 
@@ -99,6 +100,7 @@ private:
     TaggedNativeFunction m_constructor;
 
     unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+    unsigned m_length { 0 };
 
     String m_name;
     WriteBarrier<JSString> m_asString;

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2004, 2005, 2008 Nikolas Zimmermann <zimmermann@kde.org>
- * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
+ * Copyright (C) 2004, 2005, 2006, 2007 Rob Buis <buis@kde.org>
  * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,7 +23,7 @@
 
 #include "DOMMatrix2DInit.h"
 #include "SVGTransform.h"
-#include "SVGTransformable.h"
+#include "SVGTransformValue.h"
 #include "SVGValuePropertyList.h"
 
 namespace WebCore {
@@ -31,7 +31,6 @@ namespace WebCore {
 class SVGTransformList final : public SVGValuePropertyList<SVGTransform> {
     friend class SVGViewSpec;
     using Base = SVGValuePropertyList<SVGTransform>;
-    using Base::Base;
 
 public:
     static Ref<SVGTransformList> create()
@@ -49,23 +48,43 @@ public:
         return adoptRef(*new SVGTransformList(other, access));
     }
 
+    ~SVGTransformList();
+
     ExceptionOr<Ref<SVGTransform>> createSVGTransformFromMatrix(DOMMatrix2DInit&& matrixInit)
     {
         Ref svgTransform =  SVGTransform::create();
-        svgTransform->setMatrix(WTFMove(matrixInit));
+        svgTransform->setMatrix(WTF::move(matrixInit));
         return svgTransform;
     }
 
     ExceptionOr<RefPtr<SVGTransform>> consolidate();
-    AffineTransform concatenate() const;
+    std::optional<AffineTransform> NODELETE concatenate() const;
 
-    void parse(StringView);
+    bool parse(StringView);
     String valueAsString() const override;
 
+    static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringView);
+    static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringParsingBuffer<Latin1Character>&);
+    static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringParsingBuffer<char16_t>&);
+
+    template<typename CharacterType>
+    static bool parseAndReplaceTransform(SVGTransformValue::SVGTransformType, StringParsingBuffer<CharacterType>&, SVGTransform&); // Defined in SVGTransformListInlines.h
+
+    template<typename CharacterType>
+    static RefPtr<SVGTransform> parseTransform(SVGTransformValue::SVGTransformType, StringParsingBuffer<CharacterType>&); // Defined in SVGTransformListInlines.h
+
 private:
-    template<typename CharacterType> bool parseGeneric(StringParsingBuffer<CharacterType>&);
-    bool parse(StringParsingBuffer<LChar>&);
-    bool parse(StringParsingBuffer<UChar>&);
+    SVGTransformList();
+    SVGTransformList(SVGPropertyOwner*, SVGPropertyAccess);
+    SVGTransformList(const SVGTransformList&, SVGPropertyAccess);
+
+    enum class ListReplacement : bool {
+        Append,
+        Replace
+    };
+    template<typename CharacterType> bool parseGeneric(StringParsingBuffer<CharacterType>&, ListReplacement = ListReplacement::Append);
+    bool parse(StringParsingBuffer<Latin1Character>&);
+    bool parse(StringParsingBuffer<char16_t>&);
 };
 
 } // namespace WebCore

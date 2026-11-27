@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "ExecutableAllocator.h"
-#include "MacroAssemblerCodeRef.h"
-#include "StructureID.h"
+#include <JavaScriptCore/ExecutableAllocator.h>
+#include <JavaScriptCore/MacroAssemblerCodeRef.h>
+#include <JavaScriptCore/StructureID.h>
 
 namespace JSC {
 
@@ -55,7 +55,7 @@ class AccessCase;
 // See GCAwareJITStubRoutine.h for the other stub routines.
 class JITStubRoutine {
     WTF_MAKE_NONCOPYABLE(JITStubRoutine);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JITStubRoutine);
 public:
     enum class Type : uint8_t {
         JITStubRoutineType,
@@ -94,7 +94,7 @@ public:
     // MacroAssemblerCodeRef is copyable, but at the cost of reference
     // counting churn. Returning a reference is a good way of reducing
     // the churn.
-    const MacroAssemblerCodeRef<JITStubRoutinePtrTag>& code() const { return m_code; }
+    const MacroAssemblerCodeRef<JITStubRoutinePtrTag>& code() const LIFETIME_BOUND { return m_code; }
     
     static CodePtr<JITStubRoutinePtrTag> asCodePtr(Ref<JITStubRoutine>&& stubRoutine)
     {
@@ -123,7 +123,7 @@ public:
     
     static bool passesFilter(uintptr_t address)
     {
-        return isJITPC(bitwise_cast<void*>(address));
+        return isJITPC(std::bit_cast<void*>(address));
     }
     
     bool visitWeak(VM&);
@@ -153,7 +153,7 @@ protected:
     ALWAYS_INLINE CallLinkInfo* callLinkInfoAtImpl(const ConcurrentJSLocker&, unsigned) { return nullptr; }
 
     template<typename Func>
-    ALWAYS_INLINE void runWithDowncast(const Func& function);
+    ALWAYS_INLINE void NODELETE runWithDowncast(const Func& function);
 
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> m_code;
     unsigned m_refCount;

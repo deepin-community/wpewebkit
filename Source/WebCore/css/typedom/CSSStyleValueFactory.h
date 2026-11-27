@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,19 +45,26 @@ class StylePropertyShorthand;
 
 class CSSStyleValueFactory {
 public:
-    static ExceptionOr<Ref<CSSStyleValue>> reifyValue(const CSSValue&, std::optional<CSSPropertyID>, Document* = nullptr);
-    static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValue(const AtomString&, const String&, bool parseMultiple, const CSSParserContext&);
-    static RefPtr<CSSStyleValue> constructStyleValueForShorthandSerialization(const String&, const CSSParserContext&);
-    static ExceptionOr<Vector<Ref<CSSStyleValue>>> vectorFromStyleValuesOrStrings(const AtomString& property, FixedVector<std::variant<RefPtr<CSSStyleValue>, String>>&& values, const CSSParserContext&);
+    static ExceptionOr<Ref<CSSStyleValue>> reifyValue(Document&, const CSSValue&, AssociatedProperty&&);
 
-    static RefPtr<CSSStyleValue> constructStyleValueForCustomPropertySyntaxValue(const CSSCustomPropertyValue::SyntaxValue&);
+    // https://drafts.css-houdini.org/css-typed-om-1/#parse-a-cssstylevalue
+    static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValue(Document&, const AtomString&, const String&, bool parseMultiple);
+    static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValueForCustomProperty(Document&, const AtomString&, const String&, bool parseMultiple);
+    static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValueForKnownProperty(Document&, CSSPropertyID, const String&, bool parseMultiple);
+
+    static RefPtr<CSSStyleValue> constructStyleValueForShorthandSerialization(Document&, const String&, CSSPropertyID);
+
+    static ExceptionOr<Vector<Ref<CSSStyleValue>>> vectorFromStyleValuesOrStringsForCustomProperty(Document&, const AtomString& property, FixedVector<Variant<Ref<CSSStyleValue>, String>>&&);
+    static ExceptionOr<Vector<Ref<CSSStyleValue>>> vectorFromStyleValuesOrStringsForKnownProperty(Document&, CSSPropertyID, FixedVector<Variant<Ref<CSSStyleValue>, String>>&&);
+
+    ~CSSStyleValueFactory();
 
 protected:
     CSSStyleValueFactory() = delete;
 
 private:
-    static ExceptionOr<RefPtr<CSSValue>> extractCSSValue(const CSSPropertyID&, const String&, const CSSParserContext&);
-    static ExceptionOr<RefPtr<CSSStyleValue>> extractShorthandCSSValues(const CSSPropertyID&, const String&, const CSSParserContext&);
+    static ExceptionOr<RefPtr<CSSValue>> extractCSSValue(Document&, const CSSPropertyID&, const String&);
+    static ExceptionOr<RefPtr<CSSStyleValue>> extractShorthandCSSValues(Document&, const CSSPropertyID&, const String&);
     static ExceptionOr<Ref<CSSUnparsedValue>> extractCustomCSSValues(const String&);
 };
 

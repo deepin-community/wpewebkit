@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WebGPUXRViewImpl.h"
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
+#if HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)
 
 #include "WebGPUConvertToBackingContext.h"
 #include "WebGPUDevice.h"
@@ -36,7 +36,7 @@
 namespace WebCore::WebGPU {
 
 XRViewImpl::XRViewImpl(WebGPUPtr<WGPUXRView>&& binding, ConvertToBackingContext& convertToBackingContext)
-    : m_backing(WTFMove(binding))
+    : m_backing(WTF::move(binding))
     , m_convertToBackingContext(convertToBackingContext)
 {
 }
@@ -45,4 +45,4 @@ XRViewImpl::~XRViewImpl() = default;
 
 } // namespace WebCore::WebGPU
 
-#endif // HAVE(WEBGPU_IMPLEMENTATION)
+#endif // HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)

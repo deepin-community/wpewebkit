@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2012 Apple Inc.  All rights reserved.
+ * Copyright (C) 2011, 2012 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO)
 
+#include "EventTargetInterfaces.h"
 #include "TrackListBase.h"
 
 namespace WebCore {
@@ -37,34 +38,33 @@ class VideoTrackList final : public TrackListBase {
 public:
     static Ref<VideoTrackList> create(ScriptExecutionContext* context)
     {
-        auto list = adoptRef(*new VideoTrackList(context));
+        Ref list = adoptRef(*new VideoTrackList(context));
         list->suspendIfNeeded();
         return list;
     }
     virtual ~VideoTrackList();
 
-    VideoTrack* getTrackById(const AtomString&) const;
-    VideoTrack* getTrackById(TrackID) const;
-    int selectedIndex() const;
+    RefPtr<VideoTrack> getTrackById(const AtomString&) const;
+    RefPtr<VideoTrack> getTrackById(TrackID) const;
+    int NODELETE selectedIndex() const;
 
     bool isSupportedPropertyIndex(unsigned index) const { return index < m_inbandTracks.size(); }
-    VideoTrack* item(unsigned) const;
-    VideoTrack* lastItem() const { return item(length() - 1); }
-    VideoTrack* selectedItem() const;
+    VideoTrack& NODELETE item(unsigned) const;
+    VideoTrack* NODELETE itemForBindings(unsigned) const;
+    VideoTrack& lastItem() const { return item(length() - 1); }
+    VideoTrack* NODELETE selectedItem() const;
     void append(Ref<VideoTrack>&&);
 
     // EventTarget
-    enum EventTargetInterfaceType eventTargetInterface() const override;
+    enum EventTargetInterfaceType eventTargetInterface() const final;
 
 private:
-    VideoTrackList(ScriptExecutionContext*);
+    explicit VideoTrackList(ScriptExecutionContext*);
 };
 static_assert(sizeof(VideoTrackList) == sizeof(TrackListBase));
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::VideoTrackList)
-    static bool isType(const WebCore::TrackListBase& trackList) { return trackList.type() == WebCore::TrackListBase::VideoTrackList; }
-SPECIALIZE_TYPE_TRAITS_END()
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(VideoTrackList)
 
 #endif // ENABLE(VIDEO)

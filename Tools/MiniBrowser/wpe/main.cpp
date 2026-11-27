@@ -26,10 +26,15 @@
 #include "cmakeconfig.h"
 
 #include "BuildRevision.h"
-#include <WPEToolingBackends/HeadlessViewBackend.h>
-#include <WPEToolingBackends/WindowViewBackend.h>
+#include <glib-unix.h>
 #include <memory>
 #include <wpe/webkit.h>
+#include <wtf/Compiler.h>
+
+#if defined(USE_LIBWPE) && USE_LIBWPE
+#include <WPEToolingBackends/HeadlessViewBackend.h>
+#include <WPEToolingBackends/WindowViewBackend.h>
+#endif
 
 #if ENABLE_WPE_PLATFORM_HEADLESS
 #include <wpe/headless/wpe-headless.h>
@@ -40,13 +45,16 @@
 #endif
 
 #if !USE_GSTREAMER_FULL && (ENABLE_WEB_AUDIO || ENABLE_VIDEO)
+IGNORE_WARNINGS_BEGIN("cast-align")
 #include <gst/gst.h>
+IGNORE_WARNINGS_END
 #endif
 
 static const char** uriArguments;
 static const char** ignoreHosts;
 static gboolean headlessMode;
 static gboolean privateMode;
+static const char* profileDirectory;
 static gboolean automationMode;
 static gboolean ignoreTLSErrors;
 static const char* contentFilter;
@@ -60,13 +68,18 @@ static gboolean enableITP;
 static gboolean printVersion;
 static guint windowWidth = 0;
 static guint windowHeight = 0;
+#if defined(USE_LIBWPE) && USE_LIBWPE
 static guint defaultWindowWidthLegacyAPI = 1280;
 static guint defaultWindowHeightLegacyAPI = 720;
+#endif
 static GHashTable* openViews;
-#if ENABLE_WPE_PLATFORM
 static gboolean windowMaximized;
 static gboolean windowFullscreen;
-static gboolean useWPEPlatformAPI;
+static const char* configFile;
+#if ENABLE_WPE_PLATFORM
+#if defined(USE_LIBWPE) && USE_LIBWPE
+static gboolean useLegacyAPI;
+#endif
 static const char* defaultWindowTitle = "WPEWebKit MiniBrowser";
 #endif
 
@@ -107,6 +120,7 @@ static const GOptionEntry commandLineOptions[] =
 {
     { "headless", 'h', 0, G_OPTION_ARG_NONE, &headlessMode, "Run in headless mode", nullptr },
     { "private", 'p', 0, G_OPTION_ARG_NONE, &privateMode, "Run in private browsing mode", nullptr },
+    { "profile-dir", 0, 0, G_OPTION_ARG_FILENAME, &profileDirectory, "Custom profile directory to store session data", "DIR" },
     { "automation", 0, 0, G_OPTION_ARG_NONE, &automationMode, "Run in automation mode", nullptr },
     { "cookies-file", 'c', 0, G_OPTION_ARG_FILENAME, &cookiesFile, "Persistent cookie storage database file", "FILE" },
     { "cookies-policy", 0, 0, G_OPTION_ARG_STRING, &cookiesPolicy, "Cookies accept policy (always, never, no-third-party). Default: no-third-party", "POLICY" },
@@ -118,22 +132,27 @@ static const GOptionEntry commandLineOptions[] =
     { "enable-itp", 0, 0, G_OPTION_ARG_NONE, &enableITP, "Enable Intelligent Tracking Prevention (ITP)", nullptr },
     { "time-zone", 't', 0, G_OPTION_ARG_STRING, &timeZone, "Set time zone", "TIMEZONE" },
     { "features", 'F', 0, G_OPTION_ARG_STRING, &featureList, "Enable or disable WebKit features (hint: pass 'help' for a list)", "FEATURE-LIST" },
-#if ENABLE_WPE_PLATFORM
-    { "use-wpe-platform-api", 0, 0, G_OPTION_ARG_NONE, &useWPEPlatformAPI, "Use the WPE platform API", nullptr },
     { "maximized", 'm', 0, G_OPTION_ARG_NONE, &windowMaximized, "Start with maximized window", nullptr },
     { "fullscreen", 'f', 0, G_OPTION_ARG_NONE, &windowFullscreen, "Start with fullscreen window", nullptr },
+#if ENABLE_WPE_PLATFORM
+#if defined(USE_LIBWPE) && USE_LIBWPE
+    { "use-legacy-api", 0, 0, G_OPTION_ARG_NONE, &useLegacyAPI, "Use the WPE legacy API (libwpe)", nullptr },
 #endif
+#endif
+    { "config-file", 0, 0, G_OPTION_ARG_FILENAME, &configFile, "Config file to load for settings", "FILE" },
     { "size", 's', 0, G_OPTION_ARG_CALLBACK, reinterpret_cast<gpointer>(parseWindowSize), "Specify the window size to use, e.g. --size=\"800x600\"", nullptr },
     { "version", 'v', 0, G_OPTION_ARG_NONE, &printVersion, "Print the WPE version", nullptr },
     { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &uriArguments, nullptr, "[URL]" },
     { nullptr, 0, 0, G_OPTION_ARG_NONE, nullptr, nullptr, nullptr }
 };
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
 class InputClient final : public WPEToolingBackends::ViewBackend::InputClient {
 public:
-    InputClient(GApplication* application, WebKitWebView* webView)
+    InputClient(GApplication* application, WebKitWebView* webView, WPEToolingBackends::ViewBackend* backend)
         : m_application(application)
         , m_webView(webView)
+        , m_backend(backend)
     {
     }
 
@@ -159,13 +178,18 @@ public:
             }
         }
 
+        if (event->key_code == WPE_KEY_F11)
+            m_backend->setFullscreen(!m_backend->isFullscreen());
+
         return false;
     }
 
 private:
     GApplication* m_application { nullptr };
     WebKitWebView* m_webView { nullptr };
+    WPEToolingBackends::ViewBackend* m_backend { nullptr };
 };
+#endif // USE_LIBWPE
 
 #if ENABLE_WPE_PLATFORM
 static gboolean wpeViewEventCallback(WPEView* view, WPEEvent* event, WebKitWebView* webView)
@@ -232,6 +256,13 @@ static gboolean wpeViewEventCallback(WPEView* view, WPEEvent* event, WebKitWebVi
         }
     }
 
+    if (keyval == WPE_KEY_Escape) {
+        if (webkit_web_view_is_immersive_mode_enabled(webView)) {
+            webkit_web_view_leave_immersive_mode(webView);
+            return TRUE;
+        }
+    }
+
     return FALSE;
 }
 
@@ -248,21 +279,38 @@ static void webViewTitleChanged(WebKitWebView* webView, GParamSpec*, WPEView* vi
     wpe_toplevel_set_title(wpe_view_get_toplevel(view), privateTitle ? privateTitle : title);
     g_free(privateTitle);
 }
+
+static void displayDisconnected(WPEDisplay*, GError* error)
+{
+    if (error)
+        g_warning("WPE display disconnected: %s", error->message);
+    else
+        g_warning("WPE display disconnected");
+    _exit(1);
+}
 #endif
 
 
 static gboolean decidePermissionRequest(WebKitWebView *, WebKitPermissionRequest *request, gpointer)
 {
     g_print("Accepting %s request\n", G_OBJECT_TYPE_NAME(request));
+
+    if (WEBKIT_IS_XR_PERMISSION_REQUEST(request)) {
+        WebKitXRPermissionRequest* xrRequest = WEBKIT_XR_PERMISSION_REQUEST(request);
+        /* Grant all optional features */
+        webkit_xr_permission_request_set_granted_optional_features(xrRequest, webkit_xr_permission_request_get_consent_optional_features(xrRequest));
+    }
+
     webkit_permission_request_allow(request);
 
     return TRUE;
 }
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
 static std::unique_ptr<WPEToolingBackends::ViewBackend> createViewBackend(uint32_t width, uint32_t height)
 {
 #if ENABLE_WPE_PLATFORM
-    if (useWPEPlatformAPI)
+    if (!useLegacyAPI)
         return nullptr;
 #endif
 
@@ -270,6 +318,7 @@ static std::unique_ptr<WPEToolingBackends::ViewBackend> createViewBackend(uint32
         return std::make_unique<WPEToolingBackends::HeadlessViewBackend>(width, height);
     return std::make_unique<WPEToolingBackends::WindowViewBackend>(width, height);
 }
+#endif
 
 struct FilterSaveData {
     GMainLoop* mainLoop { nullptr };
@@ -293,6 +342,7 @@ static void webViewClose(WebKitWebView* webView, gpointer user_data)
 
 static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationAction*, gpointer user_data)
 {
+#if defined(USE_LIBWPE) && USE_LIBWPE
     auto backend = createViewBackend(defaultWindowWidthLegacyAPI, defaultWindowHeightLegacyAPI);
     WebKitWebViewBackend* viewBackend = nullptr;
     if (backend) {
@@ -305,9 +355,12 @@ static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationActi
                 delete static_cast<WPEToolingBackends::ViewBackend*>(data);
             }, backend.release());
     }
+#endif
 
     auto* newWebView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+#if defined(USE_LIBWPE) && USE_LIBWPE
         "backend", viewBackend,
+#endif
         "related-view", webView,
         "settings", webkit_web_view_get_settings(webView),
         "user-content-manager", webkit_web_view_get_user_content_manager(webView),
@@ -332,9 +385,22 @@ static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationActi
 static WebKitWebView* createWebViewForAutomationCallback(WebKitAutomationSession*, WebKitWebView* view)
 {
 #if ENABLE_WPE_PLATFORM
-    // Creating new views in the old API is not supported by WPE's MiniBrowser, so we just return the same view as before
-    if (!useWPEPlatformAPI)
+    // The original view might have been closed, so we need to find a valid view to clone
+    if (!g_hash_table_lookup(openViews, view)) {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, openViews);
+        if (!g_hash_table_iter_next(&iter, &key, &value))
+            return nullptr;
+        view = WEBKIT_WEB_VIEW(value);
+    }
+
+#if defined(USE_LIBWPE) && USE_LIBWPE
+    // Creating new views in the old API through automation is not supported by WPE's MiniBrowser,
+    // so we just return the same view as before
+    if (useLegacyAPI)
         return view;
+#endif
 
     if (g_hash_table_size(openViews) == 1 && !webkit_web_view_get_uri(view)) {
         webkit_web_view_load_uri(view, "about:blank");
@@ -373,23 +439,54 @@ static void automationStartedCallback(WebKitWebContext*, WebKitAutomationSession
     g_signal_connect(session, "create-web-view", G_CALLBACK(createWebViewForAutomationCallback), view);
 }
 
-static WebKitFeature* findFeature(WebKitFeatureList* featureList, const char* identifier)
+static void loadConfigFile(WebKitSettings* webkitSettings
+#if ENABLE_WPE_PLATFORM
+    , WPESettings* wpeSettings
+#endif
+    )
 {
-    for (gsize i = 0; i < webkit_feature_list_get_length(featureList); i++) {
-        WebKitFeature* feature = webkit_feature_list_get(featureList, i);
-        if (!g_ascii_strcasecmp(identifier, webkit_feature_get_identifier(feature)))
-            return feature;
+    GError* error = nullptr;
+    g_autoptr(GKeyFile) keyFile = g_key_file_new();
+    if (!g_key_file_load_from_file(keyFile, configFile, G_KEY_FILE_NONE, &error)) {
+        g_warning("Error loading key file '%s': %s", configFile, error->message);
+        g_clear_error(&error);
+        return;
     }
-    return nullptr;
+
+    if (g_key_file_has_group(keyFile, "websettings")) {
+        if (!webkit_settings_apply_from_key_file(webkitSettings, keyFile, "websettings", &error)) {
+            g_warning("Error applying WebKit settings from key file '%s': %s", configFile, error->message);
+            g_clear_error(&error);
+        }
+    }
+
+#if ENABLE_WPE_PLATFORM
+    if (wpeSettings && !wpe_settings_load_from_keyfile(wpeSettings, keyFile, &error)) {
+        g_warning("Error applying WPE platform settings from key file '%s': %s", configFile, error->message);
+        g_clear_error(&error);
+    }
+#endif
 }
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
 static void activate(GApplication* application, WPEToolingBackends::ViewBackend* backend)
+#else
+static void activate(GApplication* application, gpointer)
+#endif
 {
     g_application_hold(application);
 #if ENABLE_2022_GLIB_API
     WebKitNetworkSession* networkSession = nullptr;
     if (!automationMode) {
-        networkSession = privateMode ? webkit_network_session_new_ephemeral() : webkit_network_session_new(nullptr, nullptr);
+        if (privateMode)
+            networkSession = webkit_network_session_new_ephemeral();
+        else if (profileDirectory) {
+            g_autofree char* dataDirectory = g_build_filename(profileDirectory, "data", nullptr);
+            g_autofree char* cacheDirectory = g_build_filename(profileDirectory, "cache", nullptr);
+            networkSession = webkit_network_session_new(dataDirectory, cacheDirectory);
+        } else
+            networkSession = webkit_network_session_new(nullptr, nullptr);
+
         webkit_network_session_set_itp_enabled(networkSession, enableITP);
 
         if (proxy) {
@@ -419,7 +516,16 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
 
     auto* webContext = WEBKIT_WEB_CONTEXT(g_object_new(WEBKIT_TYPE_WEB_CONTEXT, "time-zone-override", timeZone, nullptr));
 #else
-    auto* manager = (privateMode || automationMode) ? webkit_website_data_manager_new_ephemeral() : webkit_website_data_manager_new(nullptr);
+    WebKitWebsiteDataManager* manager;
+    if (privateMode || automationMode)
+        manager = webkit_website_data_manager_new_ephemeral();
+    else if (profileDirectory) {
+        g_autofree char* dataDirectory = g_build_filename(profileDirectory, "data", nullptr);
+        g_autofree char* cacheDirectory = g_build_filename(profileDirectory, "cache", nullptr);
+        manager = webkit_website_data_manager_new("base-data-directory", dataDirectory, "base-cache-directory", cacheDirectory, nullptr);
+    } else
+        manager = webkit_website_data_manager_new(nullptr);
+
     webkit_website_data_manager_set_itp_enabled(manager, enableITP);
 
     if (proxy) {
@@ -450,19 +556,17 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
     }
 #endif
 
-    WebKitUserContentManager* userContentManager = nullptr;
+    g_autoptr(WebKitUserContentManager) userContentManager = nullptr;
     if (contentFilter) {
-        GFile* contentFilterFile = g_file_new_for_commandline_arg(contentFilter);
+        g_autoptr(GFile) contentFilterFile = g_file_new_for_commandline_arg(contentFilter);
 
         FilterSaveData saveData = { nullptr, };
-        gchar* filtersPath = g_build_filename(g_get_user_cache_dir(), g_get_prgname(), "filters", nullptr);
-        WebKitUserContentFilterStore* store = webkit_user_content_filter_store_new(filtersPath);
-        g_free(filtersPath);
+        g_autofree gchar* filtersPath = g_build_filename(g_get_user_cache_dir(), g_get_prgname(), "filters", nullptr);
+        g_autoptr(WebKitUserContentFilterStore) store = webkit_user_content_filter_store_new(filtersPath);
 
         webkit_user_content_filter_store_save_from_file(store, "WPEMiniBrowserFilter", contentFilterFile, nullptr, (GAsyncReadyCallback)filterSavedCallback, &saveData);
         saveData.mainLoop = g_main_loop_new(nullptr, FALSE);
         g_main_loop_run(saveData.mainLoop);
-        g_object_unref(store);
 
         if (saveData.filter) {
             userContentManager = webkit_user_content_manager_new();
@@ -473,7 +577,6 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
         g_clear_pointer(&saveData.error, g_error_free);
         g_clear_pointer(&saveData.filter, webkit_user_content_filter_unref);
         g_main_loop_unref(saveData.mainLoop);
-        g_object_unref(contentFilterFile);
     }
 
     auto* settings = webkit_settings_new_with_settings(
@@ -507,19 +610,26 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
                 continue;
             }
 
-            if (auto* feature = findFeature(features, item))
+            if (auto* feature = webkit_feature_list_find(features, item))
                 webkit_settings_set_feature_enabled(settings, feature, enabled);
             else
                 g_printerr("Feature '%s' is not available.", item);
         }
     }
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
     auto* viewBackend = backend ? webkit_web_view_backend_new(backend->backend(), [](gpointer data) {
         delete static_cast<WPEToolingBackends::ViewBackend*>(data);
     }, backend) : nullptr;
+#endif
 
 #if ENABLE_WPE_PLATFORM_HEADLESS
-    WPEDisplay* wpeDisplay = headlessMode && useWPEPlatformAPI ? wpe_display_headless_new() : nullptr;
+#if defined(USE_LIBWPE) && USE_LIBWPE
+    const bool useHeadlessMode = headlessMode && !useLegacyAPI;
+#else
+    const bool useHeadlessMode = headlessMode;
+#endif
+    WPEDisplay* wpeDisplay = useHeadlessMode ? wpe_display_headless_new() : nullptr;
 #endif
 
     webkit_web_context_set_automation_allowed(webContext, automationMode);
@@ -529,7 +639,9 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
         nullptr);
 
     auto* webView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+#if defined(USE_LIBWPE) && USE_LIBWPE
         "backend", viewBackend,
+#endif
         "web-context", webContext,
 #if ENABLE_2022_GLIB_API
         "network-session", networkSession,
@@ -548,17 +660,24 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
     g_clear_object(&wpeDisplay);
 #endif
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
     if (backend) {
-        backend->setInputClient(std::make_unique<InputClient>(application, webView));
+        backend->setInputClient(std::make_unique<InputClient>(application, webView, backend));
+
+        backend->setMaximized(windowMaximized);
+        backend->setFullscreen(windowFullscreen);
+
 #if USE_ATK
         auto* accessible = wpe_view_backend_dispatch_get_accessible(backend->backend());
         if (ATK_IS_OBJECT(accessible))
             backend->setAccessibleChild(ATK_OBJECT(accessible));
 #endif
     }
+#endif
 
 #if ENABLE_WPE_PLATFORM
     if (auto* wpeView = webkit_web_view_get_wpe_view(webView)) {
+        g_signal_connect(wpe_view_get_display(wpeView), "disconnected", G_CALLBACK(displayDisconnected), nullptr);
         auto* wpeToplevel = wpe_view_get_toplevel(wpeView);
         if (windowWidth > 0 && windowHeight > 0)
             wpe_toplevel_resize(wpeToplevel, windowWidth, windowHeight);
@@ -571,6 +690,15 @@ static void activate(GApplication* application, WPEToolingBackends::ViewBackend*
         g_signal_connect(webView, "notify::title", G_CALLBACK(webViewTitleChanged), wpeView);
     }
 #endif
+
+    if (configFile) {
+#if ENABLE_WPE_PLATFORM
+        auto* wpeView = webkit_web_view_get_wpe_view(webView);
+        loadConfigFile(webkit_web_view_get_settings(webView), wpeView ? wpe_display_get_settings(wpe_view_get_display(wpeView)) : nullptr);
+#else
+        loadConfigFile(webkit_web_view_get_settings(webView));
+#endif
+    }
 
     openViews = g_hash_table_new_full(nullptr, nullptr, g_object_unref, nullptr);
 
@@ -607,6 +735,7 @@ int main(int argc, char *argv[])
 {
 #if ENABLE_DEVELOPER_MODE
     g_setenv("WEBKIT_INJECTED_BUNDLE_PATH", WEBKIT_INJECTED_BUNDLE_PATH, FALSE);
+    g_setenv("WEBKIT_INSPECTOR_RESOURCES_PATH", WEBKIT_INSPECTOR_RESOURCES_PATH, FALSE);
 #endif
 
     GOptionContext* context = g_option_context_new(nullptr);
@@ -657,24 +786,21 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+#if defined(USE_LIBWPE) && USE_LIBWPE
     bool setDefaultWindowSize = true;
 
 #if ENABLE_WPE_PLATFORM
-    if (useWPEPlatformAPI)
+    if (!useLegacyAPI)
         setDefaultWindowSize = false;
+#endif
+#endif
 
     if (windowMaximized && windowFullscreen) {
         g_printerr("You cannot specify both --maximized and --fullscreen, these options are mutually exclusive.");
         return 1;
     }
 
-    if ((windowMaximized || windowFullscreen) && !useWPEPlatformAPI) {
-        g_printerr("You cannot specify either --maximized or --fullscreen, without enabling the new WPE API (--use-wpe-platform-api).");
-        return 1;
-    }
-
-#endif
-
+#if defined(USE_LIBWPE) && USE_LIBWPE
     if (setDefaultWindowSize) {
         // Default values used in old API, for legacy reasons.
         windowWidth = defaultWindowWidthLegacyAPI;
@@ -689,9 +815,20 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
+#endif
 
     GApplication* application = g_application_new("org.wpewebkit.MiniBrowser", G_APPLICATION_NON_UNIQUE);
+#if defined(USE_LIBWPE) && USE_LIBWPE
     g_signal_connect(application, "activate", G_CALLBACK(activate), backend.release());
+#else
+    g_signal_connect(application, "activate", G_CALLBACK(activate), nullptr);
+#endif
+    GSourceFunc quitOnSignal = [](gpointer app) -> gboolean {
+        g_application_quit(G_APPLICATION(app));
+        return G_SOURCE_REMOVE;
+    };
+    g_unix_signal_add(SIGINT, quitOnSignal, application);
+    g_unix_signal_add(SIGTERM, quitOnSignal, application);
     g_application_run(application, 0, nullptr);
     g_object_unref(application);
 

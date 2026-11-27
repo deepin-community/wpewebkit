@@ -27,17 +27,17 @@
 
 #include "CryptoKey.h"
 #include "CryptoKeyPair.h"
-#include "ExceptionOr.h"
 
 namespace WebCore {
 
 struct JsonWebKey;
+template<typename> class ExceptionOr;
 
 class CryptoKeyOKP final : public CryptoKey {
 public:
     using KeyMaterial = Vector<uint8_t>;
 
-    enum class NamedCurve {
+    enum class NamedCurve : bool {
         X25519,
         Ed25519,
     };
@@ -55,25 +55,27 @@ public:
     ExceptionOr<Vector<uint8_t>> exportSpki() const;
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
+    static std::optional<NamedCurve> NODELETE namedCurveFromString(const String&);
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
 
-    static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
+    static bool NODELETE isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
 
     size_t keySizeInBits() const { return platformKey().size() * 8; }
     size_t keySizeInBytes() const { return platformKey().size(); }
-    const KeyMaterial& platformKey() const { return m_data; }
+    const KeyMaterial& platformKey() const LIFETIME_BOUND { return m_data; }
 
 private:
     CryptoKeyOKP(CryptoAlgorithmIdentifier, NamedCurve, CryptoKeyType, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::OKP; }
     KeyAlgorithm algorithm() const final;
+    CryptoKey::Data data() const final;
 
     String generateJwkD() const;
     String generateJwkX() const;
 
-    static bool isPlatformSupportedCurve(NamedCurve);
+    static bool NODELETE supportsNamedCurve();
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     static bool platformCheckPairedKeys(CryptoAlgorithmIdentifier, NamedCurve, const Vector<uint8_t>&, const Vector<uint8_t>&);
     Vector<uint8_t> platformExportRaw() const;

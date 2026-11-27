@@ -33,7 +33,7 @@
 #include "config.h"
 #include "EventListenerMap.h"
 
-#include "AddEventListenerOptions.h"
+#include "AbortSignal.h"
 #include "Event.h"
 #include "EventTarget.h"
 #include "JSEventListener.h"
@@ -74,6 +74,7 @@ bool EventListenerMap::containsActive(const AtomString& eventType) const
 
 void EventListenerMap::clear()
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
@@ -101,54 +102,58 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
     return notFound;
 }
 
-void EventListenerMap::replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options& options)
+void EventListenerMap::replacePreservingOptions(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, bool useCapture)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     auto* listeners = find(eventType);
     ASSERT(listeners);
-    size_t index = findListener(*listeners, oldListener, options.capture);
+    size_t index = findListener(*listeners, oldListener, useCapture);
     ASSERT(index != notFound);
     auto& registeredListener = listeners->at(index);
+    auto existingOptions = registeredListener->options();
     registeredListener->markAsRemoved();
-    registeredListener = RegisteredEventListener::create(WTFMove(newListener), options);
+    registeredListener = RegisteredEventListener::create(WTF::move(newListener), existingOptions);
 }
 
 bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     if (auto* listeners = find(eventType)) {
         if (findListener(*listeners, listener, options.capture) != notFound)
             return false; // Duplicate listener.
-        listeners->append(RegisteredEventListener::create(WTFMove(listener), options));
+        listeners->append(RegisteredEventListener::create(WTF::move(listener), options));
         return true;
     }
 
-    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(WTFMove(listener), options) } });
+    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(WTF::move(listener), options) } });
     return true;
 }
 
 static bool removeListenerFromVector(EventListenerVector& listeners, EventListener& listener, bool useCapture)
 {
     size_t indexOfRemovedListener = findListener(listeners, listener, useCapture);
-    if (UNLIKELY(indexOfRemovedListener == notFound))
+    if (indexOfRemovedListener == notFound) [[unlikely]]
         return false;
 
     listeners[indexOfRemovedListener]->markAsRemoved();
-    listeners.remove(indexOfRemovedListener);
+    listeners.removeAt(indexOfRemovedListener);
     return true;
 }
 
 bool EventListenerMap::remove(const AtomString& eventType, EventListener& listener, bool useCapture)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
         if (m_entries[i].first == eventType) {
             bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener, useCapture);
             if (m_entries[i].second.isEmpty())
-                m_entries.remove(i);
+                m_entries.removeAt(i);
             return wasRemoved;
         }
     }
@@ -180,13 +185,14 @@ static void removeFirstListenerCreatedFromMarkup(EventListenerVector& listenerVe
 
 void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
         if (m_entries[i].first == eventType) {
             removeFirstListenerCreatedFromMarkup(m_entries[i].second);
             if (m_entries[i].second.isEmpty())
-                m_entries.remove(i);
+                m_entries.removeAt(i);
             return;
         }
     }
@@ -198,7 +204,7 @@ static void copyListenersNotCreatedFromMarkupToTarget(const AtomString& eventTyp
         // Event listeners created from markup have already been transfered to the shadow tree during cloning.
         if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback()))
             continue;
-        target->addEventListener(eventType, registeredListener->callback(), registeredListener->useCapture());
+        target->addEventListener(eventType, registeredListener->callback(), { { registeredListener->useCapture() }, registeredListener->isPassive(), registeredListener->isOnce(), nullptr, false });
     }
 }
 

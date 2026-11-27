@@ -31,8 +31,9 @@
 #include "ArrayPrototype.h"
 #include "ClonedArguments.h"
 #include "DFGArgumentsUtilities.h"
-#include "DFGBlockMapInlines.h"
+#include <wtf/IndexMap.h>
 #include "DFGClobberize.h"
+#include "DFGCombinedLiveness.h"
 #include "DFGForAllKills.h"
 #include "DFGGraph.h"
 #include "DFGInsertionSet.h"
@@ -65,10 +66,7 @@ public:
         // version over LoadStore.
         DFG_ASSERT(m_graph, nullptr, m_graph.m_form == SSA);
         
-        if (DFGArgumentsEliminationPhaseInternal::verbose) {
-            dataLog("Graph before arguments elimination:\n");
-            m_graph.dump();
-        }
+        dataLogIf(DFGArgumentsEliminationPhaseInternal::verbose, "Graph before arguments elimination:\n", m_graph);
         
         identifyCandidates();
         if (m_candidates.isEmpty())
@@ -118,11 +116,18 @@ private:
 
                 case Spread:
                     if (m_graph.isWatchingHavingABadTimeWatchpoint(node)) {
-                        // We check ArrayUse here because ArrayUse indicates that the iterator
-                        // protocol for Arrays is non-observable by user code (e.g, it hasn't
-                        // been changed).
+                        // In order to eliminate the Spread we have to know the iteration protocol is
+                        // not observable. The ArrayUse kind does not prove that, only that the child
+                        // is an Array object.
+                        //
+                        // Watching the realm of the allocation is sufficient to prove the protocol is
+                        // intact. Elimination only happens on allocations that never escape and this
+                        // pass is particularly conservative with what it means to escape. If we ever
+                        // supported PutById/Offset we would have to be more careful.
                         if (node->child1().useKind() == ArrayUse) {
-                            if ((node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer) && m_candidates.contains(node->child1().node()))
+                            if ((node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer)
+                                && m_candidates.contains(node->child1().node())
+                                && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(node->child1().node()))
                                 m_candidates.add(node, AvailabilityMap { });
                         }
                     }
@@ -350,7 +355,7 @@ private:
 
                 case NewArrayWithSpread: {
                     BitVector* bitVector = node->bitVector();
-                    bool isWatchingHavingABadTimeWatchpoint = m_graph.isWatchingHavingABadTimeWatchpoint(node); 
+                    bool isWatchingHavingABadTimeWatchpoint = m_graph.isWatchingHavingABadTimeWatchpoint(node);
                     for (unsigned i = 0; i < node->numChildren(); i++) {
                         Edge child = m_graph.varArgChild(node, i);
                         bool dontEscape;
@@ -358,7 +363,8 @@ private:
                             dontEscape = child->op() == Spread
                                 && child->child1().useKind() == ArrayUse
                                 && (child->child1()->op() == CreateRest || child->child1()->op() == NewArrayBuffer)
-                                && isWatchingHavingABadTimeWatchpoint;
+                                && isWatchingHavingABadTimeWatchpoint
+                                && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(child->child1().node());
                         } else
                             dontEscape = false;
 
@@ -370,7 +376,17 @@ private:
                 }
 
                 case Spread: {
-                    bool isOK = node->child1().useKind() == ArrayUse && (node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer);
+                    // In order to eliminate the Spread we have to know the iteration protocol is
+                    // not observable. The ArrayUse kind does not prove that, only that the child
+                    // is an Array object.
+                    //
+                    // Watching the realm of the allocation is sufficient to prove the protocol is
+                    // intact. Elimination only happens on allocations that never escape and this
+                    // pass is particularly conservative with what it means to escape. If we ever
+                    // supported PutById/Offset we would have to be more careful.
+                    bool isOK = node->child1().useKind() == ArrayUse
+                        && (node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer)
+                        && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(node->child1().node());
                     if (!isOK)
                         escape(node->child1(), node);
                     break;
@@ -484,7 +500,7 @@ private:
                 case GetByOffset:
                     if (node->child2()->op() == CreateClonedArguments && node->storageAccessData().offset == clonedArgumentsLengthPropertyOffset)
                         break;
-                    FALLTHROUGH;
+                    [[fallthrough]];
                 default:
                     m_graph.doToChildren(node, [&] (Edge edge) { return escape(edge, node); });
                     break;
@@ -506,7 +522,7 @@ private:
         m_graph.initializeNodeOwners();
         CombinedLiveness combinedLiveness(m_graph);
 
-        BlockMap<Operands<bool>> clobberedByBlock(m_graph);
+        IndexMap<BasicBlock*, Operands<bool>> clobberedByBlock(m_graph.numBlocks());
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             Operands<bool>& clobberedByThisBlock = clobberedByBlock[block];
             clobberedByThisBlock = Operands<bool>(OperandsLike, m_graph.block(0)->variablesAtHead);
@@ -548,8 +564,8 @@ private:
             return IterationStatus::Continue;
         });
 
-        using InlineCallFrames = HashSet<InlineCallFrame*, WTF::DefaultHash<InlineCallFrame*>, WTF::NullableHashTraits<InlineCallFrame*>>;
-        using InlineCallFramesForCanditates = HashMap<Node*, InlineCallFrames>;
+        using InlineCallFrames = UncheckedKeyHashSet<InlineCallFrame*, WTF::DefaultHash<InlineCallFrame*>, WTF::NullableHashTraits<InlineCallFrame*>>;
+        using InlineCallFramesForCanditates = UncheckedKeyHashMap<Node*, InlineCallFrames>;
         InlineCallFramesForCanditates inlineCallFramesForCandidate;
         for (auto& [candidate, availability] : m_candidates) {
             auto& set = inlineCallFramesForCandidate.add(candidate, InlineCallFrames()).iterator->value;
@@ -607,7 +623,7 @@ private:
             return interfere;
         };
 
-        auto removeViaKill = [&](BasicBlock* block, unsigned nodeIndex, Node* candidate) {
+        auto removeViaKill = [&](BasicBlock* block, const unsigned nodeIndex, Node* candidate) {
             if (!m_candidates.contains(candidate))
                 return;
 
@@ -663,21 +679,17 @@ private:
                 }
 
                 // This loop considers all nodes up to the nodeIndex, excluding the nodeIndex.
+                // scanIndex is a working copy so each inline call frame independently
+                // scans the full [0, nodeIndex) range.
                 //
-                // Note: nodeIndex here has a double meaning. Before entering this
-                // while loop, it refers to the remaining number of nodes that have
-                // yet to be processed. Inside the loop, it refers to the index
-                // of the current node to process (after we decrement it).
-                //
-                // If the remaining number of nodes is 0, we should not decrement nodeIndex.
-                // Hence, we must only decrement nodeIndex inside the while loop instead of
-                // in its condition statement. Note that this while loop is embedded in an
-                // outer for loop. If we decrement nodeIndex in the condition statement, a
-                // nodeIndex of 0 will become UINT_MAX, and the outer loop will wrongly
-                // treat this as there being UINT_MAX remaining nodes to process.
-                while (nodeIndex) {
-                    --nodeIndex;
-                    Node* node = block->at(nodeIndex);
+                // If the remaining number of nodes is 0, we should not decrement
+                // scanIndex. Hence, we must only decrement it inside the while loop
+                // instead of in its condition statement; otherwise a scanIndex of 0 would
+                // become UINT_MAX.
+                unsigned scanIndex = nodeIndex;
+                while (scanIndex) {
+                    --scanIndex;
+                    Node* node = block->at(scanIndex);
                     if (node == candidate)
                         break;
 
@@ -696,7 +708,7 @@ private:
                         NoOpClobberize());
 
                     if (found) {
-                        dataLogLnIf(DFGArgumentsEliminationPhaseInternal::verbose, "eliminating candidate: ", candidate, " because it is clobbered by ", block->at(nodeIndex));
+                        dataLogLnIf(DFGArgumentsEliminationPhaseInternal::verbose, "eliminating candidate: ", candidate, " because it is clobbered by ", block->at(scanIndex));
                         transitivelyRemoveCandidate(candidate);
                         return;
                     }
@@ -729,7 +741,16 @@ private:
             }
 
             if (clobberStack) {
-                for (Node* node : combinedLiveness.liveAtTail[block])
+                // liveAtTail is the union of the CFG successors' liveAtHead, but a candidate can be kept
+                // alive solely by an exceptional exit to a catch entrypoint, which the DFG models as a
+                // non-CFG successor. Such a candidate is OSR-live at the terminal yet absent from
+                // liveAtTail, so a clobber of its source slots in this block would otherwise go
+                // unnoticed. Cover that gap with the nodes live at the terminal but dead on the tail.
+                // FIXME: If this is ever too conservative we can just calculate the locals used by
+                // the catch block for the terminal.
+                NodeSet possiblyLiveOut = bytecodeLivenessAtTerminal(m_graph, block);
+                possiblyLiveOut.addAll(combinedLiveness.liveAtTail[block]);
+                for (Node* node : possiblyLiveOut)
                     removeViaKill(block, block->size(), node);
 
                 for (unsigned nodeIndex = 0; nodeIndex < block->size(); ++nodeIndex) {
@@ -803,15 +824,7 @@ private:
                         break;
 
                     ASSERT(node->origin.exitOK);
-                    ASSERT(node->child1().useKind() == Int32Use);
-                    insertionSet.insertNode(
-                        nodeIndex, SpecNone, Check, node->origin,
-                        node->child1()); 
-
                     node->setOpAndDefaultFlags(PhantomCreateRest);
-                    // We don't need this parameter for OSR exit, we can find out all the information
-                    // we need via the static parameter count and the dynamic argument count.
-                    node->child1() = Edge(); 
                     break;
                     
                 case CreateClonedArguments:
@@ -1044,7 +1057,7 @@ private:
                                 }
 
                                 if (candidate->op() == PhantomNewArrayBuffer)
-                                    return candidate->castOperand<JSImmutableButterfly*>()->length();
+                                    return candidate->castOperand<JSCellButterfly*>()->length();
 
                                 ASSERT(candidate->op() == PhantomCreateRest);
                                 unsigned numberOfArgumentsToSkip = candidate->numberOfArgumentsToSkip();
@@ -1079,7 +1092,7 @@ private:
                                     }
 
                                     if (candidate->op() == PhantomNewArrayBuffer) {
-                                        auto* array = candidate->castOperand<JSImmutableButterfly*>();
+                                        auto* array = candidate->castOperand<JSCellButterfly*>();
                                         for (unsigned index = 0; index < array->length(); ++index) {
                                             JSValue constant;
                                             if (candidate->indexingType() == ArrayWithDouble)
@@ -1293,7 +1306,7 @@ private:
 
                                 if (candidate->op() == PhantomNewArrayBuffer) {
                                     bool canExit = true;
-                                    auto* array = candidate->castOperand<JSImmutableButterfly*>();
+                                    auto* array = candidate->castOperand<JSCellButterfly*>();
                                     for (unsigned index = 0; index < array->length(); ++index) {
                                         JSValue constant;
                                         if (candidate->indexingType() == ArrayWithDouble)
@@ -1409,7 +1422,7 @@ private:
         }
     }
     
-    HashMap<Node*, AvailabilityMap> m_candidates;
+    UncheckedKeyHashMap<Node*, AvailabilityMap> m_candidates;
 };
 
 } // anonymous namespace

@@ -27,6 +27,7 @@
 #pragma once
 
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringConcatenateNumbers.h>
@@ -44,23 +45,23 @@ RefPtr<StringImpl> tryMakeStringImplFromAdaptersInternal(unsigned length, bool a
 {
     ASSERT(length <= String::MaxLength);
     if (areAllAdapters8Bit) {
-        LChar* buffer;
+        std::span<Latin1Character> buffer;
         RefPtr result = StringImpl::tryCreateUninitialized(length, buffer);
         if (!result)
             return nullptr;
 
-        if (buffer)
+        if (buffer.data())
             stringTypeAdapterAccumulator(buffer, adapters...);
 
         return result;
     }
 
-    UChar* buffer;
+    std::span<char16_t> buffer;
     RefPtr result = StringImpl::tryCreateUninitialized(length, buffer);
     if (!result)
         return nullptr;
 
-    if (buffer)
+    if (buffer.data())
         stringTypeAdapterAccumulator(buffer, adapters...);
 
     return result;
@@ -76,7 +77,12 @@ String tryMakeStringFromAdapters(StringTypeAdapters&&... adapters)
         builder.appendFromAdapters(std::forward<StringTypeAdapters>(adapters)...);
         return builder.toString();
     } else {
-        auto sum = checkedSum<int32_t>(adapters.length()...);
+        CheckedInt32 sum;
+        if constexpr (sizeof...(adapters) >= 2)
+            sum = checkedSum<int32_t>(adapters.length()...);
+        else
+            sum = std::get<0>(std::tie(adapters...)).length();
+
         if (sum.hasOverflowed())
             return String();
 
@@ -110,7 +116,12 @@ AtomString tryMakeAtomStringFromAdapters(StringTypeAdapters ...adapters)
         builder.appendFromAdapters(adapters...);
         return builder.toAtomString();
     } else {
-        auto sum = checkedSum<int32_t>(adapters.length()...);
+        CheckedInt32 sum;
+        if constexpr (sizeof...(adapters) >= 2)
+            sum = checkedSum<int32_t>(adapters.length()...);
+        else
+            sum = std::get<0>(std::tie(adapters...)).length();
+
         if (sum.hasOverflowed())
             return AtomString();
 
@@ -121,13 +132,13 @@ AtomString tryMakeAtomStringFromAdapters(StringTypeAdapters ...adapters)
         constexpr size_t maxLengthToUseStackVariable = 64;
         if (length < maxLengthToUseStackVariable) {
             if (areAllAdapters8Bit) {
-                LChar buffer[maxLengthToUseStackVariable];
-                stringTypeAdapterAccumulator(buffer, adapters...);
-                return std::span<const LChar> { buffer, length };
+                std::array<Latin1Character, maxLengthToUseStackVariable> buffer;
+                stringTypeAdapterAccumulator(std::span<Latin1Character> { buffer }, adapters...);
+                return std::span<const Latin1Character> { buffer }.first(length);
             }
-            UChar buffer[maxLengthToUseStackVariable];
-            stringTypeAdapterAccumulator(buffer, adapters...);
-            return std::span<const UChar> { buffer, length };
+            std::array<char16_t, maxLengthToUseStackVariable> buffer;
+            stringTypeAdapterAccumulator(std::span<char16_t> { buffer }, adapters...);
+            return std::span<const char16_t> { buffer }.first(length);
         }
         return tryMakeStringImplFromAdaptersInternal(length, areAllAdapters8Bit, adapters...).get();
     }
@@ -148,7 +159,7 @@ AtomString makeAtomString(StringTypes... strings)
     return result;
 }
 
-inline String WARN_UNUSED_RETURN makeStringByInserting(StringView originalString, StringView stringToInsert, unsigned position)
+[[nodiscard]] inline String makeStringByInserting(StringView originalString, StringView stringToInsert, unsigned position)
 {
     return makeString(originalString.left(position), stringToInsert, originalString.substring(position));
 }

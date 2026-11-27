@@ -29,10 +29,12 @@
 #if ENABLE(REMOTE_INSPECTOR)
 
 #include "RemoteInspectorClient.h"
-#include <WebCore/SoupVersioning.h>
 #include <wtf/FileSystem.h>
 #include <wtf/URL.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/CStringView.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebKit {
 
@@ -40,6 +42,21 @@ RemoteInspectorHTTPServer& RemoteInspectorHTTPServer::singleton()
 {
     static RemoteInspectorHTTPServer server;
     return server;
+}
+
+static bool isTrustedRequest(SoupServerMessage* message)
+{
+    // Requiring an IP or localhost Host prevents DNS rebinding.
+    auto* requestURI = soup_server_message_get_uri(message);
+    const char* host = g_uri_get_host(requestURI);
+    if (!host || (!URL::hostIsIPAddress(StringView::fromLatin1(host)) && !equalLettersIgnoringASCIICase(StringView::fromLatin1(host), "localhost"_s)))
+        return false;
+
+    const char* origin = soup_message_headers_get_one(soup_server_message_get_request_headers(message), "Origin");
+    if (!origin)
+        return true;
+
+    return protocolHostAndPortAreEqual(URL { String::fromLatin1(origin) }, URL { requestURI });
 }
 
 bool RemoteInspectorHTTPServer::start(GRefPtr<GSocketAddress>&& socketAddress, unsigned inspectorPort)
@@ -53,23 +70,20 @@ bool RemoteInspectorHTTPServer::start(GRefPtr<GSocketAddress>&& socketAddress, u
         return false;
     }
 
+    g_signal_connect(m_server.get(), "request-read", G_CALLBACK(+[](SoupServer*, SoupServerMessage* message, gpointer) {
+        if (!isTrustedRequest(message))
+            soup_server_message_set_status(message, SOUP_STATUS_FORBIDDEN, nullptr);
+    }), nullptr);
+
     soup_server_add_handler(m_server.get(), nullptr,
-#if USE(SOUP2)
-        [](SoupServer*, SoupMessage* message, const char* path, GHashTable*, SoupClientContext*, gpointer userData) {
-#else
         [](SoupServer*, SoupServerMessage* message, const char* path, GHashTable*, gpointer userData) {
-#endif
             auto& httpServer = *static_cast<RemoteInspectorHTTPServer*>(userData);
             auto status = httpServer.handleRequest(path, soup_server_message_get_response_headers(message), soup_server_message_get_response_body(message));
             soup_server_message_set_status(message, status, nullptr);
         }, this, nullptr);
 
     soup_server_add_websocket_handler(m_server.get(), "/socket", nullptr, nullptr,
-#if USE(SOUP2)
-        [](SoupServer*, SoupWebsocketConnection* connection, const char* path, SoupClientContext*, gpointer userData) {
-#else
         [](SoupServer*, SoupServerMessage*, const char* path, SoupWebsocketConnection* connection, gpointer userData) {
-#endif
             auto& httpServer = *static_cast<RemoteInspectorHTTPServer*>(userData);
             httpServer.handleWebSocket(path, connection);
         }, this, nullptr);
@@ -93,11 +107,10 @@ const String& RemoteInspectorHTTPServer::inspectorServerAddress() const
 
 unsigned RemoteInspectorHTTPServer::handleRequest(const char* path, SoupMessageHeaders* responseHeaders, SoupMessageBody* responseBody) const
 {
-    if (g_str_equal(path, "/")) {
-        auto* html = m_client->buildTargetListPage(RemoteInspectorClient::InspectorType::HTTP);
+    if (CStringView::unsafeFromUTF8(path) == "/"_s) {
+        auto html = m_client->buildTargetListPage(RemoteInspectorClient::InspectorType::HTTP).toString().utf8();
         soup_message_headers_append(responseHeaders, "Content-Type", "text/html");
-        gsize bodyLength = html->len;
-        soup_message_body_append(responseBody, SOUP_MEMORY_TAKE, g_string_free(html, FALSE), bodyLength);
+        soup_message_body_append(responseBody, SOUP_MEMORY_COPY, html.data(), html.length());
         return SOUP_STATUS_OK;
     }
 
@@ -132,9 +145,7 @@ void RemoteInspectorHTTPServer::handleWebSocket(const char* path, SoupWebsocketC
     m_webSocketConnectionToTargetMap.set(connection, std::make_pair(connectionID, targetID));
     g_signal_connect(connection, "message", G_CALLBACK(+[](SoupWebsocketConnection* connection, SoupWebsocketDataType messageType, GBytes* message, gpointer userData) {
         auto& httpServer = *static_cast<RemoteInspectorHTTPServer*>(userData);
-        gsize dataSize;
-        const auto* data = static_cast<const char*>(g_bytes_get_data(message, &dataSize));
-        httpServer.sendMessageToBackend(connection, String::fromUTF8(std::span(data, dataSize)));
+        httpServer.sendMessageToBackend(connection, String::fromUTF8(span(message)));
     }), this);
     g_signal_connect(connection, "closed", G_CALLBACK(+[](SoupWebsocketConnection* connection, gpointer userData) {
         auto& httpServer = *static_cast<RemoteInspectorHTTPServer*>(userData);
@@ -147,23 +158,19 @@ void RemoteInspectorHTTPServer::handleWebSocket(const char* path, SoupWebsocketC
 void RemoteInspectorHTTPServer::sendMessageToFrontend(uint64_t connectionID, uint64_t targetID, const String& message) const
 {
     auto* webSocketConnection = m_webSocketConnectionMap.get(std::make_pair(connectionID, targetID));
-    if (!webSocketConnection)
+    if (!webSocketConnection || soup_websocket_connection_get_state(webSocketConnection) != SOUP_WEBSOCKET_STATE_OPEN)
         return;
 
     auto utf8 = message.utf8();
     // Soup is going to copy the data immediately, so we can use g_bytes_new_static() here to avoid more data copies.
-#if SOUP_CHECK_VERSION(2, 67, 3)
     GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_static(utf8.data(), utf8.length()));
     soup_websocket_connection_send_message(webSocketConnection, SOUP_WEBSOCKET_DATA_TEXT, bytes.get());
-#else
-    soup_websocket_connection_send_text(webSocketConnection, CString(reinterpret_cast<const char*>(utf8.data()), utf8.length()).data());
-#endif
 }
 
 void RemoteInspectorHTTPServer::targetDidClose(uint64_t connectionID, uint64_t targetID)
 {
     auto* webSocketConnection = m_webSocketConnectionMap.get(std::make_pair(connectionID, targetID));
-    if (!webSocketConnection)
+    if (!webSocketConnection || soup_websocket_connection_get_state(webSocketConnection) != SOUP_WEBSOCKET_STATE_OPEN)
         return;
 
     soup_websocket_connection_close(webSocketConnection, SOUP_WEBSOCKET_CLOSE_GOING_AWAY, "Target closed");

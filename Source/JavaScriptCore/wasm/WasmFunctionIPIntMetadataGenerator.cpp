@@ -27,10 +27,13 @@
 #include "config.h"
 #include "WasmFunctionIPIntMetadataGenerator.h"
 
+#include "WasmTypeDefinition.h"
 #include <numeric>
 #include <wtf/TZoneMallocInlines.h>
 
 #if ENABLE(WEBASSEMBLY)
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -38,114 +41,110 @@ namespace Wasm {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionIPIntMetadataGenerator);
 
-unsigned FunctionIPIntMetadataGenerator::addSignature(const TypeDefinition& signature)
+void FunctionIPIntMetadataGenerator::addLength(size_t length)
 {
-    unsigned index = m_signatures.size();
-    m_signatures.append(&signature);
-    return index;
-}
-
-void FunctionIPIntMetadataGenerator::addBlankSpace(uint32_t size)
-{
-    m_metadata.grow(m_metadata.size() + size);
-}
-
-void FunctionIPIntMetadataGenerator::addRawValue(uint64_t value)
-{
-    auto size = m_metadata.size();
-    m_metadata.grow(m_metadata.size() + 8);
-    WRITE_TO_METADATA(m_metadata.data() + size, value, uint64_t);
-}
-
-void FunctionIPIntMetadataGenerator::addLength(uint32_t length)
-{
+    IPInt::InstructionLengthMetadata instructionLength {
+        .length = safeCast<uint8_t>(length)
+    };
     size_t size = m_metadata.size();
-    m_metadata.grow(size + 1);
-    WRITE_TO_METADATA(m_metadata.data() + size, length, uint8_t);
+    m_metadata.grow(size + sizeof(instructionLength));
+    WRITE_TO_METADATA(m_metadata.mutableSpan().data() + size, instructionLength, IPInt::InstructionLengthMetadata);
 }
 
-void FunctionIPIntMetadataGenerator::addLEB128ConstantInt32AndLength(uint32_t value, uint32_t length)
+void FunctionIPIntMetadataGenerator::addMemorySize(uint8_t memoryIndex)
 {
-    size_t size = m_metadata.size();
-    m_metadata.grow(size + 5);
-    WRITE_TO_METADATA(m_metadata.data() + size, length, uint8_t);
-    WRITE_TO_METADATA(m_metadata.data() + size + 1, value, uint32_t);
+    IPInt::MemorySizeMetadata md {
+        .memoryIndex = memoryIndex
+    };
+    appendMetadata(md);
 }
 
-void FunctionIPIntMetadataGenerator::addCondensedLocalIndexAndLength(uint32_t index, uint32_t length)
+void FunctionIPIntMetadataGenerator::addMemoryGrow(uint8_t memoryIndex)
 {
-    size_t size = m_metadata.size();
-    if (length == 2) {
-        m_metadata.grow(size + 1);
-        WRITE_TO_METADATA(m_metadata.data() + size, 0, uint8_t);
-    } else {
-        m_metadata.grow(size + 5);
-        WRITE_TO_METADATA(m_metadata.data() + size, length, uint8_t);
-        WRITE_TO_METADATA(m_metadata.data() + size + 1, index, uint32_t);
-    }
+    IPInt::MemoryGrowMetadata md {
+        .memoryIndex = memoryIndex
+    };
+    appendMetadata(md);
 }
 
-void FunctionIPIntMetadataGenerator::addLEB128ConstantAndLengthForType(Type type, uint64_t value, uint32_t length)
+void FunctionIPIntMetadataGenerator::addTableAccess(uint32_t index, size_t length)
 {
-    if (type.isI32()) {
-        size_t size = m_metadata.size();
-        if (length == 2) {
-            m_metadata.grow(size + 1);
-            WRITE_TO_METADATA(m_metadata.data() + size, (value >> 7) & 1, uint8_t);
-        } else {
-            m_metadata.grow(size + 5);
-            WRITE_TO_METADATA(m_metadata.data() + size, static_cast<uint8_t>(length), uint8_t);
-            WRITE_TO_METADATA(m_metadata.data() + size + 1, static_cast<uint32_t>(value), uint32_t);
-        }
-    } else if (type.isI64()) {
-        size_t size = m_metadata.size();
-        m_metadata.grow(size + 9);
-        WRITE_TO_METADATA(m_metadata.data() + size, static_cast<uint8_t>(length), uint8_t);
-        WRITE_TO_METADATA(m_metadata.data() + size + 1, static_cast<uint64_t>(value), uint64_t);
-    }  else if (type.isFuncref()) {
-        size_t size = m_metadata.size();
-        m_metadata.grow(size + 5);
-        WRITE_TO_METADATA(m_metadata.data() + size, static_cast<uint8_t>(length), uint8_t);
-        WRITE_TO_METADATA(m_metadata.data() + size + 1, static_cast<uint32_t>(value), uint32_t);
-    } else if (!type.isF32() && !type.isF64())
-        ASSERT_NOT_IMPLEMENTED_YET();
+    IPInt::TableAccessMetadata md {
+        .index = index,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
 }
 
-void FunctionIPIntMetadataGenerator::addLEB128V128Constant(v128_t value, uint32_t length)
+void FunctionIPIntMetadataGenerator::addRefFunc(uint32_t index, size_t length)
 {
-    size_t size = m_metadata.size();
-    m_metadata.grow(size + 17);
-    WRITE_TO_METADATA(m_metadata.data() + size, static_cast<uint8_t>(length), uint8_t);
-    WRITE_TO_METADATA(m_metadata.data() + size + 1, value, v128_t);
+    IPInt::RefFuncMetadata md {
+        .index = index,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
 }
 
-void FunctionIPIntMetadataGenerator::addReturnData(const Vector<Type, 16>& types)
+void FunctionIPIntMetadataGenerator::addElemDrop(uint32_t index, size_t length)
 {
-    const int returnGPRs = 2;
-    const int returnFPRs = 1;
-    // uINT: the interpreter smaller than mINT
-    // 0x00: r0
-    // 0x01: r1
-    // 0x02: fr0
-    // 0x03: stack (TODO)
-    // 0x04: return
-    Vector<uint8_t, 16> uINTBytecode;
-    int gprsUsed = 0;
-    int fprsUsed = 0;
-    for (size_t i = 0; i < types.size(); ++i) {
-        auto type = types[i];
-        if ((type.isI32() || type.isI64()) && gprsUsed != returnGPRs)
-            uINTBytecode.append(gprsUsed++);
-        else if ((type.isF32() || type.isF64()) && fprsUsed != returnFPRs)
-            uINTBytecode.append(2 + fprsUsed++);
-        else
-            uINTBytecode.append(0x03);
-    }
-    uINTBytecode.append(0x04);
-    m_returnMetadata = m_metadata.size();
-    m_metadata.appendVector(uINTBytecode);
+    IPInt::ElemDropMetadata md {
+        .index = index,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
 }
+
+void FunctionIPIntMetadataGenerator::addDataAccess(uint32_t index, size_t length)
+{
+    IPInt::DataAccessMetadata md {
+        .index = index,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
+}
+
+void FunctionIPIntMetadataGenerator::addMemoryInit(uint8_t memoryIndex, uint32_t dataIndex, size_t length)
+{
+    IPInt::MemoryInitMetadata md {
+        .memoryIndex = memoryIndex,
+        .dataIndex = dataIndex,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
+}
+
+void FunctionIPIntMetadataGenerator::addMemoryFill(uint8_t memoryIndex, size_t length)
+{
+    IPInt::MemoryFillMetadata md {
+        .memoryIndex = memoryIndex,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
+}
+
+void FunctionIPIntMetadataGenerator::addMemoryCopy(uint8_t dstMemoryIndex, uint8_t srcMemoryIndex, size_t length)
+{
+    IPInt::MemoryCopyMetadata md {
+        .dstMemoryIndex = dstMemoryIndex,
+        .srcMemoryIndex = srcMemoryIndex,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
+}
+
+void FunctionIPIntMetadataGenerator::addAtomicMemoryAccess(uint8_t memoryIndex, uint64_t offset, size_t length)
+{
+    IPInt::AtomicMemoryAccessMetadata md {
+        .memoryIndex = memoryIndex,
+        .offset = offset,
+        .instructionLength = { .length = safeCast<uint8_t>(length) }
+    };
+    appendMetadata(md);
+}
+
 
 } }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

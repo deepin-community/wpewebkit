@@ -37,8 +37,8 @@ GStreamerQuirkBcmNexus::GStreamerQuirkBcmNexus()
     m_disallowedWebAudioDecoders = { "brcmaudfilter"_s };
 
     auto registry = gst_registry_get();
-    auto brcmaudfilter = adoptGRef(gst_registry_lookup_feature(registry, "brcmaudfilter"));
-    auto mpegaudioparse = adoptGRef(gst_registry_lookup_feature(registry, "mpegaudioparse"));
+    GRefPtr brcmaudfilter = adoptGRef(gst_registry_lookup_feature(registry, "brcmaudfilter"));
+    GRefPtr mpegaudioparse = adoptGRef(gst_registry_lookup_feature(registry, "mpegaudioparse"));
 
     if (brcmaudfilter && mpegaudioparse) {
         GST_INFO("Overriding mpegaudioparse rank with brcmaudfilter rank + 1");
@@ -46,9 +46,17 @@ GStreamerQuirkBcmNexus::GStreamerQuirkBcmNexus()
     }
 }
 
+bool GStreamerQuirkBcmNexus::isPlatformSupported() const
+{
+    auto registry = gst_registry_get();
+    GRefPtr feature = adoptGRef(gst_registry_lookup_feature(registry, "brcmaudfilter"));
+    return feature;
+}
+
 std::optional<bool> GStreamerQuirkBcmNexus::isHardwareAccelerated(GstElementFactory* factory)
 {
-    if (g_str_has_prefix(GST_OBJECT_NAME(factory), "brcm"))
+    auto view = StringView::fromLatin1(GST_OBJECT_NAME(factory));
+    if (view.startsWith("brcm"_s))
         return true;
 
     return std::nullopt;

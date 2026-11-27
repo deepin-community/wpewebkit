@@ -32,11 +32,13 @@
 #include "SecurityContext.h"
 #include "Timer.h"
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
@@ -64,16 +66,17 @@ namespace Style {
 class Resolver;
 }
 
-class InspectorCSSAgent final : public InspectorAgentBase , public Inspector::CSSBackendDispatcherHandler , public InspectorStyleSheet::Listener {
+class InspectorCSSAgent final : public InspectorAgentBase , public Inspector::CSSBackendDispatcherHandler , public InspectorStyleSheet::Listener, public CanMakeCheckedPtr<InspectorCSSAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorCSSAgent);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(InspectorCSSAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorCSSAgent);
 public:
     explicit InspectorCSSAgent(PageAgentContext&);
     ~InspectorCSSAgent();
 
     class InlineStyleOverrideScope {
     public:
-        InlineStyleOverrideScope(SecurityContext& context)
+        explicit InlineStyleOverrideScope(SecurityContext& context)
             : m_contentSecurityPolicy(context.contentSecurityPolicy())
         {
             m_contentSecurityPolicy->setOverrideAllowInlineStyle(true);
@@ -85,13 +88,13 @@ public:
         }
 
     private:
-        ContentSecurityPolicy* m_contentSecurityPolicy;
+        const CheckedPtr<ContentSecurityPolicy> m_contentSecurityPolicy;
     };
 
-    static std::optional<Inspector::Protocol::CSS::PseudoId> protocolValueForPseudoId(PseudoId);
+    static std::optional<Inspector::Protocol::CSS::PseudoId> NODELETE protocolValueForPseudoElementType(PseudoElementType);
 
     // InspectorAgentBase
-    void didCreateFrontendAndBackend(Inspector::FrontendRouter*, Inspector::BackendDispatcher*);
+    void didCreateFrontendAndBackend();
     void willDestroyFrontendAndBackend(Inspector::DisconnectReason);
 
     // CSSBackendDispatcherHandler
@@ -126,17 +129,27 @@ public:
     void didChangeRendererForDOMNode(Node&);
     void didAddEventListener(EventTarget&);
     void willRemoveEventListener(EventTarget&);
+    void didChangeAssignedSlot(Node&);
+    void didChangeAssignedNodes(Element& slotElement);
 
     // InspectorDOMAgent hooks
     void didRemoveDOMNode(Node&, Inspector::Protocol::DOM::NodeId);
     void didModifyDOMAttr(Element&);
 
-    enum class LayoutFlag : uint8_t {
+    enum class LayoutFlag : uint16_t {
         Rendered = 1 << 0,
+
+        // Layout context types (mutually exclusive).
         Flex = 1 << 1,
         Grid = 1 << 2,
-        Event = 1 << 3,
-        Scrollable = 1 << 4,
+        Subgrid = 1 << 3,
+        GridLanes = 1 << 4,
+
+        // Independent flags.
+        Event = 1 << 5,
+        Scrollable = 1 << 6,
+        SlotAssigned = 1 << 7,
+        SlotFilled = 1 << 8,
     };
     OptionSet<LayoutFlag> layoutFlagsForNode(Node&);
     RefPtr<JSON::ArrayOf<String /* Inspector::Protocol::CSS::LayoutFlag */>> protocolLayoutFlagsForNode(Node&);
@@ -144,16 +157,10 @@ public:
     void reset();
 
 private:
-    class StyleSheetAction;
-    class SetStyleSheetTextAction;
-    class SetStyleTextAction;
-    class SetRuleHeaderTextAction;
-    class AddRuleAction;
-
-    typedef HashMap<Inspector::Protocol::CSS::StyleSheetId, RefPtr<InspectorStyleSheet>> IdToInspectorStyleSheet;
-    typedef HashMap<CSSStyleSheet*, RefPtr<InspectorStyleSheet>> CSSStyleSheetToInspectorStyleSheet;
-    typedef HashMap<RefPtr<Document>, Vector<RefPtr<InspectorStyleSheet>>> DocumentToViaInspectorStyleSheet; // "via inspector" stylesheets
-    typedef HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>> PseudoClassHashSet;
+    using IdToInspectorStyleSheet = HashMap<Inspector::Protocol::CSS::StyleSheetId, Ref<InspectorStyleSheet>>;
+    using CSSStyleSheetToInspectorStyleSheet = HashMap<CSSStyleSheet*, Ref<InspectorStyleSheet>>;
+    using DocumentToViaInspectorStyleSheet = HashMap<Ref<Document>, Vector<Ref<InspectorStyleSheet>>>; // "via inspector" stylesheets
+    using PseudoClassHashSet = HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>>;
 
     InspectorStyleSheetForInlineStyle& asInspectorStyleSheet(StyledElement&);
     Element* elementForId(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
@@ -165,14 +172,14 @@ private:
     void setActiveStyleSheetsForDocument(Document&, Vector<CSSStyleSheet*>& activeStyleSheets);
 
     Inspector::Protocol::CSS::StyleSheetId unbindStyleSheet(InspectorStyleSheet*);
-    InspectorStyleSheet* bindStyleSheet(CSSStyleSheet*);
+    InspectorStyleSheet& bindStyleSheet(CSSStyleSheet*);
     InspectorStyleSheet* assertStyleSheetForId(Inspector::Protocol::ErrorString&, const Inspector::Protocol::CSS::StyleSheetId&);
     InspectorStyleSheet* createInspectorStyleSheetForDocument(Document&);
-    Inspector::Protocol::CSS::StyleSheetOrigin detectOrigin(CSSStyleSheet* pageStyleSheet, Document* ownerDocument);
+    Inspector::Protocol::CSS::StyleSheetOrigin NODELETE detectOrigin(CSSStyleSheet* pageStyleSheet, Document* ownerDocument);
 
     RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(const StyleRule*, Style::Resolver&, Element&);
     RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSStyleRule*);
-    Ref<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>> buildArrayForMatchedRuleList(const Vector<RefPtr<const StyleRule>>&, Style::Resolver&, Element&, PseudoId);
+    Ref<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>> buildArrayForMatchedRuleList(const Vector<Ref<const StyleRule>>&, Style::Resolver&, Element&, std::optional<Style::PseudoElementIdentifier>);
     RefPtr<Inspector::Protocol::CSS::CSSStyle> buildObjectForAttributesStyle(StyledElement&);
 
     void nodeHasLayoutFlagsChange(Node&);
@@ -180,10 +187,10 @@ private:
 
     void resetPseudoStates();
 
-    std::unique_ptr<Inspector::CSSFrontendDispatcher> m_frontendDispatcher;
-    RefPtr<Inspector::CSSBackendDispatcher> m_backendDispatcher;
+    const UniqueRef<Inspector::CSSFrontendDispatcher> m_frontendDispatcher;
+    const Ref<Inspector::CSSBackendDispatcher> m_backendDispatcher;
 
-    Page& m_inspectedPage;
+    WeakRef<Page> m_inspectedPage;
     IdToInspectorStyleSheet m_idToInspectorStyleSheet;
     CSSStyleSheetToInspectorStyleSheet m_cssStyleSheetToInspectorStyleSheet;
     HashMap<Node*, Ref<InspectorStyleSheetForInlineStyle>> m_nodeToInspectorStyleSheet; // bogus "stylesheets" with elements' inline styles

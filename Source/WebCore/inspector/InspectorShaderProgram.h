@@ -28,6 +28,8 @@
 #if ENABLE(WEBGL)
 
 #include <JavaScriptCore/InspectorProtocolObjects.h>
+#include <wtf/Ref.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 
@@ -38,7 +40,7 @@ class InspectorShaderProgram final : public RefCounted<InspectorShaderProgram> {
 public:
     static Ref<InspectorShaderProgram> create(WebGLProgram&, InspectorCanvas&);
 
-    const String& identifier() const { return m_identifier; }
+    const String& identifier() const LIFETIME_BOUND { return m_identifier; }
     InspectorCanvas& canvas() const { return m_canvas; }
     WebGLProgram& program() const { return m_program; }
 
@@ -57,8 +59,8 @@ private:
     InspectorShaderProgram(WebGLProgram&, InspectorCanvas&);
 
     String m_identifier;
-    InspectorCanvas& m_canvas;
-    WebGLProgram& m_program;
+    WeakRef<InspectorCanvas> m_canvas;
+    WeakRef<WebGLProgram> m_program;
     bool m_disabled { false };
     bool m_highlighted { false };
 };

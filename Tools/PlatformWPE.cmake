@@ -1,9 +1,5 @@
-if (ENABLE_API_TESTS OR ENABLE_LAYOUT_TESTS OR ENABLE_MINIBROWSER)
+if (ENABLE_WPE_LEGACY_API AND (ENABLE_API_TESTS OR ENABLE_LAYOUT_TESTS OR ENABLE_MINIBROWSER))
     add_subdirectory(wpe/backends)
-endif ()
-
-if (DEVELOPER_MODE)
-    add_subdirectory(flatpak)
 endif ()
 
 if (ENABLE_API_TESTS)
@@ -31,10 +27,17 @@ if (ENABLE_COG)
     endif ()
 
     if ("${WPE_COG_PLATFORMS}" STREQUAL "")
-        set(WPE_COG_PLATFORMS "drm,headless,gtk4,x11,wayland")
+        set(WPE_COG_PLATFORMS "drm,headless,wayland,x11")
     elseif ("${WPE_COG_PLATFORMS}" STREQUAL "none")
         set(WPE_COG_PLATFORMS "")
     endif ()
+
+    # Conditionally add 'GTK4'.
+    find_package(GTK 4.0.0)
+    if (GTK_FOUND)
+        set(WPE_COG_PLATFORMS "${WPE_COG_PLATFORMS},gtk4")
+    endif ()
+
     if (DEFINED ENV{PKG_CONFIG_PATH})
         set(WPE_COG_PKG_CONFIG_PATH ${CMAKE_BINARY_DIR}:$ENV{PKG_CONFIG_PATH})
     else ()
@@ -44,18 +47,12 @@ if (ENABLE_COG)
         set(WPE_COG_REPO "https://github.com/Igalia/cog.git")
     endif ()
     if ("${WPE_COG_TAG}" STREQUAL "")
-        set(WPE_COG_TAG "9ac900a835ee4905ad3dc3d8dc377494bd8e4c34")
+        set(WPE_COG_TAG "edafaa079f1c5ebe201bac33ddf3c476479c3f1f")
     endif ()
     # TODO Use GIT_REMOTE_UPDATE_STRATEGY with 3.18 to allow switching between
     # conflicting branches without having to delete the repo
 
     # Convert a few options to their Meson equivalents
-    if (USE_SOUP2)
-        set(COG_MESON_SOUP2 enabled)
-    else ()
-        set(COG_MESON_SOUP2 disabled)
-    endif ()
-
     string(TOLOWER "${CMAKE_BUILD_TYPE}" COG_MESON_BUILDTYPE)
     if (COG_MESON_BUILDTYPE STREQUAL "relwithdebinfo")
         set(COG_MESON_BUILDTYPE debugoptimized)
@@ -85,6 +82,7 @@ if (ENABLE_COG)
             -Dwpe_api=${WPE_API_VERSION}
             -Dplatforms=${WPE_COG_PLATFORMS}
             -Db_sanitize=${COG_MESON_SANITIZE_OPTION}
+            -Dlibportal=auto
         BUILD_COMMAND
             meson compile -C <BINARY_DIR>
         INSTALL_COMMAND "")

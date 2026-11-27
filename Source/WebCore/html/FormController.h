@@ -23,6 +23,7 @@
 
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -34,7 +35,7 @@ class ValidatedFormListedElement;
 using FormControlState = Vector<AtomString>;
 
 class FormController {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FormController);
 
 public:
     FormController();
@@ -46,7 +47,7 @@ public:
     void willDeleteForm(HTMLFormElement&);
     void restoreControlStateFor(ValidatedFormListedElement&);
     void restoreControlStateIn(HTMLFormElement&);
-    bool hasFormStateToRestore() const;
+    bool NODELETE hasFormStateToRestore() const;
 
     WEBCORE_EXPORT static Vector<String> referencedFilePaths(const Vector<AtomString>& stateVector);
     static HTMLFormElement* ownerForm(const FormListedElement&);

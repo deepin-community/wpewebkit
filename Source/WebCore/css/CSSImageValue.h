@@ -20,8 +20,9 @@
 
 #pragma once
 
-#include "CSSParserContext.h"
+#include "CSSURL.h"
 #include "CSSValue.h"
+#include "CachedImage.h"
 #include "CachedResourceHandle.h"
 #include "ResourceLoaderOptions.h"
 #include <wtf/Function.h>
@@ -34,46 +35,45 @@ class CachedResourceLoader;
 class DeprecatedCSSOMValue;
 class CSSStyleDeclaration;
 class RenderElement;
-class StyleImage;
 
 namespace Style {
 class BuilderState;
+class Image;
 }
 
 class CSSImageValue final : public CSSValue {
 public:
-    static Ref<CSSImageValue> create();
-    static Ref<CSSImageValue> create(ResolvedURL, LoadedFromOpaqueSource, AtomString = { });
-    static Ref<CSSImageValue> create(URL, LoadedFromOpaqueSource, AtomString = { });
+    static Ref<CSSImageValue> NODELETE create();
+    static Ref<CSSImageValue> create(CSS::URL, AtomString initiatorType = { });
+    static Ref<CSSImageValue> create(WTF::URL, AtomString initiatorType = { });
+    static Ref<CSSImageValue> create(CachedImage&);
     ~CSSImageValue();
 
-    bool isPending() const;
+    Ref<CSSImageValue> copyForComputedStyle(const CSS::URL& resolvedURL) const;
+
+    bool NODELETE isPending() const;
     CachedImage* loadImage(CachedResourceLoader&, const ResourceLoaderOptions&);
     CachedImage* cachedImage() const { return m_cachedImage ? m_cachedImage.value().get() : nullptr; }
 
     // Take care when using this, and read https://drafts.csswg.org/css-values/#relative-urls
-    const URL& imageURL() const { return m_location.resolvedURL; }
+    const CSS::URL& url() const LIFETIME_BOUND { return m_location; }
 
-    URL reresolvedURL(const Document&) const;
+    String customCSSText(const CSS::SerializationContext&) const;
 
-    String customCSSText() const;
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
-    Ref<DeprecatedCSSOMValue> createDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
-
-    bool customTraverseSubresources(const Function<bool(const CachedResource&)>&) const;
-    void customSetReplacementURLForSubresources(const HashMap<String, String>&);
-    void customClearReplacementURLForSubresources();
+    bool customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&) const;
     bool customMayDependOnBaseURL() const;
 
     bool equals(const CSSImageValue&) const;
 
     bool knownToBeOpaque(const RenderElement&) const;
 
-    RefPtr<StyleImage> createStyleImage(Style::BuilderState&) const;
+    RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
-    bool isLoadedFromOpaqueSource() const { return m_loadedFromOpaqueSource == LoadedFromOpaqueSource::Yes; }
+    bool NODELETE isLoadedFromOpaqueSource() const;
 
-    IterationStatus customVisitChildren(const Function<IterationStatus(CSSValue&)>& func) const
+    IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>& func) const
     {
         if (m_unresolvedValue) {
             if (func(*m_unresolvedValue) == IterationStatus::Done)
@@ -84,16 +84,14 @@ public:
 
 private:
     CSSImageValue();
-    CSSImageValue(ResolvedURL&&, LoadedFromOpaqueSource, AtomString&&);
+    CSSImageValue(CSS::URL&&, AtomString&&);
+    explicit CSSImageValue(CachedImage&);
 
-    ResolvedURL m_location;
-    std::optional<CachedResourceHandle<CachedImage>> m_cachedImage;
+    CSS::URL m_location;
     AtomString m_initiatorType;
-    LoadedFromOpaqueSource m_loadedFromOpaqueSource { LoadedFromOpaqueSource::No };
+    std::optional<CachedResourceHandle<CachedImage>> m_cachedImage;
     RefPtr<CSSImageValue> m_unresolvedValue;
     bool m_isInvalid { false };
-    String m_replacementURLString;
-    bool m_shouldUseResolvedURLInCSSText { false };
 };
 
 } // namespace WebCore

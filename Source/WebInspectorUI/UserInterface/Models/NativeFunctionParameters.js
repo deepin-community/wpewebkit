@@ -652,7 +652,6 @@ WI.NativePrototypeFunctionParameters = {
         createRadialGradient: "x0, y0, r0, x1, y1, r1",
         drawFocusIfNeeded: "element",
         drawImage: "image, x, y",
-        drawImageFromRect: "image, [sx], [sy], [sw], [sh], [dx], [dy], [dw], [dh], [compositeOperation]",
         ellipse: "x, y, radiusX, radiusY, rotation, startAngle, endAngle, [anticlockwise]",
         fill: "path, [winding]",
         fillRect: "x, y, width, height",
@@ -698,7 +697,6 @@ WI.NativePrototypeFunctionParameters = {
 
     CommandLineAPIHost: {
         copyText: "text",
-        databaseId: "database",
         getEventListeners: "target",
         inspect: "objectId, hints",
         storageId: "storage",
@@ -724,11 +722,6 @@ WI.NativePrototypeFunctionParameters = {
 
     CustomEvent: {
         initCustomEvent: "type, [bubbles], [cancelable], [detail]",
-        __proto__: null,
-    },
-
-    DOMApplicationCache: {
-        /* EventTarget */
         __proto__: null,
     },
 
@@ -777,18 +770,6 @@ WI.NativePrototypeFunctionParameters = {
     DataTransferItemList: {
         add: "file",
         item: "[index]",
-        __proto__: null,
-    },
-
-    Database: {
-        changeVersion: "oldVersion, newVersion, [callback], [errorCallback], [successCallback]",
-        readTransaction: "callback, [errorCallback], [successCallback]",
-        transaction: "callback, [errorCallback], [successCallback]",
-        __proto__: null,
-    },
-
-    DatabaseCallback: {
-        handleEvent: "database",
         __proto__: null,
     },
 

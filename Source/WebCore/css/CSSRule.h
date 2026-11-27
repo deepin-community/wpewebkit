@@ -22,9 +22,12 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
-#include "StyleRuleType.h"
+#include <WebCore/CSSParserEnum.h>
+#include <WebCore/StyleRuleType.h>
+#include <wtf/Lock.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TypeCasts.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -32,10 +35,17 @@ class CSSStyleSheet;
 class StyleRuleBase;
 class StyleRule;
 class StyleRuleWithNesting;
+class WebCoreOpaqueRoot;
 
 struct CSSParserContext;
 
-class CSSRule : public RefCounted<CSSRule> {
+template<typename> class ExceptionOr;
+
+namespace CSS {
+struct SerializationContext;
+}
+
+class CSSRule : public RefCountedAndCanMakeWeakPtr<CSSRule> {
 public:
     virtual ~CSSRule() = default;
 
@@ -44,7 +54,7 @@ public:
     virtual StyleRuleType styleRuleType() const = 0;
     virtual bool isGroupingRule() const { return false; }
     virtual String cssText() const = 0;
-    virtual String cssTextWithReplacementURLs(const HashMap<String, String>&, const HashMap<RefPtr<CSSStyleSheet>, String>&) const { return cssText(); }
+    virtual String cssText(const CSS::SerializationContext&) const { return cssText(); }
     virtual void reattach(StyleRuleBase&) = 0;
 
     void setParentStyleSheet(CSSStyleSheet*);
@@ -52,10 +62,20 @@ public:
     CSSStyleSheet* parentStyleSheet() const;
     CSSRule* parentRule() const { return m_parentIsRule ? m_parentRule : nullptr; }
     bool hasStyleRuleAncestor() const;
+    CSSParserEnum::NestedContext nestedContext() const;
     virtual RefPtr<StyleRuleWithNesting> prepareChildStyleRuleForNesting(StyleRule&);
-    virtual void getChildStyleSheets(HashSet<RefPtr<CSSStyleSheet>>&) { }
+    virtual void getChildStyleSheets(HashSet<Ref<CSSStyleSheet>>&) { }
 
-    WEBCORE_EXPORT ExceptionOr<void> setCssText(const String&);
+    Lock& opaqueRootLockForGC() const { return m_opaqueRootLockForGC; }
+
+    // Computes the opaque root of this rule for the JS garbage collector. Called from the
+    // parallel GC marker threads as well as from the mutator, so it walks the parent links
+    // under opaqueRootLockForGC() and must never allocate, refcount or otherwise mutate the
+    // CSSOM. In particular it must not go through parentStyleSheet()/item(), which lazily
+    // create CSSOM wrappers and are main-thread only.
+    WEBCORE_EXPORT WebCoreOpaqueRoot opaqueRootForGCThread();
+
+    WEBCORE_EXPORT ExceptionOr<void> NODELETE setCssText(const String&);
 
 protected:
     explicit CSSRule(CSSStyleSheet*);
@@ -68,6 +88,7 @@ protected:
 private:
     mutable unsigned char m_hasCachedSelectorText : 1;
     unsigned char m_parentIsRule : 1;
+    mutable Lock m_opaqueRootLockForGC;
     union {
         CSSRule* m_parentRule;
         CSSStyleSheet* m_parentStyleSheet;
@@ -83,12 +104,14 @@ inline CSSRule::CSSRule(CSSStyleSheet* parent)
 
 inline void CSSRule::setParentStyleSheet(CSSStyleSheet* styleSheet)
 {
+    Locker locker { m_opaqueRootLockForGC };
     m_parentIsRule = false;
     m_parentStyleSheet = styleSheet;
 }
 
 inline void CSSRule::setParentRule(CSSRule* rule)
 {
+    Locker locker { m_opaqueRootLockForGC };
     m_parentIsRule = true;
     m_parentRule = rule;
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2022 Apple Inc.  All rights reserved.
+* Copyright (C) 2022 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@ typedef (double or CSSNumericValue) CSSNumberish;
     EnabledBySetting=CSSTypedOMColorEnabled,
     Exposed=(Window,Worker,PaintWorklet/*,LayoutWorklet*/),
     JSGenerateToNativeObject,
-] interface CSSHWB : CSSColorValue {
+] interface CSSHWB : CSSOMColorValue {
     constructor(CSSNumericValue h, CSSNumberish w, CSSNumberish b, optional CSSNumberish alpha = 1.0);
     attribute CSSNumericValue h;
     attribute CSSNumberish w;

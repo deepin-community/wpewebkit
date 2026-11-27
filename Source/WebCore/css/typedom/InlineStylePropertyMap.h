@@ -36,15 +36,17 @@ class InlineStylePropertyMap final : public StylePropertyMap {
 public:
     static Ref<InlineStylePropertyMap> create(StyledElement&);
 
+    Type type() const final { return Type::Inline; }
+
     RefPtr<CSSValue> propertyValue(CSSPropertyID) const final;
     String shorthandPropertySerialization(CSSPropertyID) const final;
     RefPtr<CSSValue> customPropertyValue(const AtomString& property) const final;
-    unsigned size() const final;
+    unsigned NODELETE size() const final;
     Vector<StylePropertyMapEntry> entries(ScriptExecutionContext*) const final;
     void removeProperty(CSSPropertyID) final;
     bool setShorthandProperty(CSSPropertyID, const String& value) final;
     bool setProperty(CSSPropertyID, Ref<CSSValue>&&) final;
-    bool setCustomProperty(Document&, const AtomString& property, Ref<CSSVariableReferenceValue>&&) final;
+    bool setCustomProperty(Document&, const AtomString& property, Ref<CSSSubstitutionValue>&&) final;
     void removeCustomProperty(const AtomString& property) final;
     void clear() final;
 
@@ -55,3 +57,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_CSSOM_STYLE_PROPERTY_MAP(InlineStylePropertyMap, WebCore::StylePropertyMapReadOnly::Type::Inline);

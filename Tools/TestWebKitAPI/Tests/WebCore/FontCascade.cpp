@@ -25,22 +25,41 @@
  */
 
 #include "config.h"
+#include <WebCore/Font.h>
+#include <WebCore/FontCache.h>
 #include <WebCore/FontCascade.h>
+#include <WebCore/FontCascadeFonts.h>
+#include <WebCore/TextRun.h>
+#include <WebCore/TextShapingResultAndDisplayList.h>
+#include <wtf/WeakHashSet.h>
 
 namespace TestWebKitAPI {
 
 using namespace WebCore;
 using CodePath = FontCascade::CodePath;
 
-static void testCodePath(UChar codePoint, CodePath codePath)
+static void testCodePath(char16_t codePoint, CodePath codePath)
 {
-    std::array<UChar, 1> target = { codePoint };
-    EXPECT_EQ(codePath, FontCascade::characterRangeCodePath(std::span<UChar>(target))) << "target: " << static_cast<int>(target[0]);
+    std::array<char16_t, 1> target = { codePoint };
+    EXPECT_EQ(codePath, FontCascade::characterRangeCodePath(std::span<char16_t>(target))) << "target: " << static_cast<int>(target[0]);
+}
+
+static std::array<char16_t, 2> surrogatePair(char32_t supplementaryCharacter)
+{
+    char16_t high = 0xD800 + ((supplementaryCharacter - 0x10000) >> 10);
+    char16_t low = 0xDC00 + ((supplementaryCharacter - 0x10000) & 0x3FF);
+    return { high, low };
+}
+
+static void testSupplementaryCodePath(char32_t codePoint, CodePath codePath)
+{
+    auto target = surrogatePair(codePoint);
+    EXPECT_EQ(codePath, FontCascade::characterRangeCodePath(std::span<char16_t>(target))) << "target: U+" << std::hex << static_cast<uint32_t>(codePoint);
 }
 
 struct CodePathRange {
-    UChar start;
-    UChar end;
+    char16_t start;
+    char16_t end;
     CodePath path;
     CodePath belowPath { CodePath::Simple };
     CodePath abovePath { CodePath::Simple };
@@ -48,17 +67,30 @@ struct CodePathRange {
 
 static void testCodePathRange(CodePathRange range)
 {
-    std::array<UChar, 1> below = { static_cast<UChar>(range.start - 1) };
-    std::array<UChar, 1> start = { range.start };
-    std::array<UChar, 1> middle = { static_cast<UChar>((range.start + range.end) / 2) };
-    std::array<UChar, 1> end = { range.end };
-    std::array<UChar, 1> above = { static_cast<UChar>(range.end + 1) };
+    std::array<char16_t, 1> below = { static_cast<char16_t>(range.start - 1) };
+    std::array<char16_t, 1> start = { range.start };
+    std::array<char16_t, 1> middle = { static_cast<char16_t>((range.start + range.end) / 2) };
+    std::array<char16_t, 1> end = { range.end };
+    std::array<char16_t, 1> above = { static_cast<char16_t>(range.end + 1) };
 
-    EXPECT_EQ(range.belowPath, FontCascade::characterRangeCodePath(std::span<UChar>(below))) << "below: " << std::hex << static_cast<int>(below[0]);
-    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<UChar>(start))) << "start: " << std::hex << static_cast<int>(start[0]);
-    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<UChar>(middle))) << "middle: " << std::hex << static_cast<int>(middle[0]);
-    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<UChar>(end))) << "end: " << std::hex << static_cast<int>(end[0]);
-    EXPECT_EQ(range.abovePath, FontCascade::characterRangeCodePath(std::span<UChar>(above))) << "above: " << std::hex << static_cast<int>(above[0]);
+    EXPECT_EQ(range.belowPath, FontCascade::characterRangeCodePath(std::span<char16_t>(below))) << "below: " << std::hex << static_cast<int>(below[0]);
+    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<char16_t>(start))) << "start: " << std::hex << static_cast<int>(start[0]);
+    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<char16_t>(middle))) << "middle: " << std::hex << static_cast<int>(middle[0]);
+    EXPECT_EQ(range.path, FontCascade::characterRangeCodePath(std::span<char16_t>(end))) << "end: " << std::hex << static_cast<int>(end[0]);
+    EXPECT_EQ(range.abovePath, FontCascade::characterRangeCodePath(std::span<char16_t>(above))) << "above: " << std::hex << static_cast<int>(above[0]);
+}
+
+TEST(FontCascadeTest, EqualityWithNullFonts)
+{
+    FontCascadeDescription description;
+    description.setOneFamily("Times"_s);
+    description.setComputedSize(16);
+
+    FontCascade a(FontCascadeDescription { description });
+    FontCascade b(FontCascadeDescription { description });
+
+    // Both have null m_fonts (update() not called). They should be equal.
+    EXPECT_TRUE(a == b);
 }
 
 // Testing characterRangeCodePath for non-surrogate codepoints
@@ -115,5 +147,67 @@ TEST(FontCascadeTest, characterRangeCodePath_NonSurrogates)
     testCodePathRange({ 0xFE00, 0xFE0F, CodePath::Complex });
     // U+FE20 through U+FE2F Combining half marks
     testCodePathRange({ 0xFE20, 0xFE2F, CodePath::Complex });
+}
+
+// Testing characterRangeCodePath for supplementary-plane codepoints
+TEST(FontCascadeTest, characterRangeCodePath_Surrogates)
+{
+    // U+16B00 through U+16B8F Pahawh Hmong
+    testSupplementaryCodePath(0x16B00, CodePath::Complex);
+    testSupplementaryCodePath(0x16B16, CodePath::Complex);
+    testSupplementaryCodePath(0x16B30, CodePath::Complex);
+    testSupplementaryCodePath(0x16B8F, CodePath::Complex);
+}
+
+// Purging inactive font data must flush the per-FontCascadeFonts shaped text caches.
+// A GlyphBuffer cached there holds only weak Font references, so a Font referenced only by a
+// cached shaped run can be destroyed by FontCache::purgeInactiveFontData (it has one ref); if the
+// cache is not flushed on purge, a later paint may dereference an expired weak pointer in
+// FontCascade::drawGlyphBuffer and crash. rdar://173222307
+TEST(FontCascadeTest, PurgeInactiveFontDataClearsShapedTextCache)
+{
+    FontCascadeDescription description;
+    description.setOneFamily("Times"_s);
+    description.setComputedSize(16);
+    FontCascade font(WTF::move(description));
+    font.update();
+
+    RefPtr fonts = font.fonts();
+    ASSERT_TRUE(fonts);
+
+    fonts->shapedTextCache().add("hello world"_str, makeUnique<TextShapingResultAndDisplayList>());
+    EXPECT_FALSE(fonts->shapedTextCache().isEmpty());
+
+    FontCache::forCurrentThread().purgeInactiveFontData();
+
+    EXPECT_TRUE(fonts->shapedTextCache().isEmpty());
+}
+
+// The complex text path must retain the system fallback fonts it uses (like the simple path), otherwise a
+// cached shaped run's weak Font reference dangles once FontCache::purgeInactiveFontData reclaims the font.
+TEST(FontCascadeTest, ComplexTextRetainsSystemFallbackFonts)
+{
+    FontCascadeDescription description;
+    description.setOneFamily("Times"_s);
+    description.setComputedSize(16);
+    FontCascade fontCascade(WTF::move(description));
+    fontCascade.update();
+
+    // Complex-script characters Times cannot render, forcing Core Text system fallbacks.
+    static constexpr std::array<char16_t, 8> characters { 0x06D8, 0x092D, 0x0B40, 0x0F96, 0x0DBD, 0x0EAF, 0xA86C, 0x0ACF };
+    String text { std::span<const char16_t> { characters } };
+    TextRun run { text };
+
+    // Shaping the run collects the system fallback fonts Core Text used.
+    SingleThreadWeakHashSet<const Font> fallbackFonts;
+    fontCascade.width(run, &fallbackFonts);
+
+    // Each fallback font must be retained beyond FontCache's own reference, so a purge cannot reclaim it.
+    bool hasUsedFallbackFont = false;
+    for (auto& font : fallbackFonts) {
+        hasUsedFallbackFont = true;
+        EXPECT_FALSE(font.hasOneRef());
+    }
+    ASSERT_TRUE(hasUsedFallbackFont);
 }
 }

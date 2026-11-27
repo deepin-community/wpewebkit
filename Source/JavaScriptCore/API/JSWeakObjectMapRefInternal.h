@@ -26,7 +26,8 @@
 #ifndef JSWeakObjectMapRefInternal_h
 #define JSWeakObjectMapRefInternal_h
 
-#include "WeakGCMap.h"
+#include <JavaScriptCore/WeakGCMap.h>
+#include <wtf/PtrTag.h>
 #include <wtf/RefCounted.h>
 
 namespace JSC {
@@ -49,7 +50,7 @@ public:
         return adoptRef(*new OpaqueJSWeakObjectMap(vm, data, callback));
     }
 
-    WeakMapType& map() { return m_map; }
+    WeakMapType& map() LIFETIME_BOUND { return m_map; }
     
     ~OpaqueJSWeakObjectMap()
     {

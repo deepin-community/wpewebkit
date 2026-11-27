@@ -34,11 +34,12 @@
 #include "DateComponents.h"
 #include "DateTimeFormat.h"
 #include "LocalizedStrings.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Locale);
 
 class DateTimeStringBuilder : private DateTimeFormat::TokenHandler {
     WTF_MAKE_NONCOPYABLE(DateTimeStringBuilder);
@@ -53,13 +54,13 @@ public:
 private:
     // DateTimeFormat::TokenHandler functions.
     void visitField(DateTimeFormat::FieldType, int) final;
-    void visitLiteral(String&&) final;
+    void visitLiteral(const String&) final;
 
     String zeroPadString(const String&, size_t width);
     void appendNumber(int number, size_t width);
 
     StringBuilder m_builder;
-    Locale& m_localizer;
+    const CheckedRef<Locale> m_localizer;
     const DateComponents& m_date;
 };
 
@@ -90,7 +91,7 @@ String DateTimeStringBuilder::zeroPadString(const String& string, size_t width)
 void DateTimeStringBuilder::appendNumber(int number, size_t width)
 {
     String zeroPaddedNumberString = zeroPadString(String::number(number), width);
-    m_builder.append(m_localizer.convertToLocalizedNumber(zeroPaddedNumberString));
+    m_builder.append(m_localizer->convertToLocalizedNumber(zeroPaddedNumberString));
 }
 
 void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int numberOfPatternCharacters)
@@ -102,9 +103,9 @@ void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int 
         return;
     case DateTimeFormat::FieldTypeMonth:
         if (numberOfPatternCharacters == 3)
-            m_builder.append(m_localizer.shortMonthLabels()[m_date.month()]);
+            m_builder.append(m_localizer->shortMonthLabels()[m_date.month()]);
         else if (numberOfPatternCharacters == 4)
-            m_builder.append(m_localizer.monthLabels()[m_date.month()]);
+            m_builder.append(m_localizer->monthLabels()[m_date.month()]);
         else {
             // Always use padding width of 2 so it matches DateTimeEditElement.
             appendNumber(m_date.month() + 1, 2);
@@ -112,9 +113,9 @@ void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int 
         return;
     case DateTimeFormat::FieldTypeMonthStandAlone:
         if (numberOfPatternCharacters == 3)
-            m_builder.append(m_localizer.shortStandAloneMonthLabels()[m_date.month()]);
+            m_builder.append(m_localizer->shortStandAloneMonthLabels()[m_date.month()]);
         else if (numberOfPatternCharacters == 4)
-            m_builder.append(m_localizer.standAloneMonthLabels()[m_date.month()]);
+            m_builder.append(m_localizer->standAloneMonthLabels()[m_date.month()]);
         else {
             // Always use padding width of 2 so it matches DateTimeEditElement.
             appendNumber(m_date.month() + 1, 2);
@@ -129,7 +130,7 @@ void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int 
         appendNumber(m_date.week(), 2);
         return;
     case DateTimeFormat::FieldTypePeriod:
-        m_builder.append(m_localizer.timeAMPMLabels()[(m_date.hour() >= 12 ? 1 : 0)]);
+        m_builder.append(m_localizer->timeAMPMLabels()[(m_date.hour() >= 12 ? 1 : 0)]);
         return;
     case DateTimeFormat::FieldTypeHour12: {
         int hour12 = m_date.hour() % 12;
@@ -160,7 +161,7 @@ void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int 
         else {
             double second = m_date.second() + m_date.millisecond() / 1000.0;
             String zeroPaddedSecondString = zeroPadString(String::numberToStringFixedWidth(second, 3), numberOfPatternCharacters + 4);
-            m_builder.append(m_localizer.convertToLocalizedNumber(zeroPaddedSecondString));
+            m_builder.append(m_localizer->convertToLocalizedNumber(zeroPaddedSecondString));
         }
         return;
     default:
@@ -168,18 +169,16 @@ void DateTimeStringBuilder::visitField(DateTimeFormat::FieldType fieldType, int 
     }
 }
 
-void DateTimeStringBuilder::visitLiteral(String&& text)
+void DateTimeStringBuilder::visitLiteral(const String& text)
 {
     ASSERT(text.length());
-    m_builder.append(WTFMove(text));
+    m_builder.append(text);
 }
 
 String DateTimeStringBuilder::toString()
 {
     return m_builder.toString();
 }
-
-#endif
 
 Locale::~Locale() = default;
 
@@ -242,7 +241,7 @@ String Locale::convertToLocalizedNumber(const String& input)
     return builder.toString();
 }
 
-static bool matches(const String& text, unsigned position, const String& part)
+static bool NODELETE matches(const String& text, unsigned position, const String& part)
 {
     if (part.isEmpty())
         return true;
@@ -324,7 +323,7 @@ String Locale::convertFromLocalizedNumber(const String& localized)
         else if (symbolIndex == GroupSeparatorIndex)
             return input;
         else
-            builder.append(static_cast<UChar>('0' + symbolIndex));
+            builder.append(static_cast<char16_t>('0' + symbolIndex));
     }
     String converted = builder.toString();
     // Ignore trailing '.', but will reject '.'-only string later.
@@ -333,7 +332,11 @@ String Locale::convertFromLocalizedNumber(const String& localized)
     return converted;
 }
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
+Locale::WritingDirection Locale::defaultWritingDirection() const
+{
+    return WritingDirection::Default;
+}
+
 String Locale::formatDateTime(const DateComponents& date, FormatType formatType)
 {
     if (date.type() == DateComponentsType::Invalid)
@@ -363,11 +366,30 @@ String Locale::formatDateTime(const DateComponents& date, FormatType formatType)
     return builder.toString();
 }
 
-String Locale::localizedDecimalSeparator()
+const String& Locale::localizedDecimalSeparator()
 {
     initializeLocaleData();
     return m_decimalSymbols[DecimalSeparatorIndex];
 }
-#endif
+
+String Locale::localizeNumberCharacters(const String& input)
+{
+    initializeLocaleData();
+    if (!m_hasLocaleData || input.isEmpty())
+        return input;
+
+    StringBuilder builder;
+    builder.reserveCapacity(input.length());
+    for (unsigned i = 0; i < input.length(); ++i) {
+        auto character = input[i];
+        if (character >= '0' && character <= '9')
+            builder.append(m_decimalSymbols[character - '0']);
+        else if (character == '.')
+            builder.append(m_decimalSymbols[DecimalSeparatorIndex]);
+        else
+            builder.append(character);
+    }
+    return builder.toString();
+}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,16 +20,18 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
 
-#include "FloatPoint.h"
-#include "FloatSize.h"
-#include "ProcessQualified.h"
-#include "RectEdges.h"
-#include "ScrollingNodeID.h"
+#include <WebCore/Color.h>
+#include <WebCore/FloatPoint.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/ProcessQualified.h>
+#include <WebCore/RectEdges.h>
+#include <WebCore/ScrollbarMode.h>
+#include <WebCore/ScrollingNodeID.h>
 
 namespace WTF {
 class TextStream;
@@ -45,7 +47,7 @@ enum class ScrollBehavior : uint8_t;
 using ScrollPosition = IntPoint;
 // scrollOffset() is the value used by scrollbars (min is 0,0), and should never have negative components.
 using ScrollOffset = IntPoint;
-    
+
 enum class ScrollType : bool {
     User,
     Programmatic
@@ -77,6 +79,7 @@ enum class ScrollAnimationStatus : uint8_t {
 };
 
 enum class ScrollIsAnimated : bool { No, Yes };
+enum class InterruptScrollAnimation : bool { No, Yes };
 
 enum class OverflowAnchor : bool {
     Auto,
@@ -151,15 +154,16 @@ enum class ScrollElasticity : uint8_t {
     Allowed
 };
 
+// Determines if rubber-banding should be enabled if the content size is less than the scroll view size.
+enum class RubberBandingBehavior : uint8_t {
+    Always,
+    Never,
+    BasedOnSize
+};
+
 enum class ScrollbarOrientation : uint8_t {
     Horizontal,
     Vertical
-};
-
-enum class ScrollbarMode : uint8_t {
-    Auto,
-    AlwaysOff,
-    AlwaysOn
 };
 
 enum class ScrollbarExpansionState : uint8_t {
@@ -182,6 +186,11 @@ enum class NativeScrollbarVisibility : uint8_t {
 enum class ScrollEventAxis : uint8_t {
     Horizontal,
     Vertical
+};
+
+enum class ScrollEventType : bool {
+    Scroll,
+    Scrollend
 };
 
 inline constexpr ScrollEventAxis axisFromDirection(ScrollDirection direction)
@@ -236,7 +245,7 @@ inline FloatPoint setValueForAxis(FloatPoint point, ScrollEventAxis axis, float 
     case ScrollEventAxis::Horizontal:
         point.setX(value);
         return point;
-    case ScrollEventAxis::Vertical: 
+    case ScrollEventAxis::Vertical:
         point.setY(value);
         return point;
     }
@@ -259,6 +268,11 @@ inline BoxSide boxSideForDirection(ScrollDirection direction)
     ASSERT_NOT_REACHED();
     return BoxSide::Top;
 }
+
+enum class OverlayScrollbarSizeRelevancy : bool {
+    IgnoreOverlayScrollbarSize,
+    IncludeOverlayScrollbarSize
+};
 
 enum ScrollbarControlStateMask {
     ActiveScrollbarState = 1,
@@ -293,10 +307,20 @@ enum class ScrollbarStyle : uint8_t {
     Overlay
 };
 
-enum ScrollbarOverlayStyle: uint8_t {
-    ScrollbarOverlayStyleDefault,
-    ScrollbarOverlayStyleDark,
-    ScrollbarOverlayStyleLight
+enum class ScrollbarHitTestTolerance : uint8_t {
+    None,
+    Expanded
+};
+
+enum class ScrollbarOverlayStyle : uint8_t {
+    Default,
+    Dark,
+    Light
+};
+
+enum class ScrollbarRevealBehavior : bool {
+    DontReveal,
+    Default,
 };
 
 enum class ScrollPinningBehavior : uint8_t {
@@ -308,6 +332,11 @@ enum class ScrollPinningBehavior : uint8_t {
 enum class ScrollClamping : bool {
     Unclamped,
     Clamped
+};
+
+enum class ScrollInterruptsAnimation : bool {
+    No,
+    Yes
 };
 
 enum class ScrollBehaviorForFixedElements : bool {
@@ -335,13 +364,13 @@ enum class ScrollPositioningBehavior : uint8_t {
     Stationary
 };
 
-// This value controls the method used to select snap points during scrolling. This may either
-// be "directional" or "closest." The directional method only chooses snap points that are at or
-// beyond the scroll destination in the direction of the scroll. The "closest" method does not
-// have this constraint.
+// Directional: chooses snap points that are at or beyond the scroll destination in the direction of the scroll.
+// Closest: chooses snap points that are closest in the direction of the scroll.
+// Paging: chooses the farthest snap point that is within one page of the current position in the scroll direction, otherwise the nearest snap point beyond it.
 enum class ScrollSnapPointSelectionMethod : uint8_t {
     Directional,
     Closest,
+    Paging,
 };
 
 using ScrollbarControlState = unsigned;
@@ -349,10 +378,11 @@ using ScrollbarControlPartMask = unsigned;
 
 struct ScrollPositionChangeOptions {
     ScrollType type;
-    ScrollClamping clamping = ScrollClamping::Clamped;
-    ScrollIsAnimated animated = ScrollIsAnimated::No;
-    ScrollSnapPointSelectionMethod snapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest;
-    std::optional<FloatSize> originalScrollDelta = std::nullopt;
+    ScrollClamping clamping { ScrollClamping::Clamped };
+    ScrollIsAnimated animated { ScrollIsAnimated::No };
+    ScrollSnapPointSelectionMethod snapPointSelectionMethod { ScrollSnapPointSelectionMethod::Closest };
+    std::optional<FloatSize> originalScrollDelta { };
+    ScrollInterruptsAnimation interruptsAnimation { ScrollInterruptsAnimation::Yes };
 
     static ScrollPositionChangeOptions createProgrammatic()
     {
@@ -375,12 +405,20 @@ struct ScrollPositionChangeOptions {
     }
 };
 
+struct ScrollbarColor {
+    Color thumbColor;
+    Color trackColor;
+    friend bool operator==(const ScrollbarColor&, const ScrollbarColor&) = default;
+};
+
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollType);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollClamping);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollBehaviorForFixedElements);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollElasticity);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, RubberBandingBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollbarMode);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollbarRevealBehavior);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, OverflowAnchor);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollDirection);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollGranularity);

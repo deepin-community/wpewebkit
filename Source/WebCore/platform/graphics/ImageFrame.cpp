@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,15 +30,15 @@
 
 namespace WebCore {
 
-ImageFrame::ImageFrame()
-{
-}
+ImageFrame::ImageFrame() = default;
 
 ImageFrame::ImageFrame(Ref<NativeImage>&& nativeImage)
-    : m_nativeImage(WTFMove(nativeImage))
 {
-    m_size = m_nativeImage->size();
-    m_hasAlpha = m_nativeImage->hasAlpha();
+    m_size = nativeImage->size();
+    m_hasAlpha = nativeImage->hasAlpha();
+
+    m_destinations[DecodingDestination::Base].headroom = nativeImage->headroom();
+    m_destinations[DecodingDestination::Base].nativeImage = WTF::move(nativeImage);
 }
 
 ImageFrame::~ImageFrame()
@@ -52,23 +52,8 @@ const ImageFrame& ImageFrame::defaultFrame()
     return sharedInstance;
 }
 
-ImageFrame& ImageFrame::operator=(const ImageFrame& other)
-{
-    if (this == &other)
-        return *this;
-
-    m_decodingStatus = other.m_decodingStatus;
-    m_size = other.m_size;
-
-    m_nativeImage = other.m_nativeImage;
-    m_subsamplingLevel = other.m_subsamplingLevel;
-    m_decodingOptions = other.m_decodingOptions;
-
-    m_orientation = other.m_orientation;
-    m_duration = other.m_duration;
-    m_hasAlpha = other.m_hasAlpha;
-    return *this;
-}
+ImageFrame::ImageFrame(const ImageFrame&) = default;
+ImageFrame& ImageFrame::operator=(const ImageFrame&) = default;
 
 void ImageFrame::setDecodingStatus(DecodingStatus decodingStatus)
 {
@@ -82,40 +67,60 @@ DecodingStatus ImageFrame::decodingStatus() const
     return m_decodingStatus;
 }
 
-unsigned ImageFrame::clearImage()
+size_t ImageFrame::sizeInBytes() const
 {
-    if (!hasNativeImage())
-        return 0;
+    CheckedSize sizeInBytes = 0;
 
-    unsigned frameBytes = this->frameBytes();
+    for (auto& destination : m_destinations)
+        sizeInBytes += destination.sizeInBytes();
 
-    m_nativeImage->clearSubimages();
-    m_nativeImage = nullptr;
-    m_decodingOptions = DecodingOptions();
-
-    return frameBytes;
+    return sizeInBytes;
 }
 
-unsigned ImageFrame::clear()
+size_t ImageFrame::clearImage(std::optional<DecodingDestination> decodingDestination)
 {
-    unsigned frameBytes = clearImage();
+    CheckedSize sizeInBytes = 0;
+
+    if (!decodingDestination || *decodingDestination == DecodingDestination::Base)
+        sizeInBytes += destination(DecodingDestination::Base).clear();
+
+    if (!decodingDestination || *decodingDestination == DecodingDestination::BaseAndGainMap)
+        sizeInBytes += destination(DecodingDestination::BaseAndGainMap).clear();
+
+    if (!decodingDestination || *decodingDestination == DecodingDestination::ShouldDecodeToHDR)
+        sizeInBytes += destination(DecodingDestination::ShouldDecodeToHDR).clear();
+
+    return sizeInBytes;
+}
+
+size_t ImageFrame::clear()
+{
+    auto sizeInBytes = clearImage();
     *this = ImageFrame();
-    return frameBytes;
+    return sizeInBytes;
 }
 
-bool ImageFrame::hasNativeImage(const std::optional<SubsamplingLevel>& subsamplingLevel) const
+bool ImageFrame::hasNativeImage(DecodingDestination decodingDestination, SubsamplingLevel subsamplingLevel) const
 {
-    return m_nativeImage && (!subsamplingLevel || *subsamplingLevel >= m_subsamplingLevel);
+    return destination(decodingDestination).hasNativeImage() && subsamplingLevel >= m_subsamplingLevel;
 }
 
-bool ImageFrame::hasFullSizeNativeImage(const std::optional<SubsamplingLevel>& subsamplingLevel) const
+bool ImageFrame::hasFullSizeNativeImage(DecodingDestination decodingDestination, SubsamplingLevel subsamplingLevel) const
 {
-    return hasNativeImage(subsamplingLevel) && m_decodingOptions.hasFullSize();
+    return destination(decodingDestination).hasFullSizeNativeImage() && subsamplingLevel >= m_subsamplingLevel;
 }
 
-bool ImageFrame::hasDecodedNativeImageCompatibleWithOptions(const std::optional<SubsamplingLevel>& subsamplingLevel, const DecodingOptions& decodingOptions) const
+std::optional<DecodingDestination> ImageFrame::compatibleDecodingDestinationWithOptions(const DecodingOptions& decodingOptions, SubsamplingLevel subsamplingLevel) const
 {
-    return isComplete() && hasNativeImage(subsamplingLevel) && m_decodingOptions.isCompatibleWith(decodingOptions);
+    if (!isComplete() || subsamplingLevel < m_subsamplingLevel)
+        return std::nullopt;
+
+    for (auto& destination : m_destinations) {
+        if (destination.hasDecodedNativeImageCompatibleWithOptions(decodingOptions))
+            return destination.decodingOptions.decodingDestination();
+    }
+
+    return std::nullopt;
 }
 
 } // namespace WebCore

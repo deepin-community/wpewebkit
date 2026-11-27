@@ -40,6 +40,7 @@
 #include "RenderLayer.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
 #include "RenderObject.h"
+#include "RenderText.h"
 #include "RenderView.h"
 #include "TextBoxSelectableRange.h"
 #include "VisibleSelection.h"
@@ -57,36 +58,36 @@ RenderRangeIterator::RenderRangeIterator(RenderObject* start)
 
 RenderObject* RenderRangeIterator::current() const
 {
-    return m_current;
+    return m_current.get();
 }
 
 RenderObject* RenderRangeIterator::next()
 {
-    RenderObject* currentSpan = m_spannerStack.isEmpty() ? nullptr : m_spannerStack.last()->spanner();
-    m_current = m_current->nextInPreOrder(currentSpan);
+    CheckedPtr span = m_spannerStack.isEmpty() ? nullptr : m_spannerStack.last()->spanner();
+    m_current = CheckedRef { *m_current }->nextInPreOrder(span.get());
     checkForSpanner();
-    if (!m_current && currentSpan) {
-        RenderObject* placeholder = m_spannerStack.last();
+    if (!m_current && span) {
+        CheckedPtr placeholder = m_spannerStack.last();
         m_spannerStack.removeLast();
         m_current = placeholder->nextInPreOrder();
         checkForSpanner();
     }
-    return m_current;
+    return m_current.get();
 }
 
 void RenderRangeIterator::checkForSpanner()
 {
-    CheckedPtr placeholder = dynamicDowncast<RenderMultiColumnSpannerPlaceholder>(m_current);
+    CheckedPtr placeholder = dynamicDowncast<RenderMultiColumnSpannerPlaceholder>(m_current.get());
     if (!placeholder)
         return;
     m_spannerStack.append(placeholder.get());
     m_current = placeholder->spanner();
 }
 
-static RenderObject* rendererAfterOffset(const RenderObject& renderer, unsigned offset)
+static CheckedPtr<RenderObject> rendererAfterOffset(const RenderObject& renderer, unsigned offset)
 {
-    auto* child = renderer.childAt(offset);
-    return child ? child : renderer.nextInPreOrderAfterChildren();
+    CheckedPtr child = renderer.childAt(offset);
+    return child ? child : CheckedPtr { renderer.nextInPreOrderAfterChildren() };
 }
 
 void RenderHighlight::setRenderRange(const RenderRange& renderRange)
@@ -99,19 +100,19 @@ bool RenderHighlight::setRenderRange(const HighlightRange& highlightRange)
 {
     if (highlightRange.startPosition().isNull() || highlightRange.endPosition().isNull())
         return false;
-    
+
     auto startPosition = highlightRange.startPosition();
     auto endPosition = highlightRange.endPosition();
-    
+
     if (!startPosition.containerNode() || !endPosition.containerNode())
         return false;
-    
-    auto* startRenderer = startPosition.containerNode()->renderer();
-    auto* endRenderer = endPosition.containerNode()->renderer();
-    
+
+    CheckedPtr startRenderer = startPosition.containerNode()->renderer();
+    CheckedPtr endRenderer = endPosition.containerNode()->renderer();
+
     if (!startRenderer || !endRenderer)
         return false;
-    
+
     unsigned startOffset = startPosition.computeOffsetInContainerNode();
     unsigned endOffset = endPosition.computeOffsetInContainerNode();
 
@@ -125,18 +126,18 @@ RenderObject::HighlightState RenderHighlight::highlightStateForRenderer(const Re
         return renderer.selectionState();
 
     if (&renderer == m_renderRange.start()) {
-        if (m_renderRange.start() && m_renderRange.end() && m_renderRange.start() == m_renderRange.end())
+        if (m_renderRange.end() && m_renderRange.start() == m_renderRange.end())
             return RenderObject::HighlightState::Both;
-        if (m_renderRange.start())
-            return RenderObject::HighlightState::Start;
+        return RenderObject::HighlightState::Start;
     }
     if (&renderer == m_renderRange.end())
         return RenderObject::HighlightState::End;
 
-    auto* highlightEnd = rendererAfterOffset(*m_renderRange.end(), m_renderRange.endOffset());
-    
+    CheckedPtr rangeEnd = m_renderRange.end();
+    CheckedPtr highlightEnd = rangeEnd ? rendererAfterOffset(*rangeEnd, m_renderRange.endOffset()) : nullptr;
+
     RenderRangeIterator highlightIterator(m_renderRange.start());
-    for (auto* currentRenderer = m_renderRange.start(); currentRenderer && currentRenderer != highlightEnd; currentRenderer = highlightIterator.next()) {
+    for (CheckedPtr currentRenderer = m_renderRange.start(); currentRenderer && currentRenderer != highlightEnd; currentRenderer = highlightIterator.next()) {
         if (currentRenderer == m_renderRange.start())
             continue;
         if (!currentRenderer->canBeSelectionLeaf())

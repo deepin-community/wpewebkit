@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,19 +25,22 @@
 
 #pragma once
 
-#include "FloatRoundedRect.h"
-#include "PathElement.h"
-#include "PathSegment.h"
-#include <wtf/FastMalloc.h>
+#include <WebCore/FloatRoundedRect.h>
+#include <WebCore/PathElement.h>
+#include <WebCore/PathSegment.h>
+#include <WebCore/RenderingResource.h>
+#include <wtf/CheckedRef.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
 
-class PathImpl : public ThreadSafeRefCounted<PathImpl> {
-    WTF_MAKE_FAST_ALLOCATED;
+class PathImpl : public ThreadSafeRefCounted<PathImpl>, public CanMakeThreadSafeCheckedPtr<PathImpl> {
+    WTF_MAKE_TZONE_ALLOCATED(PathImpl);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PathImpl);
 public:
-    virtual ~PathImpl() = default;
+    virtual ~PathImpl();
 
     static constexpr float circleControlPoint()
     {
@@ -48,7 +51,12 @@ public:
 
     virtual bool isPathStream() const { return false; }
 
+    virtual bool definitelyEqual(const PathImpl&) const = 0;
+
     virtual Ref<PathImpl> copy() const = 0;
+
+    virtual const Vector<PathSegment>* segmentsIfExists() const { return nullptr; }
+    virtual Vector<PathSegment> segments() const;
 
     void addSegment(PathSegment);
     virtual void add(PathMoveTo) = 0;
@@ -62,10 +70,11 @@ public:
     virtual void add(PathEllipseInRect) = 0;
     virtual void add(PathRect) = 0;
     virtual void add(PathRoundedRect) = 0;
+    virtual void add(PathContinuousRoundedRect) = 0;
     virtual void add(PathCloseSubpath) = 0;
 
     void addLinesForRect(const FloatRect&);
-    void addBeziersForRoundedRect(const FloatRoundedRect&);
+    static Vector<PathSegment, 10> beziersForRoundedRect(const FloatRoundedRect&);
 
     virtual void applySegments(const PathSegmentApplier&) const;
     virtual bool applyElements(const PathElementApplier&) const = 0;
@@ -73,13 +82,6 @@ public:
     virtual bool transform(const AffineTransform&) = 0;
 
     virtual std::optional<PathSegment> singleSegment() const { return std::nullopt; }
-    virtual std::optional<PathDataLine> singleDataLine() const { return std::nullopt; }
-    virtual std::optional<PathArc> singleArc() const { return std::nullopt; }
-    virtual std::optional<PathClosedArc> singleClosedArc() const { return std::nullopt; }
-    virtual std::optional<PathDataQuadCurve> singleQuadCurve() const { return std::nullopt; }
-    virtual std::optional<PathDataBezierCurve> singleBezierCurve() const { return std::nullopt; }
-
-    virtual bool isEmpty() const = 0;
 
     virtual bool isClosed() const;
 
@@ -90,19 +92,24 @@ public:
     virtual FloatRect fastBoundingRect() const = 0;
     virtual FloatRect boundingRect() const = 0;
 
+    WEBCORE_EXPORT void addObserver(WeakRef<RenderingResourceObserver>&&) const;
+
+    virtual bool isTransient() const { return true; }
+    virtual void setNotTransient() { }
+
 protected:
     PathImpl() = default;
 };
 
 inline void PathImpl::addSegment(PathSegment segment)
 {
-    WTF::switchOn(WTFMove(segment).data(),
+    WTF::switchOn(WTF::move(segment).data(),
         [&](auto&& segment) {
-            add(WTFMove(segment));
+            add(WTF::move(segment));
         },
         [&](PathDataLine segment) {
-            add(PathMoveTo { segment.start });
-            add(PathLineTo { segment.end });
+            add(PathMoveTo { segment.start() });
+            add(PathLineTo { segment.end() });
         },
         [&](PathDataQuadCurve segment) {
             add(PathMoveTo { segment.start });

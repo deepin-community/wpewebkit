@@ -11,6 +11,7 @@
 #define LIBANGLE_RENDERER_VULKAN_ALLOCATORHELPERPOOL_H_
 
 #include "common/PoolAlloc.h"
+#include "common/unsafe_buffers.h"
 #include "common/vulkan/vk_headers.h"
 #include "libANGLE/renderer/vulkan/vk_command_buffer_utils.h"
 #include "libANGLE/renderer/vulkan/vk_wrapper.h"
@@ -32,19 +33,6 @@ class DedicatedCommandBlockAllocator
   public:
     DedicatedCommandBlockAllocator() = default;
     void resetAllocator();
-    bool hasAllocatorLinks() const { return false; }
-
-    static constexpr size_t kDefaultPoolAllocatorPageSize = 16 * 1024;
-    void init()
-    {
-        mAllocator.initialize(kDefaultPoolAllocatorPageSize, 1);
-        // Push a scope into the pool allocator so we can easily free and re-init on reset()
-        mAllocator.push();
-    }
-
-    // Placeholder functions for attaching and detaching the allocator.
-    void attachAllocator(DedicatedCommandMemoryAllocator *allocator) {}
-    DedicatedCommandMemoryAllocator *detachAllocator(bool isCommandBufferEmpty) { return nullptr; }
 
     DedicatedCommandMemoryAllocator *getAllocator() { return &mAllocator; }
 
@@ -69,8 +57,8 @@ class DedicatedCommandBlockPool final
     using CommandHeaderIDType                  = uint16_t;
     // Make sure the size of command header ID type is less than total command header size.
     static_assert(sizeof(CommandHeaderIDType) < kCommandHeaderSize, "Check size of CommandHeader");
-    // Pool Alloc uses 16kB pages w/ 16byte header = 16368bytes. To minimize waste
-    //  using a 16368/12 = 1364. Also better perf than 1024 due to fewer block allocations
+    // PoolAllocator uses 32768 byte pools. To minimize waste using a 32768/24 = 1365.
+    // Also better perf than 1024 due to fewer block allocations.
     static constexpr size_t kBlockSize = 1360;
     // Make sure block size is 8-byte aligned to avoid ASAN errors.
     static_assert((kBlockSize % 8) == 0, "Check kBlockSize alignment");
@@ -125,11 +113,6 @@ class DedicatedCommandBlockPool final
         *headerOut = updateHeaderAndAllocatorParams(allocationSize);
     }
 
-    // Placeholder functions
-    void terminateLastCommandBlock() {}
-    void attachAllocator(vk::DedicatedCommandMemoryAllocator *source) {}
-    void detachAllocator(vk::DedicatedCommandMemoryAllocator *destination) {}
-
   private:
     void allocateNewBlock(size_t blockSize = kBlockSize);
 
@@ -137,7 +120,7 @@ class DedicatedCommandBlockPool final
     {
         mCurrentBytesRemaining -= allocationSize;
         uint8_t *headerPointer = mCurrentWritePointer;
-        mCurrentWritePointer += allocationSize;
+        ANGLE_UNSAFE_TODO(mCurrentWritePointer += allocationSize);
         // Set next cmd header to Invalid (0) so cmd sequence will be terminated
         reinterpret_cast<CommandHeaderIDType &>(*mCurrentWritePointer) = 0;
 

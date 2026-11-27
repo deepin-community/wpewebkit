@@ -28,12 +28,16 @@ namespace WebCore {
 class CSSFontFaceSrcResourceValue;
 
 class SVGFontFaceUriElement final : public SVGElement, public CachedFontClient {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFontFaceUriElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFontFaceUriElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFontFaceUriElement);
 public:
     static Ref<SVGFontFaceUriElement> create(const QualifiedName&, Document&);
 
     virtual ~SVGFontFaceUriElement();
+
+    // CachedResourceClient.
+    void ref() const final { SVGElement::ref(); }
+    void deref() const final { SVGElement::deref(); }
 
     Ref<CSSFontFaceSrcResourceValue> createSrcValue() const;
 
@@ -42,8 +46,8 @@ private:
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void childrenChanged(const ChildChange&) final;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
 
     void loadFont();
 

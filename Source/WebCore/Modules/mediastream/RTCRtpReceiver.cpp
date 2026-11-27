@@ -36,7 +36,9 @@
 #include "JSDOMPromiseDeferred.h"
 #include "Logging.h"
 #include "PeerConnectionBackend.h"
+#include "RTCEncodedStreamProducer.h"
 #include "RTCRtpCapabilities.h"
+#include "ScriptWrappableInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -47,11 +49,11 @@ namespace WebCore {
 #define LOGIDENTIFIER_RECEIVER
 #endif
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RTCRtpReceiver);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RTCRtpReceiver);
 
-RTCRtpReceiver::RTCRtpReceiver(PeerConnectionBackend& connection, Ref<MediaStreamTrack>&& track, std::unique_ptr<RTCRtpReceiverBackend>&& backend)
-    : m_track(WTFMove(track))
-    , m_backend(WTFMove(backend))
+RTCRtpReceiver::RTCRtpReceiver(PeerConnectionBackend& connection, Ref<MediaStreamTrack>&& track, UniqueRef<RTCRtpReceiverBackend>&& backend)
+    : m_track(WTF::move(track))
+    , m_backend(WTF::move(backend))
     , m_connection(connection)
 #if !RELEASE_LOG_DISABLED
     , m_logger(connection.logger())
@@ -68,13 +70,14 @@ RTCRtpReceiver::~RTCRtpReceiver()
 
 void RTCRtpReceiver::stop()
 {
-    if (!m_backend)
+    if (m_isStopped)
         return;
+
+    m_isStopped = true;
 
     if (m_transform)
         m_transform->detachFromReceiver(*this);
 
-    m_backend = nullptr;
     m_track->stopTrack(MediaStreamTrack::StopMode::PostEvent);
 }
 
@@ -84,7 +87,7 @@ void RTCRtpReceiver::getStats(Ref<DeferredPromise>&& promise)
         promise->reject(ExceptionCode::InvalidStateError);
         return;
     }
-    m_connection->getStats(*this, WTFMove(promise));
+    protect(m_connection)->getStats(*this, WTF::move(promise));
 }
 
 std::optional<RTCRtpCapabilities> RTCRtpReceiver::getCapabilities(ScriptExecutionContext& context, const String& kind)
@@ -110,16 +113,53 @@ ExceptionOr<void> RTCRtpReceiver::setTransform(std::unique_ptr<RTCRtpTransform>&
         return Exception { ExceptionCode::InvalidStateError, "transform is already in use"_s };
 
     transform->attachToReceiver(*this, m_transform.get());
-    m_transform = WTFMove(transform);
+    m_transform = WTF::move(transform);
 
     return { };
 }
 
-std::optional<RTCRtpTransform::Internal> RTCRtpReceiver::transform()
+RefPtr<RTCRtpScriptTransform> RTCRtpReceiver::transform()
 {
     if (!m_transform)
-        return { };
+        return nullptr;
     return m_transform->internalTransform();
+}
+
+ExceptionOr<RTCEncodedStreams> RTCRtpReceiver::createEncodedStreams(ScriptExecutionContext& context)
+{
+    if (m_isStopped)
+        return Exception { ExceptionCode::InvalidStateError };
+
+    if (!m_encodedStreamProducer) {
+        auto producerOrException = RTCEncodedStreamProducer::create(context);
+        if (producerOrException.hasException())
+            return producerOrException.releaseException();
+
+        lazyInitialize(m_encodedStreamProducer, producerOrException.releaseReturnValue());
+        m_encodedStreamProducer->start(m_backend->rtcRtpTransformBackend(), m_track->isVideo());
+    }
+
+    return m_encodedStreamProducer->streams();
+}
+
+std::unique_ptr<RTCDtlsTransportBackend> RTCRtpReceiver::dtlsTransportBackend()
+{
+    return m_backend->dtlsTransportBackend();
+}
+
+Ref<RTCRtpTransformBackend> RTCRtpReceiver::rtcRtpTransformBackend()
+{
+    return m_backend->rtcRtpTransformBackend();
+}
+
+ExceptionOr<void> RTCRtpReceiver::setJitterBufferTarget(std::optional<double> valueInMillisecond)
+{
+    if (valueInMillisecond && (*valueInMillisecond < 0 || *valueInMillisecond > 4000))
+        return Exception { ExceptionCode::RangeError, "jitterBufferTarget is invalid"_s };
+
+    m_jitterBufferTarget = valueInMillisecond;
+    m_backend->setJitterBufferTarget(valueInMillisecond);
+    return { };
 }
 
 #if !RELEASE_LOG_DISABLED

@@ -25,6 +25,10 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
+#if !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)
+
 #include <WebCore/NotificationPayload.h>
 #include <optional>
 #include <wtf/URL.h>
@@ -51,8 +55,10 @@ struct WebPushMessage {
 
 #if PLATFORM(COCOA)
     static std::optional<WebPushMessage> fromDictionary(NSDictionary *);
-    NSDictionary *toDictionary() const;
+    RetainPtr<NSDictionary> toDictionary() const;
 #endif
 };
 
 } // namespace WebKit
+
+#endif // !PLATFORM(COCOA) || !__has_feature(modules) || (defined(WK_SUPPORTS_SWIFT_OBJCXX_INTEROP) && WK_SUPPORTS_SWIFT_OBJCXX_INTEROP)

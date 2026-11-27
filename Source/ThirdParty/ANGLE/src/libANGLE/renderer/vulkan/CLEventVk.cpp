@@ -4,24 +4,35 @@
 // found in the LICENSE file.
 //
 // CLEventVk.cpp: Implements the class methods for CLEventVk.
+//
 
 #include "libANGLE/renderer/vulkan/CLEventVk.h"
-#include "libANGLE/renderer/vulkan/CLCommandQueueVk.h"
+
+#include "libANGLE/CLCommandQueue.h"
 
 #include "libANGLE/cl_utils.h"
 
 namespace rx
 {
 
-CLEventVk::CLEventVk(const cl::Event &event)
+CLEventVk::CLEventVk(const cl::Event &event, const cl::ExecutionStatus initialStatus)
     : CLEventImpl(event),
-      mStatus(isUserEvent() ? CL_SUBMITTED : CL_QUEUED),
-      mProfilingTimestamps(ProfilingTimestamps{})
+      mStatus(cl::ToCLenum(initialStatus)),
+      mProfilingTimestamps(ProfilingTimestamps{}),
+      mQueueSerial(QueueSerial())
 {
     ANGLE_CL_IMPL_TRY(setTimestamp(*mStatus));
 }
 
 CLEventVk::~CLEventVk() {}
+
+void CLEventVk::setQueueSerial(QueueSerial queueSerial)
+{
+    ASSERT(!isUserEvent() && "user-event should not hold a QueueSerial!");
+    ASSERT(!mQueueSerial.valid() && "we can only set event QueueSerial once!");
+
+    mQueueSerial = queueSerial;
+}
 
 angle::Result CLEventVk::getCommandExecutionStatus(cl_int &executionStatus)
 {
@@ -90,7 +101,7 @@ angle::Result CLEventVk::getProfilingInfo(cl::ProfilingInfo name,
 
     if ((value != nullptr) && (copyValue != nullptr))
     {
-        memcpy(value, copyValue, std::min(valueSize, copySize));
+        ANGLE_UNSAFE_TODO(memcpy(value, copyValue, std::min(valueSize, copySize)));
     }
 
     if (valueSizeRet != nullptr)
@@ -105,35 +116,40 @@ angle::Result CLEventVk::waitForUserEventStatus()
 {
     ASSERT(isUserEvent());
 
-    cl_int status = CL_QUEUED;
+    // User is responsible for setting the user-event object, we need to wait for that event
+    // (We dont care what the outcome is, just need to wait until that event triggers)
     std::unique_lock<std::mutex> ul(mUserEventMutex);
-    ANGLE_TRY(getCommandExecutionStatus(status));
-    if (status > CL_COMPLETE)
-    {
-        // User is responsible for setting the user-event object, we need to wait for that event
-        // (We dont care what the outcome is, just need to wait until that event triggers)
-        INFO() << "Waiting for user-event (" << &mEvent
-               << ") to be set! (aka clSetUserEventStatus)";
-        mUserEventCondition.wait(ul);
-    }
+    mUserEventCondition.wait(ul, [this]() {
+        cl_int status = *mStatus;
+        if (status > CL_COMPLETE)
+        {
+            INFO() << "waiting for user-event (" << &mEvent << ") to be set";
+            return false;
+        }
+        return true;
+    });
 
     return angle::Result::Continue;
 }
 
 angle::Result CLEventVk::setStatusAndExecuteCallback(cl_int status)
 {
-    *mStatus = status;
+    auto statusHandle        = mStatus.synchronize();
+    auto haveCallbacksHandle = mHaveCallbacks.synchronize();
 
-    ANGLE_TRY(setTimestamp(status));
-    if (status >= CL_COMPLETE && status < CL_QUEUED && mHaveCallbacks->at(status))
+    // we might skip states in some cases i.e. move from QUEUED to COMPLETE, so
+    // make sure we are setting time stamps for all transitions
+    ASSERT(*statusHandle >= status);
+    while (*statusHandle > status)
     {
-        auto haveCallbacks = mHaveCallbacks.synchronize();
-
-        // Sanity check, callback(s) only from this exec status should be outstanding
-        ASSERT(std::count(haveCallbacks->begin() + status, haveCallbacks->end(), true) == 1);
-
-        getFrontendObject().callback(status);
-        haveCallbacks->at(status) = false;
+        (*statusHandle)--;
+        ANGLE_TRY(setTimestamp(*statusHandle));
+        if (*statusHandle >= CL_COMPLETE && *statusHandle < CL_QUEUED &&
+            haveCallbacksHandle->at(*statusHandle))
+        {
+            getFrontendObject().callback(*statusHandle);
+            haveCallbacksHandle->at(*statusHandle) = false;
+        }
     }
 
     return angle::Result::Continue;
@@ -142,7 +158,7 @@ angle::Result CLEventVk::setStatusAndExecuteCallback(cl_int status)
 angle::Result CLEventVk::setTimestamp(cl_int status)
 {
     if (!isUserEvent() &&
-        mEvent.getCommandQueue()->getProperties().isSet(CL_QUEUE_PROFILING_ENABLE))
+        mEvent.getCommandQueue()->getProperties().intersects(CL_QUEUE_PROFILING_ENABLE))
     {
         // TODO(aannestrand) Just get current CPU timestamp for now, look into Vulkan GPU device
         // timestamp query instead and later make CPU timestamp a fallback if GPU timestamp cannot

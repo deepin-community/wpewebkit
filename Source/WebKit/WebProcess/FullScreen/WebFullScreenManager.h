@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,16 +27,23 @@
 
 #if ENABLE(FULLSCREEN_API)
 
-#include "WebCoreArgumentCoders.h"
+#include <WebCore/BoxExtents.h>
 #include <WebCore/EventListener.h>
-#include <WebCore/HTMLMediaElement.h>
+#include <WebCore/ExceptionOr.h>
+#include <WebCore/FloatSize.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/IntRect.h>
-#include <WebCore/LengthBox.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
+#include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
+
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+#include "FullScreenMediaDetails.h"
+#endif
 
 namespace IPC {
 class Connection;
@@ -49,11 +56,13 @@ class Element;
 class WeakPtrImplWithEventTargetData;
 class GraphicsLayer;
 class HTMLVideoElement;
+class RenderImage;
 }
 
 namespace WebKit {
 
 class WebPage;
+struct FullScreenMediaDetails;
 
 class WebFullScreenManager final : public WebCore::EventListener {
 public:
@@ -64,19 +73,21 @@ public:
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
-    bool supportsFullScreen(bool withKeyboard);
-    void enterFullScreenForElement(WebCore::Element*, WebCore::HTMLMediaElementEnums::VideoFullscreenMode);
-    void exitFullScreenForElement(WebCore::Element*);
+    bool supportsFullScreenForElement(const WebCore::Element&, bool withKeyboard);
+    void enterFullScreenForElement(WebCore::Element&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, CompletionHandler<void(WebCore::ExceptionOr<void>)>&&, CompletionHandler<bool(bool)>&&);
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+    void updateImageSource(WebCore::Element&);
+#endif // ENABLE(QUICKLOOK_FULLSCREEN)
+    void exitFullScreenForElement(WebCore::Element*, CompletionHandler<void()>&&);
 
-    void willEnterFullScreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode = WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard);
-    void didEnterFullScreen();
-    void willExitFullScreen();
-    void didExitFullScreen();
+    void didEnterFullScreen(CompletionHandler<bool(bool)>&&);
+    void willExitFullScreen(CompletionHandler<void()>&&);
+    void didExitFullScreen(CompletionHandler<void()>&&);
 
-    void saveScrollPosition();
-    void restoreScrollPosition();
+    void enterFullScreenForOwnerElements(WebCore::FrameIdentifier, CompletionHandler<void()>&&);
+    void exitFullScreenInMainFrame(CompletionHandler<void()>&&);
 
-    WebCore::Element* element();
+    WebCore::Element* NODELETE element();
 
     void videoControlsManagerDidChange();
 
@@ -87,21 +98,25 @@ protected:
 
     void setPIPStandbyElement(WebCore::HTMLVideoElement*);
 
+    void willEnterFullScreen(WebCore::Element&, CompletionHandler<void(WebCore::ExceptionOr<void>)>&&, CompletionHandler<bool(bool)>&&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode = WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard);
     void setAnimatingFullScreen(bool);
     void requestRestoreFullScreen(CompletionHandler<void(bool)>&&);
     void requestExitFullScreen();
     void setFullscreenInsets(const WebCore::FloatBoxExtent&);
     void setFullscreenAutoHideDuration(Seconds);
 
-    void didReceiveWebFullScreenManagerMessage(IPC::Connection&, IPC::Decoder&);
-
-    WebCore::IntRect m_initialFrame;
-    WebCore::IntRect m_finalFrame;
+    WebCore::IntRect m_initialFrameInRootViewCoordinates;
+    WebCore::IntRect m_finalFrameInRootViewCoordinates;
     WebCore::IntPoint m_scrollPosition;
-    float m_topContentInset { 0 };
-    Ref<WebPage> m_page;
+    const Ref<WebPage> m_page;
     RefPtr<WebCore::Element> m_element;
     WeakPtr<WebCore::Element, WebCore::WeakPtrImplWithEventTargetData> m_elementToRestore;
+    std::optional<WebCore::FrameIdentifier> m_elementFrameIdentifier;
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+    WebCore::FloatSize m_oldSize;
+    double m_scaleFactor { 1 };
+    double m_minEffectiveWidth { 0 };
+#endif
 #if ENABLE(VIDEO)
     RefPtr<WebCore::HTMLVideoElement> m_pipStandbyElement;
 #endif
@@ -116,9 +131,9 @@ private:
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger; }
-    const void* logIdentifier() const { return m_logIdentifier; }
+    uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "WebFullScreenManager"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
 #endif
 
 #if ENABLE(VIDEO)
@@ -137,15 +152,34 @@ private:
 #endif
 #endif // ENABLE(VIDEO)
 
+    void performEnterFullScreen();
+
+    // State stored by enterFullScreenForElement for performEnterFullScreen to use
+    CompletionHandler<void(WebCore::ExceptionOr<void>)> m_pendingWillEnterCallback;
+    CompletionHandler<bool(bool)> m_pendingDidEnterCallback;
+    WebCore::HTMLMediaElementEnums::VideoFullscreenMode m_pendingMode { WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard };
+
 #if ENABLE(QUICKLOOK_FULLSCREEN)
+    enum class IsUpdating : bool { No, Yes };
+    FullScreenMediaDetails getImageMediaDetails(CheckedPtr<WebCore::RenderImage>, IsUpdating);
     bool m_willUseQuickLookForFullscreen { false };
+
+    // Timer for waiting on responsive image load
+    RunLoop::Timer m_waitForLargerImageLoadTimer;
+    enum class LargerImageLoadState  { NotWaiting, WaitingForLoad, TimedOut };
+    LargerImageLoadState m_waitingForLargerImageLoad { LargerImageLoadState::NotWaiting };
+    URL m_imageSourceBeforeViewportChange;
+
+    void waitForLargerImageLoadTimerFired();
+
+    std::optional<FullScreenMediaDetails> m_pendingImageMediaDetails;
 #endif
 
     bool m_closing { false };
     bool m_inWindowFullScreenMode { false };
 #if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
 };
 

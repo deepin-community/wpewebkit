@@ -22,14 +22,15 @@
 #define Icon_h
 
 #include <wtf/Forward.h>
+#include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RetainPtr.h>
 
 #if PLATFORM(COCOA)
-#include "NativeImage.h"
-#include "PlatformImage.h"
 #include <CoreGraphics/CoreGraphics.h>
+#include <WebCore/NativeImage.h>
+#include <WebCore/PlatformImage.h>
 
 #if USE(APPKIT)
 OBJC_CLASS NSImage;
@@ -41,6 +42,11 @@ using CocoaImage = UIImage;
 
 #elif PLATFORM(WIN)
 typedef struct HICON__* HICON;
+
+#elif USE(GLIB)
+#include <wtf/glib/GRefPtr.h>
+
+typedef struct _GIcon GIcon;
 #endif
 
 namespace WebCore {
@@ -61,11 +67,17 @@ public:
     static Ref<Icon> create(HICON hIcon) { return adoptRef(*new Icon(hIcon)); }
 #endif
 
+#if USE(GLIB)
+    WEBCORE_EXPORT static RefPtr<Icon> create(GRefPtr<GIcon>&&);
+
+    GIcon* icon() const { return m_icon.get(); };
+#endif
+
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static RefPtr<Icon> create(CocoaImage *);
     WEBCORE_EXPORT static RefPtr<Icon> create(PlatformImagePtr&&);
 
-    RetainPtr<CocoaImage> image() const { return m_image; };
+    CocoaImage* image() const { return m_image.get(); };
 #endif
 
 #if PLATFORM(MAC)
@@ -80,6 +92,9 @@ private:
 #elif PLATFORM(WIN)
     Icon(HICON);
     HICON m_hIcon;
+#elif USE(GLIB)
+    explicit Icon(GRefPtr<GIcon>&&);
+    GRefPtr<GIcon> m_icon;
 #endif
 };
 

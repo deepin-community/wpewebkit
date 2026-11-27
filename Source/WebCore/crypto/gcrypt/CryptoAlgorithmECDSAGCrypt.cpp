@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmEcdsaParams.h"
 #include "CryptoKeyEC.h"
+#include "ExceptionOr.h"
 #include "GCryptUtilities.h"
 #include <pal/crypto/CryptoDigest.h>
 
@@ -69,7 +70,7 @@ static std::optional<Vector<uint8_t>> gcryptSign(gcry_sexp_t keySexp, const Vect
         if (!digestAlgorithm)
             return std::nullopt;
 
-        auto digest = PAL::CryptoDigest::create(*digestAlgorithm);
+        auto digest = PAL::Crypto::CryptoDigest::create(*digestAlgorithm);
         if (!digest)
             return std::nullopt;
 
@@ -81,11 +82,11 @@ static std::optional<Vector<uint8_t>> gcryptSign(gcry_sexp_t keySexp, const Vect
     PAL::GCrypt::Handle<gcry_sexp_t> dataSexp;
     {
         auto shaAlgorithm = hashAlgorithmName(hashAlgorithmIdentifier);
-        if (!shaAlgorithm)
+        if (shaAlgorithm.isNull())
             return std::nullopt;
 
         gcry_error_t error = gcry_sexp_build(&dataSexp, nullptr, "(data(flags raw)(hash %s %b))",
-            *shaAlgorithm, dataHash.size(), dataHash.data());
+            shaAlgorithm.characters(), dataHash.size(), dataHash.span().data());
         if (error != GPG_ERR_NO_ERROR) {
             PAL::GCrypt::logError(error);
             return std::nullopt;
@@ -129,7 +130,7 @@ static std::optional<bool> gcryptVerify(gcry_sexp_t keySexp, const Vector<uint8_
         if (!digestAlgorithm)
             return std::nullopt;
 
-        auto digest = PAL::CryptoDigest::create(*digestAlgorithm);
+        auto digest = PAL::Crypto::CryptoDigest::create(*digestAlgorithm);
         if (!digest)
             return std::nullopt;
 
@@ -140,7 +141,7 @@ static std::optional<bool> gcryptVerify(gcry_sexp_t keySexp, const Vector<uint8_
     // Construct the sig-val s-expression, extracting the r and s components from the signature vector.
     PAL::GCrypt::Handle<gcry_sexp_t> signatureSexp;
     gcry_error_t error = gcry_sexp_build(&signatureSexp, nullptr, "(sig-val(ecdsa(r %b)(s %b)))",
-        keySizeInBytes, signature.data(), keySizeInBytes, signature.data() + keySizeInBytes);
+        keySizeInBytes, signature.span().data(), keySizeInBytes, signature.subspan(keySizeInBytes).data());
     if (error != GPG_ERR_NO_ERROR) {
         PAL::GCrypt::logError(error);
         return std::nullopt;
@@ -150,11 +151,11 @@ static std::optional<bool> gcryptVerify(gcry_sexp_t keySexp, const Vector<uint8_
     PAL::GCrypt::Handle<gcry_sexp_t> dataSexp;
     {
         auto shaAlgorithm = hashAlgorithmName(hashAlgorithmIdentifier);
-        if (!shaAlgorithm)
+        if (shaAlgorithm.isNull())
             return std::nullopt;
 
         error = gcry_sexp_build(&dataSexp, nullptr, "(data(flags raw)(hash %s %b))",
-            *shaAlgorithm, dataHash.size(), dataHash.data());
+            shaAlgorithm.characters(), dataHash.size(), dataHash.span().data());
         if (error != GPG_ERR_NO_ERROR) {
             PAL::GCrypt::logError(error);
             return std::nullopt;
@@ -168,20 +169,20 @@ static std::optional<bool> gcryptVerify(gcry_sexp_t keySexp, const Vector<uint8_
     return { error == GPG_ERR_NO_ERROR };
 }
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& data, UseCryptoKit)
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& data)
 {
     auto output = gcryptSign(key.platformKey().get(), data, parameters.hashIdentifier, (key.keySizeInBits() + 7) / 8);
     if (!output)
         return Exception { ExceptionCode::OperationError };
-    return WTFMove(*output);
+    return WTF::move(*output);
 }
 
-ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data, UseCryptoKit)
+ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
     auto output = gcryptVerify(key.platformKey().get(), signature, data, parameters.hashIdentifier, (key.keySizeInBits() + 7)/ 8);
     if (!output)
         return Exception { ExceptionCode::OperationError };
-    return WTFMove(*output);
+    return WTF::move(*output);
 }
 
 } // namespace WebCore

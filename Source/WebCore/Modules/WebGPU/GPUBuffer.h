@@ -25,11 +25,9 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
 #include "GPUBufferMapState.h"
 #include "GPUIntegralTypes.h"
 #include "GPUMapMode.h"
-#include "JSDOMPromiseDeferred.h"
 #include "JSDOMPromiseDeferredForward.h"
 #include "WebGPUBuffer.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -39,27 +37,30 @@
 #include <wtf/Range.h>
 #include <wtf/RangeSet.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class GPUDevice;
+class ScriptExecutionContext;
+class WeakPtrImplWithEventTargetData;
+template<typename> class ExceptionOr;
 
-class GPUBuffer : public RefCounted<GPUBuffer>, public CanMakeWeakPtr<GPUBuffer> {
+class GPUBuffer : public RefCountedAndCanMakeWeakPtr<GPUBuffer> {
 public:
     static Ref<GPUBuffer> create(Ref<WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, GPUDevice& device)
     {
-        return adoptRef(*new GPUBuffer(WTFMove(backing), bufferSize, usage, mappedAtCreation, device));
+        return adoptRef(*new GPUBuffer(WTF::move(backing), bufferSize, usage, mappedAtCreation, device));
     }
 
-    String label() const;
+    String NODELETE label() const;
     void setLabel(String&&);
 
     using MapAsyncPromise = DOMPromiseDeferred<IDLNull>;
-    void mapAsync(GPUMapModeFlags, std::optional<GPUSize64> offset, std::optional<GPUSize64> sizeForMap, MapAsyncPromise&&);
-    ExceptionOr<Ref<JSC::ArrayBuffer>> getMappedRange(std::optional<GPUSize64> offset, std::optional<GPUSize64> rangeSize);
+    void mapAsync(GPUMapModeFlags, GPUSize64 offset, std::optional<GPUSize64> sizeForMap, MapAsyncPromise&&);
+    ExceptionOr<Ref<JSC::ArrayBuffer>> getMappedRange(GPUSize64 offset, std::optional<GPUSize64> rangeSize);
     void unmap(ScriptExecutionContext&);
 
     void destroy(ScriptExecutionContext&);
@@ -77,7 +78,7 @@ private:
     GPUBuffer(Ref<WebGPU::Buffer>&&, size_t, GPUBufferUsageFlags, bool, GPUDevice&);
     void internalUnmap(ScriptExecutionContext&);
 
-    Ref<WebGPU::Buffer> m_backing;
+    const Ref<WebGPU::Buffer> m_backing;
     struct ArrayBufferWithOffset {
         RefPtr<JSC::ArrayBuffer> buffer;
         size_t offset { 0 };
@@ -88,7 +89,7 @@ private:
     size_t m_mappedRangeSize { 0 };
     const GPUBufferUsageFlags m_usage { 0 };
     GPUBufferMapState m_mapState { GPUBufferMapState::Unmapped };
-    std::optional<MapAsyncPromise> m_pendingMapPromise;
+    std::unique_ptr<MapAsyncPromise> m_pendingMapPromise;
     WeakPtr<GPUDevice, WeakPtrImplWithEventTargetData> m_device;
     using MappedRanges = WTF::RangeSet<WTF::Range<size_t>>;
     MappedRanges m_mappedRanges;

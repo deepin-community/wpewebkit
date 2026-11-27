@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,25 +28,21 @@
 #include "IntlListFormat.h"
 
 #include "IntlObjectInlines.h"
+#include "IntlPartObject.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 
 // While UListFormatter APIs are draft in ICU 67, they are stable in ICU 68 with the same function signatures.
 // So we can assume that these signatures of draft APIs are stable.
-#if HAVE(ICU_U_LIST_FORMATTER)
 #ifdef U_HIDE_DRAFT_API
 #undef U_HIDE_DRAFT_API
 #endif
-#endif
 #include <unicode/ulistformatter.h>
-#if HAVE(ICU_U_LIST_FORMATTER)
 #define U_HIDE_DRAFT_API 1
-#endif
-
-#if HAVE(ICU_U_LIST_FORMATTER)
 #include <unicode/uformattedvalue.h>
-#endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -112,7 +109,6 @@ void IntlListFormat::initializeListFormat(JSGlobalObject* globalObject, JSValue 
     m_style = intlOption<Style>(globalObject, options, vm.propertyNames->style, { { "long"_s, Style::Long }, { "short"_s, Style::Short }, { "narrow"_s, Style::Narrow } }, "style must be either \"long\", \"short\", or \"narrow\""_s, Style::Long);
     RETURN_IF_EXCEPTION(scope, void());
 
-#if HAVE(ICU_U_LIST_FORMATTER)
     auto toUListFormatterType = [](Type type) {
         switch (type) {
         case Type::Conjunction:
@@ -143,13 +139,8 @@ void IntlListFormat::initializeListFormat(JSGlobalObject* globalObject, JSValue 
         throwTypeError(globalObject, scope, "failed to initialize ListFormat"_s);
         return;
     }
-#else
-    throwTypeError(globalObject, scope, "Failed to initialize Intl.ListFormat since this feature is not supported in the linked ICU version"_s);
-    return;
-#endif
 }
 
-#if HAVE(ICU_U_LIST_FORMATTER)
 static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JSValue iterable)
 {
     Vector<String, 4> result;
@@ -169,7 +160,6 @@ static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JS
     });
     return result;
 }
-#endif
 
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat.prototype.format
 JSValue IntlListFormat::format(JSGlobalObject* globalObject, JSValue list) const
@@ -177,22 +167,17 @@ JSValue IntlListFormat::format(JSGlobalObject* globalObject, JSValue list) const
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if HAVE(ICU_U_LIST_FORMATTER)
     auto stringList = stringListFromIterable(globalObject, list);
     RETURN_IF_EXCEPTION(scope, { });
 
-    ListFormatInput input(WTFMove(stringList));
+    ListFormatInput input(WTF::move(stringList));
 
-    Vector<UChar, 32> result;
+    Vector<char16_t, 32> result;
     auto status = callBufferProducingFunction(ulistfmt_format, m_listFormat.get(), input.stringPointers(), input.stringLengths(), input.size(), result);
     if (U_FAILURE(status))
         return throwTypeError(globalObject, scope, "failed to format list of strings"_s);
 
-    return jsString(vm, String(WTFMove(result)));
-#else
-    UNUSED_PARAM(list);
-    return throwTypeError(globalObject, scope, "failed to format list of strings"_s);
-#endif
+    return jsString(vm, String(WTF::move(result)));
 }
 
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat.prototype.formatToParts
@@ -201,11 +186,10 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if HAVE(ICU_U_LIST_FORMATTER)
     auto stringList = stringListFromIterable(globalObject, list);
     RETURN_IF_EXCEPTION(scope, { });
 
-    ListFormatInput input(WTFMove(stringList));
+    ListFormatInput input(WTF::move(stringList));
 
     UErrorCode status = U_ZERO_ERROR;
 
@@ -227,7 +211,7 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
         return throwOutOfMemoryError(globalObject, scope);
 
     int32_t formattedStringLength = 0;
-    const UChar* formattedStringPointer = ufmtval_getString(formattedValue, &formattedStringLength, &status);
+    const char16_t* formattedStringPointer = ufmtval_getString(formattedValue, &formattedStringLength, &status);
     if (U_FAILURE(status))
         return throwTypeError(globalObject, scope, "failed to format list of strings"_s);
     StringView resultStringView(std::span(formattedStringPointer, formattedStringLength));
@@ -244,10 +228,7 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
     auto elementString = jsNontrivialString(vm, "element"_s);
 
     auto createPart = [&] (JSString* type, JSString* value) {
-        JSObject* part = constructEmptyObject(globalObject);
-        part->putDirect(vm, vm.propertyNames->type, type);
-        part->putDirect(vm, vm.propertyNames->value, value);
-        return part;
+        return createIntlPartObject(globalObject, type, value);
     };
 
     int32_t resultLength = resultStringView.length();
@@ -268,29 +249,25 @@ JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list
         if (previousEndIndex < beginIndex) {
             auto value = jsString(vm, resultStringView.substring(previousEndIndex, beginIndex - previousEndIndex));
             JSObject* part = createPart(literalString, value);
-            parts->push(globalObject, part);
+            parts->putDirectIndex(globalObject, parts->length(), part);
             RETURN_IF_EXCEPTION(scope, { });
         }
         previousEndIndex = endIndex;
 
         auto value = jsString(vm, resultStringView.substring(beginIndex, endIndex - beginIndex));
         JSObject* part = createPart(elementString, value);
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
     if (previousEndIndex < resultLength) {
         auto value = jsString(vm, resultStringView.substring(previousEndIndex, resultLength - previousEndIndex));
         JSObject* part = createPart(literalString, value);
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
     return parts;
-#else
-    UNUSED_PARAM(list);
-    return throwTypeError(globalObject, scope, "failed to format list of strings"_s);
-#endif
 }
 
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat.prototype.resolvedOptions
@@ -333,3 +310,5 @@ ASCIILiteral IntlListFormat::typeString(Type type)
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

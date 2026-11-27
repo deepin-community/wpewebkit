@@ -1,7 +1,7 @@
 /*
- * Copyright (C) 2008-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile, Inc. http://www.torchmobile.com/
- * Copyright (C) 2010-2020 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010-2020 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,12 +48,13 @@ void CSSPreloadScanner::reset()
     m_ruleValue.clear();
 }
 
-void CSSPreloadScanner::scan(const HTMLToken::DataVector& data, PreloadRequestStream& requests)
+void CSSPreloadScanner::scan(const HTMLToken::DataVector& data, PreloadRequestStream& requests, const URL& predictedBaseElementURL)
 {
     ASSERT(!m_requests);
     SetForScope change(m_requests, &requests);
+    m_predictedBaseElementURL = predictedBaseElementURL;
 
-    for (UChar c : data) {
+    for (char16_t c : data) {
         if (m_state == DoneParsingImportRules)
             break;
 
@@ -75,7 +76,7 @@ bool CSSPreloadScanner::hasFinishedRuleValue() const
     return m_ruleValue[m_ruleValue.size() - 1] == ')';
 }
 
-inline void CSSPreloadScanner::tokenize(UChar c)
+inline void CSSPreloadScanner::tokenize(char16_t c)
 {
     // We are just interested in @import rules, no need for real tokenization here
     // Searching for other types of resources is probably low payoff.
@@ -172,7 +173,7 @@ inline void CSSPreloadScanner::tokenize(UChar c)
     }
 }
 
-static String parseCSSStringOrURL(std::span<const UChar> characters)
+static String parseCSSStringOrURL(std::span<const char16_t> characters)
 {
     size_t offset = 0;
     size_t reducedLength = characters.size();
@@ -221,7 +222,7 @@ static bool hasValidImportConditions(StringView conditions)
     if (conditions.isEmpty())
         return true;
 
-    conditions = conditions.trim(isASCIIWhitespace<UChar>);
+    conditions = conditions.trim(isASCIIWhitespace<char16_t>);
 
     // FIXME: Support multiple conditions.
     // FIXME: Support media queries.
@@ -241,12 +242,11 @@ void CSSPreloadScanner::emitRule()
         String url = parseCSSStringOrURL(m_ruleValue.span());
         StringView conditions(m_ruleConditions.span());
         if (!url.isEmpty() && hasValidImportConditions(conditions)) {
-            URL baseElementURL; // FIXME: This should be passed in from the HTMLPreloadScanner via scan(): without it we will get relative URLs wrong.
             // FIXME: Should this be including the charset in the preload request?
-            m_requests->append(makeUnique<PreloadRequest>("css"_s, url, baseElementURL, CachedResource::Type::CSSStyleSheet, String(), ScriptType::Classic, ReferrerPolicy::EmptyString));
+            m_requests->append(makeUnique<PreloadRequest>("css"_s, url, m_predictedBaseElementURL, CachedResource::Type::CSSStyleSheet, String(), ScriptType::Classic, ReferrerPolicy::EmptyString));
         }
         m_state = Initial;
-    } else if (equalLettersIgnoringASCIICase(rule, "charset"_s))
+    } else if (equalLettersIgnoringASCIICase(rule, "charset"_s) || equalLettersIgnoringASCIICase(rule, "layer"_s))
         m_state = Initial;
     else
         m_state = DoneParsingImportRules;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 #include "HTMLTokenizer.h"
 #include "SegmentedString.h"
 #include <pal/text/TextEncoding.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace PAL {
 class TextCodec;
@@ -36,14 +37,15 @@ class TextCodec;
 namespace WebCore {
 
 class HTMLMetaCharsetParser {
-    WTF_MAKE_NONCOPYABLE(HTMLMetaCharsetParser); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(HTMLMetaCharsetParser);
+    WTF_MAKE_NONCOPYABLE(HTMLMetaCharsetParser);
 public:
     HTMLMetaCharsetParser();
 
     // Returns true if done checking, regardless whether an encoding is found.
     bool checkForMetaCharset(std::span<const uint8_t>);
 
-    const PAL::TextEncoding& encoding() { return m_encoding; }
+    const PAL::TextEncoding& encoding() LIFETIME_BOUND { return m_encoding; }
 
     // The returned encoding might not be valid.
     static PAL::TextEncoding encodingFromMetaAttributes(std::span<const std::pair<StringView, StringView>>);

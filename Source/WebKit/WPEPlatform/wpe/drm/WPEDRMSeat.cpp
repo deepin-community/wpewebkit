@@ -26,8 +26,10 @@
 #include "config.h"
 #include "WPEDRMSeat.h"
 
+#include "GRefPtrWPE.h"
 #include "WPEDRMSession.h"
 #include "WPEKeymapXKB.h"
+#include "WPESettings.h"
 #include "WPEViewDRMPrivate.h"
 #include <linux/input.h>
 #include <wtf/MonotonicTime.h>
@@ -164,6 +166,12 @@ void Seat::processEvents()
 void Seat::processEvent(struct libinput_event* event)
 {
     switch (libinput_event_get_type(event)) {
+    case LIBINPUT_EVENT_DEVICE_ADDED:
+        handleDeviceEvent(libinput_event_get_device(event), DeviceEventType::Added);
+        break;
+    case LIBINPUT_EVENT_DEVICE_REMOVED:
+        handleDeviceEvent(libinput_event_get_device(event), DeviceEventType::Removed);
+        break;
     case LIBINPUT_EVENT_POINTER_MOTION:
         handlePointerMotionEvent(libinput_event_get_pointer_event(event));
         break;
@@ -182,9 +190,62 @@ void Seat::processEvent(struct libinput_event* event)
     case LIBINPUT_EVENT_KEYBOARD_KEY:
         handleKeyEvent(libinput_event_get_keyboard_event(event));
         break;
+    case LIBINPUT_EVENT_TOUCH_DOWN:
+        handleTouchDownEvent(libinput_event_get_touch_event(event));
+        break;
+    case LIBINPUT_EVENT_TOUCH_UP:
+        handleTouchUpEvent(libinput_event_get_touch_event(event));
+        break;
+    case LIBINPUT_EVENT_TOUCH_MOTION:
+        handleTouchMotionEvent(libinput_event_get_touch_event(event));
+        break;
+    case LIBINPUT_EVENT_TOUCH_CANCEL:
+        handleTouchCancelEvent(libinput_event_get_touch_event(event));
+        break;
     default:
         break;
     }
+}
+
+WPEAvailableInputDevices Seat::availableInputDevices() const
+{
+    uint32_t capabilities = WPE_AVAILABLE_INPUT_DEVICE_NONE;
+    if (m_pointer.deviceCount)
+        capabilities |= WPE_AVAILABLE_INPUT_DEVICE_MOUSE;
+    if (m_keyboard.deviceCount)
+        capabilities |= WPE_AVAILABLE_INPUT_DEVICE_KEYBOARD;
+    if (m_touch.deviceCount)
+        capabilities |= WPE_AVAILABLE_INPUT_DEVICE_TOUCHSCREEN;
+    return static_cast<WPEAvailableInputDevices>(capabilities);
+}
+
+void Seat::handleDeviceEvent(struct libinput_device* device, DeviceEventType eventType)
+{
+    bool changed = false;
+    if (libinput_device_has_capability(device, LIBINPUT_DEVICE_CAP_POINTER)) {
+        if (eventType == DeviceEventType::Added)
+            m_pointer.deviceCount++;
+        else
+            m_pointer.deviceCount--;
+        changed = true;
+    }
+    if (libinput_device_has_capability(device, LIBINPUT_DEVICE_CAP_KEYBOARD)) {
+        if (eventType == DeviceEventType::Added)
+            m_keyboard.deviceCount++;
+        else
+            m_keyboard.deviceCount--;
+        changed = true;
+    }
+    if (libinput_device_has_capability(device, LIBINPUT_DEVICE_CAP_TOUCH)) {
+        if (eventType == DeviceEventType::Added)
+            m_touch.deviceCount++;
+        else
+            m_touch.deviceCount--;
+        changed = true;
+    }
+
+    if (changed && m_capabilitiesChangedCallback)
+        m_capabilitiesChangedCallback(availableInputDevices());
 }
 
 void Seat::handlePointerMotionEvent(struct libinput_event_pointer* event)
@@ -206,10 +267,9 @@ void Seat::handlePointerMotionEvent(struct libinput_event_pointer* event)
     m_pointer.y = y;
     wpeViewDRMUpdateCursor(WPE_VIEW_DRM(m_view.get()), m_pointer.x, m_pointer.y);
 
-    auto* wpeEvent = wpe_event_pointer_move_new(WPE_EVENT_POINTER_MOVE, m_view.get(), m_pointer.source, m_pointer.time, modifiers(),
-        m_pointer.x / scale, m_pointer.y / scale, deltaX / scale, deltaY / scale);
-    wpe_view_event(m_view.get(), wpeEvent);
-    wpe_event_unref(wpeEvent);
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_pointer_move_new(WPE_EVENT_POINTER_MOVE, m_view.get(), m_pointer.source, m_pointer.time, modifiers(),
+        m_pointer.x / scale, m_pointer.y / scale, deltaX / scale, deltaY / scale));
+    wpe_view_event(m_view.get(), wpeEvent.get());
 }
 
 void Seat::handlePointerButtonEvent(struct libinput_event_pointer* event)
@@ -264,10 +324,9 @@ void Seat::handlePointerButtonEvent(struct libinput_event_pointer* event)
 
     auto scale = wpe_view_get_scale(m_view.get());
     unsigned pressCount = state == LIBINPUT_BUTTON_STATE_PRESSED ? wpe_view_compute_press_count(m_view.get(), m_pointer.x / scale, m_pointer.y / scale, button, m_pointer.time) : 0;
-    auto* wpeEvent = wpe_event_pointer_button_new(state == LIBINPUT_BUTTON_STATE_PRESSED ? WPE_EVENT_POINTER_DOWN : WPE_EVENT_POINTER_UP, m_view.get(), m_pointer.source,
-        m_pointer.time, modifiers(), button, m_pointer.x / scale, m_pointer.y / scale, pressCount);
-    wpe_view_event(m_view.get(), wpeEvent);
-    wpe_event_unref(wpeEvent);
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_pointer_button_new(state == LIBINPUT_BUTTON_STATE_PRESSED ? WPE_EVENT_POINTER_DOWN : WPE_EVENT_POINTER_UP, m_view.get(), m_pointer.source,
+        m_pointer.time, modifiers(), button, m_pointer.x / scale, m_pointer.y / scale, pressCount));
+    wpe_view_event(m_view.get(), wpeEvent.get());
 }
 
 void Seat::handlePointerScrollWheelEvent(struct libinput_event_pointer* event)
@@ -288,10 +347,9 @@ void Seat::handlePointerScrollWheelEvent(struct libinput_event_pointer* event)
     m_pointer.time = libinput_event_pointer_get_time(event);
 
     auto scale = wpe_view_get_scale(m_view.get());
-    auto* wpeEvent = wpe_event_scroll_new(m_view.get(), WPE_INPUT_SOURCE_MOUSE, m_pointer.time, modifiers(), -valueX / 120, -valueY / 120,
-        FALSE, FALSE, m_pointer.x / scale, m_pointer.y / scale);
-    wpe_view_event(m_view.get(), wpeEvent);
-    wpe_event_unref(wpeEvent);
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_scroll_new(m_view.get(), WPE_INPUT_SOURCE_MOUSE, m_pointer.time, modifiers(), -valueX / 120, -valueY / 120,
+        FALSE, FALSE, m_pointer.x / scale, m_pointer.y / scale));
+    wpe_view_event(m_view.get(), wpeEvent.get());
 }
 
 void Seat::handlePointerScrollContinuousEvent(struct libinput_event_pointer* event, WPEInputSource source)
@@ -321,10 +379,9 @@ void Seat::handlePointerScrollContinuousEvent(struct libinput_event_pointer* eve
     m_pointer.time = libinput_event_pointer_get_time(event);
 
     auto scale = wpe_view_get_scale(m_view.get());
-    auto* wpeEvent = wpe_event_scroll_new(m_view.get(), source, m_pointer.time, modifiers(), deltaX, deltaY,
-        TRUE, finishedHorizontal && finishedVertical, m_pointer.x / scale, m_pointer.y / scale);
-    wpe_view_event(m_view.get(), wpeEvent);
-    wpe_event_unref(wpeEvent);
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_scroll_new(m_view.get(), source, m_pointer.time, modifiers(), deltaX, deltaY,
+        TRUE, finishedHorizontal && finishedVertical, m_pointer.x / scale, m_pointer.y / scale));
+    wpe_view_event(m_view.get(), wpeEvent.get());
 }
 
 void Seat::handleKeyEvent(struct libinput_event_keyboard* event)
@@ -370,10 +427,9 @@ void Seat::handleKey(uint32_t time, uint32_t key, bool pressed, bool fromRepeat)
         return;
 
     GRefPtr<WPEView> view = m_view.get();
-    auto* event = wpe_event_keyboard_new(pressed ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, view.get(), m_keyboard.source, time,
-        modifiers(), key, keyval);
-    wpe_view_event(view.get(), event);
-    wpe_event_unref(event);
+    GRefPtr<WPEEvent> event = adoptGRef(wpe_event_keyboard_new(pressed ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, view.get(), m_keyboard.source, time,
+        modifiers(), key, keyval));
+    wpe_view_event(view.get(), event.get());
 
     auto* xkbKeymap = wpe_keymap_xkb_get_xkb_keymap(keymap);
     if (!xkb_keymap_key_repeats(xkbKeymap, key))
@@ -404,9 +460,9 @@ void Seat::handleKey(uint32_t time, uint32_t key, bool pressed, bool fromRepeat)
         g_source_attach(m_keyboard.repeat.source.get(), g_main_context_get_thread_default());
     }
 
-    // FIXME: make this configurable.
-    static const Seconds delay = 400_ms;
-    static const Seconds interval = 80_ms;
+    auto* settings = wpe_display_get_settings(wpe_view_get_display(view.get()));
+    Seconds delay = Seconds::fromMilliseconds(wpe_settings_get_uint32(settings, WPE_SETTING_KEY_REPEAT_DELAY, nullptr));
+    Seconds interval = Seconds::fromMilliseconds(wpe_settings_get_uint32(settings, WPE_SETTING_KEY_REPEAT_INTERVAL, nullptr));
 
     auto now = MonotonicTime::now().secondsSinceEpoch();
     if (!fromRepeat)
@@ -423,6 +479,72 @@ void Seat::handleKey(uint32_t time, uint32_t key, bool pressed, bool fromRepeat)
         g_source_set_ready_time(m_keyboard.repeat.source.get(), readyTime);
     } else
         g_source_set_ready_time(m_keyboard.repeat.source.get(), 0);
+}
+
+void Seat::handleTouchDownEvent(struct libinput_event_touch* event)
+{
+    if (!m_view)
+        return;
+
+    m_touch.time = libinput_event_touch_get_time(event);
+
+    int id = libinput_event_touch_get_seat_slot(event);
+    double x = libinput_event_touch_get_x_transformed(event, wpe_view_get_width(m_view.get()));
+    double y = libinput_event_touch_get_y_transformed(event, wpe_view_get_height(m_view.get()));
+    m_touch.points.add(id, std::pair<double, double>(x, y));
+
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_DOWN, m_view.get(), m_touch.source, m_touch.time, modifiers(), id, x, y));
+    wpe_view_event(m_view.get(), wpeEvent.get());
+}
+
+void Seat::handleTouchUpEvent(struct libinput_event_touch* event)
+{
+    if (!m_view)
+        return;
+
+    int id = libinput_event_touch_get_seat_slot(event);
+    const auto& iter = m_touch.points.find(id);
+    if (iter == m_touch.points.end())
+        return;
+
+    m_touch.time = libinput_event_touch_get_time(event);
+
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_UP, m_view.get(), m_touch.source, m_touch.time, modifiers(), id, iter->value.first, iter->value.second));
+    wpe_view_event(m_view.get(), wpeEvent.get());
+
+    m_touch.points.remove(id);
+}
+
+void Seat::handleTouchMotionEvent(struct libinput_event_touch* event)
+{
+    if (!m_view)
+        return;
+
+    int id = libinput_event_touch_get_seat_slot(event);
+    const auto& iter = m_touch.points.find(id);
+    if (iter == m_touch.points.end())
+        return;
+
+    m_touch.time = libinput_event_touch_get_time(event);
+
+    double x = libinput_event_touch_get_x_transformed(event, wpe_view_get_width(m_view.get()));
+    double y = libinput_event_touch_get_y_transformed(event, wpe_view_get_height(m_view.get()));
+    iter->value = { x, y };
+
+    GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_MOVE, m_view.get(), m_touch.source, m_touch.time, modifiers(), id, x, y));
+    wpe_view_event(m_view.get(), wpeEvent.get());
+}
+
+void Seat::handleTouchCancelEvent(struct libinput_event_touch*)
+{
+    if (!m_view)
+        return;
+
+    for (const auto& iter : m_touch.points) {
+        GRefPtr<WPEEvent> wpeEvent = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_CANCEL, m_view.get(), m_touch.source, 0, modifiers(), iter.key, iter.value.first, iter.value.second));
+        wpe_view_event(m_view.get(), wpeEvent.get());
+    }
+    m_touch.points.clear();
 }
 
 } // namespace DRM

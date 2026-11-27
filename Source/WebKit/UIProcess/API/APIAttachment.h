@@ -60,7 +60,7 @@ public:
 
     enum class InsertionState : uint8_t { NotInserted, Inserted };
 
-    const WTF::String& identifier() const { return m_identifier; }
+    const WTF::String& identifier() const LIFETIME_BOUND { return m_identifier; }
     void updateAttributes(CompletionHandler<void()>&&);
 
     void invalidate();
@@ -69,18 +69,18 @@ public:
 #if PLATFORM(COCOA)
     void cloneFileWrapperTo(Attachment&);
     bool shouldUseFileWrapperIconForDirectory() const;
-    void doWithFileWrapper(Function<void(NSFileWrapper *)>&&) const;
+    void doWithFileWrapper(NOESCAPE Function<void(NSFileWrapper *)>&&) const;
     void setFileWrapper(NSFileWrapper *);
     void setFileWrapperAndUpdateContentType(NSFileWrapper *, NSString *contentType);
     WTF::String utiType() const;
 #endif
     WTF::String mimeType() const;
 
-    const WTF::String& filePath() const { return m_filePath; }
+    const WTF::String& filePath() const LIFETIME_BOUND { return m_filePath; }
     void setFilePath(const WTF::String& filePath) { m_filePath = filePath; }
     WTF::String fileName() const;
 
-    const WTF::String& contentType() const { return m_contentType; }
+    const WTF::String& contentType() const LIFETIME_BOUND { return m_contentType; }
     void setContentType(const WTF::String& contentType) { m_contentType = contentType; }
 
     InsertionState insertionState() const { return m_insertionState; }
@@ -90,7 +90,7 @@ public:
 
     RefPtr<WebCore::FragmentedSharedBuffer> associatedElementData() const;
 #if PLATFORM(COCOA)
-    NSData *associatedElementNSData() const;
+    RetainPtr<NSData> associatedElementNSData() const;
 #endif
     std::optional<uint64_t> fileSizeForDisplay() const;
 
@@ -113,10 +113,13 @@ private:
     WeakPtr<WebKit::WebPageProxy> m_webPage;
     InsertionState m_insertionState { InsertionState::NotInserted };
     WebCore::AttachmentAssociatedElementType m_associatedElementType { WebCore::AttachmentAssociatedElementType::None };
-    bool m_hasEnclosingImage { false };
+#if PLATFORM(COCOA)
     bool m_isCreatedFromSerializedRepresentation { false };
+#endif
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(Attachment);
 
 #endif // ENABLE(ATTACHMENT_ELEMENT)

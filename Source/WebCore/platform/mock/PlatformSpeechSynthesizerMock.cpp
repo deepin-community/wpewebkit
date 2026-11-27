@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,13 +25,15 @@
 
 #include "config.h"
 #include "PlatformSpeechSynthesizerMock.h"
+
 #include "PlatformSpeechSynthesisUtterance.h"
+#include <wtf/MainThread.h>
 
 #if ENABLE(SPEECH_SYNTHESIS)
 
 namespace WebCore {
 
-Ref<PlatformSpeechSynthesizer> PlatformSpeechSynthesizerMock::create(PlatformSpeechSynthesizerClient& client)
+Ref<PlatformSpeechSynthesizerMock> PlatformSpeechSynthesizerMock::create(PlatformSpeechSynthesizerClient& client)
 {
     return adoptRef(*new PlatformSpeechSynthesizerMock(client));
 }
@@ -50,11 +52,14 @@ void PlatformSpeechSynthesizerMock::speakingFinished()
     RefPtr<PlatformSpeechSynthesisUtterance> protect(m_utterance);
     m_utterance = nullptr;
 
-    client().didFinishSpeaking(*protect);
+    if (RefPtr client = this->client())
+        client->didFinishSpeaking(*protect);
 }
 
 void PlatformSpeechSynthesizerMock::initializeVoiceList()
 {
+    if (m_initialVoiceListShouldBeEmpty)
+        return;
     m_voiceList.append(PlatformSpeechSynthesisVoice::create("mock.voice.bruce"_s, "bruce"_s, "en-US"_s, true, true));
     m_voiceList.append(PlatformSpeechSynthesisVoice::create("mock.voice.clark"_s, "clark"_s, "en-US"_s, true, false));
     m_voiceList.append(PlatformSpeechSynthesisVoice::create("mock.voice.logan"_s, "logan"_s, "fr-CA"_s, true, true));
@@ -63,12 +68,14 @@ void PlatformSpeechSynthesizerMock::initializeVoiceList()
 void PlatformSpeechSynthesizerMock::speak(RefPtr<PlatformSpeechSynthesisUtterance>&& utterance)
 {
     ASSERT(!m_utterance);
-    m_utterance = WTFMove(utterance);
-    client().didStartSpeaking(*m_utterance);
+    m_utterance = utterance;
+    if (RefPtr client = this->client()) {
+        client->didStartSpeaking(*utterance);
 
-    // Fire a fake word and then sentence boundary event. Since the entire sentence is the full length, pick arbitrary (3) length for the word.
-    client().boundaryEventOccurred(*m_utterance, SpeechBoundary::SpeechWordBoundary, 0, 3);
-    client().boundaryEventOccurred(*m_utterance, SpeechBoundary::SpeechSentenceBoundary, 0, m_utterance->text().length());
+        // Fire a fake word and then sentence boundary event. Since the entire sentence is the full length, pick arbitrary (3) length for the word.
+        client->boundaryEventOccurred(*utterance, SpeechBoundary::SpeechWordBoundary, 0, 3);
+        client->boundaryEventOccurred(*utterance, SpeechBoundary::SpeechSentenceBoundary, 0, utterance->text().length());
+    }
 
     // Give the fake speech job some time so that pause and other functions have time to be called.
     m_speakingFinishedTimer.startOneShot(m_utteranceDuration);
@@ -80,24 +87,30 @@ void PlatformSpeechSynthesizerMock::cancel()
         return;
 
     m_speakingFinishedTimer.stop();
-    auto utterance = std::exchange(m_utterance, nullptr);
-    client().speakingErrorOccurred(*utterance);
+
+    // Schedule the error callback asynchronously to simulate platform behavior
+    // This allows new utterances to be queued before the callback fires.
+    RefPtr utterance = std::exchange(m_utterance, nullptr);
+    callOnMainThread([protectedThis = Ref { *this }, utterance]() {
+        if (RefPtr client = protectedThis->client())
+            client->speakingErrorOccurred(*utterance);
+    });
 }
 
 void PlatformSpeechSynthesizerMock::pause()
 {
-    if (!m_utterance)
-        return;
-
-    client().didPauseSpeaking(*m_utterance);
+    if (RefPtr utterance = m_utterance) {
+        if (RefPtr client = this->client())
+            client->didPauseSpeaking(*utterance);
+    }
 }
 
 void PlatformSpeechSynthesizerMock::resume()
 {
-    if (!m_utterance)
-        return;
-
-    client().didResumeSpeaking(*m_utterance);
+    if (RefPtr utterance = m_utterance) {
+        if (RefPtr client = this->client())
+            client->didResumeSpeaking(*utterance);
+    }
 }
 
 } // namespace WebCore

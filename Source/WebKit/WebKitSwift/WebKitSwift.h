@@ -23,8 +23,27 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#import <WebKitSwift/LinearMediaKitExtras.h>
-#import <WebKitSwift/WKSLinearMediaPlayer.h>
-#import <WebKitSwift/WKSLinearMediaTypes.h>
-#import <WebKitSwift/WKSPreviewWindowController.h>
-#import <WebKitSwift/WKSTextAnimationSourceDelegate.h>
+#import "CredentialUpdaterShim.h"
+
+#import "ModelTypes.h"
+#import "WKGroupSession.h"
+#import "WKIdentityDocumentPresentmentController.h"
+#import "WKIdentityDocumentPresentmentDelegate.h"
+#import "WKIdentityDocumentPresentmentError.h"
+#import "WKIdentityDocumentPresentmentMobileDocumentRequest.h"
+#import "WKIdentityDocumentPresentmentRawRequest.h"
+#import "WKIdentityDocumentPresentmentRequest.h"
+#import "WKIdentityDocumentPresentmentResponse.h"
+#import "WKIdentityDocumentRawRequestValidator.h"
+#import "WKIntelligenceReplacementTextEffectCoordinator.h"
+#import "WKIntelligenceSmartReplyTextEffectCoordinator.h"
+#import "WKIntelligenceTextEffectCoordinator.h"
+#import "WKMarketplaceKit.h"
+#import "WKPreviewWindowController.h"
+#import "WKRKEntity.h"
+#import "WKSExperienceController.h"
+#import "WKSLinearMediaPlayer.h"
+#import "WKSLinearMediaTypes.h"
+#import "WKStageMode.h"
+#import "WKStageModeOrbitSimulator.h"
+#import "WKTextAnimationManagerIOS.h"

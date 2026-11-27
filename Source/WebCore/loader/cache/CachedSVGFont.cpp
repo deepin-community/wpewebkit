@@ -30,6 +30,7 @@
 #include "CookieJar.h"
 #include "ElementChildIteratorInlines.h"
 #include "FontCreationContext.h"
+#include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "FontPlatformData.h"
 #include "ParserContentPolicy.h"
@@ -47,33 +48,37 @@
 namespace WebCore {
 
 CachedSVGFont::CachedSVGFont(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar, const Settings& settings)
-    : CachedFont(WTFMove(request), sessionID, cookieJar, Type::SVGFontResource)
+    : CachedFont(WTF::move(request), sessionID, cookieJar, Type::SVGFontResource)
     , m_settings(settings)
 {
 }
 
 CachedSVGFont::CachedSVGFont(CachedResourceRequest&& request, CachedSVGFont& resource)
-    : CachedSVGFont(WTFMove(request), resource.sessionID(), resource.protectedCookieJar().get(), resource.m_settings.copyRef())
+    : CachedSVGFont(WTF::move(request), resource.sessionID(), protect(resource.cookieJar()).get(), resource.m_settings.copyRef())
 {
 }
 
 CachedSVGFont::~CachedSVGFont() = default;
 
-RefPtr<Font> CachedSVGFont::createFont(const FontDescription& fontDescription, bool syntheticBold, bool syntheticItalic, const FontCreationContext& fontCreationContext)
+RefPtr<Font> CachedSVGFont::createFont(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     ASSERT(firstFontFace());
-    return CachedFont::createFont(fontDescription, syntheticBold, syntheticItalic, fontCreationContext);
+    return CachedFont::createFont(fontDescription, fontCreationContext);
 }
 
-FontPlatformData CachedSVGFont::platformDataFromCustomData(const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedSVGFont::platformDataFromCustomData(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     if (m_externalSVGDocument)
-        return FontPlatformData(fontDescription.computedSize(), bold, italic); // FIXME: Why are we creating a bogus font here?
-    return CachedFont::platformDataFromCustomData(fontDescription, bold, italic, fontCreationContext);
+        return FontPlatformData(fontDescription.computedSize(), computeSyntheticBold(false, fontDescription, fontCreationContext), computeSyntheticItalic(false, fontDescription, fontCreationContext)); // FIXME: Why are we creating a bogus font here?
+    return CachedFont::platformDataFromCustomData(fontDescription, fontCreationContext);
 }
 
 bool CachedSVGFont::ensureCustomFontData()
 {
+    // SafeFontParser does not support OpenType (OTF) fonts, so we can fail early here instead of having it converted and failing later at the parsing.
+    if (m_settings->downloadableBinaryFontTrustedTypes() == DownloadableBinaryFontTrustedTypes::SafeFontParser)
+        return false;
+
     if (!m_externalSVGDocument && !errorOccurred() && !isLoading() && m_data) {
         bool sawError = false;
         {
@@ -84,9 +89,9 @@ bool CachedSVGFont::ensureCustomFontData()
 
             ScriptDisallowedScope::DisableAssertionsInScope disabledScope;
 
-            externalSVGDocument->setMarkupUnsafe(decoder->decodeAndFlush(m_data->makeContiguous()->span()), { ParserContentPolicy::AllowDeclarativeShadowRoots });
+            externalSVGDocument->setMarkupUnsafe(decoder->decodeAndFlush(protect(m_data)->makeContiguous()->span()), { ParserContentPolicy::AllowDeclarativeShadowRoots });
             sawError = decoder->sawError();
-            m_externalSVGDocument = WTFMove(externalSVGDocument);
+            m_externalSVGDocument = WTF::move(externalSVGDocument);
         }
 
         if (sawError)
@@ -96,7 +101,7 @@ bool CachedSVGFont::ensureCustomFontData()
         if (!m_externalSVGFontElement || !firstFontFace())
             return false;
         if (auto convertedFont = convertSVGToOTFFont(Ref { *m_externalSVGFontElement }))
-            m_convertedFont = SharedBuffer::create(WTFMove(convertedFont.value()));
+            m_convertedFont = SharedBuffer::create(WTF::move(convertedFont.value()));
         else {
             m_externalSVGDocument = nullptr;
             m_externalSVGFontElement = nullptr;

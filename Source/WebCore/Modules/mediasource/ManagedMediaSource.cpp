@@ -28,25 +28,29 @@
 
 #if ENABLE(MEDIA_SOURCE)
 
+#include "ContextDestructionObserverInlines.h"
 #include "Event.h"
 #include "EventNames.h"
+#include "ExceptionOr.h"
 #include "MediaSourcePrivate.h"
+#include "ScriptExecutionContext.h"
+#include "Settings.h"
 #include "SourceBufferList.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ManagedMediaSource);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ManagedMediaSource);
 
-Ref<ManagedMediaSource> ManagedMediaSource::create(ScriptExecutionContext& context)
+Ref<ManagedMediaSource> ManagedMediaSource::create(ScriptExecutionContext& context, MediaSourceInit&& options)
 {
-    auto mediaSource = adoptRef(*new ManagedMediaSource(context));
+    auto mediaSource = adoptRef(*new ManagedMediaSource(context, WTF::move(options)));
     mediaSource->suspendIfNeeded();
     return mediaSource;
 }
 
-ManagedMediaSource::ManagedMediaSource(ScriptExecutionContext& context)
-    : MediaSource(context)
+ManagedMediaSource::ManagedMediaSource(ScriptExecutionContext& context, MediaSourceInit&& options)
+    : MediaSource(context, WTF::move(options))
     , m_streamingTimer(*this, &ManagedMediaSource::streamingTimerFired)
 {
 }
@@ -77,8 +81,8 @@ void ManagedMediaSource::setStreaming(bool streaming)
         return;
     ALWAYS_LOG(LOGIDENTIFIER, streaming);
     m_streaming = streaming;
-    if (m_private)
-        m_private->setStreaming(streaming);
+    if (auto* msp = mediaSourcePrivate())
+        msp->setStreaming(streaming);
     if (streaming) {
         scheduleEvent(eventNames().startstreamingEvent);
         if (m_streamingAllowed) {
@@ -100,15 +104,21 @@ void ManagedMediaSource::ensurePrefsRead()
 
     if (m_lowThreshold && m_highThreshold)
         return;
-    m_lowThreshold = scriptExecutionContext()->settingsValues().managedMediaSourceLowThreshold;
-    m_highThreshold = scriptExecutionContext()->settingsValues().managedMediaSourceHighThreshold;
+    RefPtr context = scriptExecutionContext();
+    m_lowThreshold = context->settingsValues().managedMediaSourceLowThreshold;
+    m_highThreshold = context->settingsValues().managedMediaSourceHighThreshold;
 }
 
 void ManagedMediaSource::monitorSourceBuffers()
 {
+    if (isClosed())
+        return;
+
     MediaSource::monitorSourceBuffers();
 
-    if (!activeSourceBuffers() || !activeSourceBuffers()->length()) {
+    Ref msp = *mediaSourcePrivate();
+
+    if (!activeSourceBuffers()->length()) {
         setStreaming(true);
         return;
     }
@@ -122,15 +132,16 @@ void ManagedMediaSource::monitorSourceBuffers()
         MediaTime aheadTime = currentTime + MediaTime::createWithDouble(upper);
         return isEnded() ? std::min(duration(), aheadTime) : aheadTime;
     };
+
     if (!m_streaming) {
         PlatformTimeRanges neededBufferedRange { currentTime, std::max(currentTime, limitAhead(*m_lowThreshold)) };
-        if (!isBuffered(neededBufferedRange))
+        if (!msp->isBuffered(neededBufferedRange))
             setStreaming(true);
         return;
     }
 
     if (auto ahead = limitAhead(*m_highThreshold); currentTime < ahead) {
-        if (isBuffered({ currentTime,  ahead }))
+        if (msp->isBuffered({ currentTime,  ahead }))
             setStreaming(false);
     } else
         setStreaming(false);
@@ -140,8 +151,8 @@ void ManagedMediaSource::streamingTimerFired()
 {
     ALWAYS_LOG(LOGIDENTIFIER, "Disabling streaming due to policy ", *m_highThreshold);
     m_streamingAllowed = false;
-    if (m_private)
-        m_private->setStreamingAllowed(false);
+    if (auto* msp = mediaSourcePrivate())
+        msp->setStreamingAllowed(false);
     notifyElementUpdateMediaState();
 }
 

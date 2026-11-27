@@ -33,10 +33,10 @@ static webrtc::SdpVideoFormat createH264Format(webrtc::H264Profile profile, webr
 {
     const auto profileString = webrtc::H264ProfileLevelIdToString(webrtc::H264ProfileLevelId(profile, level));
 
-    return webrtc::SdpVideoFormat(cricket::kH264CodecName,
-        { { cricket::kH264FmtpProfileLevelId, *profileString },
-            { cricket::kH264FmtpLevelAsymmetryAllowed, "1" },
-            { cricket::kH264FmtpPacketizationMode, packetizationMode } });
+    return webrtc::SdpVideoFormat(webrtc::kH264CodecName,
+        { { webrtc::kH264FmtpProfileLevelId, *profileString },
+            { webrtc::kH264FmtpLevelAsymmetryAllowed, "1" },
+            { webrtc::kH264FmtpPacketizationMode, packetizationMode } });
 }
 
 std::vector<webrtc::SdpVideoFormat> supportedH264Formats()
@@ -53,8 +53,28 @@ std::vector<webrtc::SdpVideoFormat> supportedH264Formats()
     return {
         createH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1, "1"),
         createH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel4, "0"),
         createH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1, "1"),
         createH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel4, "0"),
+        createH264Format(webrtc::H264Profile::kProfileMain, webrtc::H264Level::kLevel3_1, "1"),
+        createH264Format(webrtc::H264Profile::kProfileMain, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfileMain, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfileMain, webrtc::H264Level::kLevel4, "0"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedHigh, webrtc::H264Level::kLevel3_1, "1"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedHigh, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedHigh, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfileConstrainedHigh, webrtc::H264Level::kLevel4, "0"),
+        createH264Format(webrtc::H264Profile::kProfileHigh, webrtc::H264Level::kLevel3_1, "1"),
+        createH264Format(webrtc::H264Profile::kProfileHigh, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfileHigh, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfileHigh, webrtc::H264Level::kLevel4, "0"),
+        createH264Format(webrtc::H264Profile::kProfilePredictiveHigh444, webrtc::H264Level::kLevel3_1, "1"),
+        createH264Format(webrtc::H264Profile::kProfilePredictiveHigh444, webrtc::H264Level::kLevel3_1, "0"),
+        createH264Format(webrtc::H264Profile::kProfilePredictiveHigh444, webrtc::H264Level::kLevel4, "1"),
+        createH264Format(webrtc::H264Profile::kProfilePredictiveHigh444, webrtc::H264Level::kLevel4, "0"),
     };
 }
 

@@ -25,7 +25,8 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
+#include <WebCore/FloatRect.h>
 #include <WebCore/MarkedText.h>
 #include <WebCore/RenderedDocumentMarker.h>
 
@@ -59,6 +60,8 @@ std::ostream& operator<<(std::ostream& os, MarkedText::Type type)
         return os << "Highlight";
     case MarkedText::Type::FragmentHighlight:
         return os << "FragmentHighlight";
+    case MarkedText::Type::TextExtractionHighlight:
+        return os << "TextExtractionHighlight";
 #if ENABLE(APP_HIGHLIGHTS)
     case MarkedText::Type::AppHighlight:
         return os << "AppHighlight";
@@ -69,6 +72,10 @@ std::ostream& operator<<(std::ostream& os, MarkedText::Type type)
 #endif
     case MarkedText::Type::TransparentContent:
         return os << "TransparentContent";
+    case MarkedText::Type::DictationStreamingOpacity:
+        return os << "DictationStreamingOpacity";
+    case MarkedText::Type::ActiveTextMatch:
+        return os << "ActiveTextMatch";
     case MarkedText::Type::Unmarked:
         return os << "Unmarked";
     }
@@ -102,7 +109,7 @@ TEST(MarkedText, SubdivideSimple)
 
 TEST(MarkedText, SubdivideSpellingAndGrammarSimple)
 {
-    RenderedDocumentMarker grammarErrorMarker { DocumentMarker { DocumentMarker::Type::Grammar, { 7, 8 } } };
+    RenderedDocumentMarker grammarErrorMarker { DocumentMarker { DocumentMarkerType::Grammar, { 7, 8 } } };
     Vector<MarkedText> expectedMarkedTexts {
         MarkedText { grammarErrorMarker.startOffset(), grammarErrorMarker.endOffset(), MarkedText::Type::GrammarError, &grammarErrorMarker },
         MarkedText { 22, 32, MarkedText::Type::SpellingError },

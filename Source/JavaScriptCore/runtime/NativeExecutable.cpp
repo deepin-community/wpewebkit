@@ -35,11 +35,11 @@ namespace JSC {
 
 const ClassInfo NativeExecutable::s_info = { "NativeExecutable"_s, &ExecutableBase::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NativeExecutable) };
 
-NativeExecutable* NativeExecutable::create(VM& vm, Ref<JSC::JITCode>&& callThunk, TaggedNativeFunction function, Ref<JSC::JITCode>&& constructThunk, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, const String& name)
+NativeExecutable* NativeExecutable::create(VM& vm, Ref<JSC::JITCode>&& callThunk, TaggedNativeFunction function, Ref<JSC::JITCode>&& constructThunk, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, unsigned length, const String& name)
 {
     NativeExecutable* executable;
     executable = new (NotNull, allocateCell<NativeExecutable>(vm)) NativeExecutable(vm, function, constructor, implementationVisibility);
-    executable->finishCreation(vm, WTFMove(callThunk), WTFMove(constructThunk), name);
+    executable->finishCreation(vm, WTF::move(callThunk), WTF::move(constructThunk), length, name);
 
     vm.forEachDebugger([&] (Debugger& debugger) {
         debugger.didCreateNativeExecutable(*executable);
@@ -58,17 +58,18 @@ Structure* NativeExecutable::createStructure(VM& vm, JSGlobalObject* globalObjec
     return Structure::create(vm, globalObject, proto, TypeInfo(NativeExecutableType, StructureFlags), info());
 }
 
-void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, const String& name)
+void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, unsigned length, const String& name)
 {
     Base::finishCreation(vm);
-    m_jitCodeForCall = WTFMove(callThunk);
-    m_jitCodeForConstruct = WTFMove(constructThunk);
-    m_jitCodeForCallWithArityCheck = m_jitCodeForCall->addressForCall(MustCheckArity);
-    m_jitCodeForConstructWithArityCheck = m_jitCodeForConstruct->addressForCall(MustCheckArity);
+    m_jitCodeForCall = WTF::move(callThunk);
+    m_jitCodeForConstruct = WTF::move(constructThunk);
+    m_jitCodeForCallWithArityCheck = m_jitCodeForCall->addressForCall(ArityCheckMode::MustCheckArity);
+    m_jitCodeForConstructWithArityCheck = m_jitCodeForConstruct->addressForCall(ArityCheckMode::MustCheckArity);
     m_name = name;
+    m_length = length;
 
-    assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCall->addressForCall(ArityCheckNotRequired).taggedPtr());
-    assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForConstruct->addressForCall(ArityCheckNotRequired).taggedPtr());
+    assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCall->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());
+    assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForConstruct->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCallWithArityCheck.taggedPtr());
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForConstructWithArityCheck.taggedPtr());
 }
@@ -89,16 +90,16 @@ const DOMJIT::Signature* NativeExecutable::signatureFor(CodeSpecializationKind k
 
 Intrinsic NativeExecutable::intrinsic() const
 {
-    return generatedJITCodeFor(CodeForCall)->intrinsic();
+    return generatedJITCodeFor(CodeSpecializationKind::CodeForCall)->intrinsic();
 }
 
 CodeBlockHash NativeExecutable::hashFor(CodeSpecializationKind kind) const
 {
-    if (kind == CodeForCall)
-        return CodeBlockHash(bitwise_cast<uintptr_t>(m_function));
+    if (kind == CodeSpecializationKind::CodeForCall)
+        return CodeBlockHash(std::bit_cast<uintptr_t>(m_function));
 
-    RELEASE_ASSERT(kind == CodeForConstruct);
-    return CodeBlockHash(bitwise_cast<uintptr_t>(m_constructor));
+    RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
+    return CodeBlockHash(std::bit_cast<uintptr_t>(m_constructor));
 }
 
 JSString* NativeExecutable::toStringSlow(JSGlobalObject *globalObject)
@@ -117,10 +118,15 @@ JSString* NativeExecutable::toStringSlow(JSGlobalObject *globalObject)
     return asString;
 }
 
+JSString* NativeExecutable::nameJSString(VM& vm) const
+{
+    return m_name.isNull() ? jsEmptyString(vm) : jsString(vm, m_name);
+}
+
 template<typename Visitor>
 void NativeExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NativeExecutable* thisObject = jsCast<NativeExecutable*>(cell);
+    NativeExecutable* thisObject = uncheckedDowncast<NativeExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_asString);

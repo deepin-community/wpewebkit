@@ -26,32 +26,42 @@
 #include "config.h"
 #include "JSAbortSignal.h"
 
+#include "JSValueInWrappedObjectInlines.h"
 #include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
 
 bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto& abortSignal = JSC::jsCast<JSAbortSignal*>(handle.slot()->asCell())->wrapped();
+    auto& abortSignal = downcast<JSAbortSignal>(handle.slot()->asCell())->wrapped();
     if (abortSignal.aborted())
         return false;
 
     if (abortSignal.isFollowingSignal()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "Is Following Signal"_s;
         return true;
     }
 
     if (abortSignal.hasAbortEventListener()) {
         if (abortSignal.hasActiveTimeoutTimer()) {
-            if (UNLIKELY(reason))
+            if (reason) [[unlikely]]
                 *reason = "Has Timeout And Abort Event Listener"_s;
             return true;
         }
-        if (!abortSignal.sourceSignals().isEmptyIgnoringNullReferences()) {
-            if (UNLIKELY(reason))
-                *reason = "Has Source Signals And Abort Event Listener"_s;
-            return true;
+        if (abortSignal.isDependent()) {
+            // Called on parallel GC marker threads, so this must not mutate the set.
+            bool hasSourceSignals = !abortSignal.sourceSignals().isEmptyIgnoringNullReferencesWithoutCleanup();
+            if (hasSourceSignals) {
+                if (reason) [[unlikely]]
+                    *reason = "Has Source Signals And Abort Event Listener"_s;
+                return true;
+            }
+        } else {
+            bool isReachable = containsWebCoreOpaqueRoot(visitor, abortSignal);
+            if (isReachable && reason) [[unlikely]]
+                *reason = "Has Abort Event Listener And Is Referenced By Other Objects"_s;
+            return isReachable;
         }
     }
 
@@ -59,11 +69,11 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 }
 
 template<typename Visitor>
-void JSAbortSignal::visitAdditionalChildren(Visitor& visitor)
+void JSAbortSignal::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().reason().visit(visitor);
+    wrapped().reason().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAbortSignal);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAbortSignal);
 
 } // namespace WebCore

@@ -33,10 +33,10 @@ namespace TestWebKitAPI {
 namespace UniqueRefTest {
 
 class A {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(A);
 };
 class B {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(B);
 public:
     B(int a, int b, int c)
         : a(a)
@@ -48,10 +48,10 @@ public:
     int c;
 };
 class C {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(C);
 public:
     C(UniqueRef<A>&& a)
-        : a(WTFMove(a))
+        : a(WTF::move(a))
     { }
     UniqueRef<A> a;
 };
@@ -69,7 +69,7 @@ TEST(WTF, UniqueRef)
     const B& d = b.get();
     B* e = &b;
     const B* f = &b;
-    UniqueRef<A> j = WTFMove(a);
+    UniqueRef<A> j = WTF::move(a);
     
     Vector<UniqueRef<B>> v;
     v.append(makeUniqueRef<B>(4, 5, 6));
@@ -81,6 +81,9 @@ TEST(WTF, UniqueRef)
     C h(makeUniqueRef<A>());
     C i(makeUniqueRef<D>());
     
+    const UniqueRef<B> k = makeUniqueRef<B>(1, 2, 3);
+    k->a = 4;
+
     UNUSED_PARAM(b);
     UNUSED_PARAM(c);
     UNUSED_PARAM(d);
@@ -90,6 +93,7 @@ TEST(WTF, UniqueRef)
     UNUSED_PARAM(h);
     UNUSED_PARAM(i);
     UNUSED_PARAM(j);
+    UNUSED_PARAM(k);
 }
 
 } // namespace TestWebKitAPI

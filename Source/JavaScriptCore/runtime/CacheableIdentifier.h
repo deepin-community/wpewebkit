@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
+#include <JavaScriptCore/GCOwnedDataScope.h>
+#include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/SymbolImpl.h>
 
 namespace JSC {
@@ -37,6 +38,7 @@ class JSCell;
 class CacheableIdentifier {
 public:
     CacheableIdentifier() = default;
+    constexpr CacheableIdentifier(std::nullptr_t) { }
 
     static inline CacheableIdentifier createFromCell(JSCell* identifier);
     template <typename CodeBlockType>
@@ -47,37 +49,30 @@ public:
     static inline CacheableIdentifier createFromSharedStub(UniquedStringImpl*);
     static constexpr CacheableIdentifier createFromRawBits(uintptr_t rawBits) { return CacheableIdentifier(rawBits); }
 
-    CacheableIdentifier(const CacheableIdentifier&) = default;
-    CacheableIdentifier(CacheableIdentifier&&) = default;
-
-    CacheableIdentifier(std::nullptr_t)
-        : m_bits(0)
-    { }
-
     bool isUid() const { return m_bits & s_uidTag; }
     bool isCell() const { return !isUid(); }
     inline bool isSymbolCell() const;
     inline bool isStringCell() const;
     inline void ensureIsCell(VM&);
 
-    bool isSymbol() const { return m_bits && uid()->isSymbol(); }
-    bool isPrivateName() const { return isSymbol() && static_cast<SymbolImpl&>(*uid()).isPrivate(); }
+    inline bool isSymbol() const;
+    inline bool isPrivateName() const;
 
     inline JSCell* cell() const;
     UniquedStringImpl* uid() const;
 
     explicit operator bool() const { return m_bits; }
 
-    unsigned hash() const { return uid()->symbolAwareHash(); }
-
-    CacheableIdentifier& operator=(const CacheableIdentifier&) = default;
-    CacheableIdentifier& operator=(CacheableIdentifier&&) = default;
+    inline unsigned hash() const;
 
     bool operator==(const CacheableIdentifier&) const;
     bool operator==(const Identifier&) const;
 
     static inline bool isCacheableIdentifierCell(JSCell*);
     static inline bool isCacheableIdentifierCell(JSValue);
+
+    static inline GCOwnedDataScope<const UniquedStringImpl*> getCacheableIdentifier(JSCell*);
+    static inline GCOwnedDataScope<const UniquedStringImpl*> getCacheableIdentifier(JSValue);
 
     uintptr_t rawBits() const { return m_bits; }
 

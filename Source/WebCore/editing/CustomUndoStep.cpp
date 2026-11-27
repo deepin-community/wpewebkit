@@ -46,8 +46,8 @@ void CustomUndoStep::unapply()
     // FIXME: It's currently unclear how input events should be dispatched when unapplying or reapplying custom
     // edit commands. Should the page be allowed to specify a target in the DOM for undo and redo?
     Ref<UndoItem> protectedUndoItem(*m_undoItem);
-    protectedUndoItem->protectedDocument()->updateLayoutIgnorePendingStylesheets();
-    protectedUndoItem->undoHandler().handleEvent();
+    protect(protectedUndoItem->document())->updateLayoutIgnorePendingStylesheets();
+    protectedUndoItem->undoHandler().invoke();
 }
 
 void CustomUndoStep::reapply()
@@ -56,8 +56,8 @@ void CustomUndoStep::reapply()
         return;
 
     Ref<UndoItem> protectedUndoItem(*m_undoItem);
-    protectedUndoItem->protectedDocument()->updateLayoutIgnorePendingStylesheets();
-    protectedUndoItem->redoHandler().handleEvent();
+    protect(protectedUndoItem->document())->updateLayoutIgnorePendingStylesheets();
+    protectedUndoItem->redoHandler().invoke();
 }
 
 bool CustomUndoStep::isValid() const

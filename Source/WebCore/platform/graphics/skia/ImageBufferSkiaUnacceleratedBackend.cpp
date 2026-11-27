@@ -29,13 +29,15 @@
 #if USE(SKIA)
 #include "FontRenderOptions.h"
 #include "IntRect.h"
+#include "NativeImage.h"
 #include "PixelBuffer.h"
+#include "SkiaSpanExtras.h"
 #include <skia/core/SkPixmap.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ImageBufferSkiaUnacceleratedBackend);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferSkiaUnacceleratedBackend);
 
 std::unique_ptr<ImageBufferSkiaUnacceleratedBackend> ImageBufferSkiaUnacceleratedBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
 {
@@ -44,16 +46,16 @@ std::unique_ptr<ImageBufferSkiaUnacceleratedBackend> ImageBufferSkiaUnaccelerate
         return nullptr;
 
     auto imageInfo = SkImageInfo::MakeN32Premul(backendSize.width(), backendSize.height(), parameters.colorSpace.platformColorSpace());
-    SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
+    SkSurfaceProps properties = FontRenderOptions::singleton().createSurfaceProps();
     auto surface = SkSurfaces::Raster(imageInfo, &properties);
     if (!surface || !surface->getCanvas())
         return nullptr;
 
-    return std::unique_ptr<ImageBufferSkiaUnacceleratedBackend>(new ImageBufferSkiaUnacceleratedBackend(parameters, WTFMove(surface)));
+    return std::unique_ptr<ImageBufferSkiaUnacceleratedBackend>(new ImageBufferSkiaUnacceleratedBackend(parameters, WTF::move(surface)));
 }
 
 ImageBufferSkiaUnacceleratedBackend::ImageBufferSkiaUnacceleratedBackend(const Parameters& parameters, sk_sp<SkSurface>&& surface)
-    : ImageBufferSkiaSurfaceBackend(parameters, WTFMove(surface), RenderingMode::Unaccelerated)
+    : ImageBufferSkiaSurfaceBackend(parameters, WTF::move(surface), RenderingMode::Unaccelerated)
 {
 }
 
@@ -82,14 +84,14 @@ void ImageBufferSkiaUnacceleratedBackend::getPixelBuffer(const IntRect& srcRect,
 {
     SkPixmap pixmap;
     if (m_surface->peekPixels(&pixmap))
-        ImageBufferBackend::getPixelBuffer(srcRect, static_cast<const uint8_t*>(pixmap.writable_addr()), destination);
+        ImageBufferBackend::getPixelBuffer(srcRect, span(pixmap), destination);
 }
 
-void ImageBufferSkiaUnacceleratedBackend::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
+void ImageBufferSkiaUnacceleratedBackend::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
 {
     SkPixmap pixmap;
     if (m_surface->peekPixels(&pixmap))
-        ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, static_cast<uint8_t*>(pixmap.writable_addr()));
+        ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, mutableSpan(pixmap));
 }
 
 } // namespace WebCore

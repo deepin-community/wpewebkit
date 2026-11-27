@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2024 Apple Inc. All rights reserved.
  *           (C) 2006 Alexey Proskuryakov (ap@nypop.com)
  *
  * This library is free software; you can redistribute it and/or
@@ -35,35 +35,39 @@
 #include "HTMLObjectElement.h"
 #include "IdTargetObserver.h"
 #include "LocalFrame.h"
+#include "Settings.h"
 #include "TreeScopeInlines.h"
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FormListedElement);
 
 using namespace HTMLNames;
 
 class FormAttributeTargetObserver final : private IdTargetObserver {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FormAttributeTargetObserver);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FormAttributeTargetObserver);
 public:
     FormAttributeTargetObserver(const AtomString& id, FormListedElement&);
 
 private:
-    void idTargetChanged() override;
+    void idTargetChanged(Element&) override;
 
-    FormListedElement& m_element;
+    WeakRef<FormListedElement> m_element;
 };
 
-FormListedElement::FormListedElement(HTMLFormElement* form)
-    : FormAssociatedElement(form)
-{
-}
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FormAttributeTargetObserver);
+
+FormListedElement::FormListedElement() = default;
 
 FormListedElement::~FormListedElement() = default;
 
 void FormListedElement::didMoveToNewDocument()
 {
-    HTMLElement& element = asHTMLElement();
-    if (element.hasAttributeWithoutSynchronization(formAttr) && element.isConnected())
+    Ref element = asHTMLElement();
+    if (element->hasAttributeWithoutSynchronization(formAttr) && element->isConnected())
         resetFormAttributeTargetObserver();
 }
 
@@ -99,11 +103,14 @@ static RefPtr<HTMLFormElement> findAssociatedForm(const HTMLElement& element, HT
             // the first element in the document to have an ID that equal to
             // the value of form attribute, so we put the result of
             // treeScope().getElementById() over the given element.
-            RefPtr newFormCandidate = dynamicDowncast<HTMLFormElement>(element.treeScope().getElementById(formId));
+            RefPtr newFormCandidate = dynamicDowncast<HTMLFormElement>(element.elementForAttributeInternal(formAttr));
             if (!newFormCandidate)
                 return nullptr;
             if (&element.traverseToRootNode() == &element.treeScope().rootNode()) {
-                ASSERT(&element.traverseToRootNode() == &newFormCandidate->traverseToRootNode());
+                if (element.document().settings().shadowRootReferenceTargetEnabled())
+                    ASSERT(&element.traverseToRootNode() == &(element.treeScope().retargetToScope(*newFormCandidate))->treeScope().rootNode());
+                else
+                    ASSERT(&element.traverseToRootNode() == &newFormCandidate->traverseToRootNode());
                 return newFormCandidate;
             }
         }
@@ -115,27 +122,33 @@ void FormListedElement::formOwnerRemovedFromTree(const Node& formRoot)
 {
     ASSERT(form());
     // Can't use RefPtr here beacuse this function might be called inside ~ShadowRoot via addChildNodesToDeletionQueue. See webkit.org/b/189493.
-    Node* rootNode = &asHTMLElement();
-    auto* currentForm = form();
-    for (auto* ancestor = asHTMLElement().parentNode(); ancestor; ancestor = ancestor->parentNode()) {
-        if (ancestor == currentForm) {
-            // Form is our ancestor so we don't need to reset our owner, we also no longer
-            // need an id observer since we are no longer connected.
-            m_formAttributeTargetObserver = nullptr;
-            return;
+    auto formHasSameRootNode = [&](Node* rootNode) -> std::optional<bool> {
+        if (auto* currentForm = form()) {
+            for (auto* ancestor = rootNode->parentNode(); ancestor; ancestor = ancestor->parentNode()) {
+                if (ancestor == currentForm)
+                    return std::nullopt;
+                rootNode = ancestor;
+            }
         }
-        rootNode = ancestor;
+        return rootNode == &formRoot;
+    }(&asHTMLElement());
+
+    if (!formHasSameRootNode) {
+        // Form is our ancestor so we don't need to reset our owner, we also no longer
+        // need an id observer since we are no longer connected.
+        m_formAttributeTargetObserver = nullptr;
+        return;
     }
 
     // We are no longer in the same tree as our form owner so clear our owner.
-    if (rootNode != &formRoot)
+    if (!*formHasSameRootNode)
         setForm(nullptr);
 }
 
 void FormListedElement::setFormInternal(RefPtr<HTMLFormElement>&& newForm)
 {
     willChangeForm();
-    if (auto* oldForm = form())
+    if (RefPtr oldForm = form())
         oldForm->unregisterFormListedElement(*this);
     FormAssociatedElement::setFormInternal(newForm.copyRef());
     if (newForm)
@@ -163,12 +176,12 @@ void FormListedElement::formWillBeDestroyed()
 
 void FormListedElement::resetFormOwner()
 {
-    RefPtr<HTMLFormElement> originalForm = form();
-    HTMLElement& element = asHTMLElement();
-    setForm(findAssociatedForm(element, originalForm.get()));
-    auto* newForm = form();
+    RefPtr originalForm = form();
+    Ref element = asHTMLElement();
+    setForm(findAssociatedForm(element.get(), originalForm.get()));
+    RefPtr newForm = form();
     if (newForm && newForm != originalForm && newForm->isConnected())
-        element.document().didAssociateFormControl(element);
+        protect(element->document())->didAssociateFormControl(element.get());
 }
 
 void FormListedElement::parseAttribute(const QualifiedName& name, const AtomString& value)
@@ -179,21 +192,21 @@ void FormListedElement::parseAttribute(const QualifiedName& name, const AtomStri
 
 void FormListedElement::parseFormAttribute(const AtomString& value)
 {
-    HTMLElement& element = asHTMLElement();
+    Ref element = asHTMLElement();
     if (value.isNull()) {
         // The form attribute removed. We need to reset form owner here.
         RefPtr originalForm = form();
         // Instead of calling setForm(findAssociatedForm(&element, originalForm.get())) here,
         // we effectively perform setForm(findAssociatedForm(&element, nullptr)) because
         // it's known that originalForm is obsolete and can't be used as a fallback.
-        setForm(HTMLFormElement::findClosestFormAncestor(element));
-        auto* newForm = form();
+        setForm(HTMLFormElement::findClosestFormAncestor(element.get()));
+        RefPtr newForm = form();
         if (newForm && newForm != originalForm && newForm->isConnected())
-            element.protectedDocument()->didAssociateFormControl(element);
+            protect(element->document())->didAssociateFormControl(element.get());
         m_formAttributeTargetObserver = nullptr;
     } else {
         resetFormOwner();
-        if (element.isConnected())
+        if (element->isConnected())
             resetFormAttributeTargetObserver();
     }
 }
@@ -288,14 +301,14 @@ const AtomString& FormListedElement::name() const
 }
 
 FormAttributeTargetObserver::FormAttributeTargetObserver(const AtomString& id, FormListedElement& element)
-    : IdTargetObserver(element.asHTMLElement().treeScope().idTargetObserverRegistry(), id)
+    : IdTargetObserver(protect(element.asHTMLElement().treeScope())->idTargetObserverRegistry(), id)
     , m_element(element)
 {
 }
 
-void FormAttributeTargetObserver::idTargetChanged()
+void FormAttributeTargetObserver::idTargetChanged(Element&)
 {
-    m_element.formAttributeTargetChanged();
+    Ref { m_element.get() }->formAttributeTargetChanged();
 }
 
 } // namespace WebCore

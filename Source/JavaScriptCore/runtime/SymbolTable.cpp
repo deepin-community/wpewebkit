@@ -30,8 +30,11 @@
 #include "SymbolTable.h"
 
 #include "CodeBlock.h"
+#include "DebuggerLocation.h"
 #include "JSCJSValueInlines.h"
 #include "ResourceExhaustion.h"
+#include "ScriptExecutable.h"
+#include "SymbolTableInlines.h"
 #include "TypeProfiler.h"
 
 #include <wtf/CommaPrinter.h>
@@ -47,7 +50,7 @@ SymbolTableEntry& SymbolTableEntry::copySlow(const SymbolTableEntry& other)
     ASSERT(other.isFat());
     FatEntry* newFatEntry = new FatEntry(*other.fatEntry());
     freeFatEntry();
-    m_bits = bitwise_cast<intptr_t>(newFatEntry);
+    m_bits = std::bit_cast<intptr_t>(newFatEntry);
     return *this;
 }
 
@@ -76,7 +79,7 @@ void SymbolTableEntry::prepareToWatch()
 SymbolTableEntry::FatEntry* SymbolTableEntry::inflateSlow()
 {
     FatEntry* entry = new FatEntry(m_bits);
-    m_bits = bitwise_cast<intptr_t>(entry);
+    m_bits = std::bit_cast<intptr_t>(entry);
     return entry;
 }
 
@@ -93,15 +96,13 @@ SymbolTable::~SymbolTable() = default;
 template<typename Visitor>
 void SymbolTable::visitChildrenImpl(JSCell* thisCell, Visitor& visitor)
 {
-    SymbolTable* thisSymbolTable = jsCast<SymbolTable*>(thisCell);
+    SymbolTable* thisSymbolTable = uncheckedDowncast<SymbolTable>(thisCell);
     ASSERT_GC_OBJECT_INHERITS(thisSymbolTable, info());
     Base::visitChildren(thisSymbolTable, visitor);
 
     visitor.append(thisSymbolTable->m_arguments);
-    
-    if (auto* rareData = thisSymbolTable->m_rareData.get())
-        visitor.append(rareData->m_codeBlock);
-    
+    visitor.append(thisSymbolTable->m_clonedFrom);
+
     // Save some memory. This is O(n) to rebuild and we do so on the fly.
     ConcurrentJSLocker locker(thisSymbolTable->m_lock);
     thisSymbolTable->m_localToEntry = nullptr;
@@ -111,7 +112,7 @@ DEFINE_VISIT_CHILDREN(SymbolTable);
 
 const SymbolTable::LocalToEntryVec& SymbolTable::localToEntry(const ConcurrentJSLocker&)
 {
-    if (UNLIKELY(!m_localToEntry)) {
+    if (!m_localToEntry) [[unlikely]] {
         unsigned size = 0;
         for (auto& entry : m_map) {
             VarOffset offset = entry.value.varOffset();
@@ -119,7 +120,7 @@ const SymbolTable::LocalToEntryVec& SymbolTable::localToEntry(const ConcurrentJS
                 size = std::max(size, offset.scopeOffset().offset() + 1);
         }
     
-        m_localToEntry = makeUnique<LocalToEntryVec>(size, nullptr);
+        m_localToEntry = makeUnique<LocalToEntryVec>(FillWith { }, size, nullptr);
         for (auto& entry : m_map) {
             VarOffset offset = entry.value.varOffset();
             if (offset.isScope())
@@ -138,7 +139,7 @@ SymbolTableEntry* SymbolTable::entryFor(const ConcurrentJSLocker& locker, ScopeO
     return toEntryVector[offset.offset()];
 }
 
-SymbolTable* SymbolTable::cloneScopePart(VM& vm)
+SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOriginal propagateCloneInvalidationToOriginal)
 {
     SymbolTable* result = SymbolTable::create(vm);
     
@@ -146,7 +147,7 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm)
     result->m_nestedLexicalScope = m_nestedLexicalScope;
     result->m_scopeType = m_scopeType;
 
-    HashMap<VarOffset, uint32_t> varOffsetToArgIndexMap;
+    UncheckedKeyHashMap<VarOffset, uint32_t> varOffsetToArgIndexMap;
 
     if (this->arguments()) {
         // Copy the arguments, but not the WatchpointSets. We create new WatchpointSets as appropriate when we create the SymbolTableEntry
@@ -179,7 +180,7 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm)
                 result->prepareToWatchScopedArgument(entry, findIter->value);
         }
 
-        result->m_map.add(iter->key, WTFMove(entry));
+        result->m_map.add(iter->key, WTF::move(entry));
     }
 
     result->m_maxScopeOffset = m_maxScopeOffset;
@@ -213,7 +214,14 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm)
                 result->m_rareData->m_privateNames.add(name.key, name.value);
         }
     }
-    
+
+    result->m_clonedFrom.set(vm, result, this);
+    result->m_propagateCloneInvalidationToOriginal = propagateCloneInvalidationToOriginal;
+    if (result->m_propagateCloneInvalidationToOriginal == PropagateCloneInvalidationToOriginal::Yes) {
+        // If the original SymbolTable's singleton is already invalidated, the new clone starts out invalidated too.
+        if (m_singleton.hasBeenInvalidated())
+            result->m_singleton.invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
+    }
     return result;
 }
 
@@ -230,19 +238,31 @@ void SymbolTable::prepareForTypeProfiling(const ConcurrentJSLocker&)
     }
 }
 
-CodeBlock* SymbolTable::rareDataCodeBlock()
+String SymbolTable::inferredName()
 {
     if (!m_rareData)
-        return nullptr;
-
-    return m_rareData->m_codeBlock.get();
+        return String();
+    return m_rareData->m_inferredName;
 }
 
-void SymbolTable::setRareDataCodeBlock(CodeBlock* codeBlock)
+DebuggerLocation SymbolTable::debuggerLocation()
+{
+    if (!m_rareData)
+        return DebuggerLocation();
+    return DebuggerLocation(m_rareData->m_debuggerSourceID, m_rareData->m_debuggerLineColumn.line, m_rareData->m_debuggerLineColumn.column);
+}
+
+void SymbolTable::collectDebuggerInfo(CodeBlock* codeBlock)
 {
     auto& rareData = ensureRareData();
-    ASSERT(!rareData.m_codeBlock);
-    rareData.m_codeBlock.set(codeBlock->vm(), this, codeBlock);
+    if (!rareData.m_inferredName.isNull())
+        return;
+    rareData.m_inferredName = String::fromUTF8(codeBlock->inferredName().span());
+    ScriptExecutable* executable = codeBlock->ownerExecutable();
+    if (!executable->isHostFunction()) {
+        rareData.m_debuggerSourceID = executable->sourceID();
+        rareData.m_debuggerLineColumn = { static_cast<unsigned>(executable->firstLine()), executable->startColumn() };
+    }
 }
 
 GlobalVariableID SymbolTable::uniqueIDForVariable(const ConcurrentJSLocker&, UniquedStringImpl* key, VM& vm)
@@ -324,7 +344,7 @@ SymbolTable::SymbolTableRareData& SymbolTable::ensureRareDataSlow()
 {
     auto rareData = makeUnique<SymbolTableRareData>();
     WTF::storeStoreFence();
-    m_rareData = WTFMove(rareData);
+    m_rareData = WTF::move(rareData);
     return *m_rareData;
 }
 

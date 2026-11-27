@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 #include "ActiveDOMObject.h"
 #include "CookieStoreManager.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "JSDOMPromiseDeferredForward.h"
 #include "Notification.h"
 #include "NotificationOptions.h"
@@ -38,9 +39,9 @@
 #include "ServiceWorkerRegistrationData.h"
 #include "Supplementable.h"
 #include "Timer.h"
-#include <wtf/ListHashSet.h>
-#include <wtf/Vector.h>
-#include <wtf/WeakHashSet.h>
+#include <wtf/Forward.h>
+#include <wtf/Ref.h>
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
@@ -50,31 +51,37 @@ class ScriptExecutionContext;
 class ServiceWorker;
 class ServiceWorkerContainer;
 class WebCoreOpaqueRoot;
+struct CookieStoreGetOptions;
 
 class ServiceWorkerRegistration final : public RefCounted<ServiceWorkerRegistration>, public Supplementable<ServiceWorkerRegistration>, public EventTarget, public ActiveDOMObject, public PushSubscriptionOwner {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(ServiceWorkerRegistration, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(ServiceWorkerRegistration, WEBCORE_EXPORT);
 public:
     static Ref<ServiceWorkerRegistration> getOrCreate(ScriptExecutionContext&, Ref<ServiceWorkerContainer>&&, ServiceWorkerRegistrationData&&);
 
     WEBCORE_EXPORT ~ServiceWorkerRegistration();
 
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
     ServiceWorkerRegistrationIdentifier identifier() const { return m_registrationData.identifier; }
 
-    ServiceWorker* installing();
-    ServiceWorker* waiting();
-    ServiceWorker* active();
+    ServiceWorker* NODELETE installing();
+    ServiceWorker* NODELETE waiting();
+    ServiceWorker* NODELETE active();
 
     bool isActive() const final { return !!m_activeWorker; }
 
-    ServiceWorker* getNewestWorker() const;
+    ServiceWorker* NODELETE getNewestWorker() const;
 
-    const String& scope() const;
+    const String& NODELETE scope() const;
 
-    ServiceWorkerUpdateViaCache updateViaCache() const;
-    void setUpdateViaCache(ServiceWorkerUpdateViaCache);
+    ServiceWorkerUpdateViaCache NODELETE updateViaCache() const;
+    void NODELETE setUpdateViaCache(ServiceWorkerUpdateViaCache);
 
-    WallTime lastUpdateTime() const;
-    void setLastUpdateTime(WallTime);
+    WallTime NODELETE lastUpdateTime() const;
+    void NODELETE setLastUpdateTime(WallTime);
 
     bool needsUpdate() const { return lastUpdateTime() && (WallTime::now() - lastUpdateTime()) > 86400_s; }
 
@@ -82,14 +89,11 @@ public:
     void unregister(Ref<DeferredPromise>&&);
 
     void subscribeToPushService(const Vector<uint8_t>& applicationServerKey, DOMPromiseDeferred<IDLInterface<PushSubscription>>&&);
-    void unsubscribeFromPushService(PushSubscriptionIdentifier, DOMPromiseDeferred<IDLBoolean>&&);
+    void unsubscribeFromPushService(std::optional<PushSubscriptionIdentifier>, DOMPromiseDeferred<IDLBoolean>&&);
     void getPushSubscription(DOMPromiseDeferred<IDLNullable<IDLInterface<PushSubscription>>>&&);
     void getPushPermissionState(DOMPromiseDeferred<IDLEnumeration<PushPermissionState>>&&);
 
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
-    const ServiceWorkerRegistrationData& data() const { return m_registrationData; }
+    const ServiceWorkerRegistrationData& data() const LIFETIME_BOUND { return m_registrationData; }
 
     void updateStateFromServer(ServiceWorkerRegistrationState, RefPtr<ServiceWorker>&&);
     void queueTaskToFireUpdateFoundEvent();
@@ -107,6 +111,9 @@ public:
 #endif
 
     CookieStoreManager& cookies();
+    void addCookieChangeSubscriptions(Vector<CookieStoreGetOptions>&&, Ref<DeferredPromise>&&);
+    void removeCookieChangeSubscriptions(Vector<CookieStoreGetOptions>&&, Ref<DeferredPromise>&&);
+    void cookieChangeSubscriptions(Ref<DeferredPromise>&&);
 
 private:
     ServiceWorkerRegistration(ScriptExecutionContext&, Ref<ServiceWorkerContainer>&&, ServiceWorkerRegistrationData&&);
@@ -121,7 +128,7 @@ private:
     bool virtualHasPendingActivity() const final;
 
     ServiceWorkerRegistrationData m_registrationData;
-    Ref<ServiceWorkerContainer> m_container;
+    const Ref<ServiceWorkerContainer> m_container;
 
     RefPtr<ServiceWorker> m_installingWorker;
     RefPtr<ServiceWorker> m_waitingWorker;
@@ -132,6 +139,8 @@ private:
     RefPtr<CookieStoreManager> m_cookieStoreManager;
 };
 
-WebCoreOpaqueRoot root(ServiceWorkerRegistration*);
+WebCoreOpaqueRoot NODELETE root(ServiceWorkerRegistration*);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(ServiceWorkerRegistration)

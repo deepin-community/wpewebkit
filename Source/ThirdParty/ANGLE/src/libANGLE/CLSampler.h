@@ -8,8 +8,13 @@
 #ifndef LIBANGLE_CLSAMPLER_H_
 #define LIBANGLE_CLSAMPLER_H_
 
+#include <angle_cl.h>
+
 #include "libANGLE/CLObject.h"
+#include "libANGLE/cl_types.h"
 #include "libANGLE/renderer/CLSamplerImpl.h"
+
+#include <cstddef>
 
 namespace cl
 {
@@ -37,6 +42,8 @@ class Sampler final : public _cl_sampler, public Object
 
     template <typename T = rx::CLSamplerImpl>
     T &getImpl() const;
+
+    static Sampler *Cast(cl_sampler sampler);
 
   private:
     Sampler(Context &context,
@@ -84,6 +91,11 @@ template <typename T>
 inline T &Sampler::getImpl() const
 {
     return static_cast<T &>(*mImpl);
+}
+
+inline Sampler *Sampler::Cast(cl_sampler sampler)
+{
+    return static_cast<Sampler *>(sampler);
 }
 
 }  // namespace cl

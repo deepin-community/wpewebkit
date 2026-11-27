@@ -25,13 +25,13 @@
 
 #pragma once
 
-#include "Color.h"
-#include "FontShadow.h"
+#include <WebCore/Color.h>
+#include <WebCore/FontShadow.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Forward.h>
 
 namespace IPC {
-template<typename T, typename> struct ArgumentCoder;
+template<typename> struct ArgumentCoder;
 }
 
 namespace WebCore {
@@ -62,8 +62,8 @@ public:
     Ref<MutableStyleProperties> createStyleProperties() const;
 
 private:
-    friend struct IPC::ArgumentCoder<FontChanges, void>;
-    const String& platformFontFamilyNameForCSS() const;
+    friend struct IPC::ArgumentCoder<FontChanges>;
+    const String& platformFontFamilyNameForCSS() const LIFETIME_BOUND;
 
     String m_fontName;
     String m_fontFamily;
@@ -87,10 +87,10 @@ public:
     void setFontChanges(const FontChanges& fontChanges) { m_fontChanges = fontChanges; }
 
     WEBCORE_EXPORT Ref<EditingStyle> createEditingStyle() const;
-    WEBCORE_EXPORT EditAction editAction() const;
+    WEBCORE_EXPORT EditAction NODELETE editAction() const;
 
 private:
-    friend struct IPC::ArgumentCoder<FontAttributeChanges, void>;
+    friend struct IPC::ArgumentCoder<FontAttributeChanges>;
     std::optional<VerticalAlignChange> m_verticalAlign;
     std::optional<Color> m_backgroundColor;
     std::optional<Color> m_foregroundColor;

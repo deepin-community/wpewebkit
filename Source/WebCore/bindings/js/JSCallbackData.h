@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,14 +28,24 @@
 
 #pragma once
 
-#include "JSDOMBinding.h"
 #include "ScriptExecutionContext.h"
-#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/PropertyName.h>
 #include <JavaScriptCore/Weak.h>
-#include <JavaScriptCore/WeakInlines.h>
-#include <wtf/Threading.h>
+#include <JavaScriptCore/WeakHandleOwner.h>
+#include <wtf/CurrentThread.h>
+#include <wtf/NakedPtr.h>
+#include <wtf/TZoneMalloc.h>
+
+namespace JSC {
+class JSObject;
+class JSValue;
+template<size_t> class MarkedArgumentBufferWithSize;
+using MarkedArgumentBuffer = MarkedArgumentBufferWithSize<8>;
+}
 
 namespace WebCore {
+
+class JSDOMGlobalObject;
 
 template<typename ImplementationClass> struct JSDOMCallbackConverterTraits;
 
@@ -43,56 +53,34 @@ template<typename ImplementationClass> struct JSDOMCallbackConverterTraits;
 // JSObject on the wrong thread without synchronization would corrupt the heap
 // (and synchronization would be slow).
 
-class JSCallbackData {
-    WTF_MAKE_FAST_ALLOCATED;
+class WEBCORE_EXPORT JSCallbackData {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(JSCallbackData, WEBCORE_EXPORT);
 public:
     enum class CallbackType { Function, Object, FunctionOrObject };
 
-    JSCallbackData(JSC::JSObject* callback, JSDOMGlobalObject* globalObject, void* owner)
-        : m_globalObject(globalObject)
-        , m_callback(callback, &m_weakOwner, owner)
-    {
-    }
+    JSCallbackData(JSC::JSObject* callback, JSDOMGlobalObject*, void* owner);
+    ~JSCallbackData();
 
-    ~JSCallbackData()
-    {
-#if !PLATFORM(IOS_FAMILY)
-        ASSERT(m_thread.ptr() == &Thread::current());
-#endif
-    }
+    JSDOMGlobalObject* globalObject();
+    JSC::JSObject* callback();
 
-    JSDOMGlobalObject* globalObject() { return m_globalObject.get(); }
-    JSC::JSObject* callback() { return m_callback.get(); }
+    template<typename Visitor> void visitJSFunctionInGCThread(Visitor&);
 
-    template<typename Visitor> void visitJSFunction(Visitor&);
+    static JSC::JSValue invokeCallback(JSDOMGlobalObject&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
 
-    WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSDOMGlobalObject&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
-
-    JSC::JSValue invokeCallback(JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
-    {
-        auto* globalObject = this->globalObject();
-        if (!globalObject)
-            return { };
-
-        return JSCallbackData::invokeCallback(*globalObject, callback(), thisValue, args, callbackType, functionName, returnedException);
-    }
+    JSC::JSValue invokeCallback(JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>&);
 
 private:
     JSC::Weak<JSDOMGlobalObject> m_globalObject;
 
-    class WeakOwner : public JSC::WeakHandleOwner {
-        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* owner, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) override
-        {
-            if (UNLIKELY(reason))
-                *reason = "Callback owner is an opaque root"_s;
-            return visitor.containsOpaqueRoot(owner);
-        }
+    class WEBCORE_EXPORT WeakOwner : public JSC::WeakHandleOwner {
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* owner, JSC::AbstractSlotVisitor&, ASCIILiteral*) override;
     };
     WeakOwner m_weakOwner;
     JSC::Weak<JSC::JSObject> m_callback;
 
 #if ASSERT_ENABLED
-    Ref<Thread> m_thread { Thread::current() };
+    const uint32_t m_threadID { currentThreadID() };
 #endif
 };
 

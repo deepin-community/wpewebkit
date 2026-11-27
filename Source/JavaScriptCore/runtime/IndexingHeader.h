@@ -25,7 +25,9 @@
 
 #pragma once
 
-#include "PropertyStorage.h"
+#include <JavaScriptCore/PropertyStorage.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -112,11 +114,6 @@ public:
         return reinterpret_cast<Butterfly*>(this + 1);
     }
     
-    // These methods are not standalone in the sense that they cannot be
-    // used on a copy of the IndexingHeader.
-    size_t preCapacity(Structure*);
-    size_t indexingPayloadSizeInBytes(Structure*);
-    
 private:
     friend class LLIntOffsetsExtractor;
 
@@ -136,3 +133,5 @@ private:
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

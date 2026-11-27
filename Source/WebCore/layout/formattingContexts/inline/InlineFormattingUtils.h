@@ -25,7 +25,10 @@
 
 #pragma once
 
+#include "BlockLayoutState.h"
+#include "InlineLine.h"
 #include "InlineLineBuilder.h"
+#include <WebCore/InlineLineTypes.h>
 
 namespace WebCore {
 namespace Layout {
@@ -40,11 +43,9 @@ public:
 
     InlineLayoutUnit logicalTopForNextLine(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&) const;
 
-    ContentHeightAndMargin inlineBlockContentHeightAndMargin(const Box&, const HorizontalConstraints&, const OverriddenVerticalValues&) const;
-    ContentWidthAndMargin inlineBlockContentWidthAndMargin(const Box&, const HorizontalConstraints&, const OverriddenHorizontalValues&) const;
-
     enum class IsIntrinsicWidthMode : bool { No, Yes };
-    InlineLayoutUnit computedTextIndent(IsIntrinsicWidthMode, std::optional<bool> previousLineEndsWithLineBreak, InlineLayoutUnit availableWidth) const;
+    enum class LineEndsWithLineBreak : bool { No, Yes };
+    InlineLayoutUnit computedTextIndent(IsIntrinsicWidthMode, IsFirstFormattedLine, std::optional<LineEndsWithLineBreak> previousLineEndsWithLineBreak, InlineLayoutUnit availableWidth) const;
 
     bool inlineLevelBoxAffectsLineBox(const InlineLevelBox&) const;
 
@@ -52,11 +53,9 @@ public:
 
     FloatingContext::Constraints floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext&) const;
 
-    static InlineRect flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
+    static InlineRect NODELETE flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
 
-    void adjustMarginStartForListMarker(const ElementBox&, LayoutUnit nestedListMarkerMarginStart, InlineLayoutUnit rootInlineBoxOffset) const;
-
-    static InlineLayoutUnit horizontalAlignmentOffset(const RenderStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, const Line::RunList& runs, bool isLastLine, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
+    static InlineLayoutUnit horizontalAlignmentOffset(const Style::ComputedStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
 
     static InlineItemPosition leadingInlineItemPositionForNextLine(InlineItemPosition lineContentEnd, std::optional<InlineItemPosition> previousLineContentEnd, bool lineHasIntrusiveOrNewlyPlacedFloat, InlineItemPosition layoutRangeEnd);
 
@@ -66,18 +65,19 @@ public:
 
     static std::pair<InlineLayoutUnit, InlineLayoutUnit> textEmphasisForInlineBox(const Box&, const ElementBox& rootBox);
 
-    static LineEndingEllipsisPolicy lineEndingEllipsisPolicy(const RenderStyle& rootStyle, size_t numberOfLinesWithInlineContent, std::optional<size_t> numberOfVisibleLinesAllowed);
+    static LineEndingTruncationPolicy NODELETE lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
+
+    static std::optional<LineLayoutResult::InlineContentEnding> inlineContentEnding(const Line::Result&);
+
+    bool NODELETE shouldDiscardRemainingContentInBlockDirection() const;
 
 private:
-    InlineLayoutUnit contentLeftAfterLastLine(const ConstraintsForInFlowContent&, std::optional<InlineLayoutUnit> lastLineLogicalBottom, const FloatingContext&) const;
     bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next) const;
 
-    const InlineLayoutState& layoutState() const;
-    const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
+    const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
 
 private:
     const InlineFormattingContext& m_inlineFormattingContext;
-
 };
 
 }

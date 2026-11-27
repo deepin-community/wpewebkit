@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,8 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteGPUProxy.h"
-#include "RemotePresentationContextProxy.h"
 #include "WebGPUIdentifier.h"
+#include <WebCore/PlatformXR.h>
 #include <WebCore/WebGPUXRProjectionLayer.h>
 
 namespace WebCore {
@@ -45,11 +45,11 @@ namespace WebKit::WebGPU {
 class ConvertToBackingContext;
 
 class RemoteXRProjectionLayerProxy final : public WebCore::WebGPU::XRProjectionLayer {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(RemoteXRProjectionLayerProxy);
 public:
-    static Ref<RemoteXRProjectionLayerProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteXRProjectionLayerProxy> create(Ref<RemoteGPUProxy>&& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteXRProjectionLayerProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteXRProjectionLayerProxy(WTF::move(parent), convertToBackingContext, identifier));
     }
 
     virtual ~RemoteXRProjectionLayerProxy();
@@ -61,43 +61,56 @@ public:
 private:
     friend class DowncastConvertToBackingContext;
 
-    RemoteXRProjectionLayerProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteXRProjectionLayerProxy(Ref<RemoteGPUProxy>&&, ConvertToBackingContext&, WebGPUIdentifier);
 
     RemoteXRProjectionLayerProxy(const RemoteXRProjectionLayerProxy&) = delete;
     RemoteXRProjectionLayerProxy(RemoteXRProjectionLayerProxy&&) = delete;
     RemoteXRProjectionLayerProxy& operator=(const RemoteXRProjectionLayerProxy&) = delete;
     RemoteXRProjectionLayerProxy& operator=(RemoteXRProjectionLayerProxy&&) = delete;
 
-    uint32_t textureWidth() const final;
-    uint32_t textureHeight() const final;
-    uint32_t textureArrayLength() const final;
+    uint32_t colorTextureWidth() const final;
+    uint32_t colorTextureHeight() const final;
+    uint32_t colorTextureArrayLength() const final;
 
     bool ignoreDepthValues() const final;
     std::optional<float> fixedFoveation() const final;
     void setFixedFoveation(std::optional<float>) final;
-    WebCore::WebGPU::WebXRRigidTransform* deltaPose() const final;
-    void setDeltaPose(WebCore::WebGPU::WebXRRigidTransform*) final;
+    WebCore::WebXRRigidTransform* deltaPose() const final;
+    void setDeltaPose(WebCore::WebXRRigidTransform*) final;
 
     // WebXRLayer
-    void startFrame() final;
+#if PLATFORM(COCOA)
+    void startFrame(size_t frameIndex, MachSendRight&&, MachSendRight&&, MachSendRight&&, size_t reusableTextureIndex, PlatformXR::RateMapDescription&&) final;
     void endFrame() final;
+#else
+    void startFrame(PlatformXR::FrameData&) final { RELEASE_ASSERT_NOT_REACHED(); }
+    void endFrame(PlatformXR::DeviceLayer&) final;
+#endif
+
+    bool allColorTexturesAreBound() const final { RELEASE_ASSERT_NOT_REACHED(); return false; }
 
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult<T> sendSync(T&& message)
+    [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().streamClientConnection().sendSync(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->sendSync(WTF::move(message), backing());
     }
+
+    bool isRemoteXRProjectionLayerProxy() const final { return true; }
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_parent;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteGPUProxy> m_parent;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteXRProjectionLayerProxy)
+    static bool isType(const WebCore::WebGPU::XRProjectionLayer& projectionLayer) { return projectionLayer.isRemoteXRProjectionLayerProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

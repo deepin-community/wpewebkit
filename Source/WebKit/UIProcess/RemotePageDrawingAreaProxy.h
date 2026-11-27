@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,35 +31,32 @@
 #include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
-class RemotePageDrawingAreaProxy;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::RemotePageDrawingAreaProxy> : std::true_type { };
-}
-
-namespace WebKit {
 
 class DrawingAreaProxy;
 class WebProcessProxy;
 
-class RemotePageDrawingAreaProxy : public IPC::MessageReceiver {
+class RemotePageDrawingAreaProxy : public IPC::MessageReceiver, public RefCounted<RemotePageDrawingAreaProxy> {
     WTF_MAKE_TZONE_ALLOCATED(RemotePageDrawingAreaProxy);
 public:
-    RemotePageDrawingAreaProxy(DrawingAreaProxy&, WebProcessProxy&);
+    static Ref<RemotePageDrawingAreaProxy> create(DrawingAreaProxy&, WebProcessProxy&);
+
     ~RemotePageDrawingAreaProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     WebProcessProxy& process() { return m_process; }
+    DrawingAreaIdentifier identifier() const { return m_identifier; }
 
 private:
+    RemotePageDrawingAreaProxy(DrawingAreaProxy&, WebProcessProxy&);
+
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
     WeakPtr<DrawingAreaProxy> m_drawingArea;
     DrawingAreaIdentifier m_identifier;
     std::span<IPC::ReceiverName> m_names;
-    Ref<WebProcessProxy> m_process;
+    const Ref<WebProcessProxy> m_process;
 };
 
 }

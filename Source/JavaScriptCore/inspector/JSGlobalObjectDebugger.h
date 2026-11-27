@@ -40,7 +40,7 @@ public:
 
     JSC::JSGlobalObject& globalObject() const { return m_globalObject; }
 
-    static RunLoopMode runLoopMode();
+    static RunLoopMode NODELETE runLoopModeSingleton();
 
 private:
     // JSC::Debugger

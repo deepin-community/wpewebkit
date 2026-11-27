@@ -27,17 +27,19 @@ class AffineTransform;
 class RenderObject;
 class SVGMarkerElement;
 
+enum class SVGMarkerUnitsType : uint8_t;
+
 class LegacyRenderSVGResourceMarker final : public LegacyRenderSVGResourceContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRenderSVGResourceMarker);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceMarker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceMarker);
 public:
-    LegacyRenderSVGResourceMarker(SVGMarkerElement&, RenderStyle&&);
+    LegacyRenderSVGResourceMarker(SVGMarkerElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGResourceMarker();
 
     inline SVGMarkerElement& markerElement() const;
 
-    void removeAllClientsFromCacheIfNeeded(bool markForInvalidation, SingleThreadWeakHashSet<RenderObject>* visitedRenderers) override;
-    void removeClientFromCache(RenderElement&, bool markForInvalidation = true) override;
+    void removeAllClientsFromCache() override { }
+    void removeClientFromCache(RenderElement&) override { }
 
     void draw(PaintInfo&, const AffineTransform&);
 
@@ -48,10 +50,10 @@ public:
     void layout() override;
     void calcViewport() override;
 
-    const AffineTransform& localToParentTransform() const override;
+    const AffineTransform& localToParentTransform() const LIFETIME_BOUND override;
     AffineTransform markerTransformation(const FloatPoint& origin, float angle, float strokeWidth) const;
 
-    OptionSet<ApplyResult> applyResource(RenderElement&, const RenderStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override { return { }; }
+    OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override { return { }; }
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) override { return FloatRect(); }
 
     FloatPoint referencePoint() const;
@@ -66,7 +68,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSVGResourceMarker"_s; }
 
     // Generates a transformation matrix usable to render marker content. Handles scaling the marker content
-    // acording to SVGs markerUnits="strokeWidth" concept, when a strokeWidth value != -1 is passed in.
+    // according to SVGs markerUnits="strokeWidth" concept, when a strokeWidth value != -1 is passed in.
     AffineTransform markerContentTransformation(const AffineTransform& contentTransformation, const FloatPoint& origin, float strokeWidth = -1) const;
 
     AffineTransform viewportTransform() const;
@@ -80,4 +82,5 @@ private:
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::LegacyRenderSVGResourceMarker)
 static bool isType(const WebCore::RenderObject& renderer) { return renderer.isLegacyRenderSVGResourceMarker(); }
 static bool isType(const WebCore::LegacyRenderSVGResource& resource) { return resource.resourceType() == WebCore::MarkerResourceType; }
+static bool isType(const WebCore::LegacyRenderSVGResourceContainer& resource) { return resource.resourceType() == WebCore::MarkerResourceType; }
 SPECIALIZE_TYPE_TRAITS_END()

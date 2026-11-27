@@ -26,7 +26,6 @@
 #include "config.h"
 #include <wtf/TimeWithDynamicClockType.h>
 
-#include <cmath>
 #include <wtf/Condition.h>
 #include <wtf/PrintStream.h>
 #include <wtf/Lock.h>
@@ -42,6 +41,12 @@ TimeWithDynamicClockType TimeWithDynamicClockType::now(ClockType type)
         return MonotonicTime::now();
     case ClockType::Approximate:
         return ApproximateTime::now();
+    case ClockType::Continuous:
+        return ContinuousTime::now();
+    case ClockType::ContinuousApproximate:
+        return ContinuousApproximateTime::now();
+    case ClockType::UnbarrieredMonotonic:
+        return UnbarrieredMonotonicTime::now();
     }
     RELEASE_ASSERT_NOT_REACHED();
     return TimeWithDynamicClockType();
@@ -70,15 +75,39 @@ ApproximateTime TimeWithDynamicClockType::approximateTime() const
     return ApproximateTime::fromRawSeconds(m_value);
 }
 
+ContinuousTime TimeWithDynamicClockType::continuousTime() const
+{
+    RELEASE_ASSERT(m_type == ClockType::Continuous);
+    return ContinuousTime::fromRawSeconds(m_value);
+}
+
+ContinuousApproximateTime TimeWithDynamicClockType::continuousApproximateTime() const
+{
+    RELEASE_ASSERT(m_type == ClockType::ContinuousApproximate);
+    return ContinuousApproximateTime::fromRawSeconds(m_value);
+}
+
+UnbarrieredMonotonicTime TimeWithDynamicClockType::unbarrieredMonotonicTime() const
+{
+    RELEASE_ASSERT(m_type == ClockType::UnbarrieredMonotonic);
+    return UnbarrieredMonotonicTime::fromRawSeconds(m_value);
+}
+
 WallTime TimeWithDynamicClockType::approximateWallTime() const
 {
     switch (m_type) {
     case ClockType::Wall:
         return wallTime();
     case ClockType::Monotonic:
-        return monotonicTime().approximateWallTime();
+        return monotonicTime().approximate<WallTime>();
     case ClockType::Approximate:
-        return approximateTime().approximateWallTime();
+        return approximateTime().approximate<WallTime>();
+    case ClockType::Continuous:
+        return continuousTime().approximate<WallTime>();
+    case ClockType::ContinuousApproximate:
+        return ContinuousApproximateTime().approximate<WallTime>();
+    case ClockType::UnbarrieredMonotonic:
+        return unbarrieredMonotonicTime().approximate<WallTime>();
     }
     RELEASE_ASSERT_NOT_REACHED();
     return WallTime();
@@ -88,11 +117,17 @@ MonotonicTime TimeWithDynamicClockType::approximateMonotonicTime() const
 {
     switch (m_type) {
     case ClockType::Wall:
-        return wallTime().approximateMonotonicTime();
+        return wallTime().approximate<MonotonicTime>();
     case ClockType::Monotonic:
         return monotonicTime();
     case ClockType::Approximate:
-        return approximateTime().approximateMonotonicTime();
+        return approximateTime().approximate<MonotonicTime>();
+    case ClockType::Continuous:
+        return continuousTime().approximate<MonotonicTime>();
+    case ClockType::ContinuousApproximate:
+        return ContinuousApproximateTime().approximate<MonotonicTime>();
+    case ClockType::UnbarrieredMonotonic:
+        return unbarrieredMonotonicTime().approximate<MonotonicTime>();
     }
     RELEASE_ASSERT_NOT_REACHED();
     return MonotonicTime();
@@ -104,28 +139,10 @@ Seconds TimeWithDynamicClockType::operator-(const TimeWithDynamicClockType& othe
     return Seconds(m_value - other.m_value);
 }
 
-bool TimeWithDynamicClockType::operator<(const TimeWithDynamicClockType& other) const
+std::partial_ordering operator<=>(const TimeWithDynamicClockType& a, const TimeWithDynamicClockType& b)
 {
-    RELEASE_ASSERT(m_type == other.m_type);
-    return m_value < other.m_value;
-}
-
-bool TimeWithDynamicClockType::operator>(const TimeWithDynamicClockType& other) const
-{
-    RELEASE_ASSERT(m_type == other.m_type);
-    return m_value > other.m_value;
-}
-
-bool TimeWithDynamicClockType::operator<=(const TimeWithDynamicClockType& other) const
-{
-    RELEASE_ASSERT(m_type == other.m_type);
-    return m_value <= other.m_value;
-}
-
-bool TimeWithDynamicClockType::operator>=(const TimeWithDynamicClockType& other) const
-{
-    RELEASE_ASSERT(m_type == other.m_type);
-    return m_value >= other.m_value;
+    RELEASE_ASSERT(a.m_type == b.m_type);
+    return a.m_value <=> b.m_value;
 }
 
 void TimeWithDynamicClockType::dump(PrintStream& out) const

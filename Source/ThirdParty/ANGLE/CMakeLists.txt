@@ -1,7 +1,12 @@
 set_property(DIRECTORY . PROPERTY FOLDER "ANGLE")
 
 if (APPLE)
-    set(is_mac TRUE)
+    set(is_apple TRUE)
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(is_ios TRUE)
+    else ()
+        set(is_mac TRUE)
+    endif ()
 elseif (WIN32)
     set(is_win TRUE)
     set(angle_enable_d3d9 TRUE)
@@ -20,6 +25,9 @@ include(GLESv2.cmake)
 include(D3D.cmake)
 include(GL.cmake)
 include(Metal.cmake)
+include(Wgpu.cmake)
+
+option(ENABLE_WEBGL_WEBGPU "Build ANGLE's WebGPU backend" OFF)
 
 set(no_gl_prototypes
     GL_GLES_PROTOTYPES=0
@@ -83,8 +91,8 @@ set(ANGLE_SOURCES
     ${angle_translator_essl_symbol_table_sources}
     ${angle_translator_glsl_and_vulkan_base_sources}
     ${angle_translator_glsl_sources}
+    $<$<BOOL:${is_apple}>:${angle_translator_glsl_apple_sources}>
     ${angle_translator_sources}
-    ${angle_system_utils_sources}
     src/common/angle_version_info.cpp
     src/libANGLE/capture/FrameCapture_mock.cpp
     src/libANGLE/capture/serialize_mock.cpp
@@ -102,12 +110,25 @@ if (WIN32)
         "src/libANGLE/renderer/dxgi_support_table.h"
         "src/libANGLE/renderer/dxgi_support_table_autogen.cpp"
     )
-    if (NOT angle_is_winuwp)
-        list(APPEND ANGLE_SOURCES
-            "src/libANGLE/renderer/d3d_format.cpp"
-            "src/libANGLE/renderer/d3d_format.h"
-        )
-    endif()
+endif ()
+
+if (ENABLE_WEBGL_WEBGPU)
+    list(APPEND ANGLE_SOURCES
+        ${wgpu_backend_sources}
+
+        ${angle_translator_lib_wgsl_sources}
+
+        WebKit/dawn/native/DawnNativeWebGPUFramework.cpp
+        WebKit/dawn/dawn_proc.h
+        WebKit/dawn/dawn_proc_table.h
+        WebKit/dawn/native/DawnNative.h
+        WebKit/dawn/webgpu.h
+        WebKit/webgpu/webgpu.h
+    )
+
+    list(APPEND ANGLE_DEFINITIONS
+        ANGLE_ENABLE_WGPU
+    )
 endif ()
 
 set(ANGLEGLESv2_LIBRARIES
@@ -117,11 +138,6 @@ set(ANGLEGLESv2_LIBRARIES
 set(zlib_wrapper_sources
     "third_party/zlib/google/compression_utils_portable.h"
     "third_party/zlib/google/compression_utils_portable.cc"
-)
-
-set(angle_gl_enum_utils
-    "src/libANGLE/gl_enum_utils.cpp"
-    "src/libANGLE/gl_enum_utils_autogen.cpp"
 )
 
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
@@ -152,6 +168,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     target_compile_definitions(ANGLEFramework INTERFACE ${gl_prototypes})
 
     add_library(GLESv2 ${GLESv2_LIBRARY_TYPE}
+        ${libglesv2_entry_point_sources}
         ${libglesv2_sources}
     )
     target_include_directories(GLESv2 PRIVATE ${ANGLE_PRIVATE_INCLUDE_DIRECTORIES})
@@ -161,6 +178,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     )
 
     target_link_libraries(GLESv2 PRIVATE ${ANGLEGLESv2_LIBRARIES} ${CMAKE_DL_LIBS})
+    WEBKIT_REUSE_PREFIX_HEADER(GLESv2 ANGLE ANGLEPrefix.h PREFIX_LANGUAGES CXX)
 
     if (WIN32)
         # Output library name according to the .def
@@ -170,8 +188,9 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
 
     add_library(GLESv2Framework INTERFACE)
     target_link_libraries(GLESv2Framework INTERFACE GLESv2)
-    target_include_directories(GLESv2Framework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR})
+    target_include_directories(GLESv2Framework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR} ${ANGLE_HEADERS_DIR})
     target_compile_definitions(GLESv2Framework INTERFACE USE_SYSTEM_EGL)
+    add_dependencies(GLESv2Framework GLSLANGHeaders ANGLEHeaders)
     add_library(ANGLE::GLES ALIAS GLESv2Framework)
 
     if (USE_ANGLE_EGL)
@@ -195,9 +214,10 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         endif ()
 
         add_library(EGLFramework INTERFACE)
-        target_include_directories(EGLFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR}/)
+        target_include_directories(EGLFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR}/ ${ANGLE_HEADERS_DIR})
         target_compile_definitions(EGLFramework INTERFACE ${gl_prototypes})
         target_link_libraries(EGLFramework INTERFACE EGL)
+        add_dependencies(EGLFramework GLSLANGHeaders ANGLEHeaders)
         add_library(ANGLE::EGL ALIAS EGLFramework)
     endif ()
 else ()
@@ -211,6 +231,8 @@ else ()
     )
 endif ()
 
+WEBKIT_ADD_PREFIX_HEADER(ANGLE ANGLEPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
+
 if (ENABLE_WEBGL)
     set(libglesv2_entry_points_headers
         src/libGLESv2/entry_points_egl_autogen.h
@@ -221,9 +243,9 @@ if (ENABLE_WEBGL)
     )
 
     WEBKIT_COPY_FILES(LibGLESv2EntryPointsHeaders
-        DESTINATION ${ANGLE_FRAMEWORK_HEADERS_DIR}/ANGLE
+        DESTINATION ${ANGLE_HEADERS_DIR}
         FILES ${libglesv2_entry_points_headers}
-        FLATTENED
+        FLATTENED NO_SYMLINK  # adjust-angle-include-paths.py rewrites these in-place
     )
     if (WIN32 AND TARGET GLESv2)
         # GLESv2 needs to have a direct or indirect dependency to
@@ -233,14 +255,21 @@ if (ENABLE_WEBGL)
         add_dependencies(GLESv2 LibGLESv2EntryPointsHeaders)
     endif ()
 
-    add_custom_target(ANGLE-webgl-headers
-        DEPENDS LibGLESv2EntryPointsHeaders ANGLEWebGLHeaders
+    set(_angle_webgl_stamp ${CMAKE_CURRENT_BINARY_DIR}/ANGLE-webgl-headers.stamp)
+    add_custom_command(
+        OUTPUT ${_angle_webgl_stamp}
         COMMAND ${CMAKE_COMMAND} -E env
             BUILT_PRODUCTS_DIR=${ANGLE_FRAMEWORK_HEADERS_DIR}
             PUBLIC_HEADERS_FOLDER_PATH=/ANGLE
             ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/adjust-angle-include-paths.py
+        COMMAND ${CMAKE_COMMAND} -E touch ${_angle_webgl_stamp}
+        DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/adjust-angle-include-paths.py
+            ${libglesv2_entry_points_headers}
         VERBATIM
     )
+    add_custom_target(ANGLE-webgl-headers DEPENDS ${_angle_webgl_stamp})
+    add_dependencies(ANGLE-webgl-headers LibGLESv2EntryPointsHeaders ANGLEWebGLHeaders)
     add_dependencies(GLESv2Framework ANGLE-webgl-headers)
 endif ()
 
@@ -254,6 +283,6 @@ if (COMPILER_IS_GCC_OR_CLANG)
 endif ()
 
 target_link_libraries(ANGLEFramework INTERFACE ANGLE)
-target_include_directories(ANGLEFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR})
+target_include_directories(ANGLEFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR} ${ANGLE_HEADERS_DIR})
 
 add_library(ANGLE::ANGLE ALIAS ANGLEFramework)

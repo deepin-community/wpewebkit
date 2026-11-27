@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2007-2008 Torch Mobile, Inc.
  *
@@ -27,11 +27,12 @@
 
 #pragma once
 
-#include "AffineTransform.h"
-#include "SourceImage.h"
+#include <WebCore/AffineTransform.h>
+#include <WebCore/SourceImage.h>
 
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 #if USE(CG)
 typedef struct CGPattern* CGPatternRef;
@@ -40,46 +41,51 @@ typedef RetainPtr<CGPatternRef> PlatformPatternPtr;
 typedef struct _cairo_pattern cairo_pattern_t;
 typedef cairo_pattern_t* PlatformPatternPtr;
 #elif USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkShader.h>
+#include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 typedef sk_sp<SkShader> PlatformPatternPtr;
 #endif
 
 namespace WebCore {
 
-class AffineTransform;
 class GraphicsContext;
 
-class Pattern final : public RefCounted<Pattern> {
-public:
-    struct Parameters {
-        Parameters(bool repeatX = true, bool repeatY = true, AffineTransform patternSpaceTransform = { })
-            : repeatX(repeatX)
-            , repeatY(repeatY)
-            , patternSpaceTransform(patternSpaceTransform)
-        {
-        }
-        bool repeatX;
-        bool repeatY;
-        AffineTransform patternSpaceTransform;
-    };
+struct PatternParameters {
+    PatternParameters(bool repeatX = true, bool repeatY = true, AffineTransform patternSpaceTransform = { })
+        : repeatX(repeatX)
+        , repeatY(repeatY)
+        , patternSpaceTransform(patternSpaceTransform)
+    {
+    }
+    bool repeatX;
+    bool repeatY;
+    AffineTransform patternSpaceTransform;
+};
 
+class Pattern final : public ThreadSafeRefCounted<Pattern> {
+public:
+    using Parameters = PatternParameters;
     WEBCORE_EXPORT static Ref<Pattern> create(SourceImage&& tileImage, const Parameters& = { });
     WEBCORE_EXPORT ~Pattern();
 
-    const SourceImage& tileImage() const { return m_tileImage; }
-    RefPtr<NativeImage> tileNativeImage() const { return m_tileImage.nativeImage(); }
-    RefPtr<ImageBuffer> tileImageBuffer() const { return m_tileImage.imageBuffer(); }
-    const Parameters& parameters() const { return m_parameters; }
+    WEBCORE_EXPORT const SourceImage& NODELETE tileImage() const;
+    WEBCORE_EXPORT void setTileImage(SourceImage&&);
+
+    WEBCORE_EXPORT RefPtr<NativeImage> tileNativeImage() const;
+    WEBCORE_EXPORT RefPtr<ImageBuffer> tileImageBuffer() const;
+
+    const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
 
     // Pattern space is an abstract space that maps to the default user space by the transformation 'userSpaceTransform'
 #if USE(SKIA)
-    PlatformPatternPtr createPlatformPattern(const AffineTransform& userSpaceTransform, const SkSamplingOptions&) const;
+    PlatformPatternPtr createPlatformPattern(const SkSamplingOptions&, const sk_sp<GrContextThreadSafeProxy>&) const;
 #else
     PlatformPatternPtr createPlatformPattern(const AffineTransform& userSpaceTransform) const;
 #endif
 
-    void setTileImage(SourceImage&& tileImage) { m_tileImage = WTFMove(tileImage); }
-    void setPatternSpaceTransform(const AffineTransform&);
+    void NODELETE setPatternSpaceTransform(const AffineTransform&);
 
     const AffineTransform& patternSpaceTransform() const { return m_parameters.patternSpaceTransform; };
     bool repeatX() const { return m_parameters.repeatX; }
@@ -91,5 +97,6 @@ private:
     SourceImage m_tileImage;
     Parameters m_parameters;
 };
+
 
 } //namespace

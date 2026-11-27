@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2020 Alexey Shvayka <shvaikalesh@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,22 +33,59 @@
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
 #include "PropertyTable.h"
+#include "WebAssemblyGCStructure.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
 
 #define DUMP_STRUCTURE_ID_STATISTICS 0
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
+template<typename DetailsFunc>
+void Structure::checkOffsetConsistency(PropertyTable* propertyTable, const DetailsFunc& detailsFunc) const
+{
+    // We cannot reliably assert things about the property table in the concurrent
+    // compilation thread. It is possible for the table to be stolen and then have
+    // things added to it, which leads to the offsets being all messed up. We could
+    // get around this by grabbing a lock here, but I think that would be overkill.
+    if (isCompilationThread())
+        return;
+
+    unsigned totalSize = propertyTable->propertyStorageSize();
+    unsigned inlineOverflowAccordingToTotalSize = totalSize < m_inlineCapacity ? 0 : totalSize - m_inlineCapacity;
+
+    auto fail = [&] (const char* description) {
+        dataLog("Detected offset inconsistency: ", description, "!\n");
+        dataLog("this = ", RawPointer(this), "\n");
+        dataLog("transitionOffset = ", transitionOffset(), "\n");
+        dataLog("maxOffset = ", maxOffset(), "\n");
+        dataLog("m_inlineCapacity = ", m_inlineCapacity, "\n");
+        dataLog("propertyTable = ", RawPointer(propertyTable), "\n");
+        dataLog("numberOfSlotsForMaxOffset = ", numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity), "\n");
+        dataLog("totalSize = ", totalSize, "\n");
+        dataLog("inlineOverflowAccordingToTotalSize = ", inlineOverflowAccordingToTotalSize, "\n");
+        dataLog("numberOfOutOfLineSlotsForMaxOffset = ", numberOfOutOfLineSlotsForMaxOffset(maxOffset()), "\n");
+        detailsFunc();
+        UNREACHABLE_FOR_PLATFORM();
+    };
+
+    if (numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity) != totalSize)
+        fail("numberOfSlotsForMaxOffset doesn't match totalSize");
+    if (inlineOverflowAccordingToTotalSize != numberOfOutOfLineSlotsForMaxOffset(maxOffset()))
+        fail("inlineOverflowAccordingToTotalSize doesn't match numberOfOutOfLineSlotsForMaxOffset");
+}
+
 #if DUMP_STRUCTURE_ID_STATISTICS
-static HashSet<Structure*>& liveStructureSet = *(new HashSet<Structure*>);
+static UncheckedKeyHashSet<Structure*>& liveStructureSet = *(new UncheckedKeyHashSet<Structure*>);
 #endif
 
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
 {
     ASSERT(isUsingSingleSlot());
-    m_data = bitwise_cast<intptr_t>(structure) | UsingSingleSlotFlag;
+    m_data = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
     vm.writeBarrier(owner, structure);
 }
 
@@ -79,7 +116,7 @@ void StructureTransitionTable::add(VM& vm, JSCell* owner, Structure* structure)
     }
 
     // Add the structure to the map.
-    map()->set(StructureTransitionTable::Hash::createFromStructure(structure), structure);
+    map()->set(StructureTransitionTable::Hash::createKeyFromStructure(structure), structure);
 }
 
 void Structure::dumpStatistics()
@@ -91,10 +128,7 @@ void Structure::dumpStatistics()
     unsigned numberWithPropertyTables = 0;
     unsigned totalPropertyTablesSize = 0;
 
-    HashSet<Structure*>::const_iterator end = liveStructureSet.end();
-    for (HashSet<Structure*>::const_iterator it = liveStructureSet.begin(); it != end; ++it) {
-        Structure* structure = *it;
-
+    for (auto* structure : liveStructureSet) {
         switch (structure->m_transitionTable.size()) {
             case 0:
                 ++numberLeaf;
@@ -182,10 +216,20 @@ void Structure::validateFlags()
         methodTable.isExtensible != static_cast<MethodTable::IsExtensibleFunctionPtr>(JSObject::isExtensible)
         && methodTable.isExtensible != JSCell::isExtensible;
     RELEASE_ASSERT(overridesIsExtensible == typeInfo().overridesIsExtensible());
+
+    // MasqueradesAsUndefined requires non-null Realm.
+    RELEASE_ASSERT(realm() || !typeInfo().masqueradesAsUndefined());
 }
 #else
 inline void Structure::validateFlags() { }
 #endif
+
+Structure::Structure(VM& vm, StructureVariant variant, JSGlobalObject* globalObject, const TypeInfo& typeInfo, const ClassInfo* classInfo)
+    : Structure(vm, globalObject, jsNull(), typeInfo, classInfo, NonArray, 0)
+{
+    m_structureVariant = variant;
+    ASSERT(this->variant() == StructureVariant::WebAssemblyGC);
+}
 
 Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, const TypeInfo& typeInfo, const ClassInfo* classInfo, IndexingType indexingType, unsigned inlineCapacity)
     : JSCell(vm, vm.structureStructure.get())
@@ -194,21 +238,23 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     , m_inlineCapacity(inlineCapacity)
     , m_bitField(0)
     , m_propertyHash(0)
-    , m_globalObject(globalObject, WriteBarrierEarlyInit)
+    , m_realm(globalObject, WriteBarrierEarlyInit)
     , m_prototype(prototype, WriteBarrierEarlyInit)
     , m_classInfo(classInfo)
     , m_transitionWatchpointSet(IsWatched)
 {
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
+    bool isArrayStorage = hasAnyArrayStorage(indexingType);
 
     setDictionaryKind(NoneDictionaryKind);
     setIsPinnedPropertyTable(false);
-    setHasAnyKindOfGetterSetterProperties(classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
-    setHasReadOnlyOrGetterSetterPropertiesExcludingProto(hasAnyKindOfGetterSetterProperties() || classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnly)));
-    setHasNonEnumerableProperties(hasStaticNonEnumerableProperty || typeInfo.overridesGetOwnPropertySlot());
-    setHasNonConfigurableProperties(hasStaticNonConfigurableProperty || typeInfo.overridesGetOwnPropertySlot());
-    setHasNonConfigurableReadOnlyOrGetterSetterProperties(hasStaticNonConfigurableProperty || (typeInfo.overridesGetOwnPropertySlot() && typeInfo.type() != ArrayType));
+    setHasAnyKindOfGetterSetterProperties(m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
+    setHasReadOnlyOrGetterSetterPropertiesExcludingProto(hasAnyKindOfGetterSetterProperties() || m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnly)));
+    setHasNonEnumerableProperties(hasStaticNonEnumerableProperty || typeInfo.overridesGetOwnPropertySlot() || isArrayStorage);
+    setHasSpecialProperties(false);
+    setHasNonConfigurableProperties(hasStaticNonConfigurableProperty || typeInfo.overridesGetOwnPropertySlot() || isArrayStorage);
+    setHasNonConfigurableReadOnlyOrGetterSetterProperties(hasStaticNonConfigurableProperty || (typeInfo.overridesGetOwnPropertySlot() && typeInfo.type() != ArrayType) || isArrayStorage);
     setHasUnderscoreProtoPropertyExcludingOriginalProto(false);
     setIsQuickPropertyAccessAllowedForEnumeration(true);
     setTransitionPropertyAttributes(0);
@@ -231,9 +277,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
 
     validateFlags();
 
-#if ENABLE(STRUCTURE_ID_WITH_SHIFT)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
-#endif
 }
 
 const ClassInfo Structure::s_info = { "Structure"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Structure) };
@@ -256,6 +300,7 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     setHasAnyKindOfGetterSetterProperties(m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
     setHasReadOnlyOrGetterSetterPropertiesExcludingProto(hasAnyKindOfGetterSetterProperties() || m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnly)));
     setHasNonEnumerableProperties(hasStaticNonEnumerableProperty || typeInfo.overridesGetOwnPropertySlot());
+    setHasSpecialProperties(false);
     setHasNonConfigurableProperties(hasStaticNonConfigurableProperty || typeInfo.overridesGetOwnPropertySlot());
     setHasNonConfigurableReadOnlyOrGetterSetterProperties(hasStaticNonConfigurableProperty || (typeInfo.overridesGetOwnPropertySlot() && typeInfo.type() != ArrayType));
     setHasUnderscoreProtoPropertyExcludingOriginalProto(false);
@@ -279,15 +324,14 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     ASSERT(hasReadOnlyOrGetterSetterPropertiesExcludingProto() == m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)));
     ASSERT(!this->typeInfo().overridesGetCallData() || m_classInfo->methodTable.getCallData != &JSCell::getCallData);
 
-#if ENABLE(STRUCTURE_ID_WITH_SHIFT)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
-#endif
 }
 
-Structure::Structure(VM& vm, Structure* previous)
+Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     : JSCell(vm, vm.structureStructure.get())
     , m_inlineCapacity(previous->m_inlineCapacity)
     , m_bitField(0)
+    , m_structureVariant(variant)
     , m_propertyHash(previous->m_propertyHash)
     , m_seenProperties(previous->m_seenProperties)
     , m_prototype(previous->m_prototype.get(), WriteBarrierEarlyInit)
@@ -300,6 +344,7 @@ Structure::Structure(VM& vm, Structure* previous)
     setHasAnyKindOfGetterSetterProperties(previous->hasAnyKindOfGetterSetterProperties());
     setHasReadOnlyOrGetterSetterPropertiesExcludingProto(previous->hasReadOnlyOrGetterSetterPropertiesExcludingProto());
     setHasNonEnumerableProperties(previous->hasNonEnumerableProperties());
+    setHasSpecialProperties(previous->hasSpecialProperties());
     setHasNonConfigurableProperties(previous->hasNonConfigurableProperties());
     setHasNonConfigurableReadOnlyOrGetterSetterProperties(previous->hasNonConfigurableReadOnlyOrGetterSetterProperties());
     setHasUnderscoreProtoPropertyExcludingOriginalProto(previous->hasUnderscoreProtoPropertyExcludingOriginalProto());
@@ -329,29 +374,36 @@ Structure::Structure(VM& vm, Structure* previous)
     // Copy this bit now, in case previous was being watched.
     setTransitionWatchpointIsLikelyToBeFired(previous->transitionWatchpointIsLikelyToBeFired());
 
-    if (previous->m_globalObject)
-        m_globalObject.set(vm, this, previous->m_globalObject.get());
+    if (previous->m_realm)
+        m_realm.set(vm, this, previous->m_realm.get());
     ASSERT(hasAnyKindOfGetterSetterProperties() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
     ASSERT(hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)));
     ASSERT(!this->typeInfo().overridesGetCallData() || m_classInfo->methodTable.getCallData != &JSCell::getCallData);
 
-#if ENABLE(STRUCTURE_ID_WITH_SHIFT)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
-#endif
 }
 
-Structure::~Structure()
-{
-    if (typeInfo().structureIsImmortal())
-        return;
-
-    if (isBrandedStructure())
-        static_cast<BrandedStructure*>(this)->destruct();
-}
+Structure::~Structure() = default;
 
 void Structure::destroy(JSCell* cell)
 {
-    static_cast<Structure*>(cell)->Structure::~Structure();
+    auto* structure = static_cast<Structure*>(cell);
+    switch (structure->variant()) {
+    case StructureVariant::Normal:
+        structure->Structure::~Structure();
+        break;
+    case StructureVariant::Branded:
+        static_cast<BrandedStructure*>(structure)->BrandedStructure::~BrandedStructure();
+        break;
+    case StructureVariant::WebAssemblyGC:
+#if ENABLE(WEBASSEMBLY)
+        static_cast<WebAssemblyGCStructure*>(structure)->WebAssemblyGCStructure::~WebAssemblyGCStructure();
+#endif
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    }
 }
 
 Structure* Structure::create(PolyProtoTag, VM& vm, JSGlobalObject* globalObject, JSObject* prototype, const TypeInfo& typeInfo, const ClassInfo* classInfo, IndexingType indexingType, unsigned inlineCapacity)
@@ -628,7 +680,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     ASSERT(!Structure::removePropertyTransitionFromExistingStructure(structure, propertyName, offset));
     ASSERT(structure->getConcurrently(propertyName.uid()) != invalidOffset);
 
-    if (structure->transitionCountHasOverflowed()) {
+    if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
         Structure* transition = toUncacheableDictionaryTransition(vm, structure, deferred);
         ASSERT(structure != transition);
@@ -712,7 +764,7 @@ Structure* Structure::changeGlobalProxyTargetTransition(VM& vm, Structure* struc
     DeferGC deferGC(vm);
     Structure* transition = Structure::create(vm, structure, &deferred);
 
-    transition->setGlobalObject(vm, globalObject);
+    transition->setRealm(vm, globalObject);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
@@ -768,7 +820,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
         return existingTransition;
     }
 
-    if (structure->transitionCountHasOverflowed()) {
+    if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
         Structure* transition = toUncacheableDictionaryTransition(vm, structure, deferred);
         ASSERT(structure != transition);
@@ -977,6 +1029,11 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     ASSERT(isDictionary());
     ASSERT(object->structure() == this);
 
+    // Must outlive cellLocker. The collection this defers until scope exit would otherwise run
+    // while the cell lock is held, and the collector takes that same cell lock to scan an array
+    // storage butterfly, so it would deadlock against us.
+    DeferGC deferGC(vm);
+
     Locker<JSCellLock> cellLocker(NoLockingNecessary);
 
     PropertyTable* table = nullptr;
@@ -995,7 +1052,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     if (beforeOutOfLineCapacity != afterOutOfLineCapacity)
         cellLocker = Locker { object->cellLock() };
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    ConcurrentJSLocker locker(m_lock);
 
     object->setStructureIDDirectly(id().nuke());
     WTF::storeStoreFence();
@@ -1021,11 +1078,12 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
             object->inlineStorageUnsafe() + inlineSize(),
             (inlineCapacity() - inlineSize()) * sizeof(EncodedJSValue));
 
-        Butterfly* butterfly = object->butterfly();
-        size_t preCapacity = butterfly->indexingHeader()->preCapacity(this);
-        void* base = butterfly->base(preCapacity, beforeOutOfLineCapacity);
-        void* startOfPropertyStorageSlots = reinterpret_cast<EncodedJSValue*>(base) + preCapacity;
-        gcSafeZeroMemory(static_cast<JSValue*>(startOfPropertyStorageSlots), (beforeOutOfLineCapacity - outOfLineSize()) * sizeof(EncodedJSValue));
+        if (Butterfly* butterfly = object->butterfly()) {
+            size_t preCapacity = butterfly->preCapacity(this);
+            void* base = butterfly->base(preCapacity, beforeOutOfLineCapacity);
+            void* startOfPropertyStorageSlots = reinterpret_cast<EncodedJSValue*>(base) + preCapacity;
+            gcSafeZeroMemory(static_cast<JSValue*>(startOfPropertyStorageSlots), (beforeOutOfLineCapacity - outOfLineSize()) * sizeof(EncodedJSValue));
+        }
         checkOffsetConsistency();
     }
 
@@ -1050,7 +1108,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     WTF::storeStoreFence();
     object->setStructureIDDirectly(id());
 
-    // We need to do a writebarrier here because the GC thread might be scanning the butterfly while
+    // We need to do a writebarrier here because a GC thread might be scanning the butterfly while
     // we are shuffling properties around. See: https://bugs.webkit.org/show_bug.cgi?id=166989
     vm.writeBarrier(object);
 
@@ -1271,7 +1329,7 @@ PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, uns
         });
 }
 
-void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
     if (!table)
@@ -1312,6 +1370,11 @@ void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArray& propert
     }
 }
 
+StructureFireDetail::StructureFireDetail(ClangVTableWorkaroundTag)
+    : m_structure(nullptr)
+{
+}
+
 void StructureFireDetail::dump(PrintStream& out) const
 {
     out.print("Structure transition from ", *m_structure);
@@ -1344,14 +1407,14 @@ void Structure::didTransitionFromThisStructure(DeferredStructureTransitionWatchp
 template<typename Visitor>
 void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Structure* thisObject = jsCast<Structure*>(cell);
+    Structure* thisObject = uncheckedDowncast<Structure>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
     
     ConcurrentJSLocker locker(thisObject->m_lock);
     
-    visitor.append(thisObject->m_globalObject);
+    visitor.append(thisObject->m_realm);
     if (!thisObject->isObject()) {
         // We do not need to clear JSPropertyNameEnumerator since it is never cached for non-object Structure.
         // We do not have code clearing JSPropertyNameEnumerator since this function can be called concurrently.
@@ -1375,8 +1438,21 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     else if (thisObject->m_propertyTableUnsafe)
         thisObject->m_propertyTableUnsafe.clear();
 
-    if (thisObject->isBrandedStructure())
+    switch (thisObject->variant()) {
+    case StructureVariant::Normal:
+        break;
+    case StructureVariant::Branded:
         BrandedStructure::visitAdditionalChildren(cell, visitor);
+        break;
+    case StructureVariant::WebAssemblyGC:
+#if ENABLE(WEBASSEMBLY)
+        WebAssemblyGCStructure::visitAdditionalChildren(cell, visitor);
+        break;
+#endif
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    }
 
     // Mark only in non Full collection. In full collection, we handle it as a weak-link.
     if (!(visitor.heap()->collectionScope() == CollectionScope::Full)) {
@@ -1394,7 +1470,7 @@ ALWAYS_INLINE bool Structure::isCheapDuringGC(Visitor& visitor)
     // has any large property names.
     // https://bugs.webkit.org/show_bug.cgi?id=157334
     
-    return (!m_globalObject || visitor.isMarked(m_globalObject.get()))
+    return (!m_realm || visitor.isMarked(m_realm.get()))
         && (hasPolyProto() || !storedPrototypeObject() || visitor.isMarked(storedPrototypeObject()));
 }
 
@@ -1447,7 +1523,7 @@ Ref<StructureShape> Structure::toStructureShape(JSValue value, bool& sawPolyProt
 
         auto newShape = StructureShape::create();
         curShape->setProto(newShape.copyRef());
-        curShape = WTFMove(newShape);
+        curShape = WTF::move(newShape);
         curValue = prototypeObject;
         curStructure = prototypeObject->structure();
     }
@@ -1529,6 +1605,18 @@ bool ClassInfo::hasStaticPropertyWithAnyOfAttributes(uint8_t attributes) const
     for (const ClassInfo* ci = this; ci; ci = ci->parentClass) {
         if (const HashTable* table = ci->staticPropHashTable) {
             if (table->seenPropertyAttributes & attributes)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool ClassInfo::hasStaticProperty(PropertyName propertyName) const
+{
+    for (const ClassInfo* ci = this; ci; ci = ci->parentClass) {
+        if (const HashTable* table = ci->staticPropHashTable) {
+            auto* entry = table->entry(propertyName);
+            if (entry)
                 return true;
         }
     }
@@ -1727,4 +1815,21 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
     out.print(kindName);
 }
 
+void Structure::checkOffsetConsistency() const
+{
+    if (auto* propertyTable = propertyTableOrNull())
+        checkOffsetConsistency(propertyTable, [] { });
+    else
+        ASSERT(!isPinnedPropertyTable());
+}
+
+#if ASSERT_ENABLED
+void Structure::checkConsistency()
+{
+    checkOffsetConsistency();
+}
+#endif
+
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

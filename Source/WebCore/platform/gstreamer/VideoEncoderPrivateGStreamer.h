@@ -22,7 +22,7 @@
 
 #include "GStreamerCommon.h"
 #include "VideoEncoderScalabilityMode.h"
-#include <wtf/FastMalloc.h>
+#include <wtf/TZoneMalloc.h>
 
 #define WEBKIT_TYPE_VIDEO_ENCODER (webkit_video_encoder_get_type())
 #define WEBKIT_VIDEO_ENCODER(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), WEBKIT_TYPE_VIDEO_ENCODER, WebKitVideoEncoder))
@@ -46,9 +46,11 @@ struct _WebKitVideoEncoderClass {
 
 GType webkit_video_encoder_get_type(void);
 
+namespace WebCore {
+
 class WebKitVideoEncoderBitRateAllocation : public RefCounted<WebKitVideoEncoderBitRateAllocation> {
+    WTF_MAKE_TZONE_ALLOCATED(WebKitVideoEncoderBitRateAllocation);
     WTF_MAKE_NONCOPYABLE(WebKitVideoEncoderBitRateAllocation);
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     static Ref<WebKitVideoEncoderBitRateAllocation> create(WebCore::VideoEncoderScalabilityMode scalabilityMode)
@@ -68,9 +70,9 @@ public:
 
     std::optional<uint32_t> getBitRate(unsigned spatialLayerIndex, unsigned temporalLayerIndex) const
     {
-        if (UNLIKELY(spatialLayerIndex >= MaxSpatialLayers))
+        if (spatialLayerIndex >= MaxSpatialLayers) [[unlikely]]
             return std::nullopt;
-        if (UNLIKELY(temporalLayerIndex >= MaxTemporalLayers))
+        if (temporalLayerIndex >= MaxTemporalLayers) [[unlikely]]
             return std::nullopt;
         return m_bitRates[spatialLayerIndex][temporalLayerIndex];
     }
@@ -83,10 +85,18 @@ private:
     { }
 
     WebCore::VideoEncoderScalabilityMode m_scalabilityMode;
-    std::optional<uint32_t> m_bitRates[MaxSpatialLayers][MaxTemporalLayers];
+    std::array<std::array<std::optional<uint32_t>, MaxSpatialLayers>, MaxTemporalLayers> m_bitRates;
 };
 
+struct CodecConfig {
+    String name;
+    bool useAnnexB;
+};
+
+} // namespace WebCore
+
 bool videoEncoderSupportsCodec(WebKitVideoEncoder*, const String&);
-bool videoEncoderSetCodec(WebKitVideoEncoder*, const String&, std::optional<WebCore::IntSize> = std::nullopt, std::optional<double> frameRate = std::nullopt);
-void videoEncoderSetBitRateAllocation(WebKitVideoEncoder*, RefPtr<WebKitVideoEncoderBitRateAllocation>&&);
+bool videoEncoderSetCodec(WebKitVideoEncoder*, const WebCore::CodecConfig&, const WebCore::IntSize&, std::optional<double> frameRate = std::nullopt, bool enableVideoFlip = false);
+void videoEncoderSetBitRateAllocation(WebKitVideoEncoder*, RefPtr<WebCore::WebKitVideoEncoderBitRateAllocation>&&);
+void videoEncoderSetFrameRate(WebKitVideoEncoder*, double frameRate);
 void teardownVideoEncoderSingleton();

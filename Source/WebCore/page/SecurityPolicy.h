@@ -28,7 +28,7 @@
 
 #pragma once
 
-#include "FetchOptions.h"
+#include <WebCore/FetchOptions.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -54,7 +54,7 @@ public:
 
     static String generateOriginHeader(ReferrerPolicy, const URL&, const SecurityOrigin&, const OriginAccessPatterns&);
 
-    static bool shouldInheritSecurityOriginFromOwner(const URL&);
+    WEBCORE_EXPORT static bool shouldInheritSecurityOriginFromOwner(const URL&);
 
     static bool isBaseURLSchemeAllowed(const URL&);
 
@@ -64,9 +64,9 @@ public:
         AllowLocalLoadsForLocalOnly,
     };
 
-    WEBCORE_EXPORT static void setLocalLoadPolicy(LocalLoadPolicy);
-    static bool restrictAccessToLocal();
-    static bool allowSubstituteDataAccessToLocal();
+    WEBCORE_EXPORT static void NODELETE setLocalLoadPolicy(LocalLoadPolicy);
+    static bool NODELETE restrictAccessToLocal();
+    static bool NODELETE allowSubstituteDataAccessToLocal();
 
     WEBCORE_EXPORT static void addOriginAccessAllowlistEntry(const SecurityOrigin& sourceOrigin, const String& destinationProtocol, const String& destinationDomain, bool allowDestinationSubdomains);
     WEBCORE_EXPORT static void removeOriginAccessAllowlistEntry(const SecurityOrigin& sourceOrigin, const String& destinationProtocol, const String& destinationDomain, bool allowDestinationSubdomains);

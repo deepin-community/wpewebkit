@@ -26,9 +26,11 @@ using BuiltinTypePtr = const std::unique_ptr<Type> BuiltinTypes::*;
 class ModuleLoader {
 private:
     struct Impl;
+    std::unique_ptr<Impl> fLocalImpl;
     Impl& fModuleLoader;
 
 public:
+    ModuleLoader();
     ModuleLoader(ModuleLoader::Impl&);
     ~ModuleLoader();
 
@@ -36,9 +38,7 @@ public:
     // allowed to fall out of scope, the mutex will be released.
     static ModuleLoader Get();
 
-    // The built-in types and root module are universal, immutable, and shared by every Compiler.
-    // They are created when the ModuleLoader is instantiated and never change.
-    const BuiltinTypes& builtinTypes();
+    // The root module is universal, immutable, and shared by every Compiler.
     const Module* rootModule();
 
     // These modules are loaded on demand; once loaded, they are kept for the lifetime of the
@@ -50,8 +50,6 @@ public:
     const Module* loadComputeModule(SkSL::Compiler* compiler);
     const Module* loadGraphiteVertexModule(SkSL::Compiler* compiler);
     const Module* loadGraphiteFragmentModule(SkSL::Compiler* compiler);
-    const Module* loadGraphiteVertexES2Module(SkSL::Compiler* compiler);
-    const Module* loadGraphiteFragmentES2Module(SkSL::Compiler* compiler);
 
     const Module* loadPublicModule(SkSL::Compiler* compiler);
     const Module* loadPrivateRTShaderModule(SkSL::Compiler* compiler);
@@ -59,9 +57,6 @@ public:
     // This updates an existing Module's symbol table to match Runtime Effect rules. GLSL types like
     // `vec4` are added; SkSL private types like `sampler2D` are replaced with an invalid type.
     void addPublicTypeAliases(const SkSL::Module* module);
-
-    // This unloads every module. It's useful primarily for benchmarking purposes.
-    void unloadModules();
 };
 
 }  // namespace SkSL

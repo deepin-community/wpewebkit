@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2015 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2013, 2015 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(REMOTE_INSPECTOR)
 
-#include "InspectorFrontendChannel.h"
-#include "RemoteControllableTarget.h"
+#include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <JavaScriptCore/RemoteControllableTarget.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -72,8 +74,8 @@ public:
     NSString *connectionIdentifier() const;
     NSString *destination() const;
 
-    Lock& queueMutex() { return m_queueMutex; }
-    const RemoteTargetQueue& queue() const { return m_queue; }
+    Lock& queueMutex() LIFETIME_BOUND { return m_queueMutex; }
+    const RemoteTargetQueue& queue() const LIFETIME_BOUND { return m_queue; }
     RemoteTargetQueue takeQueue();
 #endif
 
@@ -105,11 +107,17 @@ private:
 #endif
 
     ThreadSafeWeakPtr<RemoteControllableTarget> m_target WTF_GUARDED_BY_LOCK(m_targetMutex);
-    bool m_connected { false };
+
+    enum class ConnectionState {
+        Pending,
+        Connected,
+        Closed,
+    };
+    std::atomic<ConnectionState> m_connectionState { ConnectionState::Pending };
 
 #if PLATFORM(COCOA)
-    RetainPtr<NSString> m_connectionIdentifier;
-    RetainPtr<NSString> m_destination;
+    const RetainPtr<NSString> m_connectionIdentifier;
+    const RetainPtr<NSString> m_destination;
 #endif
 };
 

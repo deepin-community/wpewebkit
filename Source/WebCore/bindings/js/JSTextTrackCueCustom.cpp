@@ -41,11 +41,11 @@ using namespace JSC;
 
 bool JSTextTrackCueOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    JSTextTrackCue* jsTextTrackCue = jsCast<JSTextTrackCue*>(handle.slot()->asCell());
+    JSTextTrackCue* jsTextTrackCue = downcast<JSTextTrackCue>(handle.slot()->asCell());
     TextTrackCue& textTrackCue = jsTextTrackCue->wrapped();
 
     if (!textTrackCue.isContextStopped() && textTrackCue.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "TextTrackCue with pending activity"_s;
         return true;
     }
@@ -54,41 +54,19 @@ bool JSTextTrackCueOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
     if (!textTrackCue.track())
         return false;
 
-    if (UNLIKELY(reason))
+    if (reason) [[unlikely]]
         *reason = "TextTrack is an opaque root"_s;
 
-    return containsWebCoreOpaqueRoot(visitor, textTrackCue.track());
-}
-
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TextTrackCue>&& cue)
-{
-    switch (cue->cueType()) {
-    case TextTrackCue::Data:
-        return createWrapper<DataCue>(globalObject, WTFMove(cue));
-    case TextTrackCue::WebVTT:
-    case TextTrackCue::ConvertedToWebVTT:
-        return createWrapper<VTTCue>(globalObject, WTFMove(cue));
-    case TextTrackCue::Generic:
-        return createWrapper<TextTrackCue>(globalObject, WTFMove(cue));
-    }
-
-    ASSERT_NOT_REACHED();
-    return jsNull();
-}
-
-JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextTrackCue& cue)
-{
-    return wrap(lexicalGlobalObject, globalObject, cue);
+    SUPPRESS_UNCHECKED_ARG return containsWebCoreOpaqueRoot(visitor, textTrackCue.track());
 }
 
 template<typename Visitor>
-void JSTextTrackCue::visitAdditionalChildren(Visitor& visitor)
+void JSTextTrackCue::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    if (auto* textTrack = wrapped().track())
-        addWebCoreOpaqueRoot(visitor, *textTrack);
+    wrapped().visitAdditionalChildrenInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTextTrackCue);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSTextTrackCue);
 
 } // namespace WebCore
 

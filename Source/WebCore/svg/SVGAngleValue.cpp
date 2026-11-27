@@ -22,13 +22,17 @@
 #include "config.h"
 #include "SVGAngleValue.h"
 
+#include "ExceptionOr.h"
 #include "SVGParserUtilities.h"
 #include <wtf/MathExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/FastCharacterComparison.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringParsingBuffer.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAngleValue);
 
 float SVGAngleValue::value() const
 {
@@ -89,7 +93,7 @@ String SVGAngleValue::valueAsString() const
     return String();
 }
 
-template<typename CharacterType> static inline SVGAngleValue::Type parseAngleType(StringParsingBuffer<CharacterType> buffer)
+template<typename CharacterType> static inline SVGAngleValue::Type NODELETE parseAngleType(StringParsingBuffer<CharacterType> buffer)
 {
     switch (buffer.lengthRemaining()) {
     case 0:

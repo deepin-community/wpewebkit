@@ -36,7 +36,7 @@
 namespace WebCore {
 
 MediaSourceInterfaceMainThread::MediaSourceInterfaceMainThread(Ref<MediaSource>&& mediaSource)
-    : m_mediaSource(WTFMove(mediaSource))
+    : m_mediaSource(WTF::move(mediaSource))
 {
 }
 
@@ -55,6 +55,11 @@ bool MediaSourceInterfaceMainThread::isClosed() const
     return m_mediaSource->isClosed();
 }
 
+bool MediaSourceInterfaceMainThread::isEnded() const
+{
+    return m_mediaSource->isEnded();
+}
+
 MediaTime MediaSourceInterfaceMainThread::duration() const
 {
     return m_mediaSource->duration();
@@ -65,7 +70,7 @@ PlatformTimeRanges MediaSourceInterfaceMainThread::buffered() const
     return m_mediaSource->buffered();
 }
 
-Ref<TimeRanges> MediaSourceInterfaceMainThread::seekable() const
+PlatformTimeRanges MediaSourceInterfaceMainThread::seekable() const
 {
     return m_mediaSource->seekable();
 }
@@ -75,12 +80,12 @@ bool MediaSourceInterfaceMainThread::isStreamingContent() const
     if (RefPtr managedMediasource = dynamicDowncast<ManagedMediaSource>(m_mediaSource))
         return managedMediasource && managedMediasource->streamingAllowed() && managedMediasource->streaming();
     // We can assume that if we have active source buffers, later networking activity (such as stream or XHR requests) will be media related.
-    return m_mediaSource->activeSourceBuffers() && m_mediaSource->activeSourceBuffers()->length();
+    return m_mediaSource->activeSourceBuffers()->length();
 }
 
 bool MediaSourceInterfaceMainThread::attachToElement(WeakPtr<HTMLMediaElement>&& element)
 {
-    return m_mediaSource->attachToElement(WTFMove(element));
+    return m_mediaSource->attachToElement(WTF::move(element));
 }
 
 void MediaSourceInterfaceMainThread::detachFromElement()
@@ -111,6 +116,18 @@ void MediaSourceInterfaceMainThread::setAsSrcObject(bool set)
 void MediaSourceInterfaceMainThread::memoryPressure()
 {
     m_mediaSource->memoryPressure();
+}
+
+bool MediaSourceInterfaceMainThread::detachable() const
+{
+    return m_mediaSource->detachable();
+}
+
+void MediaSourceInterfaceMainThread::setLogIdentifier([[maybe_unused]] uint64_t identifier)
+{
+#if !RELEASE_LOG_DISABLED
+    m_mediaSource->setLogIdentifier(identifier);
+#endif
 }
 
 } // namespace WebCore

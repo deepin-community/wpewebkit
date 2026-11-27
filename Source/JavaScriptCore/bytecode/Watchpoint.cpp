@@ -35,14 +35,19 @@
 #include "HeapInlines.h"
 #include "LLIntPrototypeLoadAdaptiveStructureWatchpoint.h"
 #include "ObjectAdaptiveStructureWatchpoint.h"
+#include "PropertyInlineCacheClearingWatchpoint.h"
 #include "StructureRareDataInlines.h"
-#include "StructureStubClearingWatchpoint.h"
 #include "VM.h"
 
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Watchpoint);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(WatchpointSet);
+
+StringFireDetail::StringFireDetail(ClangVTableWorkaroundTag)
+    : m_string(nullptr)
+{
+}
 
 void StringFireDetail::dump(PrintStream& out) const
 {
@@ -98,6 +103,10 @@ WatchpointSet::WatchpointSet(WatchpointState state)
 
 WatchpointSet::~WatchpointSet()
 {
+    // FIXME(rdar://165379969): This is here to silence a RefcountDebugger ASSERT. But the
+    // ASSERT is correct and our code is incorrect!
+    refCountDebugger().willDelete();
+
     // Remove all watchpoints, so that they don't try to remove themselves. Note that we
     // don't fire watchpoints on deletion. We assume that any code that is interested in
     // watchpoints already also separately has a mechanism to make sure that the code is
@@ -203,7 +212,7 @@ WatchpointSet* InlineWatchpointSet::inflateSlow()
     ASSERT(!isCompilationThread());
     WatchpointSet* fat = &WatchpointSet::create(decodeState(m_data)).leakRef();
     WTF::storeStoreFence();
-    m_data = bitwise_cast<uintptr_t>(fat);
+    m_data = std::bit_cast<uintptr_t>(fat);
     return fat;
 }
 

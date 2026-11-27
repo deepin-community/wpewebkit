@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include <wtf/text/AtomStringImpl.h>
+#include <array>
 
 namespace JSC {
 
+class JSString;
 class VM;
 
 class KeyAtomStringCache {

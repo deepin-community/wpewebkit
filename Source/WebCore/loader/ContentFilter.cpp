@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,10 +41,15 @@
 #include "ParentalControlsContentFilter.h"
 #include "ScriptController.h"
 #include "SharedBuffer.h"
+#include <array>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
 #include <wtf/Vector.h>
+
+#if HAVE(WEBCONTENTRESTRICTIONS)
+#include "ParentalControlsURLFilter.h"
+#endif
 
 #if !LOG_DISABLED
 #include <wtf/text/CString.h>
@@ -65,20 +70,32 @@ Vector<ContentFilter::Type>& ContentFilter::types()
     return types;
 }
 
-std::unique_ptr<ContentFilter> ContentFilter::create(ContentFilterClient& client)
+RefPtr<ContentFilter> ContentFilter::create(ContentFilterClient& client, IsMainFrameLoad isMainFrameLoad)
 {
-    auto filters = types().map([](auto& type) {
-        return type.create();
+    PlatformContentFilter::FilterParameters params;
+#if HAVE(WEBCONTENTRESTRICTIONS)
+    params = PlatformContentFilter::FilterParameters {
+#if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
+        client.webContentRestrictionsConfigurationPath(),
+#endif
+        isMainFrameLoad,
+        client.mainDocumentURL()
+    };
+#else
+    UNUSED_PARAM(isMainFrameLoad);
+#endif
+    auto filters = types().map([params](auto& type) {
+        return type.create(params);
     });
 
     if (filters.isEmpty())
         return nullptr;
 
-    return makeUnique<ContentFilter>(WTFMove(filters), client);
+    return adoptRef(*new ContentFilter(WTF::move(filters), client));
 }
 
 ContentFilter::ContentFilter(Container&& contentFilters, ContentFilterClient& client)
-    : m_contentFilters(WTFMove(contentFilters))
+    : m_contentFilters(WTF::move(contentFilters))
     , m_client(client)
 {
     LOG(ContentFiltering, "Creating ContentFilter with %zu platform content filter(s).\n", m_contentFilters.size());
@@ -92,9 +109,11 @@ ContentFilter::~ContentFilter()
 
 bool ContentFilter::continueAfterWillSendRequest(ResourceRequest& request, const ResourceResponse& redirectResponse)
 {
-    Ref protectedClient { m_client.get() };
+    RefPtr protectedClient = m_client.get();
+    if (!protectedClient)
+        return false;
 
-    LOG(ContentFiltering, "ContentFilter received request for <%s> with redirect response from <%s>.\n", request.url().string().ascii().data(), redirectResponse.url().string().ascii().data());
+    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from <%{sensitive}s>.\n", request.url().string().utf8().data(), redirectResponse.url().string().utf8().data());
 #if !LOG_DISABLED
     ResourceRequest originalRequest { request };
 #endif
@@ -106,9 +125,79 @@ bool ContentFilter::continueAfterWillSendRequest(ResourceRequest& request, const
         request = ResourceRequest();
 #if !LOG_DISABLED
     if (request != originalRequest)
-        LOG(ContentFiltering, "ContentFilter changed request url to <%s>.\n", originalRequest.url().string().ascii().data());
+        LOG(ContentFiltering, "ContentFilter changed request url to <%{sensitive}s>.\n", originalRequest.url().string().ascii().data());
 #endif
     return !request.isNull();
+}
+
+ContentFilter::ContentFilterCallbackAggregator::~ContentFilterCallbackAggregator()
+{
+    ASSERT(RunLoop::isMain());
+    ASSERT(m_callback);
+
+    if (m_isBlocked) {
+        if (RefPtr contentFilter = m_contentFilter)
+            contentFilter->didDecide(State::Blocked);
+        m_callback(ResourceRequest());
+        return;
+    }
+
+    if (RefPtr contentFilter = m_contentFilter; contentFilter && m_numberOfFiltersAllowed == contentFilter->m_contentFilters.size())
+        contentFilter->didDecide(State::Allowed);
+
+    m_contentFilter = nullptr;
+
+    m_callback(WTF::move(m_request));
+}
+
+void ContentFilter::ContentFilterCallbackAggregator::didReceivePlatformContentFilterDecision(PlatformContentFilter& platformContentFilter, String&& urlString)
+{
+    ASSERT(RunLoop::isMain());
+
+    if (platformContentFilter.isAllowed())
+        ++m_numberOfFiltersAllowed;
+
+    if (platformContentFilter.didBlockData() && !m_isBlocked) {
+        m_isBlocked = true;
+        RefPtr contentFilter = m_contentFilter;
+        contentFilter->m_blockingContentFilter = platformContentFilter;
+        return;
+    }
+
+    URL url { urlString };
+    if (url.isValid())
+        m_request.setURL(WTF::move(url));
+}
+
+ContentFilter::ContentFilterCallbackAggregator::ContentFilterCallbackAggregator(ContentFilter& contentFilter, const ResourceRequest& request, CompletionHandler<void(ResourceRequest&&)>&& callback)
+    : m_contentFilter(contentFilter)
+    , m_request(request)
+    , m_callback(WTF::move(callback))
+{
+    ASSERT(RunLoop::isMain());
+}
+
+void ContentFilter::continueAfterWillSendRequest(ResourceRequest&& request, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
+{
+    ASSERT(RunLoop::isMain());
+
+    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from %s" SENSITIVE_LOG_STRING, request.url().string().utf8().data(), redirectResponse.url().string().utf8().data());
+    ASSERT(m_state == State::Stopped || m_state == State::Filtering);
+
+    Ref contentFilterCallbackAggregator = ContentFilterCallbackAggregator::create(*this, request, WTF::move(completionHandler));
+
+    for (Ref platformContentFilter : m_contentFilters) {
+        CompletionHandler<void(String&&)> completion = [contentFilterCallbackAggregator, platformContentFilter] (String&& urlString) mutable {
+            ASSERT(RunLoop::isMain());
+            contentFilterCallbackAggregator->didReceivePlatformContentFilterDecision(platformContentFilter, WTF::move(urlString));
+        };
+
+        if (!platformContentFilter->needsMoreData()) {
+            completion({ });
+            continue;
+        }
+        platformContentFilter->willSendRequest(ResourceRequest { request }, redirectResponse, WTF::move(completion));
+    }
 }
 
 void ContentFilter::startFilteringMainResource(const URL& url)
@@ -142,10 +231,12 @@ void ContentFilter::stopFilteringMainResource()
 
 bool ContentFilter::continueAfterResponseReceived(const ResourceResponse& response)
 {
-    Ref protectedClient { m_client.get() };
+    RefPtr protectedClient = m_client.get();
+    if (!protectedClient)
+        return false;
 
     if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter received response from <%s>.\n", response.url().string().ascii().data());
+        LOG(ContentFiltering, "ContentFilter received response from <%{sensitive}s>.\n", response.url().string().ascii().data());
         forEachContentFilterUntilBlocked([&response](PlatformContentFilter& contentFilter) {
             contentFilter.responseReceived(response);
         });
@@ -156,30 +247,11 @@ bool ContentFilter::continueAfterResponseReceived(const ResourceResponse& respon
     return m_state != State::Blocked;
 }
 
-bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data, size_t encodedDataLength)
+bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data, FromDocumentLoader fromDocumentLoader)
 {
-    Ref protectedClient { m_client.get() };
-
-    if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter received %zu bytes of data from <%{sensitive}s>.\n", data.size(), url().string().ascii().data());
-
-        forEachContentFilterUntilBlocked([data = Ref { data }](auto& contentFilter) {
-            contentFilter.addData(data);
-        });
-        if (m_state == State::Allowed) {
-            deliverStoredResourceData();
-            deliverResourceData(data, encodedDataLength);
-        } else
-            m_buffers.append(ResourceDataItem { RefPtr { &data }, encodedDataLength });
+    RefPtr protectedClient = m_client.get();
+    if (!protectedClient)
         return false;
-    }
-
-    return m_state != State::Blocked;
-}
-
-bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data)
-{
-    Ref protectedClient { m_client.get() };
 
     if (m_state == State::Filtering) {
         LOG(ContentFiltering, "ContentFilter received %zu bytes of data from <%{sensitive}s>.\n", data.size(), url().string().ascii().data());
@@ -187,10 +259,18 @@ bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data)
         forEachContentFilterUntilBlocked([data = Ref { data }](auto& contentFilter) {
             contentFilter.addData(data);
         });
-        if (m_state == State::Allowed) {
-            ASSERT(m_mainResource->dataBufferingPolicy() == DataBufferingPolicy::BufferData);
-            if (RefPtr buffer = m_mainResource->resourceBuffer())
-                deliverResourceData(buffer->makeContiguous());
+        if (fromDocumentLoader == FromDocumentLoader::Yes) {
+            if (m_state == State::Allowed) {
+                ASSERT(m_mainResource->dataBufferingPolicy() == DataBufferingPolicy::BufferData);
+                if (RefPtr buffer = m_mainResource->resourceBuffer())
+                    deliverResourceData(buffer->makeContiguous());
+            }
+        } else {
+            if (m_state == State::Allowed) {
+                deliverStoredResourceData();
+                deliverResourceData(data);
+            } else
+                m_buffers.append(ResourceDataItem { RefPtr { &data } });
         }
         return false;
     }
@@ -200,7 +280,9 @@ bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data)
 
 bool ContentFilter::continueAfterNotifyFinished(const URL& resourceURL)
 {
-    Ref protectedClient { m_client.get() };
+    RefPtr protectedClient = m_client.get();
+    if (!protectedClient)
+        return false;
     ASSERT_UNUSED(resourceURL, resourceURL == m_mainResourceURL);
 
     if (m_state == State::Filtering) {
@@ -223,7 +305,9 @@ bool ContentFilter::continueAfterNotifyFinished(const URL& resourceURL)
 
 bool ContentFilter::continueAfterNotifyFinished(CachedResource& resource)
 {
-    Ref protectedClient { m_client.get() };
+    RefPtr protectedClient = m_client.get();
+    if (!protectedClient)
+        return true;
     ASSERT_UNUSED(resource, &resource == m_mainResource);
     if (m_mainResource->errorOccurred())
         return true;
@@ -250,27 +334,29 @@ bool ContentFilter::continueAfterNotifyFinished(CachedResource& resource)
 }
 
 template <typename Function>
-inline void ContentFilter::forEachContentFilterUntilBlocked(Function&& function)
+void ContentFilter::forEachContentFilterUntilBlocked(Function&& getData)
 {
-    bool allFiltersAllowedLoad { true };
-    for (auto& contentFilter : m_contentFilters) {
-        if (!contentFilter->needsMoreData()) {
-            ASSERT(!contentFilter->didBlockData());
+    unsigned allowedCount = 0;
+    for (Ref contentFilter : m_contentFilters) {
+        if (contentFilter->needsMoreData())
+            getData(contentFilter.get());
+
+        // Still need more data for decision.
+        if (contentFilter->needsMoreData())
+            continue;
+
+        if (!contentFilter->didBlockData()) {
+            ++allowedCount;
             continue;
         }
 
-        function(contentFilter.get());
-
-        if (contentFilter->didBlockData()) {
-            ASSERT(!m_blockingContentFilter);
-            m_blockingContentFilter = contentFilter.get();
-            didDecide(State::Blocked);
-            return;
-        } else if (contentFilter->needsMoreData())
-            allFiltersAllowedLoad = false;
+        ASSERT(!m_blockingContentFilter.get());
+        m_blockingContentFilter = contentFilter.get();
+        didDecide(State::Blocked);
+        return;
     }
 
-    if (allFiltersAllowedLoad)
+    if (m_contentFilters.size() == allowedCount)
         didDecide(State::Allowed);
 }
 
@@ -286,41 +372,41 @@ void ContentFilter::didDecide(State state)
     if (m_state != State::Blocked)
         return;
 
-    Ref client = m_client.get();
-    m_blockedError = client->contentFilterDidBlock(m_blockingContentFilter->unblockHandler(), m_blockingContentFilter->unblockRequestDeniedScript());
+    RefPtr client = m_client.get();
+    if (!client)
+        return;
+    RefPtr blockingContentFilter = m_blockingContentFilter.get();
+    ASSERT(blockingContentFilter);
+    m_blockedError = client->contentFilterDidBlock(blockingContentFilter->unblockHandler(), blockingContentFilter->unblockRequestDeniedScript());
     client->cancelMainResourceLoadForContentFilter(m_blockedError);
 }
 
-Ref<ContentFilterClient> ContentFilter::protectedClient() const
-{
-    return m_client.get();
-}
-
-void ContentFilter::deliverResourceData(const SharedBuffer& buffer, size_t encodedDataLength)
+void ContentFilter::deliverResourceData(const SharedBuffer& buffer)
 {
     ASSERT(m_state == State::Allowed);
-    protectedClient()->dataReceivedThroughContentFilter(buffer, encodedDataLength);
+    if (RefPtr protectedClient = m_client.get())
+        protectedClient->dataReceivedThroughContentFilter(buffer);
 }
 
 URL ContentFilter::url()
 {
-    if (m_mainResource)
-        return m_mainResource->url();
+    if (RefPtr mainResource = m_mainResource)
+        return mainResource->url();
     return m_mainResourceURL;
 }
 
 const URL& ContentFilter::blockedPageURL()
 {
     static NeverDestroyed blockedPageURL = [] () -> URL {
-        auto webCoreBundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.WebCore"));
-        return adoptCF(CFBundleCopyResourceURL(webCoreBundle, CFSTR("ContentFilterBlockedPage"), CFSTR("html"), nullptr)).get();
+        RetainPtr webCoreBundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.WebCore"));
+        return adoptCF(CFBundleCopyResourceURL(webCoreBundle.get(), CFSTR("ContentFilterBlockedPage"), CFSTR("html"), nullptr)).get();
     }();
     return blockedPageURL;
 }
 
 bool ContentFilter::continueAfterSubstituteDataRequest(const DocumentLoader& activeLoader, const SubstituteData& substituteData)
 {
-    if (auto contentFilter = activeLoader.contentFilter()) {
+    if (RefPtr contentFilter = activeLoader.contentFilter()) {
         if (contentFilter->m_state == State::Blocked && !contentFilter->m_isLoadingBlockedPage)
             return contentFilter->m_blockedError.failingURL() != substituteData.failingURL();
     }
@@ -349,17 +435,20 @@ void ContentFilter::handleProvisionalLoadFailure(const ResourceError& error)
 {
     ASSERT(willHandleProvisionalLoadFailure(error));
 
-    RefPtr replacementData { m_blockingContentFilter->replacementData() };
+    RefPtr blockingContentFilter = m_blockingContentFilter.get();
+    ASSERT(blockingContentFilter);
+    RefPtr replacementData { blockingContentFilter->replacementData() };
     ResourceResponse response { URL(), "text/html"_s, static_cast<long long>(replacementData->size()), "UTF-8"_s };
-    SubstituteData substituteData { WTFMove(replacementData), error.failingURL(), response, SubstituteData::SessionHistoryVisibility::Hidden };
+    SubstituteData substituteData { WTF::move(replacementData), URL { error.failingURL() }, WTF::move(response), SubstituteData::SessionHistoryVisibility::Hidden };
     SetForScope loadingBlockedPage { m_isLoadingBlockedPage, true };
-    protectedClient()->handleProvisionalLoadFailureFromContentFilter(blockedPageURL(), substituteData);
+    if (RefPtr protectedClient = m_client.get())
+        protectedClient->handleProvisionalLoadFailureFromContentFilter(blockedPageURL(), WTF::move(substituteData));
 }
 
 void ContentFilter::deliverStoredResourceData()
 {
     for (auto& buffer : m_buffers)
-        deliverResourceData(*buffer.buffer, buffer.encodedDataLength);
+        deliverResourceData(Ref { *buffer.buffer });
     m_buffers.clear();
 }
 
@@ -369,6 +458,34 @@ void ContentFilter::setHostProcessAuditToken(const std::optional<audit_token_t>&
     for (auto& contentFilter : m_contentFilters)
         contentFilter->setHostProcessAuditToken(token);
 }
+#endif
+
+#if HAVE(WEBCONTENTRESTRICTIONS)
+
+bool ContentFilter::isWebContentRestrictionsUnblockURL(const URL& url)
+{
+#if PLATFORM(MAC)
+    // FIXME: Remove this when rdar://145714903 is fixed.
+    if (url.host() == "127.0.0.1"_s && url.path() == "/webcontentfilter.override.local"_s)
+        return true;
+#endif
+
+    if (!url.protocolIs(ContentFilter::urlScheme()))
+        return false;
+
+#if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
+    static constexpr std::array validHosts { "unblock"_s, "present"_s, "ask"_s };
+#else
+    static constexpr std::array validHosts { "unblock"_s };
+#endif
+
+    for (const auto& host : validHosts) {
+        if (equalIgnoringASCIICase(url.host(), host))
+            return true;
+    }
+    return false;
+}
+
 #endif
 
 } // namespace WebCore

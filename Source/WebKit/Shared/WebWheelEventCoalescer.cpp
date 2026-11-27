@@ -57,13 +57,11 @@ bool WebWheelEventCoalescer::canCoalesce(const WebWheelEvent& a, const WebWheelE
         return false;
     if (a.granularity() != b.granularity())
         return false;
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
     if (a.phase() != b.phase())
         return false;
     if (a.momentumPhase() != b.momentumPhase())
         return false;
-#endif
-#if PLATFORM(COCOA) || PLATFORM(GTK) || USE(LIBWPE)
     if (a.hasPreciseScrollingDeltas() != b.hasPreciseScrollingDeltas())
         return false;
 #endif
@@ -84,8 +82,8 @@ WebWheelEvent WebWheelEventCoalescer::coalesce(const WebWheelEvent& a, const Web
     if (a.rawPlatformDelta() && b.rawPlatformDelta())
         mergedRawPlatformScrollingDelta = a.rawPlatformDelta().value() + b.rawPlatformDelta().value();
 
-    auto event = WebWheelEvent({ WebEventType::Wheel, b.modifiers(), b.timestamp() }, b.position(), b.globalPosition(), mergedDelta, mergedWheelTicks, b.granularity(), b.directionInvertedFromDevice(), b.phase(), b.momentumPhase(), b.hasPreciseScrollingDeltas(), b.scrollCount(), mergedUnacceleratedScrollingDelta, b.ioHIDEventTimestamp(), mergedRawPlatformScrollingDelta, b.momentumEndType());
-#elif PLATFORM(GTK) || USE(LIBWPE)
+    auto event = WebWheelEvent({ WebEventType::Wheel, b.modifiers(), b.timestamp() }, b.position(), b.globalPosition(), mergedDelta, mergedWheelTicks, b.granularity(), b.directionInvertedFromDevice(), b.phase(), b.momentumPhase(), b.hasPreciseScrollingDeltas(), b.scrollCount(), mergedUnacceleratedScrollingDelta, b.ioHIDEventTimestamp(), mergedRawPlatformScrollingDelta, b.momentumEndType(), b.inputSource());
+#elif PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
     auto event = WebWheelEvent({ WebEventType::Wheel, b.modifiers(), b.timestamp() }, b.position(), b.globalPosition(), mergedDelta, mergedWheelTicks, b.granularity(), b.phase(), b.momentumPhase(), b.hasPreciseScrollingDeltas());
 #else
     auto event = WebWheelEvent({ WebEventType::Wheel, b.modifiers(), b.timestamp() }, b.position(), b.globalPosition(), mergedDelta, mergedWheelTicks, b.granularity());
@@ -101,10 +99,10 @@ bool WebWheelEventCoalescer::shouldDispatchEventNow(const WebWheelEvent& event) 
     // scrolling session to beginning or end correctly.
     // This is only needed by platforms whose WebWheelEvent has this phase
     // information (Cocoa and GTK+) but Cocoa was fine without it.
-    if (event.phase() == WebWheelEvent::Phase::PhaseNone
-        || event.phase() == WebWheelEvent::Phase::PhaseChanged
-        || event.momentumPhase() == WebWheelEvent::Phase::PhaseNone
-        || event.momentumPhase() == WebWheelEvent::Phase::PhaseChanged)
+    if (event.phase() == WebWheelEvent::Phase::None
+        || event.phase() == WebWheelEvent::Phase::Changed
+        || event.momentumPhase() == WebWheelEvent::Phase::None
+        || event.momentumPhase() == WebWheelEvent::Phase::Changed)
         return true;
 #else
     UNUSED_PARAM(event);
@@ -128,7 +126,7 @@ std::optional<WebWheelEvent> WebWheelEventCoalescer::nextEventToDispatch()
     while (!m_wheelEventQueue.isEmpty() && canCoalesce(coalescedWebEvent, m_wheelEventQueue.first())) {
         auto firstEvent = m_wheelEventQueue.takeFirst();
         coalescedSequence->append(firstEvent);
-        coalescedWebEvent = coalesce(coalescedWebEvent, WebWheelEvent { firstEvent });
+        SUPPRESS_UNCHECKED_ARG coalescedWebEvent = coalesce(coalescedWebEvent, WebWheelEvent { firstEvent });
     }
 
 #if !LOG_DISABLED
@@ -136,7 +134,7 @@ std::optional<WebWheelEvent> WebWheelEventCoalescer::nextEventToDispatch()
         LOG_WITH_STREAM(WheelEvents, stream << "WebWheelEventCoalescer::wheelEventWithCoalescing coalesced " << *coalescedSequence << " into " << platform(coalescedWebEvent));
 #endif
 
-    m_eventsBeingProcessed.append(WTFMove(coalescedSequence));
+    m_eventsBeingProcessed.append(WTF::move(coalescedSequence));
     return coalescedWebEvent;
 }
 

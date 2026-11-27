@@ -36,11 +36,13 @@
 #include "pas_heap_lock.h"
 #include "pas_large_free_heap_deferred_commit_log.h"
 #include "pas_log.h"
+#include "pas_mte.h"
 #include "pas_page_malloc.h"
 #include "pas_page_sharing_pool.h"
 #include "pas_physical_memory_transaction.h"
 #include "pas_stream.h"
 #include "pas_utility_heap.h"
+#include "pas_zero_memory.h"
 
 bool pas_large_sharing_pool_enabled = true;
 pas_red_black_tree pas_large_sharing_tree = PAS_RED_BLACK_TREE_INITIALIZER;
@@ -120,7 +122,7 @@ static void validate_min_heap(void)
             &pas_large_sharing_min_heap_instance, index);
         
         if (verbose) {
-            pas_log(" %d:%p:%lu-%lu:%llu",
+            pas_log(" %d:%p:%zu-%zu:%llu",
                     node->index_in_min_heap,
                     node, node->range.begin, node->range.end,
                     (unsigned long long)node->use_epoch);
@@ -169,28 +171,28 @@ static pas_large_sharing_node* create_node(
     pas_commit_mode is_committed,
     size_t num_live_bytes,
     pas_physical_memory_synchronization_style synchronization_style,
-    pas_mmap_capability mmap_capability)
+    pas_page_flags page_flags)
 {
     pas_large_sharing_node* result;
-    
+
     result = pas_utility_heap_allocate(
         sizeof(pas_large_sharing_node),
         "pas_large_sharing_node");
-    
+
     /* NOTE: We don't have to initialize the tree node part. But we zero the whole node to
        make things sane. */
     pas_zero_memory(result, sizeof(pas_large_sharing_node));
-    
+
     result->range = range;
     result->use_epoch = use_epoch;
     result->index_in_min_heap = 0;
     result->is_committed = is_committed;
     result->num_live_bytes = num_live_bytes;
     result->synchronization_style = synchronization_style;
-    result->mmap_capability = mmap_capability;
+    result->page_flags = page_flags;
 
     validate_node_if_asserting_aggressively(result);
-    
+
     return result;
 }
 
@@ -200,17 +202,17 @@ static pas_large_sharing_node* create_and_insert(
     pas_commit_mode is_committed,
     size_t num_live_bytes,
     pas_physical_memory_synchronization_style synchronization_style,
-    pas_mmap_capability mmap_capability)
+    pas_page_flags page_flags)
 {
     pas_large_sharing_node* result;
-    
+
     result = create_node(range, use_epoch, is_committed, num_live_bytes, synchronization_style,
-                         mmap_capability);
-    
+                         page_flags);
+
     pas_red_black_tree_insert(
         &pas_large_sharing_tree, &result->tree_node, node_compare_callback,
         &pas_large_sharing_tree_jettisoned_nodes);
-    
+
     return result;
 }
 
@@ -242,7 +244,7 @@ static void boot_tree(void)
         pas_committed,
         pas_range_size(range),
         pas_physical_memory_is_locked_by_virtual_range_common_lock,
-        pas_may_mmap);
+        pas_page_flags_none);
 }
 
 static void destroy_node(pas_large_sharing_node* node)
@@ -298,7 +300,7 @@ static bool states_match(pas_large_sharing_node* left,
     if (left->synchronization_style != right->synchronization_style)
         return false;
 
-    if (left->mmap_capability != right->mmap_capability)
+    if (left->page_flags != right->page_flags)
         return false;
 
     both_empty =
@@ -346,7 +348,7 @@ static void update_min_heap(pas_large_sharing_node* node)
        all fine so long as you call update_min_heap on all affected nodes once you're done. */
     
     if (verbose)
-        pas_log("updating node in min_heap = %p:%lu-%lu\n", node, node->range.begin, node->range.end);
+        pas_log("updating node in min_heap = %p:%zu-%zu\n", node, node->range.begin, node->range.end);
     
     PAS_ASSERT(!node->index_in_min_heap);
     
@@ -378,7 +380,7 @@ split_node_and_get_right_impl(pas_large_sharing_node* node,
     validate_node_if_asserting_aggressively(node);
     
     if (verbose)
-        pas_log("Splitting %p:%lu-%lu at %lu\n", node, node->range.begin, node->range.end, split_point);
+        pas_log("Splitting %p:%zu-%zu at %zu\n", node, node->range.begin, node->range.end, split_point);
 
     remove_from_min_heap(node);
     
@@ -388,7 +390,7 @@ split_node_and_get_right_impl(pas_large_sharing_node* node,
         node->is_committed,
         node->num_live_bytes ? node->range.end - split_point : 0,
         node->synchronization_style,
-        node->mmap_capability);
+        node->page_flags);
     
     node->range.end = split_point;
     node->num_live_bytes = node->num_live_bytes ? split_point - node->range.begin : 0;
@@ -400,7 +402,7 @@ split_node_and_get_right_impl(pas_large_sharing_node* node,
     validate_node_if_asserting_aggressively(right_node);
     
     if (verbose) {
-        pas_log("Now have %p:%lu-%lu and %p:%lu-%lu\n",
+        pas_log("Now have %p:%zu-%zu and %p:%zu-%zu\n",
                 node, node->range.begin, node->range.end,
                 right_node, right_node->range.begin, right_node->range.end);
     }
@@ -528,14 +530,15 @@ static void splat_live_bytes(pas_large_sharing_node* node,
                              size_t delta,
                              pas_free_mode free_mode)
 {
+    PAS_TESTING_ASSERT(sizeof(size_t) == sizeof(unsigned long long));
     bool did_overflow;
     switch (free_mode) {
     case pas_free:
-        did_overflow = __builtin_usubl_overflow(node->num_live_bytes, delta, &node->num_live_bytes);
+        did_overflow = __builtin_usubll_overflow((unsigned long long) node->num_live_bytes, delta, (unsigned long long *) &node->num_live_bytes);
         PAS_ASSERT(!did_overflow);
         break;
     case pas_allocated:
-        did_overflow = __builtin_uaddl_overflow(node->num_live_bytes, delta, &node->num_live_bytes);
+        did_overflow = __builtin_uaddll_overflow((unsigned long long) node->num_live_bytes, delta, (unsigned long long *) &node->num_live_bytes);
         PAS_ASSERT(!did_overflow);
         PAS_ASSERT(node->num_live_bytes <= pas_range_size(node->range));
         break;
@@ -556,7 +559,8 @@ enum splat_command {
     splat_decommit,
     splat_allocate_and_commit,
     splat_free,
-    splat_boot_free
+    splat_boot_free_committed,
+    splat_boot_free_decommitted
 };
 
 typedef enum splat_command splat_command;
@@ -570,10 +574,12 @@ static const char* splat_command_get_string(splat_command command)
         return "allocate_and_commit";
     case splat_free:
         return "free";
-    case splat_boot_free:
-        return "boot_free";
+    case splat_boot_free_committed:
+        return "boot_free_committed";
+    case splat_boot_free_decommitted:
+        return "boot_free_decommitted";
     }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return NULL;
 }
 
@@ -586,10 +592,11 @@ static pas_free_mode splat_command_get_free_mode(splat_command command)
     case splat_allocate_and_commit:
         return pas_allocated;
     case splat_free:
-    case splat_boot_free:
+    case splat_boot_free_committed:
+    case splat_boot_free_decommitted:
         return pas_free;
     }
-    PAS_ASSERT(!"Should not be reached");
+    PAS_ASSERT_NOT_REACHED();
     return pas_free;
 }
 
@@ -613,7 +620,7 @@ static bool try_splat_impl(pas_range range,
                            pas_deferred_decommit_log* decommit_log,
                            pas_physical_memory_transaction* transaction,
                            pas_physical_memory_synchronization_style synchronization_style,
-                           pas_mmap_capability mmap_capability)
+                           pas_page_flags page_flags)
 {
     pas_large_sharing_node* min_node;
     pas_large_sharing_node* max_node;
@@ -628,10 +635,10 @@ static bool try_splat_impl(pas_range range,
     
     if (verbose) {
         pas_log("Doing splat in range %p-%p, command = %s, epoch = %llu, "
-                "synchronization_style = %s, mmap_capability = %s\n",
+                "synchronization_style = %s, page_flags = 0x%x\n",
                 (void*)range.begin, (void*)range.end, splat_command_get_string(command), (unsigned long long)epoch,
                 pas_physical_memory_synchronization_style_get_string(synchronization_style),
-                pas_mmap_capability_get_string(mmap_capability));
+                (unsigned)page_flags);
     }
     
     pas_heap_lock_assert_held();
@@ -673,7 +680,7 @@ static bool try_splat_impl(pas_range range,
 
         max_node = successor(min_node);
         if (pas_range_size(max_node->range) == page_size
-            && (command == splat_free || command == splat_boot_free || max_node->is_committed)) {
+            && (command == splat_free || command == splat_boot_free_committed || max_node->is_committed)) {
             PAS_ASSERT(max_node->range.begin < range.end);
             PAS_ASSERT(max_node->range.end >= range.end);
             remove_from_min_heap(min_node);
@@ -728,7 +735,7 @@ static bool try_splat_impl(pas_range range,
     }
     
     if (verbose)
-        pas_log("min_node = %p:%lu-%lu, max_node = %p:%lu-%lu\n", min_node, min_node->range.begin, min_node->range.end, max_node, max_node->range.begin, max_node->range.end);
+        pas_log("min_node = %p:%zu-%zu, max_node = %p:%zu-%zu\n", min_node, min_node->range.begin, min_node->range.end, max_node, max_node->range.begin, max_node->range.end);
     
     begin_node = min_node;
     end_node = successor(max_node);
@@ -749,9 +756,10 @@ static bool try_splat_impl(pas_range range,
         desired_commit_mode = pas_committed;
         do_commit_stuff = true;
         break;
-        
+
     case splat_free:
-    case splat_boot_free:
+    case splat_boot_free_committed:
+    case splat_boot_free_decommitted:
         break;
     }
 
@@ -780,7 +788,7 @@ static bool try_splat_impl(pas_range range,
                                                                      desired_commit_mode);
                  inner_node = successor(inner_node)) {
                 PAS_ASSERT(inner_node->synchronization_style == synchronization_style);
-                PAS_ASSERT(inner_node->mmap_capability == mmap_capability);
+                PAS_ASSERT(inner_node->page_flags == page_flags);
                 affected_end = inner_node->range.end;
             }
             
@@ -796,13 +804,13 @@ static bool try_splat_impl(pas_range range,
                 switch (desired_commit_mode) {
                 case pas_decommitted:
                     pas_page_malloc_decommit((void*)affected_begin, affected_end - affected_begin,
-                                             mmap_capability);
+                                             page_flags);
                     decommit_log->total += affected_end - affected_begin;
                     break;
                     
                 case pas_committed:
                     pas_page_malloc_commit((void*)affected_begin, affected_end - affected_begin,
-                                           mmap_capability);
+                                           page_flags);
                     if (PAS_DEBUG_SPECTRUM_USE_FOR_COMMIT) {
                         pas_debug_spectrum_add(
                             dump_large_commit, dump_large_commit, affected_end - affected_begin);
@@ -822,14 +830,14 @@ static bool try_splat_impl(pas_range range,
                         decommit_log,
                         pas_virtual_range_create(affected_begin, affected_end,
                                                  &pas_virtual_range_common_lock,
-                                                 mmap_capability),
+                                                 page_flags),
                         pas_lock_is_held);
                     break;
                     
                 case pas_committed:
                     was_added = pas_large_free_heap_deferred_commit_log_add(
                         commit_log,
-                        pas_large_virtual_range_create(affected_begin, affected_end, mmap_capability),
+                        pas_large_virtual_range_create(affected_begin, affected_end, page_flags),
                         transaction);
                     break;
                 }
@@ -876,7 +884,7 @@ static bool try_splat_impl(pas_range range,
     
     for (node = begin_node; node != end_node; node = successor(node)) {
         if (verbose)
-            pas_log("Dealing with node = %p:%lu-%lu\n", node, node->range.begin, node->range.end);
+            pas_log("Dealing with node = %p:%zu-%zu\n", node, node->range.begin, node->range.end);
         
         remove_from_min_heap(node);
 
@@ -897,7 +905,16 @@ static bool try_splat_impl(pas_range range,
             break;
 
         case splat_free:
-        case splat_boot_free:
+        case splat_boot_free_committed:
+            splat_live_bytes(
+                node,
+                pas_range_size(pas_range_create_intersection(node->range, range)),
+                pas_free);
+            break;
+
+        case splat_boot_free_decommitted:
+            PAS_ASSERT(pas_range_subsumes(range, node->range));
+            node->is_committed = pas_decommitted;
             splat_live_bytes(
                 node,
                 pas_range_size(pas_range_create_intersection(node->range, range)),
@@ -910,18 +927,19 @@ static bool try_splat_impl(pas_range range,
         case splat_allocate_and_commit:
         case splat_free:
             PAS_ASSERT(node->synchronization_style == synchronization_style);
-            PAS_ASSERT(node->mmap_capability == mmap_capability);
+            PAS_ASSERT(node->page_flags == page_flags);
             break;
 
-        case splat_boot_free:
+        case splat_boot_free_committed:
+        case splat_boot_free_decommitted:
             PAS_ASSERT(
                 node->synchronization_style
                 == pas_physical_memory_is_locked_by_virtual_range_common_lock);
             PAS_ASSERT(
-                node->mmap_capability
-                == pas_may_mmap);
+                node->page_flags
+                == pas_page_flags_none);
             node->synchronization_style = synchronization_style;
-            node->mmap_capability = mmap_capability;
+            node->page_flags = page_flags;
             break;
         }
 
@@ -954,7 +972,8 @@ done:
                     >= pas_range_size(pas_range_create_intersection(node->range, range)));
                 break;
             case splat_free:
-            case splat_boot_free:
+            case splat_boot_free_committed:
+            case splat_boot_free_decommitted:
                 PAS_ASSERT(
                     pas_range_size(node->range) - node->num_live_bytes
                     >= pas_range_size(pas_range_create_intersection(node->range, range)));
@@ -991,12 +1010,12 @@ static bool try_splat(pas_range range,
                       pas_deferred_decommit_log* decommit_log,
                       pas_physical_memory_transaction* transaction,
                       pas_physical_memory_synchronization_style synchronization_style,
-                      pas_mmap_capability mmap_capability)
+                      pas_page_flags page_flags)
 {
     bool result;
     
     result = try_splat_impl(
-        range, command, epoch, commit_log, decommit_log, transaction, synchronization_style, mmap_capability);
+        range, command, epoch, commit_log, decommit_log, transaction, synchronization_style, page_flags);
     
     if (pas_large_sharing_pool_validate_each_splat)
         pas_large_sharing_pool_validate();
@@ -1011,12 +1030,12 @@ static void splat(pas_range range,
                   pas_deferred_decommit_log* decommit_log,
                   pas_physical_memory_transaction* transaction,
                   pas_physical_memory_synchronization_style synchronization_style,
-                  pas_mmap_capability mmap_capability)
+                  pas_page_flags page_flags)
 {
     bool result;
     
     result = try_splat(
-        range, command, epoch, commit_log, decommit_log, transaction, synchronization_style, mmap_capability);
+        range, command, epoch, commit_log, decommit_log, transaction, synchronization_style, page_flags);
     
     PAS_ASSERT(result);
 }
@@ -1024,45 +1043,70 @@ static void splat(pas_range range,
 void pas_large_sharing_pool_boot_free(
     pas_range range,
     pas_physical_memory_synchronization_style synchronization_style,
-    pas_mmap_capability mmap_capability)
+    pas_page_flags page_flags,
+    pas_commit_mode initial_commit_mode)
 {
+    splat_command command;
     uint64_t epoch;
+    size_t page_size;
+
+    PAS_PROFILE(LARGE_SHARING_POOL_BOOT_FREE, range.begin, range.end);
+    PAS_MTE_HANDLE(LARGE_SHARING_POOL_BOOT_FREE, range.begin, range.end);
+
+    page_size = pas_page_malloc_alignment();
+    PAS_ASSERT(pas_is_aligned(range.begin, page_size));
+    PAS_ASSERT(pas_is_aligned(range.end, page_size));
 
     if (!pas_large_sharing_pool_enabled)
         return;
-    
+
+    switch (initial_commit_mode) {
+    case pas_committed:
+        command = splat_boot_free_committed;
+        break;
+    case pas_decommitted:
+        command = splat_boot_free_decommitted;
+        break;
+    }
+
     epoch = pas_get_epoch();
-    splat(range, splat_boot_free, epoch, NULL, NULL, NULL, synchronization_style, mmap_capability);
+    splat(range, command, epoch, NULL, NULL, NULL, synchronization_style, page_flags);
 }
 
 void pas_large_sharing_pool_free(pas_range range,
                                  pas_physical_memory_synchronization_style synchronization_style,
-                                 pas_mmap_capability mmap_capability)
+                                 pas_page_flags page_flags)
 {
     uint64_t epoch;
+
+    PAS_PROFILE(LARGE_SHARING_POOL_FREE, range.begin, range.end);
+    PAS_MTE_HANDLE(LARGE_SHARING_POOL_FREE, range.begin, range.end);
 
     if (!pas_large_sharing_pool_enabled)
         return;
     
     epoch = pas_get_epoch();
     
-    splat(range, splat_free, epoch, NULL, NULL, NULL, synchronization_style, mmap_capability);
+    splat(range, splat_free, epoch, NULL, NULL, NULL, synchronization_style, page_flags);
 }
 
 bool pas_large_sharing_pool_allocate_and_commit(
     pas_range range,
     pas_physical_memory_transaction* transaction,
     pas_physical_memory_synchronization_style synchronization_style,
-    pas_mmap_capability mmap_capability)
+    pas_page_flags page_flags)
 {
     static const bool verbose = false;
+
+    PAS_PROFILE(LARGE_SHARING_POOL_ALLOCATE_AND_COMMIT, range.begin, range.end);
+    PAS_MTE_HANDLE(LARGE_SHARING_POOL_ALLOCATE_AND_COMMIT, range.begin, range.end);
     
     pas_large_free_heap_deferred_commit_log commit_log;
     uint64_t epoch;
     
     if (verbose) {
         pas_log("Doing allocate and commit %p-%p.\n", (void*)range.begin, (void*)range.end);
-        pas_log("Balance = %ld.\n", pas_physical_page_sharing_pool_balance);
+        pas_log("Balance = %zd.\n", pas_physical_page_sharing_pool_balance);
     }
     
     if (!pas_large_sharing_pool_enabled) {
@@ -1076,7 +1120,7 @@ bool pas_large_sharing_pool_allocate_and_commit(
     pas_large_free_heap_deferred_commit_log_construct(&commit_log);
 
     if (!try_splat(range, splat_allocate_and_commit, epoch,
-                   &commit_log, NULL, transaction, synchronization_style, mmap_capability)) {
+                   &commit_log, NULL, transaction, synchronization_style, page_flags)) {
         pas_large_free_heap_deferred_commit_log_destruct(&commit_log);
         if (verbose)
             pas_log("Giving up on allocate and commit because the splat failed.\n");
@@ -1107,7 +1151,7 @@ bool pas_large_sharing_pool_allocate_and_commit(
             PAS_ASSERT(num_locks_held <= max_num_locks_held);
             
             if (verbose)
-                pas_log("Doing a take of %lu bytes.\n", commit_log.total);
+                pas_log("Doing a take of %zu bytes.\n", commit_log.total);
             pas_physical_page_sharing_pool_take(
                 commit_log.total, pas_lock_is_held, locks_held, num_locks_held);
             
@@ -1145,12 +1189,12 @@ pas_large_sharing_pool_decommit_least_recently_used(
     validate_node(node);
     
     if (verbose) {
-        pas_log("Going to decommit %lu to %lu with epoch %llu\n",
+        pas_log("Going to decommit %zu to %zu with epoch %llu\n",
                node->range.begin, node->range.end, (unsigned long long)node->use_epoch);
     }
     
     if (try_splat(node->range, splat_decommit, 0, NULL, decommit_log, NULL,
-                  node->synchronization_style, node->mmap_capability)) {
+                  node->synchronization_style, node->page_flags)) {
         if (verbose)
             pas_log("The splat worked.\n");
         return pas_page_sharing_pool_take_success;
@@ -1202,6 +1246,9 @@ pas_large_sharing_pool_compute_summary(
 {
     pas_large_sharing_node* node;
     pas_heap_summary result;
+
+    PAS_PROFILE(LARGE_SHARING_POOL_COMPUTE_SUMMARY, range.begin, range.end);
+    PAS_MTE_HANDLE(LARGE_SHARING_POOL_COMPUTE_SUMMARY, range.begin, range.end);
 
     pas_zero_memory(&result, sizeof(result));
     

@@ -3,7 +3,7 @@
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,10 +24,13 @@
 #include "config.h"
 #include "FEFlood.h"
 
-#include "ColorSerialization.h"
 #include "FEFloodSoftwareApplier.h"
 #include "Filter.h"
 #include <wtf/text/TextStream.h>
+
+#if USE(CORE_IMAGE)
+#include "FEFloodCoreImageApplier.h"
+#endif
 
 namespace WebCore {
 
@@ -76,6 +79,24 @@ FloatRect FEFlood::calculateImageRect(const Filter& filter, std::span<const Floa
     return filter.maxEffectRect(primitiveSubregion);
 }
 
+OptionSet<FilterRenderingMode> FEFlood::supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const
+{
+    OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
+#if USE(CORE_IMAGE)
+    modes.add(FilterRenderingMode::Accelerated);
+#endif
+    return modes & preferredFilterRenderingModes;
+}
+
+std::unique_ptr<FilterEffectApplier> FEFlood::createAcceleratedApplier() const
+{
+#if USE(CORE_IMAGE)
+    return FilterEffectApplier::create<FEFloodCoreImageApplier>(*this);
+#else
+    return nullptr;
+#endif
+}
+
 std::unique_ptr<FilterEffectApplier> FEFlood::createSoftwareApplier() const
 {
     return FilterEffectApplier::create<FEFloodSoftwareApplier>(*this);
@@ -83,13 +104,13 @@ std::unique_ptr<FilterEffectApplier> FEFlood::createSoftwareApplier() const
 
 TextStream& FEFlood::externalRepresentation(TextStream& ts, FilterRepresentation representation) const
 {
-    ts << indent << "[feFlood";
+    ts << indent << "[feFlood"_s;
     FilterEffect::externalRepresentation(ts, representation);
 
-    ts << " flood-color=\"" << serializationForRenderTreeAsText(floodColor()) << "\"";
-    ts << " flood-opacity=\"" << floodOpacity() << "\"";
+    ts << " flood-color=\"" << floodColor() << '"';
+    ts << " flood-opacity=\"" << floodOpacity() << '"';
 
-    ts << "]\n";
+    ts << "]\n"_s;
     return ts;
 }
 

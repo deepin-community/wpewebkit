@@ -33,12 +33,13 @@
 #include "pas_bitfit_view.h"
 #include "pas_epoch.h"
 #include "pas_log.h"
+#include "pas_zero_memory.h"
 
 void pas_bitfit_page_construct(pas_bitfit_page* page,
                                pas_bitfit_view* view,
                                const pas_bitfit_page_config* config_ptr)
 {
-    static const bool verbose = false;
+    static const bool verbose = PAS_SHOULD_LOG(PAS_LOG_BITFIT_HEAPS);
     
     pas_bitfit_page_config config;
 
@@ -177,7 +178,7 @@ PAS_NO_RETURN void pas_bitfit_page_deallocation_did_fail(
     const char* reason)
 {
     pas_start_crash_logging();
-    pas_log("Thread %p encountered bitfit alloaction error.\n", (void*)pthread_self());
+    pas_log("Thread %p encountered bitfit allocation error.\n", (void*)pthread_self());
     pas_log("Bits for page %p (%s):\n",
             page, pas_bitfit_page_config_kind_get_string(config_kind));
     pas_bitfit_page_log_bits(page, offset, offset + 1);

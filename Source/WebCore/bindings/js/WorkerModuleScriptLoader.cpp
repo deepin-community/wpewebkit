@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #include "CachedScriptFetcher.h"
 #include "ContentSecurityPolicy.h"
 #include "DOMWrapperWorld.h"
+#include "Document.h"
 #include "JSDOMBinding.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalFrame.h"
@@ -45,23 +46,23 @@ namespace WebCore {
 
 Ref<WorkerModuleScriptLoader> WorkerModuleScriptLoader::create(ModuleScriptLoaderClient& client, DeferredPromise& promise, WorkerScriptFetcher& scriptFetcher, RefPtr<JSC::ScriptFetchParameters>&& parameters)
 {
-    return adoptRef(*new WorkerModuleScriptLoader(client, promise, scriptFetcher, WTFMove(parameters)));
+    return adoptRef(*new WorkerModuleScriptLoader(client, promise, scriptFetcher, WTF::move(parameters)));
 }
 
 WorkerModuleScriptLoader::WorkerModuleScriptLoader(ModuleScriptLoaderClient& client, DeferredPromise& promise, WorkerScriptFetcher& scriptFetcher, RefPtr<JSC::ScriptFetchParameters>&& parameters)
-    : ModuleScriptLoader(client, promise, scriptFetcher, WTFMove(parameters))
+    : ModuleScriptLoader(client, promise, scriptFetcher, WTF::move(parameters))
     , m_scriptLoader(WorkerScriptLoader::create())
 {
 }
 
 WorkerModuleScriptLoader::~WorkerModuleScriptLoader()
 {
-    protectedScriptLoader()->cancel();
+    m_scriptLoader->cancel();
 }
 
 void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourceURL)
 {
-    m_sourceURL = WTFMove(sourceURL);
+    m_sourceURL = WTF::move(sourceURL);
 
     if (auto* globalScope = dynamicDowncast<ServiceWorkerGlobalScope>(context)) {
         if (auto* scriptResource = globalScope->scriptResource(m_sourceURL)) {
@@ -74,7 +75,7 @@ void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourc
         }
     }
 
-    ResourceRequest request { m_sourceURL };
+    ResourceRequest request { URL { m_sourceURL } };
 
     FetchOptions fetchOptions;
     fetchOptions.mode = FetchOptions::Mode::Cors;
@@ -87,22 +88,29 @@ void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourc
     bool cspCheckFailed = false;
     ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::DoNotEnforce;
     if (!context.shouldBypassMainWorldContentSecurityPolicy()) {
+        std::optional<TextPosition> sourcePosition;
+        if (RefPtr document = dynamicDowncast<Document>(context))
+            sourcePosition = document->currentParserSourcePosition();
+
         CheckedPtr contentSecurityPolicy = context.contentSecurityPolicy();
-        if (fetchOptions.destination == FetchOptions::Destination::Script) {
-            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowScriptFromSource(m_sourceURL);
+        // Worklets and scripts are governed by script-src; workers are governed by worker-src.
+        bool shouldEnforceScriptSrc = fetchOptions.destination == FetchOptions::Destination::Script
+            || isWorkletDestination(fetchOptions.destination);
+        if (shouldEnforceScriptSrc) {
+            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowScriptFromSource(m_sourceURL, WTF::move(sourcePosition));
             contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::EnforceScriptSrcDirective;
         } else {
-            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowWorkerFromSource(m_sourceURL);
+            cspCheckFailed = contentSecurityPolicy && !contentSecurityPolicy->allowWorkerFromSource(m_sourceURL, WTF::move(sourcePosition));
             contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
         }
     }
 
     if (cspCheckFailed) {
         // FIXME: Always get the `ScriptExecutionContextIdentifier` of the `Document`.
-        ScriptExecutionContextIdentifier mainContext;
+        std::optional<ScriptExecutionContextIdentifier> mainContext;
         if (auto* document = dynamicDowncast<Document>(context))
             mainContext = document->identifier();
-        protectedScriptLoader()->notifyError(mainContext);
+        m_scriptLoader->notifyError(mainContext);
         ASSERT(!m_failed);
         notifyFinished(mainContext);
         ASSERT(m_failed);
@@ -116,12 +124,7 @@ void WorkerModuleScriptLoader::load(ScriptExecutionContext& context, URL&& sourc
             fetchOptions.mode = FetchOptions::Mode::SameOrigin;
     }
 
-    protectedScriptLoader()->loadAsynchronously(context, WTFMove(request), WorkerScriptLoader::Source::ModuleScript, WTFMove(fetchOptions), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, *this, taskMode());
-}
-
-Ref<WorkerScriptLoader> WorkerModuleScriptLoader::protectedScriptLoader()
-{
-    return m_scriptLoader;
+    m_scriptLoader->loadAsynchronously(context, WTF::move(request), WorkerScriptLoader::Source::ModuleScript, WTF::move(fetchOptions), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, *this, taskMode());
 }
 
 ReferrerPolicy WorkerModuleScriptLoader::referrerPolicy()
@@ -131,7 +134,7 @@ ReferrerPolicy WorkerModuleScriptLoader::referrerPolicy()
     return ReferrerPolicy::EmptyString;
 }
 
-void WorkerModuleScriptLoader::notifyFinished(ScriptExecutionContextIdentifier)
+void WorkerModuleScriptLoader::notifyFinished(std::optional<ScriptExecutionContextIdentifier>)
 {
     ASSERT(m_promise);
 
@@ -151,7 +154,7 @@ void WorkerModuleScriptLoader::notifyClientFinished()
     Ref protectedThis { *this };
 
     if (m_client)
-        m_client->notifyFinished(*this, WTFMove(m_sourceURL), m_promise.releaseNonNull());
+        m_client->notifyFinished(*this, WTF::move(m_sourceURL), m_promise.releaseNonNull());
 }
 
 String WorkerModuleScriptLoader::taskMode()

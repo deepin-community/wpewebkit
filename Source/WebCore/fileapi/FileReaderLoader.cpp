@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc.  All rights reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -38,6 +38,7 @@
 #include "ExceptionCode.h"
 #include "FileReaderLoaderClient.h"
 #include "HTTPHeaderNames.h"
+#include "HTTPParsers.h"
 #include "HTTPStatusCodes.h"
 #include "ResourceError.h"
 #include "ResourceRequest.h"
@@ -49,7 +50,9 @@
 #include "ThreadableBlobRegistry.h"
 #include "ThreadableLoader.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
@@ -57,7 +60,14 @@
 
 namespace WebCore {
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FileReaderLoader);
+
 const int defaultBufferLength = 32768;
+
+Ref<FileReaderLoader> FileReaderLoader::create(ReadType readType, FileReaderLoaderClient* client)
+{
+    return adoptRef(*new FileReaderLoader(readType, client));
+}
 
 FileReaderLoader::FileReaderLoader(ReadType readType, FileReaderLoaderClient* client)
     : m_readType(readType)
@@ -85,7 +95,8 @@ void FileReaderLoader::start(ScriptExecutionContext* scriptExecutionContext, con
     ASSERT(scriptExecutionContext);
 
     // The blob is read by routing through the request handling layer given a temporary public url.
-    m_urlForReading = { BlobURL::createPublicURL(scriptExecutionContext->securityOrigin()), scriptExecutionContext->topOrigin().data() };
+    RefPtr securityOrigin = scriptExecutionContext->securityOrigin();
+    m_urlForReading = { BlobURL::createPublicURL(securityOrigin.get()), scriptExecutionContext->topOrigin().data() };
     if (m_urlForReading.isEmpty()) {
         failed(ExceptionCode::SecurityError);
         return;
@@ -95,11 +106,12 @@ void FileReaderLoader::start(ScriptExecutionContext* scriptExecutionContext, con
     if (!contentSecurityPolicy)
         return;
 
-    ThreadableBlobRegistry::registerBlobURL(scriptExecutionContext->securityOrigin(), scriptExecutionContext->policyContainer(), m_urlForReading, blobURL);
+    ThreadableBlobRegistry::registerBlobURL(securityOrigin.get(), scriptExecutionContext->policyContainer(), m_urlForReading, blobURL);
 
     // Construct and load the request.
-    ResourceRequest request(m_urlForReading);
+    ResourceRequest request(URL { m_urlForReading });
     request.setHTTPMethod("GET"_s);
+    request.setHiddenFromInspector(true);
 
     ThreadableLoaderOptions options;
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
@@ -109,12 +121,12 @@ void FileReaderLoader::start(ScriptExecutionContext* scriptExecutionContext, con
     options.contentSecurityPolicyEnforcement = ContentSecurityPolicyEnforcement::DoNotEnforce;
 
     if (m_client) {
-        auto loader = ThreadableLoader::create(*scriptExecutionContext, *this, WTFMove(request), options);
+        auto loader = ThreadableLoader::create(*scriptExecutionContext, *this, WTF::move(request), options);
         if (!loader)
             return;
         std::exchange(m_loader, loader);
     } else
-        ThreadableLoader::loadResourceSynchronously(*scriptExecutionContext, WTFMove(request), *this, options);
+        ThreadableLoader::loadResourceSynchronously(*scriptExecutionContext, WTF::move(request), *this, options);
 }
 
 void FileReaderLoader::cancel()
@@ -125,8 +137,8 @@ void FileReaderLoader::cancel()
 
 void FileReaderLoader::terminate()
 {
-    if (m_loader) {
-        m_loader->cancel();
+    if (RefPtr loader = m_loader) {
+        loader->cancel();
         cleanup();
     }
 }
@@ -180,13 +192,13 @@ bool FileReaderLoader::processResponse(const ResourceResponse& response)
     return true;
 }
 
-void FileReaderLoader::didReceiveResponse(ScriptExecutionContextIdentifier, ResourceLoaderIdentifier, const ResourceResponse& response)
+void FileReaderLoader::didReceiveResponse(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const ResourceResponse& response)
 {
     if (!processResponse(response))
         return;
 
-    if (m_client)
-        m_client->didStartLoading();
+    if (RefPtr client = m_client.get())
+        client->didStartLoading();
 }
 
 void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
@@ -198,8 +210,8 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
         return;
 
     if (m_readType == ReadType::ReadAsBinaryChunks) {
-        if (m_client)
-            m_client->didReceiveBinaryChunk(buffer);
+        if (RefPtr client = m_client.get())
+            client->didReceiveBinaryChunk(buffer);
         return;
     }
 
@@ -224,7 +236,7 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
                 failed(ExceptionCode::NotReadableError);
                 return;
             }
-            memcpy(static_cast<char*>(newData->data()), static_cast<char*>(m_rawData->data()), m_bytesLoaded);
+            memcpySpan(newData->mutableSpan(), protect(m_rawData)->span().first(m_bytesLoaded));
 
             m_rawData = newData;
             m_totalBytes = static_cast<unsigned>(newLength);
@@ -237,27 +249,27 @@ void FileReaderLoader::didReceiveData(const SharedBuffer& buffer)
     if (length <= 0)
         return;
 
-    memcpy(static_cast<char*>(m_rawData->data()) + m_bytesLoaded, buffer.span().data(), length);
+    memcpySpan(protect(m_rawData)->mutableSpan().subspan(m_bytesLoaded), buffer.span().first(length));
     m_bytesLoaded += length;
 
     m_isRawDataConverted = false;
 
-    if (m_client)
-        m_client->didReceiveData();
+    if (RefPtr client = m_client.get())
+        client->didReceiveData();
 }
 
-void FileReaderLoader::didFinishLoading(ScriptExecutionContextIdentifier, ResourceLoaderIdentifier, const NetworkLoadMetrics&)
+void FileReaderLoader::didFinishLoading(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const NetworkLoadMetrics&)
 {
     if (m_variableLength && m_totalBytes > m_bytesLoaded) {
-        m_rawData = m_rawData->slice(0, m_bytesLoaded);
+        m_rawData = protect(m_rawData)->slice(0, m_bytesLoaded);
         m_totalBytes = m_bytesLoaded;
     }
     cleanup();
-    if (m_client)
-        m_client->didFinishLoading();
+    if (RefPtr client = m_client.get())
+        client->didFinishLoading();
 }
 
-void FileReaderLoader::didFail(ScriptExecutionContextIdentifier, const ResourceError& error)
+void FileReaderLoader::didFail(std::optional<ScriptExecutionContextIdentifier>, const ResourceError& error)
 {
     // If we're aborting, do not proceed with normal error handling since it is covered in aborting code.
     if (m_errorCode && m_errorCode.value() == ExceptionCode::AbortError)
@@ -270,8 +282,8 @@ void FileReaderLoader::failed(ExceptionCode errorCode)
 {
     m_errorCode = errorCode;
     cleanup();
-    if (m_client)
-        m_client->didFail(errorCode);
+    if (RefPtr client = m_client.get())
+        client->didFail(errorCode);
 }
 
 ExceptionCode FileReaderLoader::toErrorCode(BlobResourceHandle::Error error)
@@ -307,7 +319,7 @@ RefPtr<ArrayBuffer> FileReaderLoader::arrayBufferResult() const
         return m_rawData;
 
     // Otherwise, return a copy.
-    return ArrayBuffer::create(*m_rawData);
+    return ArrayBuffer::create(*protect(m_rawData));
 }
 
 String FileReaderLoader::stringResult()
@@ -327,7 +339,7 @@ String FileReaderLoader::stringResult()
         // No conversion is needed.
         break;
     case ReadAsBinaryString:
-        m_stringResult = m_rawData->span().first(m_bytesLoaded);
+        m_stringResult = byteCast<Latin1Character>(protect(m_rawData)->span().first(m_bytesLoaded));
         break;
     case ReadAsText:
         convertToText();
@@ -351,21 +363,30 @@ void FileReaderLoader::convertToText()
         return;
 
     // Decode the data.
-    // The File API spec says that we should use the supplied encoding if it is valid. However, we choose to ignore this
-    // requirement in order to be consistent with how WebKit decodes the web content: always has the BOM override the
-    // provided encoding.     
+    // Per the File API "read as text" algorithm, the encoding is determined in order: the explicit
+    // encoding argument if it is a supported encoding; otherwise the charset parameter of the Blob's
+    // type, if any; otherwise UTF-8.
+    // We intentionally deviate from the spec in one respect, for consistency with how WebKit decodes
+    // web content: a BOM in the data always overrides the selected encoding (handled by
+    // TextResourceDecoder), whereas the spec gives precedence to the explicitly supplied encoding.
     // FIXME: consider supporting incremental decoding to improve the perf.
-    if (!m_decoder)
-        m_decoder = TextResourceDecoder::create("text/plain"_s, m_encoding.isValid() ? m_encoding : PAL::UTF8Encoding());
+    if (!m_decoder) {
+        auto encoding = m_encoding;
+        if (!encoding.isValid())
+            encoding = extractCharsetFromMediaType(m_dataType);
+        m_decoder = TextResourceDecoder::create("text/plain"_s, encoding.isValid() ? encoding : PAL::UTF8Encoding());
+    }
+    Ref decoder = *m_decoder;
+    Ref rawData = *m_rawData;
     if (isCompleted())
-        m_stringResult = m_decoder->decodeAndFlush(m_rawData->span().first(m_bytesLoaded));
+        m_stringResult = decoder->decodeAndFlush(rawData->span().first(m_bytesLoaded));
     else
-        m_stringResult = m_decoder->decode(m_rawData->span().first(m_bytesLoaded));
+        m_stringResult = decoder->decode(rawData->span().first(m_bytesLoaded));
 }
 
 void FileReaderLoader::convertToDataURL()
 {
-    m_stringResult = makeString("data:"_s, m_dataType.isEmpty() ? "application/octet-stream"_s : m_dataType, ";base64,"_s, base64Encoded(m_rawData ? m_rawData->span().first(m_bytesLoaded) : std::span<const uint8_t>()));
+    m_stringResult = makeString("data:"_s, m_dataType.isEmpty() ? "application/octet-stream"_s : m_dataType, ";base64,"_s, base64Encoded(m_rawData ? protect(m_rawData)->span().first(m_bytesLoaded) : std::span<const uint8_t>()));
 }
 
 bool FileReaderLoader::isCompleted() const

@@ -30,14 +30,18 @@
 
 #if ENABLE(MATHML)
 
+#include "ContainerNodeInlines.h"
+#include "ElementInlinesLight.h"
 #include "HTTPParsers.h"
 #include "MathMLNames.h"
 #include "RenderMathMLToken.h"
+#include "Settings.h"
+#include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(MathMLTokenElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MathMLTokenElement);
 
 using namespace MathMLNames;
 
@@ -65,11 +69,11 @@ void MathMLTokenElement::childrenChanged(const ChildChange& change)
         mathmlRenderer->updateTokenContent();
 }
 
-RenderPtr<RenderElement> MathMLTokenElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MathMLTokenElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     ASSERT(hasTagName(MathMLNames::miTag) || hasTagName(MathMLNames::mnTag) || hasTagName(MathMLNames::msTag) || hasTagName(MathMLNames::mtextTag));
 
-    return createRenderer<RenderMathMLToken>(RenderObject::Type::MathMLToken, *this, WTFMove(style));
+    return createRenderer<RenderMathMLToken>(RenderObject::Type::MathMLToken, *this, WTF::move(style));
 }
 
 bool MathMLTokenElement::childShouldCreateRenderer(const Node& child) const
@@ -78,17 +82,10 @@ bool MathMLTokenElement::childShouldCreateRenderer(const Node& child) const
     return StyledElement::childShouldCreateRenderer(child);
 }
 
-std::optional<char32_t> MathMLTokenElement::convertToSingleCodePoint(StringView string)
+bool MathMLTokenElement::acceptsLegacyMathVariantAttribute()
 {
-    auto codePoints = string.trim(isASCIIWhitespaceWithoutFF<UChar>).codePoints();
-    auto iterator = codePoints.begin();
-    if (iterator == codePoints.end())
-        return std::nullopt;
-    std::optional<char32_t> character = *iterator;
-    ++iterator;
-    return iterator == codePoints.end() ? character : std::nullopt;
+    return !document().settings().coreMathMLDeprecateLegacyMathvariant();
 }
-
 }
 
 #endif // ENABLE(MATHML)

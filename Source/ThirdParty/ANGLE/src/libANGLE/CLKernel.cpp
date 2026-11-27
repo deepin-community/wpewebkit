@@ -4,13 +4,20 @@
 // found in the LICENSE file.
 //
 // CLKernel.cpp: Implements the cl::Kernel class.
+//
 
-#include "libANGLE/CLKernel.h"
+#include "common/unsafe_buffers.h"
+
+#include <angle_cl.h>
 
 #include "libANGLE/CLContext.h"
+#include "libANGLE/CLKernel.h"
 #include "libANGLE/CLProgram.h"
 #include "libANGLE/cl_utils.h"
+#include "libANGLE/renderer/CLKernelImpl.h"
 
+#include <array>
+#include <cstddef>
 #include <cstring>
 
 namespace cl
@@ -18,7 +25,10 @@ namespace cl
 
 angle::Result Kernel::setArg(cl_uint argIndex, size_t argSize, const void *argValue)
 {
-    return mImpl->setArg(argIndex, argSize, argValue);
+    ANGLE_TRY(mImpl->setArg(argIndex, argSize, argValue));
+
+    mSetArguments[argIndex] = {true, argIndex, argSize, argValue};
+    return angle::Result::Continue;
 }
 
 angle::Result Kernel::getInfo(KernelInfo name,
@@ -74,7 +84,7 @@ angle::Result Kernel::getInfo(KernelInfo name,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -107,6 +117,7 @@ angle::Result Kernel::getWorkGroupInfo(cl_device_id device,
 
     const void *copyValue = nullptr;
     size_t copySize       = 0u;
+    cl_ulong valueHelper;
 
     switch (name)
     {
@@ -123,8 +134,9 @@ angle::Result Kernel::getWorkGroupInfo(cl_device_id device,
             copySize  = sizeof(info.compileWorkGroupSize);
             break;
         case KernelWorkGroupInfo::LocalMemSize:
-            copyValue = &info.localMemSize;
-            copySize  = sizeof(info.localMemSize);
+            valueHelper = info.localMemSize + mImpl->getAllArgLocalMemSize();
+            copyValue   = &valueHelper;
+            copySize    = sizeof(valueHelper);
             break;
         case KernelWorkGroupInfo::PreferredWorkGroupSizeMultiple:
             copyValue = &info.prefWorkGroupSizeMultiple;
@@ -148,13 +160,109 @@ angle::Result Kernel::getWorkGroupInfo(cl_device_id device,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
     {
         *valueSizeRet = copySize;
     }
+    return angle::Result::Continue;
+}
+
+angle::Result Kernel::getSubWorkGroupInfo(cl_device_id device,
+                                          KernelSubGroupInfo name,
+                                          size_t inputValueSize,
+                                          const void *inputValue,
+                                          size_t paramValueSize,
+                                          void *paramValue,
+                                          size_t *paramValueSizeRet) const
+{
+    size_t index = 0u;
+    if (device != nullptr)
+    {
+        const DevicePtrs &devices = mProgram->getContext().getDevices();
+        index = std::find(devices.cbegin(), devices.cend(), device) - devices.cbegin();
+        ASSERT(index < devices.size() && "device should be in context device list");
+    }
+    ASSERT(mProgram->getContext().getDevices()[index]->getInfo().khrSubgroups);
+
+    const rx::CLKernelImpl::WorkGroupInfo &info = mInfo.workGroups[index];
+
+    const void *copyValue            = nullptr;
+    size_t numDims                   = inputValueSize / sizeof(size_t);
+    size_t copySize                  = 0u;
+    size_t valSizet                  = 0;
+    size_t maxSubgroupSizeForNDRange = info.subGroupSizeForNDRange;
+
+    // spec wants to return size_t[] to user instead of our uint32_t[] (i.e. WorkgroupSize)
+    std::array<size_t, 3> inputLocalWorkSize  = {1, 1, 1};
+    std::array<size_t, 3> outputLocalWorkSize = {1, 1, 1};
+
+    switch (name)
+    {
+        // CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE_KHR
+        case KernelSubGroupInfo::MaxSubGroupSizeForNdrange:
+        {
+            copyValue = &maxSubgroupSizeForNDRange;
+            copySize  = sizeof(maxSubgroupSizeForNDRange);
+            break;
+        }
+        // CL_KERNEL_SUB_GROUP_COUNT_FOR_NDRANGE_KHR
+        case KernelSubGroupInfo::SubGroupCountForNdrange:
+        {
+            // SAFETY: The frontend validator (ValidateGetKernelSubGroupInfo) ensures that
+            // input_value_size is not 0, is a multiple of sizeof(size_t), and does not exceed the
+            // device's MaxWorkItemDimensions. We trust the caller-provided pointer to match the
+            // caller-provided size per OpenCL spec.
+            angle::Span<const uint32_t> inputLocalWorkSizeSpan = ANGLE_UNSAFE_BUFFERS(
+                angle::Span<const uint32_t>(static_cast<const uint32_t *>(inputValue), numDims));
+
+            for (unsigned dim = 0; dim < numDims; dim++)
+            {
+                inputLocalWorkSize[dim] = inputLocalWorkSizeSpan[dim];
+            }
+            size_t workItemsPerWorkGroup =
+                inputLocalWorkSize[0] * inputLocalWorkSize[1] * inputLocalWorkSize[2];
+            valSizet  = rx::UnsignedCeilDivide((unsigned int)workItemsPerWorkGroup,
+                                               (unsigned int)info.subGroupSizeForNDRange);
+            copyValue = &valSizet;
+            copySize  = sizeof(valSizet);
+            break;
+        }
+        case KernelSubGroupInfo::LocalSizeForSubGroupCount:
+        {
+            uint32_t wgs = *static_cast<const uint32_t *>(inputValue) * info.subGroupSizeForNDRange;
+            if (wgs > info.workGroupSize)
+            {
+                // Cannot support these many subgroups count
+                outputLocalWorkSize = {0, 0, 0};
+            }
+            else
+            {
+                outputLocalWorkSize[0] = wgs;
+            }
+
+            copyValue = &outputLocalWorkSize;
+            copySize  = paramValueSize;
+            break;
+        }
+        default:
+            UNREACHABLE();
+            break;
+    }
+
+    if (paramValue != nullptr && copyValue != nullptr)
+    {
+        // paramValue needs to be at least as big as copySize
+        ASSERT(paramValueSize >= copySize);
+        ANGLE_UNSAFE_TODO(std::memcpy(paramValue, copyValue, copySize));
+    }
+    if (paramValueSizeRet != nullptr)
+    {
+        *paramValueSizeRet = copySize;
+    }
+
     return angle::Result::Continue;
 }
 
@@ -204,7 +312,7 @@ angle::Result Kernel::getArgInfo(cl_uint argIndex,
         }
         if (copyValue != nullptr)
         {
-            std::memcpy(value, copyValue, copySize);
+            ANGLE_UNSAFE_TODO(std::memcpy(value, copyValue, copySize));
         }
     }
     if (valueSizeRet != nullptr)
@@ -212,6 +320,21 @@ angle::Result Kernel::getArgInfo(cl_uint argIndex,
         *valueSizeRet = copySize;
     }
     return angle::Result::Continue;
+}
+
+Kernel *Kernel::clone() const
+{
+    cl_kernel kernel = mProgram->createKernel(getName().c_str());
+
+    for (KernelArg arg : mSetArguments)
+    {
+        if (arg.isSet && IsError(kernel->cast<Kernel>().setArg(arg.index, arg.size, arg.valuePtr)))
+        {
+            ANGLE_CL_SET_ERROR(CL_OUT_OF_RESOURCES);
+            return nullptr;
+        }
+    }
+    return &kernel->cast<Kernel>();
 }
 
 Kernel::~Kernel()
@@ -223,9 +346,8 @@ Kernel::Kernel(Program &program, const char *name) : mProgram(&program), mImpl(n
 {
     if (!IsError(program.getImpl().createKernel(*this, name, &mImpl)))
     {
-        ANGLE_CL_IMPL_TRY(mImpl->createInfo(&mInfo));
+        initImpl();
     }
-    ++mProgram->mNumAttachedKernels;
 }
 
 Kernel::Kernel(Program &program, const rx::CLKernelImpl::CreateFunc &createFunc)
@@ -233,8 +355,17 @@ Kernel::Kernel(Program &program, const rx::CLKernelImpl::CreateFunc &createFunc)
 {
     if (mImpl)
     {
-        ANGLE_CL_IMPL_TRY(mImpl->createInfo(&mInfo));
+        initImpl();
     }
+}
+
+void Kernel::initImpl()
+{
+    ANGLE_CL_IMPL_TRY(mImpl->createInfo(&mInfo));
+
+    mSetArguments.resize(mInfo.numArgs);
+    std::fill(mSetArguments.begin(), mSetArguments.end(), KernelArg{false, 0, 0, 0});
+
     ++mProgram->mNumAttachedKernels;
 }
 

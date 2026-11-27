@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,13 +32,18 @@
 #include <WebCore/RTCDataChannelRemoteHandlerConnection.h>
 #include <WebCore/RTCDataChannelRemoteSource.h>
 #include <WebCore/RTCDataChannelRemoteSourceConnection.h>
+#include <wtf/Lock.h>
 #include <wtf/WorkQueue.h>
 
 namespace WebKit {
 
 class RTCDataChannelRemoteManager final : private IPC::MessageReceiver {
 public:
-    static RTCDataChannelRemoteManager& sharedManager();
+    static RTCDataChannelRemoteManager& singleton();
+
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
 
     WebCore::RTCDataChannelRemoteHandlerConnection& remoteHandlerConnection();
     bool connectToRemoteSource(WebCore::RTCDataChannelIdentifier source, WebCore::RTCDataChannelIdentifier handler);
@@ -58,25 +63,25 @@ private:
     void changeReadyState(WebCore::RTCDataChannelIdentifier, WebCore::RTCDataChannelState);
     void receiveData(WebCore::RTCDataChannelIdentifier, bool isRaw, std::span<const uint8_t>);
     void detectError(WebCore::RTCDataChannelIdentifier, WebCore::RTCErrorDetailType, String&&);
-    void bufferedAmountIsDecreasing(WebCore::RTCDataChannelIdentifier, size_t);
+    void bufferedAmountIsDecreasing(WebCore::RTCDataChannelIdentifier, uint64_t);
 
     WebCore::RTCDataChannelRemoteSourceConnection& remoteSourceConnection();
     void postTaskToHandler(WebCore::RTCDataChannelIdentifier, Function<void(WebCore::RTCDataChannelRemoteHandler&)>&&);
-    WebCore::RTCDataChannelRemoteSource* sourceFromIdentifier(WebCore::RTCDataChannelIdentifier);
+    RefPtr<WebCore::RTCDataChannelRemoteSource> sourceFromIdentifier(WebCore::RTCDataChannelIdentifier);
 
     class RemoteHandlerConnection : public WebCore::RTCDataChannelRemoteHandlerConnection {
     public:
         static Ref<RemoteHandlerConnection> create(Ref<WorkQueue>&&);
 
-        void connectToSource(WebCore::RTCDataChannelRemoteHandler&, WebCore::ScriptExecutionContextIdentifier, WebCore::RTCDataChannelIdentifier, WebCore::RTCDataChannelIdentifier) final;
+        void connectToSource(WebCore::RTCDataChannelRemoteHandler&, std::optional<WebCore::ScriptExecutionContextIdentifier>, WebCore::RTCDataChannelIdentifier, WebCore::RTCDataChannelIdentifier) final;
         void sendData(WebCore::RTCDataChannelIdentifier, bool isRaw, std::span<const uint8_t>) final;
         void close(WebCore::RTCDataChannelIdentifier) final;
 
     private:
         explicit RemoteHandlerConnection(Ref<WorkQueue>&&);
 
-        Ref<IPC::Connection> m_connection;
-        Ref<WorkQueue> m_queue;
+        const Ref<IPC::Connection> m_connection;
+        const Ref<WorkQueue> m_queue;
     };
 
     class RemoteSourceConnection : public WebCore::RTCDataChannelRemoteSourceConnection {
@@ -90,22 +95,23 @@ private:
         void didReceiveStringData(WebCore::RTCDataChannelIdentifier, const String&) final;
         void didReceiveRawData(WebCore::RTCDataChannelIdentifier, std::span<const uint8_t>) final;
         void didDetectError(WebCore::RTCDataChannelIdentifier, WebCore::RTCErrorDetailType, const String&) final;
-        void bufferedAmountIsDecreasing(WebCore::RTCDataChannelIdentifier, size_t) final;
+        void bufferedAmountIsDecreasing(WebCore::RTCDataChannelIdentifier, uint64_t) final;
 
-        Ref<IPC::Connection> m_connection;
+        const Ref<IPC::Connection> m_connection;
     };
 
     struct RemoteHandler {
         WeakPtr<WebCore::RTCDataChannelRemoteHandler> handler;
-        WebCore::ScriptExecutionContextIdentifier contextIdentifier;
+        Markable<WebCore::ScriptExecutionContextIdentifier> contextIdentifier;
     };
 
-    Ref<WorkQueue> m_queue;
-    RefPtr<IPC::Connection> m_connection;
+    const Ref<WorkQueue> m_queue;
+    const Ref<IPC::Connection> m_connection;
     RefPtr<RemoteHandlerConnection> m_remoteHandlerConnection;
     RefPtr<RemoteSourceConnection> m_remoteSourceConnection;
-    HashMap<WebCore::RTCDataChannelLocalIdentifier, UniqueRef<WebCore::RTCDataChannelRemoteSource>> m_sources;
-    HashMap<WebCore::RTCDataChannelLocalIdentifier, RemoteHandler> m_handlers;
+    Lock m_mapsLock;
+    HashMap<WebCore::RTCDataChannelLocalIdentifier, Ref<WebCore::RTCDataChannelRemoteSource>> m_sources WTF_GUARDED_BY_LOCK(m_mapsLock);
+    HashMap<WebCore::RTCDataChannelLocalIdentifier, RemoteHandler> m_handlers WTF_GUARDED_BY_LOCK(m_mapsLock);
 };
 
 } // namespace WebKit

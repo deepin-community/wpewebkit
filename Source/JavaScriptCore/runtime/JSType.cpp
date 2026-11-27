@@ -1,5 +1,7 @@
 /*
  * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2024 Sosuke Suzuki <aosukeke@gmail.com>.
+ * Copyright (C) 2024 Tetsuharu Ohzeki <tetsuharu.ohzeki@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -56,10 +58,20 @@ void printInternal(PrintStream& out, JSC::JSType type)
     CASE(UnlinkedEvalCodeBlockType)
     CASE(UnlinkedFunctionCodeBlockType)
     CASE(CodeBlockType)
-    CASE(JSImmutableButterflyType)
+    CASE(JSCellButterflyType)
     CASE(JSSourceCodeType)
-    CASE(JSScriptFetcherType)
-    CASE(JSScriptFetchParametersType)
+    CASE(JSSlimPromiseReactionType)
+    CASE(JSFullPromiseReactionType)
+    CASE(JSPromiseCombinatorsContextType)
+    CASE(JSPromiseCombinatorsGlobalContextType)
+    CASE(JSWebAssemblyStreamingContextType)
+    CASE(JSMicrotaskDispatcherType)
+    CASE(ModuleRegistryEntryType)
+    CASE(ModuleLoaderPayloadType)
+    CASE(ModuleGraphLoadingStateType)
+    CASE(JSModuleLoaderType)
+    CASE(ModuleLoadingContextType)
+    CASE(SentinelType)
     CASE(ObjectType)
     CASE(FinalObjectType)
     CASE(JSCalleeType)
@@ -102,8 +114,11 @@ void printInternal(PrintStream& out, JSC::JSType type)
     CASE(JSDateType)
     CASE(ProxyObjectType)
     CASE(JSGeneratorType)
+    CASE(JSAsyncFunctionGeneratorType)
     CASE(JSAsyncGeneratorType)
     CASE(JSArrayIteratorType)
+    CASE(JSIteratorType)
+    CASE(JSIteratorHelperType)
     CASE(JSMapIteratorType)
     CASE(JSSetIteratorType)
     CASE(JSStringIteratorType)
@@ -118,6 +133,11 @@ void printInternal(PrintStream& out, JSC::JSType type)
     CASE(StringObjectType)
     CASE(DerivedStringObjectType)
     CASE(MaxJSType)
+    CASE(JSWrapForValidIteratorType)
+    CASE(JSRegExpStringIteratorType)
+    CASE(JSAsyncFromSyncIteratorType)
+    CASE(DisposableStackType)
+    CASE(AsyncDisposableStackType)
     }
 }
 

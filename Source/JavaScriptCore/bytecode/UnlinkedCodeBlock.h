@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2024 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,24 +25,24 @@
 
 #pragma once
 
-#include "ArithProfile.h"
-#include "ArrayProfile.h"
-#include "BytecodeConventions.h"
-#include "CodeType.h"
-#include "DFGExitProfile.h"
-#include "ExecutionCounter.h"
-#include "ExpressionInfo.h"
-#include "HandlerInfo.h"
-#include "Identifier.h"
-#include "InstructionStream.h"
-#include "JSCast.h"
-#include "Opcode.h"
-#include "ParserModes.h"
-#include "RegExp.h"
-#include "UnlinkedFunctionExecutable.h"
-#include "UnlinkedMetadataTable.h"
-#include "ValueProfile.h"
-#include "VirtualRegister.h"
+#include <JavaScriptCore/ArithProfile.h>
+#include <JavaScriptCore/ArrayProfile.h>
+#include <JavaScriptCore/BytecodeConventions.h>
+#include <JavaScriptCore/CodeType.h>
+#include <JavaScriptCore/DFGExitProfile.h>
+#include <JavaScriptCore/ExecutionCounter.h>
+#include <JavaScriptCore/ExpressionInfo.h>
+#include <JavaScriptCore/HandlerInfo.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/InstructionStream.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/Opcode.h>
+#include <JavaScriptCore/ParserModes.h>
+#include <JavaScriptCore/RegExp.h>
+#include <JavaScriptCore/UnlinkedFunctionExecutable.h>
+#include <JavaScriptCore/UnlinkedMetadataTable.h>
+#include <JavaScriptCore/ValueProfile.h>
+#include <JavaScriptCore/VirtualRegister.h>
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
@@ -86,12 +86,15 @@ struct UnlinkedStringJumpTable {
 
     using StringOffsetTable = MemoryCompactLookupOnlyRobinHoodHashMap<RefPtr<StringImpl>, OffsetLocation>;
     StringOffsetTable m_offsetTable;
+    unsigned m_minLength { StringImpl::MaxLength };
+    unsigned m_maxLength { 0 };
+    int32_t m_defaultOffset { 0 };
 
-    inline int32_t offsetForValue(StringImpl* value, int32_t defaultOffset) const
+    inline int32_t offsetForValue(StringImpl* value) const
     {
         auto loc = m_offsetTable.find(value);
         if (loc == m_offsetTable.end())
-            return defaultOffset;
+            return m_defaultOffset;
         return loc->value.m_branchOffset;
     }
 
@@ -102,20 +105,26 @@ struct UnlinkedStringJumpTable {
             return defaultIndex;
         return loc->value.m_indexInTable;
     }
+
+    unsigned minLength() const { return m_minLength; }
+    unsigned maxLength() const { return m_maxLength; }
+    int32_t defaultOffset() const { return m_defaultOffset; }
 };
 
 struct UnlinkedSimpleJumpTable {
     FixedVector<int32_t> m_branchOffsets;
-    int32_t m_min;
+    int32_t m_min { 0 };
+    int32_t m_defaultOffset { 0 };
+    int32_t m_isList { 0 };
 
-    inline int32_t offsetForValue(int32_t value, int32_t defaultOffset) const
+    inline int32_t offsetForValue(int32_t value) const
     {
         if (value >= m_min && static_cast<uint32_t>(value - m_min) < m_branchOffsets.size()) {
             int32_t offset = m_branchOffsets[value - m_min];
             if (offset)
                 return offset;
         }
-        return defaultOffset;
+        return m_defaultOffset;
     }
 
     void add(int32_t key, int32_t offset)
@@ -123,6 +132,11 @@ struct UnlinkedSimpleJumpTable {
         if (!m_branchOffsets[key])
             m_branchOffsets[key] = offset;
     }
+
+    int32_t defaultOffset() const { return m_defaultOffset; }
+
+    // Returns true if this is a list-style jump table (key-offset pairs), used for sparse switches.
+    bool isList() const { return !!m_isList; }
 };
 
 class UnlinkedCodeBlock : public JSCell {
@@ -130,7 +144,7 @@ public:
     typedef JSCell Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static constexpr bool needsDestruction = true;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, SubspaceAccess>
     static void subspaceFor(VM&)
@@ -155,11 +169,20 @@ public:
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool allowDirectEvalCache() const { return !(m_features & NoEvalCacheFeature); }
     bool usesImportMeta() const { return m_features & ImportMetaFeature; }
+    bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
+
+    bool hasQuickDFGTierUpUpdated() const { return m_quickDFGTierUp != TriState::Indeterminate; }
+    bool isQuickDFGTierUp() const { return m_quickDFGTierUp == TriState::True; }
+    void setQuickDFGTierUp(TriState state) { m_quickDFGTierUp = state; }
+    TriState quickDFGTierUp() const { return m_quickDFGTierUp; }
+
+    bool isQuickFTLTierUp() const { return m_quickFTLTierUp; }
+    void setQuickFTLTierUp(bool value) { m_quickFTLTierUp = value; }
 
     // Special registers
     void setThisRegister(VirtualRegister thisRegister) { m_thisRegister = thisRegister; }
@@ -173,15 +196,15 @@ public:
 
     size_t numberOfIdentifiers() const { return m_identifiers.size(); }
     const Identifier& identifier(int index) const { return m_identifiers[index]; }
-    const FixedVector<Identifier>& identifiers() const { return m_identifiers; }
+    const FixedVector<Identifier>& identifiers() const LIFETIME_BOUND { return m_identifiers; }
 
     BitVector& bitVector(size_t i) { ASSERT(m_rareData); return m_rareData->m_bitVectors[i]; }
 
-    const FixedVector<WriteBarrier<Unknown>>& constantRegisters() { return m_constantRegisters; }
+    const FixedVector<WriteBarrier<Unknown>>& constantRegisters() LIFETIME_BOUND { return m_constantRegisters; }
     const WriteBarrier<Unknown>& constantRegister(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()]; }
     WriteBarrier<Unknown>& constantRegister(VirtualRegister reg) { return m_constantRegisters[reg.toConstantIndex()]; }
     ALWAYS_INLINE JSValue getConstant(VirtualRegister reg) const { return m_constantRegisters[reg.toConstantIndex()].get(); }
-    const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation() { return m_constantsSourceCodeRepresentation; }
+    const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation() LIFETIME_BOUND { return m_constantsSourceCodeRepresentation; }
 
     SourceCodeRepresentation constantSourceCodeRepresentation(VirtualRegister reg) const
     {
@@ -202,8 +225,8 @@ public:
     unsigned jumpTarget(int index) const { return m_jumpTargets[index]; }
     unsigned lastJumpTarget() const { return m_jumpTargets.last(); }
 
-    UnlinkedHandlerInfo* handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
-    UnlinkedHandlerInfo* handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* NODELETE handlerForBytecodeIndex(BytecodeIndex, RequiredHandler = RequiredHandler::AnyHandler);
+    UnlinkedHandlerInfo* NODELETE handlerForIndex(unsigned, RequiredHandler = RequiredHandler::AnyHandler);
 
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
 
@@ -211,7 +234,7 @@ public:
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
 
-    const JSInstructionStream& instructions() const;
+    const JSInstructionStream& NODELETE instructions() const;
     const JSInstruction* instructionAt(BytecodeIndex index) const { return instructions().at(index).ptr(); }
     unsigned bytecodeOffset(const JSInstruction* instruction)
     {
@@ -235,8 +258,10 @@ public:
 
     UnlinkedFunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
     size_t numberOfFunctionDecls() { return m_functionDecls.size(); }
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const { return m_functionDecls.span(); }
     UnlinkedFunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
     size_t numberOfFunctionExprs() { return m_functionExprs.size(); }
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs() const { return m_functionExprs.span(); }
 
     // Exception handling support
     size_t numberOfExceptionHandlers() const { return m_rareData ? m_rareData->m_exceptionHandlers.size() : 0; }
@@ -315,7 +340,7 @@ public:
         return PrivateBrandRequirement::None;
     }
 
-    void dump(PrintStream&) const;
+    void NODELETE dump(PrintStream&) const;
 
     BytecodeLivenessAnalysis& livenessAnalysis(CodeBlock* codeBlock)
     {
@@ -336,7 +361,7 @@ public:
         return hasExitSite(locker, site);
     }
 
-    DFG::ExitProfile& exitProfile() { return m_exitProfile; }
+    DFG::ExitProfile& exitProfile() LIFETIME_BOUND { return m_exitProfile; }
 #endif
 
     UnlinkedMetadataTable& metadata() { return m_metadata.get(); }
@@ -352,8 +377,8 @@ public:
         return !isBuiltinFunction();
     }
     void allocateSharedProfiles(unsigned numBinaryArithProfiles, unsigned numUnaryArithProfiles);
-    UnlinkedValueProfile& unlinkedValueProfile(unsigned index) { return m_valueProfiles[index]; }
-    UnlinkedArrayProfile& unlinkedArrayProfile(unsigned index) { return m_arrayProfiles[index]; }
+    FixedVector<UnlinkedValueProfile>& unlinkedValueProfiles() LIFETIME_BOUND { return m_valueProfiles; }
+    FixedVector<UnlinkedArrayProfile>& unlinkedArrayProfiles() LIFETIME_BOUND { return m_arrayProfiles; }
     unsigned numberOfValueProfiles() const { return m_valueProfiles.size(); }
     unsigned numberOfArrayProfiles() const { return m_arrayProfiles.size(); }
 
@@ -361,7 +386,7 @@ public:
     bool hasIdentifier(UniquedStringImpl*);
 #endif
 
-    int32_t thresholdForJIT(int32_t threshold);
+    int32_t NODELETE thresholdForJIT(int32_t threshold);
 
 protected:
     UnlinkedCodeBlock(VM&, Structure*, CodeType, const ExecutableInfo&, OptionSet<CodeGenerationMode>);
@@ -400,6 +425,7 @@ private:
     unsigned m_hasCapturedVariables : 1;
 
     unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
     unsigned m_superBinding : 1;
     unsigned m_scriptMode: 1;
     unsigned m_isArrowFunctionContext : 1;
@@ -413,6 +439,9 @@ private:
     static_assert(((1U << 3) - 1) >= maxAge);
     bool m_hasCheckpoints : 1;
     LexicallyScopedFeatures m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures { 0 };
+    TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
+    bool m_quickFTLTierUp : 1 { false };
+
 public:
     ConcurrentJSLock m_lock;
 #if ENABLE(JIT)
@@ -430,7 +459,7 @@ private:
     PackedRefPtr<StringImpl> m_sourceMappingURLDirective;
 
     FixedVector<JSInstructionStream::Offset> m_jumpTargets;
-    Ref<UnlinkedMetadataTable> m_metadata;
+    const Ref<UnlinkedMetadataTable> m_metadata;
     std::unique_ptr<JSInstructionStream> m_instructions;
     std::unique_ptr<BytecodeLivenessAnalysis> m_liveness;
 
@@ -448,9 +477,9 @@ private:
 
 public:
     struct RareData {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(UnlinkedCodeBlock_RareData);
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, UnlinkedCodeBlock_RareData);
 
-        size_t sizeInBytes(const AbstractLocker&) const;
+        size_t NODELETE sizeInBytes(const AbstractLocker&) const;
 
         FixedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
 
@@ -462,7 +491,7 @@ public:
             unsigned m_startDivot;
             unsigned m_endDivot;
         };
-        HashMap<unsigned, TypeProfilerExpressionRange> m_typeProfilerInfoMap;
+        UncheckedKeyHashMap<unsigned, TypeProfilerExpressionRange> m_typeProfilerInfoMap;
         FixedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
         FixedVector<BitVector> m_bitVectors;
         FixedVector<IdentifierSet> m_constantIdentifierSets;
@@ -485,14 +514,14 @@ public:
     BinaryArithProfile& binaryArithProfile(unsigned i) { return m_binaryArithProfiles[i]; }
     UnaryArithProfile& unaryArithProfile(unsigned i) { return m_unaryArithProfiles[i]; }
 
-    BaselineExecutionCounter& llintExecuteCounter() { return m_llintExecuteCounter; }
+    BaselineExecutionCounter& llintExecuteCounter() LIFETIME_BOUND { return m_llintExecuteCounter; }
 
 private:
-    using OutOfLineJumpTargets = HashMap<JSInstructionStream::Offset, int>;
+    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
 
     OutOfLineJumpTargets m_outOfLineJumpTargets;
     std::unique_ptr<RareData> m_rareData;
-    MallocPtr<ExpressionInfo> m_expressionInfo;
+    std::unique_ptr<ExpressionInfo> m_expressionInfo;
     BaselineExecutionCounter m_llintExecuteCounter;
     FixedVector<UnlinkedValueProfile> m_valueProfiles;
     FixedVector<UnlinkedArrayProfile> m_arrayProfiles;
@@ -501,15 +530,16 @@ private:
 
 #if ASSERT_ENABLED
     Lock m_cachedIdentifierUidsLock;
-    HashSet<UniquedStringImpl*> m_cachedIdentifierUids;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_cachedIdentifierUids;
 #endif
 
 protected:
-    DECLARE_VISIT_CHILDREN;
     static size_t estimatedSize(JSCell*, VM&);
 
 public:
     DECLARE_INFO;
+
+    DECLARE_VISIT_CHILDREN;
 };
 
 }

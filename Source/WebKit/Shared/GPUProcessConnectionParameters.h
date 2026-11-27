@@ -27,13 +27,14 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "GPUProcessMediaCodecCapabilities.h"
 #include "SharedPreferencesForWebProcess.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/ProcessIdentity.h>
 #include <wtf/MachSendRight.h>
 
 #if HAVE(AUDIT_TOKEN)
 #include "CoreIPCAuditToken.h"
+#include <WebCore/PageIdentifier.h>
 #endif
 
 namespace WebKit {
@@ -46,14 +47,12 @@ struct GPUProcessConnectionParameters {
     bool ignoreInvalidMessageForTesting { false };
 #endif
 #if HAVE(AUDIT_TOKEN)
-    std::optional<CoreIPCAuditToken> presentingApplicationAuditToken;
+    HashMap<WebCore::PageIdentifier, CoreIPCAuditToken> presentingApplicationAuditTokens;
 #endif
-#if ENABLE(VP9)
-    std::optional<bool> hasVP9HardwareDecoder;
+#if PLATFORM(COCOA)
+    String applicationBundleIdentifier;
 #endif
-#if ENABLE(AV1)
-    std::optional<bool> hasAV1HardwareDecoder;
-#endif
+    std::optional<GPUProcessMediaCodecCapabilities> mediaCodecCapabilities;
 };
 
 }; // namespace WebKit

@@ -30,17 +30,19 @@
 
 #pragma once
 
-#include "DocumentInlines.h"
+#include "Document.h"
 #include "MutationObserver.h"
+#include "NodeDocument.h"
 #include <memory>
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class QualifiedName;
 
 class MutationObserverInterestGroup {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(MutationObserverInterestGroup);
 public:
     MutationObserverInterestGroup(HashMap<Ref<MutationObserver>, MutationRecordDeliveryOptions>&&, MutationRecordDeliveryOptions);
 
@@ -69,7 +71,7 @@ public:
         return createIfNeeded(target, MutationObserverOptionType::Attributes, MutationObserverOptionType::AttributeOldValue, &attributeName);
     }
 
-    bool isOldValueRequested() const;
+    bool NODELETE isOldValueRequested() const;
     void enqueueMutationRecord(Ref<MutationRecord>&&);
 
 private:

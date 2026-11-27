@@ -30,11 +30,16 @@
 #include "Document.h"
 #include "LegacySchemeRegistry.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "SecurityOrigin.h"
 #include <wtf/FileSystem.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
+
+#if PLATFORM(COCOA)
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
 
 namespace WebCore {
 
@@ -59,16 +64,20 @@ URL SecurityOriginData::toURL() const
     return URL { toString() };
 }
 
-SecurityOriginData SecurityOriginData::fromFrame(LocalFrame* frame)
+SecurityOriginData SecurityOriginData::fromLocalFrame(LocalFrame* frame)
 {
     if (!frame)
         return SecurityOriginData { };
-    
-    auto* document = frame->document();
-    if (!document)
-        return SecurityOriginData { };
 
-    return document->securityOrigin().data();
+    return fromFrame(*frame);
+}
+
+SecurityOriginData SecurityOriginData::fromFrame(const Frame& frame)
+{
+    if (RefPtr securityOrigin = frame.frameDocumentSecurityOrigin())
+        return securityOrigin->data();
+
+    return SecurityOriginData { };
 }
 
 SecurityOriginData SecurityOriginData::fromURL(const URL& url)
@@ -112,6 +121,15 @@ String SecurityOriginData::databaseIdentifier() const
     return makeString(protocol, separatorCharacter, FileSystem::encodeForFileName(host()), separatorCharacter, port().value_or(0));
 }
 
+String SecurityOriginData::optionalDatabaseIdentifier() const
+{
+    auto url = toURL();
+    if (!url.isValid())
+        return { };
+
+    return databaseIdentifier();
+}
+
 std::optional<SecurityOriginData> SecurityOriginData::fromDatabaseIdentifier(StringView databaseIdentifier)
 {
     // Make sure there's a first separator
@@ -153,7 +171,7 @@ SecurityOriginData SecurityOriginData::isolatedCopy() const &
 
 SecurityOriginData SecurityOriginData::isolatedCopy() &&
 {
-    return SecurityOriginData { crossThreadCopy(WTFMove(m_data)) };
+    return SecurityOriginData { crossThreadCopy(WTF::move(m_data)) };
 }
 
 bool operator==(const SecurityOriginData& a, const SecurityOriginData& b)

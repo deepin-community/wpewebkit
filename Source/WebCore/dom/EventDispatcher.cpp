@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Nokia Corporation and/or its subsidiary(-ies)
  * Copyright (C) 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  * Copyright (C) 2010, 2011, 2012, 2013 Google Inc. All rights reserved.
@@ -27,6 +27,7 @@
 #include "EventDispatcher.h"
 
 #include "CompositionEvent.h"
+#include "DocumentView.h"
 #include "EventContext.h"
 #include "EventNames.h"
 #include "EventPath.h"
@@ -39,11 +40,15 @@
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "MouseEvent.h"
+#include "NodeDocument.h"
 #include "ScopedEventQueue.h"
 #include "ScriptDisallowedScope.h"
+#include "Settings.h"
 #include "ShadowRoot.h"
 #include "TextEvent.h"
 #include "TouchEvent.h"
+#include "page/LocalDOMWindow.h"
+#include <wtf/Scope.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -78,27 +83,30 @@ static void callDefaultEventHandlersInBubblingOrder(Event& event, const EventPat
     }
 }
 
-static bool isInShadowTree(EventTarget* target)
+static bool NODELETE isInShadowTree(EventTarget* target)
 {
     auto* node = dynamicDowncast<Node>(target);
     return node && node->isInShadowTree();
 }
 
-static void dispatchEventInDOM(Event& event, const EventPath& path)
+static void dispatchEventInDOM(Event& event, const EventPath& path, const Document::EventListenerCounts& listenerCounts)
 {
-    // Invoke capturing event listeners in the reverse order.
-    for (size_t i = path.size(); i > 0; --i) {
-        const EventContext& eventContext = path.contextAt(i - 1);
-        if (eventContext.currentTarget() == eventContext.target())
-            event.setEventPhase(Event::AT_TARGET);
-        else
-            event.setEventPhase(Event::CAPTURING_PHASE);
-        eventContext.handleLocalEvents(event, EventTarget::EventInvokePhase::Capturing);
-        if (event.propagationStopped())
-            return;
+    if (listenerCounts.hasCapturing()) {
+        // Invoke capturing event listeners in the reverse order.
+        for (size_t i = path.size(); i > 0; --i) {
+            const EventContext& eventContext = path.contextAt(i - 1);
+            if (eventContext.currentTarget() == eventContext.target())
+                event.setEventPhase(Event::AT_TARGET);
+            else
+                event.setEventPhase(Event::CAPTURING_PHASE);
+            eventContext.handleLocalEvents(event, EventTarget::EventInvokePhase::Capturing);
+            if (event.propagationStopped())
+                return;
+        }
     }
 
-    // Invoke bubbling event listeners.
+    // Invoke bubbling event listeners. (We don't use listenerCounts here as handleLocalEvents()
+    // needs to update event and it's highly unlikely there's no bubble listeners.)
     size_t size = path.size();
     for (size_t i = 0; i < size; ++i) {
         const EventContext& eventContext = path.contextAt(i);
@@ -119,24 +127,20 @@ static bool shouldSuppressEventDispatchInDOM(Node& node, Event& event)
     if (!event.isTrusted())
         return false;
 
-    RefPtr frame = node.document().frame();
-    if (!frame)
+    RefPtr localMainFrame = protect(node.document())->localMainFrame();
+    if (!localMainFrame)
         return false;
 
-    RefPtr localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (!localFrame->checkedLoader()->shouldSuppressTextInputFromEditing())
+    if (!localMainFrame->loader().shouldSuppressTextInputFromEditing())
         return false;
 
     if (auto* textEvent = dynamicDowncast<TextEvent>(event))
         return textEvent->isKeyboard() || textEvent->isComposition();
 
-    return is<CompositionEvent>(event) || is<InputEvent>(event) || is<KeyboardEvent>(event);
+    return isAnyOf<CompositionEvent, InputEvent, KeyboardEvent>(event);
 }
 
-static HTMLInputElement* findInputElementInEventPath(const EventPath& path)
+static HTMLInputElement* NODELETE findInputElementInEventPath(const EventPath& path)
 {
     size_t size = path.size();
     for (size_t i = 0; i < size; ++i) {
@@ -147,16 +151,23 @@ static HTMLInputElement* findInputElementInEventPath(const EventPath& path)
     return nullptr;
 }
 
-static bool hasRelevantEventListener(Document& document, const Event& event)
+static Document::EventListenerCounts eventListenerCounts(const Document& document, const Event& event)
 {
-    if (document.hasEventListenersOfType(event.type()))
-        return true;
+    auto counts = document.eventListenerCountsOfType(event.type());
+    if (counts.capturing && counts.bubbling)
+        return counts;
 
     auto legacyType = EventTarget::legacyTypeForEvent(event);
-    if (!legacyType.isNull() && document.hasEventListenersOfType(legacyType))
-        return true;
+    if (legacyType.isNull())
+        return counts;
 
-    return false;
+    auto legacyCounts = document.eventListenerCountsOfType(legacyType);
+    if (!counts.capturing)
+        counts.capturing = legacyCounts.capturing;
+    if (!counts.bubbling)
+        counts.bubbling = legacyCounts.bubbling;
+
+    return counts;
 }
 
 static void resetAfterDispatchInShadowTree(Event& event)
@@ -169,19 +180,29 @@ static void resetAfterDispatchInShadowTree(Event& event)
 void EventDispatcher::dispatchEvent(Node& node, Event& event)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::InMainThread::isEventDispatchAllowedInSubtree(node));
-    
+
     LOG_WITH_STREAM(Events, stream << "EventDispatcher::dispatchEvent " << event << " on node " << node);
 
     Ref protectedNode { node };
-    RefPtr protectedView { node.document().view() };
+    Ref document = node.document();
+    RefPtr protectedView { document->view() };
 
     auto typeInfo = eventNames().typeInfoForEvent(event.type());
-    bool shouldDispatchEventToScripts = hasRelevantEventListener(node.document(), event);
+    auto listenerCounts = eventListenerCounts(document, event);
+
+    RefPtr window = document->window();
+    std::optional<PerformanceEventTimingCandidate> pendingEventTiming;
+    if (typeInfo.isInCategory(EventCategory::EventTimingEligible) && window && document->settings().eventTimingEnabled() && event.isTrusted())
+        pendingEventTiming = window->initializeEventTiming(event, typeInfo.type());
+    auto finalizeEntry(WTF::makeScopeExit([&, event = Ref(event)] {
+        if (pendingEventTiming)
+            window->markEndOfProcessingForEventTiming(*pendingEventTiming, event, typeInfo.type());
+    }));
 
     bool targetOrRelatedTargetIsInShadowTree = node.isInShadowTree() || isInShadowTree(event.relatedTarget());
     // FIXME: We should also check touch target list.
-    bool hasNoEventListnerOrDefaultEventHandler = !shouldDispatchEventToScripts && !typeInfo.hasDefaultEventHandler() && !node.document().hasConnectedPluginElements();
-    if (hasNoEventListnerOrDefaultEventHandler && !targetOrRelatedTargetIsInShadowTree) {
+    bool hasNoEventListenerOrDefaultEventHandler = !listenerCounts.hasAny() && !typeInfo.hasDefaultEventHandler() && !node.document().hasConnectedPluginElements();
+    if (hasNoEventListenerOrDefaultEventHandler && !targetOrRelatedTargetIsInShadowTree) {
         event.resetBeforeDispatch();
         event.setTarget(RefPtr { EventPath::eventTargetRespectingTargetRules(node) });
         return;
@@ -189,7 +210,7 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
 
     EventPath eventPath { node, event };
 
-    if (node.document().settings().sendMouseEventsToDisabledFormControlsEnabled() && event.isTrusted() && is<MouseEvent>(event)
+    if (event.isTrusted() && is<MouseEvent>(event)
         && (typeInfo.type() == EventType::mousedown || typeInfo.type() == EventType::mouseup || typeInfo.type() == EventType::click || typeInfo.type() == EventType::dblclick)) {
         eventPath.adjustForDisabledFormControl();
     }
@@ -205,9 +226,16 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
         }
     }
 
-    if (hasNoEventListnerOrDefaultEventHandler) {
-        if (shouldClearTargetsAfterDispatch)
-            resetAfterDispatchInShadowTree(event);
+    if (hasNoEventListenerOrDefaultEventHandler) {
+        event.resetBeforeDispatch();
+        // Use the retargeted target from the outermost event path context,
+        // since the EventPath applies retargeting across shadow boundaries.
+        // The path may be empty if adjustForDisabledFormControl() truncated it.
+        if (!eventPath.isEmpty()) {
+            event.setTarget(RefPtr { eventPath.last().target() });
+            if (shouldClearTargetsAfterDispatch)
+                resetAfterDispatchInShadowTree(event);
+        }
         return;
     }
 
@@ -228,9 +256,9 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
         inputForLegacyPreActivationBehavior->willDispatchEvent(event, clickHandlingState);
     }
 
-    if (!event.propagationStopped() && !eventPath.isEmpty() && !shouldSuppressEventDispatchInDOM(node, event) && shouldDispatchEventToScripts) {
+    if (!event.propagationStopped() && !eventPath.isEmpty() && !shouldSuppressEventDispatchInDOM(node, event) && listenerCounts.hasAny()) {
         event.setEventPath(eventPath);
-        dispatchEventInDOM(event, eventPath);
+        dispatchEventInDOM(event, eventPath, listenerCounts);
     }
 
     event.resetAfterDispatch();
@@ -247,7 +275,7 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
         RefPtr finalTarget = event.target();
         event.setTarget(RefPtr { EventPath::eventTargetRespectingTargetRules(node) });
         callDefaultEventHandlersInBubblingOrder(event, eventPath);
-        event.setTarget(WTFMove(finalTarget));
+        event.setTarget(WTF::move(finalTarget));
     }
 
     if (shouldClearTargetsAfterDispatch)
@@ -255,20 +283,21 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
 }
 
 template<typename T>
-static void dispatchEventWithType(const Vector<T*>& targets, Event& event)
+static void dispatchEventWithType(std::span<T* const> targets, Event& event)
 {
     ASSERT(targets.size() >= 1);
-    ASSERT(*targets.begin());
+    ASSERT(targets.front());
 
     EventPath eventPath { targets };
-    event.setTarget(RefPtr { *targets.begin() });
+    event.setTarget(RefPtr { targets.front() });
     event.setEventPath(eventPath);
     event.resetBeforeDispatch();
-    dispatchEventInDOM(event, eventPath);
+    // Listeners are not tracked through document so pass { 1, 1 } as listener counts.
+    dispatchEventInDOM(event, eventPath, { 1, 1 });
     event.resetAfterDispatch();
 }
 
-void EventDispatcher::dispatchEvent(const Vector<EventTarget*>& targets, Event& event)
+void EventDispatcher::dispatchEvent(std::span<EventTarget* const> targets, Event& event)
 {
     dispatchEventWithType<EventTarget>(targets, event);
 }

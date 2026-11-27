@@ -26,6 +26,7 @@
 #pragma once
 
 #include "StorageAreaIdentifier.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -33,13 +34,14 @@ namespace WebKit {
 
 class StorageAreaBase;
 
-class StorageAreaRegistry {
+class StorageAreaRegistry : public CanMakeThreadSafeCheckedPtr<StorageAreaRegistry> {
     WTF_MAKE_TZONE_ALLOCATED(StorageAreaRegistry);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StorageAreaRegistry);
 public:
     StorageAreaRegistry();
     void registerStorageArea(StorageAreaIdentifier, StorageAreaBase&);
     void unregisterStorageArea(StorageAreaIdentifier);
-    StorageAreaBase* getStorageArea(StorageAreaIdentifier);
+    StorageAreaBase* NODELETE getStorageArea(StorageAreaIdentifier);
 
 private:
     HashMap<StorageAreaIdentifier, WeakPtr<StorageAreaBase>> m_storageAreas;

@@ -153,7 +153,7 @@ struct PAS_ALIGNED(sizeof(pas_versioned_field)) pas_segregated_directory_data {
     pas_segregated_directory_sharing_payload_ptr sharing_payload;
 };
 
-#define PAS_SEGREGATED_DIRECTORY_SHARING_PAYLOAD_IS_INITIALIZED_BIT 1lu
+#define PAS_SEGREGATED_DIRECTORY_SHARING_PAYLOAD_IS_INITIALIZED_BIT 1llu
 
 #define PAS_SEGREGATED_DIRECTORY_INITIALIZER(page_config_kind_argument, sharing_mode_argument, directory_kind_argument) \
     ((pas_segregated_directory){ \
@@ -542,9 +542,8 @@ static inline pas_segregated_view pas_segregated_directory_get(
 PAS_API void pas_segregated_directory_append(
     pas_segregated_directory* directory, size_t index, pas_segregated_view view);
 
-/* This has a maximally inclusion way of treating memory that multiple views may have dibs on. For
-   example, shared page directories and partial views in size directories may report on the same
-   bytes of memory. */
+/* This has a maximally inclusion way of treating memory that multiple views may have dibs on.
+ * FIXME: is this still necessary? */
 PAS_API pas_heap_summary
 pas_segregated_directory_compute_summary(pas_segregated_directory* directory);
 

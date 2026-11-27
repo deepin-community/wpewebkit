@@ -29,16 +29,19 @@
 #include "Document.h"
 #include "Editing.h"
 #include "ElementInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameSelection.h"
 #include "HTMLOListElement.h"
 #include "HTMLUListElement.h"
 #include "LocalFrame.h"
-#include "RenderObject.h"
+#include "LocalFrameInlines.h"
+#include "RenderObjectNode.h"
+#include "SimpleRange.h"
 
 namespace WebCore {
 
 ModifySelectionListLevelCommand::ModifySelectionListLevelCommand(Ref<Document>&& document)
-    : CompositeEditCommand(WTFMove(document))
+    : CompositeEditCommand(WTF::move(document))
 {
 }
 
@@ -54,12 +57,12 @@ static bool getStartEndListChildren(const VisibleSelection& selection, RefPtr<No
         return false;
 
     // start must be in a list child
-    RefPtr startListChild = enclosingListChild(selection.start().anchorNode());
+    RefPtr startListChild = enclosingListChild(protect(selection.start().anchorNode()));
     if (!startListChild || !startListChild->renderer())
         return false;
 
     // end must be in a list child
-    RefPtr endListChild = selection.isRange() ? enclosingListChild(selection.end().anchorNode()) : startListChild;
+    RefPtr endListChild = selection.isRange() ? enclosingListChild(protect(selection.end().anchorNode())) : startListChild;
     if (!endListChild || !endListChild->renderer())
         return false;
     
@@ -80,13 +83,13 @@ static bool getStartEndListChildren(const VisibleSelection& selection, RefPtr<No
     
     // if the selection ends on a list item with a sublist, include the entire sublist
     if (endListChild->renderer()->isRenderListItem()) {
-        RenderObject* r = endListChild->renderer()->nextSibling();
-        if (r && isListHTMLElement(r->node()) && r->node()->parentNode() == startListChild->parentNode())
-            endListChild = r->node();
+        CheckedPtr renderer = endListChild->renderer()->nextSibling();
+        if (renderer && isListHTMLElement(renderer->node()) && renderer->node()->parentNode() == startListChild->parentNode())
+            endListChild = renderer->node();
     }
 
-    start = WTFMove(startListChild);
-    end = WTFMove(endListChild);
+    start = WTF::move(startListChild);
+    end = WTF::move(endListChild);
     return true;
 }
 
@@ -141,7 +144,7 @@ void ModifySelectionListLevelCommand::appendSiblingNodeRange(Node* startNode, No
 }
 
 IncreaseSelectionListLevelCommand::IncreaseSelectionListLevelCommand(Ref<Document>&& document, Type listType)
-    : ModifySelectionListLevelCommand(WTFMove(document))
+    : ModifySelectionListLevelCommand(WTF::move(document))
     , m_listType(listType)
 {
 }
@@ -185,7 +188,7 @@ void IncreaseSelectionListLevelCommand::doApply()
     if (isListHTMLElement(previousItem.get())) {
         // move nodes up into preceding list
         appendSiblingNodeRange(startListChild.get(), endListChild.get(), downcast<Element>(previousItem.get()));
-        m_listElement = WTFMove(previousItem);
+        m_listElement = WTF::move(previousItem);
     } else {
         // create a sublist for the preceding element and move nodes there
         RefPtr<Element> newParent;
@@ -193,7 +196,7 @@ void IncreaseSelectionListLevelCommand::doApply()
         case Type::InheritedListType:
             newParent = startListChild->parentElement();
             if (newParent)
-                newParent = newParent->cloneElementWithoutChildren(document());
+                newParent = newParent->cloneElementWithoutChildren(document(), nullptr);
             break;
         case Type::OrderedList:
             newParent = HTMLOListElement::create(document());
@@ -204,7 +207,7 @@ void IncreaseSelectionListLevelCommand::doApply()
         }
         insertNodeBefore(*newParent, *startListChild);
         appendSiblingNodeRange(startListChild.get(), endListChild.get(), newParent.get());
-        m_listElement = WTFMove(newParent);
+        m_listElement = WTF::move(newParent);
     }
 }
 
@@ -221,7 +224,7 @@ RefPtr<Node> IncreaseSelectionListLevelCommand::increaseSelectionListLevel(Docum
     ASSERT(document->frame());
     auto command = create(*document, type);
     command->apply();
-    return WTFMove(command->m_listElement);
+    return WTF::move(command->m_listElement);
 }
 
 RefPtr<Node> IncreaseSelectionListLevelCommand::increaseSelectionListLevel(Document* document)
@@ -240,7 +243,7 @@ RefPtr<Node> IncreaseSelectionListLevelCommand::increaseSelectionListLevelUnorde
 }
 
 DecreaseSelectionListLevelCommand::DecreaseSelectionListLevelCommand(Ref<Document>&& document)
-    : ModifySelectionListLevelCommand(WTFMove(document))
+    : ModifySelectionListLevelCommand(WTF::move(document))
 {
 }
 

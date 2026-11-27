@@ -12,14 +12,25 @@
 #include "libANGLE/Debug.h"
 
 #include "common/PackedCLEnums_autogen.h"
+#include "common/unsafe_buffers.h"
 
 #include <cinttypes>
 #include <cstdio>
 
+#ifdef ANDROID
+#    include <android/log.h>
+#endif
+
 #if defined(ANGLE_ENABLE_DEBUG_TRACE)
-#    define CL_EVENT(entryPoint, ...)                    \
-        std::printf("CL " #entryPoint ": " __VA_ARGS__); \
-        std::printf("\n")
+#    if defined(ANDROID)
+#        define CL_EVENT(entryPoint, ...)                                          \
+            ANGLE_UNSAFE_BUFFERS(__android_log_print(ANDROID_LOG_INFO, "ANGLE-CL", \
+                                                     "cl" #entryPoint ": " __VA_ARGS__))
+#    else
+#        define CL_EVENT(entryPoint, ...) \
+            ANGLE_UNSAFE_BUFFERS(std::printf("cl" #entryPoint ": " __VA_ARGS__); std::printf("\n"))
+
+#    endif
 #else
 #    define CL_EVENT(entryPoint, ...) (void(0))
 #endif

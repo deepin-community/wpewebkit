@@ -26,9 +26,11 @@
 #pragma once
 
 #include "ResourceLoadStatisticsParameters.h"
+#include "TimeBasedEvictionMode.h"
 #include "UnifiedOriginStorageLevel.h"
 #include "WebPushDaemonConnectionConfiguration.h"
 #include <WebCore/NetworkStorageSession.h>
+#include <WebCore/SecurityOriginData.h>
 #include <pal/SessionID.h>
 #include <wtf/Seconds.h>
 #include <wtf/URL.h>
@@ -44,11 +46,6 @@
 #include <WebCore/CurlProxySettings.h>
 #endif
 
-#if PLATFORM(COCOA)
-extern "C" CFStringRef const WebKit2HTTPProxyDefaultsKey;
-extern "C" CFStringRef const WebKit2HTTPSProxyDefaultsKey;
-#endif
-    
 namespace WebKit {
 
 enum class AllowsCellularAccess : bool { No, Yes };
@@ -108,8 +105,9 @@ struct NetworkSessionCreationParameters {
     String webPushMachServiceName;
     String webPushPartitionString;
     bool enablePrivateClickMeasurementDebugMode { false };
-    bool isBlobRegistryTopOriginPartitioningEnabled { false };
+    bool isOptInCookiePartitioningEnabled { false };
     bool shouldSendPrivateTokenIPCForTesting { false };
+    uint64_t cookiesVersion { 0 };
 
     UnifiedOriginStorageLevel unifiedOriginStorageLevel { UnifiedOriginStorageLevel::Standard };
     uint64_t perOriginStorageQuota;
@@ -130,13 +128,32 @@ struct NetworkSessionCreationParameters {
     bool serviceWorkerProcessTerminationDelayEnabled { true };
     bool inspectionForServiceWorkersAllowed { true };
     bool storageSiteValidationEnabled { false };
+    TimeBasedEvictionMode timeBasedEvictionMode { TimeBasedEvictionMode::Disabled };
+    Seconds timeBasedEvictionThreshold { 180 * 24_h };
+    std::optional<Seconds> lastModificationTimeUpdateIntervalOverride;
+    std::optional<Seconds> timeBasedEvictionIntervalOverride;
+    Vector<WebCore::SecurityOriginData> mockPushSubscriptionOriginsForTesting;
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool isDeclarativeWebPushEnabled { false };
 #endif
 #if HAVE(NW_PROXY_CONFIG)
-    std::optional<Vector<std::pair<Vector<uint8_t>, WTF::UUID>>> proxyConfigData;
+    std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>> proxyConfigData;
 #endif
     ResourceLoadStatisticsParameters resourceLoadStatisticsParameters;
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    String resourceMonitorThrottlerDirectory;
+    SandboxExtension::Handle resourceMonitorThrottlerDirectoryExtensionHandle;
+#endif
+#if ENABLE(TLS_1_2_DEFAULT_MINIMUM)
+    bool isLegacyTLSAllowed { false };
+#else
+    bool isLegacyTLSAllowed { true };
+#endif
+#if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
+    String webContentRestrictionsConfigurationFile;
+    SandboxExtension::Handle webContentRestrictionsConfigurationExtensionHandle;
+#endif
 };
 
 } // namespace WebKit

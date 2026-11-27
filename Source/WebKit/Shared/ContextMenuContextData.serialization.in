@@ -43,6 +43,12 @@ class WebKit::ContextMenuContextData {
     std::optional<WebCore::ShareableBitmapHandle> createPotentialQRCodeViewportSnapshotImageReadOnlyHandle();
 #endif // ENABLE(CONTEXT_MENU_QR_CODE_DETECTION)
     bool hasEntireImage();
+    bool allowsFollowingLink();
+    bool allowsFollowingImageURL();
+#if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
+    std::optional<WebCore::MediaPlayerClientIdentifier> mediaElementIdentifier();
+#endif
+    std::optional<WebKit::WebEventInputSource> inputSource();
 };
 
 #endif // ENABLE(CONTEXT_MENUS)

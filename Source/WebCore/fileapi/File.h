@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2019 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "Blob.h"
+#include <WebCore/Blob.h>
 #include <wtf/FileSystem.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
@@ -35,7 +35,7 @@
 namespace WebCore {
 
 class File final : public Blob {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(File, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(File, WEBCORE_EXPORT);
 public:
     struct PropertyBag : BlobPropertyBag {
         std::optional<int64_t> lastModified;
@@ -47,7 +47,7 @@ public:
     // Create a File using the 'new File' constructor.
     static Ref<File> create(ScriptExecutionContext& context, Vector<BlobPartVariant>&& blobPartVariants, const String& filename, const PropertyBag& propertyBag)
     {
-        auto file = adoptRef(*new File(context, WTFMove(blobPartVariants), filename, propertyBag));
+        auto file = adoptRef(*new File(context, WTF::move(blobPartVariants), filename, propertyBag));
         file->suspendIfNeeded();
         return file;
     }
@@ -75,14 +75,12 @@ public:
 
     static Ref<File> createWithRelativePath(ScriptExecutionContext*, const String& path, const String& relativePath);
 
-    bool isFile() const override { return true; }
-
-    const String& path() const { return m_path; }
-    const String& relativePath() const { return m_relativePath; }
+    const String& path() const LIFETIME_BOUND { return m_path; }
+    const String& relativePath() const LIFETIME_BOUND { return m_relativePath; }
     void setRelativePath(const String& relativePath) { m_relativePath = relativePath; }
-    const String& name() const { return m_name; }
+    const String& name() const LIFETIME_BOUND { return m_name; }
     WEBCORE_EXPORT int64_t lastModified() const; // Number of milliseconds since Epoch.
-    const std::optional<int64_t>& lastModifiedOverride() const { return m_lastModifiedDateOverride; } // Number of milliseconds since Epoch.
+    const std::optional<int64_t>& lastModifiedOverride() const LIFETIME_BOUND { return m_lastModifiedDateOverride; } // Number of milliseconds since Epoch.
     const std::optional<FileSystem::PlatformFileID> fileID() const { return m_fileID; }
 
     WEBCORE_EXPORT static String contentTypeForFile(const String& path);
@@ -94,14 +92,15 @@ public:
     bool isDirectory() const;
 
 private:
-    WEBCORE_EXPORT explicit File(ScriptExecutionContext*, const String& path);
+    WEBCORE_EXPORT File(ScriptExecutionContext*, const String& path);
     File(ScriptExecutionContext*, URL&&, String&& type, String&& path, String&& name);
     File(ScriptExecutionContext&, Vector<BlobPartVariant>&& blobPartVariants, const String& filename, const PropertyBag&);
     File(ScriptExecutionContext*, URL&&, String&& type, String&& path, String&& name, const std::optional<FileSystem::PlatformFileID>&);
     File(ScriptExecutionContext*, const Blob&, const String& name);
     File(ScriptExecutionContext*, const File&, const String& name);
-
     File(DeserializationContructor, ScriptExecutionContext*, const String& path, const URL& srcURL, const String& type, const String& name, const std::optional<int64_t>& lastModified);
+
+    bool isFile() const final { return true; }
 
     static void computeNameAndContentType(const String& path, const String& nameOverride, String& effectiveName, String& effectiveContentType);
 #if ENABLE(FILE_REPLACEMENT)

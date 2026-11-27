@@ -124,12 +124,12 @@ class BuiltinsInternalsWrapperImplementationGenerator(BuiltinsGenerator):
         return '\n'.join(lines)
 
     def _generate_initialize_static_globals(self):
-        lines = ["    JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);",
+        lines = ["    JSVMClientData& clientData = *downcast<JSVMClientData>(m_vm.clientData);",
                  "    JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {"]
         for object in self.internals:
             lines.append(BuiltinsGenerator.wrap_with_guard(object.annotations.get('conditional'), self.property_macro(object)))
         lines.append("    };")
-        lines.append("    globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));")
+        lines.append("    globalObject.addStaticGlobals(staticGlobals);")
         lines.append("    UNUSED_PARAM(clientData);")
         return '\n'.join(lines)
 

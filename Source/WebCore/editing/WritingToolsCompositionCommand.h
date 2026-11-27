@@ -26,9 +26,11 @@
 #pragma once
 
 #include "CompositeEditCommand.h"
+#include "SimpleRange.h"
 
 namespace WebCore {
 
+class DocumentFragment;
 struct AttributedString;
 
 // A Writing Tools Composition command is essentially a wrapper around a group of Replace Selection commands,
@@ -48,7 +50,7 @@ public:
 
     static Ref<WritingToolsCompositionCommand> create(Ref<Document>&& document, const SimpleRange& endingContextRange)
     {
-        return adoptRef(*new WritingToolsCompositionCommand(WTFMove(document), endingContextRange));
+        return adoptRef(*new WritingToolsCompositionCommand(WTF::move(document), endingContextRange));
     }
 
     // This method is used to add each "piece" (aka Replace selection command) of the Writing Tools composition command.
@@ -58,6 +60,8 @@ public:
 
     // FIXME: Remove this when WritingToolsController no longer needs to support `contextRangeForSessionWithID`.
     SimpleRange currentContextRange() const { return m_currentContextRange; }
+
+    void commit();
 
 private:
     WritingToolsCompositionCommand(Ref<Document>&&, const SimpleRange&);

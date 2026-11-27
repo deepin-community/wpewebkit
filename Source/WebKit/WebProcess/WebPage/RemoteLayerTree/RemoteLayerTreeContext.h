@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,8 +35,15 @@
 #include <WebCore/LayerPool.h>
 #include <WebCore/PlatformCALayer.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+
+namespace WebCore {
+class HTMLVideoElement;
+enum class GraphicsLayerType : uint8_t;
+enum class UseLosslessCompression : bool;
+}
 
 namespace WebKit {
 
@@ -47,7 +54,7 @@ class WebFrame;
 class WebPage;
 
 // FIXME: This class doesn't do much now. Roll into RemoteLayerTreeDrawingArea?
-class RemoteLayerTreeContext : public WebCore::GraphicsLayerFactory,  public RefCounted<RemoteLayerTreeContext>, public CanMakeWeakPtr<RemoteLayerTreeContext> {
+class RemoteLayerTreeContext : public RefCountedAndCanMakeWeakPtr<RemoteLayerTreeContext>, public WebCore::GraphicsLayerFactory {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeContext);
 public:
     static Ref<RemoteLayerTreeContext> create(WebPage& webpage)
@@ -66,15 +73,15 @@ public:
     void graphicsLayerDidEnterContext(GraphicsLayerCARemote&);
     void graphicsLayerWillLeaveContext(GraphicsLayerCARemote&);
 
-    WebCore::LayerPool& layerPool() { return m_layerPool; }
+    WebCore::LayerPool& layerPool() { return m_layerPool.get(); }
 
-    float deviceScaleFactor() const;
-
-    LayerHostingMode layerHostingMode() const;
+    float NODELETE deviceScaleFactor() const;
     
     std::optional<WebCore::DestinationColorSpace> displayColorSpace() const;
 
-    DrawingAreaIdentifier drawingAreaIdentifier() const;
+    std::optional<DrawingAreaIdentifier> NODELETE drawingAreaIdentifier() const;
+
+    WebCore::UseLosslessCompression NODELETE useIOSurfaceLosslessCompression() const;
 
     void buildTransaction(RemoteLayerTreeTransaction&, WebCore::PlatformCALayer& rootLayer, WebCore::FrameIdentifier);
 
@@ -86,10 +93,7 @@ public:
 
     void willStartAnimationOnLayer(PlatformCALayerRemote&);
 
-    RemoteLayerBackingStoreCollection& backingStoreCollection() { return *m_backingStoreCollection; }
-    
-    void setNextRenderingUpdateRequiresSynchronousImageDecoding() { m_nextRenderingUpdateRequiresSynchronousImageDecoding = true; }
-    bool nextRenderingUpdateRequiresSynchronousImageDecoding() const { return m_nextRenderingUpdateRequiresSynchronousImageDecoding; }
+    RemoteLayerBackingStoreCollection& backingStoreCollection() LIFETIME_BOUND { return m_backingStoreCollection; }
 
     void adoptLayersFromContext(RemoteLayerTreeContext&);
 
@@ -104,15 +108,15 @@ public:
     bool canShowWhileLocked() const;
 #endif
 
-    WebPage& webPage() { return m_webPage; }
+    WebPage& NODELETE webPage() const;
 
 private:
     explicit RemoteLayerTreeContext(WebPage&);
 
     // WebCore::GraphicsLayerFactory
-    Ref<WebCore::GraphicsLayer> createGraphicsLayer(WebCore::GraphicsLayer::Type, WebCore::GraphicsLayerClient&) override;
+    Ref<WebCore::GraphicsLayer> createGraphicsLayer(WebCore::GraphicsLayerType, WebCore::GraphicsLayerClient&) override;
 
-    WebPage& m_webPage;
+    WeakRef<WebPage> m_webPage;
 
     HashMap<WebCore::PlatformLayerIdentifier, RemoteLayerTreeTransaction::LayerCreationProperties> m_createdLayers;
     Vector<WebCore::PlatformLayerIdentifier> m_destroyedLayers;
@@ -120,18 +124,17 @@ private:
     HashMap<WebCore::PlatformLayerIdentifier, WeakPtr<PlatformCALayerRemote>> m_livePlatformLayers;
     HashMap<WebCore::PlatformLayerIdentifier, WeakPtr<PlatformCALayerRemote>> m_layersWithAnimations;
 #if HAVE(AVKIT)
-    HashMap<WebCore::PlatformLayerIdentifier, PlaybackSessionContextIdentifier> m_videoLayers;
+    HashMap<WebCore::PlatformLayerIdentifier, WebCore::MediaPlayerClientIdentifier> m_videoLayers;
 #endif
 
     HashSet<WeakRef<GraphicsLayerCARemote>> m_liveGraphicsLayers;
 
-    std::unique_ptr<RemoteLayerBackingStoreCollection> m_backingStoreCollection;
+    const UniqueRef<RemoteLayerBackingStoreCollection> m_backingStoreCollection;
 
-    WebCore::LayerPool m_layerPool;
+    const UniqueRef<WebCore::LayerPool> m_layerPool;
 
-    RemoteLayerTreeTransaction* m_currentTransaction { nullptr };
+    CheckedPtr<RemoteLayerTreeTransaction> m_currentTransaction;
 
-    bool m_nextRenderingUpdateRequiresSynchronousImageDecoding { false };
     bool m_useDynamicContentScalingDisplayListsForDOMRendering { false };
 };
 

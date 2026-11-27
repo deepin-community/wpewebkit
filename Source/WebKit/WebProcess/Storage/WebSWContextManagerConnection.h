@@ -37,6 +37,7 @@
 #include <WebCore/SWContextManager.h>
 #include <WebCore/ServiceWorkerClientData.h>
 #include <WebCore/ServiceWorkerTypes.h>
+#include <WebCore/Site.h>
 #include <wtf/URLHash.h>
 
 namespace IPC {
@@ -45,7 +46,9 @@ class FormDataReference;
 
 namespace WebCore {
 class ResourceRequest;
+class Site;
 
+enum class CrossOriginEmbedderPolicyValue : bool;
 enum class WorkerThreadMode : bool;
 
 struct FetchOptions;
@@ -56,28 +59,29 @@ struct ServiceWorkerContextData;
 namespace WebKit {
 
 class RemoteWorkerFrameLoaderClient;
+class ServiceWorkerDebuggableFrontendChannel;
 class WebServiceWorkerFetchTaskClient;
 class WebUserContentController;
 struct RemoteWorkerInitializationData;
 
-class WebSWContextManagerConnection final : public WebCore::SWContextManager::Connection, public IPC::WorkQueueMessageReceiver {
+class WebSWContextManagerConnection final : public WebCore::SWContextManager::Connection, public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop> {
 public:
-    static Ref<WebSWContextManagerConnection> create(Ref<IPC::Connection>&& connection, WebCore::RegistrableDomain&& registrableDomain, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, const WebPreferencesStore& store, RemoteWorkerInitializationData&& initializationData) { return adoptRef(*new WebSWContextManagerConnection(WTFMove(connection), WTFMove(registrableDomain), serviceWorkerPageIdentifier, pageGroupID, webPageProxyID, pageID, store, WTFMove(initializationData))); }
+    static Ref<WebSWContextManagerConnection> create(Ref<IPC::Connection>&& connection, WebCore::Site&& site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, const WebPreferencesStore& store, RemoteWorkerInitializationData&& initializationData, WebCore::CrossOriginEmbedderPolicyValue crossOriginEmbedderPolicy) { return adoptRef(*new WebSWContextManagerConnection(WTF::move(connection), WTF::move(site), serviceWorkerPageIdentifier, pageGroupID, webPageProxyID, pageID, store, WTF::move(initializationData), crossOriginEmbedderPolicy)); }
     ~WebSWContextManagerConnection();
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     WebCore::PageIdentifier pageIdentifier() const final { return m_pageID; }
 
-    void ref() const final { return IPC::WorkQueueMessageReceiver::ref(); }
-    void deref() const final { return IPC::WorkQueueMessageReceiver::deref(); }
+    void ref() const final { return IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>::ref(); }
+    void deref() const final { return IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>::deref(); }
 
 private:
-    WebSWContextManagerConnection(Ref<IPC::Connection>&&, WebCore::RegistrableDomain&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&);
+    WebSWContextManagerConnection(Ref<IPC::Connection>&&, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, RemoteWorkerInitializationData&&, WebCore::CrossOriginEmbedderPolicyValue);
 
     // WebCore::SWContextManager::Connection.
     void establishConnection(CompletionHandler<void()>&&) final;
-    void postMessageToServiceWorkerClient(const WebCore::ScriptExecutionContextIdentifier& destinationIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceIdentifier, const String& sourceOrigin) final;
+    void postMessageToServiceWorkerClient(const WebCore::ScriptExecutionContextIdentifier& destinationIdentifier, const WebCore::MessageWithMessagePorts&, WebCore::ServiceWorkerIdentifier sourceIdentifier, const WebCore::SecurityOriginData&) final;
     void didFinishInstall(std::optional<WebCore::ServiceWorkerJobDataIdentifier>, WebCore::ServiceWorkerIdentifier, bool wasSuccessful) final;
     void didFinishActivation(WebCore::ServiceWorkerIdentifier) final;
     void setServiceWorkerHasPendingEvents(WebCore::ServiceWorkerIdentifier, bool) final;
@@ -117,8 +121,6 @@ private:
 #if ENABLE(SHAREABLE_RESOURCE) && PLATFORM(COCOA)
     void didSaveScriptsToDisk(WebCore::ServiceWorkerIdentifier, WebCore::ScriptBuffer&&, HashMap<URL, WebCore::ScriptBuffer>&& importedScripts);
 #endif
-    void matchAllCompleted(uint64_t matchAllRequestIdentifier, Vector<WebCore::ServiceWorkerClientData>&&);
-    void skipWaitingCompleted(uint64_t matchAllRequestIdentifier);
     void setUserAgent(String&& userAgent);
     void close();
     void setThrottleState(bool isThrottleable);
@@ -134,25 +136,40 @@ private:
     void setRegistrationLastUpdateTime(WebCore::ServiceWorkerRegistrationIdentifier, WallTime);
     void setRegistrationUpdateViaCache(WebCore::ServiceWorkerRegistrationIdentifier, WebCore::ServiceWorkerUpdateViaCache);
 
-    Ref<IPC::Connection> m_connectionToNetworkProcess;
-    WebCore::RegistrableDomain m_registrableDomain;
+#if ENABLE(REMOTE_INSPECTOR) && PLATFORM(COCOA)
+    void connectToInspector(WebCore::ServiceWorkerIdentifier, bool isAutomaticConnection = false, bool immediatelyPause = false);
+    void disconnectFromInspector(WebCore::ServiceWorkerIdentifier);
+    void dispatchMessageFromInspector(WebCore::ServiceWorkerIdentifier, String&&);
+#if ENABLE(REMOTE_INSPECTOR_SERVICE_WORKER_AUTO_INSPECTION)
+    void unpauseServiceWorkerForRejectedAutomaticInspection(WebCore::ServiceWorkerIdentifier);
+#endif
+#endif
+
+    const Ref<IPC::Connection> m_connectionToNetworkProcess;
+    const WebCore::Site m_site;
     std::optional<WebCore::ScriptExecutionContextIdentifier> m_serviceWorkerPageIdentifier;
     PageGroupIdentifier m_pageGroupID;
     WebPageProxyIdentifier m_webPageProxyID;
     WebCore::PageIdentifier m_pageID;
 
     HashSet<std::unique_ptr<RemoteWorkerFrameLoaderClient>> m_loaders;
-    HashMap<uint64_t, WebCore::ServiceWorkerClientsMatchAllCallback> m_matchAllRequests;
-    HashMap<uint64_t, Function<void()>> m_skipWaitingCallbacks;
-    uint64_t m_previousRequestIdentifier { 0 };
     String m_userAgent;
     bool m_isThrottleable { true };
-    Ref<WebUserContentController> m_userContentController;
+    const Ref<WebUserContentController> m_userContentController;
     std::optional<WebPreferencesStore> m_preferencesStore;
-    Ref<WorkQueue> m_queue;
+    WebCore::CrossOriginEmbedderPolicyValue m_crossOriginEmbedderPolicyValue;
+    const Ref<WorkQueue> m_queue;
 
     using FetchKey = std::pair<WebCore::SWServerConnectionIdentifier, WebCore::FetchIdentifier>;
     HashMap<FetchKey, Ref<WebServiceWorkerFetchTaskClient>> m_ongoingNavigationFetchTasks WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    bool isWebSWContextManagerConnection() const final { return true; }
+#if ENABLE(REMOTE_INSPECTOR) && PLATFORM(COCOA)
+    HashMap<WebCore::ServiceWorkerIdentifier, Ref<ServiceWorkerDebuggableFrontendChannel>> m_channels WTF_GUARDED_BY_CAPABILITY(mainRunLoop);
+#endif
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebSWContextManagerConnection) \
+    static bool isType(const WebCore::SWContextManager::Connection& connection) { return connection.isWebSWContextManagerConnection(); } \
+SPECIALIZE_TYPE_TRAITS_END()

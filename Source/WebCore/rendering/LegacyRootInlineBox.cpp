@@ -21,7 +21,6 @@
 #include "LegacyRootInlineBox.h"
 
 #include "BidiResolver.h"
-#include "CSSLineBoxContainValue.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "Document.h"
@@ -31,6 +30,7 @@
 #include "LocalFrame.h"
 #include "LogicalSelectionOffsetCaches.h"
 #include "PaintInfo.h"
+#include "RenderBlockInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderInline.h"
@@ -40,17 +40,19 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(LegacyRootInlineBox);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRootInlineBox);
 
 struct SameSizeAsLegacyRootInlineBox : LegacyInlineFlowBox, CanMakeWeakPtr<LegacyRootInlineBox>, CanMakeCheckedPtr<SameSizeAsLegacyRootInlineBox> {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(SameSizeAsLegacyRootInlineBox);
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(SameSizeAsLegacyRootInlineBox);
 
     int layoutUnits[4];
 };
 
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(SameSizeAsLegacyRootInlineBox);
+
 static_assert(sizeof(LegacyRootInlineBox) == sizeof(SameSizeAsLegacyRootInlineBox), "LegacyRootInlineBox should stay small");
-#if !ASSERT_ENABLED
+#if !ASSERT_ENABLED && ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 static_assert(sizeof(SingleThreadWeakPtr<RenderObject>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
 #endif
 
@@ -60,19 +62,7 @@ LegacyRootInlineBox::LegacyRootInlineBox(RenderBlockFlow& block)
     setIsHorizontal(block.isHorizontalWritingMode());
 }
 
-LegacyRootInlineBox::~LegacyRootInlineBox()
-{
-}
-
-LayoutUnit LegacyRootInlineBox::baselinePosition(FontBaseline baselineType) const
-{
-    return renderer().baselinePosition(baselineType, isFirstLine(), isHorizontal() ? HorizontalLine : VerticalLine, PositionOfInteriorLineBoxes);
-}
-
-LayoutUnit LegacyRootInlineBox::lineHeight() const
-{
-    return renderer().lineHeight(isFirstLine(), isHorizontal() ? HorizontalLine : VerticalLine, PositionOfInteriorLineBoxes);
-}
+LegacyRootInlineBox::~LegacyRootInlineBox() = default;
 
 void LegacyRootInlineBox::adjustPosition(float dx, float dy)
 {
@@ -129,7 +119,7 @@ LayoutUnit LegacyRootInlineBox::selectionTop() const
 {
     LayoutUnit selectionTop = m_lineTop;
 
-    if (renderer().style().isFlippedLinesWritingMode())
+    if (renderer().style().writingMode().isLineInverted())
         return selectionTop;
 
     LayoutUnit prevBottom;
@@ -150,7 +140,7 @@ LayoutUnit LegacyRootInlineBox::selectionBottom() const
 {
     LayoutUnit selectionBottom = m_lineBottom;
 
-    if (!renderer().style().isFlippedLinesWritingMode() || !nextRootBox())
+    if (!renderer().style().writingMode().isLineInverted() || !nextRootBox())
         return selectionBottom;
 
     return nextRootBox()->selectionTop();
@@ -163,19 +153,6 @@ RenderBlockFlow& LegacyRootInlineBox::blockFlow() const
 
 void LegacyRootInlineBox::removeLineBoxFromRenderObject()
 {
-    // Null if we are destroying LegacyLineLayout.
-    if (auto* legacyLineLayout = blockFlow().legacyLineLayout())
-        legacyLineLayout->lineBoxes().removeLineBox(this);
-}
-
-void LegacyRootInlineBox::extractLineBoxFromRenderObject()
-{
-    blockFlow().legacyLineLayout()->lineBoxes().extractLineBox(this);
-}
-
-void LegacyRootInlineBox::attachLineBoxToRenderObject()
-{
-    blockFlow().legacyLineLayout()->lineBoxes().attachLineBox(this);
 }
 
 LayoutUnit LegacyRootInlineBox::lineBoxWidth() const

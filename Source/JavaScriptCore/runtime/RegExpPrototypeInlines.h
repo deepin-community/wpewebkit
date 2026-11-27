@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2022 Apple Inc. All Rights Reserved.
+ *  Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -20,9 +20,34 @@
 
 #pragma once
 
+#include "CommonIdentifiers.h"
+#include "JSGlobalObject.h"
+#include "RegExpObject.h"
 #include "RegExpPrototype.h"
+#include "StructureCreateInlines.h"
 
 namespace JSC {
+
+ALWAYS_INLINE bool regExpExecWatchpointIsValid(VM& vm, JSObject* thisObject)
+{
+    JSGlobalObject* globalObject = thisObject->realmMayBeNull();
+    if (!globalObject)
+        return false;
+
+    RegExpPrototype* regExpPrototype = globalObject->regExpPrototype();
+
+    ASSERT(globalObject->regExpPrimordialPropertiesWatchpointSet().state() != ClearWatchpoint);
+    if (regExpPrototype != thisObject->getPrototypeDirect())
+        return false;
+
+    if (globalObject->regExpPrimordialPropertiesWatchpointSet().state() != IsWatched)
+        return false;
+
+    if (!thisObject->hasCustomProperties())
+        return true;
+
+    return thisObject->getDirectOffset(vm, vm.propertyNames->exec) == invalidOffset;
+}
 
 inline Structure* RegExpPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {

@@ -27,8 +27,8 @@
 
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
 
-#include "ImageOrientation.h"
-#include "VideoFrame.h"
+#include <WebCore/ImageOrientation.h>
+#include <WebCore/VideoFrame.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/RetainPtr.h>
 
@@ -40,21 +40,26 @@ class PixelBuffer;
 
 class VideoFrameCV : public VideoFrame {
 public:
-    WEBCORE_EXPORT static Ref<VideoFrameCV> create(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, std::optional<PlatformVideoColorSpace>&& = { });
+    // Create a VideoFrameCV in specific color space with data from CVPixelBuffer. Intended for constructing VideoFrameCV from new pixel data.
+    WEBCORE_EXPORT static Ref<VideoFrameCV> create(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, PlatformVideoColorSpace&&);
+    // Create a VideoFrameCV in with data data and color space from CVPixelBuffer. Intended for constructing VideoFrameCV from a buffer created by
+    // a component that already set the color space properties to the buffer.
+    WEBCORE_EXPORT static Ref<VideoFrameCV> create(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&);
+    // Create a VideoFrameCV in with data data and color space from CMSampleBufferRef.
     WEBCORE_EXPORT static Ref<VideoFrameCV> create(CMSampleBufferRef, bool isMirrored, Rotation);
     WEBCORE_EXPORT ~VideoFrameCV();
 
     CVPixelBufferRef pixelBuffer() const final { return m_pixelBuffer.get(); }
-    ImageOrientation orientation() const;
+    ImageOrientation NODELETE orientation() const;
 
     // VideoFrame overrides.
-    WEBCORE_EXPORT WebCore::FloatSize presentationSize() const final;
+    WEBCORE_EXPORT WebCore::IntSize presentationSize() const final;
     WEBCORE_EXPORT uint32_t pixelFormat() const final;
     WEBCORE_EXPORT void setOwnershipIdentity(const ProcessIdentity&) final;
     bool isCV() const final { return true; }
 
 private:
-    friend struct IPC::ArgumentCoder<VideoFrameCV, void>;
+    friend struct IPC::ArgumentCoder<VideoFrameCV>;
     WEBCORE_EXPORT VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, std::optional<PlatformVideoColorSpace>&&);
     VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, PlatformVideoColorSpace&&);
 

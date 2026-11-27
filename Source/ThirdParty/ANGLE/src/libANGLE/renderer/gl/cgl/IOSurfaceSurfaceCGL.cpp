@@ -13,8 +13,11 @@
 #include <OpenGL/CGLIOSurface.h>
 #include <OpenGL/OpenGL.h>
 
+#include <array>
+
 #include "common/debug.h"
 #include "common/gl/cgl/FunctionsCGL.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/AttributeMap.h"
 #include "libANGLE/renderer/gl/BlitGL.h"
 #include "libANGLE/renderer/gl/FramebufferGL.h"
@@ -43,7 +46,7 @@ struct IOSurfaceFormatInfo
 };
 
 // clang-format off
-static const IOSurfaceFormatInfo kIOSurfaceFormats[] = {
+static constexpr std::array<IOSurfaceFormatInfo, 8> kIOSurfaceFormats = {{
     {GL_RED,      GL_UNSIGNED_BYTE,                1, GL_RED,  GL_RED,  GL_UNSIGNED_BYTE              },
     {GL_RED,      GL_UNSIGNED_SHORT,               2, GL_RED,  GL_RED,  GL_UNSIGNED_SHORT             },
     {GL_RG,       GL_UNSIGNED_BYTE,                2, GL_RG,   GL_RG,   GL_UNSIGNED_BYTE              },
@@ -52,12 +55,12 @@ static const IOSurfaceFormatInfo kIOSurfaceFormats[] = {
     {GL_BGRA_EXT, GL_UNSIGNED_BYTE,                4, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV   },
     {GL_RGB10_A2, GL_UNSIGNED_INT_2_10_10_10_REV,  4, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_2_10_10_10_REV},
     {GL_RGBA,     GL_HALF_FLOAT,                   8, GL_RGBA, GL_RGBA, GL_HALF_FLOAT                 },
-};
+}};
 // clang-format on
 
 int FindIOSurfaceFormatIndex(GLenum internalFormat, GLenum type)
 {
-    for (int i = 0; i < static_cast<int>(ArraySize(kIOSurfaceFormats)); ++i)
+    for (int i = 0; i < static_cast<int>(kIOSurfaceFormats.size()); ++i)
     {
         const auto &formatInfo = kIOSurfaceFormats[i];
         if (formatInfo.internalFormat == internalFormat && formatInfo.type == type)
@@ -139,7 +142,7 @@ egl::Error IOSurfaceSurfaceCGL::unMakeCurrent(const gl::Context *context)
     return egl::NoError();
 }
 
-egl::Error IOSurfaceSurfaceCGL::swap(const gl::Context *context)
+egl::Error IOSurfaceSurfaceCGL::swap(const gl::Context *context, SurfaceSwapFeedback *feedback)
 {
     return egl::NoError();
 }
@@ -177,12 +180,14 @@ egl::Error IOSurfaceSurfaceCGL::bindTexImage(const gl::Context *context,
 
     if (error != kCGLNoError)
     {
-        return egl::EglContextLost() << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+        std::ostringstream err;
+        err << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+        return egl::Error(EGL_CONTEXT_LOST, err.str());
     }
 
     if (IsError(initializeAlphaChannel(context, textureID)))
     {
-        return egl::EglContextLost() << "Failed to initialize IOSurface alpha channel.";
+        return egl::Error(EGL_CONTEXT_LOST, "Failed to initialize IOSurface alpha channel.");
     }
 
     return egl::NoError();
@@ -195,19 +200,14 @@ egl::Error IOSurfaceSurfaceCGL::releaseTexImage(const gl::Context *context, EGLi
     return egl::NoError();
 }
 
-void IOSurfaceSurfaceCGL::setSwapInterval(EGLint interval)
+void IOSurfaceSurfaceCGL::setSwapInterval(const egl::Display *display, EGLint interval)
 {
     UNREACHABLE();
 }
 
-EGLint IOSurfaceSurfaceCGL::getWidth() const
+gl::Extents IOSurfaceSurfaceCGL::getSize() const
 {
-    return mWidth;
-}
-
-EGLint IOSurfaceSurfaceCGL::getHeight() const
-{
-    return mHeight;
+    return gl::Extents(mWidth, mHeight, 1);
 }
 
 EGLint IOSurfaceSurfaceCGL::isPostSubBufferSupported() const
@@ -292,8 +292,8 @@ bool IOSurfaceSurfaceCGL::hasEmulatedAlphaChannel() const
     return format.internalFormat == GL_RGB;
 }
 
-egl::Error IOSurfaceSurfaceCGL::attachToFramebuffer(const gl::Context *context,
-                                                    gl::Framebuffer *framebuffer)
+void IOSurfaceSurfaceCGL::attachToFramebuffer(const gl::Context *context,
+                                              gl::Framebuffer *framebuffer)
 {
     FramebufferGL *framebufferGL = GetImplAs<FramebufferGL>(framebuffer);
     ASSERT(framebufferGL->getFramebufferID() == 0);
@@ -308,15 +308,20 @@ egl::Error IOSurfaceSurfaceCGL::attachToFramebuffer(const gl::Context *context,
             format.nativeFormat, format.nativeType, mIOSurface, mPlane);
         if (error != kCGLNoError)
         {
-            return egl::EglContextLost()
-                   << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+            std::ostringstream err;
+            err << "CGLTexImageIOSurface2D failed: " << CGLErrorString(error);
+            context->getMutableErrorSetForValidation()->validationError(
+                angle::EntryPoint::Invalid, GL_CONTEXT_LOST, err.str().c_str());
+            return;
         }
         ASSERT(error == kCGLNoError);
 
-        // TODO: pass context
         if (IsError(initializeAlphaChannel(context, textureID)))
         {
-            return egl::EglContextLost() << "Failed to initialize IOSurface alpha channel.";
+            context->getMutableErrorSetForValidation()->validationError(
+                angle::EntryPoint::Invalid, GL_CONTEXT_LOST,
+                "Failed to initialize IOSurface alpha channel.");
+            return;
         }
 
         GLuint framebufferID = 0;
@@ -330,17 +335,14 @@ egl::Error IOSurfaceSurfaceCGL::attachToFramebuffer(const gl::Context *context,
     }
 
     framebufferGL->setFramebufferID(mFramebufferID);
-    return egl::NoError();
 }
 
-egl::Error IOSurfaceSurfaceCGL::detachFromFramebuffer(const gl::Context *context,
-                                                      gl::Framebuffer *framebuffer)
+void IOSurfaceSurfaceCGL::detachFromFramebuffer(gl::Framebuffer *framebuffer)
 {
     FramebufferGL *framebufferGL = GetImplAs<FramebufferGL>(framebuffer);
     ASSERT(framebufferGL->getFramebufferID() == mFramebufferID);
 
     framebufferGL->setFramebufferID(0);
-    return egl::NoError();
 }
 
 }  // namespace rx

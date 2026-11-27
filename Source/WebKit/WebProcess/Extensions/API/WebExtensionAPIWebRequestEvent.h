@@ -31,7 +31,6 @@
 #include "JSWebExtensionWrappable.h"
 #include "WebExtensionAPIObject.h"
 #include "WebExtensionEventListenerType.h"
-#include "WebPage.h"
 
 OBJC_CLASS JSValue;
 OBJC_CLASS NSDictionary;
@@ -45,15 +44,23 @@ class WebExtensionAPIWebRequestEvent : public WebExtensionAPIObject, public JSWe
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPIWebRequestEvent, webRequestEvent, event);
 
 public:
-    using FilterAndCallbackPair = std::pair<RefPtr<WebExtensionCallbackHandler>, RetainPtr<_WKWebExtensionWebRequestFilter>>;
-    using ListenerVector = Vector<FilterAndCallbackPair>;
+#if PLATFORM(COCOA)
+    struct Listener {
+        RefPtr<WebExtensionCallbackHandler> callback;
+        RetainPtr<_WKWebExtensionWebRequestFilter> filter;
+        Vector<String> extraInfo;
+    };
 
-    const ListenerVector& listeners() const { return m_listeners; }
+    using ListenerVector = Vector<Listener>;
 
-    void addListener(WebPage&, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, id extraInfoSpec, NSString **outExceptionString);
-    void removeListener(WebPage&, RefPtr<WebExtensionCallbackHandler>);
+    const ListenerVector& listeners() const LIFETIME_BOUND { return m_listeners; }
+
+    void addListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, NSArray *extraInfo, NSString **outExceptionString);
+    void removeListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>);
     bool hasListener(RefPtr<WebExtensionCallbackHandler>);
+#endif
 
+    void enumerateListeners(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const ResourceLoadInfo&, NOESCAPE const Function<void(WebExtensionCallbackHandler&, const Vector<String>&)>&);
     void invokeListenersWithArgument(NSDictionary *argument, WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const ResourceLoadInfo&);
 
     void removeAllListeners();
@@ -71,11 +78,15 @@ private:
         setPropertyPath(toAPIString(type), &parentObject);
     }
 
-    WebPageProxyIdentifier m_pageProxyIdentifier;
+    Markable<WebCore::FrameIdentifier> m_frameIdentifier;
     WebExtensionEventListenerType m_type;
+#if PLATFORM(COCOA)
     ListenerVector m_listeners;
+#endif
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIWebRequestEvent, webRequestEvent);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

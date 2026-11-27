@@ -753,7 +753,7 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
                     fakeDescriptor.symbol = symbol;
                 // Silence any possible unhandledrejection exceptions created from accessing a native accessor with a wrong this object.
                 if (@isPromise(fakeDescriptor.value) && InjectedScriptHost.isPromiseRejectedWithNativeGetterTypeError(fakeDescriptor.value))
-                    fakeDescriptor.value.@catch(function(){});
+                    fakeDescriptor.value.@then(@undefined, function(){});
                 return fakeDescriptor;
             } catch (e) {
                 let errorDescriptor = @createObjectWithoutPrototype(
@@ -837,6 +837,29 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
             for (let i = 0; i < privatePropertySymbols.length; ++i) {
                 let privatePropertySymbol = privatePropertySymbols[i];
                 let result = processProperty(o, privatePropertySymbol, isOwnProperty, true);
+                shouldBreak = result === InjectedScript.PropertyFetchAction.Stop;
+                if (shouldBreak)
+                    break;
+            }
+
+            if (shouldBreak)
+                break;
+
+            let privateMethods = InjectedScriptHost.getOwnPrivatePropertyMethods(o, isOwnProperty);
+            for (let i = 0; i < privateMethods.length; ++i) {
+                let privateMethod = privateMethods[i];
+                let descriptor = @createObjectWithoutPrototype();
+                descriptor.name = privateMethod.name;
+                if (@Object.@hasOwn(privateMethod, "value"))
+                    descriptor.value = privateMethod.value;
+                if (@Object.@hasOwn(privateMethod, "get"))
+                    descriptor.get = privateMethod.get;
+                if (@Object.@hasOwn(privateMethod, "set"))
+                    descriptor.set = privateMethod.set;
+                if (isOwnProperty)
+                    descriptor.isOwn = true;
+                descriptor.isPrivate = true;
+                let result = processDescriptor(descriptor, isOwnProperty);
                 shouldBreak = result === InjectedScript.PropertyFetchAction.Stop;
                 if (shouldBreak)
                     break;

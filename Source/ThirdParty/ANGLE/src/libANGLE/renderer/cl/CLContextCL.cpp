@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 //
 // CLContextCL.cpp: Implements the class methods for CLContextCL.
+//
 
 #include "libANGLE/renderer/cl/CLContextCL.h"
 
@@ -132,14 +133,14 @@ angle::Result CLContextCL::createBuffer(const cl::Buffer &buffer,
 }
 
 angle::Result CLContextCL::createImage(const cl::Image &image,
-                                       cl::MemFlags flags,
-                                       const cl_image_format &format,
-                                       const cl::ImageDescriptor &desc,
                                        void *hostPtr,
                                        CLMemoryImpl::Ptr *imageOut)
 {
-    cl_int errorCode   = CL_SUCCESS;
-    cl_mem nativeImage = nullptr;
+    cl_int errorCode         = CL_SUCCESS;
+    cl_mem nativeImage       = nullptr;
+    cl::ImageDescriptor desc = image.getDescriptor();
+    cl::MemFlags flags       = image.getFlags();
+    cl_image_format format   = image.getFormat();
 
     if (mContext.getPlatform().isVersionOrNewer(1u, 2u))
     {
@@ -216,7 +217,7 @@ angle::Result CLContextCL::getSupportedImageFormats(cl::MemFlags flags,
         auto formatIt = supportedFormats.cbegin();
         while (numEntries-- != 0u && formatIt != supportedFormats.cend())
         {
-            *imageFormats++ = *formatIt++;
+            ANGLE_UNSAFE_TODO(*imageFormats++ = *formatIt++);
         }
     }
     if (numImageFormats != nullptr)

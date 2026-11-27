@@ -28,18 +28,28 @@
 
 #if ENABLE(WEBXR)
 
+#include "ContextDestructionObserverInlines.h"
+#include "ExceptionOr.h"
 #include "WebXRBoundedReferenceSpace.h"
+#include "WebXRHitTestSource.h"
+#include "WebXRInputSource.h"
 #include "WebXRJointPose.h"
 #include "WebXRJointSpace.h"
 #include "WebXRReferenceSpace.h"
 #include "WebXRSession.h"
+#include "WebXRTransientInputHitTestSource.h"
 #include "WebXRViewerPose.h"
 #include <JavaScriptCore/GenericTypedArrayViewInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(WEBXR_HIT_TEST)
+#include "WebXRHitTestResult.h"
+#include "WebXRTransientInputHitTestResult.h"
+#endif
+
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebXRFrame);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRFrame);
 
 Ref<WebXRFrame> WebXRFrame::create(WebXRSession& session, IsAnimationFrame isAnimationFrame)
 {
@@ -68,7 +78,7 @@ bool WebXRFrame::isOutsideNativeBoundsOfBoundedReferenceSpace(const WebXRSpace& 
 
 bool WebXRFrame::isLocalReferenceSpace(const WebXRSpace& space) const
 {
-    auto* referenceSpace = dynamicDowncast<WebXRReferenceSpace>(space);
+    RefPtr referenceSpace = dynamicDowncast<WebXRReferenceSpace>(space);
     if (!referenceSpace)
         return false;
 
@@ -93,11 +103,6 @@ bool WebXRFrame::mustPosesBeLimited(const WebXRSpace& space, const WebXRSpace& b
 
     return false;
 }
-
-struct WebXRFrame::PopulatedPose {
-    TransformationMatrix transform;
-    bool emulatedPosition { false };
-};
 
 // https://immersive-web.github.io/webxr/#populate-the-pose
 ExceptionOr<std::optional<WebXRFrame::PopulatedPose>> WebXRFrame::populatePose(const Document& document, const WebXRSpace& space, const WebXRSpace& baseSpace)
@@ -203,7 +208,7 @@ ExceptionOr<RefPtr<WebXRViewerPose>> WebXRFrame::getViewerPose(const Document& d
         // 8.6. Let offset be an new XRRigidTransform object equal to the view offset of view in the relevant realm of session.
         // 8.7. Set xrview’s transform property to the result of multiplying the XRViewerPose's transform by the offset transform in the relevant realm of session
         auto offset = matrixFromPose(frameData.views[index].offset);
-        auto transform = WebXRRigidTransform::create(pose->transform().rawTransform() * offset);
+        Ref transform = WebXRRigidTransform::create(pose->transform().rawTransform() * offset);
 
         // Set projection matrix for each view
         std::array<float, 16> projection = WTF::switchOn(frameData.views[index].projection, [&](const PlatformXR::FrameData::Fov& fov) {
@@ -216,7 +221,7 @@ ExceptionOr<RefPtr<WebXRViewerPose>> WebXRFrame::getViewerPose(const Document& d
             // Use aspect projection for inline sessions
             double fov =  m_session->renderState().inlineVerticalFieldOfView().value_or(piOverTwoDouble);
             float aspect = 1;
-            auto layer = m_session->renderState().baseLayer();
+            RefPtr layer = m_session->renderState().baseLayer();
             if (layer)
                 aspect = static_cast<double>(layer->framebufferWidth()) / static_cast<double>(layer->framebufferHeight());
             double near = m_session->renderState().depthNear();
@@ -224,15 +229,15 @@ ExceptionOr<RefPtr<WebXRViewerPose>> WebXRFrame::getViewerPose(const Document& d
             return TransformationMatrix::fromProjection(fov, aspect, near, far).toColumnMajorFloatArray();
         });
 
-        auto xrView = WebXRView::create(Ref { *this }, view.eye, WTFMove(transform), Float32Array::create(projection.data(), projection.size()));
+        Ref xrView = WebXRView::create(protect(*this), view.eye, Ref { view.underlyingView }, WTF::move(transform), Float32Array::create(projection.data(), projection.size()));
         xrView->setViewportModifiable(m_session->supportsViewportScaling());
 
         //  8.8. Append xrview to xrviews
-        xrViews.append(WTFMove(xrView));
+        xrViews.append(WTF::move(xrView));
     }
 
     // 9. Set pose’s views to xrviews
-    pose->setViews(WTFMove(xrViews));
+    pose->setViews(WTF::move(xrViews));
 
     // 10. Return pose.
     return pose;
@@ -289,7 +294,7 @@ ExceptionOr<bool> WebXRFrame::fillJointRadii(const Vector<Ref<WebXRJointSpace>>&
 
     // For each joint in the jointSpaces:
     // If joint’s session is different from session, throw an InvalidStateError and abort these steps.
-    for (const auto& jointSpace : jointSpaces) {
+    for (Ref jointSpace : jointSpaces) {
         if (jointSpace->session() != m_session.ptr())
             return Exception { ExceptionCode::InvalidStateError, "Joint space's session does not match frame's session"_s };
     }
@@ -329,7 +334,7 @@ ExceptionOr<bool> WebXRFrame::fillPoses(const Document& document, const Vector<R
 
     // For each space in the spaces sequence:
     // If space’s session is different from session, throw an InvalidStateError and abort these steps.
-    for (const auto& space : spaces) {
+    for (Ref space : spaces) {
         if (space->session() != m_session.ptr())
             return Exception { ExceptionCode::InvalidStateError, "Space's session does not match frame's session"_s };
     }
@@ -378,6 +383,48 @@ ExceptionOr<bool> WebXRFrame::fillPoses(const Document& document, const Vector<R
     return allValid;
 }
 
+#endif
+
+#if ENABLE(WEBXR_HIT_TEST)
+// https://immersive-web.github.io/hit-test/#dom-xrframe-gethittestresults
+ExceptionOr<Vector<Ref<WebXRHitTestResult>>> WebXRFrame::getHitTestResults(const WebXRHitTestSource& source)
+{
+    if (!m_active)
+        return Exception { ExceptionCode::InvalidStateError, "Frame is not active"_s };
+    if (!source.handle())
+        return Exception { ExceptionCode::InvalidStateError, "Hit test source is already cancelled"_s };
+
+    auto& platformResultsHash = m_session->frameData().hitTestResults;
+    auto platformResults = platformResultsHash.find(*source.handle());
+    if (platformResults == platformResultsHash.end())
+        return Exception { ExceptionCode::InvalidStateError, "Unable to obtain hit test results for specified hit test source."_s };
+
+    return platformResults->value.map([&](auto& platformResult) { return WebXRHitTestResult::create(*this, source.space(), platformResult); });
+}
+
+// https://immersive-web.github.io/hit-test/#dom-xrframe-gethittestresultsfortransientinput
+ExceptionOr<Vector<Ref<WebXRTransientInputHitTestResult>>> WebXRFrame::getHitTestResultsForTransientInput(const WebXRTransientInputHitTestSource& source)
+{
+    if (!m_active)
+        return Exception { ExceptionCode::InvalidStateError, "Frame is not active"_s };
+    if (!source.handle())
+        return Exception { ExceptionCode::InvalidStateError, "Transient input hit test source is already cancelled"_s };
+
+    auto& platformResultsHash = m_session->frameData().transientInputHitTestResults;
+    auto platformResults = platformResultsHash.find(*source.handle());
+    if (platformResults == platformResultsHash.end())
+        return Exception { ExceptionCode::InvalidStateError, "Unable to obtain transient input hit test results for specified transient input hit test source."_s };
+
+    Vector<Ref<WebXRTransientInputHitTestResult>> results;
+    for (auto& platformResult : platformResults->value) {
+        RefPtr inputSource = m_session->inputSources().itemByHandle(platformResult.inputSource);
+        if (!inputSource)
+            continue;
+        Vector<Ref<WebXRHitTestResult>> hitTestResults = platformResult.results.map([&](auto& platformHitTestResult) { return WebXRHitTestResult::create(*this, inputSource->targetRaySpace(), platformHitTestResult); });
+        results.append(WebXRTransientInputHitTestResult::create(inputSource.releaseNonNull(), WTF::move(hitTestResults)));
+    }
+    return results;
+}
 #endif
 
 } // namespace WebCore

@@ -32,12 +32,13 @@
 #include "DrawingArea.h"
 #include "WebPage.h"
 #include <GLES2/gl2.h>
-#include <WebCore/Document.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/GraphicsLayerTextureMapper.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
+#include <WebCore/PlatformDisplay.h>
 #include <WebCore/Settings.h>
 #include <WebCore/TextureMapper.h>
 #include <WebCore/TextureMapperLayer.h>
@@ -64,7 +65,7 @@ bool LayerTreeHost::prepareForRendering()
 
 void LayerTreeHost::compositeLayersToContext()
 {
-    IntSize windowSize = flooredIntSize(m_rootLayer->size() * deviceScaleFactor());
+    IntSize windowSize = flooredIntSize(m_rootLayer->size() * m_webPage.intrinsicDeviceScaleFactor());
     glViewport(0, 0, windowSize.width(), windowSize.height());
 
     m_textureMapper->beginPainting();
@@ -124,7 +125,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
     applyDeviceScaleFactor();
 
     // The creation of the TextureMapper needs an active OpenGL context.
-    m_context = GLContext::create(window(), PlatformDisplay::sharedDisplay());
+    m_context = GLContext::create(PlatformDisplay::sharedDisplay(), window());
 
     if (!m_context)
         return;
@@ -136,11 +137,11 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
 
 LayerTreeHost::~LayerTreeHost() = default;
 
-void LayerTreeHost::setLayerFlushSchedulingEnabled(bool)
+void LayerTreeHost::setLayerTreeStateIsFrozen(bool)
 {
 }
 
-void LayerTreeHost::scheduleLayerFlush()
+void LayerTreeHost::scheduleRenderingUpdate()
 {
     if (!enabled())
         return;
@@ -149,11 +150,6 @@ void LayerTreeHost::scheduleLayerFlush()
         return;
 
     m_layerFlushTimer.startOneShot(0_s);
-}
-
-void LayerTreeHost::cancelPendingLayerFlush()
-{
-    m_layerFlushTimer.stop();
 }
 
 void LayerTreeHost::setRootCompositingLayer(WebCore::GraphicsLayer* graphicsLayer)
@@ -187,7 +183,7 @@ void LayerTreeHost::setNonCompositedContentsNeedDisplay(const WebCore::IntRect& 
     if (!enabled())
         return;
     m_rootLayer->setNeedsDisplayInRect(rect);
-    scheduleLayerFlush();
+    scheduleRenderingUpdate();
 }
 
 void LayerTreeHost::scrollNonCompositedContents(const WebCore::IntRect& scrollRect)
@@ -211,27 +207,28 @@ void LayerTreeHost::flushAndRenderLayers()
     compositeLayersToContext();
 }
 
-void LayerTreeHost::forceRepaint()
+void LayerTreeHost::updateRenderingWithForcedRepaint()
 {
     flushAndRenderLayers();
 }
 
-void LayerTreeHost::forceRepaintAsync(CompletionHandler<void()>&& completionHandler)
+void LayerTreeHost::updateRenderingWithForcedRepaintAsync(CompletionHandler<void()>&& completionHandler)
 {
     completionHandler();
 }
 
-void LayerTreeHost::sizeDidChange(const WebCore::IntSize& newSize)
+void LayerTreeHost::sizeDidChange()
 {
     if (!enabled())
         return;
 
+    const auto& newSize = m_webPage.size();
     if (m_rootLayer->size() == newSize)
         return;
     m_rootLayer->setSize(newSize);
     applyDeviceScaleFactor();
 
-    scheduleLayerFlush();
+    scheduleRenderingUpdate();
 }
 
 void LayerTreeHost::pauseRendering()
@@ -253,15 +250,7 @@ void LayerTreeHost::contentsSizeChanged(const WebCore::IntSize&)
 {
 }
 
-void LayerTreeHost::didChangeViewportAttributes(WebCore::ViewportAttributes&&)
-{
-}
-
 void LayerTreeHost::setIsDiscardable(bool)
-{
-}
-
-void LayerTreeHost::deviceOrPageScaleFactorChanged()
 {
 }
 
@@ -284,7 +273,7 @@ bool LayerTreeHost::enabled()
     return window() && m_rootCompositingLayer;
 }
 
-void LayerTreeHost::paintContents(const GraphicsLayer*, GraphicsContext& context, const FloatRect& rectToPaint, OptionSet<GraphicsLayerPaintBehavior>)
+void LayerTreeHost::paintContents(const GraphicsLayer&, GraphicsContext& context, const FloatRect& rectToPaint, OptionSet<GraphicsLayerPaintBehavior>)
 {
     context.save();
     context.clip(rectToPaint);
@@ -300,13 +289,14 @@ float LayerTreeHost::deviceScaleFactor() const
 
 void LayerTreeHost::applyDeviceScaleFactor()
 {
+    float intrinsicDeviceScaleFactor = m_webPage.intrinsicDeviceScaleFactor();
     const FloatSize& size = m_rootLayer->size();
 
     TransformationMatrix m;
-    m.scale(deviceScaleFactor());
+    m.scale(intrinsicDeviceScaleFactor);
     // Center view
-    double tx = (size.width() - size.width() / deviceScaleFactor()) / 2.0;
-    double ty = (size.height() - size.height() / deviceScaleFactor()) / 2.0;
+    double tx = (size.width() - size.width() / intrinsicDeviceScaleFactor) / 2.0;
+    double ty = (size.height() - size.height() / intrinsicDeviceScaleFactor) / 2.0;
     m.translate(tx, ty);
     m_rootLayer->setTransform(m);
 }

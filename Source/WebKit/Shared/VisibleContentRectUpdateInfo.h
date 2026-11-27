@@ -28,8 +28,8 @@
 #if ENABLE(UI_SIDE_COMPOSITING)
 
 #include "TransactionID.h"
+#include <WebCore/BoxExtents.h>
 #include <WebCore/FloatRect.h>
-#include <WebCore/LengthBox.h>
 #include <WebCore/VelocityData.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/OptionSet.h>
@@ -56,12 +56,12 @@ enum class ViewStabilityFlag : uint8_t {
 
 class VisibleContentRectUpdateInfo {
 public:
-    VisibleContentRectUpdateInfo() = default;
+    VisibleContentRectUpdateInfo() = delete;
 
     VisibleContentRectUpdateInfo(const WebCore::FloatRect& exposedContentRect, const WebCore::FloatRect& unobscuredContentRect, const WebCore::FloatBoxExtent& contentInsets,
         const WebCore::FloatRect& unobscuredRectInScrollViewCoordinates, const WebCore::FloatRect& unobscuredContentRectRespectingInputViewBounds, const WebCore::FloatRect& layoutViewportRect,
         const WebCore::FloatBoxExtent& obscuredInsets, const WebCore::FloatBoxExtent& unobscuredSafeAreaInsets, double scale, OptionSet<ViewStabilityFlag> viewStability,
-        bool isFirstUpdateForNewViewSize, bool allowShrinkToFit, bool enclosedInScrollableAncestorView, const WebCore::VelocityData& scrollVelocity, TransactionID lastLayerTreeTransactionId)
+        bool isFirstUpdateForNewViewSize, bool allowShrinkToFit, bool enclosedInScrollableAncestorView, bool needsScrollend, const WebCore::VelocityData& scrollVelocity, TransactionID lastLayerTreeTransactionId)
         : m_exposedContentRect(exposedContentRect)
         , m_unobscuredContentRect(unobscuredContentRect)
         , m_contentInsets(contentInsets)
@@ -77,17 +77,18 @@ public:
         , m_isFirstUpdateForNewViewSize(isFirstUpdateForNewViewSize)
         , m_allowShrinkToFit(allowShrinkToFit)
         , m_enclosedInScrollableAncestorView(enclosedInScrollableAncestorView)
+        , m_needsScrollend(needsScrollend)
     {
     }
 
-    const WebCore::FloatRect& exposedContentRect() const { return m_exposedContentRect; }
-    const WebCore::FloatRect& unobscuredContentRect() const { return m_unobscuredContentRect; }
-    const WebCore::FloatBoxExtent& contentInsets() const { return m_contentInsets; }
-    const WebCore::FloatRect& unobscuredRectInScrollViewCoordinates() const { return m_unobscuredRectInScrollViewCoordinates; }
-    const WebCore::FloatRect& unobscuredContentRectRespectingInputViewBounds() const { return m_unobscuredContentRectRespectingInputViewBounds; }
-    const WebCore::FloatRect& layoutViewportRect() const { return m_layoutViewportRect; }
-    const WebCore::FloatBoxExtent& obscuredInsets() const { return m_obscuredInsets; }
-    const WebCore::FloatBoxExtent& unobscuredSafeAreaInsets() const { return m_unobscuredSafeAreaInsets; }
+    const WebCore::FloatRect& exposedContentRect() const LIFETIME_BOUND { return m_exposedContentRect; }
+    const WebCore::FloatRect& unobscuredContentRect() const LIFETIME_BOUND { return m_unobscuredContentRect; }
+    const WebCore::FloatBoxExtent& contentInsets() const LIFETIME_BOUND { return m_contentInsets; }
+    const WebCore::FloatRect& unobscuredRectInScrollViewCoordinates() const LIFETIME_BOUND { return m_unobscuredRectInScrollViewCoordinates; }
+    const WebCore::FloatRect& unobscuredContentRectRespectingInputViewBounds() const LIFETIME_BOUND { return m_unobscuredContentRectRespectingInputViewBounds; }
+    const WebCore::FloatRect& layoutViewportRect() const LIFETIME_BOUND { return m_layoutViewportRect; }
+    const WebCore::FloatBoxExtent& obscuredInsets() const LIFETIME_BOUND { return m_obscuredInsets; }
+    const WebCore::FloatBoxExtent& unobscuredSafeAreaInsets() const LIFETIME_BOUND { return m_unobscuredSafeAreaInsets; }
 
     double scale() const { return m_scale; }
     bool inStableState() const { return m_viewStability.isEmpty(); }
@@ -95,7 +96,8 @@ public:
     bool isFirstUpdateForNewViewSize() const { return m_isFirstUpdateForNewViewSize; }
     bool allowShrinkToFit() const { return m_allowShrinkToFit; }
     bool enclosedInScrollableAncestorView() const { return m_enclosedInScrollableAncestorView; }
-    const WebCore::VelocityData& scrollVelocity() const { return m_scrollVelocity; }
+    bool needsScrollend() const { return m_needsScrollend; }
+    const WebCore::VelocityData& scrollVelocity() const LIFETIME_BOUND { return m_scrollVelocity; }
     TransactionID lastLayerTreeTransactionID() const { return m_lastLayerTreeTransactionID; }
 
     MonotonicTime timestamp() const { return m_scrollVelocity.lastUpdateTime; }
@@ -118,6 +120,7 @@ private:
     bool m_isFirstUpdateForNewViewSize { false };
     bool m_allowShrinkToFit { false };
     bool m_enclosedInScrollableAncestorView { false };
+    bool m_needsScrollend { false };
 };
 
 inline bool operator==(const VisibleContentRectUpdateInfo& a, const VisibleContentRectUpdateInfo& b)
@@ -135,7 +138,8 @@ inline bool operator==(const VisibleContentRectUpdateInfo& a, const VisibleConte
         && a.viewStability() == b.viewStability()
         && a.isFirstUpdateForNewViewSize() == b.isFirstUpdateForNewViewSize()
         && a.allowShrinkToFit() == b.allowShrinkToFit()
-        && a.enclosedInScrollableAncestorView() == b.enclosedInScrollableAncestorView();
+        && a.enclosedInScrollableAncestorView() == b.enclosedInScrollableAncestorView()
+        && a.needsScrollend() == b.needsScrollend();
 }
 
 WTF::TextStream& operator<<(WTF::TextStream&, ViewStabilityFlag);

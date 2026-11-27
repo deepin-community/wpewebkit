@@ -60,12 +60,12 @@ class RemoteRenderBundleEncoder final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemoteRenderBundleEncoder> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::RenderBundleEncoder& renderBundleEncoder, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteRenderBundleEncoder(gpuConnectionToWebProcess, gpu, renderBundleEncoder, objectHeap, WTFMove(streamConnection), identifier));
+        return adoptRef(*new RemoteRenderBundleEncoder(gpuConnectionToWebProcess, gpu, renderBundleEncoder, objectHeap, WTF::move(streamConnection), identifier));
     }
 
     ~RemoteRenderBundleEncoder();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -81,27 +81,25 @@ private:
 
     WebCore::WebGPU::RenderBundleEncoder& backing() { return m_backing; }
 
-    RefPtr<IPC::Connection> connection() const;
-
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     void setPipeline(WebGPUIdentifier);
 
-    void setIndexBuffer(WebGPUIdentifier, WebCore::WebGPU::IndexFormat, std::optional<WebCore::WebGPU::Size64> offset, std::optional<WebCore::WebGPU::Size64>);
-    void setVertexBuffer(WebCore::WebGPU::Index32 slot, WebGPUIdentifier, std::optional<WebCore::WebGPU::Size64> offset, std::optional<WebCore::WebGPU::Size64>);
-    void unsetVertexBuffer(WebCore::WebGPU::Index32 slot, std::optional<WebCore::WebGPU::Size64> offset, std::optional<WebCore::WebGPU::Size64>);
+    void setIndexBuffer(WebGPUIdentifier, WebCore::WebGPU::IndexFormat, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64>);
+    void setVertexBuffer(WebCore::WebGPU::Index32 slot, WebGPUIdentifier, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64>);
+    void unsetVertexBuffer(WebCore::WebGPU::Index32 slot, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64>);
 
-    void draw(WebCore::WebGPU::Size32 vertexCount, std::optional<WebCore::WebGPU::Size32> instanceCount,
-        std::optional<WebCore::WebGPU::Size32> firstVertex, std::optional<WebCore::WebGPU::Size32> firstInstance);
-    void drawIndexed(WebCore::WebGPU::Size32 indexCount, std::optional<WebCore::WebGPU::Size32> instanceCount,
-        std::optional<WebCore::WebGPU::Size32> firstIndex,
-        std::optional<WebCore::WebGPU::SignedOffset32> baseVertex,
-        std::optional<WebCore::WebGPU::Size32> firstInstance);
+    void draw(WebCore::WebGPU::Size32 vertexCount, WebCore::WebGPU::Size32 instanceCount,
+        WebCore::WebGPU::Size32 firstVertex, WebCore::WebGPU::Size32 firstInstance);
+    void drawIndexed(WebCore::WebGPU::Size32 indexCount, WebCore::WebGPU::Size32 instanceCount,
+        WebCore::WebGPU::Size32 firstIndex,
+        WebCore::WebGPU::SignedOffset32 baseVertex,
+        WebCore::WebGPU::Size32 firstInstance);
 
     void drawIndirect(WebGPUIdentifier indirectBuffer, WebCore::WebGPU::Size64 indirectOffset);
     void drawIndexedIndirect(WebGPUIdentifier indirectBuffer, WebCore::WebGPU::Size64 indirectOffset);
 
-    void setBindGroup(WebCore::WebGPU::Index32, WebGPUIdentifier,
+    void setBindGroup(WebCore::WebGPU::Index32, std::optional<WebGPUIdentifier>,
         std::optional<Vector<WebCore::WebGPU::BufferDynamicOffset>>&& dynamicOffsets);
 
     void pushDebugGroup(String&& groupLabel);
@@ -113,9 +111,9 @@ private:
     void setLabel(String&&);
     void destruct();
 
-    Ref<WebCore::WebGPU::RenderBundleEncoder> m_backing;
+    const Ref<WebCore::WebGPU::RenderBundleEncoder> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;

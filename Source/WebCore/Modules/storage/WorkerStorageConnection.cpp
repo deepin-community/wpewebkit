@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 
 #include "ClientOrigin.h"
 #include "Document.h"
+#include "ExceptionOr.h"
 #include "StorageEstimate.h"
 #include "WorkerFileSystemStorageConnection.h"
 #include "WorkerGlobalScope.h"
@@ -57,21 +58,26 @@ void WorkerStorageConnection::scopeClosed()
     for (auto& callback : getDirectoryCallbacks.values())
         callback(Exception { ExceptionCode::InvalidStateError });
 
+    auto getEstimateCallbacks = std::exchange(m_getEstimateCallbacks, { });
+    for (auto& callback : getEstimateCallbacks.values())
+        callback(Exception { ExceptionCode::InvalidStateError });
+
     m_scope = nullptr;
 }
 
 void WorkerStorageConnection::getPersisted(ClientOrigin&& origin, StorageConnection::PersistCallback&& completionHandler)
 {
-    ASSERT(m_scope);
+    RefPtr scope = m_scope.get();
+    ASSERT(scope);
 
-    auto* workerLoaderProxy = m_scope->thread().workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = scope->thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return completionHandler(false);
 
     auto callbackIdentifier = ++m_lastCallbackIdentifier;
-    m_getPersistedCallbacks.add(callbackIdentifier, WTFMove(completionHandler));
+    m_getPersistedCallbacks.add(callbackIdentifier, WTF::move(completionHandler));
 
-    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = m_scope->identifier(), origin = WTFMove(origin).isolatedCopy()](auto& context) mutable {
+    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
         auto& document = downcast<Document>(context);
@@ -84,7 +90,7 @@ void WorkerStorageConnection::getPersisted(ClientOrigin&& origin, StorageConnect
         if (!mainThreadConnection)
             return mainThreadCallback(false);
 
-        mainThreadConnection->getPersisted(WTFMove(origin), WTFMove(mainThreadCallback));
+        mainThreadConnection->getPersisted(WTF::move(origin), WTF::move(mainThreadCallback));
     });
 }
 
@@ -96,72 +102,74 @@ void WorkerStorageConnection::didGetPersisted(uint64_t callbackIdentifier, bool 
 
 void WorkerStorageConnection::getEstimate(ClientOrigin&& origin, StorageConnection::GetEstimateCallback&& completionHandler)
 {
-    ASSERT(m_scope);
+    RefPtr scope = m_scope.get();
+    ASSERT(scope);
 
-    auto* workerLoaderProxy = m_scope->thread().workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = scope->thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return completionHandler(Exception { ExceptionCode::InvalidStateError });
 
     auto callbackIdentifier = ++m_lastCallbackIdentifier;
-    m_getEstimateCallbacks.add(callbackIdentifier, WTFMove(completionHandler));
+    m_getEstimateCallbacks.add(callbackIdentifier, WTF::move(completionHandler));
 
-    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = m_scope->identifier(), origin = WTFMove(origin).isolatedCopy()](auto& context) mutable {
+    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
         auto& document = downcast<Document>(context);
         auto mainThreadConnection = document.storageConnection();
         auto mainThreadCallback = [callbackIdentifier, contextIdentifier](ExceptionOr<StorageEstimate>&& result) mutable {
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTFMove(result))] (auto& scope) mutable {
-                downcast<WorkerGlobalScope>(scope).storageConnection().didGetEstimate(callbackIdentifier, WTFMove(result));
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
+                downcast<WorkerGlobalScope>(scope).storageConnection().didGetEstimate(callbackIdentifier, WTF::move(result));
             });
         };
         if (!mainThreadConnection)
             return mainThreadCallback(Exception { ExceptionCode::InvalidStateError });
 
-        mainThreadConnection->getEstimate(WTFMove(origin), WTFMove(mainThreadCallback));
+        mainThreadConnection->getEstimate(WTF::move(origin), WTF::move(mainThreadCallback));
     });
 }
 
 void WorkerStorageConnection::didGetEstimate(uint64_t callbackIdentifier, ExceptionOr<StorageEstimate>&& result)
 {
     if (auto callback = m_getEstimateCallbacks.take(callbackIdentifier))
-        callback(WTFMove(result));
+        callback(WTF::move(result));
 }
 
 void WorkerStorageConnection::fileSystemGetDirectory(ClientOrigin&& origin, StorageConnection::GetDirectoryCallback&& completionHandler)
 {
-    ASSERT(m_scope);
+    RefPtr scope = m_scope.get();
+    ASSERT(scope);
 
-    auto* workerLoaderProxy = m_scope->thread().workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = scope->thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return completionHandler(Exception { ExceptionCode::InvalidStateError });
     
     auto callbackIdentifier = ++m_lastCallbackIdentifier;
-    m_getDirectoryCallbacks.add(callbackIdentifier, WTFMove(completionHandler));
+    m_getDirectoryCallbacks.add(callbackIdentifier, WTF::move(completionHandler));
 
-    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = m_scope->identifier(), origin = WTFMove(origin).isolatedCopy()](auto& context) mutable {
+    workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = m_scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
         auto& document = downcast<Document>(context);
         auto mainThreadConnection = document.storageConnection();
         auto mainThreadCallback = [callbackIdentifier, contextIdentifier](auto&& result) mutable {
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTFMove(result))] (auto& scope) mutable {
-                downcast<WorkerGlobalScope>(scope).storageConnection().didGetDirectory(callbackIdentifier, WTFMove(result));
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
+                downcast<WorkerGlobalScope>(scope).storageConnection().didGetDirectory(callbackIdentifier, WTF::move(result));
             });
         };
         if (!mainThreadConnection)
             return mainThreadCallback(Exception { ExceptionCode::InvalidStateError });
 
-        mainThreadConnection->fileSystemGetDirectory(WTFMove(origin), WTFMove(mainThreadCallback));
+        mainThreadConnection->fileSystemGetDirectory(WTF::move(origin), WTF::move(mainThreadCallback));
     });
 }
 
 void WorkerStorageConnection::didGetDirectory(uint64_t callbackIdentifier, ExceptionOr<StorageConnection::DirectoryInfo>&& result)
 {
-    RefPtr<FileSystemStorageConnection> mainThreadFileSystemStorageConnection = result.hasException() ? nullptr : result.returnValue().second;
+    RefPtr<FileSystemStorageConnection> mainThreadFileSystemStorageConnection = result.hasException() ? nullptr : result.returnValue().connection;
     auto releaseConnectionScope = makeScopeExit([connection = mainThreadFileSystemStorageConnection]() mutable {
         if (connection)
-            callOnMainThread([connection = WTFMove(connection)]() { });
+            callOnMainThread([connection = WTF::move(connection)]() { });
     });
 
     auto callback = m_getDirectoryCallbacks.take(callbackIdentifier);
@@ -169,14 +177,15 @@ void WorkerStorageConnection::didGetDirectory(uint64_t callbackIdentifier, Excep
         return;
 
     if (result.hasException())
-        return callback(WTFMove(result));
+        return callback(WTF::move(result));
 
-    if (!m_scope)
+    RefPtr scope = m_scope.get();
+    if (!scope)
         return callback(Exception { ExceptionCode::InvalidStateError });
     releaseConnectionScope.release();
 
-    auto& workerFileSystemStorageConnection = m_scope->getFileSystemStorageConnection(Ref { *mainThreadFileSystemStorageConnection });
-    callback(StorageConnection::DirectoryInfo { result.returnValue().first, Ref { workerFileSystemStorageConnection } });
+    Ref workerFileSystemStorageConnection = scope->getFileSystemStorageConnection(protect(*mainThreadFileSystemStorageConnection));
+    callback(StorageConnection::DirectoryInfo { result.returnValue().globalIdentifier, result.returnValue().identifier, WTF::move(workerFileSystemStorageConnection) });
 }
 
 } // namespace WebCore

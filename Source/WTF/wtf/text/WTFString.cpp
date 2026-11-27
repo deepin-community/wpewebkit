@@ -24,8 +24,8 @@
 
 #include <wtf/ASCIICType.h>
 #include <wtf/DataLog.h>
+#include <wtf/Function.h>
 #include <wtf/HexNumber.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/dtoa.h>
@@ -34,44 +34,45 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
-#include <wtf/unicode/CharacterNames.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
 namespace WTF {
 
 // Construct a string with UTF-16 data.
-String::String(std::span<const UChar> characters)
+String::String(std::span<const char16_t> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(characters) } : nullptr)
 {
 }
 
 // Construct a string with latin1 data.
-String::String(std::span<const LChar> characters)
+String::String(std::span<const Latin1Character> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(characters) } : nullptr)
 {
 }
 
+// Construct a string with UTF-8 data.
+String::String(std::span<const char8_t> characters)
+    : m_impl(StringImpl::create(characters))
+{
+}
+
+// Construct a string with Latin-1 data.
 String::String(std::span<const char> characters)
-    : m_impl(characters.data() ? RefPtr { StringImpl::create(byteCast<uint8_t>(characters)) } : nullptr)
+    : m_impl(characters.data() ? RefPtr { StringImpl::create(byteCast<Latin1Character>(characters)) } : nullptr)
 {
 }
 
 // Construct a string with Latin-1 data, from a null-terminated source.
 String::String(const char* nullTerminatedString)
-    : m_impl(nullTerminatedString ? RefPtr { StringImpl::createFromCString(nullTerminatedString) } : nullptr)
+    : m_impl(nullTerminatedString ? RefPtr { StringImpl::create(byteCast<Latin1Character>(unsafeSpan(nullTerminatedString))) } : nullptr)
 {
 }
 
-int codePointCompare(const String& a, const String& b)
-{
-    return codePointCompare(a.impl(), b.impl());
-}
-
-char32_t String::characterStartingAt(unsigned i) const
+char32_t String::codePointAt(unsigned i) const
 {
     if (!m_impl || i >= m_impl->length())
         return 0;
-    return m_impl->characterStartingAt(i);
+    SUPPRESS_UNCOUNTED_ARG return m_impl->codePointAt(i);
 }
 
 String makeStringByJoining(std::span<const String> strings, const String& separator)
@@ -100,7 +101,7 @@ String makeStringByRemoving(const String& string, unsigned position, unsigned le
 
 String String::substringSharingImpl(unsigned offset, unsigned length) const
 {
-    // FIXME: We used to check against a limit of Heap::minExtraCost / sizeof(UChar).
+    // FIXME: We used to check against a limit of Heap::minExtraCost / sizeof(char16_t).
 
     unsigned stringLength = this->length();
     offset = std::min(offset, stringLength);
@@ -108,72 +109,77 @@ String String::substringSharingImpl(unsigned offset, unsigned length) const
 
     if (!offset && length == stringLength)
         return *this;
-    return StringImpl::createSubstringSharingImpl(*m_impl, offset, length);
+    SUPPRESS_UNCOUNTED_ARG return StringImpl::createSubstringSharingImpl(*m_impl, offset, length);
 }
 
 String String::convertToASCIILowercase() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToASCIILowercase() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToASCIILowercase() : String { };
 }
 
 String String::convertToASCIIUppercase() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToASCIIUppercase() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToASCIIUppercase() : String { };
 }
 
 String String::convertToLowercaseWithoutLocale() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToLowercaseWithoutLocale() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocale() : String { };
 }
 
 String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
 String String::convertToUppercaseWithoutLocale() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToUppercaseWithoutLocale() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocale() : String { };
 }
 
 String String::convertToLowercaseWithLocale(const AtomString& localeIdentifier) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToLowercaseWithLocale(localeIdentifier) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithLocale(localeIdentifier) : String { };
 }
 
 String String::convertToUppercaseWithLocale(const AtomString& localeIdentifier) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->convertToUppercaseWithLocale(localeIdentifier) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithLocale(localeIdentifier) : String { };
+}
+
+String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
 String String::trim(CodeUnitMatchFunction predicate) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->trim(predicate) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->trim(predicate) : String { };
 }
 
 String String::simplifyWhiteSpace(CodeUnitMatchFunction isWhiteSpace) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->simplifyWhiteSpace(isWhiteSpace) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->simplifyWhiteSpace(isWhiteSpace) : String { };
 }
 
 String String::foldCase() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->foldCase() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->foldCase() : String { };
 }
 
-Expected<Vector<UChar>, UTF8ConversionError> String::charactersWithoutNullTermination() const
+Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTermination() const
 {
-    Vector<UChar> result;
+    Vector<char16_t> result;
     if (!m_impl)
         return result;
 
@@ -188,7 +194,7 @@ Expected<Vector<UChar>, UTF8ConversionError> String::charactersWithoutNullTermin
     return result;
 }
 
-Expected<Vector<UChar>, UTF8ConversionError> String::charactersWithNullTermination() const
+Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithNullTermination() const
 {
     auto result = charactersWithoutNullTermination();
     if (result)
@@ -241,13 +247,13 @@ String String::numberToStringFixedPrecision(double number, unsigned precision, T
 String String::number(float number)
 {
     NumberToStringBuffer buffer;
-    return String { numberToString(number, buffer) };
+    return String { numberToStringAndSize(number, buffer) };
 }
 
 String String::number(double number)
 {
     NumberToStringBuffer buffer;
-    return String { numberToString(number, buffer) };
+    return String { numberToStringAndSize(number, buffer) };
 }
 
 String String::numberToStringFixedWidth(double number, unsigned decimalPlaces)
@@ -263,7 +269,7 @@ double String::toDouble(bool* ok) const
             *ok = false;
         return 0.0;
     }
-    return m_impl->toDouble(ok);
+    SUPPRESS_UNCOUNTED_ARG return m_impl->toDouble(ok);
 }
 
 float String::toFloat(bool* ok) const
@@ -273,13 +279,13 @@ float String::toFloat(bool* ok) const
             *ok = false;
         return 0.0f;
     }
-    return m_impl->toFloat(ok);
+    SUPPRESS_UNCOUNTED_ARG return m_impl->toFloat(ok);
 }
 
 String String::isolatedCopy() const &
 {
     // FIXME: Should this function, and the many others like it, be inlined?
-    return m_impl ? m_impl->isolatedCopy() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->isolatedCopy() : String { };
 }
 
 String String::isolatedCopy() &&
@@ -287,10 +293,10 @@ String String::isolatedCopy() &&
     if (isSafeToSendToAnotherThread()) {
         // Since we know that our string is a temporary that will be destroyed
         // we can just steal the m_impl from it, thus avoiding a copy.
-        return { WTFMove(*this) };
+        return { WTF::move(*this) };
     }
 
-    return m_impl ? m_impl->isolatedCopy() : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->isolatedCopy() : String { };
 }
 
 bool String::isSafeToSendToAnotherThread() const
@@ -319,7 +325,7 @@ inline Vector<String> String::splitInternal(StringView separator) const
 }
 
 template<bool allowEmptyEntries>
-inline void String::splitInternal(UChar separator, const SplitFunctor& functor) const
+inline void String::splitInternal(char16_t separator, NOESCAPE const SplitFunctor& functor) const
 {
     StringView view(*this);
 
@@ -335,7 +341,7 @@ inline void String::splitInternal(UChar separator, const SplitFunctor& functor) 
 }
 
 template<bool allowEmptyEntries>
-inline Vector<String> String::splitInternal(UChar separator) const
+inline Vector<String> String::splitInternal(char16_t separator) const
 {
     Vector<String> result;
     splitInternal<allowEmptyEntries>(separator, [&result](StringView item) {
@@ -345,12 +351,12 @@ inline Vector<String> String::splitInternal(UChar separator) const
     return result;
 }
 
-void String::split(UChar separator, const SplitFunctor& functor) const
+void String::split(char16_t separator, NOESCAPE const SplitFunctor& functor) const
 {
     splitInternal<false>(separator, functor);
 }
 
-Vector<String> String::split(UChar separator) const
+Vector<String> String::split(char16_t separator) const
 {
     return splitInternal<false>(separator);
 }
@@ -360,12 +366,12 @@ Vector<String> String::split(StringView separator) const
     return splitInternal<false>(separator);
 }
 
-void String::splitAllowingEmptyEntries(UChar separator, const SplitFunctor& functor) const
+void String::splitAllowingEmptyEntries(char16_t separator, NOESCAPE const SplitFunctor& functor) const
 {
     splitInternal<true>(separator, functor);
 }
 
-Vector<String> String::splitAllowingEmptyEntries(UChar separator) const
+Vector<String> String::splitAllowingEmptyEntries(char16_t separator) const
 {
     return splitInternal<true>(separator);
 }
@@ -381,28 +387,30 @@ CString String::ascii() const
     // preserved, characters outside of this range are converted to '?'.
 
     if (isEmpty()) {
-        char* characterBuffer;
+        std::span<char> characterBuffer;
         return CString::newUninitialized(0, characterBuffer);
     }
 
     if (this->is8Bit()) {
         auto characters = this->span8();
 
-        char* characterBuffer;
+        std::span<char> characterBuffer;
         CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+        size_t characterBufferIndex = 0;
         for (auto character : characters)
-            *characterBuffer++ = character && (character < 0x20 || character > 0x7f) ? '?' : character;
+            characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : byteCast<char>(character);
 
         return result;        
     }
 
     auto characters = span16();
-    char* characterBuffer;
+    std::span<char> characterBuffer;
     CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+    size_t characterBufferIndex = 0;
     for (auto character : characters)
-        *characterBuffer++ = character && (character < 0x20 || character > 0x7f) ? '?' : character;
+        characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : static_cast<char>(character);
 
     return result;
 }
@@ -419,18 +427,19 @@ CString String::latin1() const
         return CString(this->span8());
 
     auto characters = this->span16();
-    char* characterBuffer;
+    std::span<char> characterBuffer;
     CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+    size_t characterBufferIndex = 0;
     for (auto character : characters)
-        *characterBuffer++ = !isLatin1(character) ? '?' : character;
+        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? '?' : character;
 
     return result;
 }
 
 Expected<CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
 {
-    return m_impl ? m_impl->tryGetUTF8(mode) : CString { ""_span };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryGetUTF8(mode) : CString { ""_span };
 }
 
 Expected<CString, UTF8ConversionError> String::tryGetUTF8() const
@@ -445,9 +454,9 @@ CString String::utf8(ConversionMode mode) const
     return expectedString.value();
 }
 
-String String::make8Bit(std::span<const UChar> source)
+String String::make8Bit(std::span<const char16_t> source)
 {
-    LChar* destination;
+    std::span<Latin1Character> destination;
     String result = String::createUninitialized(source.size(), destination);
     StringImpl::copyCharacters(destination, source);
     return result;
@@ -457,28 +466,33 @@ void String::convertTo16Bit()
 {
     if (isNull() || !is8Bit())
         return;
-    UChar* destination;
+    std::span<char16_t> destination;
     auto convertedString = String::createUninitialized(length(), destination);
     StringImpl::copyCharacters(destination, span8());
-    *this = WTFMove(convertedString);
+    *this = WTF::move(convertedString);
 }
 
-template<bool replaceInvalidSequences>
-String fromUTF8Impl(std::span<const char8_t> string)
+String String::fromUTF8(std::span<const char8_t> codeUnits)
 {
+    return codeUnits;
+}
+
+String String::fromUTF8ReplacingInvalidSequences(std::span<const char8_t> string)
+{
+    if (!string.data())
+        return { };
+
     RELEASE_ASSERT(string.size() <= String::MaxLength);
 
     if (string.empty())
         return emptyString();
 
     if (charactersAreAllASCII(string))
-        return StringImpl::create(spanReinterpretCast<const LChar>(string));
+        return StringImpl::create(byteCast<Latin1Character>(string));
 
-    Vector<UChar, 1024> buffer(string.size());
- 
-    auto result = replaceInvalidSequences
-        ? Unicode::convertReplacingInvalidSequences(string, buffer.mutableSpan())
-        : Unicode::convert(string, buffer.mutableSpan());
+    Vector<char16_t, 1024> buffer(string.size());
+
+    auto result = Unicode::convertReplacingInvalidSequences(string, buffer.mutableSpan());
     if (result.code != Unicode::ConversionResultCode::Success)
         return { };
 
@@ -486,50 +500,46 @@ String fromUTF8Impl(std::span<const char8_t> string)
     return StringImpl::create(result.buffer);
 }
 
-String String::fromUTF8(std::span<const char8_t> string)
-{
-    if (!string.data())
-        return { };
-    return fromUTF8Impl<false>(string);
-}
-
-String String::fromUTF8ReplacingInvalidSequences(std::span<const char8_t> characters)
-{
-    if (!characters.data())
-        return { };
-    return fromUTF8Impl<true>(characters);
-}
-
 String String::fromUTF8WithLatin1Fallback(std::span<const char8_t> string)
 {
-    String utf8 = fromUTF8(string);
+    String utf8 { string };
     if (!utf8) {
         // Do this assertion before chopping the size_t down to unsigned.
         RELEASE_ASSERT(string.size() <= String::MaxLength);
-        return spanReinterpretCast<const LChar>(string);
+        return byteCast<Latin1Character>(string);
     }
     return utf8;
 }
 
 String String::fromCodePoint(char32_t codePoint)
 {
-    UChar buffer[2];
+    std::array<char16_t, 2> buffer;
     uint8_t length = 0;
     UBool error = false;
     U16_APPEND(buffer, length, 2, codePoint, error);
-    return error ? String() : String({ buffer, length });
+    return error ? String() : String(std::span { buffer }.first(length));
 }
 
 // String Operations
 
-template<typename CharacterType, TrailingJunkPolicy policy>
+enum class WhitespacePolicy : bool { Skip, Preserve };
+enum class ParseMode : bool { General, Fixed };
+
+template<typename CharacterType, TrailingJunkPolicy trailingJunkPolicy, WhitespacePolicy whitespacePolicy, ParseMode mode>
 static inline double toDoubleType(std::span<const CharacterType> data, bool* ok, size_t& parsedLength)
 {
     size_t leadingSpacesLength = 0;
-    while (leadingSpacesLength < data.size() && isUnicodeCompatibleASCIIWhitespace(data[leadingSpacesLength]))
-        ++leadingSpacesLength;
+    if constexpr (whitespacePolicy == WhitespacePolicy::Skip) {
+        while (leadingSpacesLength < data.size() && isUnicodeCompatibleASCIIWhitespace(data[leadingSpacesLength]))
+            ++leadingSpacesLength;
+    }
 
-    double number = parseDouble(data.subspan(leadingSpacesLength), parsedLength);
+    double number;
+    if constexpr (mode == ParseMode::Fixed)
+        number = parseFixedDouble(data.subspan(leadingSpacesLength), parsedLength);
+    else
+        number = parseDouble(data.subspan(leadingSpacesLength), parsedLength);
+
     if (!parsedLength) {
         if (ok)
             *ok = false;
@@ -538,46 +548,58 @@ static inline double toDoubleType(std::span<const CharacterType> data, bool* ok,
 
     parsedLength += leadingSpacesLength;
     if (ok)
-        *ok = policy == TrailingJunkPolicy::Allow || parsedLength == data.size();
+        *ok = trailingJunkPolicy == TrailingJunkPolicy::Allow || parsedLength == data.size();
     return number;
 }
 
-double charactersToDouble(std::span<const LChar> data, bool* ok)
+double charactersToDouble(std::span<const Latin1Character> data, bool* ok)
 {
     size_t parsedLength;
-    return toDoubleType<LChar, TrailingJunkPolicy::Disallow>(data, ok, parsedLength);
+    return toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
 }
 
-double charactersToDouble(std::span<const UChar> data, bool* ok)
+double charactersToDouble(std::span<const char16_t> data, bool* ok)
 {
     size_t parsedLength;
-    return toDoubleType<UChar, TrailingJunkPolicy::Disallow>(data, ok, parsedLength);
+    return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength);
 }
 
-float charactersToFloat(std::span<const LChar> data, bool* ok)
+double charactersToFixedDouble(std::span<const Latin1Character> data, bool* ok)
+{
+    size_t parsedLength;
+    return toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
+}
+
+double charactersToFixedDouble(std::span<const char16_t> data, bool* ok)
+{
+    size_t parsedLength;
+    return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
+}
+
+float charactersToFloat(std::span<const Latin1Character> data, bool* ok)
 {
     // FIXME: This will return ok even when the string fits into a double but not a float.
     size_t parsedLength;
-    return static_cast<float>(toDoubleType<LChar, TrailingJunkPolicy::Disallow>(data, ok, parsedLength));
+    return static_cast<float>(toDoubleType<Latin1Character, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength));
 }
 
-float charactersToFloat(std::span<const UChar> data, bool* ok)
+float charactersToFloat(std::span<const char16_t> data, bool* ok)
 {
     // FIXME: This will return ok even when the string fits into a double but not a float.
     size_t parsedLength;
-    return static_cast<float>(toDoubleType<UChar, TrailingJunkPolicy::Disallow>(data, ok, parsedLength));
+    return static_cast<float>(toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Skip, ParseMode::General>(data, ok, parsedLength));
 }
 
-float charactersToFloat(std::span<const LChar> data, size_t& parsedLength)
+float charactersToFloat(std::span<const Latin1Character> data, size_t& parsedLength)
 {
     // FIXME: This will return ok even when the string fits into a double but not a float.
-    return static_cast<float>(toDoubleType<LChar, TrailingJunkPolicy::Allow>(data, nullptr, parsedLength));
+    return static_cast<float>(toDoubleType<Latin1Character, TrailingJunkPolicy::Allow, WhitespacePolicy::Skip, ParseMode::General>(data, nullptr, parsedLength));
 }
 
-float charactersToFloat(std::span<const UChar> data, size_t& parsedLength)
+float charactersToFloat(std::span<const char16_t> data, size_t& parsedLength)
 {
     // FIXME: This will return ok even when the string fits into a double but not a float.
-    return static_cast<float>(toDoubleType<UChar, TrailingJunkPolicy::Allow>(data, nullptr, parsedLength));
+    return static_cast<float>(toDoubleType<char16_t, TrailingJunkPolicy::Allow, WhitespacePolicy::Skip, ParseMode::General>(data, nullptr, parsedLength));
 }
 
 const StaticString nullStringData { nullptr };
@@ -594,7 +616,9 @@ Vector<char> asciiDebug(String& string);
 
 void String::show() const
 {
-    dataLogF("%s\n", asciiDebug(impl()).data());
+    auto ascii = asciiDebug(impl());
+    auto span = ascii.span();
+    dataLogF("%.*s\n", static_cast<int>(span.size()), span.data());
 }
 
 String* string(const char* s)
@@ -610,7 +634,7 @@ Vector<char> asciiDebug(StringImpl* impl)
 
     StringBuilder buffer;
     for (unsigned i = 0; i < impl->length(); ++i) {
-        UChar ch = (*impl)[i];
+        char16_t ch = (*impl)[i];
         if (isASCIIPrintable(ch)) {
             if (ch == '\\')
                 buffer.append(ch);

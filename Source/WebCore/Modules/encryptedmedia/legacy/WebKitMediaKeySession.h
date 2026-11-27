@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,28 +28,34 @@
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
 
 #include "ActiveDOMObject.h"
-#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
-#include "ExceptionOr.h"
+#include "EventTargetInterfaces.h"
 #include "LegacyCDMSession.h"
 #include "Timer.h"
+#include "WebKitMediaKeys.h"
 #include <JavaScriptCore/Forward.h>
 #include <wtf/Deque.h>
 
 namespace WebCore {
 
 class WebKitMediaKeyError;
-class WebKitMediaKeys;
+template<typename> class ExceptionOr;
 
 class WebKitMediaKeySession final : public RefCounted<WebKitMediaKeySession>, public EventTarget, public ActiveDOMObject, private LegacyCDMSessionClient {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebKitMediaKeySession);
+    WTF_MAKE_TZONE_ALLOCATED(WebKitMediaKeySession);
 public:
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
+    // ActiveDOMObject, LegacyCDMSessionClient.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     static Ref<WebKitMediaKeySession> create(Document&, WebKitMediaKeys&, const String& keySystem);
     ~WebKitMediaKeySession();
 
     WebKitMediaKeyError* error() { return m_error.get(); }
-    const String& keySystem() const { return m_keySystem; }
-    const String& sessionId() const { return m_sessionId; }
+    const String& keySystem() const LIFETIME_BOUND { return m_keySystem; }
+    const String& sessionId() const LIFETIME_BOUND { return m_sessionId; }
     ExceptionOr<void> update(Ref<Uint8Array>&& key);
     void close();
 
@@ -57,12 +63,8 @@ public:
 
     void detachKeys() { m_keys = nullptr; }
 
-    void generateKeyRequest(const String& mimeType, Ref<Uint8Array>&& initData);
+    void generateKeyRequest(const String& mimeType, Ref<Uint8Array>&& initData, const String& mediaKeysHashSalt);
     RefPtr<ArrayBuffer> cachedKeyForKeyId(const String& keyId) const;
-
-    // ActiveDOMObject.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
 
 private:
     WebKitMediaKeySession(Document&, WebKitMediaKeys&, const String& keySystem);
@@ -72,32 +74,34 @@ private:
     void sendMessage(Uint8Array*, String destinationURL) final;
     void sendError(MediaKeyErrorCode, uint32_t systemCode) final;
     String mediaKeysStorageDirectory() const final;
+    String mediaKeysHashSalt() const final { return m_mediaKeysHashSalt; }
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
     // ActiveDOMObject.
     void stop() final;
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::WebKitMediaKeySession; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_logger; }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "WebKitMediaKeySession"_s; }
-    WTFLogChannel& logChannel() const;
+    WTFLogChannel& NODELETE logChannel() const;
 
-    Ref<Logger> m_logger;
-    const void* m_logIdentifier;
+    const Ref<const Logger> m_logger;
+    const uint64_t m_logIdentifier;
 #endif
 
-    WebKitMediaKeys* m_keys;
+    CheckedPtr<WebKitMediaKeys> m_keys;
     String m_keySystem;
     String m_sessionId;
+    String m_mediaKeysHashSalt;
     RefPtr<WebKitMediaKeyError> m_error;
-    std::unique_ptr<LegacyCDMSession> m_session;
+    RefPtr<LegacyCDMSession> m_session;
 
     struct PendingKeyRequest {
         String mimeType;
@@ -110,6 +114,8 @@ private:
     Timer m_addKeyTimer;
 };
 
-}
+} // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(WebKitMediaKeySession)
 
 #endif // ENABLE(LEGACY_ENCRYPTED_MEDIA)

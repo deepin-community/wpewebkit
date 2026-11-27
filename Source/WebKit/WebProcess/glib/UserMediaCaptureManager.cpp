@@ -33,7 +33,6 @@
 #include <WebCore/CaptureDeviceWithCapabilities.h>
 #include <WebCore/MediaDeviceHashSalts.h>
 #include <WebCore/MediaStreamRequest.h>
-#include <WebCore/RealtimeMediaSourceCenter.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -42,34 +41,34 @@ using namespace WebCore;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UserMediaCaptureManager);
 
 UserMediaCaptureManager::UserMediaCaptureManager(WebProcess& process)
+    : m_process(process)
 {
     process.addMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName(), *this);
 }
 
 UserMediaCaptureManager::~UserMediaCaptureManager()
 {
-    WebProcess::singleton().removeMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName());
+    m_process->removeMessageReceiver(Messages::UserMediaCaptureManager::messageReceiverName());
 }
 
-void UserMediaCaptureManager::validateUserMediaRequestConstraints(WebCore::MediaStreamRequest request, WebCore::MediaDeviceHashSalts&& deviceIdentifierHashSalts, ValidateUserMediaRequestConstraintsCallback&& completionHandler)
+void UserMediaCaptureManager::ref() const
 {
-    m_validateUserMediaRequestConstraintsCallback = WTFMove(completionHandler);
-    auto invalidHandler = [this](auto invalidConstraint) mutable {
-        Vector<CaptureDevice> audioDevices;
-        Vector<CaptureDevice> videoDevices;
-        m_validateUserMediaRequestConstraintsCallback(invalidConstraint, audioDevices, videoDevices);
-    };
+    m_process->ref();
+}
 
-    auto validHandler = [this](Vector<CaptureDevice>&& audioDevices, Vector<CaptureDevice>&& videoDevices) mutable {
-        m_validateUserMediaRequestConstraintsCallback(std::nullopt, audioDevices, videoDevices);
-    };
+void UserMediaCaptureManager::deref() const
+{
+    m_process->deref();
+}
 
-    RealtimeMediaSourceCenter::singleton().validateRequestConstraints(WTFMove(validHandler), WTFMove(invalidHandler), request, WTFMove(deviceIdentifierHashSalts));
+void UserMediaCaptureManager::validateUserMediaRequestConstraints(const WebCore::MediaStreamRequest& request, WebCore::MediaDeviceHashSalts&& deviceIdentifierHashSalts, WebCore::RealtimeMediaSourceCenter::ValidateHandler&& validateHandler)
+{
+    RealtimeMediaSourceCenter::singleton().validateRequestConstraints(WTF::move(validateHandler), request, WTF::move(deviceIdentifierHashSalts));
 }
 
 void UserMediaCaptureManager::getMediaStreamDevices(bool revealIdsAndLabels, GetMediaStreamDevicesCallback&& completionHandler)
 {
-    RealtimeMediaSourceCenter::singleton().getMediaStreamDevices([completionHandler = WTFMove(completionHandler), revealIdsAndLabels](auto&& devices) mutable {
+    RealtimeMediaSourceCenter::singleton().getMediaStreamDevices([completionHandler = WTF::move(completionHandler), revealIdsAndLabels](auto&& devices) mutable {
         auto devicesWithCapabilities = WTF::compactMap(devices, [&](auto& device) -> std::optional<CaptureDeviceWithCapabilities> {
             RealtimeMediaSourceCapabilities deviceCapabilities;
 
@@ -82,10 +81,10 @@ void UserMediaCaptureManager::getMediaStreamDevices(bool revealIdsAndLabels, Get
                     deviceCapabilities = *capabilities;
             }
 
-            return CaptureDeviceWithCapabilities { WTFMove(device), WTFMove(deviceCapabilities) };
+            return CaptureDeviceWithCapabilities { WTF::move(device), WTF::move(deviceCapabilities) };
         });
 
-        completionHandler(WTFMove(devicesWithCapabilities));
+        completionHandler(WTF::move(devicesWithCapabilities));
     });
 }
 

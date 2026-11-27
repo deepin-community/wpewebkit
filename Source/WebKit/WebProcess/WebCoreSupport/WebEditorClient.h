@@ -47,7 +47,7 @@ class WebEditorClient final : public WebCore::EditorClient, public WebCore::Text
     WTF_MAKE_TZONE_ALLOCATED(WebEditorClient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebEditorClient);
 public:
-    WebEditorClient(WebPage* page)
+    WebEditorClient(WebPage& page)
         : m_page(page)
     {
     }
@@ -125,12 +125,18 @@ private:
 
 #if PLATFORM(COCOA)
     void setInsertionPasteboard(const String& pasteboardName) final;
+    HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> collectAttributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>&) final;
 #endif
 
 #if USE(APPKIT)
     void uppercaseWord() final;
     void lowercaseWord() final;
     void capitalizeWord() final;
+    bool canApplyCaseTransformations(const String&) final;
+    bool canConvertToTraditionalChinese(const String&) final;
+    bool canConvertToSimplifiedChinese(const String&) final;
+    void convertToTraditionalChinese() final;
+    void convertToSimplifiedChinese() final;
 #endif
 
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
@@ -142,6 +148,8 @@ private:
     bool isAutomaticLinkDetectionEnabled() final;
     void toggleAutomaticLinkDetection() final;
     bool isAutomaticDashSubstitutionEnabled() final;
+    bool isSmartListsEnabled() final;
+    void toggleSmartLists() final;
     void toggleAutomaticDashSubstitution() final;
     bool isAutomaticTextReplacementEnabled() final;
     void toggleAutomaticTextReplacement() final;
@@ -173,16 +181,20 @@ private:
     void showSpellingUI(bool show) final;
     bool spellingUIIsShowing() final;
     void getGuessesForWord(const String& word, const String& context, const WebCore::VisibleSelection& currentSelection, Vector<String>& guesses) final;
-    void willSetInputMethodState() final;
     void setInputMethodState(WebCore::Element*) final;
     void requestCheckingOfString(WebCore::TextCheckingRequest&, const WebCore::VisibleSelection& currentSelection) final;
+    void requestExtendedCheckingOfString(WebCore::TextCheckingRequest&, const WebCore::VisibleSelection& currentSelection) final;
 
 #if PLATFORM(GTK)
     bool shouldShowUnicodeMenu() final;
 #endif
 
-#if PLATFORM(GTK) || PLATFORM(WPE)
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(MAC)
     void didDispatchInputMethodKeydown(WebCore::KeyboardEvent&) final;
+#endif
+
+#if PLATFORM(COCOA)
+    bool shouldAllowSingleClickToChangeSelection(WebCore::Node&, const WebCore::VisibleSelection&, WebCore::MouseEventInputSource) const final;
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -193,7 +205,6 @@ private:
     RefPtr<WebCore::DocumentFragment> documentFragmentFromDelegate(int index) final;
     bool performsTwoStepPaste(WebCore::DocumentFragment*) final;
     void updateStringForFind(const String&) final;
-    bool shouldAllowSingleClickToChangeSelection(WebCore::Node&, const WebCore::VisibleSelection&) const final;
     bool shouldRevealCurrentSelectionAfterInsertion() const final;
     bool shouldSuppressPasswordEcho() const final;
     bool shouldRemoveDictationAlternativesAfterEditing() const final;
@@ -205,7 +216,11 @@ private:
     bool performTwoStepDrop(WebCore::DocumentFragment&, const WebCore::SimpleRange&, bool isMove) final;
     bool supportsGlobalSelection() final;
 
-    WeakPtr<WebPage> m_page;
+#if PLATFORM(IOS_FAMILY)
+    bool shouldDrawVisuallyContiguousBidiSelection() const final;
+#endif
+
+    const WeakPtr<WebPage> m_page;
 };
 
 } // namespace WebKit

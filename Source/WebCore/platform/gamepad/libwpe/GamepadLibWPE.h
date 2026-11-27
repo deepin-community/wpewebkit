@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 RDK Management  All rights reserved.
+ * Copyright (C) 2020 RDK Management All rights reserved.
  * Copyright (C) 2022 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,25 +29,31 @@
 #if ENABLE(GAMEPAD) && USE(LIBWPE)
 
 #include "PlatformGamepad.h"
+#include <wpe/wpe.h>
+#include <wtf/TZoneMalloc.h>
 
-struct wpe_gamepad;
-struct wpe_gamepad_provider;
+#if WPE_CHECK_VERSION(1, 13, 90)
 
 namespace WebCore {
 
 class GamepadLibWPE final : public PlatformGamepad {
+    WTF_MAKE_TZONE_ALLOCATED(GamepadLibWPE);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(GamepadLibWPE);
 public:
     GamepadLibWPE(struct wpe_gamepad_provider*, uintptr_t, unsigned);
     virtual ~GamepadLibWPE();
 
-    const Vector<SharedGamepadValue>& axisValues() const final { return m_axisValues; }
-    const Vector<SharedGamepadValue>& buttonValues() const final { return m_buttonValues; }
+    const Vector<SharedGamepadValue>& axisValues() const LIFETIME_BOUND final { return m_axisValues; }
+    const Vector<SharedGamepadValue>& buttonValues() const LIFETIME_BOUND final { return m_buttonValues; }
 
     const struct wpe_gamepad* wpeGamepad() const { return m_gamepad.get(); }
 
 private:
     void buttonPressedOrReleased(unsigned, bool);
     void absoluteAxisChanged(unsigned, double);
+#if WPE_CHECK_VERSION(1, 16, 2)
+    void analogButtonChanged(unsigned, double);
+#endif
 
     Vector<SharedGamepadValue> m_buttonValues;
     Vector<SharedGamepadValue> m_axisValues;
@@ -56,5 +62,7 @@ private:
 };
 
 } // namespace WebCore
+
+#endif // WPE_CHECK_VERSION(1, 13, 90)
 
 #endif // ENABLE(GAMEPAD) && USE(LIBWPE)

@@ -32,6 +32,7 @@
 
 #include "Font.h"
 #include <wtf/text/StringHash.h>
+#include <wtf/text/TextStream.h>
 
 #if USE(CORE_TEXT)
 #include "FontCascade.h"
@@ -49,6 +50,7 @@ struct SameSizeAsFontCascadeDescription {
     AtomString string2;
     int16_t fontSelectionRequest[3];
     float size;
+    float zoom;
     TextSpacingTrim textSpacingTrim;
     TextAutospace textAutospace;
     unsigned bitfields1;
@@ -60,12 +62,12 @@ struct SameSizeAsFontCascadeDescription {
 static_assert(sizeof(FontCascadeDescription) == sizeof(SameSizeAsFontCascadeDescription), "FontCascadeDescription should stay small");
 
 FontCascadeDescription::FontCascadeDescription()
-    : m_families(RefCountedFixedVector<AtomString>::create(1))
+    : m_families(RefCountedFixedVector<FontFamily>::create(1))
     , m_isAbsoluteSize(false)
-    , m_kerning(enumToUnderlyingType(Kerning::Auto))
+    , m_kerning(std::to_underlying(Kerning::Auto))
     , m_keywordSize(0)
-    , m_fontSmoothing(enumToUnderlyingType(FontSmoothingMode::AutoSmoothing))
-    , m_isSpecifiedFont(false)
+    , m_fontSmoothing(std::to_underlying(FontSmoothingMode::Auto))
+    , m_hasAuthorSpecifiedNonGenericPrimaryFont(false)
 {
 }
 
@@ -102,7 +104,7 @@ bool FontCascadeDescription::familiesEqualForTextAutoSizing(const FontCascadeDes
         return false;
 
     for (unsigned i = 0; i < thisFamilyCount; ++i) {
-        if (!familyNamesAreEqual(familyAt(i), other.familyAt(i)))
+        if (!familyNamesAreEqual(familyAt(i).name, other.familyAt(i).name))
             return false;
     }
 
@@ -142,7 +144,7 @@ FontSmoothingMode FontCascadeDescription::usedFontSmoothing() const
 {
     auto fontSmoothingMode = fontSmoothing();
 #if USE(CORE_TEXT)
-    if (FontCascade::shouldDisableFontSubpixelAntialiasingForTesting() && (fontSmoothingMode == FontSmoothingMode::AutoSmoothing || fontSmoothingMode == FontSmoothingMode::SubpixelAntialiased))
+    if (FontCascade::shouldDisableFontSubpixelAntialiasingForTesting() && (fontSmoothingMode == FontSmoothingMode::Auto || fontSmoothingMode == FontSmoothingMode::SubpixelAntialiased))
         return FontSmoothingMode::Antialiased;
 #endif
     return fontSmoothingMode;
@@ -156,6 +158,39 @@ void FontCascadeDescription::resolveFontSizeAdjustFromFontIfNeeded(const Font& f
 
     auto aspectValue = fontSizeAdjust.resolve(computedSize(), font.fontMetrics());
     setFontSizeAdjust({ fontSizeAdjust.metric, FontSizeAdjust::ValueType::FromFont, aspectValue });
+}
+
+TextStream& operator<<(TextStream& ts, const FontFamily& family)
+{
+    ts << family.name;
+    if (family.isGeneric())
+        ts << " (generic)"_s;
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, const FontCascadeDescription& fontCascadeDescription)
+{
+    bool first = true;
+    for (auto& family : fontCascadeDescription.families()) {
+        if (!first)
+            ts << ", "_s;
+        ts << family;
+        first = false;
+    }
+
+    ts << ", specified size "_s << fontCascadeDescription.specifiedSize();
+    ts << ", computed size "_s << fontCascadeDescription.computedSize();
+    ts << ", is absolute size "_s << fontCascadeDescription.isAbsoluteSize();
+    if (fontCascadeDescription.kerning() != Kerning::Auto)
+        ts << ", kerning "_s << fontCascadeDescription.kerning();
+
+    if (fontCascadeDescription.fontSmoothing() != FontSmoothingMode::Auto)
+        ts << ", font smoothing "_s << fontCascadeDescription.fontSmoothing();
+
+    ts << ", keyword size "_s << fontCascadeDescription.keywordSize();
+    ts << ", has author specified non-generic primary font "_s << fontCascadeDescription.hasAuthorSpecifiedNonGenericPrimaryFont();
+
+    return ts;
 }
 
 } // namespace WebCore

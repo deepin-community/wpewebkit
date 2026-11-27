@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
 
@@ -42,15 +43,21 @@ struct WebPopupItem;
 
 class WebPopupMenuProxy;
 
-class WebPopupMenuProxyClient {
+class WebPopupMenuProxyClient : public CanMakeCheckedPtr<WebPopupMenuProxyClient> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WebPopupMenuProxyClient);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebPopupMenuProxyClient);
 protected:
     virtual ~WebPopupMenuProxyClient() = default;
 
 public:
+#if !PLATFORM(IOS_FAMILY)
     virtual void valueChangedForPopupMenu(WebPopupMenuProxy*, int32_t newSelectedIndex) = 0;
-    virtual void setTextFromItemForPopupMenu(WebPopupMenuProxy*, int32_t index) = 0;
     virtual NativeWebMouseEvent* currentlyProcessedMouseDownEvent() = 0;
-#if PLATFORM(GTK)
+#endif
+#if !PLATFORM(COCOA)
+    virtual void setTextFromItemForPopupMenu(WebPopupMenuProxy*, int32_t index) = 0;
+#endif
+#if PLATFORM(GTK) || PLATFORM(WPE)
     virtual void failedToShowPopupMenu() = 0;
 #endif
 };
@@ -65,7 +72,9 @@ public:
     virtual void hidePopupMenu() = 0;
     virtual void cancelTracking() { }
 
-    void invalidate() { m_client = 0; }
+    void invalidate() { m_client = nullptr; }
+
+    virtual bool isWebPopupMenuProxyMac() const { return false; }
 
 protected:
     explicit WebPopupMenuProxy(Client& client)
@@ -73,7 +82,10 @@ protected:
     {
     }
 
-    Client* m_client;
+    Client* client() const { return m_client.get(); }
+
+private:
+    CheckedPtr<Client> m_client;
 };
 
 } // namespace WebKit

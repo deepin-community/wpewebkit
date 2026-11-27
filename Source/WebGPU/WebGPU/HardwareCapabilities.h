@@ -25,6 +25,9 @@
 
 #pragma once
 
+#include <Metal/Metal.h>
+#include <WebGPU/WebGPU.h>
+#include <WebGPU/WebGPUExt.h>
 #include <optional>
 #include <wtf/Vector.h>
 
@@ -36,20 +39,21 @@ struct HardwareCapabilities {
 
     struct BaseCapabilities {
         MTLArgumentBuffersTier argumentBuffersTier { MTLArgumentBuffersTier1 };
-        bool supportsNonPrivateDepthStencilTextures { false };
         id<MTLCounterSet> timestampCounterSet { nil };
         id<MTLCounterSet> statisticCounterSet { nil };
-        // FIXME: canPresentRGB10A2PixelFormats isn't actually a _hardware_ capability,
-        // as all hardware can render to this format. It's unclear whether this should
-        // apply to _all_ PresentationContexts or just PresentationContextCoreAnimation.
+        uint32_t memoryBarrierLimit { 0 };
+        bool supportsNonPrivateDepthStencilTextures { false };
         bool canPresentRGB10A2PixelFormats { false };
+        bool supportsResidencySets { false };
     } baseCapabilities;
 };
 
 std::optional<HardwareCapabilities> hardwareCapabilities(id<MTLDevice>);
-bool isValid(const WGPULimits&);
-WGPULimits defaultLimits();
-bool anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference);
+bool NODELETE isValid(const WGPULimits&);
+WGPULimits NODELETE defaultLimits();
+bool NODELETE anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference);
 bool includesUnsupportedFeatures(const Vector<WGPUFeatureName>& target, const Vector<WGPUFeatureName>& reference);
+bool isShaderValidationEnabled(id<MTLDevice>);
+bool NODELETE isWebGPUSwiftEnabled();
 
 } // namespace WebGPU

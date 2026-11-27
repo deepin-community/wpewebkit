@@ -32,6 +32,8 @@
 #include "StreamServerConnection.h"
 #include "WebGPUObjectHeap.h"
 #include <WebCore/WebGPUBindGroup.h>
+#include <WebCore/WebGPUDevice.h>
+#include <WebCore/WebGPUExternalTexture.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -41,34 +43,36 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteBindGroup);
 RemoteBindGroup::RemoteBindGroup(WebCore::WebGPU::BindGroup& bindGroup, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(bindGroup)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteBindGroup::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteBindGroup::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteBindGroup::~RemoteBindGroup() = default;
 
 void RemoteBindGroup::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
-void RemoteBindGroup::updateExternalTextures(WebGPUIdentifier externalTextureIdentifier)
+void RemoteBindGroup::updateExternalTextures(WebGPUIdentifier externalTextureIdentifier, CompletionHandler<void(bool)>&& completion)
 {
-    if (auto* externalTexture = m_objectHeap->convertExternalTextureFromBacking(externalTextureIdentifier))
-        m_backing->updateExternalTextures(*externalTexture);
+    if (auto externalTexture = protect(m_objectHeap)->convertExternalTextureFromBacking(externalTextureIdentifier); externalTexture.get())
+        completion(protect(m_backing)->updateExternalTextures(*externalTexture.get()));
+    else
+        completion(false);
 }
 
 void RemoteBindGroup::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteBindGroup::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteBindGroup::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteBindGroup::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

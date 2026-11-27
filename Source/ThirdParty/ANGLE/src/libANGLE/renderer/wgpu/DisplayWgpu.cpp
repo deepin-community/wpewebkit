@@ -20,9 +20,32 @@
 #include "libANGLE/renderer/wgpu/DisplayWgpu_api.h"
 #include "libANGLE/renderer/wgpu/ImageWgpu.h"
 #include "libANGLE/renderer/wgpu/SurfaceWgpu.h"
+#include "libANGLE/renderer/wgpu/wgpu_proc_utils.h"
+
+#include "EGL/eglext.h"
+
+// The wgpu backend only provides a window surface when a window system is available. On Linux
+// that requires X11 or Wayland; every other supported platform always has one. When it is
+// unavailable (e.g. the ChromeOS wgpu build) CreateWgpuWindowSurface is stubbed out below and no
+// EGL_WINDOW_BIT config is advertised. Unlike the rest of the backend, X11 vs Wayland is chosen at
+// runtime (see DisplayWgpu::initialize) because a single Linux build commonly enables both.
+#if defined(ANGLE_PLATFORM_LINUX) && !defined(ANGLE_USE_X11) && !defined(ANGLE_USE_WAYLAND)
+#    define ANGLE_WEBGPU_HAS_WINDOW_SURFACE_TYPE 0
+#else
+#    define ANGLE_WEBGPU_HAS_WINDOW_SURFACE_TYPE 1
+#endif
 
 namespace rx
 {
+
+#if !ANGLE_WEBGPU_HAS_WINDOW_SURFACE_TYPE
+WindowSurfaceWgpu *CreateWgpuWindowSurface(const egl::SurfaceState &surfaceState,
+                                           EGLNativeWindowType window)
+{
+    UNIMPLEMENTED();
+    return nullptr;
+}
+#endif
 
 DisplayWgpu::DisplayWgpu(const egl::DisplayState &state) : DisplayImpl(state) {}
 
@@ -30,18 +53,85 @@ DisplayWgpu::~DisplayWgpu() {}
 
 egl::Error DisplayWgpu::initialize(egl::Display *display)
 {
-    ANGLE_TRY(createWgpuDevice());
+    const egl::AttributeMap &attribs = display->getAttributeMap();
+    mProcTable                       = *reinterpret_cast<DawnProcTable *>(
+        attribs.get(EGL_PLATFORM_ANGLE_DAWN_PROC_TABLE_ANGLE,
+                                          reinterpret_cast<EGLAttrib>(&webgpu::GetDefaultProcTable())));
 
-    mQueue = mDevice.GetQueue();
+    WGPUInstance providedInstance =
+        reinterpret_cast<WGPUInstance>(attribs.get(EGL_PLATFORM_ANGLE_WEBGPU_INSTANCE_ANGLE, 0));
+    if (providedInstance)
+    {
+        mProcTable.instanceAddRef(providedInstance);
+        mInstance = webgpu::InstanceHandle::Acquire(&mProcTable, providedInstance);
+    }
+
+    WGPUDevice providedDevice =
+        reinterpret_cast<WGPUDevice>(attribs.get(EGL_PLATFORM_ANGLE_WEBGPU_DEVICE_ANGLE, 0));
+    if (providedDevice)
+    {
+        mProcTable.deviceAddRef(providedDevice);
+        mDevice = webgpu::DeviceHandle::Acquire(&mProcTable, providedDevice);
+
+        mAdapter =
+            webgpu::AdapterHandle::Acquire(&mProcTable, mProcTable.deviceGetAdapter(mDevice.get()));
+
+        if (!mInstance)
+        {
+            mInstance = webgpu::InstanceHandle::Acquire(
+                &mProcTable, mProcTable.adapterGetInstance(mAdapter.get()));
+        }
+    }
+    else
+    {
+        ANGLE_TRY(createWgpuDevice());
+    }
+
+    mQueue = webgpu::QueueHandle::Acquire(&mProcTable, mProcTable.deviceGetQueue(mDevice.get()));
+
     mFormatTable.initialize();
 
-    webgpu::GenerateCaps(mDevice, &mGLCaps, &mGLTextureCaps, &mGLExtensions, &mGLLimitations,
+    mLimitsWgpu = WGPU_LIMITS_INIT;
+    mProcTable.deviceGetLimits(mDevice.get(), &mLimitsWgpu);
+
+    mWindowSystem = angle::NativeWindowSystem::Other;
+#if defined(ANGLE_USE_X11) || defined(ANGLE_USE_WAYLAND)
+    {
+        // The front-end fills in EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE from the
+        // environment when the app leaves it unset (Display::UpdateAttribsFromEnvironment), so it
+        // already reflects the same default the front-end picks. Anything other than X11/Wayland
+        // (no window system) leaves mWindowSystem as Other.
+        EGLAttrib platformType = attribs.get(EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE, 0);
+#    if defined(ANGLE_USE_X11)
+        if (platformType == EGL_PLATFORM_X11_EXT)
+        {
+            mWindowSystem = angle::NativeWindowSystem::X11;
+        }
+#    endif
+#    if defined(ANGLE_USE_WAYLAND)
+        if (platformType == EGL_PLATFORM_WAYLAND_EXT)
+        {
+            mWindowSystem = angle::NativeWindowSystem::Wayland;
+        }
+#    endif
+    }
+#endif
+
+    initializeFeatures();
+
+    webgpu::GenerateCaps(mLimitsWgpu, &mGLCaps, &mGLTextureCaps, &mGLExtensions, &mGLLimitations,
                          &mEGLCaps, &mEGLExtensions, &mMaxSupportedClientVersion);
 
     return egl::NoError();
 }
 
-void DisplayWgpu::terminate() {}
+void DisplayWgpu::terminate()
+{
+    mAdapter  = nullptr;
+    mInstance = nullptr;
+    mDevice   = nullptr;
+    mQueue    = nullptr;
+}
 
 egl::Error DisplayWgpu::makeCurrent(egl::Display *display,
                                     egl::Surface *drawSurface,
@@ -66,8 +156,8 @@ egl::ConfigSet DisplayWgpu::generateConfigs()
     config.blueSize              = 8;
     config.alphaSize             = 8;
     config.alphaMaskSize         = 0;
-    config.bindToTextureRGB      = EGL_TRUE;
-    config.bindToTextureRGBA     = EGL_TRUE;
+    config.bindToTextureRGB      = EGL_FALSE;
+    config.bindToTextureRGBA     = EGL_FALSE;
     config.colorBufferType       = EGL_RGB_BUFFER;
     config.configCaveat          = EGL_NONE;
     config.conformant            = EGL_OPENGL_ES2_BIT | EGL_OPENGL_ES3_BIT;
@@ -86,7 +176,10 @@ egl::ConfigSet DisplayWgpu::generateConfigs()
     config.sampleBuffers         = 0;
     config.samples               = 0;
     config.stencilSize           = 8;
-    config.surfaceType           = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
+    config.surfaceType           = EGL_PBUFFER_BIT;
+#if ANGLE_WEBGPU_HAS_WINDOW_SURFACE_TYPE
+    config.surfaceType |= EGL_WINDOW_BIT;
+#endif
     config.optimalOrientation    = 0;
     config.transparentType       = EGL_NONE;
     config.transparentRedValue   = 0;
@@ -98,13 +191,61 @@ egl::ConfigSet DisplayWgpu::generateConfigs()
     return configSet;
 }
 
-bool DisplayWgpu::testDeviceLost()
+bool ThreadSafeDisplayWgpu::testDeviceLost()
 {
     return false;
 }
 
-egl::Error DisplayWgpu::restoreLostDevice(const egl::Display *display)
+egl::Error ThreadSafeDisplayWgpu::restoreLostDevice(const egl::ThreadSafeDisplay *display)
 {
+    return egl::NoError();
+}
+
+egl::Error DisplayWgpu::validateClientBuffer(const egl::Config *configuration,
+                                             EGLenum buftype,
+                                             EGLClientBuffer clientBuffer,
+                                             const egl::AttributeMap &attribs) const
+{
+    switch (buftype)
+    {
+        case EGL_WEBGPU_TEXTURE_ANGLE:
+            return validateExternalWebGPUTexture(clientBuffer, attribs);
+        default:
+            return DisplayImpl::validateClientBuffer(configuration, buftype, clientBuffer, attribs);
+    }
+}
+
+egl::Error DisplayWgpu::validateImageClientBuffer(const gl::Context *context,
+                                                  EGLenum target,
+                                                  EGLClientBuffer clientBuffer,
+                                                  const egl::AttributeMap &attribs) const
+{
+    switch (target)
+    {
+        case EGL_WEBGPU_TEXTURE_ANGLE:
+            return validateExternalWebGPUTexture(clientBuffer, attribs);
+        default:
+            return DisplayImpl::validateImageClientBuffer(context, target, clientBuffer, attribs);
+    }
+}
+
+egl::Error DisplayWgpu::validateExternalWebGPUTexture(EGLClientBuffer buffer,
+                                                      const egl::AttributeMap &attribs) const
+{
+    WGPUTexture externalTexture = reinterpret_cast<WGPUTexture>(buffer);
+    if (externalTexture == nullptr)
+    {
+        return egl::Error(EGL_BAD_PARAMETER, "NULL Buffer");
+    }
+
+    WGPUTextureFormat externalTextureFormat = mProcTable.textureGetFormat(externalTexture);
+    const webgpu::Format *webgpuFormat =
+        getFormatForImportedTexture(attribs, externalTextureFormat);
+    if (webgpuFormat == nullptr)
+    {
+        return egl::Error(EGL_BAD_PARAMETER, "Invalid format.");
+    }
+
     return egl::NoError();
 }
 
@@ -115,12 +256,12 @@ bool DisplayWgpu::isValidNativeWindow(EGLNativeWindowType window) const
 
 std::string DisplayWgpu::getRendererDescription()
 {
-    return "Wgpu";
+    return "WebGPU";
 }
 
 std::string DisplayWgpu::getVendorString()
 {
-    return "Wgpu";
+    return "WebGPU";
 }
 
 std::string DisplayWgpu::getVersionString(bool includeFullVersion)
@@ -148,11 +289,6 @@ gl::Version DisplayWgpu::getMaxSupportedESVersion() const
     return mMaxSupportedClientVersion;
 }
 
-Optional<gl::Version> DisplayWgpu::getMaxSupportedDesktopVersion() const
-{
-    return Optional<gl::Version>::Invalid();
-}
-
 gl::Version DisplayWgpu::getMaxConformantESVersion() const
 {
     return mMaxSupportedClientVersion;
@@ -162,13 +298,30 @@ SurfaceImpl *DisplayWgpu::createWindowSurface(const egl::SurfaceState &state,
                                               EGLNativeWindowType window,
                                               const egl::AttributeMap &attribs)
 {
+#if defined(ANGLE_USE_X11)
+    if (mWindowSystem == angle::NativeWindowSystem::X11)
+    {
+        return CreateWgpuX11WindowSurface(state, window);
+    }
+#endif
+#if defined(ANGLE_USE_WAYLAND)
+    if (mWindowSystem == angle::NativeWindowSystem::Wayland)
+    {
+        return CreateWgpuWaylandWindowSurface(state, window);
+    }
+#endif
+#if !defined(ANGLE_USE_X11) && !defined(ANGLE_USE_WAYLAND)
     return CreateWgpuWindowSurface(state, window);
+#else
+    UNIMPLEMENTED();
+    return nullptr;
+#endif
 }
 
 SurfaceImpl *DisplayWgpu::createPbufferSurface(const egl::SurfaceState &state,
                                                const egl::AttributeMap &attribs)
 {
-    return new OffscreenSurfaceWgpu(state);
+    return new OffscreenSurfaceWgpu(state, EGL_NONE, nullptr);
 }
 
 SurfaceImpl *DisplayWgpu::createPbufferFromClientBuffer(const egl::SurfaceState &state,
@@ -176,8 +329,7 @@ SurfaceImpl *DisplayWgpu::createPbufferFromClientBuffer(const egl::SurfaceState 
                                                         EGLClientBuffer buffer,
                                                         const egl::AttributeMap &attribs)
 {
-    UNIMPLEMENTED();
-    return nullptr;
+    return new OffscreenSurfaceWgpu(state, buftype, buffer);
 }
 
 SurfaceImpl *DisplayWgpu::createPixmapSurface(const egl::SurfaceState &state,
@@ -193,7 +345,21 @@ ImageImpl *DisplayWgpu::createImage(const egl::ImageState &state,
                                     EGLenum target,
                                     const egl::AttributeMap &attribs)
 {
-    return new ImageWgpu(state);
+    return new ImageWgpu(state, context);
+}
+
+ExternalImageSiblingImpl *DisplayWgpu::createExternalImageSibling(const gl::Context *context,
+                                                                  EGLenum target,
+                                                                  EGLClientBuffer buffer,
+                                                                  const egl::AttributeMap &attribs)
+{
+    switch (target)
+    {
+        case EGL_WEBGPU_TEXTURE_ANGLE:
+            return new WebGPUTextureImageSiblingWgpu(buffer, attribs);
+        default:
+            return DisplayImpl::createExternalImageSibling(context, target, buffer, attribs);
+    }
 }
 
 rx::ContextImpl *DisplayWgpu::createContext(const gl::State &state,
@@ -218,17 +384,43 @@ ShareGroupImpl *DisplayWgpu::createShareGroup(const egl::ShareGroupState &state)
     return new ShareGroupWgpu(state);
 }
 
+void DisplayWgpu::populateFeatureList(angle::FeatureList *features)
+{
+    mFeatures.populateFeatureList(features);
+}
+
 angle::NativeWindowSystem DisplayWgpu::getWindowSystem() const
 {
-#if defined(ANGLE_PLATFORM_LINUX)
-#    if defined(ANGLE_USE_X11)
-    return angle::NativeWindowSystem::X11;
-#    elif defined(ANGLE_USE_WAYLAND)
-    return angle::NativeWindowSystem::Wayland;
-#    endif
-#else
-    return angle::NativeWindowSystem::Other;
-#endif
+    return mWindowSystem;
+}
+
+const webgpu::Format *DisplayWgpu::getFormatForImportedTexture(const egl::AttributeMap &attribs,
+                                                               WGPUTextureFormat wgpuFormat) const
+{
+    GLenum requestedGLFormat = attribs.getAsInt(EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, GL_NONE);
+    GLenum requestedGLType   = attribs.getAsInt(EGL_TEXTURE_TYPE_ANGLE, GL_NONE);
+
+    if (requestedGLFormat != GL_NONE)
+    {
+        const gl::InternalFormat &internalFormat =
+            gl::GetInternalFormatInfo(requestedGLFormat, requestedGLType);
+        if (internalFormat.internalFormat == GL_NONE)
+        {
+            return nullptr;
+        }
+
+        const webgpu::Format &format = mFormatTable[internalFormat.sizedInternalFormat];
+        if (format.getActualWgpuTextureFormat() != wgpuFormat)
+        {
+            return nullptr;
+        }
+
+        return &format;
+    }
+    else
+    {
+        return mFormatTable.findClosestTextureFormat(wgpuFormat);
+    }
 }
 
 void DisplayWgpu::generateExtensions(egl::DisplayExtensions *outExtensions) const
@@ -241,62 +433,119 @@ void DisplayWgpu::generateCaps(egl::Caps *outCaps) const
     *outCaps = mEGLCaps;
 }
 
+void DisplayWgpu::initializeFeatures()
+{
+    ApplyFeatureOverrides(&mFeatures, getState().featureOverrides);
+    if (mState.featureOverrides.allDisabled)
+    {
+        return;
+    }
+
+    // Disabled by default. Gets explicitly enabled by ANGLE embedders.
+    ANGLE_FEATURE_CONDITION((&mFeatures), avoidWaitAny, false);
+}
+
 egl::Error DisplayWgpu::createWgpuDevice()
 {
-    dawnProcSetProcs(&dawn::native::GetProcs());
-
-    dawn::native::DawnInstanceDescriptor dawnInstanceDescriptor;
-
-    wgpu::InstanceDescriptor instanceDescriptor;
-    instanceDescriptor.features.timedWaitAnyEnable = true;
-    instanceDescriptor.nextInChain                 = &dawnInstanceDescriptor;
-    mInstance                                      = wgpu::CreateInstance(&instanceDescriptor);
+    if (!mInstance)
+    {
+        WGPUInstanceDescriptor instanceDescriptor = WGPU_INSTANCE_DESCRIPTOR_INIT;
+        static constexpr auto kTimedWaitAny       = WGPUInstanceFeatureName_TimedWaitAny;
+        instanceDescriptor.requiredFeatureCount   = 1;
+        instanceDescriptor.requiredFeatures       = &kTimedWaitAny;
+        mInstance                                 = webgpu::InstanceHandle::Acquire(&mProcTable,
+                                                                                    mProcTable.createInstance(&instanceDescriptor));
+    }
 
     struct RequestAdapterResult
     {
         WGPURequestAdapterStatus status;
-        wgpu::Adapter adapter;
+        webgpu::AdapterHandle adapter;
         std::string message;
     };
     RequestAdapterResult adapterResult;
 
-    wgpu::RequestAdapterOptions requestAdapterOptions;
+    WGPURequestAdapterOptions requestAdapterOptions = WGPU_REQUEST_ADAPTER_OPTIONS_INIT;
 
-    wgpu::RequestAdapterCallbackInfo callbackInfo;
-    callbackInfo.mode     = wgpu::CallbackMode::WaitAnyOnly;
-    callbackInfo.callback = [](WGPURequestAdapterStatus status, WGPUAdapter adapter,
-                               char const *message, void *userdata) {
-        RequestAdapterResult *result = reinterpret_cast<RequestAdapterResult *>(userdata);
-        result->status               = status;
-        result->adapter              = wgpu::Adapter::Acquire(adapter);
-        result->message              = message ? message : "";
+    WGPURequestAdapterCallbackInfo requestAdapterCallback = WGPU_REQUEST_ADAPTER_CALLBACK_INFO_INIT;
+    requestAdapterCallback.mode                           = WGPUCallbackMode_WaitAnyOnly;
+    requestAdapterCallback.callback = [](WGPURequestAdapterStatus status, WGPUAdapter adapter,
+                                         struct WGPUStringView message, void *userdata1,
+                                         void *userdata2) {
+        RequestAdapterResult *result = reinterpret_cast<RequestAdapterResult *>(userdata1);
+        const DawnProcTable *wgpu    = reinterpret_cast<const DawnProcTable *>(userdata2);
+
+        result->status  = status;
+        result->adapter = webgpu::AdapterHandle::Acquire(wgpu, adapter);
+        result->message = std::string(message.data, message.length);
     };
-    callbackInfo.userdata = &adapterResult;
+    requestAdapterCallback.userdata1 = &adapterResult;
+    requestAdapterCallback.userdata2 = &mProcTable;
 
-    wgpu::FutureWaitInfo futureWaitInfo;
-    futureWaitInfo.future = mInstance.RequestAdapter(&requestAdapterOptions, callbackInfo);
+    WGPUFutureWaitInfo futureWaitInfo;
+    futureWaitInfo.future = mProcTable.instanceRequestAdapter(
+        mInstance.get(), &requestAdapterOptions, requestAdapterCallback);
 
-    wgpu::WaitStatus status = mInstance.WaitAny(1, &futureWaitInfo, -1);
+    WGPUWaitStatus status = mProcTable.instanceWaitAny(mInstance.get(), 1, &futureWaitInfo, -1);
     if (webgpu::IsWgpuError(status))
     {
-        return egl::EglBadAlloc() << "Failed to get WebGPU adapter: " << adapterResult.message;
+        std::ostringstream err;
+        err << "Failed to get WebGPU adapter: " << adapterResult.message;
+        return egl::Error(EGL_BAD_ALLOC, err.str());
     }
 
     mAdapter = adapterResult.adapter;
 
-    std::vector<wgpu::FeatureName> requiredFeatures;
-    requiredFeatures.push_back(wgpu::FeatureName::SurfaceCapabilities);
+    std::vector<WGPUFeatureName> requiredFeatures;  // empty for now
 
-    wgpu::DeviceDescriptor deviceDesc;
+    WGPUDeviceDescriptor deviceDesc = WGPU_DEVICE_DESCRIPTOR_INIT;
     deviceDesc.requiredFeatureCount = requiredFeatures.size();
     deviceDesc.requiredFeatures     = requiredFeatures.data();
+    deviceDesc.uncapturedErrorCallbackInfo.callback =
+        [](WGPUDevice const *device, WGPUErrorType type, struct WGPUStringView message,
+           void *userdata1, void *userdata2) {
+            ASSERT(userdata1 == nullptr);
+            ASSERT(userdata2 == nullptr);
+            ERR() << "Error: " << static_cast<std::underlying_type<WGPUErrorType>::type>(type)
+                  << " - message: " << std::string(message.data, message.length);
+        };
 
-    mDevice = mAdapter.CreateDevice(&deviceDesc);
-    mDevice.SetUncapturedErrorCallback(
-        [](WGPUErrorType type, const char *message, void *userdata) {
-            ERR() << "Error: " << type << " - message: " << message;
-        },
-        nullptr);
+    struct RequestDeviceResult
+    {
+        WGPURequestDeviceStatus status;
+        webgpu::DeviceHandle device;
+        std::string message;
+    };
+    RequestDeviceResult deviceResult;
+
+    WGPURequestDeviceCallbackInfo requestDeviceCallback = WGPU_REQUEST_DEVICE_CALLBACK_INFO_INIT;
+    requestDeviceCallback.mode                          = WGPUCallbackMode_WaitAnyOnly;
+    requestDeviceCallback.callback = [](WGPURequestDeviceStatus status, WGPUDevice device,
+                                        struct WGPUStringView message, void *userdata1,
+                                        void *userdata2) {
+        RequestDeviceResult *result = reinterpret_cast<RequestDeviceResult *>(userdata1);
+        const DawnProcTable *wgpu   = reinterpret_cast<const DawnProcTable *>(userdata2);
+
+        result->status  = status;
+        result->device  = webgpu::DeviceHandle::Acquire(wgpu, device);
+        result->message = std::string(message.data, message.length);
+    };
+    requestDeviceCallback.userdata1 = &deviceResult;
+    requestDeviceCallback.userdata2 = &mProcTable;
+
+    futureWaitInfo.future =
+        mProcTable.adapterRequestDevice(mAdapter.get(), &deviceDesc, requestDeviceCallback);
+
+    status = mProcTable.instanceWaitAny(mInstance.get(), 1, &futureWaitInfo, -1);
+    if (webgpu::IsWgpuError(status))
+    {
+        std::ostringstream err;
+        err << "Failed to get WebGPU device: " << deviceResult.message;
+        return egl::Error(EGL_BAD_ALLOC, err.str());
+    }
+
+    mDevice = deviceResult.device;
+
     return egl::NoError();
 }
 

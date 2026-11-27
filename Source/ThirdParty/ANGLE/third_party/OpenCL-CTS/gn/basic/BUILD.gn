@@ -4,7 +4,7 @@
 
 import("//third_party/OpenCL-CTS/gn/angle_ocl_cts.gni")
 
-ocl_cts_binary("basic") {
+ocl_cts_source_set("basic") {
   include_dirs =
       [ "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic" ]
   sources = [
@@ -38,7 +38,6 @@ ocl_cts_binary("basic") {
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_image_param.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_image_r8.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_imagearraycopy.cpp",
-    "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_imagearraycopy3d.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_imagecopy.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_imagecopy3d.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/basic/test_imagedim.cpp",

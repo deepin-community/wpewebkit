@@ -27,8 +27,13 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#import "WebExtensionError.h"
-#import <JavaScriptCore/JSBase.h>
+#include "WebExtensionError.h"
+#include <JavaScriptCore/JSBase.h>
+#include <wtf/Function.h>
+#include <wtf/JSONValues.h>
+#include <wtf/Markable.h>
+#include <wtf/UUID.h>
+#include <wtf/Vector.h>
 
 #ifdef __OBJC__
 #import <wtf/RetainPtr.h>
@@ -36,6 +41,33 @@
 #endif
 
 namespace WebKit {
+
+class WebFrame;
+
+Ref<JSON::Array> filterObjects(const JSON::Array&, WTF::Function<bool(const JSON::Value&)>&& lambda);
+
+Vector<String> makeStringVector(const JSON::Array&);
+
+Vector<double> availableScreenScales();
+double largestDisplayScale();
+
+RefPtr<JSON::Object> jsonWithLowercaseKeys(RefPtr<JSON::Object>);
+RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object>, RefPtr<JSON::Object>);
+
+/// Returns a concatenated error string that combines the provided information into a single, descriptive message.
+String toErrorString(const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
+
+/// Returns an error for Expected results in CompletionHandler.
+inline std::unexpected<WebExtensionError> toWebExtensionError(const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString)
+{
+    return makeUnexpected(toErrorString(callingAPIName, sourceKey, underlyingErrorString));
+}
+
+/// Returns an error object that combines the provided information into a single, descriptive message.
+JSObjectRef toJSError(JSContextRef, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
+
+/// Serializes large data to JSON chunks to avoid StringBuilder overflow.
+void serializeToMultipleJSONStrings(Ref<JSON::Object>, Function<void(String&&)>&&);
 
 #ifdef __OBJC__
 
@@ -58,12 +90,6 @@ bool validateDictionary(NSDictionary<NSString *, id> *, NSString *sourceKey, NSA
 ///  - The `callingAPIName` and `sourceKey` parameters are used to reference the object within a larger context. When an error occurs, this key helps identify the source of the problem in the `outExceptionString`.
 /// If the object is valid, returns `YES`. Otherwise returns `NO` and sets `outExceptionString` to a message describing what validation failed.
 bool validateObject(NSObject *, NSString *sourceKey, id valueTypes, NSString **outExceptionString);
-
-/// Returns a concatenated error string that combines the provided information into a single, descriptive message.
-NSString *toErrorString(NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString, ...) NS_FORMAT_ARGUMENT(3);
-
-/// Returns an error object that combines the provided information into a single, descriptive message.
-JSObjectRef toJSError(JSContextRef, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString);
 
 /// Returns a rejected Promise object that combines the provided information into a single, descriptive error message.
 JSObjectRef toJSRejectedPromise(JSContextRef, NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString);
@@ -89,6 +115,14 @@ id toWebAPI(const std::optional<T>& result, UseNullValue useNull = UseNullValue:
     return toWebAPI(result.value());
 }
 
+inline NSDictionary *toWebAPI(const JSON::Object& object)
+{
+    auto jsonString = object.toJSONString();
+    RetainPtr jsonData = [jsonString.createNSString() dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *dictionary = [NSJSONSerialization JSONObjectWithData:jsonData.get() options:0 error:nil];
+    return dictionary;
+}
+
 template<typename T>
 NSArray *toWebAPI(const Vector<T>& items)
 {
@@ -102,14 +136,9 @@ inline NSNumber *toWebAPI(size_t index)
     return index != notFound ? @(index) : @(std::numeric_limits<double>::quiet_NaN());
 }
 
-/// Returns an error for Expected results in CompletionHandler.
-template<typename... Args>
-Unexpected<WebExtensionError> toWebExtensionError(NSString *callingAPIName, NSString *sourceKey, NSString *underlyingErrorString, Args&&... args)
-{
-    return makeUnexpected(String(toErrorString(callingAPIName, sourceKey, underlyingErrorString, std::forward<Args>(args)...)));
-}
-
 #endif // __OBJC__
+
+Markable<WTF::UUID> NODELETE toDocumentIdentifier(WebFrame&);
 
 } // namespace WebKit
 

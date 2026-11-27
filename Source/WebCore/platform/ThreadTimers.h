@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
- * Copyright (C) 2009 Google Inc.  All rights reserved.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 #ifndef ThreadTimers_h
 #define ThreadTimers_h
 
+#include <wtf/CheckedPtr.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
@@ -41,11 +42,12 @@ class ThreadTimers;
 class TimerBase;
 
 struct ThreadTimerHeapItem;
-typedef Vector<RefPtr<ThreadTimerHeapItem>> ThreadTimerHeap;
+using ThreadTimerHeap = Vector<Ref<ThreadTimerHeapItem>>;
     
 // A collection of timers per thread. Kept in ThreadGlobalData.
 class ThreadTimers {
-    WTF_MAKE_NONCOPYABLE(ThreadTimers); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ThreadTimers);
+    WTF_MAKE_NONCOPYABLE(ThreadTimers);
 public:
     ThreadTimers();
 
@@ -55,11 +57,11 @@ public:
     // On a thread different then main, we should set the thread's instance of the SharedTimer.
     void setSharedTimer(SharedTimer*);
 
-    ThreadTimerHeap& timerHeap() { return m_timerHeap; }
+    ThreadTimerHeap& timerHeap() LIFETIME_BOUND { return m_timerHeap; }
 
     void updateSharedTimer();
     void fireTimersInNestedEventLoop();
-    void breakFireLoopForRenderingUpdate();
+    void NODELETE breakFireLoopForRenderingUpdate();
 
     unsigned nextHeapInsertionCount() { return m_currentHeapInsertionOrder++; }
 
@@ -68,7 +70,7 @@ private:
     void fireTimersInNestedEventLoopInternal();
 
     ThreadTimerHeap m_timerHeap;
-    SharedTimer* m_sharedTimer { nullptr }; // External object, can be a run loop on a worker thread. Normally set/reset by worker thread.
+    CheckedPtr<SharedTimer> m_sharedTimer; // External object, can be a run loop on a worker thread. Normally set/reset by worker thread.
     bool m_firingTimers { false };
     bool m_shouldBreakFireLoopForRenderingUpdate { false };
     unsigned m_currentHeapInsertionOrder { 0 };
@@ -76,9 +78,9 @@ private:
 };
 
 struct ThreadTimerHeapItem : ThreadSafeRefCounted<ThreadTimerHeapItem> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ThreadTimerHeapItem);
-    WTF_ALLOW_STRUCT_COMPACT_POINTERS;
+    WTF_MAKE_COMPACT_TZONE_ALLOCATED(ThreadTimerHeapItem);
 
+public:
     static RefPtr<ThreadTimerHeapItem> create(TimerBase&, MonotonicTime, unsigned);
 
     bool hasTimer() const { return m_timer; }

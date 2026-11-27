@@ -27,16 +27,21 @@
 
 #if ENABLE(VIDEO)
 
-#include "ContextDestructionObserver.h"
-#include "WebCoreOpaqueRoot.h"
+#include <WebCore/ContextDestructionObserver.h>
+#include <WebCore/WebCoreOpaqueRoot.h>
+#include <atomic>
 #include <wtf/LoggerHelper.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
+class Document;
 class SourceBuffer;
 class TrackListBase;
+class WeakPtrImplWithEventTargetData;
+class TrackOpaqueRoot;
 class TrackPrivateBase;
 class TrackPrivateBaseClient;
 using TrackID = uint64_t;
@@ -48,8 +53,13 @@ class TrackBase
     , private LoggerHelper
 #endif
 {
+    WTF_MAKE_TZONE_ALLOCATED(TrackBase);
 public:
     virtual ~TrackBase();
+
+    // ContextDestructionObserver.
+    void ref() const override { RefCounted::ref(); }
+    void deref() const override { RefCounted::deref(); }
 
     virtual void didMoveToNewDocument(Document&);
 
@@ -65,21 +75,22 @@ public:
     virtual int uniqueId() const { return m_uniqueId; }
 
 #if ENABLE(MEDIA_SOURCE)
-    SourceBuffer* sourceBuffer() const { return m_sourceBuffer; }
-    void setSourceBuffer(SourceBuffer* buffer) { m_sourceBuffer = buffer; }
+    SourceBuffer* NODELETE sourceBuffer() const;
+    void NODELETE setSourceBuffer(SourceBuffer*);
 #endif
 
     void setTrackList(TrackListBase&);
     void clearTrackList();
-    TrackListBase* trackList() const;
-    WebCoreOpaqueRoot opaqueRoot();
+    TrackListBase* NODELETE trackList() const;
+    void setOpaqueRoot(TrackOpaqueRoot&);
+    WebCoreOpaqueRoot NODELETE opaqueRoot() const;
 
     virtual bool enabled() const = 0;
 
 #if !RELEASE_LOG_DISABLED
-    virtual void setLogger(const Logger&, const void*);
+    virtual void setLogger(const Logger&, uint64_t);
     const Logger& logger() const final { ASSERT(m_logger); return *m_logger.get(); }
-    const void* logIdentifier() const final { return m_logIdentifier; }
+    uint64_t logIdentifier() const final { return m_logIdentifier; }
     WTFLogChannel& logChannel() const final;
 #endif
 
@@ -95,7 +106,7 @@ protected:
     virtual void setLanguage(const AtomString&);
 
 #if ENABLE(MEDIA_SOURCE)
-    SourceBuffer* m_sourceBuffer { nullptr };
+    WeakPtr<SourceBuffer> m_sourceBuffer;
 #endif
 
     void addClientToTrackPrivateBase(TrackPrivateBaseClient&, TrackPrivateBase&);
@@ -111,19 +122,21 @@ private:
     AtomString m_validBCP47Language;
 #if !RELEASE_LOG_DISABLED
     RefPtr<const Logger> m_logger;
-    const void* m_logIdentifier { nullptr };
+    uint64_t m_logIdentifier { 0 };
 #endif
     WeakPtr<TrackListBase, WeakPtrImplWithEventTargetData> m_trackList;
-    size_t m_clientRegistrationId;
+    RefPtr<TrackOpaqueRoot> m_trackOpaqueRoot;
+    size_t m_clientRegistrationId { 0 };
 };
 
 class MediaTrackBase : public TrackBase {
+    WTF_MAKE_TZONE_ALLOCATED(MediaTrackBase);
 public:
-    const AtomString& kind() const { return m_kind; }
+    const AtomString& kind() const LIFETIME_BOUND { return m_kind; }
     virtual void setKind(const AtomString&);
 
 protected:
-    MediaTrackBase(ScriptExecutionContext*, Type, const std::optional<AtomString>& id, TrackID, const AtomString& label, const AtomString& language);
+    MediaTrackBase(ScriptExecutionContext*, Type, const std::optional<String>& id, TrackID, const String& label, const String& language);
 
     void setKindInternal(const AtomString&);
 

@@ -26,6 +26,7 @@
 #include "LineBreaker.h"
 
 #include "BreakingContext.h"
+#include "RenderObjectStyle.h"
 
 namespace WebCore {
 
@@ -45,11 +46,11 @@ void LineBreaker::skipLeadingWhitespace(InlineBidiResolver& resolver, LineInfo& 
 
 LegacyInlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, LineInfo& lineInfo, RenderTextInfo& renderTextInfo)
 {
-    ASSERT(resolver.position().root() == &m_block);
+    ASSERT(resolver.position().root() == m_block.ptr());
 
     bool appliedStartWidth = resolver.position().offset();
 
-    LineWidth width(m_block, lineInfo.isFirstLine());
+    LineWidth width(m_block);
 
     skipLeadingWhitespace(resolver, lineInfo);
 

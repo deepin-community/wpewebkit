@@ -95,12 +95,12 @@ WebFrame* webkitFrameGetWebFrame(WebKitFrame* frame)
 
 GRefPtr<JSCValue> webkitFrameGetJSCValueForElementInWorld(WebKitFrame* frame, Element& element, WebKitScriptWorld* world)
 {
-    Vector<RefPtr<Element>> elements = { RefPtr<Element>(&element) };
+    Vector<Ref<Element>> elements = { Ref<Element>(element) };
     auto values = webkitFrameGetJSCValuesForElementsInWorld(frame, elements, world);
     return values.takeLast();
 }
 
-Vector<GRefPtr<JSCValue>> webkitFrameGetJSCValuesForElementsInWorld(WebKitFrame* frame, const Vector<RefPtr<Element>>& elements, WebKitScriptWorld* world)
+Vector<GRefPtr<JSCValue>> webkitFrameGetJSCValuesForElementsInWorld(WebKitFrame* frame, const Vector<Ref<Element>>& elements, WebKitScriptWorld* world)
 {
     RefPtr wkWorld = webkitScriptWorldGetInjectedBundleScriptWorld(world);
     auto jsContext = jscContextGetOrCreate(frame->priv->webFrame->jsContextForWorld(wkWorld.get()));
@@ -109,7 +109,7 @@ Vector<GRefPtr<JSCValue>> webkitFrameGetJSCValuesForElementsInWorld(WebKitFrame*
         JSValueRef jsValue = nullptr;
         {
             JSC::JSLockHolder lock(globalObject);
-            jsValue = toRef(globalObject, toJS(globalObject, globalObject, element.get()));
+            jsValue = toRef(globalObject, toJS(globalObject, globalObject, element));
         }
         return jsValue ? jscContextGetOrCreateValue(jsContext.get(), jsValue) : nullptr;
     });
@@ -139,14 +139,14 @@ guint64 webkit_frame_get_id(WebKitFrame* frame)
 {
     g_return_val_if_fail(WEBKIT_IS_FRAME(frame), 0);
 
-    return frame->priv->webFrame->frameID().object().toUInt64();
+    return frame->priv->webFrame->frameID().toUInt64();
 }
 
 /**
  * webkit_frame_is_main_frame:
  * @frame: a #WebKitFrame
  *
- * Gets whether @frame is the main frame of a #WebKitWebPage
+ * Gets whether @frame is the main frame of a #WebKitWebPage.
  *
  * Returns: %TRUE if @frame is a main frame or %FALSE otherwise
  *
@@ -313,7 +313,7 @@ JSCValue* webkit_frame_get_js_value_for_dom_object_in_script_world(WebKitFrame* 
         JSC::JSLockHolder lock(globalObject);
         G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
         if (WEBKIT_DOM_IS_NODE(domObject))
-            jsValue = toRef(globalObject, toJS(globalObject, globalObject, WebKit::core(WEBKIT_DOM_NODE(domObject))));
+            jsValue = toRef(globalObject, toJS(globalObject, globalObject, protect(WebKit::core(WEBKIT_DOM_NODE(domObject))).releaseNonNull()));
         G_GNUC_END_IGNORE_DEPRECATIONS;
     }
 

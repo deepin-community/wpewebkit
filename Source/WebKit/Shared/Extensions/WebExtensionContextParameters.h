@@ -32,12 +32,14 @@
 #include "WebExtensionContextIdentifier.h"
 #include "WebExtensionTabIdentifier.h"
 #include "WebExtensionWindowIdentifier.h"
+#include <pal/SessionID.h>
 #include <wtf/URL.h>
 
 namespace WebKit {
 
 struct WebExtensionContextParameters {
-    WebExtensionContextIdentifier identifier;
+    WebExtensionContextIdentifier unprivilegedIdentifier;
+    Markable<WebExtensionContextIdentifier> privilegedIdentifier;
 
     URL baseURL;
     String uniqueIdentifier;
@@ -45,11 +47,13 @@ struct WebExtensionContextParameters {
 
     HashMap<String, WallTime> grantedPermissions;
 
-    Ref<API::Data> localizationJSON;
-    Ref<API::Data> manifestJSON;
+    RefPtr<API::Data> localizationJSON;
+    RefPtr<API::Data> manifestJSON;
 
     double manifestVersion { 0 };
     bool isSessionStorageAllowedInContentScripts { false };
+
+    PAL::SessionID defaultSessionID;
 
     std::optional<WebCore::PageIdentifier> backgroundPageIdentifier;
 #if ENABLE(INSPECTOR_EXTENSIONS)

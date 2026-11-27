@@ -2,7 +2,7 @@
  * Copyright (C) 2000 Lars Knoll (knoll@kde.org)
  *           (C) 2000 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2003, 2005, 2006, 2007, 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Graham Dennis (graham.dennis@gmail.com)
  *
  * This library is free software; you can redistribute it and/or
@@ -26,7 +26,9 @@
 
 #include "CompositeOperation.h"
 #include "KeyframeInterpolation.h"
-#include "RenderStyle.h"
+#include "StyleComputedStyle.h"
+#include "StyleSingleAnimationRangeName.h"
+#include "StylePrimitiveNumericTypes.h"
 #include "WebAnimationTypes.h"
 #include <wtf/Vector.h>
 #include <wtf/HashSet.h>
@@ -45,25 +47,57 @@ class Resolver;
 
 class BlendingKeyframe final : public KeyframeInterpolation::Keyframe {
 public:
-    BlendingKeyframe(double offset, std::unique_ptr<RenderStyle> style)
-        : m_offset(offset)
-        , m_style(WTFMove(style))
-    {
-    }
+    struct Offset {
+        Style::SingleAnimationRangeName name;
+        Style::Percentage<> value;
+
+        Offset(Style::Percentage<> value)
+            : name(Style::SingleAnimationRangeName::Omitted)
+            , value(value)
+        {
+        }
+
+        Offset(CSS::ValueLiteral<CSS::PercentageUnit::Percentage> literal)
+            : name(Style::SingleAnimationRangeName::Omitted)
+            , value(literal)
+        {
+        }
+
+        Offset(Style::SingleAnimationRangeName name, Style::Percentage<> value)
+            : name(name)
+            , value(value)
+        {
+        }
+
+        Offset(Style::SingleAnimationRangeName name, CSS::ValueLiteral<CSS::PercentageUnit::Percentage> literal)
+            : name(name)
+            , value(literal)
+        {
+        }
+    };
+
+    BlendingKeyframe(Offset&&, std::unique_ptr<Style::ComputedStyle>&&);
+    BlendingKeyframe(const BlendingKeyframe&);
+
+    BlendingKeyframe(BlendingKeyframe&&) = default;
+    BlendingKeyframe& operator=(BlendingKeyframe&&) = default;
 
     // KeyframeInterpolation::Keyframe
-    double offset() const final { return m_offset; }
+    double offset() const final { return m_computedOffset; }
     std::optional<CompositeOperation> compositeOperation() const final { return m_compositeOperation; }
     bool animatesProperty(KeyframeInterpolation::Property) const final;
     bool isBlendingKeyframe() const final { return true; }
 
     void addProperty(const AnimatableCSSProperty&);
-    const HashSet<AnimatableCSSProperty>& properties() const { return m_properties; }
+    const HashSet<AnimatableCSSProperty>& properties() const LIFETIME_BOUND { return m_properties; }
 
-    void setOffset(double offset) { m_offset = offset; }
+    const Offset& specifiedOffset() const LIFETIME_BOUND { return m_specifiedOffset; }
+    void setComputedOffset(double offset) { m_computedOffset = offset; }
 
-    const RenderStyle* style() const { return m_style.get(); }
-    void setStyle(std::unique_ptr<RenderStyle> style) { m_style = WTFMove(style); }
+    bool NODELETE usesRangeOffset() const;
+
+    const Style::ComputedStyle* style() const LIFETIME_BOUND { return m_style.get(); }
+    void setStyle(std::unique_ptr<Style::ComputedStyle>&& style) { m_style = WTF::move(style); }
 
     TimingFunction* timingFunction() const { return m_timingFunction.get(); }
     void setTimingFunction(const RefPtr<TimingFunction>& timingFunction) { m_timingFunction = timingFunction; }
@@ -72,57 +106,70 @@ public:
 
     bool containsDirectionAwareProperty() const { return m_containsDirectionAwareProperty; }
     void setContainsDirectionAwareProperty(bool containsDirectionAwareProperty) { m_containsDirectionAwareProperty = containsDirectionAwareProperty; }
+    bool hasPropertiesWithRevertRuleOrLayer() const { return m_hasPropertiesWithRevertRuleOrLayer; }
+    void setHasPropertiesWithRevertRuleOrLayer(bool value) { m_hasPropertiesWithRevertRuleOrLayer = value; }
 
 private:
-    double m_offset;
+    Offset m_specifiedOffset;
+    double m_computedOffset { std::numeric_limits<double>::quiet_NaN() };
     HashSet<AnimatableCSSProperty> m_properties; // The properties specified in this keyframe.
-    std::unique_ptr<RenderStyle> m_style;
+    std::unique_ptr<Style::ComputedStyle> m_style;
     RefPtr<TimingFunction> m_timingFunction;
     std::optional<CompositeOperation> m_compositeOperation;
     bool m_containsDirectionAwareProperty { false };
+    bool m_hasPropertiesWithRevertRuleOrLayer { false };
 };
+
+using KeyframesIdentifier = Variant<AtomString, uint64_t>;
 
 class BlendingKeyframes {
 public:
-    explicit BlendingKeyframes(const AtomString& animationName)
-        : m_animationName(animationName)
-    {
-    }
+    BlendingKeyframes()
+        : m_identifier(nextAnonymousIdentifier())
+    { }
+    explicit BlendingKeyframes(const KeyframesIdentifier& identifier)
+        : m_identifier(identifier)
+    { }
     ~BlendingKeyframes();
 
     BlendingKeyframes& operator=(BlendingKeyframes&&) = default;
     bool operator==(const BlendingKeyframes&) const;
 
-    const AtomString& animationName() const { return m_animationName; }
+    const KeyframesIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
+    const AtomString& keyframesName() const LIFETIME_BOUND { return std::holds_alternative<AtomString>(m_identifier) ? std::get<AtomString>(m_identifier) : nullAtom(); }
+    const String& acceleratedAnimationName() const LIFETIME_BOUND;
 
     void insert(BlendingKeyframe&&);
 
     void addProperty(const AnimatableCSSProperty&);
     bool containsProperty(const AnimatableCSSProperty&) const;
-    const HashSet<AnimatableCSSProperty>& properties() const { return m_properties; }
+    const HashSet<AnimatableCSSProperty>& properties() const LIFETIME_BOUND { return m_properties; }
 
     bool containsAnimatableCSSProperty() const;
-    bool containsDirectionAwareProperty() const;
+    bool NODELETE containsDirectionAwareProperty() const;
 
     void clear();
     bool isEmpty() const { return m_keyframes.isEmpty(); }
     size_t size() const { return m_keyframes.size(); }
-    const BlendingKeyframe& operator[](size_t index) const { return m_keyframes[index]; }
+    const BlendingKeyframe& operator[](size_t index) const LIFETIME_BOUND { return m_keyframes[index]; }
 
     void copyKeyframes(const BlendingKeyframes&);
     bool hasImplicitKeyframes() const;
     bool hasImplicitKeyframeForProperty(AnimatableCSSProperty) const;
-    void fillImplicitKeyframes(const KeyframeEffect&, const RenderStyle& elementStyle);
+    void fillImplicitKeyframes(const KeyframeEffect&, const Style::ComputedStyle& elementStyle);
 
-    auto begin() const { return m_keyframes.begin(); }
-    auto end() const { return m_keyframes.end(); }
+    auto begin() const LIFETIME_BOUND { return m_keyframes.begin(); }
+    auto end() const LIFETIME_BOUND { return m_keyframes.end(); }
 
-    bool usesContainerUnits() const;
-    bool usesRelativeFontWeight() const;
-    bool hasCSSVariableReferences() const;
+    bool NODELETE usesContainerUnits() const;
+    bool usesViewportUnits() const;
+    bool NODELETE usesTreeCountingFunctions() const;
+    bool usesRelativeFontWeight() const { return m_usesRelativeFontWeight; }
+    bool hasSubstitutionFunctions() const { return m_containsSubstitutionFunctions; }
     bool hasColorSetToCurrentColor() const;
-    bool hasPropertySetToCurrentColor() const;
-    const HashSet<AnimatableCSSProperty>& propertiesSetToInherit() const;
+    bool NODELETE hasPropertySetToCurrentColor() const;
+    const HashSet<AnimatableCSSProperty>& NODELETE propertiesSetToInherit() const LIFETIME_BOUND;
+    bool hasPropertiesWithRevertRuleOrLayer() const { return m_hasPropertiesWithRevertRuleOrLayer; }
 
     void updatePropertiesMetadata(const StyleProperties&);
 
@@ -130,23 +177,36 @@ public:
     bool hasHeightDependentTransform() const { return m_hasHeightDependentTransform; }
     bool hasDiscreteTransformInterval() const { return m_hasDiscreteTransformInterval; }
     bool hasExplicitlyInheritedKeyframeProperty() const { return m_hasExplicitlyInheritedKeyframeProperty; }
+    bool usesAnchorFunctions() const { return m_usesAnchorFunctions; }
+    bool hasKeyframeNotUsingRangeOffset() const { return m_hasKeyframeNotUsingRangeOffset; }
+    bool animatesOffsetDistanceToPercentOrCalculated() const { return m_animatesOffsetDistanceToPercentOrCalculated; }
+
+    void updatedComputedOffsets(NOESCAPE const Function<double(const BlendingKeyframe::Offset&)>&);
+    bool hasKeyframeWithUnresolvedComputedOffset() const;
 
 private:
     void analyzeKeyframe(const BlendingKeyframe&);
 
-    AtomString m_animationName;
+    static uint64_t nextAnonymousIdentifier();
+
+    KeyframesIdentifier m_identifier;
+    mutable String m_acceleratedAnimationName;
     Vector<BlendingKeyframe> m_keyframes; // Kept sorted by key.
     HashSet<AnimatableCSSProperty> m_properties; // The properties being animated.
     HashSet<AnimatableCSSProperty> m_explicitToProperties; // The properties with an explicit value for the 100% keyframe.
     HashSet<AnimatableCSSProperty> m_explicitFromProperties; // The properties with an explicit value for the 0% keyframe.
     HashSet<AnimatableCSSProperty> m_propertiesSetToInherit;
     HashSet<AnimatableCSSProperty> m_propertiesSetToCurrentColor;
-    bool m_usesRelativeFontWeight { false };
-    bool m_containsCSSVariableReferences { false };
-    bool m_hasWidthDependentTransform { false };
-    bool m_hasHeightDependentTransform { false };
-    bool m_hasDiscreteTransformInterval { false };
-    bool m_hasExplicitlyInheritedKeyframeProperty { false };
+    bool m_usesRelativeFontWeight : 1 { false };
+    bool m_containsSubstitutionFunctions : 1 { false };
+    bool m_usesAnchorFunctions : 1 { false };
+    bool m_hasWidthDependentTransform : 1 { false };
+    bool m_hasHeightDependentTransform : 1 { false };
+    bool m_hasDiscreteTransformInterval : 1 { false };
+    bool m_hasExplicitlyInheritedKeyframeProperty : 1 { false };
+    bool m_hasKeyframeNotUsingRangeOffset : 1 { false };
+    bool m_hasPropertiesWithRevertRuleOrLayer : 1 { false };
+    bool m_animatesOffsetDistanceToPercentOrCalculated : 1 { false };
 };
 
 } // namespace WebCore

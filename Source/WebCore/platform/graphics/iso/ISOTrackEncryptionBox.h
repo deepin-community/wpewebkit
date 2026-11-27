@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "ISOBox.h"
+#include <WebCore/ISOBox.h>
+#include <span>
 
 namespace WebCore {
 
@@ -34,7 +35,7 @@ public:
     ISOTrackEncryptionBox();
     ~ISOTrackEncryptionBox();
 
-    static FourCC boxTypeName() { return "tenc"; }
+    static FourCC boxTypeName() { return std::span { "tenc" }; }
 
     std::optional<int8_t> defaultCryptByteBlock() const { return m_defaultCryptByteBlock; }
     std::optional<int8_t> defaultSkipByteBlock() const { return m_defaultSkipByteBlock; }
@@ -43,13 +44,12 @@ public:
     Vector<uint8_t> defaultKID() const { return m_defaultKID; }
     Vector<uint8_t> defaultConstantIV() const { return m_defaultConstantIV; }
 
-    bool parseWithoutTypeAndSize(JSC::DataView&);
+    bool parseWithoutTypeAndSize(std::span<const uint8_t>);
 
     bool parse(JSC::DataView&, unsigned& offset) override;
 
 private:
     bool parsePayload(JSC::DataView&, unsigned& offset);
-
     std::optional<int8_t> m_defaultCryptByteBlock;
     std::optional<int8_t> m_defaultSkipByteBlock;
     int8_t m_defaultIsProtected { 0 };

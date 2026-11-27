@@ -28,28 +28,26 @@
 
 #include "MediaCapabilities.h"
 #include "WorkerNavigator.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WorkerNavigatorMediaCapabilities::WorkerNavigatorMediaCapabilities()
-    : m_mediaCapabilities(MediaCapabilities::create())
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerNavigatorMediaCapabilities);
+
+WorkerNavigatorMediaCapabilities::WorkerNavigatorMediaCapabilities(WorkerNavigator& navigator)
+    : m_mediaCapabilities(MediaCapabilities::create(navigator))
 {
 }
 
 WorkerNavigatorMediaCapabilities::~WorkerNavigatorMediaCapabilities() = default;
 
-ASCIILiteral WorkerNavigatorMediaCapabilities::supplementName()
-{
-    return "WorkerNavigatorMediaCapabilities"_s;
-}
-
 WorkerNavigatorMediaCapabilities& WorkerNavigatorMediaCapabilities::from(WorkerNavigator& navigator)
 {
-    auto* supplement = static_cast<WorkerNavigatorMediaCapabilities*>(Supplement<WorkerNavigator>::from(&navigator, supplementName()));
+    auto* supplement = downcast<WorkerNavigatorMediaCapabilities>(Supplement<WorkerNavigator>::from(&navigator, supplementName()));
     if (!supplement) {
-        auto newSupplement = makeUnique<WorkerNavigatorMediaCapabilities>();
+        auto newSupplement = makeUnique<WorkerNavigatorMediaCapabilities>(navigator);
         supplement = newSupplement.get();
-        provideTo(&navigator, supplementName(), WTFMove(newSupplement));
+        provideTo(&navigator, supplementName(), WTF::move(newSupplement));
     }
     return *supplement;
 }

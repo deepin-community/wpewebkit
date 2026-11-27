@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,8 +35,8 @@ namespace WebCore {
 TextStream& operator<<(TextStream& ts, ScrollType scrollType)
 {
     switch (scrollType) {
-    case ScrollType::User: ts << "user"; break;
-    case ScrollType::Programmatic: ts << "programmatic"; break;
+    case ScrollType::User: ts << "user"_s; break;
+    case ScrollType::Programmatic: ts << "programmatic"_s; break;
     }
     return ts;
 }
@@ -54,8 +54,8 @@ TextStream& operator<<(TextStream& ts, NativeScrollbarVisibility scrollBarHidden
 TextStream& operator<<(TextStream& ts, ScrollClamping clamping)
 {
     switch (clamping) {
-    case ScrollClamping::Unclamped: ts << "unclamped"; break;
-    case ScrollClamping::Clamped: ts << "clamped"; break;
+    case ScrollClamping::Unclamped: ts << "unclamped"_s; break;
+    case ScrollClamping::Clamped: ts << "clamped"_s; break;
     }
     return ts;
 }
@@ -76,9 +76,9 @@ TextStream& operator<<(TextStream& ts, ScrollBehaviorForFixedElements behavior)
 TextStream& operator<<(TextStream& ts, ScrollBehavior behavior)
 {
     switch (behavior) {
-    case ScrollBehavior::Auto: ts << "auto"; break;
-    case ScrollBehavior::Instant: ts << "instant"; break;
-    case ScrollBehavior::Smooth: ts << "smooth"; break;
+    case ScrollBehavior::Auto: ts << "auto"_s; break;
+    case ScrollBehavior::Instant: ts << "instant"_s; break;
+    case ScrollBehavior::Smooth: ts << "smooth"_s; break;
     }
     return ts;
 }
@@ -99,6 +99,16 @@ TextStream& operator<<(TextStream& ts, ScrollElasticity behavior)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, RubberBandingBehavior behavior)
+{
+    switch (behavior) {
+    case RubberBandingBehavior::Always: ts << "always"_s; break;
+    case RubberBandingBehavior::Never: ts << "never"_s; break;
+    case RubberBandingBehavior::BasedOnSize: ts << "based on size"_s; break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, ScrollbarMode behavior)
 {
     switch (behavior) {
@@ -110,6 +120,19 @@ TextStream& operator<<(TextStream& ts, ScrollbarMode behavior)
         break;
     case ScrollbarMode::AlwaysOn:
         ts << 2;
+        break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, ScrollbarRevealBehavior behavior)
+{
+    switch (behavior) {
+    case ScrollbarRevealBehavior::DontReveal:
+        ts << "dont-reveal"_s;
+        break;
+    case ScrollbarRevealBehavior::Default:
+        ts << "default"_s;
         break;
     }
     return ts;
@@ -132,16 +155,16 @@ TextStream& operator<<(TextStream& ts, ScrollDirection direction)
 {
     switch (direction) {
     case ScrollDirection::ScrollUp:
-        ts << "up";
+        ts << "up"_s;
         break;
     case ScrollDirection::ScrollDown:
-        ts << "down";
+        ts << "down"_s;
         break;
     case ScrollDirection::ScrollLeft:
-        ts << "left";
+        ts << "left"_s;
         break;
     case ScrollDirection::ScrollRight:
-        ts << "right";
+        ts << "right"_s;
         break;
     }
     return ts;
@@ -151,16 +174,16 @@ TextStream& operator<<(TextStream& ts, ScrollGranularity granularity)
 {
     switch (granularity) {
     case ScrollGranularity::Line:
-        ts << "line";
+        ts << "line"_s;
         break;
     case ScrollGranularity::Page:
-        ts << "page";
+        ts << "page"_s;
         break;
     case ScrollGranularity::Document:
-        ts << "document";
+        ts << "document"_s;
         break;
     case ScrollGranularity::Pixel:
-        ts << "pixel";
+        ts << "pixel"_s;
         break;
     }
     return ts;
@@ -170,13 +193,13 @@ TextStream& operator<<(TextStream& ts, ScrollbarWidth width)
 {
     switch (width) {
     case ScrollbarWidth::Auto:
-        ts << "auto";
+        ts << "auto"_s;
         break;
     case ScrollbarWidth::Thin:
-        ts << "thin";
+        ts << "thin"_s;
         break;
     case ScrollbarWidth::None:
-        ts << "none";
+        ts << "none"_s;
         break;
     }
     return ts;
@@ -184,11 +207,12 @@ TextStream& operator<<(TextStream& ts, ScrollbarWidth width)
 
 TextStream& operator<<(TextStream& ts, ScrollPositionChangeOptions options)
 {
-    ts.dumpProperty("type", options.type);
-    ts.dumpProperty("clamping", options.clamping);
-    ts.dumpProperty("animated", options.animated == ScrollIsAnimated::Yes);
-    ts.dumpProperty("snap point selection method", options.snapPointSelectionMethod);
-    ts.dumpProperty("original scroll delta", options.originalScrollDelta ? *options.originalScrollDelta : FloatSize());
+    ts.dumpProperty("type"_s, options.type);
+    ts.dumpProperty("clamping"_s, options.clamping);
+    ts.dumpProperty("animated"_s, options.animated == ScrollIsAnimated::Yes);
+    ts.dumpProperty("snap point selection method"_s, options.snapPointSelectionMethod);
+    ts.dumpProperty("original scroll delta"_s, options.originalScrollDelta ? *options.originalScrollDelta : FloatSize());
+    ts.dumpProperty("interrupts animation"_s, options.interruptsAnimation == ScrollInterruptsAnimation::Yes);
 
     return ts;
 }
@@ -197,10 +221,13 @@ TextStream& operator<<(TextStream& ts, ScrollSnapPointSelectionMethod option)
 {
     switch (option) {
     case ScrollSnapPointSelectionMethod::Directional:
-        ts << "Directional";
+        ts << "Directional"_s;
         break;
     case ScrollSnapPointSelectionMethod::Closest:
-        ts << "Closest";
+        ts << "Closest"_s;
+        break;
+    case ScrollSnapPointSelectionMethod::Paging:
+        ts << "Paging"_s;
         break;
     }
     return ts;

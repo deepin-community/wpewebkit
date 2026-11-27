@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *           (C) 2006 Alexey Proskuryakov (ap@nypop.com)
  *
  * This library is free software; you can redistribute it and/or
@@ -27,21 +27,30 @@
 
 #include "Document.h"
 #include "ElementAncestorIteratorInlines.h"
+#include "ElementChildIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "ElementIterator.h"
+#include "HTMLDivElement.h"
+#include "HTMLLegendElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
 #include "HTMLSelectElement.h"
+#include "HTMLSlotElement.h"
+#include "NodeTraversal.h"
 #include "PseudoClassChangeInvalidation.h"
-#include "RenderMenuList.h"
 #include "NodeRenderStyle.h"
+#include "ScriptDisallowedScope.h"
+#include "ScriptElement.h"
+#include "Settings.h"
 #include "StyleResolver.h"
+#include "Text.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLOptGroupElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLOptGroupElement);
 
 using namespace HTMLNames;
 
@@ -56,9 +65,116 @@ Ref<HTMLOptGroupElement> HTMLOptGroupElement::create(const QualifiedName& tagNam
     return adoptRef(*new HTMLOptGroupElement(tagName, document));
 }
 
+void HTMLOptGroupElement::invalidateShadowTree()
+{
+    if (!document().settings().htmlEnhancedSelectEnabled())
+        return;
+
+    if (m_shadowTreeNeedsUpdate)
+        return;
+
+    m_shadowTreeNeedsUpdate = true;
+    if (isConnected())
+        protect(document())->addElementWithPendingUserAgentShadowTreeUpdate(*this);
+}
+
+void HTMLOptGroupElement::updateUserAgentShadowTree()
+{
+    if (!m_shadowTreeNeedsUpdate)
+        return;
+
+    m_shadowTreeNeedsUpdate = false;
+    protect(document())->removeElementWithPendingUserAgentShadowTreeUpdate(*this);
+
+    if (!m_ownerSelect && !userAgentShadowRoot())
+        return;
+
+    if (!userAgentShadowRoot()) {
+        if (m_legendChildCount || attributeWithoutSynchronization(labelAttr).isNull())
+            return;
+
+        ensureUserAgentShadowRoot();
+    }
+
+    Ref labelContainer = *m_labelContainer;
+    auto labelValue = attributeWithoutSynchronization(labelAttr);
+
+    ScriptDisallowedScope::EventAllowedScope labelContainerScope { labelContainer };
+
+    labelContainer->setTextContent(String { labelValue });
+    if (m_ownerSelect && !labelValue.isNull() && !m_legendChildCount)
+        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueBlock);
+    else
+        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+}
+
+void HTMLOptGroupElement::didAddUserAgentShadowRoot(ShadowRoot& root)
+{
+    Ref document = this->document();
+    ScriptDisallowedScope::EventAllowedScope rootScope { root };
+
+    Ref labelContainer = HTMLDivElement::create(document);
+    ScriptDisallowedScope::EventAllowedScope labelContainerScope { labelContainer };
+    labelContainer->setInlineStyleProperty(CSSPropertyPaddingInlineStart, 0.5, CSSUnitType::CSS_EM);
+    labelContainer->setInlineStyleProperty(CSSPropertyPaddingInlineEnd, 0.5, CSSUnitType::CSS_EM);
+    m_labelContainer = labelContainer;
+    root.appendChild(WTF::move(labelContainer));
+
+    root.appendChild(HTMLSlotElement::create(slotTag, document));
+}
+
+auto HTMLOptGroupElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> NeedsPostConnectionSteps
+{
+    auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
+
+    if (!document().settings().htmlEnhancedSelectParsingEnabled())
+        return result;
+
+    if (!m_ownerSelect) {
+        if (RefPtr select = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes)) {
+            m_ownerSelect = select.get();
+            select->setRecalcListItems();
+        }
+    }
+
+    if (insertionType.connectedToDocument && m_shadowTreeNeedsUpdate)
+        protect(document())->addElementWithPendingUserAgentShadowTreeUpdate(*this);
+
+    return result;
+}
+
+void HTMLOptGroupElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+{
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+
+    if (removalType.disconnectedFromDocument && m_shadowTreeNeedsUpdate)
+        protect(document())->removeElementWithPendingUserAgentShadowTreeUpdate(*this);
+
+    if (!document().settings().htmlEnhancedSelectParsingEnabled() || !m_ownerSelect)
+        return;
+
+    if (auto* select = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes)) {
+        ASSERT_UNUSED(select, select == m_ownerSelect.get());
+        return;
+    }
+
+    if (RefPtr select = std::exchange(m_ownerSelect, nullptr).get()) {
+        select->setRecalcListItems();
+        invalidateShadowTree();
+    }
+}
+
 bool HTMLOptGroupElement::isDisabledFormControl() const
 {
     return m_isDisabled;
+}
+
+bool HTMLOptGroupElement::isActuallyDisabled() const
+{
+    if (HTMLElement::isActuallyDisabled())
+        return true;
+    RefPtr select = ownerSelectElement();
+    return select && select->isDisabledFormControl();
 }
 
 bool HTMLOptGroupElement::isFocusable() const
@@ -77,6 +193,11 @@ const AtomString& HTMLOptGroupElement::formControlType() const
 
 void HTMLOptGroupElement::childrenChanged(const ChildChange& change)
 {
+    if (document().settings().htmlEnhancedSelectParsingEnabled()) {
+        HTMLElement::childrenChanged(change);
+        return;
+    }
+
     bool isRelevant = change.affectsElements == ChildChange::AffectsElements::Yes;
     RefPtr select = isRelevant ? ownerSelectElement() : nullptr;
     if (!isRelevant || !select) {
@@ -101,12 +222,26 @@ void HTMLOptGroupElement::attributeChanged(const QualifiedName& name, const Atom
             Style::PseudoClassChangeInvalidation disabledInvalidation(*this, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } });
 
             Vector<Style::PseudoClassChangeInvalidation> optionInvalidation;
-            for (auto& descendant : descendantsOfType<HTMLOptionElement>(*this))
+            for (Ref descendant : descendantsOfType<HTMLOptionElement>(*this))
                 optionInvalidation.append({ descendant, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } } });
 
             m_isDisabled = newDisabled;
         }
-    }
+    } else if (name == labelAttr)
+        invalidateShadowTree();
+}
+
+void HTMLOptGroupElement::legendChildAdded()
+{
+    m_legendChildCount++;
+    invalidateShadowTree();
+}
+
+void HTMLOptGroupElement::legendChildRemoved()
+{
+    ASSERT(m_legendChildCount);
+    m_legendChildCount--;
+    invalidateShadowTree();
 }
 
 void HTMLOptGroupElement::recalcSelectOptions()
@@ -119,19 +254,33 @@ void HTMLOptGroupElement::recalcSelectOptions()
 
 String HTMLOptGroupElement::groupLabelText() const
 {
-    String itemText = document().displayStringModifiedByEncoding(attributeWithoutSynchronization(labelAttr));
-    
+    if (document().settings().htmlEnhancedSelectEnabled() && m_legendChildCount) {
+        if (RefPtr legend = childrenOfType<HTMLLegendElement>(*this).first()) {
+            StringBuilder text;
+            for (RefPtr node = legend->firstChild(); node; node = isScriptElement(*node) ? NodeTraversal::nextSkippingChildren(*node, legend.get()) : NodeTraversal::next(*node, legend.get())) {
+                if (auto* textNode = dynamicDowncast<Text>(*node))
+                    text.append(textNode->data());
+            }
+            return text.toString().trim(isASCIIWhitespace).simplifyWhiteSpace(isASCIIWhitespace);
+        }
+    }
+
+    String itemText = protect(document())->displayStringModifiedByEncoding(attributeWithoutSynchronization(labelAttr));
+
     // In WinIE, leading and trailing whitespace is ignored in options and optgroups. We match this behavior.
     itemText = itemText.trim(deprecatedIsSpaceOrNewline);
     // We want to collapse our whitespace too.  This will match other browsers.
     itemText = itemText.simplifyWhiteSpace(deprecatedIsSpaceOrNewline);
-        
+
     return itemText;
 }
-    
+
 HTMLSelectElement* HTMLOptGroupElement::ownerSelectElement() const
 {
-    return dynamicDowncast<HTMLSelectElement>(parentNode());
+    if (!document().settings().htmlEnhancedSelectParsingEnabled())
+        return dynamicDowncast<HTMLSelectElement>(parentNode());
+
+    return m_ownerSelect.get();
 }
 
 bool HTMLOptGroupElement::accessKeyAction(bool)
@@ -143,4 +292,4 @@ bool HTMLOptGroupElement::accessKeyAction(bool)
     return false;
 }
 
-} // namespace
+} // namespace WebCore

@@ -35,24 +35,21 @@
 #include <WebCore/Timer.h>
 
 namespace WebKit {
-class DrawingAreaWC;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::DrawingAreaWC> : std::true_type { };
-}
-
-namespace WebKit {
 
 class DrawingAreaWC final
     : public DrawingArea
     , public GraphicsLayerWC::Observer {
 public:
-    DrawingAreaWC(WebPage&, const WebPageCreationParameters&);
+    static Ref<DrawingAreaWC> create(WebPage& webPage, const WebPageCreationParameters& parameters)
+    {
+        return adoptRef(*new DrawingAreaWC(webPage, parameters));
+    }
+
     ~DrawingAreaWC() override;
 
 private:
+    DrawingAreaWC(WebPage&, const WebPageCreationParameters&);
+
     // DrawingArea
     WebCore::GraphicsLayerFactory* graphicsLayerFactory() override;
     void setNeedsDisplay() override;
@@ -60,21 +57,19 @@ private:
     void scroll(const WebCore::IntRect& scrollRect, const WebCore::IntSize& scrollDelta) override;
     void updateRenderingWithForcedRepaintAsync(WebPage&, CompletionHandler<void()>&&) override;
     void triggerRenderingUpdate() override;
-    void didChangeViewportAttributes(WebCore::ViewportAttributes&&) override { }
-    void deviceOrPageScaleFactorChanged() override { }
     bool enterAcceleratedCompositingModeIfNeeded() override { return false; }
     void setLayerTreeStateIsFrozen(bool) override;
     bool layerTreeStateIsFrozen() const override { return m_isRenderingSuspended; }
 #if USE(GRAPHICS_LAYER_TEXTURE_MAPPER)    
     void updateGeometry(const WebCore::IntSize&, CompletionHandler<void()>&&) override { }
 #endif
-    void updateGeometryWC(uint64_t, WebCore::IntSize, float deviceScaleFactor) override;
+    void updateGeometryWC(uint64_t, WebCore::IntSize, float deviceScaleFactor, float intrinsicDeviceScaleFactor) override;
     void setRootCompositingLayer(WebCore::Frame&, WebCore::GraphicsLayer*) override;
     void addRootFrame(WebCore::FrameIdentifier) override;
     void attachViewOverlayGraphicsLayer(WebCore::FrameIdentifier, WebCore::GraphicsLayer*) override;
     void updatePreferences(const WebPreferencesStore&) override;
     bool shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView&) const override;
-    void displayDidRefresh() override;
+    void displayDidRefresh(MonotonicTime = MonotonicTime::now()) override;
     // GraphicsLayerWC::Observer
     void graphicsLayerAdded(GraphicsLayerWC&) override;
     void graphicsLayerRemoved(GraphicsLayerWC&) override;
@@ -97,7 +92,7 @@ private:
     RootLayerInfo* rootLayerInfoWithFrameIdentifier(WebCore::FrameIdentifier);
 
     WebCore::GraphicsLayerClient m_rootLayerClient;
-    std::unique_ptr<RemoteWCLayerTreeHostProxy> m_remoteWCLayerTreeHostProxy;
+    const std::unique_ptr<RemoteWCLayerTreeHostProxy> m_remoteWCLayerTreeHostProxy;
     WCLayerFactory m_layerFactory;
     DoublyLinkedList<GraphicsLayerWC> m_liveGraphicsLayers;
     WebCore::Timer m_updateRenderingTimer;
@@ -108,7 +103,7 @@ private:
     bool m_isForceRepaintCompletionHandlerDeferred { false };
     WCUpdateInfo m_updateInfo;
     Vector<RootLayerInfo, 1> m_rootLayers;
-    Ref<WorkQueue> m_commitQueue;
+    const Ref<WorkQueue> m_commitQueue;
     int64_t m_backingStoreStateID { 0 };
     WebCore::Region m_dirtyRegion;
     WebCore::IntRect m_scrollRect;

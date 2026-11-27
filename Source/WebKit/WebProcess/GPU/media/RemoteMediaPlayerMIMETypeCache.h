@@ -28,9 +28,13 @@
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 
 #include <WebCore/MediaPlayerEnums.h>
+#include <WebCore/PlatformMediaDecodingType.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/StringHash.h>
 
 namespace WebCore {
@@ -41,22 +45,24 @@ namespace WebKit {
 
 class RemoteMediaPlayerManager;
 
-class RemoteMediaPlayerMIMETypeCache {
+class RemoteMediaPlayerMIMETypeCache final : public CanMakeThreadSafeCheckedPtr<RemoteMediaPlayerMIMETypeCache> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaPlayerMIMETypeCache);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteMediaPlayerMIMETypeCache);
 public:
     RemoteMediaPlayerMIMETypeCache(RemoteMediaPlayerManager&, WebCore::MediaPlayerEnums::MediaEngineIdentifier);
-    ~RemoteMediaPlayerMIMETypeCache() = default;
 
     HashSet<String>& supportedTypes();
     WebCore::MediaPlayerEnums::SupportsType supportsTypeAndCodecs(const WebCore::MediaEngineSupportParameters&);
     void addSupportedTypes(const Vector<String>&);
-    bool isEmpty() const;
+    bool NODELETE isEmpty() const;
 
 private:
-    RemoteMediaPlayerManager& m_manager;
+    Ref<RemoteMediaPlayerManager> manager() const;
+
+    ThreadSafeWeakRef<RemoteMediaPlayerManager> m_manager;
     WebCore::MediaPlayerEnums::MediaEngineIdentifier m_engineIdentifier;
 
-    using SupportedTypesAndCodecsKey = std::tuple<String, bool, bool, bool>;
+    using SupportedTypesAndCodecsKey = std::tuple<String, WebCore::PlatformMediaDecodingType, bool, WebCore::MediaPlaybackTargetType>;
     std::optional<HashMap<SupportedTypesAndCodecsKey, WebCore::MediaPlayerEnums::SupportsType>> m_supportsTypeAndCodecsCache;
     HashSet<String> m_supportedTypesCache;
     bool m_hasPopulatedSupportedTypesCacheFromGPUProcess { false };

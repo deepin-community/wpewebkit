@@ -22,22 +22,22 @@
 
 #pragma once
 
-#include "Color.h"
-#include "HTMLElement.h"
-#include "MediaQuery.h"
+#include <WebCore/Color.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/MediaQuery.h>
 
 namespace WebCore {
 
 class HTMLMetaElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLMetaElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLMetaElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLMetaElement);
 public:
     static Ref<HTMLMetaElement> create(Document&);
     static Ref<HTMLMetaElement> create(const QualifiedName&, Document&);
 
-    const AtomString& content() const;
-    const AtomString& httpEquiv() const;
-    const AtomString& name() const;
+    const AtomString& NODELETE content() const;
+    const AtomString& NODELETE httpEquiv() const;
+    const AtomString& NODELETE name() const;
 
     bool mediaAttributeMatches();
 
@@ -47,9 +47,9 @@ private:
     HTMLMetaElement(const QualifiedName&, Document&);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason = AttributeModificationReason::Directly) final;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode();
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps();
+    void removingSteps(RemovalType, ContainerNode&) final;
 
     void process(const AtomString& oldValue = nullAtom());
 

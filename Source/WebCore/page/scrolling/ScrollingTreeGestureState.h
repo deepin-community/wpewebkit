@@ -27,8 +27,9 @@
 
 #if ENABLE(ASYNC_SCROLLING)
 
-#include "ScrollTypes.h"
+#include <WebCore/ScrollTypes.h>
 #include <wtf/Markable.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
@@ -41,16 +42,16 @@ class ScrollingTreeGestureState {
 public:
     ScrollingTreeGestureState(ScrollingTree&);
 
-    void receivedWheelEvent(const PlatformWheelEvent&);
+    void NODELETE receivedWheelEvent(const PlatformWheelEvent&);
 
     bool handleGestureCancel(const PlatformWheelEvent&);
 
     void nodeDidHandleEvent(ScrollingNodeID, const PlatformWheelEvent&);
     
 private:
-    void clearAllNodes();
+    void NODELETE clearAllNodes();
 
-    ScrollingTree& m_scrollingTree;
+    ThreadSafeWeakRef<ScrollingTree> m_scrollingTree;
     Markable<ScrollingNodeID> m_mayBeginNodeID;
     Markable<ScrollingNodeID> m_activeNodeID;
 };

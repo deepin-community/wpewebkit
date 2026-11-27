@@ -38,6 +38,15 @@ namespace WGSL {
 
 using namespace Types;
 
+namespace Types {
+
+size_t Array::stride() const
+{
+    return WTF::roundUpToMultipleOf(element->alignment(), element->size());
+}
+
+} // namespace Types
+
 void Type::dump(PrintStream& out) const
 {
     WTF::switchOn(*this,
@@ -170,15 +179,10 @@ void Type::dump(PrintStream& out) const
         },
         [&](const TypeConstructor& constructor) {
             out.print(constructor.name);
-        },
-        [&](const Bottom&) {
-            // Bottom is an implementation detail and should never leak, but we
-            // keep the ability to print it in debug to help when dumping types
-            out.print("⊥");
         });
 }
 
-constexpr unsigned primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
+constexpr unsigned NODELETE primitivePair(Types::Primitive::Kind first, Types::Primitive::Kind second)
 {
     static_assert(sizeof(Types::Primitive::Kind) == 1);
     return static_cast<unsigned>(first) << 8 | second;
@@ -286,10 +290,10 @@ String Type::toString() const
 }
 
 // https://gpuweb.github.io/gpuweb/wgsl/#alignment-and-size
-unsigned Type::size() const
+std::optional<unsigned> Type::maybeSize() const
 {
     return WTF::switchOn(*this,
-        [&](const Primitive& primitive) -> unsigned {
+        [&](const Primitive& primitive) -> std::optional<unsigned> {
             switch (primitive.kind) {
             case Types::Primitive::F16:
                 return 2;
@@ -308,13 +312,13 @@ unsigned Type::size() const
             case Types::Primitive::AccessMode:
             case Types::Primitive::TexelFormat:
             case Types::Primitive::AddressSpace:
-                RELEASE_ASSERT_NOT_REACHED();
+                return std::nullopt;
             }
         },
-        [&](const Vector& vector) -> unsigned {
+        [&](const Vector& vector) -> std::optional<unsigned> {
             return vector.element->size() * vector.size;
         },
-        [&](const Matrix& matrix) -> unsigned {
+        [&](const Matrix& matrix) -> std::optional<unsigned> {
             // The size of the matrix is computed as: sizeof(array<vecR<T>, C>)
             // sizeof(vecR<T>)
             auto rowSize = matrix.rows * matrix.element->size();
@@ -322,10 +326,14 @@ unsigned Type::size() const
             auto rowAlignment = (matrix.rows == 2 ? 2 : 4) * matrix.element->alignment();
             return matrix.columns * WTF::roundUpToMultipleOf(rowAlignment, rowSize);
         },
-        [&](const Array& array) -> unsigned {
+        [&](const Array& array) -> std::optional<unsigned> {
             CheckedUint32 size = 1;
             if (auto* constantSize = std::get_if<unsigned>(&array.size))
                 size = *constantSize;
+            else if (auto* expression = std::get_if<AST::Expression*>(&array.size)) {
+                if (const auto& maybeConstantValue = (*expression)->constantValue())
+                    size = maybeConstantValue->integerValue();
+            }
             auto elementSize = array.element->size();
             auto stride = WTF::roundUpToMultipleOf(array.element->alignment(), elementSize);
             if (stride < elementSize)
@@ -335,43 +343,45 @@ unsigned Type::size() const
                 return std::numeric_limits<unsigned>::max();
             return size.value();
         },
-        [&](const Struct& structure) -> unsigned {
+        [&](const Struct& structure) -> std::optional<unsigned> {
             return structure.structure.size();
         },
-        [&](const PrimitiveStruct& structure) -> unsigned {
+        [&](const PrimitiveStruct& structure) -> std::optional<unsigned> {
             unsigned size = 0;
             for (auto* type : structure.values)
                 size += type->size();
             return size;
         },
-        [&](const Function&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const Function&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const Texture&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const Texture&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const TextureStorage&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const TextureStorage&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const TextureDepth&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const TextureDepth&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const Reference&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const Reference&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const Pointer&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const Pointer&) -> std::optional<unsigned> {
+            return std::nullopt;
         },
-        [&](const Atomic& a) -> unsigned {
+        [&](const Atomic& a) -> std::optional<unsigned> {
             RELEASE_ASSERT(a.element);
             return a.element->size();
         },
-        [&](const TypeConstructor&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Bottom&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
+        [&](const TypeConstructor&) -> std::optional<unsigned> {
+            return std::nullopt;
         });
+}
+
+unsigned Type::size() const
+{
+    return *maybeSize();
 }
 
 unsigned Type::alignment() const
@@ -447,9 +457,6 @@ unsigned Type::alignment() const
         },
         [&](const TypeConstructor&) -> unsigned {
             RELEASE_ASSERT_NOT_REACHED();
-        },
-        [&](const Bottom&) -> unsigned {
-            RELEASE_ASSERT_NOT_REACHED();
         });
 }
 
@@ -463,6 +470,9 @@ Packing Type::packing() const
             return Packing::PackedStruct;
     } else if (auto* vectorType = std::get_if<Types::Vector>(this)) {
         if (vectorType->size == 3)
+            return Packing::PackedVec3;
+    } else if (auto* matrixType = std::get_if<Types::Matrix>(this)) {
+        if (matrixType->rows == 3)
             return Packing::PackedVec3;
     } else if (auto* arrayType = std::get_if<Types::Array>(this)) {
         auto elementPacking = arrayType->element->packing();
@@ -541,9 +551,6 @@ bool Type::isConstructible() const
         },
         [&](const TypeConstructor&) -> bool {
             return false;
-        },
-        [&](const Bottom&) -> bool {
-            return true;
         });
 }
 
@@ -614,9 +621,6 @@ bool Type::isStorable() const
         },
         [&](const Pointer&) -> bool {
             return false;
-        },
-        [&](const Bottom&) -> bool {
-            return true;
         });
 }
 
@@ -687,9 +691,6 @@ bool Type::isHostShareable() const
         },
         [&](const Pointer&) -> bool {
             return false;
-        },
-        [&](const Bottom&) -> bool {
-            return true;
         });
 }
 
@@ -760,9 +761,6 @@ bool Type::hasFixedFootprint() const
         },
         [&](const Pointer&) -> bool {
             return false;
-        },
-        [&](const Bottom&) -> bool {
-            return true;
         });
 }
 
@@ -833,9 +831,6 @@ bool Type::hasCreationFixedFootprint() const
         },
         [&](const Pointer&) -> bool {
             return false;
-        },
-        [&](const Bottom&) -> bool {
-            return true;
         });
 }
 
@@ -897,21 +892,44 @@ const Type* shaderTypeForTexelFormat(TexelFormat format, const TypeStore& types)
 {
     switch (format) {
     case TexelFormat::BGRA8unorm:
+    case TexelFormat::R8snorm:
+    case TexelFormat::R8unorm:
+    case TexelFormat::RG8snorm:
+    case TexelFormat::RG8unorm:
     case TexelFormat::RGBA8unorm:
     case TexelFormat::RGBA8snorm:
+    case TexelFormat::RG16unorm:
+    case TexelFormat::RG16snorm:
+    case TexelFormat::RGBA16unorm:
+    case TexelFormat::RGBA16snorm:
+    case TexelFormat::R16unorm:
+    case TexelFormat::R16snorm:
+    case TexelFormat::R16float:
+    case TexelFormat::RGB10A2unorm:
     case TexelFormat::RGBA16float:
     case TexelFormat::R32float:
     case TexelFormat::RG32float:
     case TexelFormat::RGBA32float:
+    case TexelFormat::RG16float:
+    case TexelFormat::RG11B10ufloat:
         return types.f32Type();
     case TexelFormat::RGBA8uint:
+    case TexelFormat::RGB10A2uint:
     case TexelFormat::RGBA16uint:
+    case TexelFormat::R16uint:
+    case TexelFormat::R8uint:
+    case TexelFormat::RG8uint:
+    case TexelFormat::RG16uint:
     case TexelFormat::R32uint:
     case TexelFormat::RG32uint:
     case TexelFormat::RGBA32uint:
         return types.u32Type();
     case TexelFormat::RGBA8sint:
     case TexelFormat::RGBA16sint:
+    case TexelFormat::R16sint:
+    case TexelFormat::R8sint:
+    case TexelFormat::RG8sint:
+    case TexelFormat::RG16sint:
     case TexelFormat::R32sint:
     case TexelFormat::RG32sint:
     case TexelFormat::RGBA32sint:

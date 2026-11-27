@@ -32,17 +32,17 @@
 #include "MathMLRowElement.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderStyleInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 using namespace MathMLNames;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderMathMLMath);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLMath);
 
-RenderMathMLMath::RenderMathMLMath(MathMLRowElement& element, RenderStyle&& style)
-    : RenderMathMLRow(Type::MathMLMath, element, WTFMove(style))
+RenderMathMLMath::RenderMathMLMath(MathMLRowElement& element, Style::ComputedStyle&& style)
+    : RenderMathMLRow(Type::MathMLMath, element, WTF::move(style))
 {
     ASSERT(isRenderMathMLMath());
 }
@@ -55,31 +55,33 @@ void RenderMathMLMath::centerChildren(LayoutUnit contentWidth)
     if (!centerBlockOffset)
         return;
 
-    if (!style().isLeftToRightDirection())
+    if (!style().writingMode().deprecatedIsLeftToRightDirection())
         centerBlockOffset = -centerBlockOffset;
-    for (auto* child = firstChildBox(); child; child = child->nextSiblingBox()) {
-        if (!child->isInFlow())
-            continue;
-        auto repaintRect = child->checkForRepaintDuringLayout() ? std::make_optional(child->frameRect()) : std::nullopt;
+    for (CheckedPtr child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox()) {
+        auto repaintRect = child->checkForRepaintDuringLayout() ? std::make_optional(child->borderBoxRectInContainer()) : std::nullopt;
         child->move(centerBlockOffset, { });
         if (repaintRect) {
-            repaintRect->uniteEvenIfEmpty(child->frameRect());
+            repaintRect->uniteEvenIfEmpty(child->borderBoxRectInContainer());
             repaintRectangle(*repaintRect);
         }
     }
 }
 
-void RenderMathMLMath::layoutBlock(bool relayoutChildren, LayoutUnit pageLogicalHeight)
+void RenderMathMLMath::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit pageLogicalHeight)
 {
     ASSERT(needsLayout());
 
-    if (style().display() != DisplayType::Block) {
+    if (style().display() != Style::DisplayType::BlockFlow) {
         RenderMathMLRow::layoutBlock(relayoutChildren, pageLogicalHeight);
         return;
     }
 
-    if (!relayoutChildren && simplifiedLayout())
+    insertPositionedChildrenIntoContainingBlock();
+
+    if (relayoutChildren == RelayoutChildren::No && simplifiedLayout())
         return;
+
+    layoutFloatingChildren();
 
     recomputeLogicalWidth();
     computeAndSetBlockDirectionMarginsOfChildren();
@@ -97,16 +99,12 @@ void RenderMathMLMath::layoutBlock(bool relayoutChildren, LayoutUnit pageLogical
         centerChildren(width);
     else
         setLogicalWidth(width);
-    shiftRowItems(0_lu, borderAndPaddingBefore());
+    shiftInFlowChildren(0_lu, borderAndPaddingBefore());
 
     setLogicalHeight(ascent + descent + borderAndPaddingLogicalHeight() + horizontalScrollbarHeight());
     updateLogicalHeight();
 
-    layoutPositionedObjects(relayoutChildren);
-
-    updateScrollInfoAfterLayout();
-
-    clearNeedsLayout();
+    layoutOutOfFlowBoxes(relayoutChildren);
 }
 
 }

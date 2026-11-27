@@ -60,6 +60,10 @@ public:
     static Ref<WebGeolocationManagerProxy> create(WebProcessPool*);
     ~WebGeolocationManagerProxy();
 
+    // WebContextSupplement, IPC::MessageReceiver.
+    void ref() const final { API::ObjectImpl<API::Object::Type::GeolocationManager>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::GeolocationManager>::deref(); }
+
     void setProvider(std::unique_ptr<API::GeolocationProvider>&&);
 
     void providerDidChangePosition(WebGeolocationPosition*);
@@ -68,18 +72,14 @@ public:
     void resetPermissions();
 #endif
 
-    using API::Object::ref;
-    using API::Object::deref;
-
     void webProcessIsGoingAway(WebProcessProxy&);
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
 
 private:
     explicit WebGeolocationManagerProxy(WebProcessPool*);
 
     // WebContextSupplement
     void processPoolDestroyed() override;
-    void refWebContextSupplement() override;
-    void derefWebContextSupplement() override;
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -101,7 +101,7 @@ private:
 #endif
 
     struct PerDomainData {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PerDomainData);
         WeakHashSet<WebProcessProxy> watchers;
         WeakHashSet<WebProcessProxy> watchersNeedingHighAccuracy;
         std::optional<WebCore::GeolocationPositionData> lastPosition;
@@ -112,8 +112,8 @@ private:
 #endif
     };
 
-    bool isUpdating(const PerDomainData&) const;
-    bool isHighAccuracyEnabled(const PerDomainData&) const;
+    bool NODELETE isUpdating(const PerDomainData&) const;
+    bool NODELETE isHighAccuracyEnabled(const PerDomainData&) const;
     void providerStartUpdating(PerDomainData&, const WebCore::RegistrableDomain&);
     void providerStopUpdating(PerDomainData&);
     void providerSetEnabledHighAccuracy(PerDomainData&, bool enabled);
@@ -123,3 +123,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGeolocationManagerProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::GeolocationManager; }
+SPECIALIZE_TYPE_TRAITS_END()

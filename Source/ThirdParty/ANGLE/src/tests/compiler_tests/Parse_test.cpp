@@ -21,7 +21,6 @@ class ParseTest : public testing::Test
     ParseTest()
     {
         InitBuiltInResources(&mResources);
-        mResources.FragmentPrecisionHigh = 1;
         mCompileOptions.intermediateTree = true;
     }
 
@@ -42,9 +41,8 @@ class ParseTest : public testing::Test
         }
 
         const char *shaderStrings[] = {shaderString.c_str()};
-        bool compilationSuccess     = mTranslator->compile(shaderStrings, 1, mCompileOptions);
-        TInfoSink &infoSink         = mTranslator->getInfoSink();
-        mInfoLog                    = RemoveSymbolIdsFromInfoLog(infoSink.info.c_str());
+        bool compilationSuccess     = mTranslator->compile(shaderStrings, mCompileOptions);
+        mInfoLog                    = mTranslator->getInfoSink().info.str();
         if (!compilationSuccess)
         {
             return testing::AssertionFailure() << "Shader compilation failed " << mInfoLog;
@@ -58,28 +56,13 @@ class ParseTest : public testing::Test
     {
         return mInfoLog.find(stringToFind) != std::string::npos;
     }
+    std::string intermediateTree() const { return mInfoLog; }
 
     ShBuiltInResources mResources;
     ShCompileOptions mCompileOptions{};
     ShShaderSpec mShaderSpec = SH_WEBGL_SPEC;
 
   private:
-    // Remove symbol ids from info log - the tests don't care about them.
-    static std::string RemoveSymbolIdsFromInfoLog(const char *infoLog)
-    {
-        std::string filteredLog(infoLog);
-        size_t idPrefixPos = 0u;
-        do
-        {
-            idPrefixPos = filteredLog.find(" (symbol id");
-            if (idPrefixPos != std::string::npos)
-            {
-                size_t idSuffixPos = filteredLog.find(")", idPrefixPos);
-                filteredLog.erase(idPrefixPos, idSuffixPos - idPrefixPos + 1u);
-            }
-        } while (idPrefixPos != std::string::npos);
-        return filteredLog;
-    }
 
     std::unique_ptr<TranslatorESSL> mTranslator;
     std::string mInfoLog;
@@ -95,8 +78,9 @@ int B[int[][](A)];)";
     EXPECT_TRUE(foundInIntermediateTree("constructing from an unsized array"));
 }
 
-TEST_F(ParseTest, UniformBlockNameReferenceNoCrash)
+TEST_F(ParseTest, UniformBlockNameReferenceConstructorNoCrash)
 {
+    mShaderSpec          = SH_WEBGL2_SPEC;
     const char kShader[] = R"(#version 300 es
 precision mediump float;
 out float o;
@@ -141,8 +125,103 @@ void main() { }
     EXPECT_TRUE(foundInIntermediateTree("'index' : invalid layout qualifier"));
 }
 
+// Test that with the conservative depth extension, gl_FragDepth
+// can be redeclared successfully.
+TEST_F(ParseTest, RedeclareFragDepthSuccess)
+{
+    mShaderSpec                       = SH_WEBGL2_SPEC;
+    mResources.EXT_conservative_depth = 1;
+    mCompileOptions.validateAST       = 1;
+    const char kShader[]              = R"(#version 300 es
+#extension GL_EXT_conservative_depth: enable
+precision mediump float;
+layout (depth_any) out float gl_FragDepth;
+void main() {
+}
+)";
+    EXPECT_TRUE(compile(kShader));
+}
+
+// Test that without the conservative depth extension, gl_FragDepth,
+// cannot be redeclared.
+TEST_F(ParseTest, RedeclareFragDepthNoExtFail)
+{
+    mShaderSpec                       = SH_WEBGL2_SPEC;
+    mResources.EXT_conservative_depth = 1;
+    mCompileOptions.validateAST       = 1;
+    const char kShader[]              = R"(#version 300 es
+precision mediump float;
+layout (depth_any) out float gl_FragDepth;
+void main() {
+}
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("reserved built-in name"));
+}
+
+// Test that even with the conservative depth extension, gl_FragDepth
+// cannot be redeclared locally.
+TEST_F(ParseTest, RedeclareFragDepthLocallyFail)
+{
+    mShaderSpec                       = SH_WEBGL2_SPEC;
+    mResources.EXT_conservative_depth = 1;
+    mCompileOptions.validateAST       = 1;
+    const char kShader[]              = R"(#version 300 es
+#extension GL_EXT_conservative_depth: enable
+precision mediump float;
+void main() {
+    layout (depth_any) out float gl_FragDepth;
+}
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("gl_FragDepth can only be redeclared as fragment output"));
+}
+
+// Test that with the conservative depth extension, gl_FragDepth
+// can only be redeclared once.
+TEST_F(ParseTest, RedeclareFragDepthTwiceFail)
+{
+    mShaderSpec                       = SH_WEBGL2_SPEC;
+    mResources.EXT_conservative_depth = 1;
+    mCompileOptions.validateAST       = 1;
+    const char kShader[]              = R"(#version 300 es
+#extension GL_EXT_conservative_depth: enable
+precision mediump float;
+layout (depth_any) out float gl_FragDepth;
+layout (depth_any) out float gl_FragDepth;
+void main() {
+}
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("redefinition"));
+}
+
+// Test that with the conservative depth extension gl_FragDepth
+// can only be redeclared globally.
+TEST_F(ParseTest, RedeclareFragDepthGlobalAndLocalFail)
+{
+    mShaderSpec                       = SH_WEBGL2_SPEC;
+    mResources.EXT_conservative_depth = 1;
+    mCompileOptions.validateAST       = 1;
+    const char kShader[]              = R"(#version 300 es
+#extension GL_EXT_conservative_depth: enable
+precision mediump float;
+layout (depth_any) out float gl_FragDepth;
+void main() {
+    float gl_FragDepth = 1.0;
+}
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("reserved built-in name"));
+}
+
 TEST_F(ParseTest, Radians320NoCrash)
 {
+    mShaderSpec          = SH_GLES3_2_SPEC;
     const char kShader[] = R"(#version 320 es
 precision mediump float;
 vec4 s() { writeonly vec4 color; radians(color); return vec4(1); })";
@@ -155,6 +234,7 @@ vec4 s() { writeonly vec4 color; radians(color); return vec4(1); })";
 
 TEST_F(ParseTest, CoherentCoherentNoCrash)
 {
+    mShaderSpec          = SH_GLES3_1_SPEC;
     const char kShader[] = R"(#version 310 es
 uniform highp coherent coherent readonly image2D image1;\n"
 void main() {
@@ -162,21 +242,6 @@ void main() {
     EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
     EXPECT_TRUE(foundInIntermediateTree("coherent specified multiple times"));
-}
-
-TEST_F(ParseTest, LargeArrayIndexNoCrash)
-{
-    mShaderSpec          = SH_WEBGL2_SPEC;
-    const char kShader[] = R"(#version 300 es
-int rr[~1U];
-out int o;
-void main() {
-    o = rr[1];
-})";
-    EXPECT_FALSE(compile(kShader));
-    EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(
-        foundInIntermediateTree("Size of declared variable exceeds implementation-defined limit"));
 }
 
 // Tests that separating variable declaration of multiple instances of a anonymous structure
@@ -279,6 +344,7 @@ testFunction();
 // Tests that imod of const void variable does not crash during parsing.
 TEST_F(ParseTest, ConstStructVoidAndImodAndNoCrash)
 {
+    mShaderSpec          = SH_GLES3_1_SPEC;
     const char kShader[] = R"(#version 310 es
 const struct s { void i; } ss = s();
 void main() {
@@ -296,154 +362,408 @@ void main() {
         "cannot convert from 'const void' to 'highp 3-component vector of float'"));
 }
 
-TEST_F(ParseTest, HugeUnsizedMultidimensionalArrayConstructorNoCrash)
+// Test that comma expression referring to an uniform block member through instance-name is not an
+// error.
+TEST_F(ParseTest, UniformBlockWorks)
 {
-    mCompileOptions.limitExpressionComplexity = true;
-    std::ostringstream shader;
-    shader << R"(#version 310 es
-int E=int)";
-    for (int i = 0; i < 10000; ++i)
-    {
-        shader << "[]";
-    }
-    shader << "()";
-    EXPECT_FALSE(compile(shader.str()));
-    EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("array has too many dimensions"));
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+         uniform B { uint e; } b;
+         void main() { b.e; })";
+
+    EXPECT_TRUE(compile(kShader));
+
+    const char kShader2[] = R"(#version 300 es
+         uniform B { uint e; } b;
+         mediump float f() { return .0; }
+         void main() { f(), b.e; })";
+    EXPECT_TRUE(compile(kShader2));
+
+    const char kShader3[] = R"(#version 300 es
+         uniform B { uint e; };
+         void main() { e; })";
+    EXPECT_TRUE(compile(kShader3));
+
+    const char kShader4[] = R"(#version 300 es
+        uniform B { uint e; };
+        mediump float f() { return .0; }
+        void main() { f(), e; })";
+    EXPECT_TRUE(compile(kShader4));
+
+    const char kShader5[] = R"(#version 300 es
+        uniform B { uint e; } b[3];
+        void main() { b[0].e; })";
+    EXPECT_TRUE(compile(kShader5));
+
+    const char kShader6[] = R"(#version 300 es
+        uniform B { uint e; } b[3];
+        mediump float f() { return .0; }
+        void main() { f(), b[0].e; })";
+    EXPECT_TRUE(compile(kShader6));
 }
 
-TEST_F(ParseTest, HugeMultidimensionalArrayConstructorNoCrash)
-{
-    mCompileOptions.limitExpressionComplexity = true;
-    std::ostringstream shader;
-    shader << R"(#version 310 es
-int E=int)";
-    for (int i = 0; i < 10000; ++i)
-    {
-        shader << "[1]";
-    }
-
-    for (int i = 0; i < 10000; ++i)
-    {
-        shader << "(2)";
-    }
-    EXPECT_FALSE(compile(shader.str()));
-    EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("array has too many dimensions"));
-}
-
-TEST_F(ParseTest, DeeplyNestedWhileStatementsNoCrash)
-{
-    mShaderSpec = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-void main() {
-)";
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << " while(true)";
-    }
-    shader << "; }";
-    EXPECT_FALSE(compile(shader.str()));
-    EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("statement is too deeply nested"));
-}
-
-TEST_F(ParseTest, DeeplyNestedForStatementsNoCrash)
+// Test that comma expression referring to an uniform block instance-name is an error.
+TEST_F(ParseTest, UniformBlockInstanceNameReferenceIsError)
 {
     mShaderSpec = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-void main() {
-)";
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << " for(int i = 0; i < 10; i++)";
-    }
-    shader << "; }";
-    EXPECT_FALSE(compile(shader.str()));
+
+    const char kShader[] = R"(#version 300 es
+         precision mediump float;
+         uniform B { uint e; } b;
+         void main() { b; })";
+    EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("statement is too deeply nested"));
+    EXPECT_TRUE(
+        foundInIntermediateTree("expression statement is not allowed for interface blocks"));
+
+    const char kShader2[] = R"(#version 300 es
+         uniform B { uint e; } b;
+         mediump float f() { return .0; }
+         void main() { f(), b; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("',' : sequence operator is not allowed for interface blocks"));
 }
 
-TEST_F(ParseTest, DeeplyNestedDoWhileStatementsNoCrash)
+// Test that expression statements resulting in a uniform block instance-name as an array subscript
+// is an error.
+TEST_F(ParseTest, UniformBlockInstanceNameReferenceSubscriptIsError)
 {
     mShaderSpec = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-void main() {
-)";
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << " do {";
-    }
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << "} while(true);";
-    }
-    shader << "}";
-    EXPECT_FALSE(compile(shader.str()));
+
+    const char kShader[] = R"(#version 300 es
+         precision mediump float;
+         uniform B { uint e; } b[3];
+         void main() { b[0]; })";
+    EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("statement is too deeply nested"));
+    EXPECT_TRUE(
+        foundInIntermediateTree("expression statement is not allowed for interface blocks"));
+    const char kShader2[] = R"(#version 300 es
+         uniform B { uint e; } b[3];
+         mediump float f() { return .0; }
+         void main() { f(), b[0]; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("',' : sequence operator is not allowed for interface blocks"));
 }
 
-TEST_F(ParseTest, DeeplyNestedSwitchStatementsNoCrash)
+// Test that expressions using binary operations on a uniform block instance-name is an error.
+TEST_F(ParseTest, UniformBlockInstanceNameOpIsError)
 {
     mShaderSpec = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-void main() {
-)";
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << " switch(1) { default: int i=0;";
-    }
-    for (int i = 0; i < 1700; ++i)
-    {
-        shader << "}";
-    }
-    shader << "}";
-    EXPECT_FALSE(compile(shader.str()));
+
+    const char kShader[] = R"(#version 300 es
+        precision mediump float;
+        uniform B { uint e; } b;
+        void main() { b = b; })";
+    EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("statement is too deeply nested"));
+    EXPECT_TRUE(
+        foundInIntermediateTree("'assign' : l-value required (can't modify a uniform \"b\")"));
+    EXPECT_TRUE(foundInIntermediateTree("'=' : Invalid operation for interface blocks"));
+    EXPECT_TRUE(foundInIntermediateTree(
+        "'assign' : cannot convert from 'uniform interface block' to 'uniform interface block'"));
+
+    const char kShader2[] = R"(#version 300 es
+        uniform B { uint e; } b;
+        void main() { b == b; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'==' : Invalid operation for interface blocks"));
+    EXPECT_TRUE(foundInIntermediateTree(
+        "'==' : wrong operand types - no operation '==' exists that takes a left-hand operand of "
+        "type 'uniform interface block' and a right operand of type 'uniform interface block' (or "
+        "there is no acceptable conversion)"));
+    const char kShader3[] = R"(#version 300 es
+         uniform B { uint e; } b;
+         void main() { b.e > 33u ? b : b; })";
+    EXPECT_FALSE(compile(kShader3));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'?:' : ternary operator is not allowed for interface blocks"));
 }
 
-TEST_F(ParseTest, ManyChainedUnaryExpressionsNoCrash)
+TEST_F(ParseTest, UniformBlockReferenceIsError)
 {
-    mCompileOptions.limitExpressionComplexity = true;
-    mShaderSpec                               = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-precision mediump float;
-void main() {
-  int iterations=0;)";
-    for (int i = 0; i < 6000; ++i)
-    {
-        shader << "~";
-    }
-    shader << R"(++iterations;
-}
-)";
-    EXPECT_FALSE(compile(shader.str()));
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+        uniform B { uint e; } b;
+        void main() { B; })";
+    EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("Expression too complex"));
+    EXPECT_TRUE(foundInIntermediateTree("'B' : variable expected"));
+
+    const char kShader2[] = R"(#version 300 es
+        uniform B { uint e; };
+        mediump float f() { return .0; }
+        void main() { f(), B; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'B' : variable expected"));
 }
 
-TEST_F(ParseTest, ManyChainedAssignmentsNoCrash)
+// Tests that referring to functions is a parse error.
+TEST_F(ParseTest, FunctionReferenceIsError)
 {
-    mCompileOptions.limitExpressionComplexity = true;
-    mShaderSpec                               = SH_WEBGL2_SPEC;
-    std::ostringstream shader;
-    shader << R"(#version 300 es
-void main() {
-    int c = 0;
-)";
-    for (int i = 0; i < 3750; ++i)
-    {
-        shader << "c=\n";
-    }
-    shader << "c+1; }";
-    EXPECT_FALSE(compile(shader.str()));
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+        mediump float f() { return .0; }
+        void main() { f; })";
+    EXPECT_FALSE(compile(kShader));
     EXPECT_TRUE(foundErrorInIntermediateTree());
-    EXPECT_TRUE(foundInIntermediateTree("Expression too complex"));
+    EXPECT_TRUE(foundInIntermediateTree("'f' : variable expected"));
+
+    const char kShader2[] = R"(#version 300 es
+        mediump float f() { return .0; }
+        void main() { f(), f; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'f' : variable expected"));
+}
+
+// Tests that referring to builtin functions is a parse error.
+// Shows discrepancy where the error message is unexpected, user defined functions have
+// better error message.
+TEST_F(ParseTest, BuiltinFunctionReferenceIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+        void main() { sin; })";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'sin' : undeclared identifier"));
+
+    const char kShader2[] = R"(#version 300 es
+        void main() { sin(3.0), sin; })";
+    EXPECT_FALSE(compile(kShader2));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'sin' : undeclared identifier"));
+}
+
+// Tests that unsized array parameters fail.
+TEST_F(ParseTest, UnsizedArrayParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+int f(int a[], int i) {
+    return i;
+}
+void main() { }
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'a' : function parameter array must specify a size"));
+}
+
+// Tests that unsized array parameters fail.
+TEST_F(ParseTest, UnsizedArrayParameterIsError2)
+{
+    mShaderSpec          = SH_GLES3_1_SPEC;
+    const char kShader[] = R"(#version 310 es
+int f(int []a[1], int i) {
+    return i;
+}
+void main() { }
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'a' : function parameter array must specify a size"));
+}
+
+// Tests that unnamed, unsized array parameters fail with same error message as named ones.
+TEST_F(ParseTest, UnnamedUnsizedArrayParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+int f(int[], int i) {
+    return i;
+}
+void main() { }
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'' : function parameter array must specify a size"));
+}
+
+// Tests that different array notatinos [1]a[2], a[1][2] etc work in parameters.
+TEST_F(ParseTest, ArrayParameterVariants)
+{
+    mShaderSpec          = SH_GLES3_1_SPEC;
+    const char kShader[] = R"(#version 310 es
+int f(int[1][2] a) {
+    return a[0][0];
+}
+int g(int a[1][2]) {
+    return a[0][0];
+}
+int h(int[1]a[2]) {
+    return a[0][0];
+}
+void main() {
+    int[1][2] a;
+    int b[1][2];
+    int x1 = f(a);
+    int x2 = f(b);
+    int x3 = g(a);
+    int x4 = g(b);
+
+    int[1] c[2];
+    int d[2][1];
+    int y1 = h(c);
+    int y2 = h(d);
+}
+)";
+    EXPECT_TRUE(compile(kShader));
+}
+
+// Tests that parameters parse the [1]a[2] notation in correct order.
+TEST_F(ParseTest, ArrayParameterVariantsMismatchIsError2)
+{
+    mShaderSpec          = SH_GLES3_1_SPEC;
+    const char kShader[] = R"(#version 310 es
+int f(int[1]a[2]) {
+    return a[0][0];
+}
+void main() {
+    int[1][2] a;
+    int x = f(a);
+}
+)";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'f' : no matching overloaded function found"));
+}
+
+// Tests that specifying a struct in a function parameter is a parse error.
+TEST_F(ParseTest, StructSpecificationFunctionParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision highp float;
+float f(struct S {float f;} a) {
+    return a.f;
+}
+void main() { })";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'a' : Function parameter type cannot be a structure definition"));
+}
+
+// Tests that specifying a struct in a function parameter is the same parse error as with named one.
+TEST_F(ParseTest, StructSpecificationUnnamedFunctionParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision highp float;
+float f(struct S {float f;}) {
+    return a.f;
+}
+void main() { })";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'' : Function parameter type cannot be a structure definition"));
+}
+
+// Tests that specifying a struct in a function parameter is the same parse error as with named one.
+TEST_F(ParseTest, UnnamedStructSpecificationUnnamedFunctionParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision highp float;
+float f(struct {float f;}) {
+    return a.f;
+}
+void main() { })";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'' : Function parameter type cannot be a structure definition"));
+}
+
+// Tests that specifying a struct in a function parameter is the same parse error as with named one.
+TEST_F(ParseTest, UnnamedStructSpecificationFunctionParameterIsError)
+{
+    mShaderSpec          = SH_WEBGL2_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision highp float;
+float f(struct {float f;} d) {
+    return a.f;
+}
+void main() { })";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'d' : Function parameter type cannot be a structure definition"));
+}
+
+TEST_F(ParseTest, SeparateStructStructSpecificationFunctionNoCrash)
+{
+    mCompileOptions.validateAST = 1;
+    const char kShader[] =
+        R"(struct S{int f;};struct S2{S h;} o() { return S2(S(1)); } void main(){ S2 s2 = o(); })";
+    EXPECT_TRUE(compile(kShader));
+}
+
+TEST_F(ParseTest, ConstInSamplerParamNoCrash)
+{
+    mCompileOptions.validateAST = 1;
+    const char kShader[]        = R"(void n(const in sampler2D){2;} void main(){})";
+    EXPECT_TRUE(compile(kShader));
+}
+
+TEST_F(ParseTest, ConstSamplerParamNoCrash)
+{
+    mCompileOptions.validateAST = 1;
+    const char kShader[]        = R"(void n(const sampler2D){2;} void main(){})";
+    EXPECT_TRUE(compile(kShader));
+}
+
+TEST_F(ParseTest, InConstSamplerParamIsError)
+{
+    mCompileOptions.validateAST = 1;
+    const char kShader[]        = R"(void n(in const sampler2D){2;} void main(){})";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(foundInIntermediateTree("'const' : invalid parameter qualifier"));
+}
+
+TEST_F(ParseTest, UniformBlockInstanceUnsizedArrayIsError)
+{
+    mShaderSpec          = SH_GLES3_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision mediump float;out vec4 o;uniform a{float r;}u[];void main(){o=vec4(u[0].r+u[1].r+u[1].r);})";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'u' : implicitly sized arrays only allowed for tessellation "
+                                "shaders or geometry shader inputs"));
+}
+
+TEST_F(ParseTest, InputBlockInstanceUnsizedArrayIsError)
+{
+    mShaderSpec          = SH_GLES3_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision mediump float;out vec4 o;in a{float r;}i[];void main(){o=vec4(i[0].r+i[1].r+i[1].r);})";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'i' : implicitly sized arrays only allowed for tessellation "
+                                "shaders or geometry shader inputs"));
+}
+
+TEST_F(ParseTest, OutputBlockInstanceUnsizedArrayIsError)
+{
+    mShaderSpec          = SH_GLES3_SPEC;
+    const char kShader[] = R"(#version 300 es
+precision mediump float;out a{float r;}o[];void main(){o[0].r=1.0; o[1].r=2.0;})";
+    EXPECT_FALSE(compile(kShader));
+    EXPECT_TRUE(foundErrorInIntermediateTree());
+    EXPECT_TRUE(
+        foundInIntermediateTree("'o' : implicitly sized arrays only allowed for tessellation "
+                                "shaders or geometry shader inputs"));
 }

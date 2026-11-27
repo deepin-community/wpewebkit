@@ -50,12 +50,11 @@ private:
     String responseMIMEType() const;
     bool canUseSheet(MIMETypeCheckHint, bool* hasValidMIMEType, bool* hasHTTPStatusOK) const;
     bool mayTryReplaceEncodedData() const final { return true; }
-    Ref<TextResourceDecoder> protectedDecoder() const;
 
     void didAddClient(CachedResourceClient&) final;
 
     void setEncoding(const String&) final;
-    String encoding() const final;
+    ASCIILiteral encoding() const final;
     const TextResourceDecoder* textResourceDecoder() const final { return m_decoder.ptr(); }
     void finishLoading(const FragmentedSharedBuffer*, const NetworkLoadMetrics&) final;
     void destroyDecodedData() final;

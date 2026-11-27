@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include "PageIdentifier.h"
-#include "ResourceRequestBase.h"
+#include <WebCore/PageIdentifier.h>
+#include <WebCore/ResourceRequestBase.h>
 #include "URLSoup.h"
 #include <wtf/glib/GRefPtr.h>
 
@@ -40,22 +40,22 @@ struct ResourceRequestPlatformData {
     bool acceptEncoding;
     uint16_t redirectCount;
 };
-using ResourceRequestData = std::variant<ResourceRequestBase::RequestData, ResourceRequestPlatformData>;
+using ResourceRequestData = Variant<ResourceRequestBase::RequestData, ResourceRequestPlatformData>;
 
 class ResourceRequest : public ResourceRequestBase {
 public:
-    explicit ResourceRequest(const String& url)
-        : ResourceRequestBase(URL({ }, url), ResourceRequestCachePolicy::UseProtocolCachePolicy)
+    explicit ResourceRequest(String&& url)
+        : ResourceRequestBase(URL({ }, WTF::move(url)), ResourceRequestCachePolicy::UseProtocolCachePolicy)
     {
     }
 
-    ResourceRequest(const URL& url)
-        : ResourceRequestBase(url, ResourceRequestCachePolicy::UseProtocolCachePolicy)
+    ResourceRequest(URL&& url)
+        : ResourceRequestBase(WTF::move(url), ResourceRequestCachePolicy::UseProtocolCachePolicy)
     {
     }
 
-    ResourceRequest(const URL& url, const String& referrer, ResourceRequestCachePolicy policy = ResourceRequestCachePolicy::UseProtocolCachePolicy)
-        : ResourceRequestBase(url, policy)
+    ResourceRequest(URL&& url, const String& referrer, ResourceRequestCachePolicy policy = ResourceRequestCachePolicy::UseProtocolCachePolicy)
+        : ResourceRequestBase(WTF::move(url), policy)
     {
         setHTTPReferrer(referrer);
     }
@@ -66,12 +66,12 @@ public:
     }
 
     ResourceRequest(ResourceRequestBase&& base)
-        : ResourceRequestBase(WTFMove(base))
+        : ResourceRequestBase(WTF::move(base))
     {
     }
 
     explicit ResourceRequest(ResourceRequestPlatformData&& platformData)
-        : ResourceRequestBase(WTFMove(platformData.requestData))
+        : ResourceRequestBase(WTF::move(platformData.requestData))
         , m_acceptEncoding(platformData.acceptEncoding)
         , m_redirectCount(platformData.redirectCount)
     {
@@ -95,17 +95,13 @@ public:
     // We only need to encode platform data if acceptEncoding or redirectCount are not the default.
     bool encodingRequiresPlatformData() const { return !m_acceptEncoding || m_redirectCount; }
 
-    WEBCORE_EXPORT static ResourceRequest fromResourceRequestData(ResourceRequestData);
+    WEBCORE_EXPORT static ResourceRequest fromResourceRequestData(ResourceRequestData&&);
     WEBCORE_EXPORT ResourceRequestData getRequestDataToSerialize() const;
 
 private:
     friend class ResourceRequestBase;
 
-#if USE(SOUP2)
-    GUniquePtr<SoupURI> createSoupURI() const;
-#else
     GRefPtr<GUri> createSoupURI() const;
-#endif
 
     void doUpdatePlatformRequest() { }
     void doUpdateResourceRequest() { }
@@ -120,3 +116,11 @@ private:
 
 } // namespace WebCore
 
+namespace WTF {
+
+template<> struct MarkableTraits<WebCore::ResourceRequest> {
+    static bool isEmptyValue(const WebCore::ResourceRequest& request) { return request.isNull(); };
+    static WebCore::ResourceRequest emptyValue() { return WebCore::ResourceRequest { }; };
+};
+
+} // namespace WTF

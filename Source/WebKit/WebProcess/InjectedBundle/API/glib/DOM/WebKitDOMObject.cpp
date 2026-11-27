@@ -2,7 +2,7 @@
  * Copyright (C) 2008 Luke Kenneth Casson Leighton <lkcl@lkcl.net>
  * Copyright (C) 2008 Martin Soto <soto@freedesktop.org>
  * Copyright (C) 2008 Alp Toker <alp@atoker.com>
- * Copyright (C) 2008 Apple Inc.
+ * Copyright (C) 2008 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Igalia S.L.
  */
 #include "config.h"
@@ -17,7 +17,9 @@ enum {
 
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
 
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GTK/WPE port
 G_DEFINE_TYPE(WebKitDOMObject, webkit_dom_object, G_TYPE_OBJECT)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 static void webkit_dom_object_init(WebKitDOMObject*)
 {

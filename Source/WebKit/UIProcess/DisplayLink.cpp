@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,7 +42,7 @@ using namespace WebCore;
 constexpr unsigned maxFireCountWithoutObservers { 20 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DisplayLink);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(DisplayLinkClient, DisplayLink::Client);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DisplayLink::Client);
 
 DisplayLink::DisplayLink(PlatformDisplayID displayID)
     : m_displayID(displayID)
@@ -190,7 +190,7 @@ void DisplayLink::notifyObserversDisplayDidRefresh()
 
     tracePoint(DisplayLinkUpdate);
 
-    auto maxFramesPerSecond = [](const Vector<ObserverInfo>& observers) {
+    auto maxFramesPerSecond = [](const Vector<ObserverInfo, 1>& observers) {
         std::optional<FramesPerSecond> observersMaxFramesPerSecond;
         for (const auto& observer : observers)
             observersMaxFramesPerSecond = std::max(observersMaxFramesPerSecond.value_or(0), observer.preferredFramesPerSecond);
@@ -211,7 +211,7 @@ void DisplayLink::notifyObserversDisplayDidRefresh()
             << " observers, maxFramesPerSecond " << observersMaxFramesPerSecond << " full speed client count " << clientInfo.fullSpeedUpdatesClientCount << " relevant " << anyObserverWantsCallback);
 
         if (clientInfo.fullSpeedUpdatesClientCount || anyObserverWantsCallback)
-            client->displayLinkFired(m_displayID, m_currentUpdate, clientInfo.fullSpeedUpdatesClientCount, anyObserverWantsCallback);
+            CheckedRef { client }->displayLinkFired(m_displayID, m_currentUpdate, clientInfo.fullSpeedUpdatesClientCount, anyObserverWantsCallback);
     }
 
     m_currentUpdate = m_currentUpdate.nextUpdate();
@@ -233,7 +233,7 @@ DisplayLink& DisplayLinkCollection::displayLinkForDisplay(PlatformDisplayID disp
 
     auto displayLink = makeUnique<DisplayLink>(displayID);
     auto displayLinkPtr = displayLink.get();
-    add(WTFMove(displayLink));
+    add(WTF::move(displayLink));
     return *displayLinkPtr;
 }
 
@@ -250,7 +250,7 @@ DisplayLink* DisplayLinkCollection::existingDisplayLinkForDisplay(PlatformDispla
 void DisplayLinkCollection::add(std::unique_ptr<DisplayLink>&& displayLink)
 {
     ASSERT(!m_displayLinks.containsIf([&](auto &entry) { return entry->displayID() == displayLink->displayID(); }));
-    m_displayLinks.append(WTFMove(displayLink));
+    m_displayLinks.append(WTF::move(displayLink));
 }
 
 std::optional<unsigned> DisplayLinkCollection::nominalFramesPerSecondForDisplay(PlatformDisplayID displayID)

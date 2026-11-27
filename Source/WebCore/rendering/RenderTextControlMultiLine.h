@@ -21,19 +21,20 @@
 
 #pragma once
 
+#include "ContainerNodeInlines.h"
 #include "HTMLTextAreaElement.h"
 #include "RenderTextControl.h"
 
 namespace WebCore {
 
 class RenderTextControlMultiLine final : public RenderTextControl {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderTextControlMultiLine);
+    WTF_MAKE_TZONE_ALLOCATED(RenderTextControlMultiLine);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlMultiLine);
 public:
-    RenderTextControlMultiLine(HTMLTextAreaElement&, RenderStyle&&);
+    RenderTextControlMultiLine(HTMLTextAreaElement&, Style::ComputedStyle&&);
     virtual ~RenderTextControlMultiLine();
 
-    HTMLTextAreaElement& textAreaElement() const;
+    HTMLTextAreaElement& NODELETE textAreaElement() const;
 
 private:
     void element() const = delete;
@@ -43,9 +44,8 @@ private:
     float getAverageCharWidth() override;
     LayoutUnit preferredContentLogicalWidth(float charWidth) const override;
     LayoutUnit computeControlLogicalHeight(LayoutUnit lineHeight, LayoutUnit nonContentHeight) const override;
-    LayoutUnit baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const override;
 
-    void layoutExcludedChildren(bool relayoutChildren) override;
+    void layoutExcludedChildren(RelayoutChildren) override;
 };
 
 inline RenderTextControlMultiLine* HTMLTextAreaElement::renderer() const

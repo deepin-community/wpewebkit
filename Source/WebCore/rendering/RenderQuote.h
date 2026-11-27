@@ -27,18 +27,18 @@
 namespace WebCore {
 
 class RenderQuote final : public RenderInline {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderQuote);
+    WTF_MAKE_TZONE_ALLOCATED(RenderQuote);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderQuote);
 public:
-    RenderQuote(Document&, RenderStyle&&, QuoteType);
+    RenderQuote(Document&, Style::ComputedStyle&&, QuoteType);
     virtual ~RenderQuote();
 
     void updateRenderer(RenderTreeBuilder&, RenderQuote* previousQuote);
 
 private:
     ASCIILiteral renderName() const override { return "RenderQuote"_s; }
-    bool isOpen() const;
-    void styleDidChange(StyleDifference, const RenderStyle*) override;
+    bool NODELETE isOpen() const;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
     void insertedIntoTree() override;
     void willBeRemovedFromTree() override;
 

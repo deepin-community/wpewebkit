@@ -29,16 +29,28 @@
 
 namespace WebCore {
 
+class DeferredPromise;
+class Exception;
+class ReadableStream;
+class WebTransport;
+class WebTransportReceiveStream;
+
+struct WebTransportStreamIdentifierType;
+
+using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifierType>;
+
 class WebTransportReceiveStreamSource : public RefCountedReadableStreamSource {
 public:
-    static Ref<WebTransportReceiveStreamSource> create() { return adoptRef(*new WebTransportReceiveStreamSource()); }
-    void receiveIncomingStream();
+    static Ref<WebTransportReceiveStreamSource> createIncomingStreamsSource() { return adoptRef(*new WebTransportReceiveStreamSource()); }
+    bool receiveIncomingStream(JSC::JSGlobalObject&, Ref<WebTransportReceiveStream>&);
+
 private:
+    WebTransportReceiveStreamSource() = default;
     void setActive() final { }
     void setInactive() final { }
     void doStart() final { }
     void doPull() final { }
-    void doCancel() final;
+    void doCancel(JSC::JSValue) final;
 
     bool m_isCancelled { false };
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,14 +26,13 @@
 #ifndef PAS_TRY_ALLOCATE_ARRAY_H
 #define PAS_TRY_ALLOCATE_ARRAY_H
 
-#include "pas_allocator_counts.h"
-#include "pas_cares_about_size_mode.h"
 #include "pas_heap.h"
 #include "pas_heap_config.h"
 #include "pas_heap_ref.h"
-#include "pas_local_allocator_inlines.h"
-#include "pas_physical_memory_transaction.h"
 #include "pas_segregated_heap.h"
+#include "pas_try_allocate_common.h"
+
+#if LIBPAS_ENABLED
 
 PAS_BEGIN_EXTERN_C;
 
@@ -238,5 +237,5 @@ typedef pas_allocation_result (*pas_try_allocate_array_for_realloc)(
 
 PAS_END_EXTERN_C;
 
+#endif /* LIBPAS_ENABLED */
 #endif /* PAS_TRY_ALLOCATE_ARRAY_H */
-

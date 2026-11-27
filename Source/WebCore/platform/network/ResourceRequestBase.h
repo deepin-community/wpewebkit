@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
  * Copyright (C) 2009, 2012 Google Inc. All rights reserved.
  *
@@ -27,15 +27,21 @@
 
 #pragma once
 
-#include "FormData.h"
-#include "FrameLoaderTypes.h"
-#include "HTTPHeaderMap.h"
-#include "IntRect.h"
-#include "ResourceLoadPriority.h"
+#include <WebCore/FormData.h>
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/HTTPHeaderMap.h>
+#include <WebCore/IntRect.h>
+#include <WebCore/ResourceLoadPriority.h>
+#include <optional>
 #include <wtf/EnumTraits.h>
+#include <wtf/Platform.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
+#include <wtf/WallTime.h>
 
 namespace WebCore {
+
+enum class IPAddressSpace : uint8_t;
 
 enum class ResourceRequestCachePolicy : uint8_t {
     UseProtocolCachePolicy, // normal load, equivalent to fetch "default" cache mode.
@@ -59,21 +65,21 @@ enum class ShouldUpgradeLocalhostAndIPAddress : bool { No, Yes };
 
 // Do not use this type directly.  Use ResourceRequest instead.
 class ResourceRequestBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ResourceRequestBase);
 public:
     
     enum class SameSiteDisposition : uint8_t { Unspecified, SameSite, CrossSite };
 
     struct RequestData {
         RequestData() { }
-        
-        RequestData(const URL& url, const URL& firstPartyForCookies, double timeoutInterval, const String& httpMethod, const HTTPHeaderMap& httpHeaderFields, const Vector<String>& responseContentDispositionEncodingFallbackArray, const ResourceRequestCachePolicy& cachePolicy, const SameSiteDisposition& sameSiteDisposition, const ResourceLoadPriority& priority, const ResourceRequestRequester& requester, bool allowCookies, bool isTopSite, bool isAppInitiated = true, bool privacyProxyFailClosedForUnreachableNonMainHosts = false, bool useAdvancedPrivacyProtections = false, bool didFilterLinkDecoration = false, bool isPrivateTokenUsageByThirdPartyAllowed = false, bool wasSchemeOptimisticallyUpgraded = false)
-            : m_url(url)
-            , m_firstPartyForCookies(firstPartyForCookies)
+
+        RequestData(URL&& url, URL&& firstPartyForCookies, double timeoutInterval, String&& httpMethod, HTTPHeaderMap&& httpHeaderFields, Vector<String>&& responseContentDispositionEncodingFallbackArray, ResourceRequestCachePolicy cachePolicy, SameSiteDisposition sameSiteDisposition, ResourceLoadPriority priority, ResourceRequestRequester requester, bool allowCookies, bool isTopSite, bool isAppInitiated = true, bool privacyProxyFailClosedForUnreachableNonMainHosts = false, bool useAdvancedPrivacyProtections = false, bool didFilterLinkDecoration = false, bool isPrivateTokenUsageByThirdPartyAllowed = false, bool wasSchemeOptimisticallyUpgraded = false, IPAddressSpace targetAddressSpace = IPAddressSpace::Public)
+            : m_url(WTF::move(url))
+            , m_firstPartyForCookies(WTF::move(firstPartyForCookies))
             , m_timeoutInterval(timeoutInterval)
-            , m_httpMethod(httpMethod)
-            , m_httpHeaderFields(httpHeaderFields)
-            , m_responseContentDispositionEncodingFallbackArray(responseContentDispositionEncodingFallbackArray)
+            , m_httpMethod(WTF::move(httpMethod))
+            , m_httpHeaderFields(WTF::move(httpHeaderFields))
+            , m_responseContentDispositionEncodingFallbackArray(WTF::move(responseContentDispositionEncodingFallbackArray))
             , m_cachePolicy(cachePolicy)
             , m_sameSiteDisposition(sameSiteDisposition)
             , m_priority(priority)
@@ -86,15 +92,16 @@ public:
             , m_didFilterLinkDecoration(didFilterLinkDecoration)
             , m_isPrivateTokenUsageByThirdPartyAllowed(isPrivateTokenUsageByThirdPartyAllowed)
             , m_wasSchemeOptimisticallyUpgraded(wasSchemeOptimisticallyUpgraded)
+            , m_targetAddressSpace(targetAddressSpace)
         {
         }
-        
-        RequestData(const URL& url, ResourceRequestCachePolicy cachePolicy)
-            : m_url(url)
+
+        RequestData(URL&& url, ResourceRequestCachePolicy cachePolicy)
+            : m_url(WTF::move(url))
             , m_cachePolicy(cachePolicy)
         {
         }
-        
+
         URL m_url;
         URL m_firstPartyForCookies;
         double m_timeoutInterval { s_defaultTimeoutInterval }; // 0 is a magic value for platform default on platforms that have one.
@@ -113,10 +120,11 @@ public:
         bool m_didFilterLinkDecoration : 1 { false };
         bool m_isPrivateTokenUsageByThirdPartyAllowed : 1 { false };
         bool m_wasSchemeOptimisticallyUpgraded : 1 { false };
+        IPAddressSpace m_targetAddressSpace { IPAddressSpace::Public };
     };
 
     ResourceRequestBase(RequestData&& requestData)
-        : m_requestData(WTFMove(requestData))
+        : m_requestData(WTF::move(requestData))
         , m_resourceRequestUpdated(true)
         , m_platformRequestUpdated(false)
         , m_resourceRequestBodyUpdated(true)
@@ -131,8 +139,8 @@ public:
     WEBCORE_EXPORT bool isNull() const;
     WEBCORE_EXPORT bool isEmpty() const;
     
-    WEBCORE_EXPORT const URL& url() const;
-    WEBCORE_EXPORT void setURL(const URL&, bool didFilterLinkDecoration = false);
+    WEBCORE_EXPORT const URL& url() const LIFETIME_BOUND;
+    WEBCORE_EXPORT void setURL(URL&&, bool didFilterLinkDecoration = false);
 
     void redirectAsGETIfNeeded(const ResourceRequestBase &, const ResourceResponse&);
 
@@ -146,8 +154,9 @@ public:
     
     WEBCORE_EXPORT double timeoutInterval() const; // May return 0 when using platform default.
     WEBCORE_EXPORT void setTimeoutInterval(double);
+    WEBCORE_EXPORT void resetTimeoutInterval();
     
-    WEBCORE_EXPORT const URL& firstPartyForCookies() const;
+    WEBCORE_EXPORT const URL& firstPartyForCookies() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setFirstPartyForCookies(const URL&);
 
     WEBCORE_EXPORT bool isThirdParty() const;
@@ -164,10 +173,10 @@ public:
     WEBCORE_EXPORT bool isTopSite() const; // Whether this request is for a top-level navigation.
     WEBCORE_EXPORT void setIsTopSite(bool);
 
-    WEBCORE_EXPORT const String& httpMethod() const;
+    WEBCORE_EXPORT const String& httpMethod() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setHTTPMethod(const String& httpMethod);
     
-    WEBCORE_EXPORT const HTTPHeaderMap& httpHeaderFields() const;
+    WEBCORE_EXPORT const HTTPHeaderMap& httpHeaderFields() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setHTTPHeaderFields(HTTPHeaderMap);
 
     WEBCORE_EXPORT String httpHeaderField(StringView name) const;
@@ -214,11 +223,11 @@ public:
 
     WEBCORE_EXPORT void clearPurpose();
 
-    const Vector<String>& responseContentDispositionEncodingFallbackArray() const { return m_requestData.m_responseContentDispositionEncodingFallbackArray; }
+    const Vector<String>& responseContentDispositionEncodingFallbackArray() const LIFETIME_BOUND { return m_requestData.m_responseContentDispositionEncodingFallbackArray; }
     WEBCORE_EXPORT void setResponseContentDispositionEncodingFallbackArray(const String& encoding1, const String& encoding2 = String(), const String& encoding3 = String());
     void setResponseContentDispositionEncodingFallbackArray(const Vector<String>& array) { m_requestData.m_responseContentDispositionEncodingFallbackArray = array; }
 
-    WEBCORE_EXPORT RefPtr<FormData> httpBody() const;
+    WEBCORE_EXPORT FormData* httpBody() const;
     WEBCORE_EXPORT bool hasUpload() const;
     WEBCORE_EXPORT void setHTTPBody(RefPtr<FormData>&&);
     
@@ -230,10 +239,9 @@ public:
     WEBCORE_EXPORT ResourceLoadPriority priority() const;
     WEBCORE_EXPORT void setPriority(ResourceLoadPriority);
 
-    WEBCORE_EXPORT static String partitionName(const String& domain);
-    const String& cachePartition() const { return m_cachePartition; }
-    WEBCORE_EXPORT void setCachePartition(const String&);
-    void setDomainForCachePartition(const String& domain) { setCachePartition(partitionName(domain)); }
+    WEBCORE_EXPORT String cachePartition() const;
+    bool shouldBlockThirdPartyStorage() const { return m_shouldBlockThirdPartyStorage; }
+    void setShouldBlockThirdPartyStorage(bool value) { m_shouldBlockThirdPartyStorage = value; }
 
     WEBCORE_EXPORT bool isConditional() const;
     WEBCORE_EXPORT void makeUnconditional();
@@ -245,25 +253,28 @@ public:
     ResourceRequestRequester requester() const { return m_requestData.m_requester; }
     void setRequester(ResourceRequestRequester requester) { m_requestData.m_requester = requester; }
     
+    IPAddressSpace targetAddressSpace() const { return m_requestData.m_targetAddressSpace; }
+    void setTargetAddressSpace(IPAddressSpace targetAddressSpace) { m_requestData.m_targetAddressSpace = targetAddressSpace; }
+
     // Who initiated the request so the Inspector can associate it with a context. E.g. a Web Worker.
     String initiatorIdentifier() const { return m_initiatorIdentifier; }
     void setInitiatorIdentifier(const String& identifier) { m_initiatorIdentifier = identifier; }
 
     // Additional information for the Inspector to be able to identify the node that initiated this request.
-    const std::optional<int>& inspectorInitiatorNodeIdentifier() const { return m_inspectorInitiatorNodeIdentifier; }
+    const std::optional<int>& inspectorInitiatorNodeIdentifier() const LIFETIME_BOUND { return m_inspectorInitiatorNodeIdentifier; }
     void setInspectorInitiatorNodeIdentifier(int inspectorInitiatorNodeIdentifier) { m_inspectorInitiatorNodeIdentifier = inspectorInitiatorNodeIdentifier; }
 
 #if !PLATFORM(COCOA) && !USE(SOUP)
     bool encodingRequiresPlatformData() const { return true; }
 #endif
 
-    static bool upgradeInsecureRequest(URL&);
+    WEBCORE_EXPORT static bool upgradeInsecureRequest(URL&);
     static bool upgradeInsecureRequestIfNeeded(URL&, ShouldUpgradeLocalhostAndIPAddress, const std::optional<uint16_t>&);
     void upgradeInsecureRequest();
     void upgradeInsecureRequestIfNeeded(ShouldUpgradeLocalhostAndIPAddress, const std::optional<uint16_t>&);
 
-    WEBCORE_EXPORT static double defaultTimeoutInterval(); // May return 0 when using platform default.
-    WEBCORE_EXPORT static void setDefaultTimeoutInterval(double);
+    WEBCORE_EXPORT static double NODELETE defaultTimeoutInterval(); // May return 0 when using platform default.
+    WEBCORE_EXPORT static void NODELETE setDefaultTimeoutInterval(double);
 
     WEBCORE_EXPORT static bool equal(const ResourceRequest&, const ResourceRequest&);
 
@@ -277,13 +288,13 @@ public:
     WEBCORE_EXPORT void setUseAdvancedPrivacyProtections(bool);
 
     bool didFilterLinkDecoration() const { return m_requestData.m_didFilterLinkDecoration; }
-    WEBCORE_EXPORT void setDidFilterLinkDecoration(bool);
+    WEBCORE_EXPORT void NODELETE setDidFilterLinkDecoration(bool);
 
     bool isPrivateTokenUsageByThirdPartyAllowed() const { return m_requestData.m_isPrivateTokenUsageByThirdPartyAllowed; }
-    void setIsPrivateTokenUsageByThirdPartyAllowed(bool);
+    void NODELETE setIsPrivateTokenUsageByThirdPartyAllowed(bool);
 
     bool wasSchemeOptimisticallyUpgraded() const { return m_requestData.m_wasSchemeOptimisticallyUpgraded; }
-    void setWasSchemeOptimisticallyUpgraded(bool);
+    void NODELETE setWasSchemeOptimisticallyUpgraded(bool);
 
 protected:
     // Used when ResourceRequest is initialized from a platform representation of the request
@@ -297,8 +308,8 @@ protected:
     {
     }
 
-    ResourceRequestBase(const URL& url, ResourceRequestCachePolicy policy)
-        : m_requestData({ url, policy })
+    ResourceRequestBase(URL&& url, ResourceRequestCachePolicy policy)
+        : m_requestData({ WTF::move(url), policy })
         , m_resourceRequestUpdated(true)
         , m_platformRequestUpdated(false)
         , m_resourceRequestBodyUpdated(true)
@@ -316,17 +327,17 @@ protected:
     
     RequestData m_requestData;
     String m_initiatorIdentifier;
-    String m_cachePartition { emptyString() };
     RefPtr<FormData> m_httpBody;
     std::optional<int> m_inspectorInitiatorNodeIdentifier;
     mutable bool m_resourceRequestUpdated : 1;
     mutable bool m_platformRequestUpdated : 1;
     mutable bool m_resourceRequestBodyUpdated : 1;
     mutable bool m_platformRequestBodyUpdated : 1;
+    bool m_shouldBlockThirdPartyStorage : 1 { true };
     bool m_hiddenFromInspector : 1;
 
 private:
-    const ResourceRequest& asResourceRequest() const;
+    const ResourceRequest& NODELETE asResourceRequest() const;
 
     WEBCORE_EXPORT static double s_defaultTimeoutInterval;
 };

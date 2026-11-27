@@ -32,13 +32,19 @@
 
 namespace WebCore {
 
-class CreateScriptURLCallback : public RefCounted<CreateScriptURLCallback>, public ActiveDOMCallback {
+class CreateScriptURLCallback : public ThreadSafeRefCounted<CreateScriptURLCallback>, public ActiveDOMCallback {
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual bool hasCallback() const = 0;
+    // ContextDestructionObserver.
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    virtual CallbackResult<String> handleEvent(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments) = 0;
+    virtual bool hasCallback() const = 0;
+    virtual bool isJSCreateScriptURLCallback() const { return false; }
+
+    virtual CallbackResult<String> invoke(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments) = 0;
+    virtual CallbackResult<String> invokeRethrowingException(const String& input, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments) = 0;
 };
 
 } // namespace WebCore

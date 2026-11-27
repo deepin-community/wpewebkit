@@ -40,9 +40,9 @@ private:
     {
         GRefPtr<GVariant> variant;
         if (userData) {
-            ASSERT(userData->type() == API::Object::Type::String);
-            CString userDataString = static_cast<API::String*>(userData)->string().utf8();
-            variant = adoptGRef(g_variant_parse(nullptr, userDataString.data(), userDataString.data() + userDataString.length(), nullptr, nullptr));
+            CString userDataString = downcast<API::String>(userData)->string().utf8();
+            const auto userDataSpan = userDataString.spanIncludingNullTerminator();
+            variant = adoptGRef(g_variant_parse(nullptr, userDataSpan.data(), userDataSpan.last(1).data(), nullptr, nullptr));
         }
 
         auto menuItems = WTF::map(proposedMenu, [](auto& item) {

@@ -25,11 +25,13 @@
 
 #pragma once
 
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-#include "StringAdaptors.h"
-#include "TrustedType.h"
+#include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSString.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMConvertBase.h>
+#include <WebCore/StringAdaptors.h>
+#include <WebCore/TrustedType.h>
 
 namespace WebCore {
 
@@ -64,17 +66,7 @@ inline AtomString propertyNameToAtomString(JSC::PropertyName propertyName)
 template<> struct Converter<IDLDOMString> : DefaultConverter<IDLDOMString> {
     using Result = ConversionResult<IDLDOMString>;
 
-    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto& vm = lexicalGlobalObject.vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto string = value.toWTFString(&lexicalGlobalObject);
-
-        RETURN_IF_EXCEPTION(scope, Result::exception());
-
-        return Result { WTFMove(string) };
-    }
+    WEBCORE_EXPORT static Result convert(JSC::JSGlobalObject&, JSC::JSValue);
 };
 
 template<> struct JSConverter<IDLDOMString> {
@@ -271,7 +263,7 @@ template<typename T> struct Converter<IDLAtomStringAdaptor<T>> : DefaultConverte
 
         RETURN_IF_EXCEPTION(scope, Result::exception());
 
-        return Result { WTFMove(string) };
+        return Result { string.data };
     }
 };
 
@@ -348,7 +340,7 @@ template<typename IDL> struct Converter<IDLRequiresExistingAtomStringAdaptor<IDL
     {
         static_assert(std::is_same<IDL, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
 
-        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject);
+        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject).data;
     }
 };
 

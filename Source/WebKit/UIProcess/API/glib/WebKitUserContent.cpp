@@ -23,6 +23,7 @@
 #include "WebKitUserContentPrivate.h"
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/text/CString.h>
 
 using namespace WebCore;
@@ -76,13 +77,10 @@ static inline UserScriptInjectionTime toUserScriptInjectionTime(WebKitUserScript
 
 static inline Vector<String> toStringVector(const char* const* strv)
 {
-    if (!strv)
-        return Vector<String>();
-
-    Vector<String> result;
-    for (auto str = strv; *str; ++str)
-        result.append(String::fromUTF8(*str));
-    return result;
+    const auto strvSpan = span(strv);
+    return Vector<String> { strvSpan.size(), [&strvSpan](size_t i) {
+        return String::fromUTF8(strvSpan[i]);
+    }};
 }
 
 /**
@@ -99,6 +97,7 @@ struct _WebKitUserStyleSheet {
             String::fromUTF8(source), URL { },
             toStringVector(allowList), toStringVector(blockList),
             toUserContentInjectedFrames(injectedFrames),
+            UserContentMatchParentFrame::Never,
             toUserStyleLevel(level) }, world)))
         , referenceCount(1)
     {
@@ -161,7 +160,7 @@ void webkit_user_style_sheet_unref(WebKitUserStyleSheet* userStyleSheet)
  * Style sheets can be applied to some URIs
  * only by passing non-null values for @allow_list or @block_list. Passing a
  * %NULL allow_list implies that all URIs are on the allow_list. The style
- * sheet is applied if an URI matches the allow_list and not the block_list.
+ * sheet is applied if a URI matches the allow_list and not the block_list.
  * URI patterns must be of the form `[protocol]://[host]/[path]`, where the
  * *host* and *path* components can contain the wildcard character (`*`) to
  * represent zero or more other characters.
@@ -174,7 +173,7 @@ WebKitUserStyleSheet* webkit_user_style_sheet_new(const gchar* source, WebKitUse
 {
     g_return_val_if_fail(source, nullptr);
     WebKitUserStyleSheet* userStyleSheet = static_cast<WebKitUserStyleSheet*>(fastMalloc(sizeof(WebKitUserStyleSheet)));
-    new (userStyleSheet) WebKitUserStyleSheet(source, injectedFrames, level, allowList, blockList, API::ContentWorld::pageContentWorld());
+    new (userStyleSheet) WebKitUserStyleSheet(source, injectedFrames, level, allowList, blockList, API::ContentWorld::pageContentWorldSingleton());
     return userStyleSheet;
 }
 
@@ -225,7 +224,7 @@ struct _WebKitUserScript {
             String::fromUTF8(source), URL { },
             toStringVector(allowList), toStringVector(blockList),
             toUserScriptInjectionTime(injectionTime),
-            toUserContentInjectedFrames(injectedFrames), WebCore::WaitForNotificationBeforeInjecting::No }, world)))
+            toUserContentInjectedFrames(injectedFrames) }, world)))
         , referenceCount(1)
     {
     }
@@ -287,7 +286,7 @@ void webkit_user_script_unref(WebKitUserScript* userScript)
  * Scripts can be applied to some URIs
  * only by passing non-null values for @allow_list or @block_list. Passing a
  * %NULL allow_list implies that all URIs are on the allow_list. The script
- * is applied if an URI matches the allow_list and not the block_list.
+ * is applied if a URI matches the allow_list and not the block_list.
  * URI patterns must be of the form `[protocol]://[host]/[path]`, where the
  * *host* and *path* components can contain the wildcard character (`*`) to
  * represent zero or more other characters.
@@ -300,7 +299,7 @@ WebKitUserScript* webkit_user_script_new(const gchar* source, WebKitUserContentI
 {
     g_return_val_if_fail(source, nullptr);
     WebKitUserScript* userScript = static_cast<WebKitUserScript*>(fastMalloc(sizeof(WebKitUserScript)));
-    new (userScript) WebKitUserScript(source, injectedFrames, injectionTime, allowList, blockList, API::ContentWorld::pageContentWorld());
+    new (userScript) WebKitUserScript(source, injectedFrames, injectionTime, allowList, blockList, API::ContentWorld::pageContentWorldSingleton());
     return userScript;
 }
 
@@ -340,14 +339,14 @@ API::UserScript& webkitUserScriptGetUserScript(WebKitUserScript* userScript)
 /**
  * WebKitUserContentFilter: (ref-func webkit_user_content_filter_ref) (unref-func webkit_user_content_filter_unref)
  *
- * A compiled set of rules which applied to resource loads.
+ * A compiled set of rules which are applied to resource loads.
  *
  * Since: 2.24
  */
 
 struct _WebKitUserContentFilter {
     _WebKitUserContentFilter(RefPtr<API::ContentRuleList>&& contentRuleList)
-        : contentRuleList(WTFMove(contentRuleList))
+        : contentRuleList(WTF::move(contentRuleList))
 #if ENABLE(CONTENT_EXTENSIONS)
         , identifier(this->contentRuleList->name().utf8())
 #endif
@@ -424,7 +423,7 @@ const char* webkit_user_content_filter_get_identifier(WebKitUserContentFilter* u
 WebKitUserContentFilter* webkitUserContentFilterCreate(RefPtr<API::ContentRuleList>&& contentRuleList)
 {
     WebKitUserContentFilter* userContentFilter = static_cast<WebKitUserContentFilter*>(fastMalloc(sizeof(WebKitUserContentFilter)));
-    new (userContentFilter) WebKitUserContentFilter(WTFMove(contentRuleList));
+    new (userContentFilter) WebKitUserContentFilter(WTF::move(contentRuleList));
     return userContentFilter;
 }
 

@@ -30,9 +30,10 @@
 
 #pragma once
 
-#include "FormState.h"
-#include "FrameLoaderTypes.h"
-#include "ReferrerPolicy.h"
+#include <WebCore/FormState.h>
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/ReferrerPolicy.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
 
@@ -43,7 +44,7 @@ class FormData;
 class FrameLoadRequest;
 class HTMLFormControlElement;
 
-class FormSubmission : public RefCounted<FormSubmission>, public CanMakeWeakPtr<FormSubmission> {
+class FormSubmission : public RefCountedAndCanMakeWeakPtr<FormSubmission> {
 public:
     enum class Method : uint8_t { Get, Post, Dialog };
 
@@ -54,18 +55,18 @@ public:
         void updateMethodType(const String&);
         static ASCIILiteral methodString(Method);
 
-        const String& action() const { return m_action; }
+        const String& action() const LIFETIME_BOUND { return m_action; }
         void parseAction(const String&);
 
-        const AtomString& target() const { return m_target; }
+        const AtomString& target() const LIFETIME_BOUND { return m_target; }
         void setTarget(const AtomString& target) { m_target = target; }
 
-        const String& encodingType() const { return m_encodingType; }
+        const String& encodingType() const LIFETIME_BOUND { return m_encodingType; }
         static String parseEncodingType(const String&);
         void updateEncodingType(const String&);
         bool isMultiPartForm() const { return m_isMultiPartForm; }
 
-        const String& acceptCharset() const { return m_acceptCharset; }
+        const String& acceptCharset() const LIFETIME_BOUND { return m_acceptCharset; }
         void setAcceptCharset(const String& value) { m_acceptCharset = value; }
 
     private:
@@ -77,30 +78,29 @@ public:
         String m_acceptCharset;
     };
 
-    static Ref<FormSubmission> create(HTMLFormElement&, HTMLFormControlElement* overrideSubmitter, const Attributes&, Event*, LockHistory, FormSubmissionTrigger);
+    static RefPtr<FormSubmission> create(HTMLFormElement&, HTMLFormControlElement* overrideSubmitter, const Attributes&, Event*, LockHistory, FormSubmissionTrigger);
 
     void populateFrameLoadRequest(FrameLoadRequest&);
     URL requestURL() const;
 
     Method method() const { return m_method; }
-    const URL& action() const { return m_action; }
-    const AtomString& target() const { return m_target; }
-    const String& contentType() const { return m_contentType; }
-    FormState& state() const { return *m_formState; }
-    Ref<FormState> takeState() { return m_formState.releaseNonNull(); }
+    const URL& action() const LIFETIME_BOUND { return m_action; }
+    const AtomString& target() const LIFETIME_BOUND { return m_target; }
+    const String& contentType() const LIFETIME_BOUND { return m_contentType; }
+    FormState* state() const { return m_formState.get(); }
     FormData& data() const { return *m_formData; }
     const String boundary() const { return m_boundary; }
     LockHistory lockHistory() const { return m_lockHistory; }
     Event* event() const { return m_event.get(); }
-    RefPtr<Event> protectedEvent() const;
-    const String& referrer() const { return m_referrer; }
-    const String& origin() const { return m_origin; }
+    const String& referrer() const LIFETIME_BOUND { return m_referrer; }
+    const String& origin() const LIFETIME_BOUND { return m_origin; }
 
-    const String& returnValue() const { return m_returnValue; }
+    const String& returnValue() const LIFETIME_BOUND { return m_returnValue; }
 
     void clearTarget() { m_target = { }; }
     void setReferrer(const String& referrer) { m_referrer = referrer; }
-    void setOrigin(const String& origin) { m_origin = origin; }
+    void setReferrer(String&& referrer) { m_referrer = WTF::move(referrer); }
+    void setOrigin(String&& origin) { m_origin = WTF::move(origin); }
 
     void cancel() { m_wasCancelled = true; }
     bool wasCancelled() const { return m_wasCancelled; }
@@ -125,10 +125,10 @@ private:
     AtomString m_target;
     String m_contentType;
     RefPtr<FormState> m_formState;
-    RefPtr<FormData> m_formData;
+    const RefPtr<FormData> m_formData;
     String m_boundary;
     LockHistory m_lockHistory;
-    RefPtr<Event> m_event;
+    const RefPtr<Event> m_event;
     String m_referrer;
     String m_origin;
 

@@ -39,6 +39,7 @@
 #include "DFGThunks.h"
 #include "JSCJSValueInlines.h"
 #include "LinkBuffer.h"
+#include "Options.h"
 #include "ProbeContext.h"
 #include "ThunkGenerators.h"
 #include "VM.h"
@@ -46,7 +47,7 @@
 
 namespace JSC { namespace DFG {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(JITCompiler);
+WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(JITCompiler);
 
 JITCompiler::JITCompiler(Graph& dfg)
     : CCallHelpers(dfg.m_codeBlock)
@@ -55,10 +56,10 @@ JITCompiler::JITCompiler(Graph& dfg)
     , m_blockHeads(dfg.numBlocks())
     , m_pcToCodeOriginMapBuilder(dfg.m_vm)
 {
-    if (UNLIKELY(shouldDumpDisassembly() || m_graph.m_vm.m_perBytecodeProfiler))
-        m_disassembler = makeUnique<Disassembler>(dfg);
+    if (shouldDumpDisassembly() || m_graph.m_vm.m_perBytecodeProfiler) [[unlikely]]
+        m_disassembler = makeUniqueWithoutFastMallocCheck<Disassembler>(dfg);
 #if ENABLE(FTL_JIT)
-    m_jitCode->tierUpInLoopHierarchy = WTFMove(m_graph.m_plan.tierUpInLoopHierarchy());
+    m_jitCode->tierUpInLoopHierarchy = WTF::move(m_graph.m_plan.tierUpInLoopHierarchy());
     for (BytecodeIndex tierUpBytecode : m_graph.m_plan.tierUpAndOSREnterBytecodes())
         m_jitCode->tierUpEntryTriggers.add(tierUpBytecode, JITCode::TriggerReason::DontTrigger);
 #endif
@@ -69,7 +70,7 @@ JITCompiler::~JITCompiler() = default;
 void JITCompiler::linkOSRExits()
 {
     ASSERT(m_osrExit.size() == m_exitCompilationInfo.size());
-    if (UNLIKELY(m_graph.compilation())) {
+    if (m_graph.compilation()) [[unlikely]] {
         for (unsigned i = 0; i < m_osrExit.size(); ++i) {
             OSRExitCompilationInfo& info = m_exitCompilationInfo[i];
             Vector<Label> labels;
@@ -173,7 +174,7 @@ void JITCompiler::compileEntryExecutionFlag()
 {
 #if ENABLE(FTL_JIT)
     if (m_graph.m_plan.canTierUpAndOSREnter())
-        store8(TrustedImm32(0), &m_jitCode->neverExecutedEntry);
+        store8(TrustedImm32(0), Address(GPRInfo::jitDataRegister, JITData::offsetOfNeverExecutedEntry()));
 #endif // ENABLE(FTL_JIT)
 }
 
@@ -189,12 +190,13 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
         FixedVector<std::unique_ptr<BoyerMooreHorspoolTable<uint8_t>>> tables(m_graph.m_stringSearchTable8.size());
         unsigned index = 0;
         for (auto& entry : m_graph.m_stringSearchTable8)
-            tables[index++] = WTFMove(entry.value);
-        m_jitCode->common.m_stringSearchTable8 = WTFMove(tables);
+            tables[index++] = WTF::move(entry.value);
+        m_jitCode->common.m_stringSearchTable8 = WTF::move(tables);
     }
+    m_jitCode->common.m_concatKeyAtomStringCaches = WTF::move(m_graph.m_concatKeyAtomStringCaches);
 
 #if USE(JSVALUE32_64)
-    m_jitCode->common.doubleConstants = WTFMove(m_graph.m_doubleConstants);
+    m_jitCode->common.doubleConstants = WTF::move(m_graph.m_doubleConstants);
 #endif
     
     m_graph.registerFrozenValues();
@@ -202,9 +204,9 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
     ASSERT(m_jitCode->m_stringSwitchJumpTables.isEmpty());
     ASSERT(m_jitCode->m_switchJumpTables.isEmpty());
     if (!m_graph.m_stringSwitchJumpTables.isEmpty()) 
-        m_jitCode->m_stringSwitchJumpTables = WTFMove(m_graph.m_stringSwitchJumpTables);
+        m_jitCode->m_stringSwitchJumpTables = WTF::move(m_graph.m_stringSwitchJumpTables);
     if (!m_graph.m_switchJumpTables.isEmpty())
-        m_jitCode->m_switchJumpTables = WTFMove(m_graph.m_switchJumpTables);
+        m_jitCode->m_switchJumpTables = WTF::move(m_graph.m_switchJumpTables);
 
     for (Bag<SwitchData>::iterator iter = m_graph.m_switchData.begin(); !!iter; ++iter) {
         SwitchData& data = **iter;
@@ -212,33 +214,39 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
         case SwitchChar:
         case SwitchImm: {
             if (!data.didUseJumpTable) {
-                ASSERT(m_jitCode->m_switchJumpTables[data.switchTableIndex].isEmpty());
+#if ASSERT_ENABLED
+                if (data.hasSwitchTableIndex())
+                    ASSERT(m_jitCode->m_switchJumpTables[data.switchTableIndex].isEmpty());
+#endif
                 continue;
             }
 
             const UnlinkedSimpleJumpTable& unlinkedTable = m_graph.unlinkedSwitchJumpTable(data.switchTableIndex);
             SimpleJumpTable& linkedTable = m_jitCode->m_switchJumpTables[data.switchTableIndex];
-            linkedTable.m_ctiDefault = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[data.fallThrough.block->index]);
+            linkedTable.m_ctiDefault = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[data.fallThrough.block->index()]);
             RELEASE_ASSERT(linkedTable.m_ctiOffsets.size() == unlinkedTable.m_branchOffsets.size());
             for (unsigned j = linkedTable.m_ctiOffsets.size(); j--;)
                 linkedTable.m_ctiOffsets[j] = linkedTable.m_ctiDefault;
             for (unsigned j = data.cases.size(); j--;) {
                 SwitchCase& myCase = data.cases[j];
                 linkedTable.m_ctiOffsets[myCase.value.switchLookupValue(data.kind) - unlinkedTable.m_min] =
-                    linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[myCase.target.block->index]);
+                    linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[myCase.target.block->index()]);
             }
             break;
         }
 
         case SwitchString: {
             if (!data.didUseJumpTable) {
-                ASSERT(m_jitCode->m_stringSwitchJumpTables[data.switchTableIndex].isEmpty());
+#if ASSERT_ENABLED
+                if (data.hasSwitchTableIndex())
+                    ASSERT(m_jitCode->m_stringSwitchJumpTables[data.switchTableIndex].isEmpty());
+#endif
                 continue;
             }
 
             const UnlinkedStringJumpTable& unlinkedTable = m_graph.unlinkedStringSwitchJumpTable(data.switchTableIndex);
             StringJumpTable& linkedTable = m_jitCode->m_stringSwitchJumpTables[data.switchTableIndex];
-            auto ctiDefault = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[data.fallThrough.block->index]);
+            auto ctiDefault = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[data.fallThrough.block->index()]);
             RELEASE_ASSERT(linkedTable.m_ctiOffsets.size() == unlinkedTable.m_offsetTable.size() + 1);
             for (auto& entry : linkedTable.m_ctiOffsets)
                 entry = ctiDefault;
@@ -246,7 +254,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
                 SwitchCase& myCase = data.cases[j];
                 auto iter = unlinkedTable.m_offsetTable.find(myCase.value.stringImpl());
                 RELEASE_ASSERT(iter != unlinkedTable.m_offsetTable.end());
-                linkedTable.m_ctiOffsets[iter->value.m_indexInTable] = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[myCase.target.block->index]);
+                linkedTable.m_ctiOffsets[iter->value.m_indexInTable] = linkBuffer.locationOf<JSSwitchPtrTag>(m_blockHeads[myCase.target.block->index()]);
             }
             break;
         }
@@ -261,25 +269,11 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
     for (unsigned i = 0; i < m_calls.size(); ++i)
         linkBuffer.link(m_calls[i].m_call, m_calls[i].m_function);
 
-#if USE(JSVALUE32_64)
-    finalizeInlineCaches(m_getByIds, linkBuffer);
-    finalizeInlineCaches(m_getByIdsWithThis, linkBuffer);
-    finalizeInlineCaches(m_getByVals, linkBuffer);
-    finalizeInlineCaches(m_getByValsWithThis, linkBuffer);
-    finalizeInlineCaches(m_putByIds, linkBuffer);
-    finalizeInlineCaches(m_putByVals, linkBuffer);
-    finalizeInlineCaches(m_delByIds, linkBuffer);
-    finalizeInlineCaches(m_delByVals, linkBuffer);
-    finalizeInlineCaches(m_inByIds, linkBuffer);
-    finalizeInlineCaches(m_inByVals, linkBuffer);
-    finalizeInlineCaches(m_instanceOfs, linkBuffer);
-    finalizeInlineCaches(m_privateBrandAccesses, linkBuffer);
-#else
-    m_jitCode->m_unlinkedStubInfos = FixedVector<UnlinkedStructureStubInfo>(m_unlinkedStubInfos.size());
-    if (m_jitCode->m_unlinkedStubInfos.size())
-        std::move(m_unlinkedStubInfos.begin(), m_unlinkedStubInfos.end(), m_jitCode->m_unlinkedStubInfos.begin());
-    ASSERT(m_jitCode->common.m_stubInfos.isEmpty());
-#endif
+    m_jitCode->m_unlinkedPropertyInlineCaches = FixedVector<UnlinkedPropertyInlineCache>(m_unlinkedPropertyInlineCaches.size());
+    if (m_jitCode->m_unlinkedPropertyInlineCaches.size())
+        std::move(m_unlinkedPropertyInlineCaches.begin(), m_unlinkedPropertyInlineCaches.end(), m_jitCode->m_unlinkedPropertyInlineCaches.begin());
+    ASSERT(m_jitCode->common.m_handlerPropertyInlineCaches.isEmpty());
+    ASSERT(m_jitCode->common.m_repatchingPropertyInlineCaches.isEmpty());
 
     for (auto& record : m_jsDirectCalls) {
         auto& info = *record.info;
@@ -308,7 +302,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
                     linkBuffer.locationOf<OSRExitPtrTag>(info.m_replacementDestination)));
             }
         }
-        m_jitCode->common.m_jumpReplacements = WTFMove(jumpReplacements);
+        m_jitCode->common.m_jumpReplacements = WTF::move(jumpReplacements);
     }
 
 #if ASSERT_ENABLED
@@ -320,7 +314,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
         ASSERT(m_jitCode->common.m_jumpReplacements.isEmpty());
 #endif
     
-    if (UNLIKELY(m_graph.compilation())) {
+    if (m_graph.compilation()) [[unlikely]] {
         ASSERT(m_exitSiteLabels.size() == m_osrExit.size());
         for (unsigned i = 0; i < m_exitSiteLabels.size(); ++i) {
             Vector<Label>& labels = m_exitSiteLabels[i];
@@ -333,8 +327,8 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
         ASSERT(!m_exitSiteLabels.size());
 
     m_jitCode->common.compilation = m_graph.compilation();
-    m_jitCode->m_osrExit = WTFMove(m_osrExit);
-    m_jitCode->m_speculationRecovery = WTFMove(m_speculationRecovery);
+    m_jitCode->m_osrExit = WTF::move(m_osrExit);
+    m_jitCode->m_speculationRecovery = WTF::move(m_speculationRecovery);
     
     // Link new DFG exception handlers and remove baseline JIT handlers.
     m_codeBlock->clearExceptionHandlers();
@@ -356,9 +350,9 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
     }
 
     if (m_pcToCodeOriginMapBuilder.didBuildMapping())
-        m_jitCode->common.m_pcToCodeOriginMap = makeUnique<PCToCodeOriginMap>(WTFMove(m_pcToCodeOriginMapBuilder), linkBuffer);
+        m_jitCode->common.m_pcToCodeOriginMap = makeUnique<PCToCodeOriginMap>(WTF::move(m_pcToCodeOriginMapBuilder), linkBuffer);
 
-    m_jitCode->m_linkerIR = LinkerIR(WTFMove(m_graph.m_constantPool));
+    m_jitCode->m_linkerIR = LinkerIR(WTF::move(m_graph.m_constantPool));
 }
 
 void JITCompiler::disassemble(LinkBuffer& linkBuffer)
@@ -368,20 +362,77 @@ void JITCompiler::disassemble(LinkBuffer& linkBuffer)
         linkBuffer.didAlreadyDisassemble();
     }
 
-    if (UNLIKELY(m_graph.m_plan.compilation()))
+    if (m_graph.m_plan.compilation()) [[unlikely]]
         m_disassembler->reportToProfiler(m_graph.m_plan.compilation(), linkBuffer);
 }
 
-void JITCompiler::exceptionJumpWithCallFrameRollback()
+void JITCompiler::collectIRDumpDebugInfo(LinkBuffer& linkBuffer)
 {
-    jumpThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleExceptionWithCallFrameRollback).retaggedCode<NoPtrTag>()));
+    if (!Options::useIRDump())
+        return;
+
+    if (m_irDumpLabels.isEmpty())
+        return;
+
+    auto debugInfo = makeUnique<IRDumpDebugInfo>(m_graph.m_codeBlock->inferredName());
+    auto nodeToLineIndex = m_graph.collectIRDumpDebugInfo(*debugInfo);
+
+    void* codeStart = linkBuffer.entrypoint<DisassemblyPtrTag>().untaggedPtr();
+    for (auto& entry : m_irDumpLabels) {
+        auto it = nodeToLineIndex.find(entry.node);
+        if (it == nodeToLineIndex.end())
+            continue;
+        auto location = linkBuffer.locationOf<DisassemblyPtrTag>(entry.label);
+        uint32_t codeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
+        debugInfo->codeEntries.append({ codeOffset, it->value });
+    }
+
+    linkBuffer.setIRDumpDebugInfo(WTF::move(debugInfo));
+}
+
+void JITCompiler::collectSourceCodeDumpDebugInfo(LinkBuffer& linkBuffer)
+{
+    if (!Options::useSourceCodeDump())
+        return;
+
+    if (m_irDumpLabels.isEmpty())
+        return;
+
+    auto debugInfo = makeUnique<SourceCodeDumpDebugInfo>(m_graph.m_codeBlock->inferredName());
+    void* codeStart = linkBuffer.entrypoint<DisassemblyPtrTag>().untaggedPtr();
+
+    for (auto& entry : m_irDumpLabels) {
+        CodeOrigin codeOrigin = entry.node->origin.semantic;
+        if (!codeOrigin.isSet())
+            continue;
+
+        InlineCallFrame* inlineCallFrame = codeOrigin.inlineCallFrame();
+        CodeBlock* codeBlock = inlineCallFrame ? inlineCallFrame->baselineCodeBlock.get() : m_graph.m_codeBlock;
+        if (!codeBlock)
+            continue;
+
+        BytecodeIndex bytecodeIndex = codeOrigin.bytecodeIndex();
+        if (bytecodeIndex.offset() >= codeBlock->instructionsSize())
+            continue;
+
+        LineColumn lineColumn = codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+        RefPtr provider = codeBlock->ownerExecutable()->source().provider();
+        if (!provider)
+            continue;
+
+        auto location = linkBuffer.locationOf<DisassemblyPtrTag>(entry.label);
+        uint32_t codeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
+        debugInfo->codeEntries.append({ codeOffset, lineColumn, provider.releaseNonNull() });
+    }
+
+    linkBuffer.setSourceCodeDumpDebugInfo(WTF::move(debugInfo));
 }
 
 #if USE(JSVALUE32_64)
 void* JITCompiler::addressOfDoubleConstant(Node* node)
 {
     double value = node->asNumber();
-    int64_t valueBits = bitwise_cast<int64_t>(value);
+    int64_t valueBits = std::bit_cast<int64_t>(value);
     return m_graph.m_doubleConstantsMap.ensure(valueBits, [&]{
         double* addressInConstantPool = m_graph.m_doubleConstants.add();
         *addressInConstantPool = value;
@@ -394,7 +445,7 @@ void JITCompiler::noticeCatchEntrypoint(BasicBlock& basicBlock, JITCompiler::Lab
 {
     RELEASE_ASSERT(basicBlock.isCatchEntrypoint);
     RELEASE_ASSERT(basicBlock.intersectionOfCFAHasVisited); // An entrypoint is reachable by definition.
-    m_graph.appendCatchEntrypoint(basicBlock.bytecodeBegin, linkBuffer.locationOf<ExceptionHandlerPtrTag>(blockHead), WTFMove(argumentFormats));
+    m_graph.appendCatchEntrypoint(basicBlock.bytecodeBegin, linkBuffer.locationOf<ExceptionHandlerPtrTag>(blockHead), WTF::move(argumentFormats));
 }
 
 void JITCompiler::noticeOSREntry(BasicBlock& basicBlock, JITCompiler::Label blockHead, LinkBuffer& linkBuffer)
@@ -448,25 +499,15 @@ void JITCompiler::noticeOSREntry(BasicBlock& basicBlock, JITCompiler::Label bloc
         }
     }
         
-    entry.m_expectedValues = WTFMove(expectedValues);
-    entry.m_reshufflings = WTFMove(reshufflings);
-    m_osrEntry.append(WTFMove(entry));
-}
-
-void JITCompiler::appendExceptionHandlingOSRExit(SpeculativeJIT* speculative, ExitKind kind, unsigned eventStreamIndex, CodeOrigin opCatchOrigin, HandlerInfo* exceptionHandler, CallSiteIndex callSite, MacroAssembler::JumpList jumpsToFail)
-{
-    OSRExit exit(kind, JSValueRegs(), MethodOfGettingAValueProfile(), speculative, eventStreamIndex);
-    exit.m_codeOrigin = opCatchOrigin;
-    exit.m_exceptionHandlerCallSiteIndex = callSite;
-    OSRExitCompilationInfo& exitInfo = appendExitInfo(jumpsToFail);
-    m_osrExit.append(WTFMove(exit));
-    m_exceptionHandlerOSRExitCallSites.append(ExceptionHandlingOSRExitInfo { exitInfo, *exceptionHandler, callSite });
+    entry.m_expectedValues = WTF::move(expectedValues);
+    entry.m_reshufflings = WTF::move(reshufflings);
+    m_osrEntry.append(WTF::move(entry));
 }
 
 void JITCompiler::setEndOfMainPath(CodeOrigin semanticOrigin)
 {
     m_pcToCodeOriginMapBuilder.appendItem(labelIgnoringWatchpoints(), semanticOrigin);
-    if (LIKELY(!m_disassembler))
+    if (!m_disassembler) [[likely]]
         return;
     m_disassembler->setEndOfMainPath(labelIgnoringWatchpoints());
 }
@@ -474,7 +515,7 @@ void JITCompiler::setEndOfMainPath(CodeOrigin semanticOrigin)
 void JITCompiler::setEndOfCode()
 {
     m_pcToCodeOriginMapBuilder.appendItem(labelIgnoringWatchpoints(), PCToCodeOriginMapBuilder::defaultCodeOrigin());
-    if (LIKELY(!m_disassembler))
+    if (!m_disassembler) [[likely]]
         return;
     m_disassembler->setEndOfCode(labelIgnoringWatchpoints());
 }
@@ -498,10 +539,10 @@ void JITCompiler::loadConstant(LinkerIR::Constant index, GPRReg dest)
 #endif
 }
 
-void JITCompiler::loadStructureStubInfo(StructureStubInfoIndex index, GPRReg dest)
+void JITCompiler::loadPropertyInlineCache(PropertyInlineCacheIndex index, GPRReg dest)
 {
 #if USE(JSVALUE64)
-    subPtr(GPRInfo::jitDataRegister, TrustedImm32(static_cast<uintptr_t>(index.m_index + 1) * sizeof(StructureStubInfo)), dest);
+    subPtr(GPRInfo::jitDataRegister, TrustedImm32(static_cast<uintptr_t>(index.m_index + 1) * sizeof(HandlerPropertyInlineCache)), dest);
 #else
     UNUSED_PARAM(index);
     UNUSED_PARAM(dest);
@@ -578,22 +619,17 @@ LinkerIR::Constant JITCompiler::addToConstantPool(LinkerIR::Type type, void* pay
     return result.iterator->value;
 }
 
-std::tuple<CompileTimeStructureStubInfo, StructureStubInfoIndex> JITCompiler::addStructureStubInfo()
+std::tuple<CompileTimePropertyInlineCache, PropertyInlineCacheIndex> JITCompiler::addPropertyInlineCache()
 {
-#if USE(JSVALUE64)
-    unsigned index = m_unlinkedStubInfos.size();
-    DFG::UnlinkedStructureStubInfo* stubInfo = &m_unlinkedStubInfos.alloc();
-    return std::tuple { stubInfo, StructureStubInfoIndex { index } };
-#else
-    StructureStubInfo* stubInfo = jitCode()->common.m_stubInfos.add();
-    return std::tuple { stubInfo, StructureStubInfoIndex(0) };
-#endif
+    unsigned index = m_unlinkedPropertyInlineCaches.size();
+    DFG::UnlinkedPropertyInlineCache* propertyCache = &m_unlinkedPropertyInlineCaches.alloc();
+    return std::tuple { propertyCache, PropertyInlineCacheIndex { index } };
 }
 
 std::tuple<CompileTimeCallLinkInfo, JITCompiler::LinkableConstant> JITCompiler::addCallLinkInfo(CodeOrigin codeOrigin)
 {
     if (m_graph.m_plan.isUnlinked()) {
-        void* unlinkedCallLinkInfoIndex = bitwise_cast<void*>(static_cast<uintptr_t>(m_unlinkedCallLinkInfos.size()));
+        void* unlinkedCallLinkInfoIndex = std::bit_cast<void*>(static_cast<uintptr_t>(m_unlinkedCallLinkInfos.size()));
         UnlinkedCallLinkInfo* callLinkInfo = &m_unlinkedCallLinkInfos.alloc();
         callLinkInfo->codeOrigin = codeOrigin;
         LinkerIR::Constant callLinkInfoIndex = addToConstantPool(LinkerIR::Type::CallLinkInfo, unlinkedCallLinkInfoIndex);

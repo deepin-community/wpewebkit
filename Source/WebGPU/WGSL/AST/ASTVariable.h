@@ -67,11 +67,11 @@ public:
     VariableFlavor& flavor() { return m_flavor; };
 
     VariableRole role() const { return m_role; }
-    VariableRole& role() { return m_role; }
+    VariableRole& role() LIFETIME_BOUND { return m_role; }
 
     Identifier& name() override { return m_name; }
     Identifier& originalName() { return m_originalName; }
-    Attribute::List& attributes() { return m_attributes; }
+    Attribute::List& attributes() LIFETIME_BOUND { return m_attributes; }
     VariableQualifier* maybeQualifier() { return m_qualifier; }
     Expression* maybeTypeName() { return m_type; }
     Expression* maybeInitializer() { return m_initializer; }
@@ -89,14 +89,14 @@ public:
 
 private:
     Variable(SourceSpan span, VariableFlavor flavor, Identifier&& name, Expression::Ptr type, Expression::Ptr initializer)
-        : Variable(span, flavor, WTFMove(name), { }, type, initializer, { })
+        : Variable(span, flavor, WTF::move(name), { }, type, initializer, { })
     { }
 
     Variable(SourceSpan span, VariableFlavor flavor, Identifier&& name, VariableQualifier::Ptr qualifier, Expression::Ptr type, Expression::Ptr initializer, Attribute::List&& attributes, VariableRole role = VariableRole::UserDefined)
         : Declaration(span)
-        , m_name(WTFMove(name))
+        , m_name(WTF::move(name))
         , m_originalName(m_name)
-        , m_attributes(WTFMove(attributes))
+        , m_attributes(WTF::move(attributes))
         , m_qualifier(qualifier)
         , m_type(type)
         , m_initializer(initializer)

@@ -41,7 +41,7 @@ namespace WebCore {
 // Salt to separate otherwise identical string hashes so a class-selector like .article won't match <article> elements.
 enum { TagNameSalt = 13, IdSalt = 17, ClassSalt = 19, AttributeSalt = 23 };
 
-static bool isExcludedAttribute(const AtomString& name)
+static bool NODELETE isExcludedAttribute(const AtomString& name)
 {
     return name == HTMLNames::classAttr->localName() || name == HTMLNames::idAttr->localName() || name == HTMLNames::styleAttr->localName();
 }
@@ -61,8 +61,8 @@ void SelectorFilter::collectElementIdentifierHashes(const Element& element, Vect
     }
     
     if (element.hasAttributesWithoutUpdate()) {
-        for (auto& attribute : element.attributesIterator()) {
-            auto attributeName = element.isHTMLElement() ? attribute.localName() : attribute.localNameLowercase();
+        for (auto& attribute : element.attributes()) {
+            auto& attributeName = element.isHTMLElement() ? attribute.localName() : attribute.localNameLowercase();
             if (isExcludedAttribute(attributeName))
                 continue;
             identifierHashes.append(attributeName.impl()->existingHash() * AttributeSalt);
@@ -72,7 +72,7 @@ void SelectorFilter::collectElementIdentifierHashes(const Element& element, Vect
 
 bool SelectorFilter::parentStackIsConsistent(const ContainerNode* parentNode) const
 {
-    if (!parentNode || is<Document>(parentNode) || is<ShadowRoot>(parentNode))
+    if (!parentNode || isAnyOf<Document, ShadowRoot>(*parentNode))
         return m_parentStack.isEmpty();
 
     return !m_parentStack.isEmpty() && m_parentStack.last().element == parentNode;
@@ -81,11 +81,11 @@ bool SelectorFilter::parentStackIsConsistent(const ContainerNode* parentNode) co
 void SelectorFilter::initializeParentStack(Element& parent)
 {
     Vector<Element*, 20> ancestors;
-    for (auto* ancestor = &parent; ancestor; ancestor = ancestor->parentElement())
-        ancestors.append(ancestor);
-    m_parentStack.reserveCapacity(m_parentStack.capacity() + ancestors.size());
+    for (CheckedPtr ancestor = &parent; ancestor; ancestor = ancestor->parentElement())
+        ancestors.append(ancestor.get());
+    m_parentStack.reserveCapacity(ancestors.size());
     for (unsigned i = ancestors.size(); i--;)
-        pushParent(ancestors[i]);
+        pushParent(protect(ancestors[i]));
 }
 
 void SelectorFilter::pushParent(Element* parent)
@@ -104,7 +104,7 @@ void SelectorFilter::pushParent(Element* parent)
 
 void SelectorFilter::pushParentInitializingIfNeeded(Element& parent)
 {
-    if (UNLIKELY(m_parentStack.isEmpty())) {
+    if (m_parentStack.isEmpty()) [[unlikely]] {
         initializeParentStack(parent);
         return;
     }
@@ -169,8 +169,8 @@ void SelectorFilter::collectSimpleSelectorHash(CollectedSelectorHashes& collecte
         case CSSSelector::PseudoClass::Where:
             // We can use the filter in the trivial case of single argument :is()/:where().
             // Supporting the multiargument case would require more than one hash.
-            if (selector.selectorList()->listSize() == 1)
-                collectSelectorHashes(collectedHashes, *selector.selectorList()->first(), IncludeRightmost::Yes);
+            if (selector.selectorList()->size() == 1)
+                collectSelectorHashes(collectedHashes, selector.selectorList()->first(), IncludeRightmost::Yes);
             break;
         default:
             break;
@@ -185,12 +185,12 @@ void SelectorFilter::collectSelectorHashes(CollectedSelectorHashes& collectedHas
 {
     auto [selector, relation, skipOverSubselectors] = [&] {
         if (includeRightmost == IncludeRightmost::No)
-            return std::tuple { rightmostSelector.tagHistory(), rightmostSelector.relation(), true };
+            return std::tuple { rightmostSelector.precedingInComplexSelector(), rightmostSelector.relation(), true };
 
         return std::tuple { &rightmostSelector, CSSSelector::Relation::Subselector, false };
     }();
 
-    for (; selector; selector = selector->tagHistory()) {
+    for (; selector; selector = selector->precedingInComplexSelector()) {
         // Only collect identifiers that match ancestors.
         switch (relation) {
         case CSSSelector::Relation::Subselector:

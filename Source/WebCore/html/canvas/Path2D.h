@@ -30,13 +30,14 @@
 #include "CanvasPath.h"
 #include "SVGPathUtilities.h"
 #include <wtf/RefCounted.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 struct DOMMatrix2DInit;
 
 class WEBCORE_EXPORT Path2D final : public RefCounted<Path2D>, public CanvasPath {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(Path2D, WEBCORE_EXPORT);
 public:
     virtual ~Path2D();
 
@@ -62,14 +63,11 @@ public:
 
     ExceptionOr<void> addPath(Path2D&, DOMMatrix2DInit&&);
 
-    const Path& path() const { return m_path; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
 
 private:
-    Path2D() = default;
-    Path2D(const Path& path)
-        : CanvasPath(path)
-    {
-    }
+    Path2D();
+    Path2D(const Path&);
 };
 
 } // namespace WebCore

@@ -25,19 +25,10 @@
 #if ENABLE(MEDIA_STREAM) && USE(GSTREAMER)
 #include "GStreamerAudioCapturer.h"
 
-#if USE(LIBWEBRTC)
-#include "LibWebRTCAudioFormat.h"
-#endif
-
 #include <gst/app/gstappsink.h>
+#include <wtf/MediaTime.h>
 
 namespace WebCore {
-
-#if USE(LIBWEBRTC)
-static constexpr size_t s_audioCaptureSampleRate = LibWebRTCAudioFormat::sampleRate;
-#else
-static constexpr size_t s_audioCaptureSampleRate = 48000;
-#endif
 
 GST_DEBUG_CATEGORY(webkit_audio_capturer_debug);
 #define GST_CAT_DEFAULT webkit_audio_capturer_debug
@@ -51,27 +42,32 @@ static void initializeAudioCapturerDebugCategory()
 }
 
 GStreamerAudioCapturer::GStreamerAudioCapturer(GStreamerCaptureDevice&& device)
-    : GStreamerCapturer(WTFMove(device), adoptGRef(gst_caps_new_simple("audio/x-raw", "rate", G_TYPE_INT, s_audioCaptureSampleRate, nullptr)))
+    : GStreamerCapturer(WTF::move(device), adoptGRef(gst_caps_new_empty_simple("audio/x-raw")))
 {
     initializeAudioCapturerDebugCategory();
 }
 
-GStreamerAudioCapturer::GStreamerAudioCapturer()
-    : GStreamerCapturer("appsrc", adoptGRef(gst_caps_new_simple("audio/x-raw", "rate", G_TYPE_INT, s_audioCaptureSampleRate, nullptr)), CaptureDevice::DeviceType::Microphone)
+GStreamerAudioCapturer::GStreamerAudioCapturer(const PipeWireCaptureDevice& device)
+    : GStreamerCapturer(device)
 {
     initializeAudioCapturerDebugCategory();
+}
+
+void GStreamerAudioCapturer::handleSample(GRefPtr<GstSample>&& sample)
+{
+    auto presentationTime = fromGstClockTime(GST_BUFFER_PTS(gst_sample_get_buffer(sample.get())));
+    m_sinkAudioDataCallback.second(WTF::move(sample), WTF::move(presentationTime));
 }
 
 void GStreamerAudioCapturer::setSinkAudioCallback(SinkAudioDataCallback&& callback)
 {
-    if (m_sinkAudioDataCallback.first)
-        g_signal_handler_disconnect(sink(), m_sinkAudioDataCallback.first);
+    if (m_sinkAudioDataCallback.first.newSampleSignalId)
+        g_signal_handler_disconnect(sink(), m_sinkAudioDataCallback.first.newSampleSignalId);
 
-    m_sinkAudioDataCallback.second = WTFMove(callback);
-    m_sinkAudioDataCallback.first = g_signal_connect_swapped(sink(), "new-sample", G_CALLBACK(+[](GStreamerAudioCapturer* capturer, GstElement* sink) -> GstFlowReturn {
-        auto gstSample = adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(sink)));
-        auto presentationTime = fromGstClockTime(GST_BUFFER_PTS(gst_sample_get_buffer(gstSample.get())));
-        capturer->m_sinkAudioDataCallback.second(WTFMove(gstSample), WTFMove(presentationTime));
+    m_sinkAudioDataCallback.second = WTF::move(callback);
+    m_sinkAudioDataCallback.first.newSampleSignalId = g_signal_connect_swapped(sink(), "new-sample", G_CALLBACK(+[](GStreamerAudioCapturer* capturer, GstElement* sink) -> GstFlowReturn {
+        GRefPtr sample = adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(sink)));
+        capturer->handleSample(WTF::move(sample));
         return GST_FLOW_OK;
     }), this);
 }
@@ -79,23 +75,23 @@ void GStreamerAudioCapturer::setSinkAudioCallback(SinkAudioDataCallback&& callba
 GstElement* GStreamerAudioCapturer::createConverter()
 {
     auto* bin = gst_bin_new(nullptr);
-    auto* audioconvert = makeGStreamerElement("audioconvert", nullptr);
-    auto* audioresample = makeGStreamerElement("audioresample", nullptr);
+    auto* audioconvert = makeGStreamerElement("audioconvert"_s);
+    auto* audioresample = makeGStreamerElement("audioresample"_s);
     gst_bin_add_many(GST_BIN_CAST(bin), audioconvert, audioresample, nullptr);
     gst_element_link(audioconvert, audioresample);
 
 #if USE(GSTREAMER_WEBRTC)
-    if (auto audioFilter = makeGStreamerElement("audiornnoise", nullptr)) {
-        auto audioconvert2 = makeGStreamerElement("audioconvert", nullptr);
-        auto audioresample2 = makeGStreamerElement("audioresample", nullptr);
+    if (auto audioFilter = makeGStreamerElement("audiornnoise"_s)) {
+        auto audioconvert2 = makeGStreamerElement("audioconvert"_s);
+        auto audioresample2 = makeGStreamerElement("audioresample"_s);
         gst_bin_add_many(GST_BIN_CAST(bin), audioconvert2, audioresample2, audioFilter, nullptr);
         gst_element_link_many(audioconvert2, audioresample2, audioFilter, audioconvert, nullptr);
     }
 #endif
 
-    if (auto pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SRC)))
+    if (GRefPtr pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SRC)))
         gst_element_add_pad(GST_ELEMENT_CAST(bin), gst_ghost_pad_new("src", pad.get()));
-    if (auto pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SINK)))
+    if (GRefPtr pad = adoptGRef(gst_bin_find_unlinked_pad(GST_BIN_CAST(bin), GST_PAD_SINK)))
         gst_element_add_pad(GST_ELEMENT_CAST(bin), gst_ghost_pad_new("sink", pad.get()));
 
     return bin;

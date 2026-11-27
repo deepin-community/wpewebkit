@@ -53,11 +53,11 @@ public:
         return adoptRef(*new SecurityOrigin(securityOriginData.isolatedCopy()));
     }
 
-    const WebCore::SecurityOriginData& securityOrigin() const { return m_securityOrigin; }
+    const WebCore::SecurityOriginData& securityOrigin() const LIFETIME_BOUND { return m_securityOrigin; }
 
 private:
     SecurityOrigin(WebCore::SecurityOriginData&& securityOrigin)
-        : m_securityOrigin(WTFMove(securityOrigin))
+        : m_securityOrigin(WTF::move(securityOrigin))
     {
     }
 
@@ -65,3 +65,5 @@ private:
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(SecurityOrigin);

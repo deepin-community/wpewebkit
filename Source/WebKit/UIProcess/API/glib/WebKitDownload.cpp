@@ -35,6 +35,7 @@
 #include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/CStringView.h>
 
 using namespace WebKit;
 using namespace WebCore;
@@ -70,7 +71,7 @@ enum {
     N_PROPERTIES,
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 struct _WebKitDownloadPrivate {
     ~_WebKitDownloadPrivate()
@@ -99,7 +100,7 @@ struct _WebKitDownloadPrivate {
     bool allowOverwrite;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitDownload, webkit_download, G_TYPE_OBJECT, GObject)
 
@@ -205,7 +206,7 @@ static void webkit_download_class_init(WebKitDownloadClass* downloadClass)
      * This value will range from 0.0 to 1.0. The value is an estimate
      * based on the total number of bytes expected to be received for
      * a download.
-     * If you need a more accurate progress information you can connect to
+     * If you need more accurate progress information you can connect to
      * #WebKitDownload::received-data signal to track the progress.
      */
     sObjProperties[PROP_ESTIMATED_PROGRESS] =
@@ -231,7 +232,7 @@ static void webkit_download_class_init(WebKitDownloadClass* downloadClass)
             FALSE,
             WEBKIT_PARAM_READWRITE);
 
-    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WebKitDownload::received-data:
@@ -435,10 +436,12 @@ void webkitDownloadFinished(WebKitDownload* download)
 
 void webkitDownloadDecideDestinationWithSuggestedFilename(WebKitDownload* download, CString&& suggestedFilename, CompletionHandler<void(AllowOverwrite, String)>&& completionHandler)
 {
-    if (download->priv->isCancelled)
+    if (download->priv->isCancelled) {
+        completionHandler(AllowOverwrite::No, { });
         return;
+    }
 
-    download->priv->decideDestinationCallback = WTFMove(completionHandler);
+    download->priv->decideDestinationCallback = WTF::move(completionHandler);
     gboolean applicationWillDecideDestination = FALSE;
     g_signal_emit(download, signals[DECIDE_DESTINATION], 0, suggestedFilename.data(), &applicationWillDecideDestination);
     if (!applicationWillDecideDestination)
@@ -529,10 +532,11 @@ void webkit_download_set_destination(WebKitDownload* download, const gchar* dest
 #if ENABLE(2022_GLIB_API)
     g_return_if_fail(g_path_is_absolute(destination));
 #else
-    g_return_if_fail(g_str_has_prefix(destination, "file://") || g_path_is_absolute(destination));
+    auto isFileURI = startsWith(CStringView::unsafeFromUTF8(destination).span(), "file://"_s);
+    g_return_if_fail(isFileURI || g_path_is_absolute(destination));
 
     GUniquePtr<char> destinationPath;
-    if (g_str_has_prefix(destination, "file://")) {
+    if (isFileURI) {
         download->priv->destinationURI.reset(g_strdup(destination));
         destinationPath.reset(g_filename_from_uri(destination, nullptr, nullptr));
         destination = destinationPath.get();
@@ -544,7 +548,7 @@ void webkit_download_set_destination(WebKitDownload* download, const gchar* dest
         download->priv->destination.reset(g_strdup(destination));
 #else
         if (destinationPath)
-            download->priv->destination = WTFMove(destinationPath);
+            download->priv->destination = WTF::move(destinationPath);
         else
             download->priv->destination.reset(g_strdup(destination));
 #endif
@@ -593,7 +597,7 @@ void webkit_download_cancel(WebKitDownload* download)
     maybeFinishDecideDestination(download);
 
     download->priv->isCancelled = true;
-    download->priv->download->cancel([download = Ref { *download->priv->download }] (auto*) {
+    download->priv->download->cancel([download = protect(*download->priv->download)] (auto*) {
         download->client().legacyDidCancel(download.get());
     });
 }
@@ -603,11 +607,10 @@ void webkit_download_cancel(WebKitDownload* download)
  * @download: a #WebKitDownload
  *
  * Gets the value of the #WebKitDownload:estimated-progress property.
- * Gets the value of the #WebKitDownload:estimated-progress property.
  * You can monitor the estimated progress of the download operation by
  * connecting to the notify::estimated-progress signal of @download.
  *
- * Returns: an estimate of the of the percent complete for a download
+ * Returns: an estimate of the percent complete for a download
  *     as a range from 0.0 to 1.0.
  */
 gdouble webkit_download_get_estimated_progress(WebKitDownload* download)
@@ -622,7 +625,9 @@ gdouble webkit_download_get_estimated_progress(WebKitDownload* download)
     if (!contentLength)
         return 0;
 
-    return static_cast<gdouble>(priv->currentSize) / static_cast<gdouble>(contentLength);
+    // We cannot trust that the Content-Length will be correct. If current size
+    // exceeds Content-Length, our estimate will just be 1.0.
+    return std::min(static_cast<gdouble>(priv->currentSize) / static_cast<gdouble>(contentLength), 1.0);
 }
 
 /**

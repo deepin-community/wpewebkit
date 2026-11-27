@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,10 +33,10 @@ namespace WebCore {
 class RenderScrollbar;
 
 class RenderScrollbarPart final : public RenderBlock {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderScrollbarPart);
+    WTF_MAKE_TZONE_ALLOCATED(RenderScrollbarPart);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderScrollbarPart);
 public:
-    RenderScrollbarPart(Document&, RenderStyle&&, RenderScrollbar* = nullptr, ScrollbarPart = NoPart);
+    RenderScrollbarPart(Document&, Style::ComputedStyle&&, RenderScrollbar* = nullptr, ScrollbarPart = NoPart);
     
     virtual ~RenderScrollbarPart();
 
@@ -44,20 +44,16 @@ public:
     
     bool requiresLayer() const override { return false; }
 
+    bool isInsideEntirelyHiddenLayer() const override { return false; }
+
     void layout() override;
     
     void paintIntoRect(GraphicsContext&, const LayoutPoint&, const LayoutRect&);
 
-    // Scrollbar parts needs to be rendered at device pixel boundaries.
-    LayoutUnit marginTop() const override { ASSERT(isIntegerValue(m_marginBox.top())); return m_marginBox.top(); }
-    LayoutUnit marginBottom() const override { ASSERT(isIntegerValue(m_marginBox.bottom())); return m_marginBox.bottom(); }
-    LayoutUnit marginLeft() const override { ASSERT(isIntegerValue(m_marginBox.left())); return m_marginBox.left(); }
-    LayoutUnit marginRight() const override { ASSERT(isIntegerValue(m_marginBox.right())); return m_marginBox.right(); }
-
     RenderBox* rendererOwningScrollbar() const;
 
 private:
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
 
     void layoutHorizontalPart();
@@ -66,7 +62,7 @@ private:
     void computeScrollbarWidth();
     void computeScrollbarHeight();
     
-    RenderScrollbar* m_scrollbar;
+    SingleThreadWeakPtr<RenderScrollbar> m_scrollbar;
     ScrollbarPart m_part;
 };
 

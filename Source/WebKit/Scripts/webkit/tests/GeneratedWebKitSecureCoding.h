@@ -32,6 +32,7 @@
 OBJC_CLASS AVOutputContext;
 #endif
 OBJC_CLASS NSSomeFoundationType;
+OBJC_CLASS class NSSomeOtherFoundationType;
 #if ENABLE(DATA_DETECTION)
 OBJC_CLASS DDScannerResult;
 #endif
@@ -48,7 +49,7 @@ public:
     RetainPtr<id> toID() const;
 
 private:
-    friend struct IPC::ArgumentCoder<CoreIPCAVOutputContext, void>;
+    friend struct IPC::ArgumentCoder<CoreIPCAVOutputContext>;
 
     CoreIPCAVOutputContext(
         RetainPtr<NSString>&&,
@@ -69,7 +70,7 @@ public:
     RetainPtr<id> toID() const;
 
 private:
-    friend struct IPC::ArgumentCoder<CoreIPCNSSomeFoundationType, void>;
+    friend struct IPC::ArgumentCoder<CoreIPCNSSomeFoundationType>;
 
     CoreIPCNSSomeFoundationType(
         RetainPtr<NSString>&&,
@@ -90,6 +91,24 @@ private:
     RetainPtr<NSDictionary> m_OptionalDictionaryKey;
 };
 
+class CoreIPCclass NSSomeOtherFoundationType {
+public:
+    CoreIPCclass NSSomeOtherFoundationType(class NSSomeOtherFoundationType *);
+    CoreIPCclass NSSomeOtherFoundationType(const RetainPtr<class NSSomeOtherFoundationType>& object)
+        : CoreIPCclass NSSomeOtherFoundationType(object.get()) { }
+
+    RetainPtr<id> toID() const;
+
+private:
+    friend struct IPC::ArgumentCoder<CoreIPCclass NSSomeOtherFoundationType>;
+
+    CoreIPCclass NSSomeOtherFoundationType(
+        RetainPtr<NSDictionary>&&
+    );
+
+    RetainPtr<NSDictionary> m_DictionaryKey;
+};
+
 #if ENABLE(DATA_DETECTION)
 class CoreIPCDDScannerResult {
 public:
@@ -100,7 +119,7 @@ public:
     RetainPtr<id> toID() const;
 
 private:
-    friend struct IPC::ArgumentCoder<CoreIPCDDScannerResult, void>;
+    friend struct IPC::ArgumentCoder<CoreIPCDDScannerResult>;
 
     CoreIPCDDScannerResult(
         RetainPtr<NSString>&&,

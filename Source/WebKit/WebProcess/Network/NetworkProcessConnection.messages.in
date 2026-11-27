@@ -20,7 +20,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-messages -> NetworkProcessConnection LegacyReceiver {
+[
+    DispatchedFrom=Networking,
+    DispatchedTo=WebContent
+]
+messages -> NetworkProcessConnection WantsDispatchMessage {
 
 #if ENABLE(SHAREABLE_RESOURCE)
     DidCacheResource(WebCore::ResourceRequest request, WebCore::ShareableResourceHandle resource)
@@ -43,7 +47,10 @@ messages -> NetworkProcessConnection LegacyReceiver {
 #endif
 
     MessagesAvailableForPort(struct WebCore::MessagePortIdentifier port)
+    DropNonSerializableInProcessCache(WebCore::NonSerializedDataIdentifier identifier)
 
     BroadcastConsoleMessage(enum:uint8_t JSC::MessageSource messageSource, enum:uint8_t JSC::MessageLevel messageLevel, String message)
     LoadCancelledDownloadRedirectRequestInFrame(WebCore::ResourceRequest request, WebCore::FrameIdentifier frameID, WebCore::PageIdentifier pageID)
+
+    StorageAccessPermissionChanged(WebCore::RegistrableDomain topFrameDomain, WebCore::RegistrableDomain subFrameDomain)
 }

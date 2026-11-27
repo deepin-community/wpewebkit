@@ -22,16 +22,17 @@ ROOT_TARGETS = [
     "//:libEGL",
 ]
 
+END2END_TEST_TARGET = "//src/tests:angle_end2end_tests__library"
+
 # Used only in generated Android.bp file for DMA-BUF-enabled builds on Android.
 # See b/353262025 for details.
-DMA_BUF_TARGETS = [
-    "//src/libANGLE/renderer/vulkan:angle_android_vulkan_dma_buf",
-]
+DMA_BUF_TARGET = "//src/libANGLE/renderer/vulkan:angle_android_vulkan_dma_buf"
 
 BLUEPRINT_COMMENT_PROPERTY = '__android_bp_comment'
 
+CURRENT_SDK_VERSION = 'current'
 MIN_SDK_VERSION = '28'
-TARGET_SDK_VERSION = '33'
+TARGET_SDK_VERSION = '37'
 STL = 'libc++_static'
 
 ABI_ARM = 'arm'
@@ -40,6 +41,8 @@ ABI_X86 = 'x86'
 ABI_X64 = 'x86_64'
 
 ABI_TARGETS = [ABI_ARM, ABI_ARM64, ABI_X86, ABI_X64]
+
+rust_ffi_gen_output_map = {}
 
 
 def gn_abi(abi):
@@ -82,6 +85,8 @@ def write_blueprint_key_value(output, name, value, indent=1):
 
     if isinstance(value, set) or isinstance(value, list):
         value = list(sorted(set(value)))
+        if name == 'cflags':
+            fix_platform_default_defines(value)
 
     if isinstance(value, list):
         output.append(tabs(indent) + '%s: [' % name)
@@ -135,13 +140,21 @@ def write_blueprint(output, target_type, values):
 
 
 def gn_target_to_blueprint_target(target, target_info):
-    if 'output_name' in target_info:
+    if 'output_name' in target_info and target_info.get('type') != 'rust_library':
         return target_info['output_name']
+
+    if target_info.get('type') == 'rust_library':
+        return 'lib' + target_info['crate_name']
+
+    if target_info.get('type') == 'shared_library':
+        # Deduce name from the shared library path
+        # end2end tests lib and libangle_util.so don't have output_name set for the early return above
+        return os.path.splitext(os.path.basename(target_info['outputs'][0]))[0]
 
     # Split the gn target name (in the form of //gn_file_path:target_name) into gn_file_path and
     # target_name
     match = re.match(r"^//([a-zA-Z0-9\-\+_/]*):([a-zA-Z0-9\-\+_.]+)$", target)
-    assert match is not None
+    assert match is not None, target
 
     gn_file_path = match.group(1)
     target_name = match.group(2)
@@ -190,6 +203,23 @@ def gn_paths_to_blueprint_paths(paths):
     return rebased_paths
 
 
+def gn_generated_sources_to_blueprint_generated_sources(sources):
+    # Blueprints only list source files in the sources list. Headers are only referenced though
+    # include paths.
+    generated_source_file_extension_allowlist = [
+        '.c',
+        '.cc',
+        '.cpp',
+    ]
+
+    generated_source_targets = []
+    for source in sources:
+        if source in rust_ffi_gen_output_map and os.path.splitext(
+                source)[1] in generated_source_file_extension_allowlist:
+            generated_source_targets.append(rust_ffi_gen_output_map[source])
+    return generated_source_targets
+
+
 def gn_sources_to_blueprint_sources(sources):
     # Blueprints only list source files in the sources list. Headers are only referenced though
     # include paths.
@@ -201,6 +231,9 @@ def gn_sources_to_blueprint_sources(sources):
 
     rebased_sources = []
     for source in sources:
+        if source in rust_ffi_gen_output_map:
+            # these need to be placed under generated_sources and generated_headers entry in Android.bp
+            continue
         if os.path.splitext(source)[1] in file_extension_allowlist:
             rebased_sources.append(gn_path_to_blueprint_path(source))
     return rebased_sources
@@ -210,6 +243,23 @@ target_blockist = [
     '//build/config:shared_library_deps',
     '//third_party/zlib:zlib',
     '//third_party/zlib/google:compression_utils_portable',
+
+    # end2end tests: -> platform libgtest, libgmock
+    '//testing/gtest:gtest',
+    '//testing/gmock:gmock',
+    '//third_party/googletest:gtest',
+    '//third_party/googletest:gmock',
+
+    # Do not add chromium rust dependencies, we will use Android rust dependencies instead
+    '//build/rust:cxx_cppdeps',
+    '//build/rust:cxx_rustdeps',
+    '//build/rust/allocator:allocator',
+    '//build/rust/std:std',
+    '//build/rust/gni_impl:rustc_print_cfg',
+    '//third_party/rust/cxxbridge_cmd/v1:cxxbridge(//build/toolchain/linux:clang_x64_for_rust_host_build_tools)',
+
+    # Do not add chromium perfetto dependencies, use Android perfetto library instead
+    '//third_party/perfetto/src/tracing:client_api',
 ]
 
 third_party_target_allowlist = [
@@ -232,7 +282,49 @@ include_blocklist = [
     '//out/Android/gen/third_party/glslang/src/include/',
     '//third_party/zlib/',
     '//third_party/zlib/google/',
+    # end2end tests: -> platform libgtest, libgmock
+    '//third_party/googletest/custom/',
+    '//third_party/googletest/src/googletest/include/',
+    '//third_party/googletest/src/googlemock/include/',
+    # rust ffi gen directory
+    '//out/Android/gen/',
+    '//out/Android/gen/src/',
+    '//out/Android/gen/third_party/angle/src/',
+    # Do not add chromium perfetto dependencies. The include will be resolved by Android libperfetto_client_experimental
+    '//third_party/perfetto/include/',
+    '//out/Android/gen/third_party/perfetto/',
+    '//out/Android/gen/third_party/perfetto/build_config/',
+    '//third_party/protobuf/*',
 ]
+
+targets_using_jni = [
+    '//src/tests:native_test_support_android',
+    '//util:angle_util',
+]
+
+
+def get_rust_ffi_header_file_gen_target_name(rust_source_full_path):
+    _, _, rust_source_without_full_path = rust_source_full_path.rpartition('/')
+    generated_rust_ffi_header_file = "libcxx_" + rust_source_without_full_path.removesuffix(
+        ".rs") + "_header"
+    return generated_rust_ffi_header_file
+
+
+def get_rust_ffi_source_file_gen_target_name(rust_source_full_path):
+    _, _, rust_source_without_full_path = rust_source_full_path.rpartition('/')
+    generated_rust_ffi_source_file = "libcxx_" + rust_source_without_full_path.removesuffix(
+        ".rs") + "_cpp"
+    return generated_rust_ffi_source_file
+
+
+# Check if the given gn build target type and target information matches with the target that generates C++ headers
+# and C++ source from rust files
+def is_gn_target_rust_ffi(gn_dep_type, dep_info):
+    if gn_dep_type in blueprint_gen_rust_ffi_types and 'script' in dep_info and dep_info[
+            'script'] == '//third_party/rust/cxx/chromium_integration/run_cxxbridge.py':
+        return True
+    else:
+        return False
 
 
 @functools.lru_cache(maxsize=None)  # .cache() is py3.9 http://b/246559064#comment8
@@ -242,7 +334,10 @@ def gn_deps_to_blueprint_deps(abi, target, build_info):
     shared_libs = []
     defaults = []
     generated_headers = []
+    whole_static_libs = []
     header_libs = []
+    if target in targets_using_jni:
+        header_libs.append('jni_headers')
     if 'deps' not in target_info:
         return static_libs, defaults
 
@@ -270,9 +365,16 @@ def gn_deps_to_blueprint_deps(abi, target, build_info):
                 if blueprint_dep_name == 'angle_commit_id':
                     continue
                 generated_headers.append(blueprint_dep_name)
+            elif is_gn_target_rust_ffi(gn_dep_type, dep_info):
+                for generated_file in dep_info['outputs']:
+                    if generated_file in rust_ffi_gen_output_map and os.path.splitext(
+                            generated_file)[1] == '.h':
+                        generated_headers.append(rust_ffi_gen_output_map[generated_file])
+            elif gn_dep_type == 'rust_library':
+                whole_static_libs.append(blueprint_dep_name)
 
             # Blueprints do not chain linking of static libraries.
-            (child_static_libs, _, _, child_generated_headers,
+            (child_static_libs, _, _, _, child_generated_headers,
              _) = gn_deps_to_blueprint_deps(abi, dep, build_info)
 
             # Each target needs to link all child static library dependencies.
@@ -285,9 +387,17 @@ def gn_deps_to_blueprint_deps(abi, target, build_info):
         elif dep == '//third_party/zlib/google:compression_utils_portable':
             # Replace zlib by Android's zlib, compression_utils_portable is the root dependency
             shared_libs.append('libz')
-            static_libs.extend(['zlib_google_compression_utils_portable', 'cpufeatures'])
+            static_libs.extend(['zlib_google_compression_utils_portable'])
+        elif dep == '//testing/gtest:gtest':
+            static_libs.append('libgtest_ndk_c++')
+        elif dep == '//testing/gmock:gmock':
+            static_libs.append('libgmock_ndk')
+        elif dep == '//third_party/perfetto/src/tracing:client_api':
+            # Replace perfetto dependency with Android's prebuilt perfetto library
+            static_libs.append('libperfetto_client_experimental')
 
-    return static_libs, shared_libs, defaults, generated_headers, header_libs
+
+    return static_libs, shared_libs, defaults, whole_static_libs, generated_headers, header_libs
 
 
 def gn_libs_to_blueprint_shared_libraries(target_info):
@@ -305,11 +415,23 @@ def gn_libs_to_blueprint_shared_libraries(target_info):
     return result
 
 
+def is_include_dir_blocklisted(include_dir):
+    norm_dir = include_dir.rstrip('/') + '/'
+    for entry in include_blocklist:
+        if entry.endswith('*'):
+            prefix = entry[:-1].rstrip('/') + '/'
+            if norm_dir.startswith(prefix):
+                return True
+        elif norm_dir == entry.rstrip('/') + '/':
+            return True
+    return False
+
+
 def gn_include_dirs_to_blueprint_include_dirs(target_info):
     result = []
     if 'include_dirs' in target_info:
         for include_dir in target_info['include_dirs']:
-            if len(include_dir) > 0 and include_dir not in include_blocklist:
+            if len(include_dir) > 0 and not is_include_dir_blocklisted(include_dir):
                 result.append(gn_path_to_blueprint_path(include_dir))
     return result
 
@@ -351,6 +473,10 @@ blueprint_library_target_types = {
     "group": "cc_defaults",
 }
 
+blueprint_rust_library_target_types = {
+    "rust_library": "rust_ffi_static",
+}
+
 
 def merge_bps(bps_for_abis):
     common_bp = {}
@@ -378,7 +504,41 @@ def merge_bps(bps_for_abis):
     return common_bp
 
 
-def library_target_to_blueprint(target, build_info):
+def rustlibrary_target_to_blueprint(target, build_info) -> list[tuple[str, dict]]:
+    bps_for_abis = {}
+    blueprint_type = ""
+    for abi in ABI_TARGETS:
+        if target not in build_info[abi].keys():
+            bps_for_abis[abi] = {}
+            continue
+
+        target_info = build_info[abi][target]
+
+        blueprint_type = blueprint_rust_library_target_types[target_info['type']]
+
+        bp = {'name': gn_target_to_blueprint_target(target, target_info)}
+
+        bp['crate_name'] = target_info['crate_name']
+
+        bp['srcs'] = [gn_path_to_blueprint_path(target_info['crate_root'])]
+
+        bp['rustlibs'] = {"libcxx"}
+
+        bp['sdk_version'] = CURRENT_SDK_VERSION
+
+        rustEditionPrefix = "--edition="
+        if 'rustflags' in target_info:
+            for rustflag in target_info['rustflags']:
+                if rustflag.startswith(rustEditionPrefix):
+                    bp['edition'] = rustflag[len(rustEditionPrefix):]
+                    break
+
+        bps_for_abis[abi] = bp
+    common_bp = merge_bps(bps_for_abis)
+    return [(blueprint_type, common_bp)]
+
+
+def library_target_to_blueprint(target, build_info) -> list[tuple[str, dict]]:
     bps_for_abis = {}
     blueprint_type = ""
     for abi in ABI_TARGETS:
@@ -394,8 +554,11 @@ def library_target_to_blueprint(target, build_info):
 
         if 'sources' in target_info:
             bp['srcs'] = gn_sources_to_blueprint_sources(target_info['sources'])
+            bp['generated_sources'] = gn_generated_sources_to_blueprint_generated_sources(
+                target_info['sources'])
 
-        (bp['static_libs'], bp['shared_libs'], bp['defaults'], bp['generated_headers'],
+        (bp['static_libs'], bp['shared_libs'], bp['defaults'], bp['whole_static_libs'],
+         bp['generated_headers'],
          bp['header_libs']) = gn_deps_to_blueprint_deps(abi, target, build_info)
         bp['shared_libs'] += gn_libs_to_blueprint_shared_libraries(target_info)
 
@@ -405,16 +568,28 @@ def library_target_to_blueprint(target, build_info):
 
         bp['defaults'].append('angle_common_library_cflags')
 
-        bp['sdk_version'] = MIN_SDK_VERSION
+        bp['sdk_version'] = CURRENT_SDK_VERSION
+
         bp['stl'] = STL
+
+        # Explicitly disable general Control Flow Integrity (CFI)
+        bp['sanitize'] = {
+            'cfi': False,
+        }
+
+        # Explicitly enable LTO and add aggressive LTO optimizations
+        bp['whole_program_vtables'] = True
+        bp['ldflags'] = ['-Wl,-plugin-opt,O2']
+
         if target in ROOT_TARGETS:
             bp['defaults'].append('angle_vendor_cc_defaults')
             bp['defaults'].append('angle_dma_buf_cc_defaults')
+            bp['afdo'] = True
         bps_for_abis[abi] = bp
 
     common_bp = merge_bps(bps_for_abis)
 
-    return blueprint_type, common_bp
+    return [(blueprint_type, common_bp)]
 
 
 def gn_action_args_to_blueprint_args(blueprint_inputs, blueprint_outputs, args):
@@ -428,6 +603,19 @@ def gn_action_args_to_blueprint_args(blueprint_inputs, blueprint_outputs, args):
         ('gen/', ''),
     ]
 
+    # some args have special prefix added in front of the file name, we need to
+    # take them out before transforming the file path, and then add them back:
+    # e.g.
+    # transform
+    # --extinst=,../../third_party/spirv-headers/src/include/spirv/unified1/extinst.debuginfo.grammar.json
+    # to
+    # --extinst=,$(location third_party/spirv-headers/src/include/spirv/unified1/extinst.debuginfo.grammar.json)
+    special_prefixs = [
+        '--extinst=,',
+        '--extinst=SHDEBUG100_,',
+        '--extinst=CLDEBUG100_,',
+    ]
+
     result_args = []
     for arg in args:
         # Attempt to find if this arg is a path to one of the inputs. If it is, use the blueprint
@@ -436,12 +624,23 @@ def gn_action_args_to_blueprint_args(blueprint_inputs, blueprint_outputs, args):
         remapped_path_arg = arg
         for (remap_source, remap_dest) in remap_folders:
             remapped_path_arg = remapped_path_arg.replace(remap_source, remap_dest)
+        special_prefix = ''
+        for special_item in special_prefixs:
+            if remapped_path_arg.startswith(special_item):
+                special_prefix = special_item
+                break
+        if special_prefix != '':
+            remapped_path_arg = remapped_path_arg[len(special_prefix):]
 
         if remapped_path_arg in blueprint_inputs or remapped_path_arg in blueprint_outputs:
-            result_args.append('$(location %s)' % remapped_path_arg)
+            remapped_path_arg = remapped_path_arg
+            result_args.append('%s$(location %s)' % (special_prefix, remapped_path_arg))
         elif os.path.basename(remapped_path_arg) in blueprint_outputs:
-            result_args.append('$(location %s)' % os.path.basename(remapped_path_arg))
+            remapped_path_arg = remapped_path_arg
+            result_args.append('%s$(location %s)' %
+                               (special_prefix, os.path.basename(remapped_path_arg)))
         else:
+            remapped_path_arg = special_prefix + remapped_path_arg
             result_args.append(remapped_path_arg)
 
     return result_args
@@ -449,6 +648,10 @@ def gn_action_args_to_blueprint_args(blueprint_inputs, blueprint_outputs, args):
 
 blueprint_gen_types = {
     "action": "cc_genrule",
+}
+
+blueprint_gen_rust_ffi_types = {
+    "action_foreach": "genrule",
 }
 
 
@@ -463,6 +666,19 @@ outputs_remap = {
 
 def is_input_in_tool_files(tool_files, input):
     return input in tool_files
+
+
+def separate_py_files_from_bp_srcs_entry(input_list):
+    bp_tools_list = []  # Initialize the new list for ".py" items
+    remaining_gn_input_list = []  # Initialize the list for the items that are not ".py"
+
+    for item in input_list:
+        if item.endswith(".py"):
+            bp_tools_list.append(item)
+        else:
+            remaining_gn_input_list.append(item)
+
+    return remaining_gn_input_list, bp_tools_list
 
 
 # special handling the {{response_file_name}} args in GN:
@@ -492,7 +708,43 @@ def handle_gn_build_arg_response_file_name(command_arg_list):
     return new_temp_file_name, updated_args
 
 
-def action_target_to_blueprint(abi, target, build_info):
+def add_rust_ffi_to_map(gn_rust_ffi_output_list, android_bp_rust_ffi_output,
+                        android_bp_rust_ffi_gen_target):
+    for gn_rust_ffi_output in gn_rust_ffi_output_list:
+        if gn_rust_ffi_output.endswith(android_bp_rust_ffi_output):
+            rust_ffi_gen_output_map[gn_rust_ffi_output] = android_bp_rust_ffi_gen_target
+            return
+
+
+def action_foreach_target_to_blueprint(abi, target, build_info) -> list[tuple[str, dict]]:
+    target_info = build_info[abi][target]
+    blueprint_type = blueprint_gen_rust_ffi_types[target_info['type']]
+    output_rust_ffi_list = target_info['outputs']
+
+    bp_list = []
+    for rust_source in target_info['sources']:
+        blueprint_source_path = gn_path_to_blueprint_path(rust_source)
+        rust_ffi_header_bp = {'name': get_rust_ffi_header_file_gen_target_name(rust_source)}
+        rust_ffi_header_bp['tools'] = ['cxxbridge']
+        rust_ffi_header_bp['cmd'] = '$(location cxxbridge) $(in) --header > $(out)'
+        rust_ffi_header_bp['srcs'] = [blueprint_source_path]
+        rust_ffi_header_bp['out'] = [blueprint_source_path[len("src/"):] + ".h"]
+        bp_list.append((blueprint_type, rust_ffi_header_bp))
+        add_rust_ffi_to_map(output_rust_ffi_list, rust_ffi_header_bp['out'][0],
+                            rust_ffi_header_bp['name'])
+
+        rust_ffi_source_bp = {'name': get_rust_ffi_source_file_gen_target_name(rust_source)}
+        rust_ffi_source_bp['tools'] = ['cxxbridge']
+        rust_ffi_source_bp['cmd'] = '$(location cxxbridge) $(in) > $(out)'
+        rust_ffi_source_bp['srcs'] = [blueprint_source_path]
+        rust_ffi_source_bp['out'] = [blueprint_source_path[len("src/"):] + ".cc"]
+        bp_list.append((blueprint_type, rust_ffi_source_bp))
+        add_rust_ffi_to_map(output_rust_ffi_list, rust_ffi_source_bp['out'][0],
+                            rust_ffi_source_bp['name'])
+    return bp_list
+
+
+def action_target_to_blueprint(abi, target, build_info) -> list[tuple[str, dict]]:
     target_info = build_info[abi][target]
     blueprint_type = blueprint_gen_types[target_info['type']]
 
@@ -513,7 +765,15 @@ def action_target_to_blueprint(abi, target, build_info):
             if not is_input_in_tool_files(target_info['script'], input)
         ]
 
-    bp_srcs = gn_paths_to_blueprint_paths(gn_inputs)
+    # Take "*.py" out from gn_inputs, they need to be listed in tool_files entry
+    # in Android.bp.
+    gn_inputs_without_python_script = gn_inputs
+    extra_tool_files = []
+    if 'script' in target_info:
+        gn_inputs_without_python_script, extra_tool_files = separate_py_files_from_bp_srcs_entry(
+            gn_inputs)
+
+    bp_srcs = gn_paths_to_blueprint_paths(gn_inputs_without_python_script)
 
     bp['srcs'] = bp_srcs
 
@@ -529,6 +789,17 @@ def action_target_to_blueprint(abi, target, build_info):
     bp['out'] = bp_outputs
 
     bp['tool_files'] = [gn_path_to_blueprint_path(target_info['script'])]
+    if 'script' in target_info:
+        # if there are more than 1 python script listed in "tool_files" entry in
+        # Android.bp action target, we need to specify which script we are
+        # invoking.
+        if len(extra_tool_files) > 0:
+            location = '$(location ' + target_info['script'].lstrip('/') + ')'
+        else:
+            location = '$(location)'
+        bp['tool_files'] += gn_paths_to_blueprint_paths(extra_tool_files)
+    else:
+        location = '$(location)'
 
     new_temporary_gn_response_file, updated_args = handle_gn_build_arg_response_file_name(
         target_info['args'])
@@ -536,35 +807,43 @@ def action_target_to_blueprint(abi, target, build_info):
     if new_temporary_gn_response_file:
         # add the command 'echo $(in) > $(genDir)/gn_response_file' to
         # write $response_file_contents into the new_temporary_gn_response_file.
-        cmd = ['echo $(in) >', new_temporary_gn_response_file, '&&', '$(location)'
+        cmd = ['echo $(in) >', new_temporary_gn_response_file, '&&', location
               ] + gn_action_args_to_blueprint_args(bp_srcs, bp_outputs, updated_args)
     else:
-        cmd = ['$(location)'] + gn_action_args_to_blueprint_args(bp_srcs, bp_outputs,
-                                                                 target_info['args'])
+        cmd = [location] + gn_action_args_to_blueprint_args(bp_srcs, bp_outputs,
+                                                            target_info['args'])
 
     bp['cmd'] = ' '.join(cmd)
 
-    bp['sdk_version'] = MIN_SDK_VERSION
+    bp['sdk_version'] = CURRENT_SDK_VERSION
 
-    return blueprint_type, bp
+    return [(blueprint_type, bp)]
 
 
-def gn_target_to_blueprint(target, build_info):
+def gn_target_to_blueprint(target, build_info) -> list[tuple[str, dict]]:
     for abi in ABI_TARGETS:
         gn_type = build_info[abi][target]['type']
         if gn_type in blueprint_library_target_types:
             return library_target_to_blueprint(target, build_info)
         elif gn_type in blueprint_gen_types:
             return action_target_to_blueprint(abi, target, build_info)
+        elif gn_type in blueprint_rust_library_target_types:
+            return rustlibrary_target_to_blueprint(target, build_info)
+        elif is_gn_target_rust_ffi(gn_type, build_info[abi][target]):
+            return action_foreach_target_to_blueprint(abi, target, build_info)
         else:
-            # Target is not used by this ABI
+            # Target is not supported by this ABI
             continue
 
 
 @functools.lru_cache(maxsize=None)
 def get_gn_target_dependencies(abi, target, build_info):
     result = collections.OrderedDict()
-    result[target] = 1
+    action_foreach_result = collections.OrderedDict()
+    if build_info[abi][target]['type'] == 'action_foreach':
+        action_foreach_result[target] = 1
+    else:
+        result[target] = 1
 
     for dep in build_info[abi][target]['deps']:
         if dep in target_blockist:
@@ -575,9 +854,11 @@ def get_gn_target_dependencies(abi, target, build_info):
             continue
 
         # Recurse
-        result.update(get_gn_target_dependencies(abi, dep, build_info))
+        action_for_each_targets, other_targets = get_gn_target_dependencies(abi, dep, build_info)
+        action_foreach_result.update(action_for_each_targets)
+        result.update(other_targets)
 
-    return result
+    return action_foreach_result, result
 
 
 def get_angle_in_vendor_flag_config():
@@ -653,9 +934,7 @@ def get_angle_android_dma_buf_flag_config(build_info):
         'name': 'angle_dma_buf_cc_defaults',
         'soong_config_variables': {
             'angle_android_dma_buf': {
-                'defaults': [
-                    gn_target_to_blueprint_target(target, {}) for target in DMA_BUF_TARGETS
-                ],
+                'defaults': [gn_target_to_blueprint_target(DMA_BUF_TARGET, {})],
             }
         },
     }))
@@ -665,13 +944,25 @@ def get_angle_android_dma_buf_flag_config(build_info):
 
 # returns list of (blueprint module type, dict with contents)
 def get_blueprint_targets_from_build_info(build_info: BuildInfo) -> List[Tuple[str, dict]]:
-    targets_to_write = collections.OrderedDict()
+    non_action_foreach_targets_to_write = collections.OrderedDict()
+    action_foreach_targets_to_write = collections.OrderedDict()
     for abi in ABI_TARGETS:
-        for root_target in ROOT_TARGETS + DMA_BUF_TARGETS:
-            targets_to_write.update(get_gn_target_dependencies(abi, root_target, build_info))
+        for root_target in ROOT_TARGETS + [END2END_TEST_TARGET, DMA_BUF_TARGET]:
+            action_foreach_targets, non_action_foreach_targets = get_gn_target_dependencies(
+                abi, root_target, build_info)
+            action_foreach_targets_to_write.update(action_foreach_targets)
+            non_action_foreach_targets_to_write.update(non_action_foreach_targets)
 
     generated_targets = []
-    for target in reversed(targets_to_write.keys()):
+
+    # Process target whose type is action_foreach
+    # We need to insert generated header and source to rust_ffi_gen_output_map hash map first
+    # before processing other targets
+    for action_foreach_target in action_foreach_targets_to_write.keys():
+        generated_target_list = gn_target_to_blueprint(action_foreach_target, build_info)
+        generated_targets.extend(generated_target_list)
+
+    for target in reversed(non_action_foreach_targets_to_write.keys()):
         # Do not export angle_commit_id target in Android.bp, because the script
         # src/commit_id.py invoked by this target  can't guarantee to generate a
         # meaningful ANGLE git hash during compile time, see b/348044346.
@@ -680,9 +971,58 @@ def get_blueprint_targets_from_build_info(build_info: BuildInfo) -> List[Tuple[s
         # {AndroidANGLERoot}/angle_commmit.h.
         if target == '//:angle_commit_id':
             continue
-        generated_targets.append(gn_target_to_blueprint(target, build_info))
+        generated_target_list = gn_target_to_blueprint(target, build_info)
+        generated_targets.extend(generated_target_list)
 
     return generated_targets
+
+
+def handle_angle_non_conformant_extensions_and_versions(
+    generated_targets: List[Tuple[str, dict]],
+    blueprint_targets: List[dict],
+):
+    """Replace the non conformant cflags with a separate cc_defaults.
+
+    The downstream can custom the cflags easier.
+    """
+    non_conform_cflag = '-DANGLE_EXPOSE_NON_CONFORMANT_EXTENSIONS_AND_VERSIONS'
+    non_conform_defaults = 'angle_non_conformant_extensions_and_versions_cflags'
+
+    blueprint_targets.append(('cc_defaults', {
+        'name': non_conform_defaults,
+        'cflags': [non_conform_cflag],
+    }))
+
+    for _, bp in generated_targets:
+        if 'cflags' in bp and non_conform_cflag in bp['cflags']:
+            bp['cflags'] = list(set(bp['cflags']) - {non_conform_cflag})
+            bp['defaults'].append(non_conform_defaults)
+
+
+def fix_platform_default_defines(cflags: list[str]) -> None:
+    """Avoids macro redefinition errors for flags specified by Android.
+
+    Android may specify platform defaults for macros like `_FORTIFY_SOURCE` and
+    `_LIBCPP_HARDENING_MODE`. If both Android and Angle provide different values
+    for these (e.g., `-D_FORTIFY_SOURCE=3 -D_FORTIFY_SOURCE=2`), Clang will emit
+    errors about macro redefinitions.
+
+    This inserts `-U${FLAG}` before Angle's definitions, to avoid those errors.
+    """
+    flags_to_check = (
+        '_FORTIFY_SOURCE',
+        '_LIBCPP_HARDENING_MODE',
+    )
+    for flag in flags_to_check:
+        d_flag = f'-D{flag}'
+
+        # It's _technically_ possible that we have multiple instances of these
+        # flags in a single command. If these flags _differ_ in value, they
+        # should already be a build error, so we only need to worry about adding
+        # the `-U` flag before the first.
+        flag_index = next((i for i, cflag in enumerate(cflags) if d_flag in cflag), None)
+        if flag_index is not None:
+            cflags.insert(flag_index, f'-U{flag}')
 
 
 def main():
@@ -715,8 +1055,6 @@ def main():
         {
             'name':
                 'angle_common_library_cflags',
-            'cpp_std':
-                'gnu++17',  # TODO(b/330910097): std::popcount missing from external/libcxx
             'cflags': [
                 # Chrome and Android use different versions of Clang which support differnt warning options.
                 # Ignore errors about unrecognized warning flags.
@@ -731,19 +1069,62 @@ def main():
 
     generated_targets = get_blueprint_targets_from_build_info(build_info)
 
-    # Move cflags that are repeated in each target to cc_defaults
-    all_cflags = [set(bp['cflags']) for _, bp in generated_targets if 'cflags' in bp]
-    all_target_cflags = set.intersection(*all_cflags)
+    # Will modify generated_targets and blueprint_targets in-place to handle the
+    # angle_expose_non_conformant_extensions_and_versions gn argument.
+    handle_angle_non_conformant_extensions_and_versions(generated_targets, blueprint_targets)
 
+    # Move cflags that are repeated in each target to cc_defaults
+    # 1. Identify common cflags across all generated targets.
+    targets_with_cflags = [bp for _, bp in generated_targets if 'cflags' in bp]
+    if targets_with_cflags:
+        common_cflags = set.intersection(*(set(bp['cflags']) for bp in targets_with_cflags))
+    else:
+        common_cflags = set()
+
+    # 2. Identify common arch-specific cflags.
+    common_arch_cflags = {}
+    for abi in ABI_TARGETS:
+        targets_with_arch_cflags = [
+            bp for _, bp in generated_targets
+            if 'arch' in bp and abi in bp['arch'] and 'cflags' in bp['arch'][abi]
+        ]
+        if targets_with_arch_cflags:
+            common_arch_cflags[abi] = set.intersection(
+                *(set(bp['arch'][abi]['cflags']) for bp in targets_with_arch_cflags))
+        else:
+            common_arch_cflags[abi] = set()
+
+    # 3. Move these common flags to angle_common_auto_cflags and remove from individual targets.
     for _, bp in generated_targets:
         if 'cflags' in bp:
-            bp['cflags'] = list(set(bp['cflags']) - all_target_cflags)
-            bp['defaults'].append('angle_common_auto_cflags')
+            bp['cflags'] = list(set(bp['cflags']) - common_cflags)
+            # Every generated target that had cflags should inherit from angle_common_auto_cflags
+            if 'angle_common_auto_cflags' not in bp.get('defaults', []):
+                bp.setdefault('defaults', []).append('angle_common_auto_cflags')
 
-    blueprint_targets.append(('cc_defaults', {
+        for abi, flags in common_arch_cflags.items():
+            if flags and 'arch' in bp and abi in bp['arch'] and 'cflags' in bp['arch'][abi]:
+                bp['arch'][abi]['cflags'] = list(set(bp['arch'][abi]['cflags']) - flags)
+                # Cleanup empty structures
+                if not bp['arch'][abi]['cflags']:
+                    del bp['arch'][abi]['cflags']
+                if not bp['arch'][abi]:
+                    del bp['arch'][abi]
+                if not bp['arch']:
+                    del bp['arch']
+
+    # 4. Create the consolidated cc_defaults
+    auto_cflags_bp = {
         'name': 'angle_common_auto_cflags',
-        'cflags': list(all_target_cflags),
-    }))
+        'cflags': list(common_cflags),
+    }
+    if any(common_arch_cflags.values()):
+        auto_cflags_bp['arch'] = {}
+        for abi, flags in common_arch_cflags.items():
+            if flags:
+                auto_cflags_bp['arch'][abi] = {'cflags': list(flags)}
+
+    blueprint_targets.append(('cc_defaults', auto_cflags_bp))
     blueprint_targets.extend(generated_targets)
 
     # Add license build rules
@@ -773,14 +1154,9 @@ def main():
             'src/third_party/libXNVCtrl/LICENSE',
             'src/third_party/volk/LICENSE.md',
             'third_party/abseil-cpp/LICENSE',
-            'third_party/android_system_sdk/LICENSE',
-            'third_party/bazel/LICENSE',
-            'third_party/colorama/LICENSE',
-            'third_party/proguard/LICENSE',
-            'third_party/r8/LICENSE',
-            'third_party/turbine/LICENSE',
             'third_party/glslang/LICENSE',
             'third_party/glslang/src/LICENSE.txt',
+            'third_party/re2/LICENSE',
             'third_party/spirv-headers/LICENSE',
             'third_party/spirv-headers/src/LICENSE',
             'third_party/spirv-tools/LICENSE',
@@ -866,7 +1242,6 @@ def main():
         'optimize': {
             'enabled': True,
             'shrink': True,
-            'proguard_compatibility': False,
         },
         'asset_dirs': ['src/android_system_settings/assets',],
     }))
@@ -899,7 +1274,6 @@ def main():
         'optimize': {
             'enabled': True,
             'shrink': True,
-            'proguard_compatibility': False,
         },
         'asset_dirs': ['src/android_system_settings/assets',],
     }))

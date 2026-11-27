@@ -27,25 +27,113 @@
 #include "FontPlatformData.h"
 
 #include "FontCache.h"
+#include "FontCascadeInlines.h"
 #include "FontCustomPlatformData.h"
 #include "FontRenderOptions.h"
 #include "FontVariationsSkia.h"
 #include "NotImplemented.h"
 #include "OpenTypeTypes.h"
 #include "SkiaHarfBuzzFont.h"
+#include <wtf/Hasher.h>
+
+#if ENABLE(MATHML)
+#include "OpenTypeMathData.h"
+#endif
+
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkStream.h>
 #include <skia/core/SkTypeface.h>
-#include <wtf/Hasher.h>
-#include <wtf/VectorHash.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
 FontPlatformData::FontPlatformData(sk_sp<SkTypeface>&& typeface, float size, bool syntheticBold, bool syntheticOblique, FontOrientation orientation, FontWidthVariant widthVariant, TextRenderingMode textRenderingMode, Vector<hb_feature_t>&& features, const FontCustomPlatformData* customPlatformData)
-    : FontPlatformData(size, syntheticBold, syntheticOblique, orientation, widthVariant, textRenderingMode, customPlatformData)
+    : FontPlatformData(WTF::move(typeface), FontMetadata { size, orientation, widthVariant, textRenderingMode, syntheticBold, syntheticOblique }, WTF::move(features), customPlatformData)
 {
-    m_font = SkFont(typeface, m_size);
-    m_font.setEmbolden(m_syntheticBold);
-    m_font.setSkewX(m_syntheticOblique ? -SK_Scalar1 / 4 : 0);
+}
+
+FontPlatformData::FontPlatformData(sk_sp<SkTypeface>&& typeface, const FontMetadata& metadata, Vector<hb_feature_t>&& features, const FontCustomPlatformData* customPlatformData)
+    : FontPlatformData(metadata, customPlatformData)
+{
+    m_font = SkFont(typeface, m_metadata.pointSize);
+    m_features = WTF::move(features);
+
+    platformDataInit();
+}
+
+FontPlatformData::FontPlatformData(const FontMetadata& metadata, RefPtr<FontCustomPlatformData>&& customPlatformData)
+    : FontPlatformData(metadata, customPlatformData.get())
+{
+    m_font = SkFont(customPlatformData->m_typeface, m_metadata.pointSize);
+
+    platformDataInit();
+}
+
+FontPlatformData::~FontPlatformData()
+{
+    if (m_customPlatformData) {
+        // Dereference sk_sp<SkTypeface> used by font.
+        m_font = { };
+        // Clear sk_sp<SkTypeface> objects from cache if refcount is 1.
+        m_customPlatformData->clearUnusedVariationTypefacesCacheEntries();
+    }
+}
+
+bool FontPlatformData::skiaTypefaceHasAnySupportedColorTable(const SkTypeface& typeface)
+{
+    const int tablesCount = typeface.countTables();
+    if (!tablesCount)
+        return false;
+
+    Vector<SkFontTableTag> tables(tablesCount);
+    const int tableTagsCount = typeface.readTableTags(tables.mutableSpan());
+    if (!tableTagsCount)
+        return false;
+
+    static constexpr SkFontTableTag cpalTag = SkSetFourByteTag('C', 'P', 'A', 'L');
+    static constexpr SkFontTableTag colrTag = SkSetFourByteTag('C', 'O', 'L', 'R');
+    static constexpr SkFontTableTag sbixTag = SkSetFourByteTag('s', 'b', 'i', 'x');
+    static constexpr SkFontTableTag cbdtTag = SkSetFourByteTag('C', 'B', 'D', 'T');
+    static constexpr SkFontTableTag cblcTag = SkSetFourByteTag('C', 'B', 'L', 'C');
+
+    bool cpalFound = false;
+    bool colrFound = false;
+    bool cbdtFound = false;
+    bool cblcFound = false;
+    for (int i = 0; i < tableTagsCount; ++i) {
+        switch (tables[i]) {
+        case sbixTag:
+            return true;
+        case cpalTag:
+            if (colrFound)
+                return true;
+            cpalFound = true;
+            break;
+        case colrTag:
+            if (cpalFound)
+                return true;
+            colrFound = true;
+            break;
+        case cbdtTag:
+            if (cblcFound)
+                return true;
+            cbdtFound = true;
+            break;
+        case cblcTag:
+            if (cbdtFound)
+                return true;
+            cblcFound = true;
+            break;
+        }
+    }
+
+    return false;
+}
+
+void FontPlatformData::platformDataInit()
+{
+    m_font.setEmbolden(m_metadata.isSyntheticBold);
+    m_font.setSkewX(m_metadata.isSyntheticOblique ? -SK_Scalar1 / 4 : 0);
 
     bool useSubpixelPositioning = FontRenderOptions::singleton().useSubpixelPositioning();
 
@@ -63,11 +151,38 @@ FontPlatformData::FontPlatformData(sk_sp<SkTypeface>&& typeface, float size, boo
     bool forceSubpixel = !FontRenderOptions::singleton().isHintingDisabledForTesting() && m_font.getHinting() != SkFontHinting::kFull;
     m_font.setSubpixel(forceSubpixel || useSubpixelPositioning);
 
-    m_font.setLinearMetrics(useSubpixelPositioning);
+    m_font.setLinearMetrics(m_font.getHinting() == SkFontHinting::kNone && m_font.isSubpixel());
 
-    m_hbFont = SkiaHarfBuzzFont::getOrCreate(*m_font.getTypeface());
+    auto& typeface = *m_font.getTypeface();
+    m_hbFont = SkiaHarfBuzzFont::getOrCreate(typeface);
+    m_isColorBitmapFont = m_hbFont->isColorBitmapFont();
+}
 
-    m_features = WTFMove(features);
+std::optional<FontPlatformData> FontPlatformData::fromIPCData(const FontMetadata& metadata, IPCData&& ipcData)
+{
+    return WTF::switchOn(ipcData,
+        [&] (const FontPlatformSerializedData& d) -> std::optional<FontPlatformData> {
+            if (sk_sp<SkTypeface> typeface = SkTypeface::MakeDeserialize(SkMemoryStream::Make(d.typefaceData).get(), nullptr))
+                return FontPlatformData(WTF::move(typeface), metadata, { });
+
+            return std::nullopt;
+        },
+        [&] (CustomFontCreationData& d) -> std::optional<FontPlatformData> {
+            auto fontFaceData = SharedBuffer::create(WTF::move(d.fontFaceData));
+            if (RefPtr fontCustomPlatformData = FontCustomPlatformData::create(fontFaceData, d.itemInCollection))
+                return FontPlatformData(metadata, WTF::move(fontCustomPlatformData));
+
+            return std::nullopt;
+        }
+    );
+}
+
+FontPlatformData::IPCData FontPlatformData::toIPCData() const
+{
+    if (auto* data = creationData())
+        return CustomFontCreationData { { data->fontFaceData->span() }, data->itemInCollection };
+
+    return FontPlatformSerializedData { m_font.getTypeface()->serialize() };
 }
 
 bool FontPlatformData::isFixedPitch() const
@@ -78,7 +193,7 @@ bool FontPlatformData::isFixedPitch() const
 unsigned FontPlatformData::hash() const
 {
     // FIXME: do we need to consider m_features for the hash?
-    return computeHash(m_font.getTypeface()->uniqueID(), m_widthVariant, m_isHashTableDeletedValue, m_textRenderingMode, m_orientation, m_syntheticBold, m_syntheticOblique);
+    return computeHash(m_font.getTypeface()->uniqueID(), m_isHashTableDeletedValue, m_metadata.widthVariant, m_metadata.textRenderingMode, m_metadata.orientation, m_metadata.isSyntheticBold, m_metadata.isSyntheticOblique);
 }
 
 bool FontPlatformData::platformIsEqual(const FontPlatformData& other) const
@@ -118,25 +233,30 @@ RefPtr<SharedBuffer> FontPlatformData::openTypeTable(uint32_t table) const
         return nullptr;
 
     Vector<uint8_t> data(tableSize);
-    if (typeface->getTableData(tag, 0, tableSize, data.data()) != tableSize)
+    if (typeface->getTableData(tag, 0, tableSize, data.mutableSpan().data()) != tableSize)
         return nullptr;
 
-    return SharedBuffer::create(WTFMove(data));
+    return SharedBuffer::create(WTF::move(data));
 }
 
 FontPlatformData FontPlatformData::create(const Attributes& data, const FontCustomPlatformData* custom)
 {
-    ASSERT(custom);
-    sk_sp<SkTypeface> typeface = custom->m_typeface;
     Vector<hb_feature_t> features = data.m_features;
-    return FontPlatformData(WTFMove(typeface), data.m_size, data.m_syntheticBold, data.m_syntheticOblique, data.m_orientation, data.m_widthVariant, data.m_textRenderingMode, WTFMove(features), custom);
+    if (custom) {
+        sk_sp<SkTypeface> typeface = custom->m_typeface;
+        return { WTF::move(typeface), data.m_metadata, WTF::move(features), custom };
+    }
+    sk_sp<SkTypeface> typeface = FontCache::forCurrentThread().fontManager().matchFamilyStyle(data.m_familyName.c_str(), data.m_style);
+    return { WTF::move(typeface), data.m_metadata, WTF::move(features) };
 }
 
 FontPlatformData::Attributes FontPlatformData::attributes() const
 {
-    Attributes result(m_size, m_orientation, m_widthVariant, m_textRenderingMode, m_syntheticBold, m_syntheticOblique);
-    result.m_features = m_features;
-    return result;
+    SkString familyName;
+    skFont().getTypeface()->getFamilyName(&familyName);
+    SkFontStyle style = skFont().getTypeface()->fontStyle();
+    Vector<hb_feature_t> features = m_features;
+    return { m_metadata, familyName, style, WTF::move(features) };
 }
 
 hb_font_t* FontPlatformData::hbFont() const
@@ -157,8 +277,8 @@ HbUniquePtr<hb_font_t> FontPlatformData::createOpenTypeMathHarfBuzzFont() const
 
 void FontPlatformData::updateSize(float size)
 {
-    m_size = size;
-    m_font.setSize(m_size);
+    m_metadata.pointSize = size;
+    m_font.setSize(m_metadata.pointSize);
 }
 
 Vector<FontPlatformData::FontVariationAxis> FontPlatformData::variationAxes(ShouldLocalizeAxisNames) const

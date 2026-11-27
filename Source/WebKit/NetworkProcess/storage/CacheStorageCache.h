@@ -30,30 +30,32 @@
 #include "NetworkCacheKey.h"
 #include <WebCore/RetrieveRecordsOptions.h>
 #include <wtf/Identified.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WorkQueue.h>
 
-namespace WebKit {
-class CacheStorageCache;
+namespace WebCore {
+struct ClientOrigin;
 }
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::CacheStorageCache> : std::true_type { };
+namespace WebKit {
+class CacheStorageCache;
 }
 
 namespace WebKit {
 
 class CacheStorageManager;
 
-class CacheStorageCache : public CanMakeWeakPtr<CacheStorageCache>, public Identified<WebCore::DOMCacheIdentifier> {
+class CacheStorageCache : public RefCountedAndCanMakeWeakPtr<CacheStorageCache>, public Identified<WebCore::DOMCacheIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(CacheStorageCache);
 public:
-    CacheStorageCache(CacheStorageManager&, const String& name, const String& uniqueName, const String& path, Ref<WorkQueue>&&);
+    static Ref<CacheStorageCache> create(CacheStorageManager&, const String& name, const String& uniqueName, const String& path, Ref<WorkQueue>&&);
+
     ~CacheStorageCache();
-    const String& name() const { return m_name; }
-    const String& uniqueName() const { return m_uniqueName; }
-    CacheStorageManager* manager();
+    const String& name() const LIFETIME_BOUND { return m_name; }
+    const String& uniqueName() const LIFETIME_BOUND { return m_uniqueName; }
+    CacheStorageManager* NODELETE manager();
+    std::optional<WebCore::ClientOrigin> origin() const;
 
     void getSize(CompletionHandler<void(uint64_t)>&&);
     void open(WebCore::DOMCacheEngine::CacheIdentifierCallback&&);
@@ -63,27 +65,34 @@ public:
     void removeAllRecords();
     void close();
 
+    Vector<CacheStorageRecordInformation> findRecords(const WebCore::RetrieveRecordsOptions&);
+    void retrieveRecords(const Vector<CacheStorageRecordInformation>&, WebCore::RetrieveRecordsOptions&&, WebCore::DOMCacheEngine::CrossThreadRecordsCallback&&);
+
 private:
+    CacheStorageCache(CacheStorageManager&, const String& name, const String& uniqueName, const String& path, Ref<WorkQueue>&&);
     CacheStorageRecordInformation* findExistingRecord(const WebCore::ResourceRequest&, std::optional<uint64_t> = std::nullopt);
     void putRecordsAfterQuotaCheck(Vector<CacheStorageRecord>&&, WebCore::DOMCacheEngine::RecordIdentifiersCallback&&);
     void putRecordsInStore(Vector<CacheStorageRecord>&&, Vector<std::optional<CacheStorageRecord>>&&, WebCore::DOMCacheEngine::RecordIdentifiersCallback&&);
-    void assertIsOnCorrectQueue()
+    void assertIsOnCorrectQueue() const
     {
 #if ASSERT_ENABLED
         assertIsCurrent(m_queue.get());
 #endif
     }
 
+    static String computeKeyURL(const URL&);
+    using RecordsMap = HashMap<String, Vector<CacheStorageRecordInformation>>;
+
     WeakPtr<CacheStorageManager> m_manager;
     bool m_isInitialized { false };
     Vector<WebCore::DOMCacheEngine::CacheIdentifierCallback> m_pendingInitializationCallbacks;
     String m_name;
     String m_uniqueName;
-    HashMap<String, Vector<CacheStorageRecordInformation>> m_records;
+    RecordsMap m_records;
 #if ASSERT_ENABLED
-    Ref<WorkQueue> m_queue;
+    const Ref<WorkQueue> m_queue;
 #endif
-    Ref<CacheStorageStore> m_store;
+    const Ref<CacheStorageStore> m_store;
 };
 
 } // namespace WebKit

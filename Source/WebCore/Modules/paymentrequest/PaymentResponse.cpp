@@ -30,6 +30,7 @@
 
 #include "Document.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "NotImplemented.h"
 #include "PaymentComplete.h"
 #include "PaymentCompleteDetails.h"
@@ -38,10 +39,11 @@
 #include <JavaScriptCore/ThrowScope.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
+#include "ContextDestructionObserverInlines.h"
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(PaymentResponse);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PaymentResponse);
 
 PaymentResponse::PaymentResponse(ScriptExecutionContext* context, PaymentRequest& request)
     : ActiveDOMObject { context }
@@ -64,14 +66,25 @@ PaymentResponse::~PaymentResponse()
 
 void PaymentResponse::setDetailsFunction(DetailsFunction&& detailsFunction)
 {
-    m_detailsFunction = WTFMove(detailsFunction);
+    m_detailsFunction = WTF::move(detailsFunction);
     m_cachedDetails.clear();
 }
 
 void PaymentResponse::complete(Document& document, std::optional<PaymentComplete>&& result, std::optional<PaymentCompleteDetails>&& details, DOMPromiseDeferred<void>&& promise)
 {
-    if (m_state == State::Stopped || !m_request) {
-        promise.reject(Exception { ExceptionCode::AbortError });
+    if (!document.isFullyActive()) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "Document is not fully active."_s });
+        return;
+    }
+
+    if (m_state == State::Stopped) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The payment response object is closed."_s });
+        return;
+    }
+
+    RefPtr request = m_request.get();
+    if (!request) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The payment response object is closed."_s });
         return;
     }
 
@@ -93,20 +106,31 @@ void PaymentResponse::complete(Document& document, std::optional<PaymentComplete
         }
     }
 
-    auto exception = m_request->complete(document, WTFMove(result), WTFMove(serializedData));
+    auto exception = request->complete(document, WTF::move(result), WTF::move(serializedData));
     if (!exception.hasException()) {
         ASSERT(hasPendingActivity());
         ASSERT(m_state == State::Created);
         m_pendingActivity = nullptr;
         m_state = State::Completed;
     }
-    promise.settle(WTFMove(exception));
+    promise.settle(WTF::move(exception));
 }
 
-void PaymentResponse::retry(PaymentValidationErrors&& errors, DOMPromiseDeferred<void>&& promise)
+void PaymentResponse::retry(const Document& document, PaymentValidationErrors&& errors, DOMPromiseDeferred<void>&& promise)
 {
-    if (m_state == State::Stopped || !m_request) {
-        promise.reject(Exception { ExceptionCode::AbortError });
+    if (!document.isFullyActive()) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "Document is not fully active."_s });
+        return;
+    }
+
+    if (m_state == State::Stopped) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The payment response object is closed."_s });
+        return;
+    }
+
+    RefPtr request = m_request.get();
+    if (!request) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The payment response object is closed."_s });
         return;
     }
 
@@ -118,18 +142,18 @@ void PaymentResponse::retry(PaymentValidationErrors&& errors, DOMPromiseDeferred
     ASSERT(hasPendingActivity());
     ASSERT(m_state == State::Created);
 
-    auto exception = m_request->retry(WTFMove(errors));
+    auto exception = request->retry(WTF::move(errors));
     if (exception.hasException()) {
         promise.reject(exception.releaseException());
         return;
     }
 
-    m_retryPromise = makeUnique<DOMPromiseDeferred<void>>(WTFMove(promise));
+    m_retryPromise = makeUnique<DOMPromiseDeferred<void>>(WTF::move(promise));
 }
 
 void PaymentResponse::abortWithException(Exception&& exception)
 {
-    settleRetryPromise(WTFMove(exception));
+    settleRetryPromise(WTF::move(exception));
     m_pendingActivity = nullptr;
     m_state = State::Completed;
 }
@@ -141,14 +165,14 @@ void PaymentResponse::settleRetryPromise(ExceptionOr<void>&& result)
 
     ASSERT(hasPendingActivity());
     ASSERT(m_state == State::Created || m_state == State::Stopped);
-    m_retryPromise->settle(WTFMove(result));
+    m_retryPromise->settle(WTF::move(result));
     m_retryPromise = nullptr;
 }
 
 void PaymentResponse::stop()
 {
-    queueTaskKeepingObjectAlive(*this, TaskSource::Payment, [this, pendingActivity = std::exchange(m_pendingActivity, nullptr)] {
-        settleRetryPromise(Exception { ExceptionCode::AbortError });
+    queueTaskKeepingObjectAlive(*this, TaskSource::Payment, [pendingActivity = std::exchange(m_pendingActivity, nullptr)](auto& response) {
+        response.settleRetryPromise(Exception { ExceptionCode::AbortError });
     });
     m_state = State::Stopped;
 }
@@ -165,6 +189,11 @@ void PaymentResponse::suspend(ReasonForSuspension reason)
     }
 
     stop();
+}
+
+ScriptExecutionContext* PaymentResponse::scriptExecutionContext() const
+{
+    return ActiveDOMObject::scriptExecutionContext();
 }
 
 } // namespace WebCore

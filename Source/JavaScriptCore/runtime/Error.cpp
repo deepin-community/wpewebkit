@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2001 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2024 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2025 Apple Inc. All rights reserved.
  *  Copyright (C) 2007 Eric Seidel (eric@webkit.org)
  *
  *  This library is free software; you can redistribute it and/or
@@ -24,12 +24,14 @@
 #include "config.h"
 #include "Error.h"
 
+#include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -105,6 +107,8 @@ JSObject* createError(JSGlobalObject* globalObject, ErrorTypeWithExtension error
         return createURIError(globalObject, message);
     case ErrorTypeWithExtension::AggregateError:
         break;
+    case ErrorTypeWithExtension::SuppressedError:
+        break;
     case ErrorTypeWithExtension::OutOfMemoryError:
         return createOutOfMemoryError(globalObject, message);
     }
@@ -151,8 +155,8 @@ public:
         return IterationStatus::Done;
     }
 
-    CodeBlock* codeBlock() const { return m_codeBlock; }
-    BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
+    CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
+    BytecodeIndex NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
 
 private:
     CallFrame* m_startCallFrame;
@@ -161,21 +165,21 @@ private:
     mutable BytecodeIndex m_bytecodeIndex { 0 };
 };
 
-std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo)
+std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo, JSCell* subclassCaller)
 {
-    JSGlobalObject* globalObject = obj->globalObject();
+    JSGlobalObject* globalObject = obj->realm();
     if (!globalObject->stackTraceLimit())
         return nullptr;
 
     size_t framesToSkip = useCurrentFrame ? 0 : 1;
     std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
-    vm.interpreter.getStackTrace(obj, *stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), nullptr, ownerOfCallLinkInfo, callLinkInfo);
+    vm.interpreter.getStackTrace(obj, *stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), subclassCaller, ownerOfCallLinkInfo, callLinkInfo);
     return stackTrace;
 }
 
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
 {
-    if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isPartiallyInitializedFrame()) {
+    if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
         auto* callerFrame = startCallFrame->callerFrame(entryFrame);
         if (callerFrame)
@@ -218,7 +222,7 @@ bool addErrorInfo(VM& vm, Vector<StackFrame>* stackTrace, JSObject* obj)
         obj->putDirect(vm, vm.propertyNames->line, jsNumber(lineColumn.line));
         obj->putDirect(vm, vm.propertyNames->column, jsNumber(lineColumn.column));
         if (!sourceURL.isEmpty())
-            obj->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTFMove(sourceURL)));
+            obj->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(sourceURL)));
 
         obj->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, *stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
@@ -247,7 +251,7 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     // ErrorInstance to materialize whatever it needs to. There's a chance that we get passed some
     // other kind of object, which also has materializable properties. But this code is heuristic-ey
     // enough that if we're wrong in such corner cases, it's not the end of the world.
-    if (ErrorInstance* errorInstance = jsDynamicCast<ErrorInstance*>(error))
+    if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error))
         errorInstance->materializeErrorInfoIfNeeded(vm);
     
     // FIXME: This does not modify the column property, which confusingly continues to reflect
@@ -263,7 +267,7 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
 JSObject* createTypeErrorCopy(JSGlobalObject* globalObject, JSValue error)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String errorString = "Error encountered during evaluation"_s;
 
     if (error.isPrimitive()) {
@@ -291,13 +295,13 @@ JSObject* createTypeErrorCopy(JSGlobalObject* globalObject, JSValue error)
 
 String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = span(interfaceName);
+    auto interfaceNameSpan = unsafeSpan(interfaceName);
     return makeString("The "_s, interfaceNameSpan, '.', attributeName, " getter can only be used on instances of "_s, interfaceNameSpan);
 }
 
 String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = span(interfaceName);
+    auto interfaceNameSpan = unsafeSpan(interfaceName);
     return makeString("The "_s, interfaceNameSpan, '.', attributeName, " setter can only be used on instances of "_s, interfaceNameSpan);
 }
 
@@ -394,7 +398,7 @@ JSObject* createURIError(JSGlobalObject* globalObject, const String& message)
 JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
 {
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
-    jsCast<ErrorInstance*>(error)->setOutOfMemoryError();
+    uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     return error;
 }
 
@@ -403,7 +407,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
     if (message.isEmpty())
         return createOutOfMemoryError(globalObject);
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
-    jsCast<ErrorInstance*>(error)->setOutOfMemoryError();
+    uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     return error;
 }
 

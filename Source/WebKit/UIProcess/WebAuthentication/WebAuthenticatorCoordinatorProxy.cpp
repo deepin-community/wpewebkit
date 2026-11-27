@@ -34,6 +34,7 @@
 #include "Logging.h"
 #include "WebAuthenticationFlags.h"
 #include "WebAuthenticatorCoordinatorProxyMessages.h"
+#include "WebFrameProxy.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include "WebsiteDataStore.h"
@@ -50,10 +51,15 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebAuthenticatorCoordinatorProxy);
 
+Ref<WebAuthenticatorCoordinatorProxy> WebAuthenticatorCoordinatorProxy::create(WebPageProxy& webPageProxy)
+{
+    return adoptRef(*new WebAuthenticatorCoordinatorProxy(webPageProxy));
+}
+
 WebAuthenticatorCoordinatorProxy::WebAuthenticatorCoordinatorProxy(WebPageProxy& webPageProxy)
     : m_webPageProxy(webPageProxy)
 {
-    m_webPageProxy.legacyMainFrameProcess().addMessageReceiver(Messages::WebAuthenticatorCoordinatorProxy::messageReceiverName(), m_webPageProxy.webPageIDInMainFrameProcess(), *this);
+    protect(webPageProxy.legacyMainFrameProcess())->addMessageReceiver(Messages::WebAuthenticatorCoordinatorProxy::messageReceiverName(), webPageProxy.webPageIDInMainFrameProcess(), *this);
 }
 
 WebAuthenticatorCoordinatorProxy::~WebAuthenticatorCoordinatorProxy()
@@ -61,27 +67,87 @@ WebAuthenticatorCoordinatorProxy::~WebAuthenticatorCoordinatorProxy()
 #if HAVE(UNIFIED_ASC_AUTH_UI)
     cancel([]() { });
 #endif // HAVE(UNIFIED_ASC_AUTH_UI)
-    m_webPageProxy.legacyMainFrameProcess().removeMessageReceiver(Messages::WebAuthenticatorCoordinatorProxy::messageReceiverName(), m_webPageProxy.webPageIDInMainFrameProcess());
+    if (RefPtr webPageProxy = m_webPageProxy.get())
+        protect(webPageProxy->legacyMainFrameProcess())->removeMessageReceiver(Messages::WebAuthenticatorCoordinatorProxy::messageReceiverName(), webPageProxy->webPageIDInMainFrameProcess());
 }
 
-const SharedPreferencesForWebProcess& WebAuthenticatorCoordinatorProxy::sharedPreferencesForWebProcess() const
+std::optional<SharedPreferencesForWebProcess> WebAuthenticatorCoordinatorProxy::sharedPreferencesForWebProcess() const
 {
-    return m_webPageProxy.legacyMainFrameProcess().sharedPreferencesForWebProcess();
+    auto* webPageProxy = m_webPageProxy.get();
+    return webPageProxy ? webPageProxy->legacyMainFrameProcess().sharedPreferencesForWebProcess() : std::nullopt;
 }
 
-void WebAuthenticatorCoordinatorProxy::makeCredential(FrameIdentifier frameId, FrameInfoData&& frameInfo, PublicKeyCredentialCreationOptions&& options, MediationRequirement mediation, RequestCompletionHandler&& handler)
+void WebAuthenticatorCoordinatorProxy::makeCredential(IPC::Connection& connection, FrameIdentifier frameId, FrameInfoData&& frameInfo, PublicKeyCredentialCreationOptions&& options, MediationRequirement mediation, RequestCompletionHandler&& handler)
 {
-    handleRequest({ { }, WTFMove(options), m_webPageProxy, WebAuthenticationPanelResult::Unavailable, nullptr, GlobalFrameIdentifier { m_webPageProxy.webPageIDInMainFrameProcess(), frameId }, WTFMove(frameInfo), String(), nullptr, mediation, std::nullopt }, WTFMove(handler));
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy) {
+        handler({ }, (AuthenticatorAttachment)0, ExceptionData { ExceptionCode::NotSupportedError, "This request is not supported at this time."_s });
+        RELEASE_LOG_ERROR(WebAuthn, "WebPageProxy had been released");
+        return;
+    }
+
+    RefPtr frame = WebFrameProxy::webFrame(frameId);
+    if (!frame) {
+        RELEASE_LOG_ERROR(WebAuthn, "Frame not found for WebAuthn MakeCredential request");
+        return handler({ }, static_cast<AuthenticatorAttachment>(0), ExceptionData { ExceptionCode::InvalidStateError });
+    }
+    if (frame->url().protocolIsInHTTPFamily()) {
+        auto expectedOrigin = SecurityOriginData::fromURLWithoutStrictOpaqueness(frame->url());
+        MESSAGE_CHECK_COMPLETION_BASE(frameInfo.securityOrigin == expectedOrigin, connection,
+            handler({ }, static_cast<AuthenticatorAttachment>(0), ExceptionData { ExceptionCode::InvalidStateError }));
+    }
+
+    handleRequest({ { }, WTF::move(options), *webPageProxy, WebAuthenticationPanelResult::Unavailable, nullptr, GlobalFrameIdentifier { webPageProxy->webPageIDInMainFrameProcess(), frameId }, WTF::move(frameInfo), String(), nullptr, mediation, std::nullopt }, WTF::move(handler));
 }
 
-void WebAuthenticatorCoordinatorProxy::getAssertion(FrameIdentifier frameId, FrameInfoData&& frameInfo, PublicKeyCredentialRequestOptions&& options, MediationRequirement mediation, std::optional<WebCore::SecurityOriginData> parentOrigin, RequestCompletionHandler&& handler)
+void WebAuthenticatorCoordinatorProxy::getAssertion(IPC::Connection& connection, FrameIdentifier frameId, FrameInfoData&& frameInfo, PublicKeyCredentialRequestOptions&& options, MediationRequirement mediation, std::optional<WebCore::SecurityOriginData> parentOrigin, RequestCompletionHandler&& handler)
 {
-    handleRequest({ { }, WTFMove(options), m_webPageProxy, WebAuthenticationPanelResult::Unavailable, nullptr, GlobalFrameIdentifier { m_webPageProxy.webPageIDInMainFrameProcess(), frameId }, WTFMove(frameInfo), String(), nullptr, mediation, parentOrigin }, WTFMove(handler));
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy) {
+        handler({ }, (AuthenticatorAttachment)0, ExceptionData { ExceptionCode::NotSupportedError, "This request is not supported at this time."_s });
+        RELEASE_LOG_ERROR(WebAuthn, "WebPageProxy had been released");
+        return;
+    }
+
+    RefPtr frame = WebFrameProxy::webFrame(frameId);
+    if (!frame) {
+        RELEASE_LOG_ERROR(WebAuthn, "Frame not found for WebAuthn GetAssertion request");
+        return handler({ }, static_cast<AuthenticatorAttachment>(0), ExceptionData { ExceptionCode::InvalidStateError });
+    }
+    if (frame->url().protocolIsInHTTPFamily()) {
+        auto expectedOrigin = SecurityOriginData::fromURLWithoutStrictOpaqueness(frame->url());
+        MESSAGE_CHECK_COMPLETION_BASE(frameInfo.securityOrigin == expectedOrigin, connection,
+            handler({ }, static_cast<AuthenticatorAttachment>(0), ExceptionData { ExceptionCode::InvalidStateError }));
+    }
+
+    if (parentOrigin) {
+        bool foundMatchingAncestor = false;
+        bool hasHTTPAncestor = false;
+        for (RefPtr ancestor = frame->parentFrame(); ancestor; ancestor = ancestor->parentFrame()) {
+            if (!ancestor->url().protocolIsInHTTPFamily())
+                continue;
+            hasHTTPAncestor = true;
+            auto ancestorOrigin = SecurityOriginData::fromURLWithoutStrictOpaqueness(ancestor->url());
+            if (*parentOrigin == ancestorOrigin) {
+                foundMatchingAncestor = true;
+                break;
+            }
+        }
+        if (hasHTTPAncestor) {
+            MESSAGE_CHECK_COMPLETION_BASE(foundMatchingAncestor, connection,
+                handler({ }, static_cast<AuthenticatorAttachment>(0), ExceptionData { ExceptionCode::InvalidStateError }));
+        }
+    }
+
+    handleRequest({ { }, WTF::move(options), *webPageProxy, WebAuthenticationPanelResult::Unavailable, nullptr, GlobalFrameIdentifier { webPageProxy->webPageIDInMainFrameProcess(), frameId }, WTF::move(frameInfo), String(), nullptr, mediation, parentOrigin }, WTF::move(handler));
 }
 
 void WebAuthenticatorCoordinatorProxy::handleRequest(WebAuthenticationRequestData&& data, RequestCompletionHandler&& handler)
 {
-    auto origin = API::SecurityOrigin::create(data.frameInfo.securityOrigin.protocol(), data.frameInfo.securityOrigin.host(), data.frameInfo.securityOrigin.port());
+    if (!data.frameInfo)
+        return handler({ }, AuthenticatorAttachment::Platform, ExceptionData { ExceptionCode::InvalidStateError });
+
+    auto origin = API::SecurityOrigin::create(data.frameInfo->securityOrigin);
 
     bool shouldRequestConditionalRegistration = std::holds_alternative<PublicKeyCredentialCreationOptions>(data.options) && data.mediation == MediationRequirement::Conditional;
 
@@ -89,25 +155,27 @@ void WebAuthenticatorCoordinatorProxy::handleRequest(WebAuthenticationRequestDat
     if (shouldRequestConditionalRegistration)
         username = std::get<PublicKeyCredentialCreationOptions>(data.options).user.name;
 
-    CompletionHandler<void(bool)> afterConsent = [this, weakThis = WeakPtr { *this }, data = WTFMove(data), handler = WTFMove(handler)] (bool result) mutable {
-        if (!weakThis)
-            return;
-        auto& authenticatorManager = m_webPageProxy.websiteDataStore().authenticatorManager();
+    CompletionHandler<void(bool)> afterConsent = [weakThis = WeakPtr { *this }, data = WTF::move(data), handler = WTF::move(handler)] (bool result) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return handler({ }, AuthenticatorAttachment::Platform, ExceptionData { ExceptionCode::InvalidStateError });
+
+        Ref authenticatorManager = protectedThis->m_webPageProxy->websiteDataStore().authenticatorManager();
         if (result) {
 #if HAVE(UNIFIED_ASC_AUTH_UI) || HAVE(WEB_AUTHN_AS_MODERN)
-            if (!authenticatorManager.isMock() && !authenticatorManager.isVirtual()) {
-                if (!isASCAvailable()) {
+            if (!authenticatorManager->isMock() && !authenticatorManager->isVirtual()) {
+                if (!protectedThis->isASCAvailable()) {
                     handler({ }, AuthenticatorAttachment::Platform, ExceptionData { ExceptionCode::NotSupportedError, "Not implemented."_s });
                     RELEASE_LOG_ERROR(WebAuthn, "Web Authentication is not currently supported in this environment.");
                     return;
                 }
                 // performRequest calls out to ASCAgent which will then call [_WKWebAuthenticationPanel makeCredential/getAssertionWithChallenge]
-                // which calls authenticatorManager.handleRequest(..)
-                performRequest(WTFMove(data), WTFMove(handler));
+                // which calls authenticatorManager->handleRequest(..)
+                protectedThis->performRequest(WTF::move(data), WTF::move(handler));
                 return;
             }
 #else
-            if (data.parentOrigin && !authenticatorManager.isMock() && !authenticatorManager.isVirtual()) {
+            if (data.parentOrigin && !authenticatorManager->isMock() && !authenticatorManager->isVirtual()) {
                 handler({ }, (AuthenticatorAttachment)0, ExceptionData { ExceptionCode::NotAllowedError, "The origin of the document is not the same as its ancestors."_s });
                 RELEASE_LOG_ERROR(WebAuthn, "The origin of the document is not the same as its ancestors.");
                 return;
@@ -119,17 +187,17 @@ void WebAuthenticatorCoordinatorProxy::handleRequest(WebAuthenticationRequestDat
             WebAuthn::Scope scope = data.parentOrigin ? WebAuthn::Scope::CrossOrigin : WebAuthn::Scope::SameOrigin;
             auto topOrigin = data.parentOrigin ? data.parentOrigin->toString() : nullString();
             WTF::switchOn(data.options, [&](const PublicKeyCredentialCreationOptions& options) {
-                clientDataJSON = buildClientDataJson(ClientDataType::Create, options.challenge, data.frameInfo.securityOrigin.securityOrigin(), scope, topOrigin);
+                clientDataJSON = buildClientDataJson(ClientDataType::Create, options.challenge, data.frameInfo->securityOrigin.securityOrigin(), scope, topOrigin);
             }, [&](const PublicKeyCredentialRequestOptions& options) {
-                clientDataJSON = buildClientDataJson(ClientDataType::Get, options.challenge, data.frameInfo.securityOrigin.securityOrigin(), scope, topOrigin);
+                clientDataJSON = buildClientDataJson(ClientDataType::Get, options.challenge, data.frameInfo->securityOrigin.securityOrigin(), scope, topOrigin);
             });
             data.hash = buildClientDataJsonHash(*clientDataJSON);
 
-            authenticatorManager.handleRequest(WTFMove(data), [handler = WTFMove(handler), clientDataJSON = WTFMove(clientDataJSON)] (std::variant<Ref<AuthenticatorResponse>, ExceptionData>&& result) mutable {
+            authenticatorManager->handleRequest(WTF::move(data), [handler = WTF::move(handler), clientDataJSON = WTF::move(clientDataJSON)] (Variant<Ref<AuthenticatorResponse>, ExceptionData>&& result) mutable {
                 ASSERT(RunLoop::isMain());
                 WTF::switchOn(result, [&](const Ref<AuthenticatorResponse>& response) {
                     auto responseData = response->data();
-                    responseData.clientDataJSON = WTFMove(clientDataJSON);
+                    responseData.clientDataJSON = WTF::move(clientDataJSON);
                     handler(responseData, response->attachment(), { });
                 }, [&](const ExceptionData& exception) {
                     handler({ }, (AuthenticatorAttachment)0, exception);
@@ -141,9 +209,18 @@ void WebAuthenticatorCoordinatorProxy::handleRequest(WebAuthenticationRequestDat
         }
     };
 
-    auto& authenticatorManager = m_webPageProxy.websiteDataStore().authenticatorManager();
-    if (shouldRequestConditionalRegistration && !authenticatorManager.isMock() && !authenticatorManager.isVirtual()) {
-        m_webPageProxy.uiClient().requestWebAuthenticationConditonalMediationRegistration(WTFMove(username), WTFMove(afterConsent));
+    Ref authenticatorManager = m_webPageProxy->websiteDataStore().authenticatorManager();
+    if (shouldRequestConditionalRegistration && !authenticatorManager->isMock() && !authenticatorManager->isVirtual()) {
+        m_webPageProxy->uiClient().requestWebAuthenticationConditonalMediationRegistration(username, [weakThis = WeakPtr { *this }, username, afterConsent = WTF::move(afterConsent), origin = origin->securityOrigin()] (std::optional<bool> consented) mutable {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return afterConsent(false);
+#if HAVE(WEB_AUTHN_AS_MODERN)
+            afterConsent(consented ? *consented : protectedThis->removeMatchingAutofillEventForUsername(username, origin));
+#else
+            afterConsent(consented && *consented);
+#endif
+        });
         return;
     }
 
@@ -167,6 +244,37 @@ void WebAuthenticatorCoordinatorProxy::isConditionalMediationAvailable(const Sec
     handler(false);
 }
 #endif // !HAVE(UNIFIED_ASC_AUTH_UI) && !HAVE(WEB_AUTHN_AS_MODERN)
+
+#if HAVE(WEB_AUTHN_AS_MODERN)
+
+void WebAuthenticatorCoordinatorProxy::removeExpiredAutofillEvents()
+{
+    m_recentAutofills.removeAllMatching([] (const AutofillEvent& event) {
+        constexpr Seconds autofillEventTimeout { 5 * 60 };
+        auto now = MonotonicTime::now();
+        return event.time + autofillEventTimeout < now;
+    });
+}
+
+void WebAuthenticatorCoordinatorProxy::recordAutofill(const String& username, const URL& url)
+{
+    removeExpiredAutofillEvents();
+    m_recentAutofills.append({
+        MonotonicTime::now(),
+        username,
+        url,
+    });
+}
+
+bool WebAuthenticatorCoordinatorProxy::removeMatchingAutofillEventForUsername(const String& username, const WebCore::SecurityOriginData& securityOrigin)
+{
+    removeExpiredAutofillEvents();
+    bool value = m_recentAutofills.removeLastMatching([&] (const AutofillEvent& event) {
+        return event.username == username && RegistrableDomain { event.url } == RegistrableDomain { securityOrigin };
+    });
+    return value;
+}
+#endif // HAVE(WEB_AUTHN_AS_MODERN)
 
 } // namespace WebKit
 

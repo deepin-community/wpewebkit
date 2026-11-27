@@ -30,7 +30,6 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/FixedVector.h>
-#include <wtf/VectorHash.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -179,7 +178,7 @@ TEST(WTF_FixedVector, Move)
     vec1[1] = 1;
     vec1[2] = 2;
 
-    FixedVector<unsigned> vec2(WTFMove(vec1));
+    FixedVector<unsigned> vec2(WTF::move(vec1));
     SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vec1.size());
     EXPECT_EQ(3U, vec2.size());
     for (unsigned i = 0; i < vec2.size(); ++i)
@@ -194,7 +193,7 @@ TEST(WTF_FixedVector, MoveAssign)
     vec1[2] = 2;
 
     FixedVector<unsigned> vec2;
-    vec2 = WTFMove(vec1);
+    vec2 = WTF::move(vec1);
     SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vec1.size());
     EXPECT_EQ(3U, vec2.size());
     for (unsigned i = 0; i < vec2.size(); ++i)
@@ -205,7 +204,7 @@ TEST(WTF_FixedVector, MoveVector)
 {
     auto vec1 = Vector<MoveOnly>::from(MoveOnly(0), MoveOnly(1), MoveOnly(2), MoveOnly(3));
     EXPECT_EQ(4U, vec1.size());
-    FixedVector<MoveOnly> vec2(WTFMove(vec1));
+    FixedVector<MoveOnly> vec2(WTF::move(vec1));
     SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vec1.size());
     EXPECT_EQ(4U, vec2.size());
     for (unsigned index = 0; index < vec2.size(); ++index)
@@ -218,7 +217,7 @@ TEST(WTF_FixedVector, MoveAssignVector)
     {
         auto vec1 = Vector<MoveOnly>::from(MoveOnly(0), MoveOnly(1), MoveOnly(2), MoveOnly(3));
         EXPECT_EQ(4U, vec1.size());
-        vec2 = WTFMove(vec1);
+        vec2 = WTF::move(vec1);
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vec1.size());
     }
     EXPECT_EQ(4U, vec2.size());
@@ -226,16 +225,26 @@ TEST(WTF_FixedVector, MoveAssignVector)
         EXPECT_EQ(index, vec2[index].value());
 }
 
+TEST(WTF_FixedVector, GeneratorConstructor)
+{
+    auto vec1 = FixedVector<MoveOnly>::createWithSizeFromGenerator(4, [](auto index) -> MoveOnly {
+        return MoveOnly(index);
+    });
+    EXPECT_EQ(4U, vec1.size());
+    for (unsigned index = 0; index < vec1.size(); ++index)
+        EXPECT_EQ(index, vec1[index].value());
+}
+
 TEST(WTF_FixedVector, FailableGeneratorConstructor)
 {
-    auto vec1 = FixedVector<MoveOnly>::createWithSizeFromGenerator(4, [](auto index) -> std::optional<MoveOnly> {
+    auto vec1 = FixedVector<MoveOnly>::createWithSizeFromFailableGenerator(4, [](auto index) -> std::optional<MoveOnly> {
         if (index == 0)
             return MoveOnly(0);
         return std::nullopt;
     });
     EXPECT_EQ(0U, vec1.size());
 
-    auto vec2 = FixedVector<MoveOnly>::createWithSizeFromGenerator(4, [](auto index) -> std::optional<MoveOnly> {
+    auto vec2 = FixedVector<MoveOnly>::createWithSizeFromFailableGenerator(4, [](auto index) -> std::optional<MoveOnly> {
         return MoveOnly(index);
     });
     EXPECT_EQ(4U, vec2.size());
@@ -327,7 +336,7 @@ struct DestructorObserver {
 
 TEST(WTF_FixedVector, Destructor)
 {
-    Vector<bool> flags(3, false);
+    Vector<bool> flags(FillWith { }, 3, false);
     {
         FixedVector<DestructorObserver> vector(flags.size());
         for (unsigned i = 0; i < flags.size(); ++i)
@@ -341,7 +350,7 @@ TEST(WTF_FixedVector, Destructor)
 
 TEST(WTF_FixedVector, DestructorAfterMove)
 {
-    Vector<bool> flags(3, false);
+    Vector<bool> flags(FillWith { }, 3, false);
     {
         FixedVector<DestructorObserver> outerVector;
         {
@@ -350,7 +359,7 @@ TEST(WTF_FixedVector, DestructorAfterMove)
                 vector[i] = DestructorObserver(&flags[i]);
             for (unsigned i = 0; i < flags.size(); ++i)
                 EXPECT_FALSE(flags[i]);
-            outerVector = WTFMove(vector);
+            outerVector = WTF::move(vector);
         }
         for (unsigned i = 0; i < flags.size(); ++i)
             EXPECT_FALSE(flags[i]);
@@ -364,14 +373,14 @@ TEST(WTF_FixedVector, MoveKeepsData)
     {
         FixedVector<unsigned> vec1(3);
         auto* data1 = vec1.span().data();
-        FixedVector<unsigned> vec2(WTFMove(vec1));
+        FixedVector<unsigned> vec2(WTF::move(vec1));
         EXPECT_EQ(data1, vec2.span().data());
     }
     {
         FixedVector<unsigned> vec1(3);
         auto* data1 = vec1.span().data();
         FixedVector<unsigned> vec2;
-        vec2 = WTFMove(vec1);
+        vec2 = WTF::move(vec1);
         EXPECT_EQ(data1, vec2.span().data());
     }
 }
@@ -382,7 +391,7 @@ TEST(WTF_FixedVector, MoveKeepsDataNested)
         Vector<FixedVector<unsigned>> vec1;
         vec1.append(FixedVector<unsigned>(3));
         auto* data1 = vec1[0].span().data();
-        FixedVector<FixedVector<unsigned>> vec2(WTFMove(vec1));
+        FixedVector<FixedVector<unsigned>> vec2(WTF::move(vec1));
         EXPECT_EQ(1U, vec2.size());
         EXPECT_EQ(data1, vec2[0].span().data());
     }
@@ -391,7 +400,7 @@ TEST(WTF_FixedVector, MoveKeepsDataNested)
         vec1.append(FixedVector<unsigned>(3));
         auto* data1 = vec1[0].span().data();
         FixedVector<FixedVector<unsigned>> vec2;
-        vec2 = WTFMove(vec1);
+        vec2 = WTF::move(vec1);
         EXPECT_EQ(1U, vec2.size());
         EXPECT_EQ(data1, vec2[0].span().data());
     }
@@ -425,6 +434,120 @@ TEST(WTF_FixedVector, Equal)
         EXPECT_EQ(vec2, vec1);
         EXPECT_EQ(vec3, vec1);
     }
+}
+
+TEST(WTF_FixedVector, SizeAndValueConstructorPOD)
+{
+    FixedVector<unsigned> vec(FillWith { }, 5, 42U);
+    EXPECT_EQ(5U, vec.size());
+    for (unsigned i = 0; i < vec.size(); ++i)
+        EXPECT_EQ(42U, vec[i]);
+}
+
+TEST(WTF_FixedVector, SizeAndValueConstructorNonPOD)
+{
+    String value = "hello"_s;
+    FixedVector<String> vec(FillWith { }, 3, value);
+    EXPECT_EQ(3U, vec.size());
+    for (unsigned i = 0; i < vec.size(); ++i)
+        EXPECT_STREQ("hello", vec[i].utf8().data());
+}
+
+TEST(WTF_FixedVector, SizeAndValueConstructorZeroSize)
+{
+    FixedVector<unsigned> vec(FillWith { }, 0, 42U);
+    EXPECT_TRUE(vec.isEmpty());
+    EXPECT_EQ(0U, vec.size());
+}
+
+TEST(WTF_FixedVector, SizeAndValueConstructorSingleElement)
+{
+    FixedVector<unsigned> vec(FillWith { }, 1, 99U);
+    EXPECT_EQ(1U, vec.size());
+    EXPECT_EQ(99U, vec[0]);
+}
+
+TEST(WTF_FixedVector, MoveAssignNonEmptyToNonEmpty)
+{
+    Vector<bool> flags(FillWith { }, 3, false);
+    {
+        FixedVector<DestructorObserver> vec1(3);
+        for (unsigned i = 0; i < 3; ++i)
+            vec1[i] = DestructorObserver(&flags[i]);
+
+        FixedVector<DestructorObserver> vec2(2);
+
+        // Move-assigning over vec2 must destroy its old storage.
+        vec2 = WTF::move(vec1);
+        EXPECT_EQ(3U, vec2.size());
+
+        // The original objects should still be alive (now owned by vec2).
+        for (unsigned i = 0; i < 3; ++i)
+            EXPECT_FALSE(flags[i]);
+    }
+    // After vec2 goes out of scope, all observers should be destructed.
+    for (unsigned i = 0; i < 3; ++i)
+        EXPECT_TRUE(flags[i]);
+}
+
+TEST(WTF_FixedVector, MoveAssignEmptyToEmpty)
+{
+    FixedVector<unsigned> vec1;
+    FixedVector<unsigned> vec2;
+    vec2 = WTF::move(vec1);
+    EXPECT_TRUE(vec2.isEmpty());
+}
+
+TEST(WTF_FixedVector, MoveVectorEmpty)
+{
+    Vector<unsigned> vec1;
+    FixedVector<unsigned> vec2(WTF::move(vec1));
+    EXPECT_TRUE(vec2.isEmpty());
+}
+
+TEST(WTF_FixedVector, MoveAssignVectorEmpty)
+{
+    FixedVector<unsigned> vec(3);
+    vec[0] = 0;
+    vec[1] = 1;
+    vec[2] = 2;
+
+    Vector<unsigned> empty;
+    vec = WTF::move(empty);
+    EXPECT_TRUE(vec.isEmpty());
+}
+
+TEST(WTF_FixedVector, MoveAssignVectorOverNonEmpty)
+{
+    Vector<bool> flags(FillWith { }, 3, false);
+    {
+        FixedVector<DestructorObserver> vec(3);
+        for (unsigned i = 0; i < 3; ++i)
+            vec[i] = DestructorObserver(&flags[i]);
+
+        // Move-assigning a Vector over a non-empty FixedVector must destroy old elements.
+        auto source = Vector<DestructorObserver>::from(DestructorObserver());
+        vec = WTF::move(source);
+        EXPECT_EQ(1U, vec.size());
+        for (unsigned i = 0; i < 3; ++i)
+            EXPECT_TRUE(flags[i]);
+    }
+}
+
+TEST(WTF_FixedVector, EqualDifferentSizes)
+{
+    FixedVector<unsigned> vec1 = { 1, 2, 3 };
+    FixedVector<unsigned> vec2 = { 1, 2 };
+    EXPECT_NE(vec1, vec2);
+    EXPECT_NE(vec2, vec1);
+}
+
+TEST(WTF_FixedVector, EqualEmptyAndNonEmpty)
+{
+    FixedVector<unsigned> empty;
+    FixedVector<unsigned> nonEmpty = { 1 };
+    EXPECT_NE(empty, nonEmpty);
+    EXPECT_NE(nonEmpty, empty);
 }
 
 } // namespace TestWebKitAPI

@@ -54,7 +54,7 @@ public:
     void claim(ScriptExecutionContext&, Ref<DeferredPromise>&&);
 
     enum PromiseIdentifierType { };
-    using PromiseIdentifier = LegacyNullableAtomicObjectIdentifier<PromiseIdentifierType>;
+    using PromiseIdentifier = AtomicObjectIdentifier<PromiseIdentifierType>;
 
     PromiseIdentifier addPendingPromise(Ref<DeferredPromise>&&);
     RefPtr<DeferredPromise> takePendingPromise(PromiseIdentifier);
@@ -65,6 +65,6 @@ private:
     HashMap<PromiseIdentifier, Ref<DeferredPromise>> m_pendingPromises;
 };
 
-WebCoreOpaqueRoot root(ServiceWorkerClients*);
+WebCoreOpaqueRoot NODELETE root(ServiceWorkerClients*);
 
 } // namespace WebCore

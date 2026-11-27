@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2013-2014 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,17 +31,22 @@
 #include "AppendNodeCommand.h"
 #include "ApplyStyleCommand.h"
 #include "BreakBlockquoteCommand.h"
+#include "ContainerNodeInlines.h"
 #include "DataTransfer.h"
 #include "DeleteFromTextNodeCommand.h"
 #include "DeleteSelectionCommand.h"
 #include "DocumentFragment.h"
-#include "DocumentInlines.h"
 #include "DocumentMarkerController.h"
+#include "DocumentMarkers.h"
+#include "DocumentView.h"
 #include "Editing.h"
+#include "EditingInlines.h"
 #include "Editor.h"
 #include "EditorInsertAction.h"
 #include "ElementTraversal.h"
 #include "Event.h"
+#include "FontAttributes.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLBRElement.h"
 #include "HTMLDivElement.h"
 #include "HTMLLIElement.h"
@@ -56,11 +61,14 @@
 #include "InsertTextCommand.h"
 #include "LocalFrame.h"
 #include "MergeIdenticalElementsCommand.h"
+#include "NodeDocument.h"
 #include "NodeTraversal.h"
+#include "PositionInlines.h"
 #include "RemoveNodeCommand.h"
 #include "RemoveNodePreservingChildrenCommand.h"
 #include "RenderBlockFlow.h"
-#include "RenderStyleInlines.h"
+#include "RenderObject.h"
+#include "RenderObjectStyle.h"
 #include "RenderText.h"
 #include "RenderedDocumentMarker.h"
 #include "ReplaceNodeWithSpanCommand.h"
@@ -72,14 +80,19 @@
 #include "SplitTextNodeCommand.h"
 #include "SplitTextNodeContainingElementCommand.h"
 #include "StaticRange.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include "TextIterator.h"
+#include "TextListParser.h"
 #include "VisibleUnits.h"
 #include "WrapContentsInDummySpanCommand.h"
 #include "markup.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AccessibilityUndoReplacedText);
 
 using namespace HTMLNames;
 
@@ -135,7 +148,7 @@ static String stringForVisiblePositionIndexRange(const VisiblePositionIndexRange
         return String();
     VisiblePosition start = visiblePositionForIndex(range.startIndex.value, range.startIndex.scope.get());
     VisiblePosition end = visiblePositionForIndex(range.endIndex.value, range.endIndex.scope.get());
-    return AccessibilityObject::stringForVisiblePositionRange({ WTFMove(start), WTFMove(end) });
+    return AccessibilityObject::stringForVisiblePositionRange({ WTF::move(start), WTF::move(end) });
 }
 
 String AccessibilityUndoReplacedText::textDeletedByUnapply()
@@ -159,11 +172,11 @@ static void postTextStateChangeNotification(AXObjectCache* cache, const VisibleP
     if (!node)
         return;
     if (insertedText.length() && deletedText.length())
-        cache->postTextReplacementNotification(node.get(), AXTextEditTypeDelete, insertedText, AXTextEditTypeInsert, deletedText, position);
+        cache->postTextReplacementNotification(node.get(), AXTextEditType::Delete, insertedText, AXTextEditType::Insert, deletedText, position);
     else if (deletedText.length())
-        cache->postTextStateChangeNotification(node.get(), AXTextEditTypeInsert, deletedText, position);
+        cache->postTextStateChangeNotification(node.get(), AXTextEditType::Insert, deletedText, position);
     else if (insertedText.length())
-        cache->postTextStateChangeNotification(node.get(), AXTextEditTypeDelete, insertedText, position);
+        cache->postTextStateChangeNotification(node.get(), AXTextEditType::Delete, insertedText, position);
 }
 
 void AccessibilityUndoReplacedText::postTextStateChangeNotificationForUnapply(AXObjectCache* cache)
@@ -203,7 +216,7 @@ Ref<EditCommandComposition> EditCommandComposition::create(Document& document,
 }
 
 EditCommandComposition::EditCommandComposition(Document& document, const VisibleSelection& startingSelection, const VisibleSelection& endingSelection, EditAction editAction)
-    : m_document(&document)
+    : m_document(document)
     , m_startingSelection(startingSelection)
     , m_endingSelection(endingSelection)
     , m_startingRootEditableElement(startingSelection.rootEditableElement())
@@ -226,9 +239,7 @@ bool EditCommandComposition::areRootEditabledElementsConnected()
 
 void EditCommandComposition::unapply(AddToUndoStack addToUndoStack)
 {
-    RefPtr document = protectedDocument();
-    ASSERT(document);
-    RefPtr frame { document->frame() };
+    RefPtr frame = m_document->frame();
     if (!frame)
         return;
 
@@ -240,7 +251,8 @@ void EditCommandComposition::unapply(AddToUndoStack addToUndoStack)
     // Changes to the document may have been made since the last editing operation that require a layout, as in <rdar://problem/5658603>.
     // Low level operations, like RemoveNodeCommand, don't require a layout because the high level operations that use them perform one
     // if one is necessary (like for the creation of VisiblePositions).
-    document->updateLayoutIgnorePendingStylesheets();
+    m_document->updateLayoutIgnorePendingStylesheets();
+    Ref document = m_document.get();
 #if PLATFORM(IOS_FAMILY)
     // FIXME: Where should iPhone code deal with the composition?
     // Since editing commands don't save/restore the composition, undoing without fixing
@@ -264,9 +276,9 @@ void EditCommandComposition::unapply(AddToUndoStack addToUndoStack)
     document->editor().unappliedEditing(*this);
 
     if (AXObjectCache::accessibilityEnabled())
-        m_replacedText.postTextStateChangeNotificationForUnapply(document->existingAXObjectCache());
+        m_replacedText.postTextStateChangeNotificationForUnapply(m_document->existingAXObjectCache());
 
-    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(document->selection().isNone() || document->selection().isConnectedToDocument());
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_document->selection().isNone() || m_document->selection().isConnectedToDocument());
 }
 
 void EditCommandComposition::unapply()
@@ -276,9 +288,7 @@ void EditCommandComposition::unapply()
 
 void EditCommandComposition::reapply()
 {
-    auto document = protectedDocument();
-    ASSERT(document);
-    RefPtr frame { document->frame() };
+    RefPtr frame = m_document->frame();
     if (!frame)
         return;
 
@@ -290,26 +300,25 @@ void EditCommandComposition::reapply()
     // Changes to the document may have been made since the last editing operation that require a layout, as in <rdar://problem/5658603>.
     // Low level operations, like RemoveNodeCommand, don't require a layout because the high level operations that use them perform one
     // if one is necessary (like for the creation of VisiblePositions).
-    document->updateLayoutIgnorePendingStylesheets();
+    m_document->updateLayoutIgnorePendingStylesheets();
 
+    Ref document = m_document.get();
     auto prohibitScrollingForScope = document->view() ? document->view()->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
     if (!document->editor().willReapplyEditing(*this))
         return;
 
-    for (size_t i = 0; i < m_commands.size(); ++i) {
-        RefPtr command = m_commands[i].get();
+    for (Ref command : m_commands)
         command->doReapply();
-    }
 
     document->editor().reappliedEditing(*this);
 
     if (AXObjectCache::accessibilityEnabled())
-        m_replacedText.postTextStateChangeNotificationForReapply(document->existingAXObjectCache());
+        m_replacedText.postTextStateChangeNotificationForReapply(m_document->existingAXObjectCache());
 
-    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(document->selection().isNone() || document->selection().isConnectedToDocument());
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_document->selection().isNone() || m_document->selection().isConnectedToDocument());
 }
 
-void EditCommandComposition::append(SimpleEditCommand* command)
+void EditCommandComposition::append(SimpleEditCommand& command)
 {
     m_commands.append(command);
 }
@@ -334,12 +343,10 @@ void EditCommandComposition::setRangeDeletedByUnapply(const VisiblePositionIndex
 }
 
 #ifndef NDEBUG
-void EditCommandComposition::getNodesInCommand(HashSet<Ref<Node>>& nodes)
+void EditCommandComposition::getNodesInCommand(NodeSet& nodes)
 {
-    for (size_t i = 0; i < m_commands.size(); ++i) {
-        RefPtr command = m_commands[i].get();
+    for (Ref command : m_commands)
         command->getNodesInCommand(nodes);
-    }
 }
 #endif
 
@@ -349,7 +356,7 @@ String EditCommandComposition::label() const
 }
 
 CompositeEditCommand::CompositeEditCommand(Ref<Document>&& document, EditAction editingAction)
-    : EditCommand(WTFMove(document), editingAction)
+    : EditCommand(WTF::move(document), editingAction)
 {
 }
 
@@ -360,7 +367,7 @@ CompositeEditCommand::~CompositeEditCommand()
 
 bool CompositeEditCommand::willApplyCommand()
 {
-    return protectedDocument()->editor().willApplyEditing(*this, targetRangesForBindings());
+    return protect(document())->editor().willApplyEditing(*this, targetRangesForBindings());
 }
 
 void CompositeEditCommand::apply()
@@ -403,10 +410,10 @@ void CompositeEditCommand::apply()
     // Changes to the document may have been made since the last editing operation that require a layout, as in <rdar://problem/5658603>.
     // Low level operations, like RemoveNodeCommand, don't require a layout because the high level operations that use them perform one
     // if one is necessary (like for the creation of VisiblePositions).
-    auto document = protectedDocument();
+    Ref document = this->document();
     document->updateLayoutIgnorePendingStylesheets();
 
-    auto prohibitScrollingForScope = document->view() ? document->view()->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
+    auto prohibitScrollingForScope = document->view() ? protect(document->view())->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
     if (!willApplyCommand())
         return;
 
@@ -421,20 +428,20 @@ void CompositeEditCommand::apply()
 
 void CompositeEditCommand::didApplyCommand()
 {
-    protectedDocument()->editor().appliedEditing(*this);
+    protect(document())->editor().appliedEditing(*this);
 }
 
-Vector<RefPtr<StaticRange>> CompositeEditCommand::targetRanges() const
+Vector<Ref<StaticRange>> CompositeEditCommand::targetRanges() const
 {
     ASSERT(!isEditingTextAreaOrTextInput());
     auto firstRange = document().selection().selection().firstRange();
     if (!firstRange)
         return { };
 
-    return { 1, StaticRange::create(WTFMove(*firstRange)) };
+    return { FillWith { }, 1, StaticRange::create(WTF::move(*firstRange)) };
 }
 
-Vector<RefPtr<StaticRange>> CompositeEditCommand::targetRangesForBindings() const
+Vector<Ref<StaticRange>> CompositeEditCommand::targetRangesForBindings() const
 {
     if (isEditingTextAreaOrTextInput())
         return { };
@@ -449,22 +456,22 @@ RefPtr<DataTransfer> CompositeEditCommand::inputEventDataTransfer() const
 
 EditCommandComposition* CompositeEditCommand::composition() const
 {
-    for (RefPtr command = this; command; command = command->parent()) {
-        if (auto composition = command->m_composition) {
+    for (auto* command = this; command; command = command->parent()) {
+        if (auto* composition = command->m_composition.get()) {
             ASSERT(!command->parent());
-            return composition.get();
+            return composition;
         }
     }
     return nullptr;
 }
 
-EditCommandComposition& CompositeEditCommand::ensureComposition()
+Ref<EditCommandComposition> CompositeEditCommand::ensureComposition()
 {
-    RefPtr command { this };
+    Ref command { *this };
     while (RefPtr parent = command->parent())
-        command = WTFMove(parent);
+        command = parent.releaseNonNull();
     if (!command->m_composition)
-        command->m_composition = EditCommandComposition::create(protectedDocument(), startingSelection(), endingSelection(), editingAction());
+        command->m_composition = EditCommandComposition::create(document(), startingSelection(), endingSelection(), editingAction());
     return *command->m_composition;
 }
 
@@ -504,11 +511,11 @@ void CompositeEditCommand::applyCommandToComposite(Ref<EditCommand>&& command)
 {
     command->setParent(this);
     command->doApply();
-    if (command->isSimpleEditCommand()) {
+    if (auto* simpleCommand = dynamicDowncast<SimpleEditCommand>(command.get())) {
         command->setParent(nullptr);
-        ensureComposition().append(toSimpleEditCommand(command.ptr()));
+        ensureComposition()->append(*simpleCommand);
     }
-    m_commands.append(WTFMove(command));
+    m_commands.append(WTF::move(command));
 }
 
 void CompositeEditCommand::applyCommandToComposite(Ref<CompositeEditCommand>&& command, const VisibleSelection& selection)
@@ -519,37 +526,37 @@ void CompositeEditCommand::applyCommandToComposite(Ref<CompositeEditCommand>&& c
         command->setEndingSelection(selection);
     }
     command->doApply();
-    m_commands.append(WTFMove(command));
+    m_commands.append(WTF::move(command));
 }
 
 void CompositeEditCommand::applyStyle(const EditingStyle* style, EditAction editingAction)
 {
-    applyCommandToComposite(ApplyStyleCommand::create(protectedDocument(), style, editingAction));
+    applyCommandToComposite(ApplyStyleCommand::create(document(), style, editingAction));
 }
 
-void CompositeEditCommand::applyStyle(const EditingStyle* style, const Position& start, const Position& end, EditAction editingAction)
+void CompositeEditCommand::applyStyle(const EditingStyle* style, const Position& start, const Position& end, EditAction editingAction, ApplyStylePropertyLevel level)
 {
-    applyCommandToComposite(ApplyStyleCommand::create(protectedDocument(), style, start, end, editingAction));
+    applyCommandToComposite(ApplyStyleCommand::create(document(), style, start, end, editingAction, level));
 }
 
 void CompositeEditCommand::applyStyledElement(Ref<Element>&& element)
 {
-    applyCommandToComposite(ApplyStyleCommand::create(WTFMove(element), false));
+    applyCommandToComposite(ApplyStyleCommand::create(WTF::move(element), false));
 }
 
 void CompositeEditCommand::removeStyledElement(Ref<Element>&& element)
 {
-    applyCommandToComposite(ApplyStyleCommand::create(WTFMove(element), true));
+    applyCommandToComposite(ApplyStyleCommand::create(WTF::move(element), true));
 }
 
 void CompositeEditCommand::insertParagraphSeparator(bool useDefaultParagraphElement, bool pasteBlockqutoeIntoUnquotedArea)
 {
-    applyCommandToComposite(InsertParagraphSeparatorCommand::create(protectedDocument(), useDefaultParagraphElement, pasteBlockqutoeIntoUnquotedArea, editingAction()));
+    applyCommandToComposite(InsertParagraphSeparatorCommand::create(document(), useDefaultParagraphElement, pasteBlockqutoeIntoUnquotedArea, editingAction()));
 }
 
 void CompositeEditCommand::insertLineBreak()
 {
-    applyCommandToComposite(InsertLineBreakCommand::create(protectedDocument()));
+    applyCommandToComposite(InsertLineBreakCommand::create(document()));
 }
 
 bool CompositeEditCommand::isRemovableBlock(const Node* node)
@@ -575,7 +582,7 @@ bool CompositeEditCommand::insertNodeBefore(Ref<Node>&& insertChild, Node& refCh
     RefPtr parent { refChild.parentNode() };
     if (!parent || (!parent->hasEditableStyle() && parent->renderer()))
         return false;
-    applyCommandToComposite(InsertNodeBeforeCommand::create(WTFMove(insertChild), refChild, shouldAssumeContentIsAlwaysEditable, editingAction()));
+    applyCommandToComposite(InsertNodeBeforeCommand::create(WTF::move(insertChild), refChild, shouldAssumeContentIsAlwaysEditable, editingAction()));
     return true;
 }
 
@@ -587,10 +594,10 @@ void CompositeEditCommand::insertNodeAfter(Ref<Node>&& insertChild, Node& refChi
 
     ASSERT(!parent->isShadowRoot());
     if (parent->lastChild() == &refChild)
-        appendNode(WTFMove(insertChild), *parent);
+        appendNode(WTF::move(insertChild), *parent);
     else {
         ASSERT(refChild.nextSibling());
-        insertNodeBefore(WTFMove(insertChild), *refChild.nextSibling());
+        insertNodeBefore(WTF::move(insertChild), protect(*refChild.nextSibling()));
     }
 }
 
@@ -600,7 +607,7 @@ void CompositeEditCommand::insertNodeAt(Ref<Node>&& insertChild, const Position&
     // For editing positions like [table, 0], insert before the table,
     // likewise for replaced elements, brs, etc.
     Position p = editingPosition.parentAnchoredEquivalent();
-    auto refChild = p.protectedDeprecatedNode();
+    RefPtr refChild = p.deprecatedNode();
     int offset = p.deprecatedEditingOffset();
     
     if (canHaveChildrenForEditing(*refChild)) {
@@ -608,25 +615,25 @@ void CompositeEditCommand::insertNodeAt(Ref<Node>&& insertChild, const Position&
         for (int i = 0; child && i < offset; i++)
             child = child->nextSibling();
         if (child)
-            insertNodeBefore(WTFMove(insertChild), *child);
+            insertNodeBefore(WTF::move(insertChild), *child);
         else
-            appendNode(WTFMove(insertChild), downcast<ContainerNode>(*refChild));
+            appendNode(WTF::move(insertChild), downcast<ContainerNode>(*refChild));
     } else if (caretMinOffset(*refChild) >= offset)
-        insertNodeBefore(WTFMove(insertChild), *refChild);
-    else if (auto* text = dynamicDowncast<Text>(*refChild); text && caretMaxOffset(*refChild) > offset) {
+        insertNodeBefore(WTF::move(insertChild), *refChild);
+    else if (RefPtr text = dynamicDowncast<Text>(*refChild); text && caretMaxOffset(*refChild) > offset) {
         splitTextNode(*text, offset);
 
         // Mutation events (bug 22634) from the text node insertion may have removed the refChild
         if (!refChild->isConnected())
             return;
-        insertNodeBefore(WTFMove(insertChild), *refChild);
+        insertNodeBefore(WTF::move(insertChild), *refChild);
     } else
-        insertNodeAfter(WTFMove(insertChild), *refChild);
+        insertNodeAfter(WTF::move(insertChild), *refChild);
 }
 
 void CompositeEditCommand::appendNode(Ref<Node>&& node, Ref<ContainerNode>&& parent)
 {
-    applyCommandToComposite(AppendNodeCommand::create(WTFMove(parent), WTFMove(node), editingAction()));
+    applyCommandToComposite(AppendNodeCommand::create(WTF::move(parent), WTF::move(node), editingAction()));
 }
 
 void CompositeEditCommand::removeChildrenInRange(Node& node, unsigned from, unsigned to)
@@ -664,12 +671,12 @@ void CompositeEditCommand::moveRemainingSiblingsToNewParent(Node* node, Node* pa
     NodeVector nodesToRemove;
     Ref<Element> protectedNewParent = newParent;
 
-    for (; node && node != pastLastNodeToMove; node = node->nextSibling())
-        nodesToRemove.append(*node);
+    for (RefPtr currentNode = node; currentNode && currentNode != pastLastNodeToMove; currentNode = currentNode->nextSibling())
+        nodesToRemove.append(*currentNode);
 
     for (auto& nodeToRemove : nodesToRemove) {
         removeNode(nodeToRemove);
-        appendNode(WTFMove(nodeToRemove), newParent);
+        appendNode(WTF::move(nodeToRemove), newParent);
     }
 }
 
@@ -711,6 +718,13 @@ void CompositeEditCommand::splitElement(Element& element, Node& atChild)
     applyCommandToComposite(SplitElementCommand::create(element, atChild));
 }
 
+void CompositeEditCommand::splitListElement(Element& listNode, Node& listChild)
+{
+    splitElement(listNode, *splitTreeToNode(listChild, listNode));
+    if (listNode.hasTagName(olTag) && listNode.hasAttribute(startAttr))
+        setNodeAttribute(listNode, startAttr, AtomString::number(1));
+}
+
 void CompositeEditCommand::mergeIdenticalElements(Element& first, Element& second)
 {
     Ref<Element> protectedFirst = first;
@@ -746,7 +760,7 @@ void CompositeEditCommand::inputText(const String& text, bool selectInsertedText
         newline = text.find('\n', offset);
         if (newline != offset) {
             int substringLength = newline == notFound ? length - offset : newline - offset;
-            applyCommandToComposite(InsertTextCommand::create(protectedDocument(), text.substring(offset, substringLength), false));
+            applyCommandToComposite(InsertTextCommand::create(document(), text.substring(offset, substringLength), AllowPasswordEcho::Yes, false));
         }
         if (newline != notFound) {
             VisiblePosition caret(endingSelection().visibleStart());
@@ -761,7 +775,7 @@ void CompositeEditCommand::inputText(const String& text, bool selectInsertedText
                     else if (!length)
                         length--;
                 }
-                applyCommandToComposite(BreakBlockquoteCommand::create(protectedDocument()));
+                applyCommandToComposite(BreakBlockquoteCommand::create(document()));
             } else
                 insertLineBreak();
         }
@@ -773,10 +787,10 @@ void CompositeEditCommand::inputText(const String& text, bool selectInsertedText
         setEndingSelection(VisibleSelection(visiblePositionForIndex(startIndex, scope.get()), visiblePositionForIndex(startIndex + length, scope.get())));
 }
 
-void CompositeEditCommand::insertTextIntoNode(Text& node, unsigned offset, const String& text)
+void CompositeEditCommand::insertTextIntoNode(Text& node, unsigned offset, const String& text, AllowPasswordEcho allowPasswordEcho)
 {
     if (!text.isEmpty())
-        applyCommandToComposite(InsertIntoTextNodeCommand::create(node, offset, text, editingAction()));
+        applyCommandToComposite(InsertIntoTextNodeCommand::create(node, offset, text, allowPasswordEcho, editingAction()));
 }
 
 void CompositeEditCommand::deleteTextFromNode(Text& node, unsigned offset, unsigned count)
@@ -784,11 +798,11 @@ void CompositeEditCommand::deleteTextFromNode(Text& node, unsigned offset, unsig
     applyCommandToComposite(DeleteFromTextNodeCommand::create(node, offset, count, editingAction()));
 }
 
-void CompositeEditCommand::replaceTextInNode(Text& node, unsigned offset, unsigned count, const String& replacementText)
+void CompositeEditCommand::replaceTextInNode(Text& node, unsigned offset, unsigned count, const String& replacementText, AllowPasswordEcho allowPasswordEcho)
 {
     applyCommandToComposite(DeleteFromTextNodeCommand::create(node, offset, count));
     if (!replacementText.isEmpty())
-        applyCommandToComposite(InsertIntoTextNodeCommand::create(node, offset, replacementText, editingAction()));
+        applyCommandToComposite(InsertIntoTextNodeCommand::create(node, offset, replacementText, allowPasswordEcho, editingAction()));
 }
 
 Position CompositeEditCommand::replaceSelectedTextInNode(const String& text)
@@ -799,6 +813,8 @@ Position CompositeEditCommand::replaceSelectedTextInNode(const String& text)
         return Position();
 
     RefPtr<Text> textNode = start.containerText();
+    if (end.offsetInContainerNode() < start.offsetInContainerNode() || start.offsetInContainerNode() > static_cast<int>(textNode->length()) || end.offsetInContainerNode() > static_cast<int>(textNode->length()))
+        return Position();
     replaceTextInNode(*textNode, start.offsetInContainerNode(), end.offsetInContainerNode() - start.offsetInContainerNode(), text);
 
     return Position(textNode.get(), start.offsetInContainerNode() + text.length());
@@ -834,30 +850,30 @@ Position CompositeEditCommand::positionOutsideTabSpan(const Position& position)
     case Position::PositionIsOffsetInAnchor:
         break;
     case Position::PositionIsBeforeAnchor:
-        return positionInParentBeforeNode(position.anchorNode());
+        return positionInParentBeforeNode(protect(*position.anchorNode()));
     case Position::PositionIsAfterAnchor:
-        return positionInParentAfterNode(position.anchorNode());
+        return positionInParentAfterNode(protect(*position.anchorNode()));
     }
 
     RefPtr tabSpan { parentTabSpanNode(position.containerNode()) };
 
-    if (position.offsetInContainerNode() <= caretMinOffset(*position.containerNode()))
-        return positionInParentBeforeNode(tabSpan.get());
+    if (position.offsetInContainerNode() <= caretMinOffset(protect(*position.containerNode())))
+        return positionInParentBeforeNode(*tabSpan);
 
-    if (position.offsetInContainerNode() >= caretMaxOffset(*position.containerNode()))
-        return positionInParentAfterNode(tabSpan.get());
+    if (position.offsetInContainerNode() >= caretMaxOffset(protect(*position.containerNode())))
+        return positionInParentAfterNode(*tabSpan);
 
-    splitTextNodeContainingElement(downcast<Text>(*position.containerNode()), position.offsetInContainerNode());
-    return positionInParentBeforeNode(tabSpan.get());
+    splitTextNodeContainingElement(protect(downcast<Text>(*position.containerNode())), position.offsetInContainerNode());
+    return positionInParentBeforeNode(*tabSpan);
 }
 
 void CompositeEditCommand::insertNodeAtTabSpanPosition(Ref<Node>&& node, const Position& pos)
 {
     // insert node before, after, or at split of tab span
-    insertNodeAt(WTFMove(node), positionOutsideTabSpan(pos));
+    insertNodeAt(WTF::move(node), positionOutsideTabSpan(pos));
 }
 
-static EditAction deleteSelectionEditingActionForEditingAction(EditAction editingAction)
+static EditAction NODELETE deleteSelectionEditingActionForEditingAction(EditAction editingAction)
 {
     switch (editingAction) {
     case EditAction::Cut:
@@ -870,7 +886,7 @@ static EditAction deleteSelectionEditingActionForEditingAction(EditAction editin
 void CompositeEditCommand::deleteSelection(bool smartDelete, bool mergeBlocksAfterDelete, bool replace, bool expandForSpecialElements, bool sanitizeMarkup)
 {
     if (endingSelection().isRange())
-        applyCommandToComposite(DeleteSelectionCommand::create(protectedDocument(), smartDelete, mergeBlocksAfterDelete, replace, expandForSpecialElements, sanitizeMarkup, deleteSelectionEditingActionForEditingAction(editingAction())));
+        applyCommandToComposite(DeleteSelectionCommand::create(document(), smartDelete, mergeBlocksAfterDelete, replace, expandForSpecialElements, sanitizeMarkup, deleteSelectionEditingActionForEditingAction(editingAction())));
 }
 
 void CompositeEditCommand::deleteSelection(const VisibleSelection &selection, bool smartDelete, bool mergeBlocksAfterDelete, bool replace, bool expandForSpecialElements, bool sanitizeMarkup)
@@ -889,7 +905,7 @@ void CompositeEditCommand::setNodeAttribute(Element& element, const QualifiedNam
     applyCommandToComposite(SetNodeAttributeCommand::create(element, attribute, value));
 }
 
-static inline bool containsOnlyDeprecatedEditingWhitespace(const String& text)
+static inline bool NODELETE containsOnlyDeprecatedEditingWhitespace(const String& text)
 {
     for (unsigned i = 0; i < text.length(); ++i) {
         if (!deprecatedIsEditingWhitespace(text[i]))
@@ -912,7 +928,7 @@ RefPtr<Text> CompositeEditCommand::textNodeForRebalance(const Position& position
     if (!textNode || !textNode->length())
         return nullptr;
 
-    textNode->protectedDocument()->updateStyleIfNeeded();
+    protect(textNode->document())->updateStyleIfNeeded();
 
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
@@ -942,7 +958,7 @@ void CompositeEditCommand::rebalanceWhitespaceAt(const Position& position)
     rebalanceWhitespaceOnTextSubstring(*textNode, position.offsetInContainerNode(), position.offsetInContainerNode());
 }
 
-static bool isWhitespaceForRebalance(Text& textNode, UChar character)
+static bool NODELETE isWhitespaceForRebalance(Text& textNode, char16_t character)
 {
     return deprecatedIsEditingWhitespace(character) && (character != '\n' || !textNode.renderer() || !textNode.renderer()->style().preserveNewline());
 }
@@ -987,13 +1003,13 @@ void CompositeEditCommand::prepareWhitespaceAtPositionForSplit(Position& positio
     if (!isRichlyEditablePosition(position))
         return;
 
-    auto textNode = dynamicDowncast<Text>(position.protectedDeprecatedNode());
+    auto textNode = dynamicDowncast<Text>(protect(position.deprecatedNode()));
     if (!textNode || !textNode->length())
         return;
     
     {
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
-        CheckedPtr renderer = textNode->renderer();
+        auto* renderer = textNode->renderer();
         if (renderer && !renderer->style().collapseWhiteSpace())
             return;        
     }
@@ -1017,7 +1033,7 @@ void CompositeEditCommand::replaceCollapsibleWhitespaceWithNonBreakingSpaceIfNee
     Position pos = visiblePosition.deepEquivalent().downstream();
     if (!pos.containerNode() || !is<Text>(*pos.containerNode()) || is<HTMLBRElement>(*pos.deprecatedNode()))
         return;
-    replaceTextInNodePreservingMarkers(*pos.protectedContainerText(), pos.offsetInContainerNode(), 1, nonBreakingSpaceString());
+    replaceTextInNodePreservingMarkers(*protect(pos.containerText()), pos.offsetInContainerNode(), 1, nonBreakingSpaceString());
 }
 
 void CompositeEditCommand::rebalanceWhitespace()
@@ -1036,7 +1052,7 @@ void CompositeEditCommand::deleteInsignificantText(Text& textNode, unsigned star
     if (start >= end)
         return;
 
-    protectedDocument()->updateLayout();
+    document().updateLayout();
 
     bool wholeTextNodeIsEmpty = false;
     String string;
@@ -1111,7 +1127,7 @@ void CompositeEditCommand::deleteInsignificantText(const Position& start, const 
         return;
 
     Vector<Ref<Text>> nodes;
-    for (RefPtr node = start.protectedDeprecatedNode(); node; node = NodeTraversal::next(*node)) {
+    for (RefPtr node = start.deprecatedNode(); node; node = NodeTraversal::next(*node)) {
         if (RefPtr textNode = dynamicDowncast<Text>(*node))
             nodes.append(*textNode);
         if (node == end.deprecatedNode())
@@ -1125,7 +1141,7 @@ void CompositeEditCommand::deleteInsignificantText(const Position& start, const 
     }
     if (!nodes.isEmpty()) {
         // Callers expect render tree to be in sync.
-        protectedDocument()->updateLayoutIgnorePendingStylesheets();
+        document().updateLayoutIgnorePendingStylesheets();
     }
 }
 
@@ -1136,7 +1152,7 @@ void CompositeEditCommand::deleteInsignificantTextDownstream(const Position& pos
 
 RefPtr<Element> CompositeEditCommand::appendBlockPlaceholder(Ref<Element>&& container)
 {
-    auto document = protectedDocument();
+    Ref document = this->document();
     document->updateLayoutIgnorePendingStylesheets();
     
     // Should check isBlockFlow || isInlineFlow when deletion improves. See 4244964.
@@ -1144,7 +1160,7 @@ RefPtr<Element> CompositeEditCommand::appendBlockPlaceholder(Ref<Element>&& cont
         return nullptr;
 
     auto placeholder = createBlockPlaceholderElement(document);
-    appendNode(placeholder.copyRef(), WTFMove(container));
+    appendNode(placeholder.copyRef(), WTF::move(container));
     return placeholder;
 }
 
@@ -1156,7 +1172,7 @@ RefPtr<Node> CompositeEditCommand::insertBlockPlaceholder(const Position& pos)
     // Should assert isBlockFlow || isInlineFlow when deletion improves.  See 4244964.
     ASSERT(pos.deprecatedNode()->renderer());
 
-    auto placeholder = createBlockPlaceholderElement(protectedDocument());
+    auto placeholder = createBlockPlaceholderElement(document());
     insertNodeAt(placeholder.copyRef(), pos);
     return placeholder;
 }
@@ -1166,7 +1182,7 @@ RefPtr<Node> CompositeEditCommand::addBlockPlaceholderIfNeeded(Element* containe
     if (!container)
         return nullptr;
 
-    protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    document().updateLayoutIgnorePendingStylesheets();
 
     {
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
@@ -1176,7 +1192,7 @@ RefPtr<Node> CompositeEditCommand::addBlockPlaceholderIfNeeded(Element* containe
             return nullptr;
 
         // Append the placeholder to make sure it follows any unrendered blocks.
-        if (blockFlow->height() && (!blockFlow->isRenderListItem() || blockFlow->firstChild()))
+        if (blockFlow->borderBoxHeight() && (!blockFlow->isRenderListItem() || blockFlow->firstChild()))
             return nullptr;
     }
 
@@ -1200,7 +1216,7 @@ void CompositeEditCommand::removePlaceholderAt(const Position& p)
 
 Ref<HTMLElement> CompositeEditCommand::insertNewDefaultParagraphElementAt(const Position& position)
 {
-    auto document = protectedDocument();
+    Ref document = this->document();
     auto paragraphElement = createDefaultParagraphElement(document);
     paragraphElement->appendChild(HTMLBRElement::create(document));
     insertNodeAt(paragraphElement.copyRef(), position);
@@ -1214,7 +1230,7 @@ RefPtr<Node> CompositeEditCommand::moveParagraphContentsToNewBlockIfNecessary(co
     if (pos.isNull())
         return nullptr;
     
-    protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    document().updateLayoutIgnorePendingStylesheets();
     
     // It's strange that this function is responsible for verifying that pos has not been invalidated
     // by an earlier call to this function.  The caller, applyBlockStyle, should do this.
@@ -1236,7 +1252,7 @@ RefPtr<Node> CompositeEditCommand::moveParagraphContentsToNewBlockIfNecessary(co
         return nullptr;
 
     // Perform some checks to see if we need to perform work in this function.
-    if (upstreamStart.deprecatedNode() && isBlock(*upstreamStart.protectedDeprecatedNode())) {
+    if (upstreamStart.deprecatedNode() && isBlock(*upstreamStart.deprecatedNode())) {
         // If the block is the root editable element, always move content to a new block,
         // since it is illegal to modify attributes on the root editable element for editing.
         if (upstreamStart.deprecatedNode() == editableRootForPosition(upstreamStart)) {
@@ -1244,16 +1260,16 @@ RefPtr<Node> CompositeEditCommand::moveParagraphContentsToNewBlockIfNecessary(co
             // block but don't try and move content into it, since there's nothing for moveParagraphs to move.
             if (!Position::hasRenderedNonAnonymousDescendantsWithHeight(downcast<RenderElement>(*upstreamStart.deprecatedNode()->renderer())))
                 return insertNewDefaultParagraphElementAt(upstreamStart);
-        } else if (upstreamEnd.deprecatedNode() && isBlock(*upstreamEnd.protectedDeprecatedNode())) {
-            if (!upstreamEnd.protectedDeprecatedNode()->isDescendantOf(upstreamStart.protectedDeprecatedNode().get())) {
+        } else if (upstreamEnd.deprecatedNode() && isBlock(*upstreamEnd.deprecatedNode())) {
+            if (!upstreamEnd.deprecatedNode()->isDescendantOf(upstreamStart.deprecatedNode())) {
                 // If the paragraph end is a descendant of paragraph start, then we need to run
                 // the rest of this function. If not, we can bail here.
                 return nullptr;
             }
-        } else if (enclosingBlock(upstreamEnd.protectedDeprecatedNode()) != upstreamStart.deprecatedNode()) {
+        } else if (enclosingBlock(upstreamEnd.deprecatedNode()) != upstreamStart.deprecatedNode()) {
             // The visibleEnd. If it is an ancestor of the paragraph start, then
             // we can bail as we have a full block to work with.
-            if (upstreamStart.protectedDeprecatedNode()->isDescendantOf(enclosingBlock(upstreamEnd.protectedDeprecatedNode()).get()))
+            if (upstreamStart.deprecatedNode()->isDescendantOf(enclosingBlock(upstreamEnd.deprecatedNode()).get()))
                 return nullptr;
         } else if (isEndOfEditableOrNonEditableContent(visibleEnd)) {
             // At the end of the editable region. We can bail here as well.
@@ -1268,10 +1284,10 @@ RefPtr<Node> CompositeEditCommand::moveParagraphContentsToNewBlockIfNecessary(co
 
     bool endWasBr = visibleParagraphEnd.deepEquivalent().deprecatedNode()->hasTagName(brTag);
 
-    moveParagraphs(visibleParagraphStart, visibleParagraphEnd, VisiblePosition(firstPositionInNode(newBlock.ptr())));
+    moveParagraphs(visibleParagraphStart, visibleParagraphEnd, VisiblePosition(firstPositionInNode(newBlock)));
 
     if (newBlock->lastChild() && newBlock->lastChild()->hasTagName(brTag) && !endWasBr)
-        removeNode(*newBlock->lastChild());
+        removeNode(protect(*newBlock->lastChild()));
 
     return newBlock;
 }
@@ -1309,7 +1325,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
         Vector<RefPtr<Node>> ancestors;
         
         // Insert each node from innerNode to outerNode (excluded) in a list.
-        for (RefPtr n = start.protectedDeprecatedNode(); n && n != outerNode; n = n->parentNode())
+        for (RefPtr n = start.deprecatedNode(); n && n != outerNode; n = n->parentNode())
             ancestors.append(n);
 
         // Clone every node between start.deprecatedNode() and outerBlock.
@@ -1318,7 +1334,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
             auto item = std::exchange(ancestors[i - 1], nullptr);
             auto child = item->cloneNode(isRenderedTable(item.get()));
             appendNode(child.copyRef(), downcast<Element>(*lastNode));
-            lastNode = WTFMove(child);
+            lastNode = WTF::move(child);
         }
     }
 
@@ -1335,7 +1351,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
         while (!end.deprecatedNode()->isDescendantOf(outerNode.get()) && outerNode->parentNode())
             outerNode = outerNode->parentNode();
 
-        auto startNode = start.protectedDeprecatedNode();
+        RefPtr startNode = start.deprecatedNode();
         for (RefPtr<Node> node = NodeTraversal::nextSkippingChildren(*startNode, outerNode.get()); node; node = NodeTraversal::nextSkippingChildren(*node, outerNode.get())) {
             // Move lastNode up in the tree as much as node was moved up in the
             // tree by NodeTraversal::nextSkippingChildren, so that the relative depth between
@@ -1347,8 +1363,8 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
 
             auto clonedNode = node->cloneNode(true);
             insertNodeAfter(clonedNode.copyRef(), *lastNode);
-            lastNode = WTFMove(clonedNode);
-            if (node == end.deprecatedNode() || end.protectedDeprecatedNode()->isDescendantOf(*node))
+            lastNode = WTF::move(clonedNode);
+            if (node == end.deprecatedNode() || end.deprecatedNode()->isDescendantOf(*node))
                 break;
         }
     }
@@ -1367,7 +1383,7 @@ void CompositeEditCommand::cleanupAfterDeletion(VisiblePosition destination)
     if (!caretAfterDelete.equals(destination) && isStartOfParagraph(caretAfterDelete) && isEndOfParagraph(caretAfterDelete)) {
         // Note: We want the rightmost candidate.
         Position position = caretAfterDelete.deepEquivalent().downstream();
-        auto node = position.protectedDeprecatedNode();
+        RefPtr node = position.deprecatedNode();
         ASSERT(node);
         // Normally deletion will leave a br as a placeholder.
         if (is<HTMLBRElement>(*node))
@@ -1440,11 +1456,11 @@ void CompositeEditCommand::moveParagraphWithClones(const VisiblePosition& startO
     beforeParagraph = VisiblePosition(beforeParagraph.deepEquivalent());
     afterParagraph = VisiblePosition(afterParagraph.deepEquivalent());
 
-    if (beforeParagraph.isNotNull() && !isRenderedTable(beforeParagraph.deepEquivalent().protectedDeprecatedNode().get())
+    if (beforeParagraph.isNotNull() && !isRenderedTable(protect(beforeParagraph.deepEquivalent().deprecatedNode()).get())
         && ((!isEndOfParagraph(beforeParagraph) && !isStartOfParagraph(beforeParagraph)) || beforeParagraph == afterParagraph)
         && isEditablePosition(beforeParagraph.deepEquivalent())) {
         // FIXME: Trim text between beforeParagraph and afterParagraph if they aren't equal.
-        insertNodeAt(HTMLBRElement::create(protectedDocument()), beforeParagraph.deepEquivalent());
+        insertNodeAt(HTMLBRElement::create(document()), beforeParagraph.deepEquivalent());
     }
 }
     
@@ -1468,7 +1484,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
 
     std::optional<uint64_t> startIndex;
     std::optional<uint64_t> endIndex;
-    bool originalIsDirectional = endingSelection().isDirectional();
+    auto originalDirectionality = endingSelection().directionality();
     if (preserveSelection && !endingSelection().isNone()) {
         auto visibleStart = endingSelection().visibleStart();
         auto visibleEnd = endingSelection().visibleEnd();
@@ -1497,7 +1513,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
     if (start.isNull() || end.isNull())
         return;
 
-    auto document = protectedDocument();
+    Ref document = this->document();
     // FIXME: Serializing and re-parsing is an inefficient way to preserve style.
     RefPtr<DocumentFragment> fragment;
     if (startOfParagraphToMove != endOfParagraphToMove)
@@ -1534,7 +1550,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
     cleanupAfterDeletion(destination);
 
     // FIXME (Bug 211793): We should redesign cleanupAfterDeletion or find another destination when it is removed.
-    if (destination.deepEquivalent().isOrphan() || VisibleSelection(destination, originalIsDirectional).isNone())
+    if (destination.deepEquivalent().isOrphan() || VisibleSelection(destination, originalDirectionality).isNone())
         return;
 
     // Add a br if pruning an empty block level element caused a collapse. For example:
@@ -1559,12 +1575,12 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
 
     auto destinationIndex = characterCount({ { *editableRoot, 0 }, *makeBoundaryPoint(destination) }, TextIteratorBehavior::EmitsCharactersBetweenAllVisiblePositions);
 
-    setEndingSelection(VisibleSelection(destination, originalIsDirectional));
+    setEndingSelection(VisibleSelection(destination, originalDirectionality));
     ASSERT(endingSelection().isCaretOrRange());
     OptionSet<ReplaceSelectionCommand::CommandOption> options { ReplaceSelectionCommand::SelectReplacement, ReplaceSelectionCommand::MovingParagraph };
     if (!preserveStyle)
         options.add(ReplaceSelectionCommand::MatchStyle);
-    applyCommandToComposite(ReplaceSelectionCommand::create(document.copyRef(), WTFMove(fragment), options));
+    applyCommandToComposite(ReplaceSelectionCommand::create(document.copyRef(), WTF::move(fragment), options));
 
     document->editor().markMisspellingsAndBadGrammar(endingSelection());
 
@@ -1581,7 +1597,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
         // of the document (which will return null).
         auto start = makeDeprecatedLegacyPosition(resolveCharacterLocation(makeRangeSelectingNodeContents(*editableRoot), destinationIndex + *startIndex, TextIteratorBehavior::EmitsCharactersBetweenAllVisiblePositions));
         auto end = makeDeprecatedLegacyPosition(resolveCharacterLocation(makeRangeSelectingNodeContents(*editableRoot), destinationIndex + *endIndex, TextIteratorBehavior::EmitsCharactersBetweenAllVisiblePositions));
-        setEndingSelection({ start, end, Affinity::Downstream, originalIsDirectional });
+        setEndingSelection({ start, end, Affinity::Downstream, originalDirectionality });
     }
 }
 
@@ -1611,49 +1627,53 @@ bool CompositeEditCommand::breakOutOfEmptyListItem()
     RefPtr emptyListItem = enclosingEmptyListItem(endingSelection().visibleStart());
     RefPtr listNode = emptyListItem->parentNode();
     auto style = EditingStyle::create(endingSelection().start());
-    Ref document = protectedDocument();
+    Ref document = this->document();
     style->mergeTypingStyle(document);
 
-    RefPtr<Element> newBlock;
-    if (RefPtr blockEnclosingList = listNode->parentNode()) {
-        if (RefPtr liElement = dynamicDowncast<HTMLLIElement>(*blockEnclosingList)) { // listNode is inside another list item
-            if (visiblePositionAfterNode(*blockEnclosingList) == visiblePositionAfterNode(*listNode)) {
-                // If listNode appears at the end of the outer list item, then move listNode outside of this list item
-                // e.g. <ul><li>hello <ul><li><br></li></ul> </li></ul> should become <ul><li>hello</li> <ul><li><br></li></ul> </ul> after this section
-                // If listNode does NOT appear at the end, then we should consider it as a regular paragraph.
-                // e.g. <ul><li> <ul><li><br></li></ul> hello</li></ul> should become <ul><li> <div><br></div> hello</li></ul> at the end
-                splitElement(*liElement, *listNode);
-                removeNodePreservingChildren(*listNode->protectedParentNode());
-                newBlock = HTMLLIElement::create(document);
+    Ref newBlock = [&] -> Ref<Element> {
+        if (RefPtr blockEnclosingList = listNode->parentNode()) {
+            // Check if listNode is inside another list item.
+            if (RefPtr liElement = dynamicDowncast<HTMLLIElement>(*blockEnclosingList)) {
+                if (visiblePositionAfterNode(*blockEnclosingList) == visiblePositionAfterNode(*listNode)) {
+                    // If listNode appears at the end of the outer list item, then move listNode outside of this list item
+                    // e.g. <ul><li>hello <ul><li><br></li></ul> </li></ul> should become <ul><li>hello</li> <ul><li><br></li></ul> </ul> after this section
+                    // If listNode does NOT appear at the end, then we should consider it as a regular paragraph.
+                    // e.g. <ul><li> <ul><li><br></li></ul> hello</li></ul> should become <ul><li> <div><br></div> hello</li></ul> at the end
+                    splitElement(*liElement, *listNode);
+                    removeNodePreservingChildren(*protect(listNode->parentNode()));
+                    return HTMLLIElement::create(document);
+                }
+                // If listNode does NOT appear at the end of the outer list item, then behave as if in a regular paragraph.
+                return createDefaultParagraphElement(document);
             }
-            // If listNode does NOT appear at the end of the outer list item, then behave as if in a regular paragraph.
-        } else if (blockEnclosingList->hasTagName(olTag) || blockEnclosingList->hasTagName(ulTag))
-            newBlock = HTMLLIElement::create(document);
-    }
-    if (!newBlock)
-        newBlock = createDefaultParagraphElement(document);
+
+            if (blockEnclosingList->hasTagName(olTag) || blockEnclosingList->hasTagName(ulTag))
+                return HTMLLIElement::create(document);
+        }
+        return createDefaultParagraphElement(document);
+    }();
 
     RefPtr<Node> previousListNode = emptyListItem->isElementNode() ? ElementTraversal::previousSibling(*emptyListItem): emptyListItem->previousSibling();
     RefPtr<Node> nextListNode = emptyListItem->isElementNode() ? ElementTraversal::nextSibling(*emptyListItem): emptyListItem->nextSibling();
     if ((nextListNode && isListItem(*nextListNode)) || isListHTMLElement(nextListNode.get())) {
         // If emptyListItem follows another list item or nested list, split the list node.
         if (previousListNode && (isListItem(*previousListNode) || isListHTMLElement(previousListNode.get())))
-            splitElement(downcast<Element>(*listNode), *emptyListItem);
+            splitListElement(downcast<Element>(*listNode), *emptyListItem);
 
         // If emptyListItem is followed by other list item or nested list, then insert newBlock before the list node.
         // Because we have splitted the element, emptyListItem is the first element in the list node.
         // i.e. insert newBlock before ul or ol whose first element is emptyListItem
-        insertNodeBefore(*newBlock, *listNode);
+        insertNodeBefore(newBlock, *listNode);
         removeNode(*emptyListItem);
     } else {
         // When emptyListItem does not follow any list item or nested list, insert newBlock after the enclosing list node.
         // Remove the enclosing node if emptyListItem is the only child; otherwise just remove emptyListItem.
-        insertNodeAfter(*newBlock, *listNode);
+        insertNodeAfter(newBlock, *listNode);
         removeNode((previousListNode && (isListItem(*previousListNode) || isListHTMLElement(previousListNode.get()))) ? *emptyListItem : *listNode);
     }
 
-    appendBlockPlaceholder(*newBlock);
-    setEndingSelection(VisibleSelection(firstPositionInNode(newBlock.get()), Affinity::Downstream, endingSelection().isDirectional()));
+    appendBlockPlaceholder(newBlock.copyRef());
+    setEndingSelection(VisibleSelection(firstPositionInNode(newBlock), Affinity::Downstream, endingSelection().directionality()));
 
     style->prepareToApplyAt(endingSelection().start());
     if (!style->isEmpty())
@@ -1682,18 +1702,18 @@ bool CompositeEditCommand::breakOutOfEmptyMailBlockquotedParagraph()
     if (enclosingNodeOfType(previous.deepEquivalent(), &isMailBlockquote))
         return false;
     
-    auto document = protectedDocument();
+    Ref document = this->document();
     auto br = HTMLBRElement::create(document);
     // We want to replace this quoted paragraph with an unquoted one, so insert a br
     // to hold the caret before the highest blockquote.
     insertNodeBefore(br, *highestBlockquote);
-    VisiblePosition atBR = positionBeforeNode(br.ptr());
+    VisiblePosition atBR = positionBeforeNode(br);
     // If the br we inserted collapsed, for example foo<br><blockquote>...</blockquote>, insert
     // a second one.
     if (!isStartOfParagraph(atBR))
         insertNodeBefore(HTMLBRElement::create(document), br.get());
-    setEndingSelection(VisibleSelection(atBR, endingSelection().isDirectional()));
-    
+    setEndingSelection(VisibleSelection(atBR, endingSelection().directionality()));
+
     // If this is an empty paragraph there must be a line break here.
     if (!lineBreakExistsAtVisiblePosition(caret))
         return false;
@@ -1703,7 +1723,7 @@ bool CompositeEditCommand::breakOutOfEmptyMailBlockquotedParagraph()
     ASSERT(caretPos.deprecatedNode()->hasTagName(brTag) || (caretPos.deprecatedNode()->isTextNode() && caretPos.deprecatedNode()->renderer()->style().preserveNewline()));
     
     if (caretPos.deprecatedNode()->hasTagName(brTag))
-        removeNodeAndPruneAncestors(*caretPos.protectedDeprecatedNode());
+        removeNodeAndPruneAncestors(*protect(caretPos.deprecatedNode()));
     else if (RefPtr textNode = dynamicDowncast<Text>(*caretPos.deprecatedNode())) {
         ASSERT(caretPos.deprecatedEditingOffset() == 0);
         RefPtr parentNode { textNode->parentNode() };
@@ -1734,8 +1754,8 @@ Position CompositeEditCommand::positionAvoidingSpecialElementBoundary(const Posi
 
     // Don't avoid block level anchors, because that would insert content into the wrong paragraph.
     if (enclosingAnchor && !isBlock(*enclosingAnchor)) {
-        VisiblePosition firstInAnchor(firstPositionInNode(enclosingAnchor.get()));
-        VisiblePosition lastInAnchor(lastPositionInNode(enclosingAnchor.get()));
+        VisiblePosition firstInAnchor(firstPositionInNode(*enclosingAnchor));
+        VisiblePosition lastInAnchor(lastPositionInNode(*enclosingAnchor));
         // If visually just after the anchor, insert *inside* the anchor unless it's the last
         // VisiblePosition in the document, to match NSTextView.
         if (visiblePos == lastInAnchor) {
@@ -1750,10 +1770,10 @@ Position CompositeEditCommand::positionAvoidingSpecialElementBoundary(const Posi
             // Don't insert outside an anchor if doing so would skip over a line break.  It would
             // probably be safe to move the line break so that we could still avoid the anchor here.
             Position downstream(visiblePos.deepEquivalent().downstream());
-            if (lineBreakExistsAtVisiblePosition(visiblePos) && downstream.protectedDeprecatedNode()->isDescendantOf(enclosingAnchor.get()))
+            if (lineBreakExistsAtVisiblePosition(visiblePos) && downstream.deprecatedNode()->isDescendantOf(enclosingAnchor.get()))
                 return original;
             
-            result = positionInParentAfterNode(enclosingAnchor.get());
+            result = positionInParentAfterNode(*enclosingAnchor);
         }
         // If visually just before an anchor, insert *outside* the anchor unless it's the first
         // VisiblePosition in a paragraph, to match NSTextView.
@@ -1767,7 +1787,7 @@ Position CompositeEditCommand::positionAvoidingSpecialElementBoundary(const Posi
             if (!enclosingAnchor)
                 return original;
 
-            result = positionInParentBeforeNode(enclosingAnchor.get());
+            result = positionInParentBeforeNode(*enclosingAnchor);
         }
     }
         
@@ -1783,19 +1803,19 @@ RefPtr<Node> CompositeEditCommand::splitTreeToNode(Node& start, Node& end, bool 
 {
     ASSERT(&start != &end);
 
-    RefPtr adjustedEnd = &end;
+    RefPtr adjustedEnd = end;
     if (shouldSplitAncestor && adjustedEnd->parentNode())
         adjustedEnd = adjustedEnd->parentNode();
 
     ASSERT(adjustedEnd);
     RefPtr<Node> node;
-    for (node = &start; node && node->parentNode() != adjustedEnd;) {
+    for (node = start; node && node->parentNode() != adjustedEnd;) {
         RefPtr parentNode = node->parentNode();
         RefPtr parentElement = dynamicDowncast<Element>(parentNode);
         if (!parentElement || editingIgnoresContent(*parentNode))
             break;
         // Do not split a node when doing so introduces an empty node.
-        VisiblePosition positionInParent = firstPositionInNode(parentNode.get());
+        VisiblePosition positionInParent = firstPositionInNode(*parentNode);
         VisiblePosition positionInNode = firstPositionInOrBeforeNode(node.get());
         if (positionInParent != positionInNode)
             splitElement(*parentElement, *node);

@@ -62,19 +62,17 @@ public:
 
     void deleteRemoteMediaPlayer(WebCore::MediaPlayerIdentifier);
 
-    WebCore::MediaPlayerIdentifier findRemotePlayerId(const WebCore::MediaPlayerPrivateInterface*);
+    std::optional<WebCore::MediaPlayerIdentifier> findRemotePlayerId(const WebCore::MediaPlayerPrivateInterface*);
 
     RemoteMediaPlayerMIMETypeCache& typeCache(WebCore::MediaPlayerEnums::MediaEngineIdentifier);
 
-    void ref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteMediaPlayerManager>::ref(); }
-    void deref() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteMediaPlayerManager>::deref(); }
-    ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RemoteMediaPlayerManager>::controlBlock(); }
+    WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
     void initialize(const WebProcessCreationParameters&);
 
 private:
     RemoteMediaPlayerManager();
-    Ref<WebCore::MediaPlayerPrivateInterface> createRemoteMediaPlayer(WebCore::MediaPlayer*, WebCore::MediaPlayerEnums::MediaEngineIdentifier);
+    Ref<WebCore::MediaPlayerPrivateInterface> createRemoteMediaPlayer(WebCore::MediaPlayer&, WebCore::MediaPlayerEnums::MediaEngineIdentifier);
 
     // GPUProcessConnection::Client
     void gpuProcessConnectionDidClose(GPUProcessConnection&) final;
@@ -82,7 +80,7 @@ private:
     friend class MediaPlayerRemoteFactory;
     void getSupportedTypes(WebCore::MediaPlayerEnums::MediaEngineIdentifier, HashSet<String>&);
     WebCore::MediaPlayer::SupportsType supportsTypeAndCodecs(WebCore::MediaPlayerEnums::MediaEngineIdentifier, const WebCore::MediaEngineSupportParameters&);
-    bool supportsKeySystem(WebCore::MediaPlayerEnums::MediaEngineIdentifier, const String& keySystem, const String& mimeType);
+    bool NODELETE supportsKeySystem(WebCore::MediaPlayerEnums::MediaEngineIdentifier, const String& keySystem, const String& mimeType);
 
     HashMap<WebCore::MediaPlayerIdentifier, ThreadSafeWeakPtr<MediaPlayerPrivateRemote>> m_players;
     ThreadSafeWeakPtr<GPUProcessConnection> m_gpuProcessConnection;

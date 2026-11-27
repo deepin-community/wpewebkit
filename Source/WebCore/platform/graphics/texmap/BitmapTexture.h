@@ -31,10 +31,27 @@
 #include "IntPoint.h"
 #include "IntRect.h"
 #include "IntSize.h"
+#include "PixelFormat.h"
 #include "TextureMapperGLHeaders.h"
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+
+#if USE(GBM)
+#include "MemoryMappedGPUBuffer.h"
+#endif
+
+#if USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkRefCnt.h>
+#include <skia/gpu/ganesh/GrBackendSurface.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+class GrDirectContext;
+class SkSurface;
+enum GrSurfaceOrigin : int;
+#endif
+
+typedef void *EGLImage;
 
 namespace WebCore {
 
@@ -48,18 +65,33 @@ public:
     enum class Flags : uint8_t {
         SupportsAlpha = 1 << 0,
         DepthBuffer = 1 << 1,
+#if USE(GBM)
+        BackedByDMABuf = 1 << 2,
+        ForceLinearBuffer = 1 << 3,
+        ForceVivanteSuperTiledBuffer = 1 << 4,
+#endif
+        UseBGRALayout = 1 << 5,
+        NearestFiltering = 1 << 6,
+        ExternalOESRenderTarget = 1 << 7,
     };
 
-    static Ref<BitmapTexture> create(const IntSize& size, OptionSet<Flags> flags = { }, GLint internalFormat = GL_DONT_CARE)
+    static Ref<BitmapTexture> create(const IntSize& size, OptionSet<Flags> flags = { })
     {
-        return adoptRef(*new BitmapTexture(size, flags, internalFormat));
+        return adoptRef(*new BitmapTexture(size, flags));
     }
+
+#if USE(GBM) || OS(ANDROID)
+    static Ref<BitmapTexture> create(EGLImage image, const IntSize& size, OptionSet<Flags> flags = { })
+    {
+        return adoptRef(*new BitmapTexture(image, size, flags));
+    }
+#endif
 
     WEBCORE_EXPORT ~BitmapTexture();
 
     const IntSize& size() const { return m_size; };
+    size_t sizeInBytes() const;
     OptionSet<Flags> flags() const { return m_flags; }
-    GLint internalFormat() const { return m_internalFormat; }
     bool isOpaque() const { return !m_flags.contains(Flags::SupportsAlpha); }
 
     void bindAsSurface();
@@ -69,42 +101,67 @@ public:
 
     void updateContents(NativeImage*, const IntRect&, const IntPoint& offset);
     void updateContents(GraphicsLayer*, const IntRect& target, const IntPoint& offset, float scale = 1);
-    void updateContents(const void*, const IntRect& target, const IntPoint& offset, int bytesPerLine);
+    void updateContents(const void* srcData, const IntRect& targetRect, const IntPoint& sourceOffset, int bytesPerLine, PixelFormat);
 
+    void swapTexture(BitmapTexture&);
     void reset(const IntSize&, OptionSet<Flags> = { });
 
-    int numberOfBytes() const { return size().width() * size().height() * 32 >> 3; }
-
     RefPtr<const FilterOperation> filterOperation() const { return m_filterOperation; }
-    void setFilterOperation(RefPtr<const FilterOperation>&& filterOperation) { m_filterOperation = WTFMove(filterOperation); }
+    void setFilterOperation(RefPtr<const FilterOperation>&& filterOperation) { m_filterOperation = WTF::move(filterOperation); }
 
-    ClipStack& clipStack() { return m_clipStack; }
+    ClipStack& clipStack() LIFETIME_BOUND { return m_clipStack; }
 
-    void copyFromExternalTexture(GLuint textureID);
-    void copyFromExternalTexture(BitmapTexture& sourceTexture, const IntRect& sourceRect, const IntSize& destinationOffset);
     void copyFromExternalTexture(GLuint sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset);
 
-    OptionSet<TextureMapperFlags> colorConvertFlags() const { return m_colorConvertFlags; }
+    OptionSet<TextureMapperFlags> colorConvertFlags() const;
+
+#if USE(SKIA)
+    GrBackendTexture createSkiaBackendTexture() const;
+    sk_sp<SkSurface> createSkiaSurface(GrDirectContext*, GrSurfaceOrigin = kTopLeft_GrSurfaceOrigin, unsigned sampleCount = 0) const;
+#endif
+
+#if USE(GBM)
+    MemoryMappedGPUBuffer* memoryMappedGPUBuffer() const LIFETIME_BOUND { return m_memoryMappedGPUBuffer.get(); }
+    IntSize allocatedSize() const;
+#else
+    IntSize allocatedSize() const { return m_size; }
+#endif
 
 private:
-    BitmapTexture(const IntSize&, OptionSet<Flags>, GLint internalFormat);
+    BitmapTexture(const IntSize&, OptionSet<Flags>);
+#if USE(GBM) || OS(ANDROID)
+    BitmapTexture(EGLImage, const IntSize&, OptionSet<Flags>);
+#endif
 
     void clearIfNeeded();
     void createFboIfNeeded();
 
+    void determineRenderTargetAndBinding();
+
+    GLenum textureFormat() const;
+    void createTexture();
+    void allocateTexture();
+#if USE(GBM)
+    bool allocateTextureFromMemoryMappedGPUBuffer();
+#endif
+
     OptionSet<Flags> m_flags;
     IntSize m_size;
     GLuint m_id { 0 };
+    GLenum m_renderTarget { GL_TEXTURE_2D };
+    GLenum m_binding { GL_TEXTURE_BINDING_2D };
     GLuint m_fbo { 0 };
     GLuint m_depthBufferObject { 0 };
     GLuint m_stencilBufferObject { 0 };
     bool m_stencilBound { false };
     bool m_shouldClear { true };
     ClipStack m_clipStack;
-    OptionSet<TextureMapperFlags> m_colorConvertFlags;
     RefPtr<const FilterOperation> m_filterOperation;
-    GLint m_internalFormat { 0 };
-    GLenum m_format { 0 };
+    PixelFormat m_pixelFormat { PixelFormat::RGBA8 };
+
+#if USE(GBM)
+    std::unique_ptr<MemoryMappedGPUBuffer> m_memoryMappedGPUBuffer;
+#endif
 };
 
 } // namespace WebCore

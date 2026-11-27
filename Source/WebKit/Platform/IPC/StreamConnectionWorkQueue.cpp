@@ -53,7 +53,7 @@ void StreamConnectionWorkQueue::dispatch(WTF::Function<void()>&& function)
         // not dispatched as a function.
         if (m_shouldQuit)
             return;
-        m_functions.append(WTFMove(function));
+        m_functions.append(WTF::move(function));
         if (!m_shouldQuit && !m_processingThread) {
             startProcessingThread();
             return;
@@ -88,18 +88,18 @@ void StreamConnectionWorkQueue::removeStreamConnection(StreamServerConnection& c
     wakeUp();
 }
 
-void StreamConnectionWorkQueue::stopAndWaitForCompletion(WTF::Function<void()>&& cleanupFunction)
+void StreamConnectionWorkQueue::stopAndWaitForCompletion(NOESCAPE WTF::Function<void()>&& cleanupFunction)
 {
     RefPtr<Thread> processingThread;
     {
         Locker locker { m_lock };
-        m_cleanupFunction = WTFMove(cleanupFunction);
+        m_cleanupFunction = WTF::move(cleanupFunction);
         processingThread = m_processingThread;
         m_shouldQuit = true;
     }
     if (!processingThread)
         return;
-    ASSERT(Thread::current().uid() != processingThread->uid());
+    ASSERT(Thread::currentSingleton().uid() != processingThread->uid());
     wakeUp();
     processingThread->waitForCompletion();
     {
@@ -113,14 +113,9 @@ void StreamConnectionWorkQueue::wakeUp()
     m_wakeUpSemaphore.signal();
 }
 
-IPC::Semaphore& StreamConnectionWorkQueue::wakeUpSemaphore()
-{
-    return m_wakeUpSemaphore;
-}
-
 void StreamConnectionWorkQueue::startProcessingThread()
 {
-    auto task = [this]() mutable {
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE auto task = [this]() mutable {
         for (;;) {
             processStreams();
             if (m_shouldQuit) {
@@ -128,7 +123,7 @@ void StreamConnectionWorkQueue::startProcessingThread()
                 WTF::Function<void()> cleanup = nullptr;
                 {
                     Locker locker { m_lock };
-                    cleanup = WTFMove(m_cleanupFunction);
+                    cleanup = WTF::move(m_cleanupFunction);
 
                 }
                 if (cleanup)
@@ -138,7 +133,7 @@ void StreamConnectionWorkQueue::startProcessingThread()
             m_wakeUpSemaphore.wait();
         }
     };
-    m_processingThread = Thread::create(m_name, WTFMove(task), ThreadType::Graphics, Thread::QOS::UserInteractive);
+    m_processingThread = Thread::create(m_name, WTF::move(task), ThreadType::Graphics, Thread::QOS::UserInteractive);
 }
 
 void StreamConnectionWorkQueue::processStreams()
@@ -157,7 +152,7 @@ void StreamConnectionWorkQueue::processStreams()
             connections = m_connections;
         }
         for (auto& function : functions)
-            WTFMove(function)();
+            WTF::move(function)();
 
         hasMoreToProcess = false;
         for (auto& connection : connections)
@@ -168,7 +163,7 @@ void StreamConnectionWorkQueue::processStreams()
 bool StreamConnectionWorkQueue::isCurrent() const
 {
     Locker locker { m_lock };
-    return m_processingThread ? m_processingThread->uid() == Thread::current().uid() : false;
+    return m_processingThread ? m_processingThread->uid() == Thread::currentSingleton().uid() : false;
 }
 
 }

@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "IndexingType.h"
-#include "WeakGCMap.h"
+#include <JavaScriptCore/CollectionScope.h>
+#include <JavaScriptCore/IndexingType.h>
+#include <JavaScriptCore/WeakGCMap.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/text/UniquedStringImpl.h>
 
@@ -35,6 +36,7 @@ namespace JSC {
 class JSCell;
 class Structure;
 
+class JSObject;
 // In fact, it should be 7 bits. See PropertySlot and Structure definitions.
 using TransitionPropertyAttributes = uint8_t;
 
@@ -154,12 +156,12 @@ class StructureTransitionTable {
 
     class PointerKey {
     public:
-        PointerKey(UniquedStringImpl* uid) : m_pointer(bitwise_cast<uintptr_t>(uid)) { }
-        PointerKey(JSObject* object) : m_pointer(bitwise_cast<uintptr_t>(object)) { }
+        PointerKey(UniquedStringImpl* uid) : m_pointer(std::bit_cast<uintptr_t>(uid)) { }
+        PointerKey(JSObject* object) : m_pointer(std::bit_cast<uintptr_t>(object)) { }
         constexpr PointerKey(std::nullptr_t) { }
 
         uintptr_t raw() const { return m_pointer; }
-        void* pointer() const { return bitwise_cast<void*>(m_pointer); }
+        void* pointer() const { return std::bit_cast<void*>(m_pointer); }
 
         static PointerKey fromRaw(uintptr_t key)
         {
@@ -231,7 +233,7 @@ class StructureTransitionTable {
             return a == b;
         }
 
-        static Key createFromStructure(Structure*);
+        static Key createKeyFromStructure(Structure*);
         static Key createKey(PointerKey impl, unsigned attributes, TransitionKind transitionKind)
         {
             return Key { impl, attributes, transitionKind };
@@ -254,7 +256,7 @@ class StructureTransitionTable {
             return a == b;
         }
 
-        static Key createFromStructure(Structure*);
+        static Key createKeyFromStructure(Structure*);
         static Key createKey(PointerKey impl, unsigned attributes, TransitionKind transitionKind)
         {
             return Key { impl.pointer(), attributes, transitionKind };
@@ -269,13 +271,7 @@ class StructureTransitionTable {
 public:
     StructureTransitionTable() = default;
 
-    ~StructureTransitionTable()
-    {
-        if (!isUsingSingleSlot()) {
-            delete map();
-            return;
-        }
-    }
+    inline ~StructureTransitionTable(); // Defined in StructureInlines.h.
 
     void add(VM&, JSCell* owner, Structure*);
     bool contains(PointerKey, unsigned attributes, TransitionKind) const;
@@ -296,14 +292,14 @@ private:
     TransitionMap* map() const
     {
         ASSERT(!isUsingSingleSlot());
-        return bitwise_cast<TransitionMap*>(m_data);
+        return std::bit_cast<TransitionMap*>(m_data);
     }
 
     void setMap(TransitionMap* map)
     {
         ASSERT(isUsingSingleSlot());
         // This implicitly clears the flag that indicates we're using a single transition
-        m_data = bitwise_cast<intptr_t>(map);
+        m_data = std::bit_cast<intptr_t>(map);
         ASSERT(!isUsingSingleSlot());
     }
 

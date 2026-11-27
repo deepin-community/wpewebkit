@@ -28,11 +28,19 @@
 
 namespace WebCore {
 
-const uint64_t maxInflightKeepaliveBytes { 65536 }; // 64 kibibytes as per Fetch specification.
+constexpr uint64_t maxInflightKeepaliveBytes { 65536 }; // 64 kibibytes as per Fetch specification.
+
+Ref<KeepaliveRequestTracker> KeepaliveRequestTracker::create()
+{
+    return adoptRef(*new KeepaliveRequestTracker);
+}
 
 KeepaliveRequestTracker::~KeepaliveRequestTracker()
 {
-    auto inflightRequests = WTFMove(m_inflightKeepaliveRequests);
+    auto inflightRequests = WTF::map(m_inflightKeepaliveRequests, [](auto& request) {
+        return RefPtr { request.get() };
+    });
+    m_inflightKeepaliveRequests.clear();
     for (auto& resource : inflightRequests)
         resource->removeClient(*this);
 }
@@ -40,7 +48,7 @@ KeepaliveRequestTracker::~KeepaliveRequestTracker()
 bool KeepaliveRequestTracker::tryRegisterRequest(CachedResource& resource)
 {
     ASSERT(resource.options().keepAlive);
-    auto body = resource.resourceRequest().httpBody();
+    RefPtr body = resource.resourceRequest().httpBody();
     if (!body)
         return true;
 
@@ -75,7 +83,7 @@ void KeepaliveRequestTracker::unregisterRequest(CachedResource& resource)
 {
     ASSERT(resource.options().keepAlive);
 
-    m_inflightKeepaliveBytes -= resource.resourceRequest().httpBody()->lengthInBytes();
+    m_inflightKeepaliveBytes -= protect(resource.resourceRequest().httpBody())->lengthInBytes();
     ASSERT(m_inflightKeepaliveBytes <= maxInflightKeepaliveBytes);
 
     resource.removeClient(*this);

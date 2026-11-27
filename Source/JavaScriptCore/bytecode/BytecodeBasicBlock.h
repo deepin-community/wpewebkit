@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include "InstructionStream.h"
-#include "Opcode.h"
+#include <JavaScriptCore/InstructionStream.h>
+#include <JavaScriptCore/Opcode.h>
 #include <limits.h>
 #include <wtf/FastBitVector.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -43,7 +44,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BytecodeBasicBlock);
 
 template<typename OpcodeTraits>
 class BytecodeBasicBlock {
-    WTF_MAKE_TZONE_ALLOCATED(BytecodeBasicBlock);
+    WTF_MAKE_TZONE_ALLOCATED_TEMPLATE(BytecodeBasicBlock);
     WTF_MAKE_NONCOPYABLE(BytecodeBasicBlock);
     friend class BytecodeGraph;
 public:
@@ -63,11 +64,11 @@ public:
     unsigned leaderOffset() const { return m_leaderOffset; }
     unsigned totalLength() const { return m_totalLength; }
 
-    const Vector<uint8_t>& delta() const { return m_delta; }
-    const Vector<unsigned>& successors() const { return m_successors; }
+    const Vector<uint8_t>& delta() const LIFETIME_BOUND { return m_delta; }
+    const Vector<unsigned>& successors() const LIFETIME_BOUND { return m_successors; }
 
-    FastBitVector& in() { return m_in; }
-    FastBitVector& out() { return m_out; }
+    FastBitVector& in() LIFETIME_BOUND { return m_in; }
+    FastBitVector& out() LIFETIME_BOUND { return m_out; }
 
     unsigned index() const { return m_index; }
 
@@ -99,7 +100,8 @@ private:
     FastBitVector m_out;
 };
 
+WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<typename OpcodeTraits>, BytecodeBasicBlock<OpcodeTraits>);
+
 using JSBytecodeBasicBlock = BytecodeBasicBlock<JSOpcodeTraits>;
-using WasmBytecodeBasicBlock = BytecodeBasicBlock<WasmOpcodeTraits>;
 
 } // namespace JSC

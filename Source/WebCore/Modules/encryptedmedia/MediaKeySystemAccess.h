@@ -32,7 +32,7 @@
 
 #include "ActiveDOMObject.h"
 #include "MediaKeySystemConfiguration.h"
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -43,17 +43,16 @@ class DeferredPromise;
 class Document;
 class MediaKeys;
 
-class MediaKeySystemAccess : public RefCounted<MediaKeySystemAccess>, public CanMakeWeakPtr<MediaKeySystemAccess>, public ActiveDOMObject {
+class MediaKeySystemAccess : public RefCounted<MediaKeySystemAccess>, public ActiveDOMObject {
 public:
-    static Ref<MediaKeySystemAccess> create(Document&, const String& keySystem, MediaKeySystemConfiguration&&, Ref<CDM>&&);
-    ~MediaKeySystemAccess();
-
-    // ActiveDOMObject.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    const String& keySystem() const { return m_keySystem; }
-    const MediaKeySystemConfiguration& getConfiguration() const { return *m_configuration; }
+    static Ref<MediaKeySystemAccess> create(Document&, const String& keySystem, MediaKeySystemConfiguration&&, Ref<CDM>&&);
+    ~MediaKeySystemAccess();
+
+    const String& keySystem() const LIFETIME_BOUND { return m_keySystem; }
+    const MediaKeySystemConfiguration& getConfiguration() const LIFETIME_BOUND { return *m_configuration; }
     void createMediaKeys(Document&, Ref<DeferredPromise>&&);
 
 private:
@@ -61,7 +60,7 @@ private:
 
     String m_keySystem;
     std::unique_ptr<MediaKeySystemConfiguration> m_configuration;
-    Ref<CDM> m_implementation;
+    const Ref<CDM> m_implementation;
 };
 
 } // namespace WebCore

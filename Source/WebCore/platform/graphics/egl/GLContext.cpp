@@ -19,8 +19,12 @@
 #include "config.h"
 #include "GLContext.h"
 
+#include "GLDisplay.h"
 #include "GraphicsContextGL.h"
 #include "Logging.h"
+#include "PlatformDisplay.h"
+#include <wtf/StringPrintStream.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -35,6 +39,8 @@
 #endif
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GLContext);
 
 const char* GLContext::errorString(int statusCode)
 {
@@ -67,7 +73,8 @@ const char* GLContext::lastErrorString()
     return errorString(eglGetError());
 }
 
-bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config, EGLSurfaceType surfaceType)
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
+bool GLContext::getEGLConfig(EGLDisplay display, EGLConfig* config, int surfaceType)
 {
     std::array<EGLint, 4> rgbaSize = { 8, 8, 8, 8 };
     if (const char* environmentVariable = getenv("WEBKIT_EGL_PIXEL_LAYOUT")) {
@@ -77,6 +84,7 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
             WTFLogAlways("Unknown pixel layout %s, falling back to RGBA8888", environmentVariable);
     }
 
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib / Windows ports.
     EGLint attributeList[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
         EGL_RED_SIZE, rgbaSize[0],
@@ -84,30 +92,12 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
         EGL_BLUE_SIZE, rgbaSize[2],
         EGL_ALPHA_SIZE, rgbaSize[3],
         EGL_STENCIL_SIZE, 8,
-        EGL_SURFACE_TYPE, EGL_NONE,
+        EGL_SURFACE_TYPE, surfaceType,
         EGL_DEPTH_SIZE, 0,
         EGL_NONE
     };
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-    switch (surfaceType) {
-    case GLContext::Surfaceless:
-        if (platformDisplay.type() == PlatformDisplay::Type::Surfaceless)
-            attributeList[13] = EGL_PBUFFER_BIT;
-        else
-            attributeList[13] = EGL_WINDOW_BIT;
-        break;
-    case GLContext::PbufferSurface:
-        attributeList[13] = EGL_PBUFFER_BIT;
-        break;
-    case GLContext::PixmapSurface:
-        attributeList[13] = EGL_PIXMAP_BIT;
-        break;
-    case GLContext::WindowSurface:
-        attributeList[13] = EGL_WINDOW_BIT;
-        break;
-    }
-
-    EGLDisplay display = platformDisplay.eglDisplay();
     EGLint count;
     if (!eglChooseConfig(display, attributeList, nullptr, 0, &count)) {
         RELEASE_LOG_INFO(Compositing, "Cannot get count of available EGL configurations: %s.", lastErrorString());
@@ -116,7 +106,7 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
 
     EGLint numberConfigsReturned;
     Vector<EGLConfig> configs(count);
-    if (!eglChooseConfig(display, attributeList, reinterpret_cast<EGLConfig*>(configs.data()), count, &numberConfigsReturned) || !numberConfigsReturned) {
+    if (!eglChooseConfig(display, attributeList, reinterpret_cast<EGLConfig*>(configs.mutableSpan().data()), count, &numberConfigsReturned) || !numberConfigsReturned) {
         RELEASE_LOG_INFO(Compositing, "Cannot get available EGL configurations: %s.", lastErrorString());
         return false;
     }
@@ -139,36 +129,34 @@ bool GLContext::getEGLConfig(PlatformDisplay& platformDisplay, EGLConfig* config
     RELEASE_LOG_INFO(Compositing, "Could not find suitable EGL configuration out of %zu checked.", configs.size());
     return false;
 }
+IGNORE_CLANG_WARNINGS_END
 
-std::unique_ptr<GLContext> GLContext::createWindowContext(GLNativeWindowType window, PlatformDisplay& platformDisplay, EGLContext sharingContext)
+std::unique_ptr<GLContext> GLContext::createWindowContext(GLDisplay& display, Target target, GLNativeWindowType window, EGLContext sharingContext)
 {
+    EGLDisplay eglDisplay = display.eglDisplay();
     EGLConfig config;
-    if (!getEGLConfig(platformDisplay, &config, WindowSurface)) {
+    if (!getEGLConfig(eglDisplay, &config, EGL_WINDOW_BIT)) {
         RELEASE_LOG_INFO(Compositing, "Cannot obtain EGL window context configuration: %s\n", lastErrorString());
         return nullptr;
     }
 
-    EGLContext context = createContextForEGLVersion(platformDisplay, config, sharingContext);
+    auto context = createEGLContext(display, config, sharingContext);
     if (context == EGL_NO_CONTEXT) {
         RELEASE_LOG_INFO(Compositing, "Cannot create EGL window context: %s\n", lastErrorString());
         return nullptr;
     }
 
-    EGLDisplay display = platformDisplay.eglDisplay();
     EGLSurface surface = EGL_NO_SURFACE;
-    switch (platformDisplay.type()) {
+    switch (target) {
 #if USE(WPE_RENDERER)
-    case PlatformDisplay::Type::WPE:
-        surface = createWindowSurfaceWPE(display, config, window);
+    case Target::WPE:
+        surface = createWindowSurfaceWPE(eglDisplay, config, window);
         break;
 #endif // USE(WPE_RENDERER)
 #if USE(GBM)
-    case PlatformDisplay::Type::GBM:
+    case Target::GBM:
 #endif
-#if PLATFORM(GTK)
-    case PlatformDisplay::Type::Default:
-#endif
-    case PlatformDisplay::Type::Surfaceless:
+    case Target::Surfaceless:
         RELEASE_ASSERT_NOT_REACHED();
         break;
     default:
@@ -180,235 +168,357 @@ std::unique_ptr<GLContext> GLContext::createWindowContext(GLNativeWindowType win
         // EGLNativeWindowType changes depending on the EGL implementation, reinterpret_cast
         // would work for pointers, and static_cast for numeric types only; so use a plain
         // C cast expression which works in all possible cases.
-        surface = eglCreateWindowSurface(display, config, (EGLNativeWindowType) window, nullptr);
+        surface = eglCreateWindowSurface(eglDisplay, config, (EGLNativeWindowType) window, nullptr);
     }
 
     if (surface == EGL_NO_SURFACE) {
         RELEASE_LOG_INFO(Compositing, "Cannot create EGL window surface: %s\n", lastErrorString());
-        eglDestroyContext(display, context);
+        eglDestroyContext(eglDisplay, context);
         return nullptr;
     }
 
-    return makeUnique<GLContext>(platformDisplay, context, surface, config, WindowSurface);
+    return makeUnique<GLContext>(display, context, surface, config);
 }
 
-std::unique_ptr<GLContext> GLContext::createPbufferContext(PlatformDisplay& platformDisplay, EGLContext sharingContext)
+std::unique_ptr<GLContext> GLContext::createSurfacelessContext(GLDisplay& display, Target target, EGLContext sharingContext)
 {
-    EGLConfig config;
-    if (!getEGLConfig(platformDisplay, &config, PbufferSurface)) {
-        RELEASE_LOG_INFO(Compositing, "Cannot obtain EGL Pbuffer configuration: %s\n", lastErrorString());
-        return nullptr;
-    }
-
-    EGLContext context = createContextForEGLVersion(platformDisplay, config, sharingContext);
-    if (context == EGL_NO_CONTEXT) {
-        RELEASE_LOG_INFO(Compositing, "Cannot create EGL Pbuffer context: %s\n", lastErrorString());
-        return nullptr;
-    }
-
-    EGLDisplay display = platformDisplay.eglDisplay();
-    static const int pbufferAttributes[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
-    EGLSurface surface = eglCreatePbufferSurface(display, config, pbufferAttributes);
-    if (surface == EGL_NO_SURFACE) {
-        RELEASE_LOG_INFO(Compositing, "Cannot create EGL Pbuffer surface: %s\n", lastErrorString());
-        eglDestroyContext(display, context);
-        return nullptr;
-    }
-
-    return makeUnique<GLContext>(platformDisplay, context, surface, config, PbufferSurface);
-}
-
-std::unique_ptr<GLContext> GLContext::createSurfacelessContext(PlatformDisplay& platformDisplay, EGLContext sharingContext)
-{
-    EGLDisplay display = platformDisplay.eglDisplay();
-    if (display == EGL_NO_DISPLAY) {
-        RELEASE_LOG_INFO(Compositing, "Cannot create surfaceless EGL context: invalid display (last error: %s)\n", lastErrorString());
-        return nullptr;
-    }
-
-    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+    EGLDisplay eglDisplay = display.eglDisplay();
+    const char* extensions = eglQueryString(eglDisplay, EGL_EXTENSIONS);
     if (!GLContext::isExtensionSupported(extensions, "EGL_KHR_surfaceless_context") && !GLContext::isExtensionSupported(extensions, "EGL_KHR_surfaceless_opengl")) {
         RELEASE_LOG_INFO(Compositing, "Cannot create surfaceless EGL context: required extensions missing.");
         return nullptr;
     }
 
     EGLConfig config;
-    if (!getEGLConfig(platformDisplay, &config, Surfaceless)) {
+    if (!getEGLConfig(eglDisplay, &config, target == Target::Surfaceless ? EGL_PBUFFER_BIT : EGL_WINDOW_BIT)) {
         RELEASE_LOG_INFO(Compositing, "Cannot obtain EGL surfaceless configuration: %s\n", lastErrorString());
         return nullptr;
     }
 
-    EGLContext context = createContextForEGLVersion(platformDisplay, config, sharingContext);
+    auto context = createEGLContext(display, config, sharingContext);
     if (context == EGL_NO_CONTEXT) {
         RELEASE_LOG_INFO(Compositing, "Cannot create EGL surfaceless context: %s\n", lastErrorString());
         return nullptr;
     }
 
-    return makeUnique<GLContext>(platformDisplay, context, EGL_NO_SURFACE, config, Surfaceless);
+    return makeUnique<GLContext>(display, context, EGL_NO_SURFACE, config);
 }
 
-std::unique_ptr<GLContext> GLContext::create(GLNativeWindowType window, PlatformDisplay& platformDisplay)
+std::unique_ptr<GLContext> GLContext::createPbufferContext(GLDisplay& display, EGLContext sharingContext)
 {
-    if (!window)
-        return GLContext::createOffscreen(platformDisplay);
-
-    if (platformDisplay.eglDisplay() == EGL_NO_DISPLAY) {
-        WTFLogAlways("Cannot create EGL context: invalid display (last error: %s)\n", lastErrorString());
+    EGLDisplay eglDisplay = display.eglDisplay();
+    EGLConfig config;
+    if (!getEGLConfig(eglDisplay, &config, EGL_PBUFFER_BIT)) {
+        RELEASE_LOG_INFO(Compositing, "Cannot obtain EGL Pbuffer configuration: %s\n", lastErrorString());
         return nullptr;
     }
+
+    auto context = createEGLContext(display, config, sharingContext);
+    if (context == EGL_NO_CONTEXT) {
+        RELEASE_LOG_INFO(Compositing, "Cannot create EGL Pbuffer context: %s\n", lastErrorString());
+        return nullptr;
+    }
+
+    static const int pbufferAttributes[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+    EGLSurface surface = eglCreatePbufferSurface(eglDisplay, config, pbufferAttributes);
+    if (surface == EGL_NO_SURFACE) {
+        RELEASE_LOG_INFO(Compositing, "Cannot create EGL Pbuffer surface: %s\n", lastErrorString());
+        eglDestroyContext(eglDisplay, context);
+        return nullptr;
+    }
+
+    return makeUnique<GLContext>(display, context, surface, config);
+}
+
+std::unique_ptr<GLContext> GLContext::createOffscreenContext(GLDisplay& display, Target target, EGLContext sharingContext)
+{
+    if (auto context = createSurfacelessContext(display, target, sharingContext))
+        return context;
+
+    switch (target) {
+#if USE(WPE_RENDERER)
+    case Target::WPE:
+        if (auto context = createWPEContext(display, sharingContext))
+            return context;
+        break;
+#endif
+#if USE(GBM)
+    case Target::GBM:
+#endif
+    case Target::Surfaceless:
+        // Do not fallback to pbuffers.
+        RELEASE_LOG_INFO(Compositing, "Could not create EGL surfaceless context: %s.", lastErrorString());
+        return nullptr;
+    default:
+        break;
+    }
+
+    RELEASE_LOG_INFO(Compositing, "Could not create platform context: %s. Using Pbuffer as fallback.", lastErrorString());
+    if (auto context = createPbufferContext(display, sharingContext))
+        return context;
+
+    RELEASE_LOG_INFO(Compositing, "Could not create Pbuffer context: %s.", lastErrorString());
+    return nullptr;
+}
+
+std::unique_ptr<GLContext> GLContext::create(GLDisplay& display, Target target, GLContext* sharingGLContext, GLNativeWindowType window)
+{
+    RELEASE_ASSERT(display.eglDisplay() != EGL_NO_DISPLAY);
 
     if (eglBindAPI(EGL_OPENGL_ES_API) == EGL_FALSE) {
-        WTFLogAlways("Cannot create EGL context: error binding OpenGL ES API (%s)\n", lastErrorString());
+        RELEASE_LOG_INFO(Compositing, "Cannot create EGL context: error binding OpenGL ES API (%s)\n", lastErrorString());
         return nullptr;
     }
 
-    EGLContext eglSharingContext = platformDisplay.sharingGLContext() ? static_cast<GLContext*>(platformDisplay.sharingGLContext())->m_context : EGL_NO_CONTEXT;
-    auto context = createWindowContext(window, platformDisplay, eglSharingContext);
+    EGLContext eglSharingContext = sharingGLContext ? sharingGLContext->m_context : EGL_NO_CONTEXT;
+    auto context = window ? createWindowContext(display, target, window, eglSharingContext) : createOffscreenContext(display, target, eglSharingContext);
     if (!context)
-        WTFLogAlways("Could not create EGL context.");
+        RELEASE_LOG_INFO(Compositing, "Could not create EGL context.");
     return context;
+}
+
+static GLContext::Target targetForPlatformDisplay(PlatformDisplay& platformDisplay)
+{
+    switch (platformDisplay.type()) {
+    case PlatformDisplay::Type::Surfaceless:
+        return GLContext::Target::Surfaceless;
+#if USE(WPE_RENDERER)
+    case PlatformDisplay::Type::WPE:
+        return GLContext::Target::WPE;
+#endif
+#if USE(GBM)
+    case PlatformDisplay::Type::GBM:
+        return GLContext::Target::GBM;
+#endif
+    default:
+        break;
+    }
+    return GLContext::Target::Default;
+}
+
+std::unique_ptr<GLContext> GLContext::create(PlatformDisplay& platformDisplay, GLNativeWindowType window)
+{
+    return GLContext::create(platformDisplay.glDisplay(), targetForPlatformDisplay(platformDisplay), platformDisplay.sharingGLContext(), window);
 }
 
 std::unique_ptr<GLContext> GLContext::createOffscreen(PlatformDisplay& platformDisplay)
 {
-    if (platformDisplay.eglDisplay() == EGL_NO_DISPLAY) {
-        WTFLogAlways("Cannot create EGL context: invalid display (last error: %s)\n", lastErrorString());
-        return nullptr;
-    }
-
-    if (eglBindAPI(EGL_OPENGL_ES_API) == EGL_FALSE) {
-        WTFLogAlways("Cannot create EGL context: error binding OpenGL ES API (%s)\n", lastErrorString());
-        return nullptr;
-    }
-
-    EGLContext eglSharingContext = platformDisplay.sharingGLContext() ? static_cast<GLContext*>(platformDisplay.sharingGLContext())->m_context : EGL_NO_CONTEXT;
-    auto context = createSurfacelessContext(platformDisplay, eglSharingContext);
-    if (!context) {
-        switch (platformDisplay.type()) {
-#if USE(WPE_RENDERER)
-        case PlatformDisplay::Type::WPE:
-            context = createWPEContext(platformDisplay, eglSharingContext);
-            break;
-#endif
-#if USE(GBM)
-        case PlatformDisplay::Type::GBM:
-#endif
-        case PlatformDisplay::Type::Surfaceless:
-            // Do not fallback to pbuffers.
-            WTFLogAlways("Could not create EGL surfaceless context: %s.", lastErrorString());
-            return nullptr;
-        default:
-            break;
-        }
-    }
-    if (!context) {
-        RELEASE_LOG_INFO(Compositing, "Could not create platform context: %s. Using Pbuffer as fallback.", lastErrorString());
-        context = createPbufferContext(platformDisplay, eglSharingContext);
-        if (!context)
-            RELEASE_LOG_INFO(Compositing, "Could not create Pbuffer context: %s.", lastErrorString());
-    }
-
-    return context;
+    return GLContext::create(platformDisplay.glDisplay(), targetForPlatformDisplay(platformDisplay), platformDisplay.sharingGLContext());
 }
 
 std::unique_ptr<GLContext> GLContext::createSharing(PlatformDisplay& platformDisplay)
 {
-    if (platformDisplay.eglDisplay() == EGL_NO_DISPLAY) {
-        WTFLogAlways("Cannot create EGL sharing context: invalid display (last error: %s)", lastErrorString());
-        return nullptr;
-    }
-
-    if (eglBindAPI(EGL_OPENGL_ES_API) == EGL_FALSE) {
-        WTFLogAlways("Cannot create EGL sharing context: error binding OpenGL ES API (%s)\n", lastErrorString());
-        return nullptr;
-    }
-
-    auto context = createSurfacelessContext(platformDisplay);
-    if (!context) {
-        switch (platformDisplay.type()) {
-#if USE(WPE_RENDERER)
-        case PlatformDisplay::Type::WPE:
-            context = createWPEContext(platformDisplay);
-            break;
-#endif
-#if USE(GBM)
-        case PlatformDisplay::Type::GBM:
-#endif
-        case PlatformDisplay::Type::Surfaceless:
-            // Do not fallback to pbuffers.
-            WTFLogAlways("Could not create EGL surfaceless context: %s.", lastErrorString());
-            return nullptr;
-        default:
-            break;
-        }
-    }
-    if (!context) {
-        RELEASE_LOG_INFO(Compositing, "Could not create platform context: %s. Using Pbuffer as fallback.", lastErrorString());
-        context = createPbufferContext(platformDisplay);
-        if (!context)
-            RELEASE_LOG_INFO(Compositing, "Could not create Pbuffer context: %s.", lastErrorString());
-    }
-
-    if (!context)
-        WTFLogAlways("Could not create EGL sharing context.");
-    return context;
+    return GLContext::create(platformDisplay.glDisplay(), targetForPlatformDisplay(platformDisplay));
 }
 
-GLContext::GLContext(PlatformDisplay& display, EGLContext context, EGLSurface surface, EGLConfig config, EGLSurfaceType type)
+#if !RELEASE_LOG_DISABLED
+static void logGLDebugMessage(GLenum source, GLenum type, GLuint identifier, GLenum severity, GLsizei, const GLchar* message, const void*)
+{
+    static constexpr auto sourceName = [](GLenum source) -> const char* {
+        switch (source) {
+        case GL_DEBUG_SOURCE_API_KHR:
+            return "API call";
+        case GL_DEBUG_SOURCE_WINDOW_SYSTEM_KHR:
+            return "Window System";
+        case GL_DEBUG_SOURCE_SHADER_COMPILER_KHR:
+            return "Shader Compiler";
+        case GL_DEBUG_SOURCE_THIRD_PARTY_KHR:
+            return "Third Party";
+        case GL_DEBUG_SOURCE_APPLICATION_KHR:
+            return "Application";
+        case GL_DEBUG_SOURCE_OTHER_KHR:
+        default:
+            return "Other";
+        };
+    };
+
+    static constexpr auto typeName = [](GLenum type) -> const char* {
+        switch (type) {
+        case GL_DEBUG_TYPE_ERROR_KHR:
+            return "Error";
+        case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_KHR:
+            return "Deprecated Behaviour";
+        case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_KHR:
+            return "Undefined Behaviour";
+        case GL_DEBUG_TYPE_PORTABILITY_KHR:
+            return "Non-portable";
+        case GL_DEBUG_TYPE_PERFORMANCE_KHR:
+            return "Performance";
+        case GL_DEBUG_TYPE_MARKER_KHR:
+            return "Marker";
+        case GL_DEBUG_TYPE_PUSH_GROUP_KHR:
+            return "Group Push";
+        case GL_DEBUG_TYPE_POP_GROUP_KHR:
+            return "Group Pop";
+        case GL_DEBUG_TYPE_OTHER_KHR:
+        default:
+            return "Other";
+        }
+    };
+
+    static constexpr auto logLevel = [](GLenum severity) -> WTFLogLevel {
+        switch (severity) {
+        case GL_DEBUG_SEVERITY_HIGH_KHR:
+            return WTFLogLevel::Error;
+        case GL_DEBUG_SEVERITY_MEDIUM_KHR:
+            return WTFLogLevel::Warning;
+        case GL_DEBUG_SEVERITY_LOW_KHR:
+            return WTFLogLevel::Info;
+        case GL_DEBUG_SEVERITY_NOTIFICATION_KHR:
+        default:
+            return WTFLogLevel::Debug;
+        }
+    };
+
+    RELEASE_LOG_WITH_LEVEL(GLContext, logLevel(severity), "%s (%s) [id=%u]: %s", sourceName(source), typeName(type), identifier, message);
+    if (type == GL_DEBUG_TYPE_ERROR_KHR && LOG_CHANNEL(GLContext).level >= WTFLogLevel::Debug) {
+        WTF::StringPrintStream backtraceStream;
+        WTFReportBacktraceWithPrefixAndPrintStream(backtraceStream, "#");
+        RELEASE_LOG(GLContext, "Backtrace leading to error:\n%s", backtraceStream.toString().utf8().data());
+    }
+}
+
+bool GLContext::enableDebugLogging()
+{
+    const char* glExtensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+    const bool backtraceOnError = LOG_CHANNEL(GLContext).level >= WTFLogLevel::Debug;
+
+#if USE(LIBEPOXY)
+    if ((!epoxy_is_desktop_gl() && glVersion() >= 320) || isExtensionSupported(glExtensions, "GL_KHR_debug") || isExtensionSupported(glExtensions, "GL_ARB_debug_output")) {
+        glDebugMessageCallbackKHR(logGLDebugMessage, nullptr);
+        glEnable(backtraceOnError ? GL_DEBUG_OUTPUT_SYNCHRONOUS_KHR : GL_DEBUG_OUTPUT_KHR);
+        return true;
+    }
+#else
+    // Assume EGL/GLES2+, which is the case for platforms that do not use Epoxy.
+    PFNGLDEBUGMESSAGECALLBACKKHRPROC debugMessageCallback = nullptr;
+    if (glVersion() >= 320)
+        debugMessageCallback = reinterpret_cast<PFNGLDEBUGMESSAGECALLBACKKHRPROC>(eglGetProcAddress("glDebugMessageCallback"));
+    else if (isExtensionSupported(glExtensions, "GL_KHR_debug"))
+        debugMessageCallback = reinterpret_cast<PFNGLDEBUGMESSAGECALLBACKKHRPROC>(eglGetProcAddress("glDebugMessageCallbackKHR"));
+
+    if (debugMessageCallback) {
+        debugMessageCallback(logGLDebugMessage, nullptr);
+        glEnable(backtraceOnError ? GL_DEBUG_OUTPUT_SYNCHRONOUS_KHR : GL_DEBUG_OUTPUT_KHR);
+        return true;
+    }
+#endif
+
+    return false;
+}
+
+static inline bool shouldEnableDebugLogging()
+{
+    return LOG_CHANNEL(GLContext).state != WTFLogChannelState::Off;
+}
+#endif // !RELEASE_LOG_DISABLED
+
+GLContext::GLContext(GLDisplay& display, EGLContext context, EGLSurface surface, EGLConfig config)
     : m_display(display)
     , m_context(context)
     , m_surface(surface)
     , m_config(config)
-    , m_type(type)
 {
-    ASSERT(type != PixmapSurface);
-    ASSERT(type == Surfaceless || surface != EGL_NO_SURFACE);
-    RELEASE_ASSERT(m_display.eglDisplay() != EGL_NO_DISPLAY);
     RELEASE_ASSERT(context != EGL_NO_CONTEXT);
+
+#if !RELEASE_LOG_DISABLED
+    if (shouldEnableDebugLogging()) [[unlikely]] {
+        GLContext* previousContext = nullptr;
+        if (!isCurrent()) {
+            previousContext = current();
+            makeContextCurrent();
+        }
+
+        if (!enableDebugLogging()) {
+            static std::once_flag onceFlag;
+            std::call_once(onceFlag, []() {
+                RELEASE_LOG_FAULT(GLContext, "No debug logging support, neither GL_KHR_debug, GL_ARB_debug_output, nor GLES 3.2+ are available");
+            });
+        }
+
+        if (previousContext)
+            previousContext->makeContextCurrent();
+    }
+#endif // !RELEASE_LOG_DISABLED
+
+#if ENABLE(MEDIA_TELEMETRY)
+    if (m_surface != EGL_NO_SURFACE) {
+        MediaTelemetryReport::singleton().reportWaylandInfo(*this, MediaTelemetryReport::WaylandAction::InitGfx,
+            MediaTelemetryReport::WaylandGraphicsState::GfxInitialized, MediaTelemetryReport::WaylandInputsState::InputsInitialized);
+    }
+#endif
 }
 
 GLContext::~GLContext()
 {
-    EGLDisplay display = m_display.eglDisplay();
-    if (m_context) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroyContext(display, m_context);
-    }
+    if (auto display = m_display.get()) {
+        // Thread-local contexts are destroyed when their thread exits, which can happen _while_ the main thread terminates the display.
+        display->runIfNotTerminated([&](EGLDisplay eglDisplay) {
+            if (m_context) {
+                eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+                eglDestroyContext(eglDisplay, m_context);
+            }
 
-    if (m_surface)
-        eglDestroySurface(display, m_surface);
+            if (m_surface)
+                eglDestroySurface(eglDisplay, m_surface);
+        });
+    }
 
 #if USE(WPE_RENDERER)
     destroyWPETarget();
 #endif
+
+#if ENABLE(MEDIA_TELEMETRY)
+    if (m_surface != EGL_NO_SURFACE) {
+        MediaTelemetryReport::singleton().reportWaylandInfo(*this, MediaTelemetryReport::WaylandAction::DeinitGfx,
+            MediaTelemetryReport::WaylandGraphicsState::GfxNotInitialized, MediaTelemetryReport::WaylandInputsState::InputsInitialized);
+    }
+#endif
 }
 
-EGLContext GLContext::createContextForEGLVersion(PlatformDisplay& platformDisplay, EGLConfig config, EGLContext sharingContext)
+RefPtr<GLDisplay> GLContext::display() const
 {
-    static EGLint contextAttributes[3];
-    static bool contextAttributesInitialized = false;
+    return m_display.get();
+}
 
-    if (!contextAttributesInitialized) {
-        contextAttributesInitialized = true;
+EGLContext GLContext::createEGLContext(GLDisplay& display, EGLConfig config, EGLContext sharingContext)
+{
+    Vector<EGLint, 5> contextAttributes {
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+    };
 
-        contextAttributes[0] = EGL_CONTEXT_CLIENT_VERSION;
-        contextAttributes[1] = 2;
-        contextAttributes[2] = EGL_NONE;
+#if !RELEASE_LOG_DISABLED
+    if (shouldEnableDebugLogging()) {
+        if (display.checkVersion(1, 5)) {
+            contextAttributes.append(EGL_CONTEXT_OPENGL_DEBUG);
+            contextAttributes.append(EGL_TRUE);
+        } else {
+            contextAttributes.append(EGL_CONTEXT_FLAGS_KHR);
+            contextAttributes.append(EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR);
+        }
     }
+#endif
 
-    return eglCreateContext(platformDisplay.eglDisplay(), config, sharingContext, contextAttributes);
+    contextAttributes.append(EGL_NONE);
+    return eglCreateContext(display.eglDisplay(), config, sharingContext, contextAttributes.span().data());
 }
 
 bool GLContext::makeCurrentImpl()
 {
     ASSERT(m_context);
-    return eglMakeCurrent(m_display.eglDisplay(), m_surface, m_surface, m_context);
+    auto display = m_display.get();
+    return display ? eglMakeCurrent(display->eglDisplay(), m_surface, m_surface, m_context) : false;
 }
 
 bool GLContext::unmakeCurrentImpl()
 {
-    return eglMakeCurrent(m_display.eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    auto display = m_display.get();
+    return display ? eglMakeCurrent(display->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) : false;
+}
+
+unsigned GLContext::glVersion() const
+{
+    return version();
 }
 
 bool GLContext::makeContextCurrent()
@@ -425,7 +535,8 @@ bool GLContext::makeContextCurrent()
     if (isSwitchingFromANGLE)
         context->unmakeCurrentImpl();
 
-    if (eglMakeCurrent(m_display.eglDisplay(), m_surface, m_surface, m_context)) {
+    auto display = m_display.get();
+    if (display && eglMakeCurrent(display->eglDisplay(), m_surface, m_surface, m_context)) {
         didMakeContextCurrent();
         return true;
     }
@@ -442,7 +553,8 @@ bool GLContext::unmakeContextCurrent()
     if (!isCurrent())
         return true;
 
-    if (eglMakeCurrent(m_display.eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
+    auto display = m_display.get();
+    if (display && eglMakeCurrent(display->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
         didUnmakeContextCurrent();
         return true;
     }
@@ -460,11 +572,11 @@ GLContext* GLContext::current()
 
 void GLContext::swapBuffers()
 {
-    if (m_type == Surfaceless)
+    if (m_surface == EGL_NO_SURFACE)
         return;
 
-    ASSERT(m_surface);
-    eglSwapBuffers(m_display.eglDisplay(), m_surface);
+    if (auto display = m_display.get())
+        eglSwapBuffers(display->eglDisplay(), m_surface);
 }
 
 GCGLContext GLContext::platformContext() const
@@ -472,6 +584,7 @@ GCGLContext GLContext::platformContext() const
     return m_context;
 }
 
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 bool GLContext::isExtensionSupported(const char* extensionList, const char* extension)
 {
     if (!extensionList)
@@ -479,14 +592,17 @@ bool GLContext::isExtensionSupported(const char* extensionList, const char* exte
 
     ASSERT(extension);
     int extensionLen = strlen(extension);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib / Windows ports.
     const char* extensionListPtr = extensionList;
     while ((extensionListPtr = strstr(extensionListPtr, extension))) {
         if (extensionListPtr[extensionLen] == ' ' || extensionListPtr[extensionLen] == '\0')
             return true;
         extensionListPtr += extensionLen;
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return false;
 }
+IGNORE_CLANG_WARNINGS_END
 
 unsigned GLContext::versionFromString(const char* versionStringAsChar)
 {
@@ -508,7 +624,7 @@ unsigned GLContext::versionFromString(const char* versionStringAsChar)
     return parseIntegerAllowingTrailingJunk<unsigned>(versionDigits[0]).value_or(0) * 100 + parseIntegerAllowingTrailingJunk<unsigned>(versionDigits[1]).value_or(0) * 10;
 }
 
-unsigned GLContext::version()
+unsigned GLContext::version() const
 {
     if (!m_version) {
         auto* versionString = reinterpret_cast<const char*>(::glGetString(GL_VERSION));
@@ -520,19 +636,26 @@ unsigned GLContext::version()
 
 const GLContext::GLExtensions& GLContext::glExtensions() const
 {
-    static std::once_flag flag;
-    std::call_once(flag, [this] {
+    static GLExtensions glExtensions;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
         const char* extensionsString = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-        m_glExtensions.OES_texture_npot = isExtensionSupported(extensionsString, "GL_OES_texture_npot");
-        m_glExtensions.EXT_unpack_subimage = isExtensionSupported(extensionsString, "GL_EXT_unpack_subimage");
-        m_glExtensions.APPLE_sync = isExtensionSupported(extensionsString, "GL_APPLE_sync");
-        m_glExtensions.OES_packed_depth_stencil = isExtensionSupported(extensionsString, "GL_OES_packed_depth_stencil");
+        glExtensions = GLExtensions {
+            .OES_texture_npot = isExtensionSupported(extensionsString, "GL_OES_texture_npot"),
+            .EXT_unpack_subimage = isExtensionSupported(extensionsString, "GL_EXT_unpack_subimage"),
+            .APPLE_sync = isExtensionSupported(extensionsString, "GL_APPLE_sync"),
+            .OES_packed_depth_stencil = isExtensionSupported(extensionsString, "GL_OES_packed_depth_stencil"),
+            .EXT_YUV_target = isExtensionSupported(extensionsString, "GL_EXT_YUV_target"),
+#if USE(VULKAN)
+            .EXT_memory_object = isExtensionSupported(extensionsString, "GL_EXT_memory_object"),
+#endif
+        };
     });
-    return m_glExtensions;
+    return glExtensions;
 }
 
 GLContext::ScopedGLContext::ScopedGLContext(std::unique_ptr<GLContext>&& context)
-    : m_context(WTFMove(context))
+    : m_context(WTF::move(context))
 {
     auto eglContext = eglGetCurrentContext();
     m_previous.glContext = GLContext::current();
@@ -585,5 +708,49 @@ GLContext::ScopedGLContextCurrent::~ScopedGLContextCurrent()
     if (m_previous.context)
         eglMakeCurrent(m_previous.display, m_previous.drawSurface, m_previous.readSurface, m_previous.context);
 }
+
+#if ENABLE(MEDIA_TELEMETRY)
+EGLDisplay GLContext::eglDisplay() const
+{
+    auto display = m_display.get();
+    return display ? display->eglDisplay() : EGL_NO_DISPLAY;
+}
+
+EGLConfig GLContext::eglConfig() const
+{
+    EGLConfig config = nullptr;
+    auto display = m_display.get();
+    if (!display)
+        return nullptr;
+
+    if (!getEGLConfig(display->eglDisplay(), &config, WindowSurface)) {
+        WTFLogAlways("Cannot obtain EGL window context configuration: %s\n", lastErrorString());
+        config = nullptr;
+        ASSERT_NOT_REACHED();
+    }
+
+    return config;
+}
+
+EGLSurface GLContext::eglSurface() const
+{
+    return m_surface;
+}
+
+EGLContext GLContext::eglContext() const
+{
+    return m_context;
+}
+
+unsigned GLContext::windowWidth() const
+{
+    return parseInteger<unsigned>(StringView::fromLatin1(std::getenv("WPE_INIT_VIEW_WIDTH"))).value_or(1920);
+}
+
+unsigned GLContext::windowHeight() const
+{
+    return parseInteger<unsigned>(StringView::fromLatin1(std::getenv("WPE_INIT_VIEW_HEIGHT"))).value_or(1080);
+}
+#endif
 
 } // namespace WebCore

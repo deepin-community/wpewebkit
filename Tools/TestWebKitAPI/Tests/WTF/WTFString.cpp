@@ -25,8 +25,9 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <limits>
+#include <numbers>
 #include <sstream>
 #include <wtf/MathExtras.h>
 #include <wtf/text/CString.h>
@@ -100,8 +101,8 @@ TEST(WTF, StringNumberFixedPrecision)
     EXPECT_STREQ("-1.79769e+308", testStringNumberFixedPrecision(Limits::lowest()));
     EXPECT_STREQ("1.79769e+308", testStringNumberFixedPrecision(Limits::max()));
 
-    EXPECT_STREQ("3.14159", testStringNumberFixedPrecision(piDouble));
-    EXPECT_STREQ("3.14159", testStringNumberFixedPrecision(piFloat));
+    EXPECT_STREQ("3.14159", testStringNumberFixedPrecision(std::numbers::pi));
+    EXPECT_STREQ("3.14159", testStringNumberFixedPrecision(std::numbers::pi_v<float>));
     EXPECT_STREQ("1.5708", testStringNumberFixedPrecision(piOverTwoDouble));
     EXPECT_STREQ("1.5708", testStringNumberFixedPrecision(piOverTwoFloat));
     EXPECT_STREQ("0.785398", testStringNumberFixedPrecision(piOverFourDouble));
@@ -149,8 +150,8 @@ TEST(WTF, StringNumberFixedWidth)
     EXPECT_STREQ("", testStringNumberFixedWidth(Limits::lowest()));
     EXPECT_STREQ("", testStringNumberFixedWidth(Limits::max()));
 
-    EXPECT_STREQ("3.141593", testStringNumberFixedWidth(piDouble));
-    EXPECT_STREQ("3.141593", testStringNumberFixedWidth(piFloat));
+    EXPECT_STREQ("3.141593", testStringNumberFixedWidth(std::numbers::pi));
+    EXPECT_STREQ("3.141593", testStringNumberFixedWidth(std::numbers::pi_v<float>));
     EXPECT_STREQ("1.570796", testStringNumberFixedWidth(piOverTwoDouble));
     EXPECT_STREQ("1.570796", testStringNumberFixedWidth(piOverTwoFloat));
     EXPECT_STREQ("0.785398", testStringNumberFixedWidth(piOverFourDouble));
@@ -196,8 +197,8 @@ TEST(WTF, StringNumber)
     EXPECT_STREQ("-1.7976931348623157e+308", testStringNumber(Limits::lowest()));
     EXPECT_STREQ("1.7976931348623157e+308", testStringNumber(Limits::max()));
 
-    EXPECT_STREQ("3.141592653589793", testStringNumber(piDouble));
-    EXPECT_STREQ("3.1415927410125732", testStringNumber(piFloat));
+    EXPECT_STREQ("3.141592653589793", testStringNumber(std::numbers::pi));
+    EXPECT_STREQ("3.1415927410125732", testStringNumber(std::numbers::pi_v<float>));
     EXPECT_STREQ("1.5707963267948966", testStringNumber(piOverTwoDouble));
     EXPECT_STREQ("1.5707963705062866", testStringNumber(piOverTwoFloat));
     EXPECT_STREQ("0.7853981633974483", testStringNumber(piOverFourDouble));
@@ -261,12 +262,12 @@ TEST(WTF, StringReplaceWithLiteral)
     // Cases for 16Bit source.
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
-    testString = makeStringByReplacingAll(testString, UChar(0x00E9 /*U+00E9 is 'é'*/), "e"_s);
+    testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), "e"_s);
     EXPECT_STREQ("resume", testString.utf8().data());
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
-    testString = makeStringByReplacingAll(testString, UChar(0x00E9 /*U+00E9 is 'é'*/), ""_s);
+    testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), ""_s);
     EXPECT_STREQ("rsum", testString.utf8().data());
 
     testString = String::fromUTF8("résumé");
@@ -278,7 +279,7 @@ TEST(WTF, StringReplaceWithLiteral)
 TEST(WTF, StringIsolatedCopy)
 {
     String original = "1234"_s;
-    auto copy = WTFMove(original).isolatedCopy();
+    auto copy = WTF::move(original).isolatedCopy();
     EXPECT_FALSE(original.impl() == copy.impl());
 }
 
@@ -362,15 +363,15 @@ TEST(WTF, StringExistingHash)
     EXPECT_EQ(string2.existingHash(), 0u);
 }
 
-TEST(WTF, StringUnicodeEqualUCharArray)
+TEST(WTF, StringUnicodeEqualUTF16Array)
 {
     String string1("abc"_s);
     EXPECT_FALSE(string1.isNull());
     EXPECT_TRUE(string1.is8Bit());
-    UChar ab[] = { 'a', 'b' };
-    UChar abc[] = { 'a', 'b', 'c' };
-    UChar abcd[] = { 'a', 'b', 'c', 'd' };
-    UChar aBc[] = { 'a', 'B', 'c' };
+    char16_t ab[] = { 'a', 'b' };
+    char16_t abc[] = { 'a', 'b', 'c' };
+    char16_t abcd[] = { 'a', 'b', 'c', 'd' };
+    char16_t aBc[] = { 'a', 'B', 'c' };
     EXPECT_FALSE(equal(string1, ab));
     EXPECT_TRUE(equal(string1, abc));
     EXPECT_FALSE(equal(string1, abcd));
@@ -457,10 +458,60 @@ TEST(WTF, StringMakeStringByJoining)
     std::array<String, 1> test2 = { "hello"_s };
     auto test2_result = makeStringByJoining(test2, "sdf"_s);
     ASSERT_EQ(test2_result, "hello"_s);
-    
+
     std::vector<String> test3 = { "foo"_s, "bar"_s };
     auto test3_result = makeStringByJoining(test3, ", "_s);
     ASSERT_EQ(test3_result, "foo, bar"_s);
+}
+
+TEST(WTF, StringUTF8ConversionInvalidUTF16LenientMode)
+{
+    // Test invalid UTF-16 (orphan surrogates) with LenientConversion mode.
+    // Invalid sequences should be replaced with U+FFFD (replacement character).
+
+    // Create a string with an orphan high surrogate (0xD800)
+    char16_t orphanHighSurrogate[] = { 'a', 'b', 'c', 0xD800, 'd', 'e', 'f', 0 };
+    String stringWithOrphanHigh = String(std::span { orphanHighSurrogate, 7 });
+
+    auto result = stringWithOrphanHigh.utf8(LenientConversion);
+    // U+FFFD in UTF-8 is 0xEF 0xBF 0xBD
+    EXPECT_STREQ("abc\xEF\xBF\xBD" "def", result.data());
+
+    // Create a string with an orphan low surrogate (0xDC00)
+    char16_t orphanLowSurrogate[] = { 'x', 0xDC00, 'y', 0 };
+    String stringWithOrphanLow = String(std::span { orphanLowSurrogate, 3 });
+
+    auto resultLow = stringWithOrphanLow.utf8(LenientConversion);
+    EXPECT_STREQ("x\xEF\xBF\xBDy", resultLow.data());
+
+    // Create a string with two consecutive orphan surrogates
+    char16_t doubleOrphan[] = { 0xD800, 0xD800, 0 };
+    String stringWithDoubleOrphan = String(std::span { doubleOrphan, 2 });
+
+    auto resultDouble = stringWithDoubleOrphan.utf8(LenientConversion);
+    // Each orphan should become one replacement character
+    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultDouble.data());
+
+    // Create a string with reversed surrogate pair (low then high)
+    char16_t reversedPair[] = { 0xDC00, 0xD800, 0 };
+    String stringWithReversed = String(std::span { reversedPair, 2 });
+
+    auto resultReversed = stringWithReversed.utf8(LenientConversion);
+    // Both are invalid, should become two replacement characters
+    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultReversed.data());
+}
+
+TEST(WTF, StringUTF8ConversionStrictReplacingMode)
+{
+    // Test StrictConversionReplacingUnpairedSurrogatesWithFFFD mode.
+    // This mode replaces unpaired surrogates with U+FFFD.
+
+    // Create a string with an orphan high surrogate
+    char16_t orphanHighSurrogate[] = { 'a', 'b', 0xD800, 'c', 0 };
+    String stringWithOrphan = String(std::span { orphanHighSurrogate, 4 });
+
+    auto result = stringWithOrphan.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    EXPECT_STREQ("ab\xEF\xBF\xBD" "c", result.data());
 }
 
 } // namespace TestWebKitAPI

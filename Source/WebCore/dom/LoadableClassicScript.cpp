@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple, Inc. All Rights Reserved.
+ * Copyright (C) 2016-2017 Apple, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,6 @@
 #include "DefaultResourceLoadPriority.h"
 #include "Element.h"
 #include "FetchIdioms.h"
-#include "LoadableImportMap.h"
 #include "LoadableScriptError.h"
 #include "ScriptElement.h"
 #include "ScriptSourceCode.h"
@@ -40,8 +39,8 @@
 
 namespace WebCore {
 
-LoadableNonModuleScriptBase::LoadableNonModuleScriptBase(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriorityHint,  const AtomString& crossOriginMode, const String& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
-    : LoadableScript(nonce, policy, fetchPriorityHint, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree)
+LoadableNonModuleScriptBase::LoadableNonModuleScriptBase(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriority,  const AtomString& crossOriginMode, const AtomString& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
+    : LoadableScript(nonce, policy, fetchPriority, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree)
     , m_integrity(integrity)
     , m_isAsync(isAsync)
 {
@@ -49,7 +48,7 @@ LoadableNonModuleScriptBase::LoadableNonModuleScriptBase(const AtomString& nonce
 
 LoadableNonModuleScriptBase::~LoadableNonModuleScriptBase()
 {
-    if (CachedResourceHandle cachedScript = m_cachedScript)
+    if (RefPtr cachedScript = m_cachedScript)
         cachedScript->removeClient(*this);
 }
 
@@ -83,7 +82,7 @@ std::optional<LoadableScript::Error> LoadableNonModuleScriptBase::takeError()
 bool LoadableNonModuleScriptBase::wasCanceled() const
 {
     ASSERT(m_cachedScript);
-    return m_cachedScript->wasCanceled();
+    return protect(m_cachedScript)->wasCanceled();
 }
 
 void LoadableNonModuleScriptBase::notifyFinished(CachedResource& resource, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
@@ -102,7 +101,7 @@ void LoadableNonModuleScriptBase::notifyFinished(CachedResource& resource, const
         };
     }
 
-    CachedResourceHandle cachedScript = m_cachedScript;
+    RefPtr cachedScript = m_cachedScript;
     if (!m_error && !isScriptAllowedByNosniff(cachedScript->response())) {
         m_error = Error {
             ErrorType::Nosniff,
@@ -150,28 +149,27 @@ bool LoadableNonModuleScriptBase::load(Document& document, const URL& sourceURL)
     };
 
     m_weakDocument = document;
-    CachedResourceHandle cachedScript = requestScriptWithCache(document, sourceURL, crossOriginMode(), String { integrity() }, priority());
-    m_cachedScript = cachedScript;
-    if (!cachedScript)
+    m_cachedScript = requestScriptWithCache(document, sourceURL, FetchOptionsDestination::Script, crossOriginMode(), String { integrity() }, priority(), { });
+    if (!m_cachedScript)
         return false;
-    cachedScript->addClient(*this);
+    protect(m_cachedScript)->addClient(*this);
     return true;
 }
 
-Ref<LoadableClassicScript> LoadableClassicScript::create(const AtomString& nonce, const AtomString& integrityMetadata, ReferrerPolicy policy, RequestPriority fetchPriorityHint, const AtomString& crossOriginMode, const String& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
+Ref<LoadableClassicScript> LoadableClassicScript::create(const AtomString& nonce, const AtomString& integrityMetadata, ReferrerPolicy policy, RequestPriority fetchPriority, const AtomString& crossOriginMode, const AtomString& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
 {
-    return adoptRef(*new LoadableClassicScript(nonce, integrityMetadata, policy, fetchPriorityHint, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree, isAsync));
+    return adoptRef(*new LoadableClassicScript(nonce, integrityMetadata, policy, fetchPriority, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree, isAsync));
 }
 
-LoadableClassicScript::LoadableClassicScript(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriorityHint, const AtomString& crossOriginMode, const String& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
-    : LoadableNonModuleScriptBase(nonce, integrity, policy, fetchPriorityHint, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree, isAsync)
+LoadableClassicScript::LoadableClassicScript(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriority, const AtomString& crossOriginMode, const AtomString& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree, bool isAsync)
+    : LoadableNonModuleScriptBase(nonce, integrity, policy, fetchPriority, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree, isAsync)
 {
 }
 
 void LoadableClassicScript::execute(ScriptElement& scriptElement)
 {
     ASSERT(!m_error);
-    scriptElement.executeClassicScript(ScriptSourceCode(protectedCachedScript().get(), JSC::SourceProviderSourceType::Program, *this));
+    scriptElement.executeClassicScript(ScriptSourceCode(protect(cachedScript()).ptr(), JSC::SourceProviderSourceType::Program, *this));
 }
 
 }

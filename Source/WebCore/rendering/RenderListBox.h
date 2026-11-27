@@ -41,19 +41,20 @@ class HTMLOptionElement;
 class HTMLSelectElement;
 
 class RenderListBox final : public RenderBlockFlow, public ScrollableArea {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderListBox);
+    WTF_MAKE_TZONE_ALLOCATED(RenderListBox);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderListBox);
 public:
-    RenderListBox(HTMLSelectElement&, RenderStyle&&);
+    RenderListBox(HTMLSelectElement&, Style::ComputedStyle&&);
     virtual ~RenderListBox();
 
     // CheckedPtr interface
-    uint32_t ptrCount() const final { return CanMakeCheckedPtr::ptrCount(); }
-    uint32_t ptrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::ptrCountWithoutThreadCheck(); }
-    void incrementPtrCount() const final { CanMakeCheckedPtr::incrementPtrCount(); }
-    void decrementPtrCount() const final { CanMakeCheckedPtr::decrementPtrCount(); }
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
-    HTMLSelectElement& selectElement() const;
+    HTMLSelectElement& NODELETE selectElement() const;
 
     void selectionChanged();
 
@@ -73,7 +74,11 @@ public:
     unsigned size() const;
 
     bool scroll(ScrollDirection, ScrollGranularity, unsigned stepCount = 1, Element** stopElement = nullptr, RenderBox* startBox = nullptr, const IntPoint& wheelEventAbsolutePoint = IntPoint()) override;
-    FrameIdentifier rootFrameID() const final;
+    std::optional<FrameIdentifier> rootFrameID() const final;
+
+    void scrollDidEnd() final;
+
+    bool NODELETE isScrollableOrRubberbandable() final;
 
 private:
     bool isVisibleToHitTesting() const final;
@@ -93,22 +98,18 @@ private:
 
     bool logicalScroll(ScrollLogicalDirection, ScrollGranularity, unsigned stepCount = 1, Element** stopElement = nullptr) override;
 
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
-    void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
-    void computePreferredLogicalWidths() override;
-    LayoutUnit baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
+    void computeIntrinsicLogicalWidthContributions() override;
     LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
 
     void layout() override;
-
-    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = nullptr) const override;
 
     bool canBeProgramaticallyScrolled() const override { return true; }
     void autoscroll(const IntPoint&) override;
     void stopAutoscroll() override;
 
-    virtual bool shouldPanScroll() const { return true; }
     void panScroll(const IntPoint&) override;
 
     int verticalScrollbarWidth() const override;
@@ -130,12 +131,12 @@ private:
 
     void setScrollOffset(const ScrollOffset&) final;
 
-    ScrollPosition scrollPosition() const final;
+    ScrollPosition NODELETE scrollPosition() const final;
     ScrollPosition minimumScrollPosition() const final;
     ScrollPosition maximumScrollPosition() const final;
 
     void invalidateScrollbarRect(Scrollbar&, const IntRect&) final;
-    bool isActive() const final;
+    bool NODELETE isActive() const final;
     bool isScrollCornerVisible() const final { return false; } // We don't support resize on list boxes yet. If we did these would have to change.
     IntRect scrollCornerRect() const final { return IntRect(); }
     void invalidateScrollCornerRect(const IntRect&) final { }
@@ -143,20 +144,19 @@ private:
     IntRect convertFromContainingViewToScrollbar(const Scrollbar&, const IntRect&) const final;
     IntPoint convertFromScrollbarToContainingView(const Scrollbar&, const IntPoint&) const final;
     IntPoint convertFromContainingViewToScrollbar(const Scrollbar&, const IntPoint&) const final;
-    Scrollbar* verticalScrollbar() const final;
-    Scrollbar* horizontalScrollbar() const final;
+    Scrollbar* NODELETE verticalScrollbar() const final;
+    Scrollbar* NODELETE horizontalScrollbar() const final;
     IntSize contentsSize() const final;
-    IntSize visibleSize() const final { return IntSize(width(), height()); }
+    IntSize visibleSize() const final { return IntSize(borderBoxWidth(), borderBoxHeight()); }
     IntPoint lastKnownMousePositionInView() const final;
     bool isHandlingWheelEvent() const final;
     bool shouldSuspendScrollAnimations() const final;
-    bool forceUpdateScrollbarsOnMainThreadForPerformanceTesting() const final;
+    bool NODELETE forceUpdateScrollbarsOnMainThreadForPerformanceTesting() const final;
 
     ScrollableArea* enclosingScrollableArea() const final;
-    bool isScrollableOrRubberbandable() final;
     bool hasScrollableOrRubberbandableAncestor() final;
     IntRect scrollableAreaBoundingBox(bool* = nullptr) const final;
-    bool mockScrollbarsControllerEnabled() const final;
+    bool NODELETE mockScrollbarsControllerEnabled() const final;
     void logMockScrollbarsControllerMessage(const String&) const final;
     String debugDescription() const final;
     void didStartScrollAnimation() final;
@@ -191,7 +191,7 @@ private:
 
     std::optional<int> optionRowIndex(const HTMLOptionElement&) const;
 
-    float deviceScaleFactor() const final;
+    float NODELETE deviceScaleFactor() const final;
 
     LayoutRect rectForScrollbar(const Scrollbar&) const;
 
@@ -200,7 +200,7 @@ private:
     void paintItemBackground(PaintInfo&, const LayoutPoint&, int listIndex);
     void scrollToRevealSelection();
 
-    ScrollbarOrientation scrollbarOrientationForWritingMode() const;
+    ScrollbarOrientation NODELETE scrollbarOrientationForWritingMode() const;
 
     bool shouldPlaceVerticalScrollbarOnLeft() const final { return RenderBlockFlow::shouldPlaceVerticalScrollbarOnLeft(); }
 

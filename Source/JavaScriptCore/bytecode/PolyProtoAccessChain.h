@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "CacheableIdentifier.h"
-#include "StructureID.h"
-#include "VM.h"
+#include <JavaScriptCore/CacheableIdentifier.h>
+#include <JavaScriptCore/StructureID.h>
+#include <JavaScriptCore/VM.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Vector.h>
 
@@ -45,13 +45,13 @@ public:
     static RefPtr<PolyProtoAccessChain> tryCreate(JSGlobalObject*, JSCell* base, CacheableIdentifier, const PropertySlot&);
     static RefPtr<PolyProtoAccessChain> tryCreate(JSGlobalObject*, JSCell* base, CacheableIdentifier, JSObject* target);
 
-    const FixedVector<StructureID>& chain() const { return m_chain; }
+    const FixedVector<StructureID>& chain() const LIFETIME_BOUND { return m_chain; }
 
     void dump(Structure* baseStructure, PrintStream& out) const;
 
-    bool operator==(const PolyProtoAccessChain&) const;
+    bool NODELETE operator==(const PolyProtoAccessChain&) const;
 
-    bool needImpurePropertyWatchpoint(VM&) const;
+    bool NODELETE needImpurePropertyWatchpoint(VM&) const;
 
     template <typename Func>
     void forEach(VM&, Structure* baseStructure, const Func& func) const
@@ -73,7 +73,7 @@ public:
 
 private:
     explicit PolyProtoAccessChain(Vector<StructureID>&& chain)
-        : m_chain(WTFMove(chain))
+        : m_chain(WTF::move(chain))
     {
     }
 

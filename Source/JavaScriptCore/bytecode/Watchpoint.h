@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSExportMacros.h>
 #include <wtf/Atomics.h>
+#include <wtf/DebugHeap.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
@@ -46,14 +48,13 @@ class FireDetail {
     void* operator new(size_t) = delete;
     
 public:
-    FireDetail() = default;
     virtual ~FireDetail() = default;
     // This can't be pure virtual as it breaks our Dumpable concept.
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.
     virtual void dump(PrintStream&) const { }
 };
 
-class StringFireDetail final : public FireDetail {
+class JS_EXPORT_PRIVATE StringFireDetail final : public FireDetail {
 public:
     StringFireDetail(const char* string)
         : m_string(string)
@@ -63,6 +64,8 @@ public:
     void dump(PrintStream& out) const final;
 
 private:
+    explicit StringFireDetail(ClangVTableWorkaroundTag);
+
     const char* m_string;
 };
 
@@ -95,8 +98,8 @@ class WatchpointSet;
 #if ENABLE(JIT)
 #define JSC_WATCHPOINT_TYPES_WITHOUT_DFG(macro) \
     JSC_WATCHPOINT_TYPES_WITHOUT_JIT(macro) \
-    macro(StructureTransitionStructureStubClearing, StructureTransitionStructureStubClearingWatchpoint) \
-    macro(StructureStubInfoClearing, StructureStubInfoClearingWatchpoint)
+    macro(StructureTransitionPropertyInlineCacheClearing, StructureTransitionPropertyInlineCacheClearingWatchpoint) \
+    macro(PropertyInlineCacheClearing, PropertyInlineCacheClearingWatchpoint)
 
 #if ENABLE(DFG_JIT)
 #define JSC_WATCHPOINT_TYPES(macro) \
@@ -117,7 +120,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Watchpoint);
 class Watchpoint : public BasicRawSentinelNode<Watchpoint> {
     WTF_MAKE_NONCOPYABLE(Watchpoint);
     WTF_MAKE_NONMOVABLE(Watchpoint);
-    WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Watchpoint);
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Watchpoint, Watchpoint);
 public:
 #define JSC_DEFINE_WATCHPOINT_TYPES(type, _) type,
     enum class Type : uint8_t {
@@ -159,7 +162,7 @@ class VM;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(WatchpointSet);
 
 class WatchpointSet : public ThreadSafeRefCounted<WatchpointSet> {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(WatchpointSet);
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(WatchpointSet, WatchpointSet);
     friend class LLIntOffsetsExtractor;
     friend class DeferredWatchpointFire;
 public:
@@ -202,7 +205,7 @@ public:
     // As a convenience, this will ignore 0. That's because code paths in the DFG
     // that create speculation watchpoints may choose to bail out if speculation
     // had already been terminated.
-    void add(Watchpoint*);
+    void NODELETE add(Watchpoint*);
     
     // Force the watchpoint set to behave as if it was being watched even if no
     // watchpoints have been installed. This will result in invalidation if the
@@ -222,7 +225,7 @@ public:
     template <typename T>
     void fireAll(VM& vm, T& fireDetails)
     {
-        if (LIKELY(m_state != IsWatched))
+        if (m_state != IsWatched) [[likely]]
             return;
         fireAllSlow(vm, fireDetails);
     }
@@ -256,11 +259,9 @@ public:
     {
         return m_setIsNotEmpty;
     }
-    
-    int8_t* addressOfState() { return &m_state; }
+
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(WatchpointSet, m_state); }
-    int8_t* addressOfSetIsNotEmpty() { return &m_setIsNotEmpty; }
-    
+
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const FireDetail&); // Call only if you've checked isWatched.
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints); // Ditto.
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const char* reason); // Ditto.
@@ -270,7 +271,7 @@ protected:
 
 private:
     void fireAllWatchpoints(VM&, const FireDetail&);
-    void take(WatchpointSet* other);
+    void NODELETE take(WatchpointSet* other);
     
     friend class InlineWatchpointSet;
 
@@ -342,7 +343,7 @@ public:
     void startWatching()
     {
         if (isFat()) {
-            fat()->startWatching();
+            protect(fat())->startWatching();
             return;
         }
         ASSERT(decodeState(m_data) != IsInvalidated);
@@ -353,7 +354,7 @@ public:
     void fireAll(VM& vm, T fireDetails)
     {
         if (isFat()) {
-            fat()->fireAll(vm, fireDetails);
+            protect(fat())->fireAll(vm, fireDetails);
             return;
         }
         if (decodeState(m_data) == ClearWatchpoint)
@@ -365,7 +366,7 @@ public:
     void invalidate(VM& vm, const FireDetail& detail)
     {
         if (isFat())
-            fat()->invalidate(vm, detail);
+            protect(fat())->invalidate(vm, detail);
         else
             m_data = encodeState(IsInvalidated);
     }
@@ -375,7 +376,7 @@ public:
     void touch(VM& vm, const FireDetail& detail)
     {
         if (isFat()) {
-            fat()->touch(vm, detail);
+            protect(fat())->touch(vm, detail);
             return;
         }
         uintptr_t data = m_data;
@@ -439,7 +440,7 @@ public:
     // if they collect a Vector of WatchpointSet*.
     WatchpointSet* inflate()
     {
-        if (LIKELY(isFat()))
+        if (isFat()) [[likely]]
             return fat();
         return inflateSlow();
     }
@@ -468,7 +469,7 @@ private:
     
     static WatchpointSet* fat(uintptr_t data)
     {
-        return bitwise_cast<WatchpointSet*>(data);
+        return std::bit_cast<WatchpointSet*>(data);
     }
     
     WatchpointSet* fat()
@@ -482,9 +483,9 @@ private:
         ASSERT(isFat());
         return fat(m_data);
     }
-    
+
     JS_EXPORT_PRIVATE WatchpointSet* inflateSlow();
-    JS_EXPORT_PRIVATE void freeFat();
+    JS_EXPORT_PRIVATE void NODELETE freeFat();
     
     uintptr_t m_data;
 };
@@ -497,7 +498,7 @@ public:
     {
     }
 
-    JS_EXPORT_PRIVATE void takeWatchpointsToFire(WatchpointSet*);
+    JS_EXPORT_PRIVATE void NODELETE takeWatchpointsToFire(WatchpointSet*);
 
 protected:
     WatchpointSet& watchpointsToFire() { return m_watchpointsToFire; }

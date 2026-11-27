@@ -26,7 +26,7 @@
 #include "config.h"
 
 #include "RefLogger.h"
-#include "Utilities.h"
+#include "Helpers/Utilities.h"
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefCounted.h>
@@ -76,7 +76,7 @@ TEST(WTF_RefPtr, Basic)
 
     {
         RefPtr<RefLogger> p1 = &a;
-        RefPtr<RefLogger> p2 = WTFMove(p1);
+        RefPtr<RefLogger> p2 = WTF::move(p1);
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -84,7 +84,7 @@ TEST(WTF_RefPtr, Basic)
 
     {
         RefPtr<RefLogger> p1 = &a;
-        RefPtr<RefLogger> p2(WTFMove(p1));
+        RefPtr<RefLogger> p2(WTF::move(p1));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -100,7 +100,7 @@ TEST(WTF_RefPtr, Basic)
 
     {
         RefPtr<DerivedRefLogger> p1 = &a;
-        RefPtr<RefLogger> p2 = WTFMove(p1);
+        RefPtr<RefLogger> p2 = WTF::move(p1);
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -120,7 +120,7 @@ TEST(WTF_RefPtr, AssignPassRefToRefPtr)
     DerivedRefLogger a("a");
     {
         Ref<RefLogger> passRef(a);
-        RefPtr<RefLogger> ptr = WTFMove(passRef);
+        RefPtr<RefLogger> ptr = WTF::move(passRef);
         EXPECT_EQ(&a, ptr.get());
     }
     EXPECT_STREQ("ref(a) deref(a) ", takeLogStr().c_str());
@@ -201,7 +201,7 @@ TEST(WTF_RefPtr, Assignment)
         EXPECT_EQ(&a, p1.get());
         EXPECT_EQ(&b, p2.get());
         log() << "| ";
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         EXPECT_EQ(&b, p1.get());
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p2.get());
         log() << "| ";
@@ -247,7 +247,7 @@ TEST(WTF_RefPtr, Assignment)
         EXPECT_EQ(&a, p1.get());
         EXPECT_EQ(&c, p2.get());
         log() << "| ";
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         EXPECT_EQ(&c, p1.get());
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p2.get());
         log() << "| ";
@@ -277,7 +277,7 @@ TEST(WTF_RefPtr, Assignment)
         RefPtr<RefLogger> ptr(&a);
         EXPECT_EQ(&a, ptr.get());
         IGNORE_WARNINGS_BEGIN("self-move")
-        ptr = WTFMove(ptr);
+        ptr = WTF::move(ptr);
         IGNORE_WARNINGS_END
         EXPECT_EQ(&a, ptr.get());
     }
@@ -343,7 +343,7 @@ TEST(WTF_RefPtr, Release)
 
     {
         RefPtr<RefLogger> p1 = &a;
-        RefPtr<RefLogger> p2 = WTFMove(p1);
+        RefPtr<RefLogger> p2 = WTF::move(p1);
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -351,7 +351,7 @@ TEST(WTF_RefPtr, Release)
 
     {
         RefPtr<RefLogger> p1 = &a;
-        RefPtr<RefLogger> p2(WTFMove(p1));
+        RefPtr<RefLogger> p2(WTF::move(p1));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -359,7 +359,7 @@ TEST(WTF_RefPtr, Release)
 
     {
         RefPtr<DerivedRefLogger> p1 = &a;
-        RefPtr<RefLogger> p2 = WTFMove(p1);
+        RefPtr<RefLogger> p2 = WTF::move(p1);
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p1.get());
         EXPECT_EQ(&a, p2.get());
     }
@@ -371,7 +371,7 @@ TEST(WTF_RefPtr, Release)
         EXPECT_EQ(&a, p1.get());
         EXPECT_EQ(&b, p2.get());
         log() << "| ";
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         EXPECT_EQ(&b, p1.get());
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p2.get());
         log() << "| ";
@@ -384,7 +384,7 @@ TEST(WTF_RefPtr, Release)
         EXPECT_EQ(&a, p1.get());
         EXPECT_EQ(&c, p2.get());
         log() << "| ";
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         EXPECT_EQ(&c, p1.get());
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(nullptr, p2.get());
         log() << "| ";
@@ -431,7 +431,7 @@ TEST(WTF_RefPtr, Const)
 {
     // This test passes if it compiles without an error.
     auto a = ConstRefCounted::create();
-    Ref<const ConstRefCounted> b = WTFMove(a);
+    Ref<const ConstRefCounted> b = WTF::move(a);
     RefPtr<const ConstRefCounted> c = b.ptr();
     Ref<const ConstRefCounted> d = returnConstRefCountedRef();
     RefPtr<const ConstRefCounted> e = &returnConstRefCountedRef();
@@ -526,7 +526,7 @@ TEST(WTF_RefPtr, AssignBeforeDeref)
         log() << "| ";
         a.slotToCheck = &p1;
         b.slotToCheck = &p1;
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         a.slotToCheck = nullptr;
         b.slotToCheck = nullptr;
         EXPECT_EQ(&b, p1.get());
@@ -559,7 +559,7 @@ public:
 
     ~PartiallyDestroyedRefPtrTest()
     {
-        RefPtrAllowingPartiallyDestroyed<PartiallyDestroyedRefPtrTest> protectedThis { this };
+        RefPtr<PartiallyDestroyedRefPtrTest> protectedThis { this };
         protectedThis->m_int = 0;
     }
 
@@ -579,6 +579,46 @@ TEST(WTF_RefPtr, RefPtrAllowingPartiallyDestroyed)
     partiallyDestroyedRefPtrTest = nullptr;
 }
 
+// This test is disabled because it intentionally crashes.
+
+#define TEST_DANGLING_REF_PTR 0
+
+#if TEST_DANGLING_REF_PTR
+
+class DanglingRefPtrTest : public RefCounted<DanglingRefPtrTest> {
+public:
+    static Ref<DanglingRefPtrTest> create()
+    {
+        return adoptRef(*new DanglingRefPtrTest);
+    }
+
+    ~DanglingRefPtrTest()
+    {
+        ref();
+
+        // Create a dummy entry in the log between our two relevant entries.
+        RefPtr partiallyDestroyedRefPtrTest = PartiallyDestroyedRefPtrTest::create();
+        partiallyDestroyedRefPtrTest = nullptr;
+
+        ref();
+    }
+};
+
+TEST(WTF_RefPtr, DanglingRefPtr)
+{
+    // Force the log to wrap around with dummy entries.
+    for (size_t i = 0; i < 1024 + 1; ++i) {
+        RefPtr partiallyDestroyedRefPtrTest = PartiallyDestroyedRefPtrTest::create();
+        partiallyDestroyedRefPtrTest = nullptr;
+    }
+
+    // Then add a real entry.
+    RefPtr danglingRefPtrTest = DanglingRefPtrTest::create();
+    danglingRefPtrTest = nullptr;
+}
+
+#endif
+
 class PartiallyDestroyedRefPtrTestThreadSafe : public ThreadSafeRefCounted<PartiallyDestroyedRefPtrTestThreadSafe> {
 public:
     static Ref<PartiallyDestroyedRefPtrTestThreadSafe> create()
@@ -588,7 +628,7 @@ public:
 
     ~PartiallyDestroyedRefPtrTestThreadSafe()
     {
-        RefPtrAllowingPartiallyDestroyed<PartiallyDestroyedRefPtrTestThreadSafe> protectedThis { this };
+        RefPtr<PartiallyDestroyedRefPtrTestThreadSafe> protectedThis { this };
         protectedThis->m_int = 0;
     }
 
@@ -607,6 +647,46 @@ TEST(WTF_RefPtr, RefPtrAllowingPartiallyDestroyedThreadSafe)
     RefPtr partiallyDestroyedRefPtrTest = PartiallyDestroyedRefPtrTestThreadSafe::create();
     partiallyDestroyedRefPtrTest = nullptr;
 }
+
+// This test is disabled because it intentionally crashes.
+
+#define TEST_DANGLING_REF_PTR_THREAD_SAFE 0
+
+#if TEST_DANGLING_REF_PTR_THREAD_SAFE
+
+class DanglingRefPtrTestThreadSafe : public ThreadSafeRefCounted<DanglingRefPtrTestThreadSafe> {
+public:
+    static Ref<DanglingRefPtrTestThreadSafe> create()
+    {
+        return adoptRef(*new DanglingRefPtrTestThreadSafe);
+    }
+
+    ~DanglingRefPtrTestThreadSafe()
+    {
+        ref();
+
+        // Create a dummy entry in the log between our two relevant entries.
+        RefPtr partiallyDestroyedRefPtrTestThreadSafe = PartiallyDestroyedRefPtrTestThreadSafe::create();
+        partiallyDestroyedRefPtrTestThreadSafe = nullptr;
+
+        ref();
+    }
+};
+
+TEST(WTF_RefPtr, DanglingRefPtrThreadSafe)
+{
+    // Force the log to wrap around with dummy entries.
+    for (size_t i = 0; i < 1024 + 1; ++i) {
+        RefPtr partiallyDestroyedRefPtrTestThreadSafe = PartiallyDestroyedRefPtrTestThreadSafe::create();
+        partiallyDestroyedRefPtrTestThreadSafe = nullptr;
+    }
+
+    // Then add a real entry.
+    RefPtr danglingRefPtrTestThreadSafe = DanglingRefPtrTestThreadSafe::create();
+    danglingRefPtrTestThreadSafe = nullptr;
+}
+
+#endif
 
 // FIXME: Enable these tests once Win platform supports TestWebKitAPI::Util::run
 #if! PLATFORM(WIN)

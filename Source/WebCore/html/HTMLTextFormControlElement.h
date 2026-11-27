@@ -24,8 +24,9 @@
 
 #pragma once
 
-#include "HTMLFormControlElement.h"
-#include "PointerEventTypeNames.h"
+#include <WebCore/HTMLFormControlElement.h>
+#include <WebCore/PointerEventTypeNames.h>
+#include <wtf/ValueOrReference.h>
 
 namespace WebCore {
 
@@ -43,7 +44,7 @@ enum TextFieldEventBehavior { DispatchNoEvent, DispatchChangeEvent, DispatchInpu
 enum TextControlSetValueSelection { SetSelectionToEnd, Clamp, DoNotSet };
 
 class HTMLTextFormControlElement : public HTMLFormControlElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLTextFormControlElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLTextFormControlElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLTextFormControlElement);
 public:
     // Common flag for HTMLInputElement::tooLong() / tooShort() and HTMLTextAreaElement::tooLong() / tooShort().
@@ -51,7 +52,7 @@ public:
 
     virtual ~HTMLTextFormControlElement();
 
-    void didEditInnerTextValue();
+    void didEditInnerTextValue(bool wasUserEdit);
     void forwardEvent(Event&);
 
     int maxLength() const { return m_maxLength; }
@@ -59,7 +60,7 @@ public:
     int minLength() const { return m_minLength; }
     ExceptionOr<void> setMinLength(int);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
 
     // The derived class should return true if placeholder processing is needed.
     bool isPlaceholderVisible() const { return m_isPlaceholderVisible; }
@@ -86,7 +87,8 @@ public:
 
     void scheduleSelectionChangeEvent();
 
-    TextFieldSelectionDirection computeSelectionDirection() const;
+    TextFieldSelectionDirection NODELETE computeSelectionDirection() const;
+    TextFieldSelectionDirection normalizeSelectionDirection(TextFieldSelectionDirection);
 
     std::optional<SimpleRange> selection() const;
     String selectedText() const;
@@ -94,31 +96,33 @@ public:
     void dispatchFormControlChangeEvent() final;
     void scheduleSelectEvent();
 
-    virtual String value() const = 0;
+    virtual ValueOrReference<String> value() const = 0;
 
     virtual ExceptionOr<void> setValue(const String&, TextFieldEventBehavior = DispatchNoEvent, TextControlSetValueSelection = TextControlSetValueSelection::SetSelectionToEnd) = 0;
     virtual RefPtr<TextControlInnerTextElement> innerTextElement() const = 0;
     virtual RefPtr<TextControlInnerTextElement> innerTextElementCreatingShadowSubtreeIfNeeded() = 0;
-    virtual RenderStyle createInnerTextStyle(const RenderStyle&) = 0;
+    virtual Style::ComputedStyle createInnerTextStyle(const Style::ComputedStyle&) = 0;
 
     virtual bool dirAutoUsesValue() const = 0;
 
     bool selectionChanged(bool shouldFireSelectEvent);
-    WEBCORE_EXPORT bool lastChangeWasUserEdit() const;
+    WEBCORE_EXPORT bool NODELETE lastChangeWasUserEdit() const;
+    bool NODELETE wasEverChangedByUserEdit() const;
     void setInnerTextValue(String&&);
     String innerTextValue() const;
 
     String directionForFormData() const;
 
-    void setTextAsOfLastFormControlChangeEvent(const String& text) { m_textAsOfLastFormControlChangeEvent = text; }
+    void setTextAsOfLastFormControlChangeEvent(String&& text) { m_textAsOfLastFormControlChangeEvent = WTF::move(text); }
 
     WEBCORE_EXPORT virtual bool isInnerTextElementEditable() const;
 
     bool canContainRangeEndPoint() const override { return false; }
 
+    WEBCORE_EXPORT void dispatchUserTextInputEvent();
+
 protected:
-    HTMLTextFormControlElement(const QualifiedName&, Document&, HTMLFormElement*);
-    bool isPlaceholderEmpty() const;
+    HTMLTextFormControlElement(const QualifiedName&, Document&);
     virtual void updatePlaceholderText() = 0;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
@@ -129,7 +133,7 @@ protected:
 
     void updateInnerTextElementEditability();
 
-    bool cacheSelection(unsigned start, unsigned end, TextFieldSelectionDirection);
+    bool NODELETE cacheSelection(unsigned start, unsigned end, TextFieldSelectionDirection);
 
     void restoreCachedSelection(SelectionRevealMode, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
     bool hasCachedSelection() const { return m_hasCachedSelection; }
@@ -143,15 +147,17 @@ protected:
 
     String valueWithHardLineBreaks() const;
 
-    void adjustInnerTextStyle(const RenderStyle& parentStyle, RenderStyle& textBlockStyle) const;
+    void adjustInnerTextStyle(const Style::ComputedStyle& parentStyle, Style::ComputedStyle& textBlockStyle) const;
 
     void internalSetMaxLength(int maxLength) { m_maxLength = maxLength; }
     void internalSetMinLength(int minLength) { m_minLength = minLength; }
 
+    bool shouldApplyScriptTrackingPrivacyProtection() const;
+
 private:
     TextFieldSelectionDirection cachedSelectionDirection() const { return static_cast<TextFieldSelectionDirection>(m_cachedSelectionDirection); }
 
-    bool isTextFormControlElement() const final { return true; }
+    bool NODELETE isTextFormControlElement() const final { return true; }
 
     void dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, const FocusOptions&) final;
     void dispatchBlurEvent(RefPtr<Element>&& newFocusedElement) final;
@@ -176,6 +182,7 @@ private:
     unsigned m_lastChangeWasUserEdit : 1 { false };
     unsigned m_isPlaceholderVisible : 1 { false };
     unsigned m_canShowPlaceholder : 1 { true };
+    unsigned m_wasEverChangedByUserEdit : 1 { false };
 
     int m_maxLength { -1 };
     int m_minLength { -1 };
@@ -185,13 +192,14 @@ private:
 
     bool m_hasCachedSelection { false };
     bool m_hasScheduledSelectionChangeEvent { false };
+    bool m_isInsideSetSelectionRange { false };
 
     String m_pointerType { mousePointerEventType() };
 
     String m_textAsOfLastFormControlChangeEvent;
 };
 
-WEBCORE_EXPORT HTMLTextFormControlElement* enclosingTextFormControl(const Position&);
+WEBCORE_EXPORT HTMLTextFormControlElement* NODELETE enclosingTextFormControl(const Position&);
 
 } // namespace WebCore
 

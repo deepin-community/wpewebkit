@@ -25,8 +25,6 @@
 
 #pragma once
 
-#include "PCToCodeOriginMap.h"
-#include <wtf/Box.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
@@ -39,65 +37,51 @@ class NativeCalleeRegistry {
     WTF_MAKE_TZONE_ALLOCATED(NativeCalleeRegistry);
     WTF_MAKE_NONCOPYABLE(NativeCalleeRegistry);
 public:
-    static void initialize();
-    static NativeCalleeRegistry& singleton();
+    static void NODELETE initialize();
+    static NativeCalleeRegistry& NODELETE singleton();
 
-    Lock& getLock() WTF_RETURNS_LOCK(m_lock) { return m_lock; }
+    Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
 
     void registerCallee(NativeCallee* callee)
     {
         Locker locker { m_lock };
-        m_calleeSet.add(callee);
+        auto addResult = m_calleeSet.add(callee);
+        ASSERT_UNUSED(addResult, addResult.isNewEntry);
+    }
+
+    template<typename CalleeContainer>
+    void registerCallees(const CalleeContainer& callees)
+    {
+        Locker locker { m_lock };
+        for (auto& callee : callees) {
+            auto addResult = m_calleeSet.add(callee.ptr());
+            ASSERT_UNUSED(addResult, addResult.isNewEntry);
+        }
     }
 
     void unregisterCallee(NativeCallee* callee)
     {
         Locker locker { m_lock };
         m_calleeSet.remove(callee);
-#if ENABLE(JIT)
-        m_pcToCodeOriginMaps.remove(callee);
-#endif
     }
 
-    const HashSet<NativeCallee*>& allCallees() WTF_REQUIRES_LOCK(m_lock)
+    const UncheckedKeyHashSet<NativeCallee*>& allCallees() WTF_REQUIRES_LOCK(m_lock)
     {
         return m_calleeSet;
     }
 
     bool isValidCallee(NativeCallee* callee)  WTF_REQUIRES_LOCK(m_lock)
     {
-        if (!HashSet<NativeCallee*>::isValidValue(callee))
+        if (!UncheckedKeyHashSet<NativeCallee*>::isValidValue(callee))
             return false;
         return m_calleeSet.contains(callee);
     }
-
-#if ENABLE(JIT)
-    void addPCToCodeOriginMap(NativeCallee* callee, Box<PCToCodeOriginMap> originMap)
-    {
-        Locker locker { m_lock };
-        ASSERT(isValidCallee(callee));
-        auto addResult = m_pcToCodeOriginMaps.add(callee, WTFMove(originMap));
-        RELEASE_ASSERT(addResult.isNewEntry);
-    }
-
-    Box<PCToCodeOriginMap> codeOriginMap(NativeCallee* callee)  WTF_REQUIRES_LOCK(m_lock)
-    {
-        ASSERT(isValidCallee(callee));
-        auto iter = m_pcToCodeOriginMaps.find(callee);
-        if (iter != m_pcToCodeOriginMaps.end())
-            return iter->value;
-        return nullptr;
-    }
-#endif
 
     NativeCalleeRegistry() = default;
 
 private:
     Lock m_lock;
-    HashSet<NativeCallee*> m_calleeSet WTF_GUARDED_BY_LOCK(m_lock);
-#if ENABLE(JIT)
-    HashMap<NativeCallee*, Box<PCToCodeOriginMap>> m_pcToCodeOriginMaps WTF_GUARDED_BY_LOCK(m_lock);
-#endif
+    UncheckedKeyHashSet<NativeCallee*> m_calleeSet WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

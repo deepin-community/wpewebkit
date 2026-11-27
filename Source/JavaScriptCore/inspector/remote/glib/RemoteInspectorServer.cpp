@@ -32,7 +32,7 @@
 #include <gio/gio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
-#include <wtf/glib/GUniquePtr.h>
+#include <wtf/glib/GSpanExtras.h>
 
 namespace Inspector {
 
@@ -88,10 +88,9 @@ static RemoteInspector::Client::SessionCapabilities processSessionCapabilities(G
             capabilities.proxy->socksURL = String::fromUTF8(socksURL);
 
         if (GRefPtr<GVariant> ignoreAddressList = g_variant_lookup_value(proxy.get(), "ignoreAddressList", G_VARIANT_TYPE("as"))) {
-            gsize ignoreAddressListLength;
-            GUniquePtr<char> ignoreAddressArray(reinterpret_cast<char*>(g_variant_get_strv(ignoreAddressList.get(), &ignoreAddressListLength)));
-            for (unsigned i = 0; i < ignoreAddressListLength; ++i)
-                capabilities.proxy->ignoreAddressList.append(String::fromUTF8(reinterpret_cast<char**>(ignoreAddressArray.get())[i]));
+            auto addresses = gVariantGetStrv(ignoreAddressList);
+            for (const char* address : addresses.span())
+                capabilities.proxy->ignoreAddressList.append(String::fromUTF8(address));
         }
     }
 
@@ -119,6 +118,8 @@ const SocketConnection::MessageHandlers& RemoteInspectorServer::messageHandlers(
             GRefPtr<GVariant> backendCommandsHash;
             g_variant_get(parameters, "(@ay)", &backendCommandsHash.outPtr());
             auto* backendCommands = inspectorServer.setupInspectorClient(connection, g_variant_get_bytestring(backendCommandsHash.get()));
+            if (!backendCommands)
+                return;
             connection.sendMessage("DidSetupInspectorClient", g_variant_new("(@ay)", backendCommands));
         }}
     },
@@ -163,7 +164,8 @@ const SocketConnection::MessageHandlers& RemoteInspectorServer::messageHandlers(
             GRefPtr<GVariant> sessionCapabilities;
             g_variant_get(parameters, "(&s@a{sv})", &sessionID, &sessionCapabilities.outPtr());
             auto capabilities = processSessionCapabilities(sessionCapabilities.get());
-            inspectorServer.startAutomationSession(connection, sessionID, capabilities);
+            if (!inspectorServer.startAutomationSession(connection, sessionID, capabilities))
+                return;
             auto clientCapabilities = RemoteInspector::singleton().clientCapabilities();
             connection.sendMessage("DidStartAutomationSession", g_variant_new("(ss)",
                 clientCapabilities ? clientCapabilities->browserName.utf8().data() : "",
@@ -213,7 +215,7 @@ gboolean RemoteInspectorServer::incomingConnectionCallback(GSocketService*, GSoc
 void RemoteInspectorServer::incomingConnection(Ref<SocketConnection>&& connection)
 {
     ASSERT(!m_connections.contains(connection.ptr()));
-    m_connections.add(WTFMove(connection));
+    m_connections.add(WTF::move(connection));
 }
 
 void RemoteInspectorServer::setTargetList(SocketConnection& remoteInspectorConnection, GVariant* parameters)
@@ -235,9 +237,12 @@ void RemoteInspectorServer::setTargetList(SocketConnection& remoteInspectorConne
     clientConnection->sendMessage("SetTargetList", g_variant_new("(t@a(tsssb))", addResult.iterator->value, targetList.get()));
 }
 
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 GVariant* RemoteInspectorServer::setupInspectorClient(SocketConnection& clientConnection, const char* clientBackendCommandsHash)
 {
-    ASSERT(!m_clientConnection);
+    if (m_clientConnection && m_clientConnection != &clientConnection)
+        return nullptr;
+
     m_clientConnection = &clientConnection;
 
     GVariant* backendCommands;
@@ -253,33 +258,42 @@ GVariant* RemoteInspectorServer::setupInspectorClient(SocketConnection& clientCo
 
     return backendCommands;
 }
+IGNORE_CLANG_WARNINGS_END
 
 void RemoteInspectorServer::setup(SocketConnection& clientConnection, uint64_t connectionID, uint64_t targetID)
 {
-    ASSERT(m_clientConnection == &clientConnection || m_automationConnection == &clientConnection);
-    ASSERT(m_idToRemoteInspectorConnectionMap.contains(connectionID));
+    RefPtr remoteInspectorConnection = m_idToRemoteInspectorConnectionMap.get(connectionID);
+    if (!remoteInspectorConnection)
+        return;
+
     if (&clientConnection == m_automationConnection) {
         m_automationTargets.add(std::make_pair(connectionID, targetID));
         RemoteInspector::singleton().setup(targetID);
         return;
     }
 
+    if (&clientConnection != m_clientConnection)
+        return;
+
     m_inspectionTargets.add(std::make_pair(connectionID, targetID));
-    m_idToRemoteInspectorConnectionMap.get(connectionID)->sendMessage("Setup", g_variant_new("(t)", targetID));
+    remoteInspectorConnection->sendMessage("Setup", g_variant_new("(t)", targetID));
 }
 
 void RemoteInspectorServer::close(SocketConnection& clientConnection, uint64_t connectionID, uint64_t targetID)
 {
-    ASSERT(m_clientConnection == &clientConnection || m_automationConnection == &clientConnection);
-    ASSERT(m_idToRemoteInspectorConnectionMap.contains(connectionID));
     if (&clientConnection == m_automationConnection) {
         m_automationTargets.remove(std::make_pair(connectionID, targetID));
         return;
     }
 
-    ASSERT(m_inspectionTargets.contains(std::make_pair(connectionID, targetID)));
-    m_idToRemoteInspectorConnectionMap.get(connectionID)->sendMessage("FrontendDidClose", g_variant_new("(t)", targetID));
-    m_inspectionTargets.remove(std::make_pair(connectionID, targetID));
+    if (&clientConnection != m_clientConnection)
+        return;
+
+    if (!m_inspectionTargets.remove(std::make_pair(connectionID, targetID)))
+        return;
+
+    if (RefPtr remoteInspectorConnection = m_idToRemoteInspectorConnectionMap.get(connectionID))
+        remoteInspectorConnection->sendMessage("FrontendDidClose", g_variant_new("(t)", targetID));
 }
 
 void RemoteInspectorServer::connectionDidClose(SocketConnection& clientConnection)
@@ -289,11 +303,21 @@ void RemoteInspectorServer::connectionDidClose(SocketConnection& clientConnectio
         for (auto connectionTargetPair : copyToVector(m_automationTargets))
             close(clientConnection, connectionTargetPair.first, connectionTargetPair.second);
         m_automationConnection = nullptr;
-    } else if (&clientConnection == m_clientConnection) {
+#if USE(GLIB)
+        // As we support single sessions, there's no need to send a sessionID like we do when setting up the automation connection
+        // in startAutomationSession(). If we ever support multiple sessions, we should eventually map the sessionID to the connectionID and
+        // send it here.
+        RemoteInspector::singleton().automationConnectionDidClose();
+#endif
+    }
+
+    if (&clientConnection == m_clientConnection) {
         for (auto connectionTargetPair : copyToVector(m_inspectionTargets))
             close(clientConnection, connectionTargetPair.first, connectionTargetPair.second);
         m_clientConnection = nullptr;
-    } else if (m_remoteInspectorConnectionToIDMap.contains(&clientConnection)) {
+    }
+
+    if (m_remoteInspectorConnectionToIDMap.contains(&clientConnection)) {
         uint64_t connectionID = m_remoteInspectorConnectionToIDMap.take(&clientConnection);
         m_idToRemoteInspectorConnectionMap.remove(connectionID);
         // Send an empty target list to the clients.
@@ -309,38 +333,48 @@ void RemoteInspectorServer::connectionDidClose(SocketConnection& clientConnectio
 
 void RemoteInspectorServer::sendMessageToBackend(SocketConnection& clientConnection, uint64_t connectionID, uint64_t targetID, const char* message)
 {
-    ASSERT(m_clientConnection == &clientConnection || m_automationConnection == &clientConnection);
-    ASSERT(m_idToRemoteInspectorConnectionMap.contains(connectionID));
     if (&clientConnection == m_automationConnection) {
         RemoteInspector::singleton().sendMessageToTarget(targetID, message);
         return;
     }
 
-    m_idToRemoteInspectorConnectionMap.get(connectionID)->sendMessage("SendMessageToTarget", g_variant_new("(t&s)", targetID, message));
+    if (&clientConnection != m_clientConnection || !m_inspectionTargets.contains(std::make_pair(connectionID, targetID)))
+        return;
+
+    RefPtr remoteInspectorConnection = m_idToRemoteInspectorConnectionMap.get(connectionID);
+    if (!remoteInspectorConnection)
+        return;
+
+    remoteInspectorConnection->sendMessage("SendMessageToTarget", g_variant_new("(t&s)", targetID, message));
 }
 
 void RemoteInspectorServer::sendMessageToFrontend(SocketConnection& remoteInspectorConnection, uint64_t targetID, const char* message)
 {
     ASSERT(m_connections.contains(&remoteInspectorConnection));
-    ASSERT(m_remoteInspectorConnectionToIDMap.contains(&remoteInspectorConnection));
 
-    uint64_t connectionID = m_remoteInspectorConnectionToIDMap.get(&remoteInspectorConnection);
-    auto connectionTargetPair = std::make_pair(connectionID, targetID);
+    auto connectionID = m_remoteInspectorConnectionToIDMap.getOptional(&remoteInspectorConnection);
+    if (!connectionID)
+        return;
+
+    auto connectionTargetPair = std::make_pair(*connectionID, targetID);
     if (!m_automationTargets.contains(connectionTargetPair) && !m_inspectionTargets.contains(connectionTargetPair))
         return;
 
     RefPtr clientConnection = m_inspectionTargets.contains(connectionTargetPair) ? m_clientConnection : m_automationConnection;
-    ASSERT(clientConnection);
-    clientConnection->sendMessage("SendMessageToFrontend", g_variant_new("(tt&s)", connectionID, targetID, message));
+    if (!clientConnection)
+        return;
+
+    clientConnection->sendMessage("SendMessageToFrontend", g_variant_new("(tt&s)", *connectionID, targetID, message));
 }
 
-void RemoteInspectorServer::startAutomationSession(SocketConnection& automationConnection, const char* sessionID, const RemoteInspector::Client::SessionCapabilities& capabilities)
+bool RemoteInspectorServer::startAutomationSession(SocketConnection& automationConnection, const char* sessionID, const RemoteInspector::Client::SessionCapabilities& capabilities)
 {
-    if (!m_automationConnection)
-        m_automationConnection = &automationConnection;
-    ASSERT(m_automationConnection == &automationConnection);
+    if (m_automationConnection && m_automationConnection != &automationConnection)
+        return false;
 
+    m_automationConnection = &automationConnection;
     RemoteInspector::singleton().requestAutomationSession(sessionID, capabilities);
+    return true;
 }
 
 } // namespace Inspector

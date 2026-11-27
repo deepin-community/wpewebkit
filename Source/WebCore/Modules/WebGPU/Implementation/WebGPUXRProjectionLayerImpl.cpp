@@ -26,35 +26,49 @@
 #include "config.h"
 #include "WebGPUXRProjectionLayerImpl.h"
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
+#if HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)
 
+#include "PlatformXR.h"
 #include "WebGPUConvertToBackingContext.h"
 #include "WebGPUDevice.h"
 #include "WebGPUTextureFormat.h"
+#include "WebXRRigidTransform.h"
+#include <wtf/MachSendRight.h>
 
 namespace WebCore::WebGPU {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(XRProjectionLayerImpl);
+
 XRProjectionLayerImpl::XRProjectionLayerImpl(WebGPUPtr<WGPUXRProjectionLayer>&& projectionLayer, ConvertToBackingContext& convertToBackingContext)
-    : m_backing(WTFMove(projectionLayer))
+    : m_backing(WTF::move(projectionLayer))
     , m_convertToBackingContext(convertToBackingContext)
 {
 }
 
 XRProjectionLayerImpl::~XRProjectionLayerImpl() = default;
 
-uint32_t XRProjectionLayerImpl::textureWidth() const
+uint32_t XRProjectionLayerImpl::colorTextureWidth() const
 {
     return 0;
 }
 
-uint32_t XRProjectionLayerImpl::textureHeight() const
+uint32_t XRProjectionLayerImpl::colorTextureHeight() const
 {
     return 0;
 }
 
-uint32_t XRProjectionLayerImpl::textureArrayLength() const
+uint32_t XRProjectionLayerImpl::colorTextureArrayLength() const
 {
-    return 0;
+#if PLATFORM(IOS_FAMILY_SIMULATOR)
+    return 1;
+#else
+    return 2;
+#endif
+}
+
+bool XRProjectionLayerImpl::allColorTexturesAreBound() const
+{
+    return false;
 }
 
 bool XRProjectionLayerImpl::ignoreDepthValues() const
@@ -74,18 +88,35 @@ void XRProjectionLayerImpl::setFixedFoveation(std::optional<float>)
 
 WebXRRigidTransform* XRProjectionLayerImpl::deltaPose() const
 {
+#if ENABLE(WEBXR)
+    return m_webXRRigidTransform.get();
+#else
     return nullptr;
+#endif
 }
 
-void XRProjectionLayerImpl::setDeltaPose(WebXRRigidTransform*)
+void XRProjectionLayerImpl::setDeltaPose(WebXRRigidTransform* pose)
 {
-    return;
+#if ENABLE(WEBXR)
+    m_webXRRigidTransform = pose;
+#else
+    UNUSED_PARAM(pose);
+#endif
 }
 
 // WebXRLayer
-void XRProjectionLayerImpl::startFrame()
+void XRProjectionLayerImpl::startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, PlatformXR::RateMapDescription&& rateMap)
 {
-    return;
+#if ENABLE(WEBXR)
+    wgpuXRProjectionLayerStartFrame(m_backing.get(), frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, rateMap.screenSize.width(), rateMap.screenSize.height(), WTF::move(rateMap.horizontalSamplesLeft), WTF::move(rateMap.horizontalSamplesRight), WTF::move(rateMap.verticalSamples));
+#else
+    UNUSED_PARAM(frameIndex);
+    UNUSED_PARAM(colorBuffer);
+    UNUSED_PARAM(depthBuffer);
+    UNUSED_PARAM(completionSyncEvent);
+    UNUSED_PARAM(reusableTextureIndex);
+    UNUSED_PARAM(rateMap);
+#endif
 }
 
 void XRProjectionLayerImpl::endFrame()
@@ -95,4 +126,4 @@ void XRProjectionLayerImpl::endFrame()
 
 } // namespace WebCore::WebGPU
 
-#endif // HAVE(WEBGPU_IMPLEMENTATION)
+#endif // HAVE(WEBGPU_IMPLEMENTATION) && ENABLE(WEBGPU)

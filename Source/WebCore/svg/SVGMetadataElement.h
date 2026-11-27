@@ -26,7 +26,7 @@
 namespace WebCore {
 
 class SVGMetadataElement final : public SVGElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGMetadataElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGMetadataElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGMetadataElement);
 public:
     static Ref<SVGMetadataElement> create(const QualifiedName&, Document&);
@@ -34,7 +34,7 @@ public:
 private:
     SVGMetadataElement(const QualifiedName&, Document&);
 
-    bool rendererIsNeeded(const RenderStyle&) final { return false; }
+    bool rendererIsNeeded(const Style::ComputedStyle&) final { return false; }
     bool supportsFocus() const final { return false; }
 };
 

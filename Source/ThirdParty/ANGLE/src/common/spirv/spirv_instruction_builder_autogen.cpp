@@ -20,6 +20,12 @@ namespace spirv
 {
 namespace
 {
+ANGLE_NOINLINE void ShaderNotRepresentible()
+{
+    ERR() << "Complex shader not representible in SPIR-V";
+    ANGLE_CRASH();
+}
+
 uint32_t MakeLengthOp(size_t length, spv::Op op)
 {
     ASSERT(length <= 0xFFFFu);
@@ -30,8 +36,7 @@ uint32_t MakeLengthOp(size_t length, spv::Op op)
     // would gracefully fail compilation, so this is more of a safety net.
     if (ANGLE_UNLIKELY(length > 0xFFFFu))
     {
-        ERR() << "Complex shader not representible in SPIR-V";
-        ANGLE_CRASH();
+        ShaderNotRepresentible();
     }
 
     return static_cast<uint32_t>(length) << 16 | op;
@@ -3207,7 +3212,7 @@ void WriteGroupNonUniformBroadcast(Blob *blob,
                                    IdResult idResult2,
                                    IdScope execution,
                                    IdRef value,
-                                   IdRef id)
+                                   IdRef invocationId)
 {
     const size_t startSize = blob->size();
     blob->push_back(0);
@@ -3215,7 +3220,7 @@ void WriteGroupNonUniformBroadcast(Blob *blob,
     blob->push_back(idResult2);
     blob->push_back(execution);
     blob->push_back(value);
-    blob->push_back(id);
+    blob->push_back(invocationId);
     (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpGroupNonUniformBroadcast);
 }
 void WriteGroupNonUniformBroadcastFirst(Blob *blob,
@@ -3331,7 +3336,7 @@ void WriteGroupNonUniformShuffle(Blob *blob,
                                  IdResult idResult2,
                                  IdScope execution,
                                  IdRef value,
-                                 IdRef id)
+                                 IdRef invocationId)
 {
     const size_t startSize = blob->size();
     blob->push_back(0);
@@ -3339,7 +3344,7 @@ void WriteGroupNonUniformShuffle(Blob *blob,
     blob->push_back(idResult2);
     blob->push_back(execution);
     blob->push_back(value);
-    blob->push_back(id);
+    blob->push_back(invocationId);
     (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpGroupNonUniformShuffle);
 }
 void WriteGroupNonUniformShuffleXor(Blob *blob,
@@ -3796,126 +3801,6 @@ void WritePtrNotEqual(Blob *blob,
     blob->push_back(operand2);
     (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpPtrNotEqual);
 }
-void WriteSDot(Blob *blob,
-               IdResultType idResultType1,
-               IdResult idResult2,
-               IdRef vector1,
-               IdRef vector2,
-               const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpSDot);
-}
-void WriteUDot(Blob *blob,
-               IdResultType idResultType1,
-               IdResult idResult2,
-               IdRef vector1,
-               IdRef vector2,
-               const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpUDot);
-}
-void WriteSUDot(Blob *blob,
-                IdResultType idResultType1,
-                IdResult idResult2,
-                IdRef vector1,
-                IdRef vector2,
-                const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpSUDot);
-}
-void WriteSDotAccSat(Blob *blob,
-                     IdResultType idResultType1,
-                     IdResult idResult2,
-                     IdRef vector1,
-                     IdRef vector2,
-                     IdRef accumulator,
-                     const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    blob->push_back(accumulator);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpSDotAccSat);
-}
-void WriteUDotAccSat(Blob *blob,
-                     IdResultType idResultType1,
-                     IdResult idResult2,
-                     IdRef vector1,
-                     IdRef vector2,
-                     IdRef accumulator,
-                     const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    blob->push_back(accumulator);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpUDotAccSat);
-}
-void WriteSUDotAccSat(Blob *blob,
-                      IdResultType idResultType1,
-                      IdResult idResult2,
-                      IdRef vector1,
-                      IdRef vector2,
-                      IdRef accumulator,
-                      const spv::PackedVectorFormat *packedVectorFormat)
-{
-    const size_t startSize = blob->size();
-    blob->push_back(0);
-    blob->push_back(idResultType1);
-    blob->push_back(idResult2);
-    blob->push_back(vector1);
-    blob->push_back(vector2);
-    blob->push_back(accumulator);
-    if (packedVectorFormat)
-    {
-        blob->push_back(*packedVectorFormat);
-    }
-    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpSUDotAccSat);
-}
 void WriteBeginInvocationInterlockEXT(Blob *blob)
 {
     const size_t startSize = blob->size();
@@ -3936,6 +3821,14 @@ void WriteDemoteToHelperInvocation(Blob *blob)
     blob->push_back(0);
 
     (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpDemoteToHelperInvocation);
+}
+void WriteIsHelperInvocationEXT(Blob *blob, IdResultType idResultType1, IdResult idResult2)
+{
+    const size_t startSize = blob->size();
+    blob->push_back(0);
+    blob->push_back(idResultType1);
+    blob->push_back(idResult2);
+    (*blob)[startSize] = MakeLengthOp(blob->size() - startSize, spv::OpIsHelperInvocationEXT);
 }
 
 }  // namespace spirv

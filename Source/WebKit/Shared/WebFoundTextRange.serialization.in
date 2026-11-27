@@ -20,9 +20,26 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-struct WebKit::WebFoundTextRange {
+[Nested] struct WebKit::WebFoundTextRange::DOMData {
     uint64_t location;
     uint64_t length;
-    AtomString frameIdentifier;
+};
+
+[Nested] struct WebKit::WebFoundTextRange::PDFData {
+    uint64_t startPage;
+    uint64_t startOffset;
+    uint64_t endPage;
+    uint64_t endOffset;
+};
+
+[Nested] struct WebKit::WebFoundTextRange::CueData {
+    WebCore::MediaPlayerClientIdentifier mediaElementIdentifier;
+    uint64_t documentOffset;
+    uint64_t seekTimeMilliseconds;
+};
+
+struct WebKit::WebFoundTextRange {
+    Variant<WebKit::WebFoundTextRange::DOMData, WebKit::WebFoundTextRange::PDFData, WebKit::WebFoundTextRange::CueData> data;
+    Vector<uint64_t> pathToFrame;
     uint64_t order;
 }

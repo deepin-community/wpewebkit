@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,54 +32,75 @@
 #include "WebAssemblyGCObjectBase.h"
 #include <wtf/Ref.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 class JSWebAssemblyInstance;
 
-class JSWebAssemblyStruct final : public WebAssemblyGCObjectBase {
+class alignas(sizeof(uint64_t)) JSWebAssemblyStruct final : public WebAssemblyGCObjectBase {
 public:
     using Base = WebAssemblyGCObjectBase;
-    static constexpr bool needsDestruction = true;
-
-    static void destroy(JSCell*);
+    static_assert(StructureFlags == WebAssemblyGCObjectBase::StructureFlags, "WebAssemblyGCObjectBase must have the same StructureFlags as us");
 
     template<typename CellType, SubspaceAccess mode>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    static CompleteSubspace* subspaceFor(VM& vm)
     {
-        return vm.webAssemblyStructSpace<mode>();
+        return &vm.heap.cellSpace;
     }
 
-    DECLARE_EXPORT_INFO;
+    DECLARE_INFO;
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-
-    static JSWebAssemblyStruct* tryCreate(JSGlobalObject*, Structure*, JSWebAssemblyInstance*, uint32_t, RefPtr<const Wasm::RTT>);
+    static inline TypeInfoBlob typeInfoBlob();
+    static inline WebAssemblyGCStructure* createStructure(VM&, Ref<const Wasm::RTT>&&);
+    static JSWebAssemblyStruct* tryCreate(VM&, WebAssemblyGCStructure*);
+    static JSWebAssemblyStruct* create(VM&, WebAssemblyGCStructure*);
 
     DECLARE_VISIT_CHILDREN;
 
     uint64_t get(uint32_t) const;
+    v128_t NODELETE getVector(uint32_t) const;
     void set(uint32_t, uint64_t);
     void set(uint32_t, v128_t);
-    const Wasm::StructType* structType() const { return m_type->as<Wasm::StructType>(); }
-    Wasm::FieldType fieldType(uint32_t fieldIndex) const { return structType()->field(fieldIndex); }
+    const Wasm::RTT& structType() const { return gcStructure()->rtt(); }
+    Wasm::FieldType fieldType(uint32_t fieldIndex) const { SUPPRESS_UNCOUNTED_ARG return structType().field(fieldIndex); }
 
-    // Returns the offset for m_payload.m_storage
-    static constexpr ptrdiff_t offsetOfPayload() { return OBJECT_OFFSETOF(JSWebAssemblyStruct, m_payload) + FixedVector<uint8_t>::offsetOfStorage(); }
+    uint8_t* fieldPointer(uint32_t fieldIndex) { SUPPRESS_UNCOUNTED_ARG return payload() + structType().offsetOfFieldInPayload(fieldIndex); }
+    const uint8_t* fieldPointer(uint32_t fieldIndex) const { return const_cast<JSWebAssemblyStruct*>(this)->fieldPointer(fieldIndex); }
 
-    const uint8_t* fieldPointer(uint32_t fieldIndex) const;
-    uint8_t* fieldPointer(uint32_t fieldIndex);
+    static constexpr ptrdiff_t offsetOfData()
+    {
+        return WTF::roundUpToMultipleOf<alignof(uint64_t)>(sizeof(JSWebAssemblyStruct));
+    }
+
+    static constexpr size_t allocationSize(unsigned payloadSize)
+    {
+        return offsetOfData() + payloadSize;
+    }
 
 protected:
-    JSWebAssemblyStruct(VM&, Structure*, Ref<const Wasm::TypeDefinition>&&, RefPtr<const Wasm::RTT>);
+    JSWebAssemblyStruct(VM&, WebAssemblyGCStructure*, unsigned payloadSize);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    // FIXME: It is possible to encode the type information in the structure field of Wasm.Struct and remove this field.
-    // https://bugs.webkit.org/show_bug.cgi?id=244838
-    Ref<const Wasm::TypeDefinition> m_type;
-
-    FixedVector<uint8_t> m_payload;
+private:
+    uint8_t* payload() { return std::bit_cast<uint8_t*>(this) + offsetOfData(); }
+    const uint8_t* payload() const { return std::bit_cast<const uint8_t*>(this) + offsetOfData(); }
 };
 
+
+TypeInfoBlob JSWebAssemblyStruct::typeInfoBlob()
+{
+    return TypeInfoBlob(0, TypeInfo(WebAssemblyGCObjectType, StructureFlags));
+}
+
+WebAssemblyGCStructure* JSWebAssemblyStruct::createStructure(VM& vm, Ref<const Wasm::RTT>&& rtt)
+{
+    RELEASE_ASSERT(rtt->kind() == Wasm::RTTKind::Struct);
+    return WebAssemblyGCStructure::create(vm, TypeInfo(WebAssemblyGCObjectType, StructureFlags), info(), WTF::move(rtt));
+}
+
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

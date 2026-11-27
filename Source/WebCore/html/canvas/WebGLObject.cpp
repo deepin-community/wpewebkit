@@ -54,7 +54,7 @@ Lock& WebGLObject::objectGraphLockForContext()
 {
     // Should not call this if the object or context has been deleted.
     ASSERT(m_context);
-    return m_context->objectGraphLock();
+    return context()->objectGraphLock();
 }
 
 GraphicsContextGL* WebGLObject::graphicsContextGL() const
@@ -86,11 +86,11 @@ void WebGLObject::deleteObject(const AbstractLocker& locker, GraphicsContextGL* 
         return;
 
     if (!m_attachmentCount) {
-        if (!context3d)
-            context3d = graphicsContextGL();
-
-        if (context3d)
-            deleteObjectImpl(locker, context3d, m_object);
+        RefPtr<GraphicsContextGL> gl = context3d;
+        if (!gl)
+            gl = m_context->graphicsContextGL();
+        if (gl)
+            deleteObjectImpl(locker, gl.get(), m_object);
     }
 
     if (!m_attachmentCount)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,9 +37,7 @@
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSSegmentedFontFace);
 
-CSSSegmentedFontFace::CSSSegmentedFontFace()
-{
-}
+CSSSegmentedFontFace::CSSSegmentedFontFace() = default;
 
 CSSSegmentedFontFace::~CSSSegmentedFontFace()
 {
@@ -51,7 +49,7 @@ void CSSSegmentedFontFace::appendFontFace(Ref<CSSFontFace>&& fontFace)
 {
     m_cache.clear();
     fontFace->addClient(*this);
-    m_fontFaces.append(WTFMove(fontFace));
+    m_fontFaces.append(WTF::move(fontFace));
 }
 
 void CSSSegmentedFontFace::fontLoaded(CSSFontFace&)
@@ -70,7 +68,7 @@ public:
     {
         if (!m_result || (policy == ExternalResourceDownloadPolicy::Allow
             && (m_fontFace->status() == CSSFontFace::Status::Pending || m_fontFace->status() == CSSFontFace::Status::Loading || m_fontFace->status() == CSSFontFace::Status::TimedOut))) {
-            const auto result = m_fontFace->font(m_fontDescription, m_syntheticBold, m_syntheticItalic, policy, m_fontPaletteValues, m_fontFeatureValues);
+            const auto result = protect(m_fontFace)->font(m_fontDescription, m_syntheticBold, m_syntheticItalic, policy, m_fontPaletteValues, m_fontFeatureValues);
             if (!m_result)
                 m_result = result;
         }
@@ -88,7 +86,7 @@ private:
     {
     }
 
-    bool isLoading() const final
+    bool NODELETE isLoading() const final
     {
         return m_result && m_result.value() && m_result.value()->isInterstitial();
     }
@@ -105,7 +103,7 @@ private:
 static void appendFont(FontRanges& ranges, Ref<FontAccessor>&& fontAccessor, const Vector<CSSFontFace::UnicodeRange>& unicodeRanges)
 {
     if (unicodeRanges.isEmpty()) {
-        ranges.appendRange({ 0, 0x7FFFFFFF, WTFMove(fontAccessor) });
+        ranges.appendRange({ 0, 0x7FFFFFFF, WTF::move(fontAccessor) });
         return;
     }
 
@@ -115,12 +113,16 @@ static void appendFont(FontRanges& ranges, Ref<FontAccessor>&& fontAccessor, con
 
 FontRanges CSSSegmentedFontFace::fontRanges(const FontDescription& fontDescription, const FontPaletteValues& fontPaletteValues, RefPtr<FontFeatureValues> fontFeatureValues)
 {
-    auto addResult = m_cache.add(std::make_tuple(FontDescriptionKey(fontDescription), fontPaletteValues), FontRanges());
-    auto& ranges = addResult.iterator->value;
+    auto key = std::make_tuple(FontDescriptionKey(fontDescription), fontPaletteValues);
 
-    if (!addResult.isNewEntry)
-        return ranges;
+    if (auto entry = m_cache.find(key); entry != m_cache.end())
+        return entry->value;
 
+    // Build the result in a local. The loop below calls out to CSSFontFace::font(), which for a local()
+    // source completes the load synchronously, notifies clients and can therefore resolve a FontFace
+    // `loaded` promise, running author script that re-enters this function. A reference into m_cache's
+    // bucket array would dangle the moment such a reentrant insertion rehashed the table.
+    FontRanges ranges;
     auto desiredRequest = fontDescription.fontSelectionRequest();
 
     for (auto& face : m_fontFaces) {
@@ -130,17 +132,18 @@ FontRanges CSSSegmentedFontFace::fontRanges(const FontDescription& fontDescripti
         auto selectionCapabilities = face->fontSelectionCapabilities();
 
         bool syntheticBold = fontDescription.hasAutoFontSynthesisWeight() && !isFontWeightBold(selectionCapabilities.weight.maximum) && isFontWeightBold(desiredRequest.weight);
-        bool syntheticItalic = fontDescription.hasAutoFontSynthesisStyle() && !isItalic(selectionCapabilities.slope.maximum) && isItalic(desiredRequest.slope);
+        bool syntheticItalic = fontDescription.allowsItalicOrObliqueFontSynthesisStyle() && !isItalic(selectionCapabilities.slope.maximum) && isItalic(desiredRequest.slope);
 
         // Metrics used for layout come from FontRanges::fontForFirstRange(), which assumes that the first font is non-null.
         auto fontAccessor = CSSFontAccessor::create(face, fontDescription, fontPaletteValues, fontFeatureValues, syntheticBold, syntheticItalic);
         if (ranges.isNull() && !fontAccessor->font(ExternalResourceDownloadPolicy::Forbid))
             continue;
         
-        appendFont(ranges, WTFMove(fontAccessor), face->ranges());
+        appendFont(ranges, WTF::move(fontAccessor), face->ranges());
     }
     
     ranges.shrinkToFit();
+    m_cache.add(WTF::move(key), ranges);
     return ranges;
 }
 

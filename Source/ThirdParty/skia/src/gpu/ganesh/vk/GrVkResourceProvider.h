@@ -9,8 +9,8 @@
 #define GrVkResourceProvider_DEFINED
 
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/vk/SkiaVulkan.h"
 #include "src/core/SkChecksum.h"
 #include "src/core/SkLRUCache.h"
@@ -25,6 +25,7 @@
 #include "src/gpu/ganesh/vk/GrVkSampler.h"
 #include "src/gpu/ganesh/vk/GrVkSamplerYcbcrConversion.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -205,7 +206,7 @@ public:
     void recycleDescriptorSet(const GrVkDescriptorSet* descSet,
                               const GrVkDescriptorSetManager::Handle&);
 
-    void storePipelineCacheData();
+    void storePipelineCacheData(size_t maxSize);
 
     // Destroy any cached resources. To be called before destroying the VkDevice.
     // The assumption is that all queues are idle and all command buffers are finished.
@@ -221,7 +222,7 @@ public:
     // objects from the cache are probably not worth the complexity of safely releasing them.
     void releaseUnlockedBackendObjects();
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
     void resetShaderCacheForTesting() const { fPipelineStateCache->release(); }
 #endif
 

@@ -31,17 +31,20 @@
 #pragma once
 
 #include "BaseTextInputType.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class URLInputType final : public BaseTextInputType {
+    WTF_MAKE_TZONE_ALLOCATED(URLInputType);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(URLInputType);
 public:
     static Ref<URLInputType> create(HTMLInputElement& element)
     {
         return adoptRef(*new URLInputType(element));
     }
 
-    bool typeMismatchFor(const String&) const final;
+    bool typeMismatchFor(StringView) const final;
     bool typeMismatch() const final;
 
 private:
@@ -52,7 +55,7 @@ private:
 
     const AtomString& formControlType() const final;
     String typeMismatchText() const final;
-    String sanitizeValue(const String&) const final;
+    ValueOrReference<String> sanitizeValue(const String& value LIFETIME_BOUND) const final;
 };
 
 } // namespace WebCore

@@ -25,7 +25,9 @@
 
 #pragma once
 
-#include "ColorTypes.h"
+#include <WebCore/ColorTypes.h>
+#include <WebCore/PlatformExportMacros.h>
+#include <numeric>
 #include <wtf/MathExtras.h>
 
 namespace WebCore {
@@ -44,7 +46,6 @@ template<typename Output, typename Input> Output convertColorCarryingForwardMiss
 // Conversion functions for raw color components with associated color spaces.
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpace outputColorSpace);
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, const DestinationColorSpace& outputColorSpace);
-
 
 // All color types, other than XYZA or those inheriting from RGBType, must implement
 // the following conversions to and from their "Reference" color.
@@ -77,15 +78,12 @@ template<typename Output, typename Input> Output convertColor(const Input& color
 //
 // If there is no analogous component, `std::nullopt` is returned.
 template<typename Output, typename Input, unsigned IndexInInput>
-constexpr std::optional<unsigned> analogousComponentIndex()
+consteval std::optional<unsigned> analogousComponentIndex()
 {
     if constexpr (IndexInInput == 3)
         return 3; // Special case alpha, it always should carry forward.
-    else {
-        constexpr auto inputCategory = Input::Model::componentInfo[IndexInInput].category;
-        if constexpr (!inputCategory)
-            return std::nullopt;
-        else if constexpr (*inputCategory == Output::Model::componentInfo[0].category)
+    else if constexpr (constexpr auto inputCategory = Input::Model::componentInfo[IndexInInput].category) {
+        if constexpr (*inputCategory == Output::Model::componentInfo[0].category)
             return 0;
         else if constexpr (*inputCategory == Output::Model::componentInfo[1].category)
             return 1;
@@ -93,19 +91,67 @@ constexpr std::optional<unsigned> analogousComponentIndex()
             return 2;
         else
             return std::nullopt;
-    }
+    } else
+        return std::nullopt;
 }
+
+// Determines if an analogous set exists between Output and Input. An analogous set
+// is comprised of any components that don't have analogous components. So, for there
+// to be an analogous set, at least one component must not have an analogous component.
+template<typename Output, typename Input>
+consteval bool hasAnalogousSet()
+{
+    return !analogousComponentIndex<Output, Input, 0>()
+        || !analogousComponentIndex<Output, Input, 1>()
+        || !analogousComponentIndex<Output, Input, 2>()
+        || !analogousComponentIndex<Output, Input, 3>();
+}
+
+// Utility to check whether if all analogous set components are missing. When this is
+// true, the analogous set components will all be forwarded as missing.
+template<typename Output, typename Input>
+    requires (hasAnalogousSet<Output, Input>())
+constexpr bool areAllAnalogousSetComponentsMissing(ColorComponents<float, 4>& input)
+{
+    if constexpr (!analogousComponentIndex<Output, Input, 0>()) {
+        if (!std::isnan(input[0]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 1>()) {
+        if (!std::isnan(input[1]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 2>()) {
+        if (!std::isnan(input[2]))
+            return false;
+    }
+    if constexpr (!analogousComponentIndex<Output, Input, 3>()) {
+        if (!std::isnan(input[3]))
+            return false;
+    }
+    return true;
+}
+
 
 // Utility to update appropriate component in `output` if an analogous component
 // in `input` is missing (which is encoded as NaN in color types).
 template<typename Output, typename Input, unsigned IndexInInput>
-constexpr void tryToCarryForwardComponentIfMissing(const ColorComponents<float, 4>& input, ColorComponents<float, 4>& output)
+constexpr void tryToCarryForwardMissingForAnalogousComponent(const ColorComponents<float, 4>& input, ColorComponents<float, 4>& output)
 {
-    constexpr auto analogousComponentIndexInOutput = analogousComponentIndex<Output, Input, IndexInInput>();
-    if constexpr (analogousComponentIndexInOutput) {
+    if constexpr (constexpr auto analogousComponentIndexInOutput = analogousComponentIndex<Output, Input, IndexInInput>()) {
         if (std::isnan(input[IndexInInput]))
             output[*analogousComponentIndexInOutput] = std::numeric_limits<float>::quiet_NaN();
     }
+}
+
+// Utility to update appropriate component in `output` if all analogous set components
+// in `input` are missing  (which is encoded as NaN in color types) and this component
+// in `output` is part of the analogous set.
+template<typename Output, typename Input, unsigned IndexInOutput>
+constexpr void tryToCarryForwardMissingForAnalogousSetComponent(ColorComponents<float, 4>& output)
+{
+    if constexpr (!analogousComponentIndex<Input, Output, IndexInOutput>())
+        output[IndexInOutput] = std::numeric_limits<float>::quiet_NaN();
 }
 
 // Performs color space conversion followed by carrying forward missing components
@@ -121,10 +167,19 @@ template<typename Output, typename Input> Output convertColorCarryingForwardMiss
         auto input = asColorComponents(color.unresolved());
         auto output = asColorComponents(convertColor<Output>(color).unresolved());
 
-        tryToCarryForwardComponentIfMissing<Output, Input, 0>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 1>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 2>(input, output);
-        tryToCarryForwardComponentIfMissing<Output, Input, 3>(input, output);
+        if constexpr (hasAnalogousSet<Output, Input>()) {
+            if (areAllAnalogousSetComponentsMissing<Output, Input>(input)) {
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 0>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 1>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 2>(output);
+                tryToCarryForwardMissingForAnalogousSetComponent<Output, Input, 3>(output);
+            }
+        }
+
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 0>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 1>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 2>(input, output);
+        tryToCarryForwardMissingForAnalogousComponent<Output, Input, 3>(input, output);
 
         return makeFromComponents<Output>(output);
     }
@@ -132,8 +187,8 @@ template<typename Output, typename Input> Output convertColorCarryingForwardMiss
 
 // MARK: White Point.
 
-constexpr float D50WhitePoint[] = { 0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585 };
-constexpr float D65WhitePoint[] = { 0.3127 / 0.3290, 1.0, (1.0 - 0.3127 - 0.3290) / 0.3290 };
+constexpr std::array<float, 3> D50WhitePoint { 0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585 };
+constexpr std::array<float, 3> D65WhitePoint { 0.3127 / 0.3290, 1.0, (1.0 - 0.3127 - 0.3290) / 0.3290 };
 
 // MARK: Chromatic Adaptation conversions.
 
@@ -279,65 +334,6 @@ struct ClipGamutMapping {
     template<typename ColorType> static auto mapToBoundedGamut(const ColorType& color) -> typename ColorType::BoundedCounterpart
     {
         return clipToGamut<typename ColorType::BoundedCounterpart>(color);
-    }
-};
-
-struct CSSGamutMapping {
-    // This implements the CSS gamut mapping algorithm (https://drafts.csswg.org/css-color/#css-gamut-mapping) for RGB
-    // colors that are out of gamut for a particular RGB color space. It implements a relative colorimetric intent mapping
-    // for colors that are outside the destination gamut and leaves colors inside the destination gamut unchanged.
-
-    // A simple optimization over the pseudocode in the specification has been made to avoid unnecessary work in the
-    // main bisection loop by checking the gamut using the extended linear color space of the RGB family regardless of
-    // of whether the final type is gamma encoded or not. This avoids unnecessary gamma encoding for non final loops.
-
-    // FIXME: This is a naive iterative solution that works for any bounded RGB color space. This can be optimized by
-    // using an analytical solution that computes the exact intersection.
-
-    static constexpr float JND = 0.02f;
-
-    template<typename ColorType> static auto mapToBoundedGamut(const ColorType& color) -> typename ColorType::BoundedCounterpart
-    {
-        using BoundedColorType = typename ColorType::BoundedCounterpart;
-        using ExtendedLinearColorType = ExtendedLinearEncoded<typename BoundedColorType::ComponentType, typename BoundedColorType::Descriptor>;
-        using BoundedLinearColorType = BoundedLinearEncoded<typename BoundedColorType::ComponentType, typename BoundedColorType::Descriptor>;
-
-        auto resolvedColor = color.resolved();
-
-        if (auto result = colorIfInGamut<BoundedColorType>(resolvedColor))
-            return *result;
-
-        auto colorInOKLCHColorSpace = convertColor<OKLCHA<float>>(resolvedColor).resolved();
-
-        if (WTF::areEssentiallyEqual(colorInOKLCHColorSpace.lightness, 100.0f) || colorInOKLCHColorSpace.lightness > 100.0f)
-            return { 1.0, 1.0, 1.0, resolvedColor.alpha };
-        else if (WTF::areEssentiallyEqual(colorInOKLCHColorSpace.lightness, 0.0f))
-            return { 0.0f, 0.0f, 0.0f, resolvedColor.alpha };
-
-        float min = 0.0f;
-        float max = colorInOKLCHColorSpace.chroma;
-
-        while (true) {
-            auto chroma = (min + max) / 2.0f;
-
-            auto current = colorInOKLCHColorSpace;
-            current.chroma = chroma;
-
-            auto currentInExtendedLinearColorSpace = convertColor<ExtendedLinearColorType>(current).resolved();
-
-            if (inGamut<BoundedLinearColorType>(currentInExtendedLinearColorSpace)) {
-                min = chroma;
-                continue;
-            }
-
-            auto currentClippedToBoundedLinearColorSpace = clipToGamut<BoundedLinearColorType>(currentInExtendedLinearColorSpace);
-
-            auto deltaE = computeDeltaEOK(currentClippedToBoundedLinearColorSpace, current);
-            if (deltaE < JND)
-                return convertColor<BoundedColorType>(currentClippedToBoundedLinearColorSpace);
-
-            max = chroma;
-        }
     }
 };
 

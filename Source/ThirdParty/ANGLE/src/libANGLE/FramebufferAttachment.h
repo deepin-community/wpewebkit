@@ -110,6 +110,7 @@ class FramebufferAttachment final
     TextureTarget cubeMapFace() const;
     GLint mipLevel() const;
     GLint layer() const;
+    bool has3DLayer() const;
     bool isLayered() const;
 
     GLsizei getNumViews() const { return mNumViews; }
@@ -120,6 +121,8 @@ class FramebufferAttachment final
     bool isRenderToTexture() const;
     GLsizei getRenderToTextureSamples() const;
 
+    // Explicitly resolves attachment size to use before state synchronization (e.g. validation).
+    angle::Result ensureSizeResolved(const Context *context) const;
     // The size of the underlying resource the attachment points to. The 'depth' value will
     // correspond to a 3D texture depth or the layer count of a 2D array texture. For Surfaces and
     // Renderbuffers, it will always be 1.
@@ -172,6 +175,8 @@ class FramebufferAttachment final
     static const GLint kDefaultRenderToTextureSamples;
 
   private:
+    bool isSpecified() const;
+
     angle::Result getRenderTargetImpl(const Context *context,
                                       GLsizei samples,
                                       rx::FramebufferAttachmentRenderTarget **rtOut) const;
@@ -222,6 +227,8 @@ class FramebufferAttachmentObject : public angle::Subject, public angle::Observe
     FramebufferAttachmentObject();
     ~FramebufferAttachmentObject() override;
 
+    virtual angle::Result ensureSizeResolved(const Context *context) const                 = 0;
+    virtual bool isAttachmentSpecified(const ImageIndex &imageIndex) const                 = 0;
     virtual Extents getAttachmentSize(const ImageIndex &imageIndex) const                  = 0;
     virtual Format getAttachmentFormat(GLenum binding, const ImageIndex &imageIndex) const = 0;
     virtual GLsizei getAttachmentSamples(const ImageIndex &imageIndex) const               = 0;
@@ -263,6 +270,22 @@ inline const ImageIndex &FramebufferAttachment::getTextureImageIndex() const
 {
     ASSERT(type() == GL_TEXTURE);
     return mTarget.textureIndex();
+}
+
+inline angle::Result FramebufferAttachment::ensureSizeResolved(const Context *context) const
+{
+    ASSERT(mResource);
+    // Do not lock Surface::mMutex here when mType == GL_FRAMEBUFFER_DEFAULT. This method is called
+    // from GL entry points while ContextMutex is already held, whereas EGL entry points acquire
+    // Surface::mMutex before ContextMutex. The default framebuffer surface is current on |context|
+    // and protected by ContextMutex.
+    return mResource->ensureSizeResolved(context);
+}
+
+inline bool FramebufferAttachment::isSpecified() const
+{
+    ASSERT(mResource);
+    return mResource->isAttachmentSpecified(mTarget.textureIndex());
 }
 
 inline Extents FramebufferAttachment::getSize() const

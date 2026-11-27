@@ -25,15 +25,23 @@
 
 #pragma once
 
-#include "FetchOptions.h"
+#include <WebCore/CrossOriginEmbedderPolicyValue.h>
 #include <wtf/text/WTFString.h>
+
+namespace WTF {
+
+class URL;
+
+} // namespace WTF
+
+using WTF::URL;
 
 namespace WTF::Persistence {
 
 class Decoder;
 class Encoder;
 
-}
+} // namespace WTF::Persistence
 
 namespace WebCore {
 
@@ -44,11 +52,7 @@ class ScriptExecutionContext;
 struct ReportingClient;
 class SecurityOriginData;
 
-// https://html.spec.whatwg.org/multipage/origin.html#embedder-policy-value
-enum class CrossOriginEmbedderPolicyValue : bool {
-    UnsafeNone,
-    RequireCORP
-};
+enum class FetchOptionsDestination : uint8_t;
 
 // https://html.spec.whatwg.org/multipage/origin.html#embedder-policy
 struct CrossOriginEmbedderPolicy {
@@ -58,7 +62,7 @@ struct CrossOriginEmbedderPolicy {
     String reportOnlyReportingEndpoint;
 
     CrossOriginEmbedderPolicy isolatedCopy() const &;
-    CrossOriginEmbedderPolicy isolatedCopy() &&;
+    WEBCORE_EXPORT CrossOriginEmbedderPolicy isolatedCopy() &&;
     void encode(WTF::Persistence::Encoder&) const;
     static std::optional<CrossOriginEmbedderPolicy> decode(WTF::Persistence::Decoder &);
 
@@ -71,6 +75,6 @@ enum class COEPDisposition : bool { Reporting , Enforce };
 
 WEBCORE_EXPORT CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse&, const ScriptExecutionContext*);
 WEBCORE_EXPORT void sendCOEPInheritenceViolation(ReportingClient&, const URL& embedderURL, const String& endpoint, COEPDisposition, const String& type, const URL& blockedURL);
-WEBCORE_EXPORT void sendCOEPCORPViolation(ReportingClient&, const URL& embedderURL, const String& endpoint, COEPDisposition, FetchOptions::Destination, const URL& blockedURL);
+WEBCORE_EXPORT void sendCOEPCORPViolation(ReportingClient&, const URL& embedderURL, const String& endpoint, COEPDisposition, FetchOptionsDestination, const URL& blockedURL);
 
 } // namespace WebCore

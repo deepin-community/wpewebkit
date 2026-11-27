@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "WebGPUIntegralTypes.h"
+#include <WebCore/WebGPUIntegralTypes.h>
 #include <cstdint>
 #include <wtf/OptionSet.h>
 
@@ -37,6 +37,7 @@ enum class TextureUsage : uint8_t {
     TextureBinding   = 1 << 2,
     StorageBinding   = 1 << 3,
     RenderAttachment = 1 << 4,
+    Transient        = 1 << 5,
 };
 using TextureUsageFlags = OptionSet<TextureUsage>;
 

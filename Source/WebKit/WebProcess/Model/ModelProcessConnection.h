@@ -29,6 +29,10 @@
 
 #include "Connection.h"
 #include "MessageReceiverMap.h"
+#include "SharedPreferencesForWebProcess.h"
+#include "WebProcess.h"
+#include <WebCore/ModelPlayerIdentifier.h>
+#include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
@@ -44,12 +48,20 @@ struct WebPageCreationParameters;
 class ModelProcessConnection
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ModelProcessConnection>
     , public IPC::Connection::Client {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModelProcessConnection);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ModelProcessConnection);
 public:
     static RefPtr<ModelProcessConnection> create(IPC::Connection& parentConnection);
     ~ModelProcessConnection();
 
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+
     IPC::Connection& connection() { return m_connection.get(); }
-    IPC::MessageReceiverMap& messageReceiverMap() { return m_messageReceiverMap; }
+    IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return WebProcess::singleton().sharedPreferencesForWebProcess(); }
+    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcessValue() const { return WebProcess::singleton().sharedPreferencesForWebProcessValue(); }
 
 #if HAVE(AUDIT_TOKEN)
     std::optional<audit_token_t> auditToken();
@@ -62,13 +74,9 @@ public:
 
     void configureLoggingChannel(const String&, WTFLogChannelState, WTFLogLevel);
 
-    class Client {
+    class Client : public AbstractThreadSafeRefCountedAndCanMakeWeakPtr {
     public:
         virtual ~Client() = default;
-
-        virtual void ref() const = 0;
-        virtual void deref() const = 0;
-        virtual ThreadSafeWeakPtrControlBlock& controlBlock() const = 0;
 
         virtual void modelProcessConnectionDidClose(ModelProcessConnection&) { }
     };
@@ -84,14 +92,15 @@ private:
     // IPC::Connection::Client
     void didClose(IPC::Connection&) override;
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfObjectFailingDecoding) override;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) override;
 
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
     bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     // Messages.
     void didInitialize(std::optional<ModelProcessConnectionInfo>&&);
+    void didUnloadModelPlayer(WebCore::ModelPlayerIdentifier);
 
     // The connection from the web process to the model process.
     Ref<IPC::Connection> m_connection;

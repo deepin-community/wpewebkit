@@ -31,8 +31,8 @@
 
 namespace WebKit {
 
-enum class SampleBufferDisplayLayerIdentifierType { };
-using SampleBufferDisplayLayerIdentifier = LegacyNullableObjectIdentifier<SampleBufferDisplayLayerIdentifierType>;
+struct SampleBufferDisplayLayerIdentifierType;
+using SampleBufferDisplayLayerIdentifier = ObjectIdentifier<SampleBufferDisplayLayerIdentifierType>;
 
 } // namespace WebKit
 

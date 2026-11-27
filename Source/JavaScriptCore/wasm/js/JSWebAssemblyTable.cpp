@@ -28,7 +28,10 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "ExceptionScope.h"
 #include "JSCInlines.h"
+#include "JSString.h"
+#include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyInstance.h"
 #include "ObjectConstructor.h"
 
@@ -36,16 +39,9 @@ namespace JSC {
 
 const ClassInfo JSWebAssemblyTable::s_info = { "WebAssembly.Table"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebAssemblyTable) };
 
-JSWebAssemblyTable* JSWebAssemblyTable::tryCreate(JSGlobalObject* globalObject, VM& vm, Structure* structure, Ref<Wasm::Table>&& table)
+JSWebAssemblyTable* JSWebAssemblyTable::create(VM& vm, Structure* structure, Ref<Wasm::Table>&& table)
 {
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (!globalObject->webAssemblyEnabled()) {
-        throwException(globalObject, throwScope, createEvalError(globalObject, globalObject->webAssemblyDisabledErrorMessage()));
-        return nullptr;
-    }
-
-    auto* instance = new (NotNull, allocateCell<JSWebAssemblyTable>(vm)) JSWebAssemblyTable(vm, structure, WTFMove(table));
+    auto* instance = new (NotNull, allocateCell<JSWebAssemblyTable>(vm)) JSWebAssemblyTable(vm, structure, WTF::move(table));
     instance->table()->setOwner(instance);
     instance->finishCreation(vm);
     return instance;
@@ -58,7 +54,7 @@ Structure* JSWebAssemblyTable::createStructure(VM& vm, JSGlobalObject* globalObj
 
 JSWebAssemblyTable::JSWebAssemblyTable(VM& vm, Structure* structure, Ref<Wasm::Table>&& table)
     : Base(vm, structure)
-    , m_table(WTFMove(table))
+    , m_table(WTF::move(table))
 {
 }
 
@@ -70,7 +66,7 @@ void JSWebAssemblyTable::destroy(JSCell* cell)
 template<typename Visitor>
 void JSWebAssemblyTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSWebAssemblyTable* thisObject = jsCast<JSWebAssemblyTable*>(cell);
+    JSWebAssemblyTable* thisObject = uncheckedDowncast<JSWebAssemblyTable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
@@ -79,43 +75,73 @@ void JSWebAssemblyTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSWebAssemblyTable);
 
-bool JSWebAssemblyTable::grow(uint32_t delta, JSValue defaultValue)
+std::optional<uint32_t> JSWebAssemblyTable::grow(JSGlobalObject* globalObject, uint32_t delta, JSValue defaultValue)
 {
-    if (delta == 0)
-        return true;
-    return !!m_table->grow(delta, defaultValue);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint64_t wasmValue = 0;
+    if (isExnref(m_table->wasmType())) [[unlikely]] {
+        if (!defaultValue.isNull()) {
+            throwTypeError(globalObject, scope, "Table.grow cannot handle exnref table"_s);
+            return { };
+        }
+        wasmValue = JSValue::encode(defaultValue);
+    } else {
+        wasmValue = toWebAssemblyValue(globalObject, m_table->wasmType(), defaultValue);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+
+    return m_table->grow(delta, JSValue::decode(wasmValue));
 }
 
-JSValue JSWebAssemblyTable::get(uint32_t index)
+JSValue JSWebAssemblyTable::get(JSGlobalObject* globalObject, uint32_t index)
 {
-    RELEASE_ASSERT(index < length());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (isExnref(m_table->wasmType())) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Table.get cannot handle exnref table"_s);
+        return { };
+    }
+
     return m_table->get(index);
+}
+
+void JSWebAssemblyTable::set(JSGlobalObject* globalObject, uint32_t index, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (isExnref(m_table->wasmType())) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Table.set cannot handle exnref table"_s);
+        return;
+    }
+
+    uint64_t wasmValue = toWebAssemblyValue(globalObject, m_table->wasmType(), value);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    if (index < length())
+        return m_table->set(index, JSValue::decode(wasmValue));
+
+    throwRangeError(globalObject, scope, "Table.set expects an index less than the length of the table"_s);
 }
 
 void JSWebAssemblyTable::set(uint32_t index, JSValue value)
 {
-    RELEASE_ASSERT(index < length());
-    RELEASE_ASSERT(m_table->isExternrefTable());
     m_table->set(index, value);
-}
-
-void JSWebAssemblyTable::set(uint32_t index, WebAssemblyFunctionBase* function)
-{
-    RELEASE_ASSERT(index < length());
-    RELEASE_ASSERT(m_table->asFuncrefTable());
-    auto& subThis = *static_cast<Wasm::FuncRefTable*>(&m_table.get());
-    subThis.setFunction(index, function, function->importableFunction(), function->instance());
 }
 
 void JSWebAssemblyTable::clear(uint32_t index)
 {
-    RELEASE_ASSERT(index < length());
+    ASSERT(index < length());
     m_table->clear(index);
 }
 
 JSObject* JSWebAssemblyTable::type(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     Wasm::TableElementType element = m_table->type();
     JSString* elementString = nullptr;
@@ -137,16 +163,32 @@ JSObject* JSWebAssemblyTable::type(JSGlobalObject* globalObject)
     }
 
     JSObject* result;
+    auto numberOrBigInt = [&](uint32_t value) {
+        return m_table->addressType().is64Bit()
+            ? JSBigInt::createFrom(globalObject, value)
+            : jsNumber(value);
+    };
+
     auto maximum = m_table->maximum();
     if (maximum) {
         result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), jsNumber(*maximum));
+        auto maxValue = numberOrBigInt(*maximum);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        result->putDirect(vm, Identifier::fromString(vm, "maximum"_s), maxValue);
     } else
         result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
 
-    uint32_t minimum = m_table->length();
-    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), jsNumber(minimum));
+    uint64_t minimum = m_table->length();
+    auto minValue = numberOrBigInt(minimum);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    result->putDirect(vm, Identifier::fromString(vm, "minimum"_s), minValue);
     result->putDirect(vm, Identifier::fromString(vm, "element"_s), elementString);
+
+    JSString* address = m_table->addressType().is64Bit()
+        ? jsNontrivialString(vm, "i64"_s)
+        : jsNontrivialString(vm, "i32"_s);
+    result->putDirect(vm, Identifier::fromString(vm, "address"_s), address);
+
     return result;
 }
 

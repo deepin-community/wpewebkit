@@ -7,9 +7,10 @@
 
 #include "src/sksl/SkSLCompiler.h"
 
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkDebug.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/sksl/SkSLAnalysis.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLDefines.h"
 #include "src/sksl/SkSLInliner.h"
@@ -56,22 +57,23 @@ public:
 };
 
 Compiler::Compiler() : fErrorReporter(this) {
-    auto moduleLoader = ModuleLoader::Get();
-    fContext = std::make_shared<Context>(moduleLoader.builtinTypes(), fErrorReporter);
+    fContext = std::make_shared<Context>(BuiltinTypes::Get(), fErrorReporter);
 }
 
 Compiler::~Compiler() {}
 
 const Module* Compiler::moduleForProgramKind(ProgramKind kind) {
     auto m = ModuleLoader::Get();
+    return this->moduleForProgramKind(kind, m);
+}
+
+const Module* Compiler::moduleForProgramKind(ProgramKind kind, ModuleLoader& m) {
     switch (kind) {
         case ProgramKind::kFragment:              return m.loadFragmentModule(this);
         case ProgramKind::kVertex:                return m.loadVertexModule(this);
         case ProgramKind::kCompute:               return m.loadComputeModule(this);
         case ProgramKind::kGraphiteFragment:      return m.loadGraphiteFragmentModule(this);
         case ProgramKind::kGraphiteVertex:        return m.loadGraphiteVertexModule(this);
-        case ProgramKind::kGraphiteFragmentES2:   return m.loadGraphiteFragmentES2Module(this);
-        case ProgramKind::kGraphiteVertexES2:     return m.loadGraphiteVertexES2Module(this);
         case ProgramKind::kPrivateRuntimeBlender:
         case ProgramKind::kPrivateRuntimeColorFilter:
         case ProgramKind::kPrivateRuntimeShader:  return m.loadPrivateRTShaderModule(this);
@@ -352,7 +354,7 @@ bool Compiler::optimize(Program& program) {
                          program.fUsage.get());
 #endif
 
-        // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
+        // Unreachable code can confuse some drivers, so it's worth removing. (skbug.com/40043094)
         Transform::EliminateUnreachableCode(program);
 
         while (Transform::EliminateDeadFunctions(program)) {
@@ -424,8 +426,7 @@ bool Compiler::finalize(Program& program) {
         }
     }
     if (this->errorCount() == 0) {
-        bool enforceSizeLimit = ProgramConfig::IsRuntimeEffect(program.fConfig->fKind);
-        Analysis::CheckProgramStructure(program, enforceSizeLimit);
+        Analysis::CheckProgramStructure(program);
 
         // Make sure that variables are declared in the symbol tables that immediately enclose them.
         SkDEBUGCODE(Analysis::CheckSymbolTableCorrectness(program));

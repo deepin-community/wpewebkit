@@ -25,59 +25,42 @@
 
 #pragma once
 
-#include "LayoutIntegrationBoxTree.h"
-#include "LayoutState.h"
-#include "RenderObjectEnums.h"
-#include <wtf/CheckedPtr.h>
+#include <WebCore/FlexFormattingContext.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
-class HitTestLocation;
-class HitTestRequest;
-class HitTestResult;
-class RenderBlock;
 class RenderFlexibleBox;
-class RenderStyle;
-struct PaintInfo;
 
 namespace LayoutIntegration {
 
-class FlexLayout final : public CanMakeCheckedPtr<FlexLayout> {
-    WTF_MAKE_FAST_ALLOCATED;
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FlexLayout);
+class FlexLayout {
 public:
     FlexLayout(RenderFlexibleBox&);
-    ~FlexLayout();
 
-    void updateFormattingRootGeometryAndInvalidate();
-    void updateFlexItemDimensions(const RenderBlock& flexItem, LayoutUnit minimumContentSize, LayoutUnit maximumContentSize);
-    void updateStyle(const RenderBlock&, const RenderStyle& oldStyle);
+    void layout(RelayoutChildren);
 
-    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
+    std::optional<LayoutUnit> firstLineBaseline() const;
+    std::optional<LayoutUnit> lastLineBaseline() const;
 
-    void layout();
-    void paint(PaintInfo&, const LayoutPoint& paintOffset);
-    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction);
-
-    void collectOverflow();
-    LayoutUnit contentLogicalHeight() const;
+    // Sets the static position of an out-of-flow flex item; returns true if it changed.
+    bool setStaticPositionForPositionedLayout(const RenderBox&);
 
 private:
-    void updateRenderers();
+    FlexLayoutItems collectFlexItems(RelayoutChildren);
+    void prepareFlexItemForPositionedLayout(RenderBox&);
+    const RenderBox* flexItemForFirstBaseline() const;
+    const RenderBox* flexItemForLastBaseline() const;
+    const RenderBox* baselineFlexItemInLine(size_t lineStart, size_t itemCount, bool reverse) const;
+    LayoutUnit staticMainAxisPositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticCrossAxisPositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticInlinePositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticBlockPositionForPositionedFlexItem(const RenderBox&);
 
-    const Layout::ElementBox& flexBox() const { return m_boxTree.rootLayoutBox(); }
-    Layout::ElementBox& flexBox() { return m_boxTree.rootLayoutBox(); }
+    RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }
 
-    const RenderFlexibleBox& flexBoxRenderer() const { return downcast<RenderFlexibleBox>(m_boxTree.rootRenderer()); }
-    RenderFlexibleBox& flexBoxRenderer() { return downcast<RenderFlexibleBox>(m_boxTree.rootRenderer()); }
-
-    Layout::LayoutState& layoutState() { return *m_layoutState; }
-    const Layout::LayoutState& layoutState() const { return *m_layoutState; }
-
-    BoxTree m_boxTree;
-    WeakPtr<Layout::LayoutState> m_layoutState;
+    const CheckedRef<RenderFlexibleBox> m_flexBox;
 };
 
 }
 }
-

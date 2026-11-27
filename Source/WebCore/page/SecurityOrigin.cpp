@@ -33,13 +33,12 @@
 #include "LegacySchemeRegistry.h"
 #include "OriginAccessEntry.h"
 #include "PublicSuffixStore.h"
-#include "RuntimeApplicationChecks.h"
 #include "SecurityPolicy.h"
-#include <pal/text/TextEncoding.h>
 #include "ThreadableBlobRegistry.h"
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
@@ -52,6 +51,7 @@
 namespace WebCore {
 
 constexpr unsigned maximumURLSize = 0x04000000;
+constexpr unsigned maximumFragmentIdentifierSize = 2u * 1024u * 1024u;
 
 bool SecurityOrigin::shouldIgnoreHost(const URL& url)
 {
@@ -133,7 +133,7 @@ SecurityOrigin::SecurityOrigin(const URL& url)
 }
 
 SecurityOrigin::SecurityOrigin(SecurityOriginData&& data)
-    : m_data(WTFMove(data))
+    : m_data(WTF::move(data))
 {
     initializeShared(m_data.toURL());
 }
@@ -365,12 +365,16 @@ static bool isFeedWithNestedProtocolInHTTPFamily(const URL& url)
 bool SecurityOrigin::canDisplay(const URL& url, const OriginAccessPatterns& patterns) const
 {
     ASSERT(!isInNetworkProcess());
+
+    if (url.string().length() > maximumURLSize)
+        return false;
+
+    if (url.fragmentIdentifier().length() > maximumFragmentIdentifierSize)
+        return false;
+
     if (m_universalAccess)
         return true;
 
-    if (url.pathEnd() > maximumURLSize)
-        return false;
-    
 #if !PLATFORM(IOS_FAMILY) && !ENABLE(BUBBLEWRAP_SANDBOX)
     if (m_data.protocol() == "file"_s && url.protocolIsFile() && !FileSystem::filesHaveSameVolume(m_filePath, url.fileSystemPath()))
         return false;
@@ -402,10 +406,10 @@ bool SecurityOrigin::canDisplay(const URL& url, const OriginAccessPatterns& patt
 SecurityOrigin::Policy SecurityOrigin::canShowNotifications() const
 {
     if (m_universalAccess)
-        return AlwaysAllow;
+        return Policy::AlwaysAllow;
     if (isOpaque())
-        return AlwaysDeny;
-    return Ask;
+        return Policy::AlwaysDeny;
+    return Policy::Ask;
 }
 
 bool SecurityOrigin::isSameOriginAs(const SecurityOrigin& other) const
@@ -560,7 +564,6 @@ Ref<SecurityOrigin> SecurityOrigin::createFromString(const String& originString)
 
 Ref<SecurityOrigin> SecurityOrigin::create(const String& protocol, const String& host, std::optional<uint16_t> port)
 {
-    String decodedHost = PAL::decodeURLEscapeSequences(host);
     auto origin = create(URL { makeString(protocol, "://"_s, host, '/') });
     if (port && !WTF::isDefaultPortForProtocol(*port, protocol))
         origin->m_data.setPort(port);
@@ -569,15 +572,15 @@ Ref<SecurityOrigin> SecurityOrigin::create(const String& protocol, const String&
 
 Ref<SecurityOrigin> SecurityOrigin::create(SecurityOriginData&& data)
 {
-    return adoptRef(*new SecurityOrigin(WTFMove(data)));
+    return adoptRef(*new SecurityOrigin(WTF::move(data)));
 }
 
 Ref<SecurityOrigin> SecurityOrigin::create(WebCore::SecurityOriginData&& data, String&& domain, String&& filePath, bool universalAccess, bool domainWasSetInDOM, bool canLoadLocalResources, bool enforcesFilePathSeparation, bool needsStorageAccessFromFileURLsQuirk, std::optional<bool> isPotentiallyTrustworthy, bool isLocal)
 {
     auto origin = adoptRef(*new SecurityOrigin);
-    origin->m_data = WTFMove(data);
-    origin->m_domain = WTFMove(domain);
-    origin->m_filePath = WTFMove(filePath);
+    origin->m_data = WTF::move(data);
+    origin->m_domain = WTF::move(domain);
+    origin->m_filePath = WTF::move(filePath);
     origin->m_universalAccess = universalAccess;
     origin->m_domainWasSetInDOM = domainWasSetInDOM;
     origin->m_canLoadLocalResources = canLoadLocalResources;
@@ -588,22 +591,21 @@ Ref<SecurityOrigin> SecurityOrigin::create(WebCore::SecurityOriginData&& data, S
     return origin;
 }
 
-// FIXME: other should be a const SecurityOrigin& because we assume it is non-null.
-bool SecurityOrigin::equal(const SecurityOrigin* other) const
+bool SecurityOrigin::equal(const SecurityOrigin& other) const
 {
-    if (other == this)
+    if (&other == this)
         return true;
 
-    if (isOpaque() || other->isOpaque())
-        return data().opaqueOriginIdentifier() == other->data().opaqueOriginIdentifier();
+    if (isOpaque() || other.isOpaque())
+        return data().opaqueOriginIdentifier() == other.data().opaqueOriginIdentifier();
     
-    if (!isSameSchemeHostPort(*other))
+    if (!isSameSchemeHostPort(other))
         return false;
 
-    if (m_domainWasSetInDOM != other->m_domainWasSetInDOM)
+    if (m_domainWasSetInDOM != other.m_domainWasSetInDOM)
         return false;
 
-    if (m_domainWasSetInDOM && m_domain != other->m_domain)
+    if (m_domainWasSetInDOM && m_domain != other.m_domain)
         return false;
 
     return true;

@@ -34,8 +34,10 @@
 #include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "FontPlatformData.h"
+#include "LocalFrame.h"
 #include "Logging.h"
 #include "MemoryCache.h"
+#include "Settings.h"
 #include "SharedBuffer.h"
 #include "SubresourceLoader.h"
 #include "TextResourceDecoder.h"
@@ -49,7 +51,7 @@
 namespace WebCore {
 
 CachedFont::CachedFont(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar, Type type)
-    : CachedResource(WTFMove(request), type, sessionID, cookieJar)
+    : CachedResource(WTF::move(request), type, sessionID, cookieJar)
     , m_loadInitiated(false)
     , m_hasCreatedFontDataWrappingResource(false)
 {
@@ -73,10 +75,15 @@ void CachedFont::didAddClient(CachedResourceClient& client)
 
 FontParsingPolicy CachedFont::policyForCustomFont(const Ref<SharedBuffer>& data)
 {
-    if (!m_loader || !m_loader->frame())
+    RefPtr loader = m_loader;
+    if (!loader)
         return FontParsingPolicy::Deny;
 
-    return fontBinaryParsingPolicy(data->span(), m_loader->frame()->settings().downloadableBinaryFontTrustedTypes());
+    RefPtr frame = loader->frame();
+    if (!frame)
+        return FontParsingPolicy::Deny;
+
+    return fontBinaryParsingPolicy(data->span(), frame->settings().downloadableBinaryFontTrustedTypes());
 }
 
 void CachedFont::finishLoading(const FragmentedSharedBuffer* data, const NetworkLoadMetrics& metrics)
@@ -90,7 +97,7 @@ void CachedFont::finishLoading(const FragmentedSharedBuffer* data, const Network
             setErrorAndDeleteData();
             return;
         }
-        m_data = WTFMove(dataContiguous);
+        m_data = WTF::move(dataContiguous);
         setEncodedSize(m_data->size());
     } else {
         m_data = nullptr;
@@ -102,7 +109,7 @@ void CachedFont::finishLoading(const FragmentedSharedBuffer* data, const Network
 
 void CachedFont::setErrorAndDeleteData()
 {
-    CachedResourceHandle protectedThis { *this };
+    RefPtr protectedThis { *this };
     setEncodedSize(0);
     error(Status::DecodeError);
     if (inCache())
@@ -146,13 +153,13 @@ bool CachedFont::ensureCustomFontData(SharedBuffer* data)
             return false;
 
         case FontParsingPolicy::LoadWithSystemFontParser: {
-            m_fontCustomPlatformData = createCustomFontData(*data, calculateItemInCollection(), wrapping);
+            m_fontCustomPlatformData = createCustomFontDataSystemParser(*data, calculateItemInCollection(), wrapping);
             if (!m_fontCustomPlatformData)
                 RELEASE_LOG(Fonts, "[Font Parser] A font could not be parsed by system font parser.");
             break;
         }
         case FontParsingPolicy::LoadWithSafeFontParser: {
-            m_fontCustomPlatformData = createCustomFontDataExperimentalParser(*data, calculateItemInCollection(), wrapping);
+            m_fontCustomPlatformData = createCustomFontDataSafeFontParser(*data, calculateItemInCollection(), wrapping);
             if (!m_fontCustomPlatformData) {
                 m_didRefuseToParseCustomFont = true;
                 RELEASE_LOG(Fonts, "[Font Parser] A font could not be parsed by safe font parser.");
@@ -174,35 +181,56 @@ bool CachedFont::ensureCustomFontData(SharedBuffer* data)
     return m_fontCustomPlatformData.get();
 }
 
-RefPtr<FontCustomPlatformData> CachedFont::createCustomFontData(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping)
+RefPtr<FontCustomPlatformData> CachedFont::createCustomFontData(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping, DownloadableBinaryFontTrustedTypes trustedTypes)
+{
+    return createCustomFontDataWithPolicy(bytes, itemInCollection, wrapping, fontBinaryParsingPolicy(bytes.span(), trustedTypes));
+}
+
+RefPtr<FontCustomPlatformData> CachedFont::createCustomFontDataWithPolicy(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping, FontParsingPolicy policy)
+{
+    switch (policy) {
+    case FontParsingPolicy::Deny:
+        return nullptr;
+
+    case FontParsingPolicy::LoadWithSystemFontParser:
+        return createCustomFontDataSystemParser(bytes, itemInCollection, wrapping);
+
+    case FontParsingPolicy::LoadWithSafeFontParser:
+        return createCustomFontDataSafeFontParser(bytes, itemInCollection, wrapping);
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+RefPtr<FontCustomPlatformData> CachedFont::createCustomFontDataSystemParser(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping)
 {
     RefPtr buffer = { &bytes };
     wrapping = !convertWOFFToSfntIfNecessary(buffer);
     return buffer ? FontCustomPlatformData::create(*buffer, itemInCollection) : nullptr;
 }
 
-RefPtr<FontCustomPlatformData> CachedFont::createCustomFontDataExperimentalParser(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping)
+RefPtr<FontCustomPlatformData> CachedFont::createCustomFontDataSafeFontParser(SharedBuffer& bytes, const String& itemInCollection, bool& wrapping)
 {
     RefPtr buffer = { &bytes };
     wrapping = !convertWOFFToSfntIfNecessary(buffer);
     return FontCustomPlatformData::createMemorySafe(*buffer, itemInCollection);
 }
 
-RefPtr<Font> CachedFont::createFont(const FontDescription& fontDescription, bool syntheticBold, bool syntheticItalic, const FontCreationContext& fontCreationContext)
+RefPtr<Font> CachedFont::createFont(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
-    return Font::create(platformDataFromCustomData(fontDescription, syntheticBold, syntheticItalic, fontCreationContext), Font::Origin::Remote);
+    return Font::create(platformDataFromCustomData(fontDescription, fontCreationContext), Font::Origin::Remote);
 }
 
-FontPlatformData CachedFont::platformDataFromCustomData(const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedFont::platformDataFromCustomData(const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
     RefPtr fontCustomPlatformData = m_fontCustomPlatformData;
     ASSERT(fontCustomPlatformData);
-    return platformDataFromCustomData(*fontCustomPlatformData, fontDescription, bold, italic, fontCreationContext);
+    return platformDataFromCustomData(*fontCustomPlatformData, fontDescription, fontCreationContext);
 }
 
-FontPlatformData CachedFont::platformDataFromCustomData(FontCustomPlatformData& fontCustomPlatformData, const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
+FontPlatformData CachedFont::platformDataFromCustomData(FontCustomPlatformData& fontCustomPlatformData, const FontDescription& fontDescription, const FontCreationContext& fontCreationContext)
 {
-    return fontCustomPlatformData.fontPlatformData(fontDescription, bold, italic, fontCreationContext);
+    return fontCustomPlatformData.fontPlatformData(fontDescription, fontCreationContext);
 }
 
 void CachedFont::allClientsRemoved()
@@ -216,7 +244,7 @@ void CachedFont::checkNotify(const NetworkLoadMetrics&, LoadWillContinueInAnothe
         return;
 
     CachedResourceClientWalker<CachedFontClient> walker(*this);
-    while (CachedFontClient* client = walker.next())
+    while (RefPtr client = walker.next())
         client->fontLoaded(*this);
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/RectEdges.h>
 #include <memory>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Deque.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
@@ -44,6 +45,7 @@ namespace WebCore {
 struct DisplayUpdate;
 using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
+enum class RubberBandingBehavior : uint8_t;
 }
 
 namespace WebKit {
@@ -52,16 +54,20 @@ class MomentumEventDispatcher {
     WTF_MAKE_NONCOPYABLE(MomentumEventDispatcher);
     WTF_MAKE_TZONE_ALLOCATED(MomentumEventDispatcher);
 public:
-    class Client {
+    class Client : public CanMakeCheckedPtr<Client> {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Client);
+        WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Client);
     friend class MomentumEventDispatcher;
     public:
         virtual ~Client() = default;
 
     private:
-        virtual void handleSyntheticWheelEvent(WebCore::PageIdentifier, const WebWheelEvent&, WebCore::RectEdges<bool> rubberBandableEdges) = 0;
-        
+        virtual void handleSyntheticWheelEvent(WebCore::PageIdentifier, const WebWheelEvent&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges) = 0;
+
         virtual void startDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID) = 0;
         virtual void stopDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID) = 0;
+
+        virtual void didEndSyntheticMomentumScrolling() = 0;
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
         virtual void flushMomentumEventLoggingSoon() = 0;
@@ -71,9 +77,9 @@ public:
     MomentumEventDispatcher(Client&);
     ~MomentumEventDispatcher();
 
-    bool handleWheelEvent(WebCore::PageIdentifier, const WebWheelEvent&, WebCore::RectEdges<bool> rubberBandableEdges);
+    bool handleWheelEvent(WebCore::PageIdentifier, const WebWheelEvent&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
 
-    void setScrollingAccelerationCurve(WebCore::PageIdentifier, std::optional<ScrollingAccelerationCurve>);
+    void setScrollingAccelerationCurve(WebCore::PageIdentifier, std::optional<ScrollingAccelerationCurve>&&);
 
     void displayDidRefresh(WebCore::PlatformDisplayID);
 
@@ -98,7 +104,7 @@ private:
         WebCore::PlatformDisplayID displayID;
         WebCore::FramesPerSecond nominalFrameRate;
     };
-    std::optional<DisplayProperties> displayProperties(WebCore::PageIdentifier) const;
+    std::optional<DisplayProperties> NODELETE displayProperties(WebCore::PageIdentifier) const;
 
     void dispatchSyntheticMomentumEvent(WebWheelEvent::Phase, WebCore::FloatSize delta);
 
@@ -110,13 +116,12 @@ private:
 
     WebCore::FloatSize offsetAtTime(Seconds);
     std::pair<WebCore::FloatSize, WebCore::FloatSize> computeNextDelta(WebCore::FloatSize currentUnacceleratedDelta);
+    std::pair<WebCore::FloatSize, WebCore::FloatSize> computeNextDeltaSimple(WebCore::FloatSize currentUnacceleratedDelta);
 
     void didReceiveScrollEventWithInterval(WebCore::FloatSize, Seconds);
     void didReceiveScrollEvent(const WebWheelEvent&);
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
-    void pushLogEntry(uint32_t generatedPhase, uint32_t eventPhase);
-
     WebCore::FloatSize m_lastActivePhaseDelta;
 
     struct LogEntry {
@@ -125,11 +130,17 @@ private:
         float totalGeneratedOffset { 0 };
         float totalEventOffset { 0 };
 
-        uint32_t generatedPhase { 0 };
-        uint32_t eventPhase { 0 };
+        struct Phases {
+            WebWheelEvent::Phase event { WebWheelEvent::Phase::None };
+            WebWheelEvent::Phase momentum { WebWheelEvent::Phase::None };
+        };
+        Phases generatedPhases;
+        Phases eventPhases;
     };
     LogEntry m_currentLogState;
     Vector<LogEntry> m_log;
+
+    void pushLogEntry(LogEntry::Phases /*generatedPhases*/, LogEntry::Phases /*eventPhases*/);
 #endif
 
     struct Delta {
@@ -141,15 +152,17 @@ private:
     HistoricalDeltas m_deltaHistoryX;
     HistoricalDeltas m_deltaHistoryY;
 
-    Markable<WallTime> m_lastScrollTimestamp;
+    Markable<MonotonicTime> m_lastScrollTimestamp;
     std::optional<WebWheelEvent> m_lastIncomingEvent;
-    WebCore::RectEdges<bool> m_lastRubberBandableEdges;
+    WebCore::RectEdges<WebCore::RubberBandingBehavior> m_lastRubberBandableEdges;
     bool m_isInOverriddenPlatformMomentumGesture { false };
 
+    enum class MomentumCurve : uint8_t { Default, Simple };
     struct {
         bool active { false };
+        MomentumCurve momentumCurve { MomentumCurve::Default };
 
-        WebCore::PageIdentifier pageIdentifier;
+        Markable<WebCore::PageIdentifier> pageIdentifier;
         std::optional<ScrollingAccelerationCurve> accelerationCurve;
         std::optional<WebWheelEvent> initiatingEvent;
 
@@ -177,7 +190,7 @@ private:
 
     mutable Lock m_accelerationCurvesLock;
     HashMap<WebCore::PageIdentifier, std::optional<ScrollingAccelerationCurve>> m_accelerationCurves WTF_GUARDED_BY_LOCK(m_accelerationCurvesLock);
-    Client& m_client;
+    const CheckedRef<Client> m_client;
 };
 
 } // namespace WebKit

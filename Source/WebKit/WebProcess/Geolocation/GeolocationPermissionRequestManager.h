@@ -30,6 +30,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 class Geolocation;
@@ -51,13 +52,16 @@ public:
 
     void didReceiveGeolocationPermissionDecision(GeolocationIdentifier, const String& authorizationToken);
 
+    void NODELETE ref() const;
+    void deref() const;
+
 private:
     using IDToGeolocationMap = HashMap<GeolocationIdentifier, WeakRef<WebCore::Geolocation>>;
     using GeolocationToIDMap = HashMap<WeakRef<WebCore::Geolocation>, GeolocationIdentifier>;
     IDToGeolocationMap m_idToGeolocationMap;
     GeolocationToIDMap m_geolocationToIDMap;
 
-    WebPage& m_page;
+    WeakRef<WebPage> m_page;
 };
 
 } // namespace WebKit

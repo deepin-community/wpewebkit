@@ -42,18 +42,20 @@ class PrintStream;
 class WallTime final : public GenericTimeMixin<WallTime> {
 public:
     static constexpr ClockType clockType = ClockType::Wall;
+
+    // Declared here, not inherited: Swift's C++ interop importer mishandles
+    // an `operator bool` inherited from a template base (rdar://181622867).
+    explicit constexpr operator bool() const { return !!m_value; }
     
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - WallTime().
     constexpr WallTime() = default;
 
     WTF_EXPORT_PRIVATE static WallTime now();
-    
-    WallTime approximateWallTime() const { return *this; }
-    WTF_EXPORT_PRIVATE MonotonicTime approximateMonotonicTime() const;
-    
+
+    WTF_EXPORT_PRIVATE static WallTime fromSecondsSinceEpoch(Seconds);
+    WTF_EXPORT_PRIVATE Seconds secondsSinceEpoch() const;
+
     WTF_EXPORT_PRIVATE void dump(PrintStream&) const;
-    
-    struct MarkableTraits;
 
 private:
     friend class GenericTimeMixin<WallTime>;
@@ -64,7 +66,8 @@ private:
 };
 static_assert(sizeof(WallTime) == sizeof(double));
 
-struct WallTime::MarkableTraits {
+template<>
+struct MarkableTraits<WallTime> {
     static bool isEmptyValue(WallTime time)
     {
         return time.isNaN();

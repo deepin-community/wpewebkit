@@ -30,6 +30,7 @@
 #include "APIInjectedBundlePageLoaderClient.h"
 #include "WKBundlePageLoaderClient.h"
 #include <wtf/Forward.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace API {
 class Object;
@@ -43,6 +44,7 @@ template<> struct ClientTraits<WKBundlePageLoaderClientBase> {
 namespace WebKit {
 
 class InjectedBundlePageLoaderClient : public API::Client<WKBundlePageLoaderClientBase>, public API::InjectedBundle::PageLoaderClient {
+    WTF_MAKE_TZONE_ALLOCATED(InjectedBundlePageLoaderClient);
 public:
     explicit InjectedBundlePageLoaderClient(const WKBundlePageLoaderClientBase*);
 
@@ -60,8 +62,6 @@ public:
     void didSameDocumentNavigationForFrame(WebPage&, WebFrame&, SameDocumentNavigationType, RefPtr<API::Object>&) override;
     void didReceiveTitleForFrame(WebPage&, const WTF::String&, WebFrame&, RefPtr<API::Object>&) override;
     void didRemoveFrameFromHierarchy(WebPage&, WebFrame&, RefPtr<API::Object>&) override;
-    void didDisplayInsecureContentForFrame(WebPage&, WebFrame&, RefPtr<API::Object>&) override;
-    void didRunInsecureContentForFrame(WebPage&, WebFrame&, RefPtr<API::Object>&) override;
 
     void didFirstLayoutForFrame(WebPage&, WebFrame&, RefPtr<API::Object>&) override;
     void didFirstVisuallyNonEmptyLayoutForFrame(WebPage&, WebFrame&, RefPtr<API::Object>&) override;

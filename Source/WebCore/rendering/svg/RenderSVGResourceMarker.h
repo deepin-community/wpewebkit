@@ -29,10 +29,10 @@ class GraphicsContext;
 class SVGMarkerElement;
 
 class RenderSVGResourceMarker final : public RenderSVGResourceContainer {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGResourceMarker);
+    WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceMarker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceMarker);
 public:
-    RenderSVGResourceMarker(SVGMarkerElement&, RenderStyle&&);
+    RenderSVGResourceMarker(SVGMarkerElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGResourceMarker();
 
     inline bool hasReverseStart() const;
@@ -45,10 +45,10 @@ public:
     AffineTransform markerTransformation(const FloatPoint& origin, float angle, float strokeWidth) const;
 
 private:
+    bool requiresLayer() const final { return true; }
     ASCIILiteral renderName() const final { return "RenderSVGResourceMarker"_s; }
 
     inline SVGMarkerElement& markerElement() const;
-    inline Ref<SVGMarkerElement> protectedMarkerElement() const;
     inline FloatPoint referencePoint() const;
     inline std::optional<float> angle() const;
     inline SVGMarkerUnitsType markerUnits() const;
@@ -62,8 +62,8 @@ private:
 
     FloatRect computeViewport() const;
 
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const final;
-    LayoutRect overflowClipRect(const LayoutPoint& location, RenderFragmentContainer* = nullptr, OverlayScrollbarSizeRelevancy = IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
+    LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;
     void updateLayerTransform() final;
     bool needsHasSVGTransformFlags() const final { return true; }
 

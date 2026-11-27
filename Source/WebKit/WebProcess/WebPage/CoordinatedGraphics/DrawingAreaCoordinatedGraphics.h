@@ -36,15 +36,22 @@ class GraphicsContext;
 }
 
 namespace WebKit {
-
+class NonCompositedFrameRenderer;
+struct RenderProcessInfo;
 struct UpdateInfo;
 
 class DrawingAreaCoordinatedGraphics final : public DrawingArea {
 public:
-    DrawingAreaCoordinatedGraphics(WebPage&, const WebPageCreationParameters&);
+    static Ref<DrawingAreaCoordinatedGraphics> create(WebPage& webPage, const WebPageCreationParameters& parameters)
+    {
+        return adoptRef(*new DrawingAreaCoordinatedGraphics(webPage, parameters));
+    }
+
     virtual ~DrawingAreaCoordinatedGraphics();
 
 private:
+    DrawingAreaCoordinatedGraphics(WebPage&, const WebPageCreationParameters&);
+
     // DrawingArea
     void setNeedsDisplay() override;
     void setNeedsDisplayInRect(const WebCore::IntRect&) override;
@@ -56,18 +63,11 @@ private:
     bool layerTreeStateIsFrozen() const override { return m_layerTreeStateIsFrozen; }
 
     void updatePreferences(const WebPreferencesStore&) override;
-    void mainFrameContentSizeChanged(WebCore::FrameIdentifier, const WebCore::IntSize&) override;
     void sendEnterAcceleratedCompositingModeIfNeeded() override;
 
 #if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
-    void deviceOrPageScaleFactorChanged() override;
-    void didChangeViewportAttributes(WebCore::ViewportAttributes&&) override;
     bool enterAcceleratedCompositingModeIfNeeded() override;
     void backgroundColorDidChange() override;
-#endif
-
-#if PLATFORM(WPE) && USE(GBM) && ENABLE(WPE_PLATFORM)
-    void preferredBufferFormatsDidChange() override;
 #endif
 
     bool supportsAsyncScrolling() const override;
@@ -85,14 +85,14 @@ private:
 
     // IPC message handlers.
     void updateGeometry(const WebCore::IntSize&, CompletionHandler<void()>&&) override;
-    void displayDidRefresh() override;
-    void setDeviceScaleFactor(float) override;
+    void displayDidRefresh(MonotonicTime) override;
+    void setDeviceScaleFactor(float, CompletionHandler<void()>&&) override;
     void forceUpdate() override;
     void didDiscardBackingStore() override;
 
-#if PLATFORM(GTK)
-    void adjustTransientZoom(double scale, WebCore::FloatPoint origin) override;
-    void commitTransientZoom(double scale, WebCore::FloatPoint origin, CompletionHandler<void()>&&) override;
+#if ENABLE(DAMAGE_TRACKING)
+    void resetDamageHistoryForTesting() override;
+    void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&) const override;
 #endif
 
     void exitAcceleratedCompositingModeSoon();
@@ -146,11 +146,6 @@ private:
     bool m_shouldSendEnterAcceleratedCompositingMode { false };
 
     RunLoop::Timer m_displayTimer;
-
-#if PLATFORM(GTK)
-    bool m_transientZoom { false };
-    WebCore::FloatPoint m_transientZoomInitialOrigin;
-#endif
 };
 
 } // namespace WebKit

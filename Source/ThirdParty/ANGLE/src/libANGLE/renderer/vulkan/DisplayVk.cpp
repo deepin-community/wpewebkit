@@ -23,6 +23,7 @@
 #include "libANGLE/renderer/vulkan/SyncVk.h"
 #include "libANGLE/renderer/vulkan/TextureVk.h"
 #include "libANGLE/renderer/vulkan/VkImageImageSiblingVk.h"
+#include "libANGLE/renderer/vulkan/vk_helpers.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
 
 namespace rx
@@ -52,16 +53,16 @@ void GetSupportedFormatColorspaces(VkPhysicalDevice physicalDevice,
         uint32_t surfaceFormatCount = 0;
 
         // Query the count first
-        VkResult result = vkGetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo2,
-                                                                &surfaceFormatCount, nullptr);
+        VkResult result = VK_CALL(vkGetPhysicalDeviceSurfaceFormats2KHR, physicalDevice,
+                                  &surfaceInfo2, &surfaceFormatCount, nullptr);
         ASSERT(result == VK_SUCCESS);
         ASSERT(surfaceFormatCount > 0);
 
         // Query the VkSurfaceFormat2KHR list
         std::vector<VkSurfaceFormat2KHR> surfaceFormats2(surfaceFormatCount,
                                                          kSurfaceFormat2Initializer);
-        result = vkGetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo2,
-                                                       &surfaceFormatCount, surfaceFormats2.data());
+        result = VK_CALL(vkGetPhysicalDeviceSurfaceFormats2KHR, physicalDevice, &surfaceInfo2,
+                         &surfaceFormatCount, surfaceFormats2.data());
         ASSERT(result == VK_SUCCESS);
 
         *surfaceFormatsOut = std::move(surfaceFormats2);
@@ -70,14 +71,14 @@ void GetSupportedFormatColorspaces(VkPhysicalDevice physicalDevice,
     {
         uint32_t surfaceFormatCount = 0;
         // Query the count first
-        VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface,
-                                                               &surfaceFormatCount, nullptr);
+        VkResult result = VK_CALL(vkGetPhysicalDeviceSurfaceFormatsKHR, physicalDevice, surface,
+                                  &surfaceFormatCount, nullptr);
         ASSERT(result == VK_SUCCESS);
 
         // Query the VkSurfaceFormatKHR list
         std::vector<VkSurfaceFormatKHR> surfaceFormats(surfaceFormatCount);
-        result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount,
-                                                      surfaceFormats.data());
+        result = VK_CALL(vkGetPhysicalDeviceSurfaceFormatsKHR, physicalDevice, surface,
+                         &surfaceFormatCount, surfaceFormats.data());
         ASSERT(result == VK_SUCCESS);
 
         // Copy over data from std::vector<VkSurfaceFormatKHR> to std::vector<VkSurfaceFormat2KHR>
@@ -152,7 +153,7 @@ void InstallDebugAnnotator(egl::Display *display, vk::Renderer *renderer)
 
 DisplayVk::DisplayVk(const egl::DisplayState &state)
     : DisplayImpl(state),
-      vk::Context(new vk::Renderer()),
+      ThreadSafeDisplayVk(new vk::Renderer()),
       mScratchBuffer(1000u),
       mSupportedColorspaceFormatsMap{}
 {}
@@ -173,10 +174,17 @@ egl::Error DisplayVk::initialize(egl::Display *display)
         static_cast<uint32_t>(attribs.get(EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE, 0));
     const uint32_t preferredDeviceId =
         static_cast<uint32_t>(attribs.get(EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE, 0));
+    const uint8_t *preferredDeviceUuid =
+        mState.vulkanDeviceUUID.has_value() ? mState.vulkanDeviceUUID->data() : nullptr;
+    const uint8_t *preferredDriverUuid =
+        mState.vulkanDriverUUID.has_value() ? mState.vulkanDriverUUID->data() : nullptr;
+    const VkDriverId preferredDriverId =
+        static_cast<VkDriverId>(attribs.get(EGL_PLATFORM_ANGLE_VULKAN_DRIVER_ID_ANGLE, 0));
 
     angle::Result result = mRenderer->initialize(
-        this, this, desiredICD, preferredVendorId, preferredDeviceId, useDebugLayers,
-        getWSIExtension(), getWSILayer(), getWindowSystem(), mState.featureOverrides);
+        this, this, desiredICD, preferredVendorId, preferredDeviceId, preferredDeviceUuid,
+        preferredDriverUuid, preferredDriverId, useDebugLayers, getWSIExtension(), getWSILayer(),
+        getWindowSystem(), mState.featureOverrides);
     ANGLE_TRY(angle::ToEGL(result, EGL_NOT_INITIALIZED));
 
     mDeviceQueueIndex = mRenderer->getDeviceQueueIndex(egl::ContextPriority::Medium);
@@ -205,16 +213,16 @@ egl::Error DisplayVk::makeCurrent(egl::Display *display,
     return egl::NoError();
 }
 
-bool DisplayVk::testDeviceLost()
+bool ThreadSafeDisplayVk::testDeviceLost()
 {
     return mRenderer->isDeviceLost();
 }
 
-egl::Error DisplayVk::restoreLostDevice(const egl::Display *display)
+egl::Error ThreadSafeDisplayVk::restoreLostDevice(const egl::ThreadSafeDisplay *display)
 {
     // A vulkan device cannot be restored, the entire renderer would have to be re-created along
     // with any other EGL objects that reference it.
-    return egl::EglBadDisplay();
+    return egl::Error(EGL_BAD_DISPLAY);
 }
 
 std::string DisplayVk::getRendererDescription()
@@ -253,8 +261,7 @@ egl::Error DisplayVk::waitClient(const gl::Context *context)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "DisplayVk::waitClient");
     ContextVk *contextVk = vk::GetImpl(context);
-    return angle::ToEGL(contextVk->finishImpl(RenderPassClosureReason::EGLWaitClient),
-                        EGL_BAD_ACCESS);
+    return angle::ToEGL(contextVk->finishImpl(QueueSubmitReason::EGLWaitClient), EGL_BAD_ACCESS);
 }
 
 egl::Error DisplayVk::waitNative(const gl::Context *context, EGLint engine)
@@ -309,7 +316,7 @@ ImageImpl *DisplayVk::createImage(const egl::ImageState &state,
 
 ShareGroupImpl *DisplayVk::createShareGroup(const egl::ShareGroupState &state)
 {
-    return new ShareGroupVk(state);
+    return new ShareGroupVk(state, mRenderer);
 }
 
 bool DisplayVk::isConfigFormatSupported(VkFormat format) const
@@ -421,7 +428,7 @@ StreamProducerImpl *DisplayVk::createStreamProducerD3DTexture(
     return static_cast<StreamProducerImpl *>(0);
 }
 
-EGLSyncImpl *DisplayVk::createSync()
+EGLSyncImpl *ThreadSafeDisplayVk::createSync()
 {
     return new EGLSyncVk();
 }
@@ -436,11 +443,6 @@ gl::Version DisplayVk::getMaxConformantESVersion() const
     return mRenderer->getMaxConformantESVersion();
 }
 
-Optional<gl::Version> DisplayVk::getMaxSupportedDesktopVersion() const
-{
-    return gl::Version{4, 6};
-}
-
 egl::Error DisplayVk::validateImageClientBuffer(const gl::Context *context,
                                                 EGLenum target,
                                                 EGLClientBuffer clientBuffer,
@@ -453,7 +455,7 @@ egl::Error DisplayVk::validateImageClientBuffer(const gl::Context *context,
             VkImage *vkImage = reinterpret_cast<VkImage *>(clientBuffer);
             if (!vkImage || *vkImage == VK_NULL_HANDLE)
             {
-                return egl::EglBadParameter() << "clientBuffer is invalid.";
+                return egl::Error(EGL_BAD_PARAMETER, "clientBuffer is invalid.");
             }
 
             GLenum internalFormat =
@@ -471,8 +473,10 @@ egl::Error DisplayVk::validateImageClientBuffer(const gl::Context *context,
                 case GL_NONE:
                     break;
                 default:
-                    return egl::EglBadParameter() << "Invalid EGLImage texture internal format: 0x"
-                                                  << std::hex << internalFormat;
+                    std::ostringstream err;
+                    err << "Invalid EGLImage texture internal format: 0x" << std::hex
+                        << internalFormat;
+                    return egl::Error(EGL_BAD_PARAMETER, err.str());
             }
 
             uint64_t hi = static_cast<uint64_t>(attribs.get(EGL_VULKAN_IMAGE_CREATE_INFO_HI_ANGLE));
@@ -481,10 +485,10 @@ egl::Error DisplayVk::validateImageClientBuffer(const gl::Context *context,
             if (reinterpret_cast<const VkImageCreateInfo *>(info)->sType !=
                 VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
             {
-                return egl::EglBadParameter()
-                       << "EGL_VULKAN_IMAGE_CREATE_INFO_HI_ANGLE and "
-                          "EGL_VULKAN_IMAGE_CREATE_INFO_LO_ANGLE are not pointing to a "
-                          "valid VkImageCreateInfo structure.";
+                return egl::Error(EGL_BAD_PARAMETER,
+                                  "EGL_VULKAN_IMAGE_CREATE_INFO_HI_ANGLE and "
+                                  "EGL_VULKAN_IMAGE_CREATE_INFO_LO_ANGLE are not pointing to a "
+                                  "valid VkImageCreateInfo structure.");
             }
 
             return egl::NoError();
@@ -530,67 +534,63 @@ void DisplayVk::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->imagePixmap           = false;  // ANGLE does not support pixmaps
     outExtensions->glTexture2DImage      = true;
     outExtensions->glTextureCubemapImage = true;
-    outExtensions->glTexture3DImage =
-        getRenderer()->getFeatures().supportsSampler2dViewOf3d.enabled;
+    outExtensions->glTexture3DImage      = getFeatures().supportsSampler2dViewOf3d.enabled;
     outExtensions->glRenderbufferImage = true;
-    outExtensions->imageNativeBuffer =
-        getRenderer()->getFeatures().supportsAndroidHardwareBuffer.enabled;
+    outExtensions->imageNativeBuffer     = getFeatures().supportsAndroidHardwareBuffer.enabled;
     outExtensions->surfacelessContext = true;
     outExtensions->glColorspace       = true;
-    outExtensions->imageGlColorspace =
-        outExtensions->glColorspace && getRenderer()->getFeatures().supportsImageFormatList.enabled;
+    outExtensions->imageGlColorspace     = outExtensions->glColorspace;
 
 #if defined(ANGLE_PLATFORM_ANDROID)
     outExtensions->getNativeClientBufferANDROID = true;
     outExtensions->framebufferTargetANDROID     = true;
+
+    // Only expose EGL_ANDROID_front_buffer_auto_refresh on Android and when Vulkan supports
+    // VK_EXT_swapchain_maintenance1 (supportsSwapchainMaintenance1 feature), since we know that
+    // VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR
+    // are compatible on Android (does not require swapchain recreation).
+    outExtensions->frontBufferAutoRefreshANDROID =
+        getFeatures().supportsSwapchainMaintenance1.enabled;
 #endif  // defined(ANGLE_PLATFORM_ANDROID)
 
     // EGL_EXT_image_dma_buf_import is only exposed if EGL_EXT_image_dma_buf_import_modifiers can
     // also be exposed.  The Vulkan extensions that support these EGL extensions are not split in
     // the same way; both Vulkan extensions are needed for EGL_EXT_image_dma_buf_import, and with
     // both Vulkan extensions, EGL_EXT_image_dma_buf_import_modifiers is also supportable.
-    outExtensions->imageDmaBufImportEXT =
-        getRenderer()->getFeatures().supportsExternalMemoryDmaBufAndModifiers.enabled;
+    outExtensions->imageDmaBufImportEXT = getFeatures().supportsExternalMemoryDmaBuf.enabled &&
+                                          getFeatures().supportsImageDrmFormatModifier.enabled;
     outExtensions->imageDmaBufImportModifiersEXT = outExtensions->imageDmaBufImportEXT;
 
     // Disable context priority when non-zero memory init is enabled. This enforces a queue order.
-    outExtensions->contextPriority = !getRenderer()->getFeatures().allocateNonZeroMemory.enabled;
+    outExtensions->contextPriority = !getFeatures().allocateNonZeroMemory.enabled;
     outExtensions->noConfigContext = true;
 
 #if defined(ANGLE_PLATFORM_ANDROID) || defined(ANGLE_PLATFORM_LINUX)
-    outExtensions->nativeFenceSyncANDROID =
-        getRenderer()->getFeatures().supportsAndroidNativeFenceSync.enabled;
+    outExtensions->nativeFenceSyncANDROID = getFeatures().supportsAndroidNativeFenceSync.enabled;
 #endif  // defined(ANGLE_PLATFORM_ANDROID) || defined(ANGLE_PLATFORM_LINUX)
-
-#if defined(ANGLE_PLATFORM_GGP)
-    outExtensions->ggpStreamDescriptor = true;
-    outExtensions->swapWithFrameToken  = getRenderer()->getFeatures().supportsGGPFrameToken.enabled;
-#endif  // defined(ANGLE_PLATFORM_GGP)
 
     outExtensions->bufferAgeEXT = true;
 
-    outExtensions->protectedContentEXT =
-        (getRenderer()->getFeatures().supportsProtectedMemory.enabled &&
-         getRenderer()->getFeatures().supportsSurfaceProtectedSwapchains.enabled);
+    outExtensions->presentationTime    = getFeatures().supportsTimestampSurfaceAttribute.enabled;
+    outExtensions->protectedContentEXT = (getFeatures().supportsProtectedMemory.enabled &&
+                                          getFeatures().supportsSurfaceProtectedSwapchains.enabled);
 
     outExtensions->createSurfaceSwapIntervalANGLE = true;
 
     outExtensions->mutableRenderBufferKHR =
-        getRenderer()->getFeatures().supportsSharedPresentableImageExtension.enabled;
+        getFeatures().supportsSharedPresentableImageExtension.enabled;
 
     outExtensions->vulkanImageANGLE = true;
 
-    outExtensions->lockSurface3KHR =
-        getRenderer()->getFeatures().supportsLockSurfaceExtension.enabled;
+    outExtensions->lockSurface3KHR = getFeatures().supportsLockSurfaceExtension.enabled;
 
     outExtensions->partialUpdateKHR = true;
 
     outExtensions->timestampSurfaceAttributeANGLE =
-        getRenderer()->getFeatures().supportsTimestampSurfaceAttribute.enabled;
+        getFeatures().supportsTimestampSurfaceAttribute.enabled;
 
     outExtensions->eglColorspaceAttributePassthroughANGLE =
-        outExtensions->glColorspace &&
-        getRenderer()->getFeatures().eglColorspaceAttributePassthrough.enabled;
+        outExtensions->glColorspace && getFeatures().eglColorspaceAttributePassthrough.enabled;
 
     // If EGL_KHR_gl_colorspace extension is supported check if other colorspace extensions
     // can be supported as well.
@@ -614,6 +614,11 @@ void DisplayVk::generateExtensions(egl::DisplayExtensions *outExtensions) const
             isColorspaceSupported(VK_COLOR_SPACE_HDR10_ST2084_EXT);
         outExtensions->glColorspaceBt2020Hlg = isColorspaceSupported(VK_COLOR_SPACE_HDR10_HLG_EXT);
     }
+
+    outExtensions->surfaceCompressionEXT =
+        getFeatures().supportsImageCompressionControlSwapchain.enabled;
+
+    outExtensions->contextPriorityRealtimeNV = getFeatures().supportsGlobalPriority.enabled;
 }
 
 void DisplayVk::generateCaps(egl::Caps *outCaps) const
@@ -627,10 +632,10 @@ const char *DisplayVk::getWSILayer() const
     return nullptr;
 }
 
-void DisplayVk::handleError(VkResult result,
-                            const char *file,
-                            const char *function,
-                            unsigned int line)
+void ThreadSafeDisplayVk::handleError(VkResult result,
+                                      const char *file,
+                                      const char *function,
+                                      unsigned int line)
 {
     ASSERT(result != VK_SUCCESS);
 
@@ -662,12 +667,12 @@ void DisplayVk::populateFeatureList(angle::FeatureList *features)
 // vk::GlobalOps
 void DisplayVk::putBlob(const angle::BlobCacheKey &key, const angle::MemoryBuffer &value)
 {
-    getBlobCache()->putApplication(key, value);
+    getBlobCache()->putApplication(nullptr, key, value);
 }
 
 bool DisplayVk::getBlob(const angle::BlobCacheKey &key, angle::BlobCacheValue *valueOut)
 {
-    return getBlobCache()->get(&mScratchBuffer, key, valueOut);
+    return getBlobCache()->get(nullptr, &mScratchBuffer, key, valueOut);
 }
 
 std::shared_ptr<angle::WaitableEvent> DisplayVk::postMultiThreadWorkerTask(
@@ -680,4 +685,81 @@ void DisplayVk::notifyDeviceLost()
 {
     mState.notifyDeviceLost();
 }
+
+void DisplayVk::lockVulkanQueue()
+{
+    mRenderer->lockVulkanQueueForExternalAccess();
+}
+
+void DisplayVk::unlockVulkanQueue()
+{
+    mRenderer->unlockVulkanQueueForExternalAccess();
+}
+
+egl::Error DisplayVk::querySupportedCompressionRates(const egl::Config *configuration,
+                                                     const egl::AttributeMap &attributes,
+                                                     EGLint *rates,
+                                                     EGLint rate_size,
+                                                     EGLint *num_rates) const
+{
+    ASSERT(mRenderer->getFeatures().supportsImageCompressionControl.enabled);
+    ASSERT(mRenderer->getFeatures().supportsImageCompressionControlSwapchain.enabled);
+
+    if (rate_size == 0 || rates == nullptr)
+    {
+        *num_rates = 0;
+        return egl::NoError();
+    }
+
+    const vk::Format &format = mRenderer->getFormat(configuration->renderTargetFormat);
+
+    VkImageCompressionControlEXT compressionInfo = {};
+    compressionInfo.sType                        = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT;
+    compressionInfo.flags                        = VK_IMAGE_COMPRESSION_FIXED_RATE_DEFAULT_EXT;
+    compressionInfo.compressionControlPlaneCount = 1;
+
+    VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
+    imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+    imageFormatInfo.pNext = &compressionInfo;
+    imageFormatInfo.format =
+        vk::GetVkFormatFromFormatID(mRenderer, format.getActualRenderableImageFormatID());
+    imageFormatInfo.type   = VK_IMAGE_TYPE_2D;
+    imageFormatInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageFormatInfo.usage  = vk::kImageUsageTransferBits | VK_IMAGE_USAGE_SAMPLED_BIT |
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+
+    VkImageCompressionPropertiesEXT compressionProperties = {};
+    compressionProperties.sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT;
+
+    VkImageFormatProperties2 imageFormatProperties2 = {};
+    imageFormatProperties2.sType                    = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+    imageFormatProperties2.pNext                    = &compressionProperties;
+
+    VkResult result =
+        VK_CALL(vkGetPhysicalDeviceImageFormatProperties2, mRenderer->getPhysicalDevice(),
+                &imageFormatInfo, &imageFormatProperties2);
+
+    if (result == VK_ERROR_FORMAT_NOT_SUPPORTED)
+    {
+        *num_rates = 0;
+        return egl::NoError();
+    }
+    else if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+    {
+        return egl::Error(EGL_BAD_ALLOC);
+    }
+    else if (result != VK_SUCCESS)
+    {
+        return egl::Error(EGL_BAD_ACCESS);
+    }
+
+    std::vector<EGLint> eglFixedRates = vk_gl::ConvertCompressionFlagsToEGLFixedRate(
+        compressionProperties.imageCompressionFixedRateFlags, static_cast<size_t>(rate_size));
+    std::copy(eglFixedRates.begin(), eglFixedRates.end(), rates);
+    *num_rates = static_cast<EGLint>(eglFixedRates.size());
+
+    return egl::NoError();
+}
+
 }  // namespace rx

@@ -25,15 +25,15 @@
 
 #pragma once
 
-#include "AllocationFailureMode.h"
-#include "BlockDirectoryBits.h"
-#include "CellAttributes.h"
-#include "FreeList.h"
-#include "LocalAllocator.h"
-#include "MarkedBlock.h"
+#include <JavaScriptCore/BlockDirectoryBits.h>
+#include <JavaScriptCore/CellAttributes.h>
+#include <JavaScriptCore/FreeList.h>
+#include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/LocalAllocator.h>
+#include <JavaScriptCore/MarkedBlock.h>
 #include <wtf/DataLog.h>
-#include <wtf/FastBitVector.h>
-#include <wtf/MonotonicTime.h>
+#include <wtf/DebugHeap.h>
+#include <wtf/Lock.h>
 #include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
@@ -53,33 +53,30 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BlockDirectory);
 
 class BlockDirectory {
     WTF_MAKE_NONCOPYABLE(BlockDirectory);
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(BlockDirectory);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(BlockDirectory, BlockDirectory);
     
     friend class LLIntOffsetsExtractor;
 
 public:
     BlockDirectory(size_t cellSize);
     ~BlockDirectory();
-    void setSubspace(Subspace*);
+    void NODELETE setSubspace(Subspace*);
     void lastChanceToFinalize();
     void prepareForAllocation();
     void stopAllocating();
     void stopAllocatingForGood();
     void resumeAllocating();
-    void beginMarkingForFullCollection();
+    void NODELETE beginMarkingForFullCollection();
     void endMarking();
-    void snapshotUnsweptForEdenCollection();
-    void snapshotUnsweptForFullCollection();
+    void NODELETE snapshotUnsweptForEdenCollection();
+    void NODELETE snapshotUnsweptForFullCollection();
     void sweep();
     void shrink();
     void assertNoUnswept();
     size_t cellSize() const { return m_cellSize; }
     CellAttributes attributes() const { return m_attributes; }
-    bool needsDestruction() const { return m_attributes.destruction == NeedsDestruction; }
     DestructionMode destruction() const { return m_attributes.destruction; }
     HeapCell::Kind cellKind() const { return m_attributes.cellKind; }
-
-    bool isFreeListedCell(const void* target);
 
     inline void forEachBlock(const std::invocable<MarkedBlock::Handle*> auto&);
     inline void forEachNotEmptyBlock(const std::invocable<MarkedBlock::Handle*> auto&);
@@ -94,7 +91,7 @@ public:
     void updatePercentageOfPagedOutPages(WTF::SimpleStats&);
     
 #if ASSERT_ENABLED
-    void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
+    JS_EXPORT_PRIVATE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
     void assertSweeperIsSuspended() const WTF_ASSERTS_ACQUIRED_LOCK(m_bitvectorLock);
 #else
     ALWAYS_INLINE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
@@ -104,7 +101,7 @@ public:
     // to release the capability.
     ALWAYS_INLINE void releaseAssertAcquiredBitVectorLock() const WTF_RELEASES_SHARED_CAPABILITY(m_bitvectorLock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS { }
 
-    Lock& bitvectorLock() WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
+    Lock& bitvectorLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
 
 #define BLOCK_DIRECTORY_BIT_ACCESSORS(lowerBitName, capitalBitName)     \
     bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.is ## capitalBitName(index); } \
@@ -146,14 +143,17 @@ public:
     
     MarkedBlock::Handle* findEmptyBlockToSteal();
     
-    MarkedBlock::Handle* findBlockToSweep() { return findBlockToSweep(m_unsweptCursor); }
+    inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
-    
+
+    // FIXME: rdar://139998916
+    MarkedBlock::Handle* NODELETE findMarkedBlockHandleDebug(MarkedBlock*);
+
     void didFinishUsingBlock(MarkedBlock::Handle*);
     void didFinishUsingBlock(AbstractLocker&, MarkedBlock::Handle*) WTF_REQUIRES_LOCK(m_bitvectorLock);
 
     Subspace* subspace() const { return m_subspace; }
-    MarkedSpace& markedSpace() const;
+    MarkedSpace& NODELETE markedSpace() const;
     
     void dump(PrintStream&) const;
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);

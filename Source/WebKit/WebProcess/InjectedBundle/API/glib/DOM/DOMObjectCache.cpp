@@ -23,8 +23,9 @@
 #include <WebCore/FrameDestructionObserver.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/LocalDOMWindow.h>
-#include <WebCore/LocalFrame.h>
-#include <WebCore/Node.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <WebCore/NodeDocument.h>
+#include <WebCore/NodeInlines.h>
 #include <glib-object.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
@@ -36,7 +37,7 @@
 namespace WebKit {
 
 struct DOMObjectCacheData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DOMObjectCacheData);
     DOMObjectCacheData(GObject* wrapper)
         : object(wrapper)
         , cacheReferences(1)
@@ -72,7 +73,7 @@ struct DOMObjectCacheData {
 };
 
 class DOMObjectCacheFrameObserver;
-typedef HashMap<WebCore::LocalFrame*, std::unique_ptr<DOMObjectCacheFrameObserver>> DOMObjectCacheFrameObserverMap;
+typedef HashMap<WebCore::LocalFrame*, RefPtr<DOMObjectCacheFrameObserver>> DOMObjectCacheFrameObserverMap;
 
 static DOMObjectCacheFrameObserverMap& domObjectCacheFrameObservers()
 {
@@ -80,12 +81,12 @@ static DOMObjectCacheFrameObserverMap& domObjectCacheFrameObservers()
     return map;
 }
 
-class DOMObjectCacheFrameObserver final: public WebCore::FrameDestructionObserver {
+class DOMObjectCacheFrameObserver final: public WebCore::FrameDestructionObserver, public RefCounted<DOMObjectCacheFrameObserver> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(DOMObjectCacheFrameObserver);
 public:
-    DOMObjectCacheFrameObserver(WebCore::LocalFrame& frame)
-        : FrameDestructionObserver(&frame)
+    static RefPtr<DOMObjectCacheFrameObserver> create(WebCore::LocalFrame& frame)
     {
+        return adoptRef(*new DOMObjectCacheFrameObserver(frame));
     }
 
     ~DOMObjectCacheFrameObserver()
@@ -93,15 +94,19 @@ public:
         ASSERT(m_objects.isEmpty());
     }
 
+    // WebCore::FrameDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void addObjectCacheData(DOMObjectCacheData& data)
     {
         ASSERT(!m_objects.contains(&data));
 
-        auto* domWindow = m_frame->document()->domWindow();
-        if (domWindow && (!m_domWindowObserver || m_domWindowObserver->window() != domWindow)) {
+        auto* window = m_frame->document()->window();
+        if (window && (!m_domWindowObserver || m_domWindowObserver->window() != window)) {
             // New LocalDOMWindow, clear the cache and create a new DOMWindowObserver.
             clear();
-            m_domWindowObserver = makeUnique<DOMWindowObserver>(*domWindow, *this);
+            m_domWindowObserver = DOMWindowObserver::create(*window, *this);
         }
 
         m_objects.append(&data);
@@ -109,14 +114,12 @@ public:
     }
 
 private:
-    class DOMWindowObserver final : public WebCore::LocalDOMWindowObserver {
+    class DOMWindowObserver final : public RefCounted<DOMWindowObserver>, public WebCore::LocalDOMWindowObserver {
         WTF_MAKE_TZONE_ALLOCATED_INLINE(DOMWindowObserver);
     public:
-        DOMWindowObserver(WebCore::LocalDOMWindow& window, DOMObjectCacheFrameObserver& frameObserver)
-            : m_window(window)
-            , m_frameObserver(frameObserver)
+        static Ref<DOMWindowObserver> create(WebCore::LocalDOMWindow& window, DOMObjectCacheFrameObserver& frameObserver)
         {
-            window.registerObserver(*this);
+            return adoptRef(*new DOMWindowObserver(window, frameObserver));
         }
 
         ~DOMWindowObserver()
@@ -127,14 +130,26 @@ private:
 
         WebCore::LocalDOMWindow* window() const { return m_window.get(); }
 
+        // WebCore::LocalDOMWindowObserver.
+        void ref() const final { RefCounted::ref(); }
+        void deref() const final { RefCounted::deref(); }
+
     private:
+        DOMWindowObserver(WebCore::LocalDOMWindow& window, DOMObjectCacheFrameObserver& frameObserver)
+            : m_window(window)
+            , m_frameObserver(frameObserver)
+        {
+            window.registerObserver(*this);
+        }
+
         void willDetachGlobalObjectFromFrame() override
         {
-            m_frameObserver.willDetachGlobalObjectFromFrame();
+            if (m_frameObserver)
+                m_frameObserver->willDetachGlobalObjectFromFrame();
         }
 
         WeakPtr<WebCore::LocalDOMWindow, WebCore::WeakPtrImplWithEventTargetData> m_window;
-        DOMObjectCacheFrameObserver& m_frameObserver;
+        WeakPtr<DOMObjectCacheFrameObserver> m_frameObserver;
     };
 
     static void objectFinalizedCallback(gpointer userData, GObject* finalizedObject)
@@ -150,7 +165,7 @@ private:
         if (m_objects.isEmpty())
             return;
 
-        auto objects = WTFMove(m_objects);
+        auto objects = WTF::move(m_objects);
 
         // Deleting of DOM wrappers might end up deleting the wrapped core object which could cause some problems
         // for example if a Document is deleted during the frame destruction, so we remove the weak references now
@@ -158,7 +173,7 @@ private:
         for (auto* data : objects)
             g_object_weak_unref(data->object, DOMObjectCacheFrameObserver::objectFinalizedCallback, this);
 
-        RunLoop::main().dispatch([objects] {
+        RunLoop::mainSingleton().dispatch([objects] {
             for (auto* data : objects)
                 data->clearObject();
         });
@@ -183,15 +198,20 @@ private:
         m_domWindowObserver = nullptr;
     }
 
+    DOMObjectCacheFrameObserver(WebCore::LocalFrame& frame)
+        : FrameDestructionObserver(&frame)
+    {
+    }
+
     Vector<DOMObjectCacheData*, 8> m_objects;
-    std::unique_ptr<DOMWindowObserver> m_domWindowObserver;
+    RefPtr<DOMWindowObserver> m_domWindowObserver;
 };
 
 static DOMObjectCacheFrameObserver& getOrCreateDOMObjectCacheFrameObserver(WebCore::LocalFrame& frame)
 {
     DOMObjectCacheFrameObserverMap::AddResult result = domObjectCacheFrameObservers().add(&frame, nullptr);
     if (result.isNewEntry)
-        result.iterator->value = makeUnique<DOMObjectCacheFrameObserver>(frame);
+        result.iterator->value = DOMObjectCacheFrameObserver::create(frame);
     return *result.iterator->value;
 }
 

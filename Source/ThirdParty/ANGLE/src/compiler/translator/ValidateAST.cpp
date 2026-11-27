@@ -9,9 +9,9 @@
 #include "common/utilities.h"
 #include "compiler/translator/Diagnostics.h"
 #include "compiler/translator/ImmutableStringBuilder.h"
+#include "compiler/translator/Name.h"
 #include "compiler/translator/Symbol.h"
 #include "compiler/translator/tree_util/IntermTraverse.h"
-#include "compiler/translator/tree_util/SpecializationConstant.h"
 #include "compiler/translator/util.h"
 
 namespace sh
@@ -71,12 +71,12 @@ class ValidateAST : public TIntermTraverser
     void scope(Visit visit);
     bool isVariableDeclared(const TVariable *variable);
     bool variableNeedsDeclaration(const TVariable *variable);
-    const TFieldListCollection *getStructOrInterfaceBlock(const TType &type,
-                                                          ImmutableString *typeNameOut);
+    const TFieldListCollection *getStructOrInterfaceBlock(const TType &type, Name *typeNameOut);
 
     void expectNonNullChildren(Visit visit, TIntermNode *node, size_t least_count);
 
     bool validateInternal();
+    bool isInDeclaration() const;
 
     ValidateASTOptions mOptions;
     TDiagnostics *mDiagnostics;
@@ -88,7 +88,7 @@ class ValidateAST : public TIntermTraverser
     // For validateVariableReferences:
     std::vector<std::set<const TVariable *>> mDeclaredVariables;
     std::set<const TInterfaceBlock *> mNamelessInterfaceBlocks;
-    std::map<ImmutableString, const TVariable *> mReferencedBuiltIns;
+    std::map<ImmutableString, TSymbolUniqueId> mReferencedBuiltIns;
     bool mVariableReferencesFailed = false;
 
     // For validateOps:
@@ -114,7 +114,8 @@ class ValidateAST : public TIntermTraverser
     bool mPrecisionFailed = false;
 
     // For validateStructUsage:
-    std::vector<std::map<ImmutableString, const TFieldListCollection *>> mStructsAndBlocksByName;
+    std::vector<std::map<Name, const TFieldListCollection *>> mStructsAndBlocksByName;
+    std::vector<std::map<TSymbolUniqueId, const TFieldListCollection *>> mStructsById;
     std::set<const TFunction *> mStructUsageProcessedFunctions;
     bool mStructUsageFailed = false;
 
@@ -133,6 +134,11 @@ class ValidateAST : public TIntermTraverser
     // For validateNoStatementsAfterBranch:
     bool mIsBranchVisitedInBlock        = false;
     bool mNoStatementsAfterBranchFailed = false;
+
+    // For validateNoCaseAtEndOfSwitchBlock:
+    bool mNoCaseAtEndOfSwitchBlockFailed = false;
+
+    bool mVariableNamingFailed = false;
 };
 
 bool IsSameType(const TType &a, const TType &b)
@@ -307,7 +313,7 @@ void ValidateAST::visitStructOrInterfaceBlockDeclaration(const TType &type,
     }
 
     // Make sure the structure or interface block is not doubly defined.
-    ImmutableString typeName("");
+    Name typeName;
     const TFieldListCollection *namedStructOrBlock = getStructOrInterfaceBlock(type, &typeName);
 
     // Recurse the fields of the structure or interface block and check members of structure type.
@@ -336,24 +342,25 @@ void ValidateAST::visitStructOrInterfaceBlockDeclaration(const TType &type,
         if (type.getStruct() == nullptr)
         {
             // Allow interfaces to be doubly-defined.
-            std::string name(typeName.data());
+            ImmutableString rawName = typeName.rawName();
 
             if (IsShaderIn(type.getQualifier()))
             {
-                typeName = ImmutableString(name + "<input>");
+                rawName = BuildConcatenatedImmutableString(rawName, "<input>");
             }
             else if (IsShaderOut(type.getQualifier()))
             {
-                typeName = ImmutableString(name + "<output>");
+                rawName = BuildConcatenatedImmutableString(rawName, "<output>");
             }
             else if (IsStorageBuffer(type.getQualifier()))
             {
-                typeName = ImmutableString(name + "<buffer>");
+                rawName = BuildConcatenatedImmutableString(rawName, "<buffer>");
             }
             else if (type.getQualifier() == EvqUniform)
             {
-                typeName = ImmutableString(name + "<uniform>");
+                rawName = BuildConcatenatedImmutableString(rawName, "<uniform>");
             }
+            typeName = Name(rawName, typeName.symbolType());
         }
 
         if (mStructsAndBlocksByName.back().find(typeName) != mStructsAndBlocksByName.back().end())
@@ -361,7 +368,7 @@ void ValidateAST::visitStructOrInterfaceBlockDeclaration(const TType &type,
             mDiagnostics->error(location,
                                 "Found redeclaration of struct or interface block with the same "
                                 "name in the same scope <validateStructUsage>",
-                                typeName.data());
+                                typeName.rawName().data());
             mStructUsageFailed = true;
         }
         else
@@ -369,6 +376,10 @@ void ValidateAST::visitStructOrInterfaceBlockDeclaration(const TType &type,
             // First encounter.
             mStructsAndBlocksByName.back()[typeName] = namedStructOrBlock;
         }
+    }
+    if (type.getStruct() != nullptr)
+    {
+        mStructsById.back()[type.getStruct()->uniqueId()] = type.getStruct();
     }
 }
 
@@ -382,15 +393,17 @@ void ValidateAST::visitStructUsage(const TType &type, const TSourceLoc &location
     // Make sure the structure being referenced has the same pointer as the closest (in scope)
     // definition.
     const TStructure *structure     = type.getStruct();
-    const ImmutableString &typeName = structure->name();
+    const ImmutableString typeName  = structure->symbolType() == SymbolType::Empty
+                                          ? ImmutableString("<anonymous>")
+                                          : structure->name();
 
     bool foundDeclaration = false;
-    for (size_t scopeIndex = mStructsAndBlocksByName.size(); scopeIndex > 0; --scopeIndex)
+    for (size_t scopeIndex = mStructsById.size(); scopeIndex > 0; --scopeIndex)
     {
-        const std::map<ImmutableString, const TFieldListCollection *> &scopeDecls =
-            mStructsAndBlocksByName[scopeIndex - 1];
+        const std::map<TSymbolUniqueId, const TFieldListCollection *> &scopeDecls =
+            mStructsById[scopeIndex - 1];
 
-        auto iter = scopeDecls.find(typeName);
+        auto iter = scopeDecls.find(structure->uniqueId());
         if (iter != scopeDecls.end())
         {
             foundDeclaration = true;
@@ -426,12 +439,7 @@ void ValidateAST::visitBuiltInFunction(TIntermOperator *node, const TFunction *f
         return;
     }
 
-    ImmutableStringBuilder opValueBuilder(16);
-    opValueBuilder << "op: ";
-    opValueBuilder.appendDecimal(op);
-
-    ImmutableString opValue = opValueBuilder;
-
+    ImmutableString opValue = BuildConcatenatedImmutableString("op: ", op);
     if (function == nullptr)
     {
         mDiagnostics->error(node->getLine(),
@@ -624,11 +632,11 @@ void ValidateAST::visitBuiltInVariable(TIntermSymbol *node)
         auto iter = mReferencedBuiltIns.find(name);
         if (iter == mReferencedBuiltIns.end())
         {
-            mReferencedBuiltIns[name] = variable;
+            mReferencedBuiltIns.emplace(name, variable->uniqueId());
             return;
         }
 
-        if (variable != iter->second)
+        if (variable->uniqueId() != iter->second)
         {
             mDiagnostics->error(
                 node->getLine(),
@@ -645,8 +653,13 @@ void ValidateAST::visitBuiltInVariable(TIntermSymbol *node)
         if ((name == "gl_ClipDistance" && qualifier != EvqClipDistance) ||
             (name == "gl_CullDistance" && qualifier != EvqCullDistance) ||
             (name == "gl_FragDepth" && qualifier != EvqFragDepth) ||
+            (name == "gl_FragDepthEXT" && qualifier != EvqFragDepth) ||
             (name == "gl_LastFragData" && qualifier != EvqLastFragData) ||
-            (name == "gl_LastFragColorARM" && qualifier != EvqLastFragColor))
+            (name == "gl_LastFragColorARM" && qualifier != EvqLastFragColor) ||
+            (name == "gl_LastFragDepthARM" && qualifier != EvqLastFragDepth) ||
+            (name == "gl_LastFragStencilARM" && qualifier != EvqLastFragStencil) ||
+            (name == "gl_DepthRange" && qualifier != EvqDepthRange) ||
+            (name == "gl_NumSamples" && qualifier != EvqNumSamples))
         {
             mDiagnostics->error(
                 node->getLine(),
@@ -676,10 +689,12 @@ void ValidateAST::scope(Visit visit)
         if (visit == PreVisit)
         {
             mStructsAndBlocksByName.push_back({});
+            mStructsById.push_back({});
         }
         else if (visit == PostVisit)
         {
             mStructsAndBlocksByName.pop_back();
+            mStructsById.pop_back();
         }
     }
 }
@@ -707,18 +722,11 @@ bool ValidateAST::variableNeedsDeclaration(const TVariable *variable)
         return false;
     }
 
-    // Additionally, don't expect declaration for Vulkan specialization constants if not enabled.
-    // The declaration of these variables is deferred.
-    if (variable->getType().getQualifier() == EvqSpecConst)
-    {
-        return mOptions.validateSpecConstReferences;
-    }
-
     return true;
 }
 
 const TFieldListCollection *ValidateAST::getStructOrInterfaceBlock(const TType &type,
-                                                                   ImmutableString *typeNameOut)
+                                                                   Name *typeNameOut)
 {
     const TStructure *structure           = type.getStruct();
     const TInterfaceBlock *interfaceBlock = type.getInterfaceBlock();
@@ -730,12 +738,12 @@ const TFieldListCollection *ValidateAST::getStructOrInterfaceBlock(const TType &
     if (structure != nullptr && structure->symbolType() != SymbolType::Empty)
     {
         structOrBlock = structure;
-        *typeNameOut  = structure->name();
+        *typeNameOut  = Name(*structure);
     }
     else if (interfaceBlock != nullptr)
     {
         structOrBlock = interfaceBlock;
-        *typeNameOut  = interfaceBlock->name();
+        *typeNameOut  = Name(*interfaceBlock);
     }
 
     return structOrBlock;
@@ -776,7 +784,15 @@ void ValidateAST::visitSymbol(TIntermSymbol *node)
             visitVariableNeedingDeclaration(node);
         }
     }
-
+    if (variable->symbolType() == SymbolType::Empty &&
+        variable->getType().getInterfaceBlock() == nullptr)
+    {
+        if (!isInDeclaration())
+        {
+            mDiagnostics->error(node->getLine(), "Found symbol with empty name", "");
+            mVariableNamingFailed = true;
+        }
+    }
     const bool isBuiltIn = gl::IsBuiltInName(variable->name().data());
     if (isBuiltIn)
     {
@@ -900,6 +916,17 @@ bool ValidateAST::visitSwitch(Visit visit, TIntermSwitch *node)
     if (mOptions.validateExpressionTypes && visit == PreVisit)
     {
         validateExpressionTypeSwitch(node);
+    }
+
+    if (mOptions.validateNoCaseAtEndOfSwitchBlock && visit == PreVisit)
+    {
+        const TIntermSequence &statements = *node->getStatementList()->getSequence();
+        if (!statements.empty() && statements.back()->getAsCaseNode() != nullptr)
+        {
+            mDiagnostics->error(node->getLine(), "Found switch block that ends in a case statement",
+                                "<validateNoCaseAtEndOfSwitchBlock>");
+            mNoCaseAtEndOfSwitchBlockFailed = true;
+        }
     }
 
     return true;
@@ -1306,7 +1333,14 @@ bool ValidateAST::validateInternal()
            !mBuiltInOpsFailed && !mFunctionCallFailed && !mNoRawFunctionCallsFailed &&
            !mNullNodesFailed && !mQualifiersFailed && !mPrecisionFailed && !mStructUsageFailed &&
            !mExpressionTypesFailed && !mMultiDeclarationsFailed && !mNoSwizzleOfSwizzleFailed &&
-           !mNoQualifiersOnConstructorsFailed && !mNoStatementsAfterBranchFailed;
+           !mNoQualifiersOnConstructorsFailed && !mNoStatementsAfterBranchFailed &&
+           !mNoCaseAtEndOfSwitchBlockFailed && !mVariableNamingFailed;
+}
+
+bool ValidateAST::isInDeclaration() const
+{
+    auto *parent = getParentNode();
+    return parent != nullptr && parent->getAsDeclarationNode() != nullptr;
 }
 
 }  // anonymous namespace

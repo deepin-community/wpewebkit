@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,27 +38,21 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebKit {
-class PrivateClickMeasurementManager;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::PrivateClickMeasurementManager> : std::true_type { };
-}
-
-namespace WebKit {
+using ApplicationBundleIdentifiersOrAuditToken = Variant<std::pair<String, String>, Vector<uint8_t>>;
 
 class PrivateClickMeasurementManager : public PCM::ManagerInterface, public CanMakeWeakPtr<PrivateClickMeasurementManager> {
     WTF_MAKE_TZONE_ALLOCATED(PrivateClickMeasurementManager);
 public:
+    static Ref<PrivateClickMeasurementManager> create(UniqueRef<PCM::Client>&&, const String& storageDirectory, const ApplicationBundleIdentifiersOrAuditToken&);
 
-    explicit PrivateClickMeasurementManager(UniqueRef<PCM::Client>&&, const String& storageDirectory);
     ~PrivateClickMeasurementManager();
 
     using ApplicationBundleIdentifier = String;
 
     void storeUnattributed(PrivateClickMeasurement&&, CompletionHandler<void()>&&) final;
     void handleAttribution(AttributionTriggerData&&, const URL& requestURL, WebCore::RegistrableDomain&& redirectDomain, const URL& firstPartyURL, const ApplicationBundleIdentifier&) final;
+    void checkAttributionTimer() final;
     void clear(CompletionHandler<void()>&&) final;
     void clearForRegistrableDomain(RegistrableDomain&&, CompletionHandler<void()>&&) final;
     void migratePrivateClickMeasurementFromLegacyStorage(PrivateClickMeasurement&&, PrivateClickMeasurementAttributionType) final;
@@ -77,8 +71,11 @@ public:
     void setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBundleIdentifier&&);
     void destroyStoreForTesting(CompletionHandler<void()>&&) final;
     void allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo&) final;
+    void fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&&);
 
 private:
+    PrivateClickMeasurementManager(UniqueRef<PCM::Client>&&, const String& storageDirectory, const ApplicationBundleIdentifiersOrAuditToken&);
+
     PCM::Store& store();
     const PCM::Store& store() const;
     void initializeStore() const;
@@ -106,7 +103,8 @@ private:
     std::optional<ApplicationBundleIdentifier> m_privateClickMeasurementAppBundleIDForTesting;
     mutable RefPtr<PCM::Store> m_store;
     String m_storageDirectory;
-    UniqueRef<PCM::Client> m_client;
+    const ApplicationBundleIdentifiersOrAuditToken m_applicationBundleIdentifier;
+    const UniqueRef<PCM::Client> m_client;
 
     struct AttributionReportTestConfig {
         URL attributionReportClickSourceURL;

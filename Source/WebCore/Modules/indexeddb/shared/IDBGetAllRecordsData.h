@@ -25,21 +25,23 @@
 
 #pragma once
 
-#include "IDBKeyRangeData.h"
-#include "IDBObjectStoreIdentifier.h"
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBKeyRangeData.h>
+#include <WebCore/IDBObjectStoreIdentifier.h>
 
 namespace WebCore {
 
 namespace IndexedDB {
-enum class GetAllType : bool;
+enum class GetAllType : uint8_t;
 }
 
 struct IDBGetAllRecordsData {
     IDBKeyRangeData keyRangeData;
     IndexedDB::GetAllType getAllType;
     std::optional<uint32_t> count;
+    IndexedDB::CursorDirection cursorDirection;
     IDBObjectStoreIdentifier objectStoreIdentifier;
-    uint64_t indexIdentifier;
+    std::optional<IDBIndexIdentifier> indexIdentifier { };
 
     WEBCORE_EXPORT IDBGetAllRecordsData isolatedCopy() const;
 

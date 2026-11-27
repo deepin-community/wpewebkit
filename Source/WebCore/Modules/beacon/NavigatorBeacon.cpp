@@ -27,19 +27,20 @@
 #include "NavigatorBeacon.h"
 
 #include "CachedRawResource.h"
-#include "CachedResourceLoader.h"
-#include "Document.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentResourceLoader.h"
 #include "FrameDestructionObserverInlines.h"
 #include "HTTPParsers.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "Navigator.h"
 #include "Page.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NavigatorBeacon);
 
 NavigatorBeacon::NavigatorBeacon(Navigator& navigator)
     : m_navigator(navigator)
@@ -49,23 +50,28 @@ NavigatorBeacon::NavigatorBeacon(Navigator& navigator)
 NavigatorBeacon::~NavigatorBeacon()
 {
     for (auto& beacon : m_inflightBeacons)
-        beacon->removeClient(*this);
+        protect(beacon)->removeClient(*this);
 }
 
-NavigatorBeacon* NavigatorBeacon::from(Navigator& navigator)
+void NavigatorBeacon::ref() const
 {
-    auto* supplement = static_cast<NavigatorBeacon*>(Supplement<Navigator>::from(&navigator, supplementName()));
+    m_navigator->ref();
+}
+
+void NavigatorBeacon::deref() const
+{
+    m_navigator->deref();
+}
+
+Ref<NavigatorBeacon> NavigatorBeacon::from(Navigator& navigator)
+{
+    RefPtr supplement = downcast<NavigatorBeacon>(Supplement<Navigator>::from(&navigator, supplementName()));
     if (!supplement) {
-        auto newSupplement = makeUnique<NavigatorBeacon>(navigator);
+        auto newSupplement = makeUniqueWithoutRefCountedCheck<NavigatorBeacon>(navigator);
         supplement = newSupplement.get();
-        provideTo(&navigator, supplementName(), WTFMove(newSupplement));
+        provideTo(&navigator, supplementName(), WTF::move(newSupplement));
     }
-    return supplement;
-}
-
-ASCIILiteral NavigatorBeacon::supplementName()
-{
-    return "NavigatorBeacon"_s;
+    return supplement.releaseNonNull();
 }
 
 void NavigatorBeacon::notifyFinished(CachedResource& resource, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
@@ -83,7 +89,7 @@ void NavigatorBeacon::logError(const ResourceError& error)
 {
     ASSERT(!error.isNull());
 
-    RefPtr frame = m_navigator.frame();
+    RefPtr frame = m_navigator->frame();
     if (!frame)
         return;
 
@@ -105,24 +111,24 @@ void NavigatorBeacon::logError(const ResourceError& error)
 
 ExceptionOr<bool> NavigatorBeacon::sendBeacon(Document& document, const String& url, std::optional<FetchBody::Init>&& body)
 {
-    URL parsedUrl = document.completeURL(url);
+    URL parsedURL = document.parseURL(url);
 
-    // Set parsedUrl to the result of the URL parser steps with url and base. If the algorithm returns an error, or if
-    // parsedUrl's scheme is not "http" or "https", throw a "TypeError" exception and terminate these steps.
-    if (!parsedUrl.isValid())
+    // Set parsedURL to the result of the URL parser steps with url and base. If the algorithm returns an error, or if
+    // parsedURL's scheme is not "http" or "https", throw a "TypeError" exception and terminate these steps.
+    if (!parsedURL.isValid())
         return Exception { ExceptionCode::TypeError, "This URL is invalid"_s };
-    if (!parsedUrl.protocolIsInHTTPFamily())
+    if (!parsedURL.protocolIsInHTTPFamily())
         return Exception { ExceptionCode::TypeError, "Beacons can only be sent over HTTP(S)"_s };
 
     if (!document.frame())
         return false;
 
-    if (!document.shouldBypassMainWorldContentSecurityPolicy() && !document.checkedContentSecurityPolicy()->allowConnectToSource(parsedUrl)) {
+    if (!document.shouldBypassMainWorldContentSecurityPolicy() && !protect(document.contentSecurityPolicy())->allowConnectToSource(parsedURL, document.currentParserSourcePosition())) {
         // We simulate a network error so we return true here. This is consistent with Blink.
         return true;
     }
 
-    ResourceRequest request(parsedUrl);
+    ResourceRequest request(WTF::move(parsedURL));
     request.setHTTPMethod("POST"_s);
     request.setRequester(ResourceRequestRequester::Beacon);
     if (RefPtr documentLoader = document.loader())
@@ -137,7 +143,7 @@ ExceptionOr<bool> NavigatorBeacon::sendBeacon(Document& document, const String& 
     if (body) {
         options.mode = FetchOptions::Mode::NoCors;
         String mimeType;
-        auto result = FetchBody::extract(WTFMove(body.value()), mimeType);
+        auto result = FetchBody::extract(WTF::move(body.value()), mimeType);
         if (result.hasException())
             return result.releaseException();
         auto fetchBody = result.releaseReturnValue();
@@ -154,21 +160,21 @@ ExceptionOr<bool> NavigatorBeacon::sendBeacon(Document& document, const String& 
         }
     }
 
-    auto cachedResource = document.protectedCachedResourceLoader()->requestBeaconResource({ WTFMove(request), options });
-    if (!cachedResource) {
-        logError(cachedResource.error());
+    auto cachedResourceOrError = protect(document.cachedResourceLoader())->requestBeaconResource({ WTF::move(request), options });
+    if (!cachedResourceOrError) {
+        logError(cachedResourceOrError.error());
         return false;
     }
-
-    ASSERT(!m_inflightBeacons.contains(cachedResource.value().get()));
-    m_inflightBeacons.append(cachedResource.value().get());
-    cachedResource.value()->addClient(*this);
+    Ref cachedResource = WTF::move(cachedResourceOrError.value());
+    ASSERT(!m_inflightBeacons.contains(cachedResource.ptr()));
+    m_inflightBeacons.append(cachedResource.copyRef());
+    cachedResource->addClient(*this);
     return true;
 }
 
 ExceptionOr<bool> NavigatorBeacon::sendBeacon(Navigator& navigator, Document& document, const String& url, std::optional<FetchBody::Init>&& body)
 {
-    return NavigatorBeacon::from(navigator)->sendBeacon(document, url, WTFMove(body));
+    return NavigatorBeacon::from(navigator)->sendBeacon(document, url, WTF::move(body));
 }
 
 }

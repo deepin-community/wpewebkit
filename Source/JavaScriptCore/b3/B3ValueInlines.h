@@ -30,6 +30,7 @@
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
 #include "B3BottomTupleValue.h"
+#include "B3BulkMemoryValue.h"
 #include "B3CCallValue.h"
 #include "B3CheckValue.h"
 #include "B3Const128Value.h"
@@ -50,10 +51,42 @@
 #include "B3Value.h"
 #include "B3VariableValue.h"
 #include "B3WasmAddressValue.h"
+#include "B3WasmArrayElementValue.h"
+#include "B3WasmArrayGetValue.h"
+#include "B3WasmArrayLengthValue.h"
+#include "B3WasmArrayNewValue.h"
+#include "B3WasmArraySetValue.h"
 #include "B3WasmBoundsCheckValue.h"
+#include "B3WasmRefTypeCheckValue.h"
+#include "B3WasmStructGetValue.h"
+#include "B3WasmStructNewValue.h"
+#include "B3WasmStructSetValue.h"
+#include <array>
 #include <wtf/GraphNodeWorklist.h>
 
 namespace JSC { namespace B3 {
+
+inline constexpr unsigned numberOfB3Opcodes = static_cast<unsigned>(Oops) + 1;
+
+// Effects for opcodes whose effects are a pure function of the opcode. Invalid entries are
+// value-dependent and handled by Value::effectsSlow(). Defined once in B3Value.cpp.
+JS_EXPORT_PRIVATE extern const std::array<Effects, numberOfB3Opcodes> constantEffectsTable;
+
+ALWAYS_INLINE Effects Value::effects() const
+{
+    const Effects& entry = constantEffectsTable[opcode()];
+    if (entry.isValid()) [[likely]]
+        return entry;
+    return effectsSlow();
+}
+
+ALWAYS_INLINE bool Value::mustExecute() const
+{
+    const Effects& entry = constantEffectsTable[opcode()];
+    if (entry.isValid()) [[likely]]
+        return entry.mustExecute();
+    return effectsSlow().mustExecute();
+}
 
 #define DISPATCH_ON_KIND(MACRO) \
     switch (kind().opcode()) { \
@@ -67,10 +100,12 @@ namespace JSC { namespace B3 {
     case Identity: \
     case Opaque: \
     case Neg: \
+    case PurifyNaN: \
     case Clz: \
     case Abs: \
     case Ceil: \
     case Floor: \
+    case FTrunc: \
     case Sqrt: \
     case SExt8: \
     case SExt16: \
@@ -91,6 +126,8 @@ namespace JSC { namespace B3 {
     case Add: \
     case Sub: \
     case Mul: \
+    case MulHigh: \
+    case UMulHigh: \
     case Div: \
     case UDiv: \
     case Mod: \
@@ -118,6 +155,8 @@ namespace JSC { namespace B3 {
     case EqualOrUnordered: \
     case Select: \
         return MACRO(Value); \
+    case WasmArrayLength: \
+        return MACRO(WasmArrayLengthValue); \
     case ArgumentReg: \
         return MACRO(ArgumentRegValue); \
     case Const32: \
@@ -148,6 +187,9 @@ namespace JSC { namespace B3 {
     case Store16: \
     case Store: \
         return MACRO(MemoryValue); \
+    case MemoryCopy: \
+    case MemoryFill: \
+        return MACRO(BulkMemoryValue); \
     case Switch: \
         return MACRO(SwitchValue); \
     case Upsilon: \
@@ -158,6 +200,21 @@ namespace JSC { namespace B3 {
         return MACRO(WasmAddressValue); \
     case WasmBoundsCheck: \
         return MACRO(WasmBoundsCheckValue); \
+    case WasmStructGet: \
+        return MACRO(WasmStructGetValue); \
+    case WasmStructSet: \
+        return MACRO(WasmStructSetValue); \
+    case WasmStructNew: \
+        return MACRO(WasmStructNewValue); \
+    case WasmArrayGet: \
+        return MACRO(WasmArrayGetValue); \
+    case WasmArraySet: \
+        return MACRO(WasmArraySetValue); \
+    case WasmArrayNew: \
+        return MACRO(WasmArrayNewValue); \
+    case WasmRefCast: \
+    case WasmRefTest: \
+        return MACRO(WasmRefTypeCheckValue); \
     case AtomicXchgAdd: \
     case AtomicXchgAnd: \
     case AtomicXchgOr: \
@@ -194,6 +251,8 @@ namespace JSC { namespace B3 {
     case VectorAddSat: \
     case VectorSubSat: \
     case VectorMul: \
+    case VectorMulHigh: \
+    case VectorMulLow: \
     case VectorDotProduct: \
     case VectorDiv: \
     case VectorMin: \
@@ -233,11 +292,24 @@ namespace JSC { namespace B3 {
     case VectorExtaddPairwise: \
     case VectorMulSat: \
     case VectorSwizzle: \
+    case VectorUnzipEven: \
+    case VectorUnzipOdd: \
+    case VectorZipLower: \
+    case VectorZipHigher: \
+    case VectorTransposeEven: \
+    case VectorTransposeOdd: \
+    case VectorReverse: \
+    case VectorExtractPair: \
     case VectorRelaxedSwizzle: \
     case VectorMulByElement: \
-    case VectorShiftByVector: \
     case VectorRelaxedMAdd: \
     case VectorRelaxedNMAdd: \
+    case VectorRelaxedLaneSelect: \
+    case VectorRelaxedQ15Mulr: \
+    case VectorRelaxedMin: \
+    case VectorRelaxedMax: \
+    case VectorRelaxedDotI8x16I7x16: \
+    case VectorRelaxedDotI8x16I7x16Add: \
         return MACRO(SIMDValue); \
     default: \
         RELEASE_ASSERT_NOT_REACHED(); \
@@ -294,6 +366,11 @@ inline bool Value::isConstant() const
 inline bool Value::isInteger() const
 {
     return type() == Int32 || type() == Int64;
+}
+
+inline bool Value::isFP() const
+{
+    return type() == Float || type() == Double;
 }
 
 inline bool Value::hasInt32() const

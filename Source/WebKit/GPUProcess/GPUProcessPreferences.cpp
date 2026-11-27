@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 20220-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,49 +38,7 @@ namespace WebKit {
 
 void GPUProcessPreferences::copyEnabledWebPreferences(const WebPreferences& webPreferences)
 {
-#if ENABLE(OPUS)
-    if (webPreferences.opusDecoderEnabled())
-        opusDecoderEnabled = true;
-#endif
-
-#if ENABLE(VORBIS)
-    if (webPreferences.vorbisDecoderEnabled())
-        vorbisDecoderEnabled = true;
-#endif
-
-#if ENABLE(WEBM_FORMAT_READER)
-    if (webPreferences.webMFormatReaderEnabled())
-        webMFormatReaderEnabled = true;
-#endif
-
-#if ENABLE(MEDIA_SOURCE) && ENABLE(VP9)
-    if (webPreferences.webMParserEnabled())
-        webMParserEnabled = true;
-#endif
-
-#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-    if (webPreferences.mediaSourceInlinePaintingEnabled())
-        mediaSourceInlinePaintingEnabled = true;
-#endif
-
-#if HAVE(AVCONTENTKEYSPECIFIER)
-    if (webPreferences.sampleBufferContentKeySessionSupportEnabled())
-        sampleBufferContentKeySessionSupportEnabled = true;
-#endif
-        
-#if ENABLE(ALTERNATE_WEBM_PLAYER)
-    if (webPreferences.alternateWebMPlayerEnabled())
-        alternateWebMPlayerEnabled = true;
-#endif
-
-#if ENABLE(EXTENSION_CAPABILITIES)
-    if (webPreferences.mediaCapabilityGrantsEnabled())
-        mediaCapabilityGrantsEnabled = true;
-#endif
-
 #if ENABLE(VP9)
-    if (webPreferences.vp8DecoderEnabled())
-        vp8DecoderEnabled = true;
     if (webPreferences.vp9DecoderEnabled())
         vp9DecoderEnabled = true;
     if (webPreferences.sWVPDecodersAlwaysEnabled())

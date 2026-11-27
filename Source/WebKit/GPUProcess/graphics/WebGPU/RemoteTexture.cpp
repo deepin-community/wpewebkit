@@ -40,7 +40,7 @@
 #include <WebCore/WebGPUTextureViewDescriptor.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_OPTIONAL_CONNECTION_BASE(assertion, connection())
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_streamConnection)
 
 namespace WebKit {
 
@@ -49,56 +49,55 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteTexture);
 RemoteTexture::RemoteTexture(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::Texture& texture, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     : m_backing(texture)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_identifier(identifier)
     , m_gpuConnectionToWebProcess(gpuConnectionToWebProcess)
     , m_gpu(gpu)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteTexture::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteTexture::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteTexture::~RemoteTexture() = default;
 
-RefPtr<IPC::Connection> RemoteTexture::connection() const
-{
-    RefPtr connection = m_gpuConnectionToWebProcess.get();
-    if (!connection)
-        return nullptr;
-    return &connection->connection();
-}
-
 void RemoteTexture::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteTexture::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteTexture::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteTexture::createView(const std::optional<WebGPU::TextureViewDescriptor>& descriptor, WebGPUIdentifier identifier)
 {
     std::optional<WebCore::WebGPU::TextureViewDescriptor> convertedDescriptor;
+    Ref objectHeap = m_objectHeap.get();
+
     if (descriptor) {
-        auto resultDescriptor = m_objectHeap->convertFromBacking(*descriptor);
+        auto resultDescriptor = objectHeap->convertFromBacking(*descriptor);
         MESSAGE_CHECK(resultDescriptor);
-        convertedDescriptor = WTFMove(resultDescriptor);
+        convertedDescriptor = WTF::move(resultDescriptor);
     }
-    auto textureView = m_backing->createView(convertedDescriptor);
+    auto textureView = protect(m_backing)->createView(convertedDescriptor);
     MESSAGE_CHECK(textureView);
-    auto remoteTextureView = RemoteTextureView::create(textureView.releaseNonNull(), m_objectHeap, m_streamConnection.copyRef(), m_gpu, identifier);
-    m_objectHeap->addObject(identifier, remoteTextureView);
+    auto remoteTextureView = RemoteTextureView::create(textureView.releaseNonNull(), objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
+    objectHeap->addObject(identifier, remoteTextureView);
 }
 
 void RemoteTexture::destroy()
 {
-    m_backing->destroy();
+    protect(m_backing)->destroy();
+}
+
+void RemoteTexture::undestroy()
+{
+    protect(m_backing)->undestroy();
 }
 
 void RemoteTexture::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteTexture::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

@@ -10,13 +10,14 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextureCompressionType.h"
-#include "include/gpu/GrBackendSemaphore.h"
-#include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrDirectContext.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkMathPriv.h"
+#include "include/gpu/ganesh/GrBackendSemaphore.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkCompressedDataUtils.h"
+#include "src/core/SkMathPriv.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/gpu/GlobalResourceStats.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/ganesh/GrBackendUtils.h"
 #include "src/gpu/ganesh/GrCaps.h"
@@ -434,6 +435,7 @@ bool GrGpu::readPixels(GrSurface* surface,
     SkASSERT(!surface->framebufferOnly());
     SkASSERT(this->caps()->areColorTypeAndFormatCompatible(surfaceColorType,
                                                            surface->backendFormat()));
+    SkASSERT(dstColorType != GrColorType::kUnknown);
 
     if (!SkIRect::MakeSize(surface->dimensions()).contains(rect)) {
         return false;
@@ -682,6 +684,7 @@ void GrGpu::didWriteToSurface(GrSurface* surface, GrSurfaceOrigin origin, const 
 void GrGpu::executeFlushInfo(SkSpan<GrSurfaceProxy*> proxies,
                              SkSurfaces::BackendSurfaceAccess access,
                              const GrFlushInfo& info,
+                             std::optional<GrTimerQuery> timerQuery,
                              const skgpu::MutableTextureState* newState) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 
@@ -711,8 +714,18 @@ void GrGpu::executeFlushInfo(SkSpan<GrSurfaceProxy*> proxies,
         }
     }
 
-    if (info.fFinishedProc) {
-        this->addFinishedProc(info.fFinishedProc, info.fFinishedContext);
+    if (timerQuery) {
+        this->endTimerQuery(*timerQuery);
+    }
+
+    skgpu::AutoCallback callback;
+    if (info.fFinishedWithStatsProc) {
+        callback = skgpu::AutoCallback(info.fFinishedWithStatsProc, info.fFinishedContext);
+    } else {
+        callback = skgpu::AutoCallback(info.fFinishedProc, info.fFinishedContext);
+    }
+    if (callback) {
+        this->addFinishedCallback(std::move(callback), std::move(timerQuery));
     }
 
     if (info.fSubmittedProc) {
@@ -737,15 +750,13 @@ GrOpsRenderPass* GrGpu::getOpsRenderPass(
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
         const TArray<GrSurfaceProxy*, true>& sampledProxies,
         GrXferBarrierFlags renderPassXferBarriers) {
-#if SK_HISTOGRAMS_ENABLED
     fCurrentSubmitRenderPassCount++;
-#endif
     fStats.incRenderPasses();
     return this->onGetOpsRenderPass(renderTarget, useMSAASurface, stencil, origin, bounds,
                                     colorInfo, stencilInfo, sampledProxies, renderPassXferBarriers);
 }
 
-bool GrGpu::submitToGpu(GrSyncCpu sync) {
+bool GrGpu::submitToGpu(const GrSubmitInfo& info) {
     this->stats()->incNumSubmitToGpus();
 
     if (auto manager = this->stagingBufferManager()) {
@@ -756,11 +767,13 @@ bool GrGpu::submitToGpu(GrSyncCpu sync) {
         uniformsBuffer->startSubmit(this);
     }
 
-    bool submitted = this->onSubmitToGpu(sync);
+    bool submitted = this->onSubmitToGpu(info);
 
     this->callSubmittedProcs(submitted);
 
     this->reportSubmitHistograms();
+
+    fCurrentSubmitRenderPassCount = 0;
 
     return submitted;
 }
@@ -770,11 +783,10 @@ void GrGpu::reportSubmitHistograms() {
     // The max allowed value for SK_HISTOGRAM_EXACT_LINEAR is 100. If we want to support higher
     // values we can add SK_HISTOGRAM_CUSTOM_COUNTS but this has a number of buckets that is less
     // than the number of actual values
-    static constexpr int kMaxRenderPassBucketValue = 100;
+    [[maybe_unused]] static constexpr int kMaxRenderPassBucketValue = 100;
     SK_HISTOGRAM_EXACT_LINEAR("SubmitRenderPasses",
                               std::min(fCurrentSubmitRenderPassCount, kMaxRenderPassBucketValue),
                               kMaxRenderPassBucketValue);
-    fCurrentSubmitRenderPassCount = 0;
 #endif
 
     this->onReportSubmitHistograms();
@@ -811,7 +823,7 @@ void GrGpu::dumpJSON(SkJSONWriter* writer) const {
 void GrGpu::dumpJSON(SkJSONWriter* writer) const { }
 #endif
 
-#if defined(GR_TEST_UTILS)
+#if defined(GPU_TEST_UTILS)
 
 #if GR_GPU_STATS
 
@@ -853,7 +865,7 @@ void GrGpu::Stats::dumpKeyValuePairs(TArray<SkString>* keys, TArray<double>* val
 }
 
 #endif // GR_GPU_STATS
-#endif // defined(GR_TEST_UTILS)
+#endif // defined(GPU_TEST_UTILS)
 
 bool GrGpu::CompressedDataIsCorrect(SkISize dimensions,
                                     SkTextureCompressionType compressionType,
@@ -891,8 +903,14 @@ GrBackendTexture GrGpu::createBackendTexture(SkISize dimensions,
         return {};
     }
 
-    return this->onCreateBackendTexture(
+    auto beTex = this->onCreateBackendTexture(
             dimensions, format, renderable, mipmapped, isProtected, label);
+    if (beTex.isValid()) {
+        skgpu::GlobalResourceStats::RecordCreateBackendTexture(
+                isProtected == GrProtected::kYes ? skgpu::Protected::kYes : skgpu::Protected::kNo,
+                GrSurface::ComputeSize(beTex.getBackendFormat(), dimensions, 1, mipmapped));
+    }
+    return beTex;
 }
 
 bool GrGpu::clearBackendTexture(const GrBackendTexture& backendTexture,
@@ -935,7 +953,25 @@ GrBackendTexture GrGpu::createCompressedBackendTexture(SkISize dimensions,
         return {};
     }
 
-    return this->onCreateCompressedBackendTexture(dimensions, format, mipmapped, isProtected);
+    auto tex =  this->onCreateCompressedBackendTexture(dimensions, format, mipmapped, isProtected);
+    if (tex.isValid()) {
+        skgpu::GlobalResourceStats::RecordCreateBackendTexture(
+                isProtected == GrProtected::kYes ? skgpu::Protected::kYes : skgpu::Protected::kNo,
+                GrSurface::ComputeSize(format, dimensions, /*colorSamplesPerPixel=*/1, mipmapped));
+    }
+    return tex;
+}
+
+void GrGpu::deleteBackendTexture(const GrBackendTexture& beTex) {
+    if (beTex.isValid()) {
+        skgpu::GlobalResourceStats::RecordDeleteBackendTexture(
+                beTex.isProtected() ? skgpu::Protected::kYes : skgpu::Protected::kNo,
+                GrSurface::ComputeSize(beTex.getBackendFormat(),
+                                       beTex.dimensions(),
+                                       /*colorSamplesPerPixel=*/1,
+                                       beTex.mipmapped()));
+        this->onDeleteBackendTexture(beTex);
+    }
 }
 
 bool GrGpu::updateCompressedBackendTexture(const GrBackendTexture& backendTexture,

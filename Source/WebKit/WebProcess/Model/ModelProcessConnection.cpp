@@ -35,7 +35,6 @@
 #include "ModelProcessConnectionParameters.h"
 #include "ModelProcessModelPlayerManager.h"
 #include "ModelProcessModelPlayerMessages.h"
-#include "WebCoreArgumentCoders.h"
 #include "WebPage.h"
 #include "WebPageCreationParameters.h"
 #include "WebPageMessages.h"
@@ -45,24 +44,15 @@
 namespace WebKit {
 using namespace WebCore;
 
-static ModelProcessConnectionParameters getModelProcessConnectionParameters()
-{
-    ModelProcessConnectionParameters parameters;
-#if PLATFORM(COCOA)
-    parameters.webProcessIdentity = ProcessIdentity { ProcessIdentity::CurrentProcess };
-#endif
-    return parameters;
-}
-
 RefPtr<ModelProcessConnection> ModelProcessConnection::create(IPC::Connection& parentConnection)
 {
     auto connectionIdentifiers = IPC::Connection::createConnectionIdentifierPair();
     if (!connectionIdentifiers)
         return nullptr;
 
-    parentConnection.send(Messages::WebProcessProxy::CreateModelProcessConnection(WTFMove(connectionIdentifiers->client), getModelProcessConnectionParameters()), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+    parentConnection.send(Messages::WebProcessProxy::CreateModelProcessConnection(WTF::move(connectionIdentifiers->client)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 
-    auto instance = adoptRef(*new ModelProcessConnection(WTFMove(connectionIdentifiers->server)));
+    auto instance = adoptRef(*new ModelProcessConnection(WTF::move(connectionIdentifiers->server)));
 #if ENABLE(IPC_TESTING_API)
     if (parentConnection.ignoreInvalidMessageForTesting())
         instance->connection().setIgnoreInvalidMessageForTesting();
@@ -71,7 +61,7 @@ RefPtr<ModelProcessConnection> ModelProcessConnection::create(IPC::Connection& p
 }
 
 ModelProcessConnection::ModelProcessConnection(IPC::Connection::Identifier&& connectionIdentifier)
-    : m_connection(IPC::Connection::createServerConnection(connectionIdentifier))
+    : m_connection(IPC::Connection::createServerConnection(WTF::move(connectionIdentifier)))
 {
     m_connection->open(*this);
 }
@@ -99,7 +89,7 @@ void ModelProcessConnection::invalidate()
 void ModelProcessConnection::didClose(IPC::Connection&)
 {
     RELEASE_LOG(Process, "%p - ModelProcessConnection::didClose", this);
-    auto protector = Ref { *this };
+    Ref protector { *this };
     WebProcess::singleton().modelProcessConnectionClosed(*this);
 
     m_clients.forEach([this] (auto& client) {
@@ -108,7 +98,7 @@ void ModelProcessConnection::didClose(IPC::Connection&)
     m_clients.clear();
 }
 
-void ModelProcessConnection::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t)
+void ModelProcessConnection::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>&)
 {
 }
 
@@ -134,6 +124,11 @@ void ModelProcessConnection::didInitialize(std::optional<ModelProcessConnectionI
         return;
     }
     m_hasInitialized = true;
+}
+
+void ModelProcessConnection::didUnloadModelPlayer(WebCore::ModelPlayerIdentifier modelPlayerIdentifier)
+{
+    WebProcess::singleton().modelProcessModelPlayerManager().didUnloadModelProcessModelPlayer(modelPlayerIdentifier);
 }
 
 bool ModelProcessConnection::waitForDidInitialize()

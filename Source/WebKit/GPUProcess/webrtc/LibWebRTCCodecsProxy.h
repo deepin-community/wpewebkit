@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,13 +29,14 @@
 
 #include "Connection.h"
 #include "RemoteVideoFrameIdentifier.h"
+#include "SharedPreferencesForWebProcess.h"
 #include "SharedVideoFrame.h"
 #include "VideoDecoderIdentifier.h"
 #include "VideoEncoderIdentifier.h"
-#include "VideoCodecType.h"
 #include "WorkQueueMessageReceiver.h"
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/SharedMemory.h>
+#include <WebCore/VideoCodecType.h>
 #include <WebCore/VideoEncoderScalabilityMode.h>
 #include <WebCore/WebRTCVideoDecoder.h>
 #include <atomic>
@@ -64,61 +65,72 @@ class RemoteVideoFrameObjectHeap;
 struct SharedVideoFrame;
 class SharedVideoFrameReader;
 
-class LibWebRTCCodecsProxy final : public IPC::WorkQueueMessageReceiver {
+class LibWebRTCCodecsProxy final : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any> {
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCCodecsProxy);
 public:
-    static Ref<LibWebRTCCodecsProxy> create(GPUConnectionToWebProcess&);
+    static Ref<LibWebRTCCodecsProxy> create(GPUConnectionToWebProcess&, SharedPreferencesForWebProcess&);
     ~LibWebRTCCodecsProxy();
-    void stopListeningForIPC(Ref<LibWebRTCCodecsProxy>&& refFromConnection);
-    bool allowsExitUnderMemoryPressure() const;
 
+    void ref() const final { IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any>::ref(); }
+    void deref() const final { IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any>::deref(); }
+
+    void stopListeningForIPC(Ref<LibWebRTCCodecsProxy>&& refFromConnection);
+    bool NODELETE allowsExitUnderMemoryPressure() const;
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
+    void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess);
 private:
-private:
-    explicit LibWebRTCCodecsProxy(GPUConnectionToWebProcess&);
+    explicit LibWebRTCCodecsProxy(GPUConnectionToWebProcess&, SharedPreferencesForWebProcess&);
     void initialize();
     auto createDecoderCallback(VideoDecoderIdentifier, bool useRemoteFrames, bool enableAdditionalLogging);
-    std::unique_ptr<WebCore::WebRTCVideoDecoder> createLocalDecoder(VideoDecoderIdentifier, VideoCodecType, bool useRemoteFrames, bool enableAdditionalLogging);
+    std::unique_ptr<WebCore::WebRTCVideoDecoder> createLocalDecoder(VideoDecoderIdentifier, WebCore::VideoCodecType, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride);
     WorkQueue& workQueue() const { return m_queue; }
 
     // IPC::WorkQueueMessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    void createDecoder(VideoDecoderIdentifier, VideoCodecType, const String& codecString, bool useRemoteFrames, bool enableAdditionalLogging, CompletionHandler<void(bool)>&&);
+    void createDecoder(VideoDecoderIdentifier, WebCore::VideoCodecType, const String& codecString, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, CompletionHandler<void(bool)>&&);
     void releaseDecoder(VideoDecoderIdentifier);
-    void flushDecoder(VideoDecoderIdentifier);
+    void flushDecoder(VideoDecoderIdentifier, CompletionHandler<void()>&&);
     void setDecoderFormatDescription(VideoDecoderIdentifier, std::span<const uint8_t>, uint16_t width, uint16_t height);
-    void decodeFrame(VideoDecoderIdentifier, int64_t timeStamp, std::span<const uint8_t>);
+    void setDecoderColorSpaceOverride(VideoDecoderIdentifier, std::optional<WebCore::PlatformVideoColorSpace>&&);
+    void decodeFrame(VideoDecoderIdentifier, int64_t timeStamp, std::span<const uint8_t>, CompletionHandler<void(bool)>&&);
     void setFrameSize(VideoDecoderIdentifier, uint16_t width, uint16_t height);
 
-    void createEncoder(VideoEncoderIdentifier, VideoCodecType, const String& codecString, const Vector<std::pair<String, String>>&, bool useLowLatency, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, CompletionHandler<void(bool)>&&);
+    void createEncoder(VideoEncoderIdentifier, WebCore::VideoCodecType, const String& codecString, const Vector<std::pair<String, String>>&, bool useLowLatency, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, CompletionHandler<void(bool)>&&);
     void releaseEncoder(VideoEncoderIdentifier);
     void initializeEncoder(VideoEncoderIdentifier, uint16_t width, uint16_t height, unsigned startBitrate, unsigned maxBitrate, unsigned minBitrate, uint32_t maxFramerate);
     void encodeFrame(VideoEncoderIdentifier, SharedVideoFrame&&, int64_t timeStamp, std::optional<uint64_t> duration, bool shouldEncodeAsKeyFrame, CompletionHandler<void(bool)>&&);
     void flushEncoder(VideoEncoderIdentifier, CompletionHandler<void()>&&);
-    void setEncodeRates(VideoEncoderIdentifier, uint32_t bitRate, uint32_t frameRate);
+    void setEncodeRates(VideoEncoderIdentifier, uint32_t bitRate, uint32_t frameRate, CompletionHandler<void()>&&);
     void setSharedVideoFrameSemaphore(VideoEncoderIdentifier, IPC::Semaphore&&);
     void setSharedVideoFrameMemory(VideoEncoderIdentifier, WebCore::SharedMemory::Handle&&);
     void setRTCLoggingLevel(WTFLogLevel);
 
     void notifyEncoderResult(VideoEncoderIdentifier, bool);
+    void notifyDecoderResult(VideoDecoderIdentifier, bool);
 
     struct Decoder {
         std::unique_ptr<WebCore::WebRTCVideoDecoder> webrtcDecoder;
         std::unique_ptr<WebCore::FrameRateMonitor> frameRateMonitor;
+        Deque<CompletionHandler<void(bool)>> decodingCallbacks;
     };
-    void doDecoderTask(VideoDecoderIdentifier, Function<void(Decoder&)>&&);
+    void doDecoderTask(VideoDecoderIdentifier, NOESCAPE Function<void(Decoder&)>&&);
 
     struct Encoder {
         webrtc::LocalEncoder webrtcEncoder { nullptr };
         std::unique_ptr<SharedVideoFrameReader> frameReader;
         Deque<CompletionHandler<void(bool)>> encodingCallbacks;
+        WebCore::VideoCodecType codecType { WebCore::VideoCodecType::H264 };
+        bool useLowLatency { false };
+        bool isInvalid { false };
     };
-    Encoder* findEncoder(VideoEncoderIdentifier) WTF_REQUIRES_CAPABILITY(workQueue());
+    Encoder* NODELETE findEncoder(VideoEncoderIdentifier) WTF_REQUIRES_CAPABILITY(workQueue());
 
-    Ref<IPC::Connection> m_connection;
-    Ref<WorkQueue> m_queue;
-    Ref<RemoteVideoFrameObjectHeap> m_videoFrameObjectHeap;
+    const Ref<IPC::Connection> m_connection;
+    const Ref<WorkQueue> m_queue;
+    const Ref<RemoteVideoFrameObjectHeap> m_videoFrameObjectHeap;
     WebCore::ProcessIdentity m_resourceOwner;
+    SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
     HashMap<VideoDecoderIdentifier, Decoder> m_decoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     HashMap<VideoEncoderIdentifier, Encoder> m_encoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     std::atomic<bool> m_hasEncodersOrDecoders { false };

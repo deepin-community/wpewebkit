@@ -29,25 +29,28 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include "ActiveDOMObject.h"
-#include "Blob.h"
-#include "EventTarget.h"
-#include "IDLTypes.h"
-#include "JSDOMPromiseDeferred.h"
-#include "MediaProducer.h"
-#include "MediaStreamTrackDataHolder.h"
-#include "MediaStreamTrackPrivate.h"
-#include "MediaTrackCapabilities.h"
-#include "MediaTrackConstraints.h"
-#include "PhotoCapabilities.h"
-#include "PhotoSettings.h"
-#include "PlatformMediaSession.h"
+#include <WebCore/ActiveDOMObject.h>
+#include <WebCore/Blob.h>
+#include <WebCore/EventTarget.h>
+#include <WebCore/EventTargetInterfaces.h>
+#include <WebCore/Exception.h>
+#include <WebCore/IDLTypes.h>
+#include <WebCore/JSDOMPromiseDeferredForward.h>
+#include <WebCore/MediaProducer.h>
+#include <WebCore/MediaStreamTrackDataHolder.h>
+#include <WebCore/MediaStreamTrackPrivate.h>
+#include <WebCore/MediaTrackCapabilities.h>
+#include <WebCore/MediaTrackConstraints.h>
+#include <WebCore/PhotoCapabilities.h>
+#include <WebCore/PhotoSettings.h>
+#include <WebCore/PlatformMediaSession.h>
 #include <wtf/LoggerHelper.h>
 
 namespace WebCore {
 
 class AudioSourceProvider;
 class Document;
+class MediaSessionManagerInterface;
 
 struct MediaTrackConstraints;
 
@@ -61,7 +64,7 @@ class MediaStreamTrack
     , private LoggerHelper
 #endif
 {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(MediaStreamTrack);
+    WTF_MAKE_TZONE_ALLOCATED(MediaStreamTrack);
 public:
     class Observer {
     public:
@@ -74,27 +77,32 @@ public:
     static Ref<MediaStreamTrack> create(ScriptExecutionContext&, UniqueRef<MediaStreamTrackDataHolder>&&);
     virtual ~MediaStreamTrack();
 
+    // ContextDestructionObserver, AudioCaptureSource.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
     static MediaProducerMediaStateFlags captureState(const RealtimeMediaSource&);
 
     virtual bool isCanvas() const { return false; }
 
     const AtomString& kind() const;
-    WEBCORE_EXPORT const String& id() const;
-    const String& label() const;
+    const String& id() const { return m_private->id(); }
+    const String& NODELETE label() const;
 
     const AtomString& contentHint() const;
     void setContentHint(const String&);
         
-    bool enabled() const;
+    bool NODELETE enabled() const;
     void setEnabled(bool);
 
-    bool muted() const;
-    bool mutedForBindings() const;
+    bool NODELETE muted() const;
+    bool NODELETE mutedForBindings() const;
 
     enum class State { Live, Ended };
     State readyState() const { return m_readyState; }
 
-    bool ended() const;
+    bool NODELETE ended() const;
 
     virtual RefPtr<MediaStreamTrack> clone();
 
@@ -115,9 +123,9 @@ public:
         std::optional<int> sampleRate;
         std::optional<int> sampleSize;
         std::optional<bool> echoCancellation;
-        String displaySurface;
         String deviceId;
         String groupId;
+        String displaySurface;
 
         String whiteBalanceMode;
         std::optional<double> zoom;
@@ -139,8 +147,8 @@ public:
     using PhotoSettingsPromise = NativePromise<PhotoSettings, Exception>;
     Ref<PhotoSettingsPromise> getPhotoSettings();
 
-    const MediaTrackConstraints& getConstraints() const { return m_constraints; }
-    void setConstraints(MediaTrackConstraints&& constraints) { m_constraints = WTFMove(constraints); }
+    const MediaTrackConstraints& getConstraints() const LIFETIME_BOUND { return m_constraints; }
+    void setConstraints(MediaTrackConstraints&& constraints) { m_constraints = WTF::move(constraints); }
 
     void applyConstraints(const std::optional<MediaTrackConstraints>&, DOMPromiseDeferred<void>&&);
 
@@ -158,15 +166,11 @@ public:
     void addObserver(Observer&);
     void removeObserver(Observer&);
 
-    // ActiveDOMObject.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
-    void setIdForTesting(String&& id) { m_private->setIdForTesting(WTFMove(id)); }
+    void setIdForTesting(String&& id) { m_private->setIdForTesting(WTF::move(id)); }
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_private->logger(); }
-    const void* logIdentifier() const final { return m_private->logIdentifier(); }
+    uint64_t logIdentifier() const final { return m_private->logIdentifier(); }
 #endif
 
     void setShouldFireMuteEventImmediately(bool value) { m_shouldFireMuteEventImmediately = value; }
@@ -183,13 +187,32 @@ public:
     bool isDetached() const { return m_isDetached; }
     UniqueRef<MediaStreamTrackDataHolder> detach();
 
+    void setMediaStreamId(const String& id) { m_mediaStreamId = id; }
+    const String& mediaStreamId() const LIFETIME_BOUND { return m_mediaStreamId; }
+
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
+
+    class Keeper : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Keeper> {
+    public:
+        static Ref<Keeper> create(bool isEnabled) { return adoptRef(*new Keeper(isEnabled)); }
+        bool isTrackEnabled() const { return m_isEnabled; }
+        void setEnabled(bool isEnabled) { m_isEnabled = isEnabled; }
+
+    private:
+        explicit Keeper(bool isEnabled)
+            : m_isEnabled(isEnabled)
+        {
+        }
+
+        std::atomic<bool> m_isEnabled;
+    };
+
+    Ref<Keeper> keeper();
+
 protected:
     MediaStreamTrack(ScriptExecutionContext&, Ref<MediaStreamTrackPrivate>&&);
 
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
-        
-    Ref<MediaStreamTrackPrivate> m_private;
-        
+
 private:
     explicit MediaStreamTrack(MediaStreamTrack&);
 
@@ -214,32 +237,39 @@ private:
     void trackConfigurationChanged(MediaStreamTrackPrivate&) final;
 
     // AudioCaptureSource
-    bool isCapturingAudio() const final;
-    bool wantsToCaptureAudio() const final;
+    bool NODELETE isCapturingAudio() const final;
+    bool NODELETE wantsToCaptureAudio() const final;
+
+    RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const final { return "MediaStreamTrack"_s; }
-    WTFLogChannel& logChannel() const final;
+    WTFLogChannel& NODELETE logChannel() const final;
 #endif
 
     Vector<Observer*> m_observers;
 
     MediaTrackConstraints m_constraints;
 
-    String m_groupId;
+    const Ref<MediaStreamTrackPrivate> m_private;
+    String m_mediaStreamId;
     State m_readyState { State::Live };
     bool m_muted { false };
     bool m_ended { false };
     const bool m_isCaptureTrack { false };
     bool m_isInterrupted { false };
     bool m_shouldFireMuteEventImmediately { false };
+    bool m_isConfigurationChangePending { false };
     bool m_isDetached { false };
     mutable AtomString m_kind;
     mutable AtomString m_contentHint;
+    ThreadSafeWeakPtr<Keeper> m_keeper;
 };
 
 typedef Vector<Ref<MediaStreamTrack>> MediaStreamTrackVector;
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(MediaStreamTrack)
 
 #endif // ENABLE(MEDIA_STREAM)

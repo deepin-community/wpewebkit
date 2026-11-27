@@ -49,6 +49,7 @@ class MachSendRight;
 namespace IPC {
 class Connection;
 class Decoder;
+enum class Critical : bool;
 }
 
 namespace WebCore {
@@ -59,7 +60,6 @@ class GraphicsLayerFactory;
 class LocalFrame;
 class LocalFrameView;
 class TiledBacking;
-struct ViewportAttributes;
 enum class DelegatedScrollingMode : uint8_t;
 }
 
@@ -71,18 +71,27 @@ class LayerTreeHost;
 struct WebPageCreationParameters;
 struct WebPreferencesStore;
 
-class DrawingArea : public IPC::MessageReceiver, public WebCore::DisplayRefreshMonitorFactory {
+class DrawingArea : public RefCounted<DrawingArea>, public IPC::MessageReceiver, public WebCore::DisplayRefreshMonitorFactory {
     WTF_MAKE_TZONE_ALLOCATED(DrawingArea);
     WTF_MAKE_NONCOPYABLE(DrawingArea);
 
 public:
-    static std::unique_ptr<DrawingArea> create(WebPage&, const WebPageCreationParameters&);
+    static RefPtr<DrawingArea> create(WebPage&, const WebPageCreationParameters&);
     virtual ~DrawingArea();
-    
-    DrawingAreaType type() const { return m_type; }
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+#if ENABLE(TILED_CA_DRAWING_AREA)
+    virtual DrawingAreaType type() const = 0;
+#endif
     DrawingAreaIdentifier identifier() const { return m_identifier; }
 
-    static bool supportsGPUProcessRendering(DrawingAreaType);
+#if ENABLE(TILED_CA_DRAWING_AREA)
+    static bool NODELETE supportsGPUProcessRendering(DrawingAreaType);
+#else
+    static bool supportsGPUProcessRendering();
+#endif
 
     virtual void setNeedsDisplay() = 0;
     virtual void setNeedsDisplayInRect(const WebCore::IntRect&) = 0;
@@ -140,7 +149,6 @@ public:
     virtual void dispatchAfterEnsuringUpdatedScrollPosition(WTF::Function<void ()>&&);
 
     virtual void activityStateDidChange(OptionSet<WebCore::ActivityState>, ActivityStateChangeID, CompletionHandler<void()>&& completionHandler) { completionHandler(); };
-    virtual void setLayerHostingMode(LayerHostingMode) { }
 
     virtual void tryMarkLayersVolatile(CompletionHandler<void(bool)>&&);
 
@@ -154,26 +162,38 @@ public:
     virtual void updateGeometry(const WebCore::IntSize& viewSize, bool flushSynchronously, const WTF::MachSendRight& fencePort, CompletionHandler<void()>&&) = 0;
 #endif
 
+#if USE(GRAPHICS_LAYER_WC) || USE(GRAPHICS_LAYER_TEXTURE_MAPPER)
+    virtual void setIntrinsicDeviceScaleFactor(float) { }
+#endif
 #if USE(GRAPHICS_LAYER_WC)
-    virtual void updateGeometryWC(uint64_t, WebCore::IntSize, float deviceScaleFactor) { };
+    virtual void updateGeometryWC(uint64_t, WebCore::IntSize, float deviceScaleFactor, float intrinsicDeviceScaleFactor) { };
 #endif
 
 #if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
     virtual void updateGeometry(const WebCore::IntSize&, CompletionHandler<void()>&&) = 0;
-    virtual void didChangeViewportAttributes(WebCore::ViewportAttributes&&) = 0;
-    virtual void deviceOrPageScaleFactorChanged() = 0;
     virtual bool enterAcceleratedCompositingModeIfNeeded() = 0;
-    virtual void backgroundColorDidChange() { };
+    virtual void backgroundColorDidChange() { }
 #endif
 
-#if PLATFORM(WPE) && USE(GBM) && ENABLE(WPE_PLATFORM)
+#if USE(COORDINATED_GRAPHICS)
+    virtual void releaseMemory(WTF::Critical) { }
+#endif
+
+#if PLATFORM(WPE) && ENABLE(WPE_PLATFORM) && (USE(GBM) || OS(ANDROID))
     virtual void preferredBufferFormatsDidChange() { }
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    virtual void dispatchPendingCallbacksAfterEnsuringDrawing() = 0;
+#endif
+
+#if ENABLE(DAMAGE_TRACKING)
+    virtual void resetDamageHistoryForTesting() { }
+    virtual void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&) const { }
 #endif
 
     virtual void adoptLayersFromDrawingArea(DrawingArea&) { }
     virtual void adoptDisplayRefreshMonitorsFromDrawingArea(DrawingArea&) { }
-
-    virtual void setNextRenderingUpdateRequiresSynchronousImageDecoding() { }
 
     void removeMessageReceiverIfNeeded();
     
@@ -185,15 +205,14 @@ public:
     static RetainPtr<CABasicAnimation> transientZoomSnapAnimationForKeyPath(ASCIILiteral);
 
 protected:
-    DrawingArea(DrawingAreaType, DrawingAreaIdentifier, WebPage&);
+    DrawingArea(DrawingAreaIdentifier, WebPage&);
 
     template<typename T> bool send(T&& message)
     {
-        Ref webPage = m_webPage.get();
+        Ref webPage = m_webPage;
         return webPage->send(std::forward<T>(message), m_identifier.toUInt64(), { });
     }
 
-    const DrawingAreaType m_type;
     DrawingAreaIdentifier m_identifier;
     WeakRef<WebPage> m_webPage;
     WebCore::IntSize m_lastViewSizeForScaleToFit;
@@ -210,19 +229,21 @@ private:
 #if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
     virtual void updateBackingStoreState(uint64_t /*backingStoreStateID*/, bool /*respondImmediately*/, float /*deviceScaleFactor*/, const WebCore::IntSize& /*size*/,
                                          const WebCore::IntSize& /*scrollOffset*/) { }
-    virtual void setDeviceScaleFactor(float) { }
     virtual void forceUpdate() { }
     virtual void didDiscardBackingStore() { }
 #endif
-    virtual void displayDidRefresh() { }
+
+    virtual void setDeviceScaleFactor(float, CompletionHandler<void()>&& completionHandler) { completionHandler(); }
+    virtual void displayDidRefresh(MonotonicTime) { }
 
     // DisplayRefreshMonitorFactory.
     RefPtr<WebCore::DisplayRefreshMonitor> createDisplayRefreshMonitor(WebCore::PlatformDisplayID) override;
 
 #if PLATFORM(COCOA)
-    virtual void setDeviceScaleFactor(float) { }
     virtual void setColorSpace(std::optional<WebCore::DestinationColorSpace>) { }
+#endif
 
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     virtual void dispatchAfterEnsuringDrawing(IPC::AsyncReplyID) = 0;
 #endif
 
@@ -236,7 +257,19 @@ private:
 
 } // namespace WebKit
 
+#if ENABLE(TILED_CA_DRAWING_AREA)
+
 #define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA(ToValueTypeName, AreaType) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
     static bool isType(const WebKit::DrawingArea& area) { return area.type() == WebKit::AreaType; } \
 SPECIALIZE_TYPE_TRAITS_END()
+
+#else
+
+// There is only one type of DrawingArea.
+#define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA(ToValueTypeName, AreaType) \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
+    static bool isType(const WebKit::DrawingArea&) { return true; } \
+SPECIALIZE_TYPE_TRAITS_END()
+
+#endif

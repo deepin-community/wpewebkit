@@ -7,15 +7,19 @@
 // driver_utils.h : provides more information about current driver.
 
 #include <algorithm>
+#include "common/unsafe_buffers.h"
 
 #include "libANGLE/renderer/driver_utils.h"
 
 #include "common/android_util.h"
 #include "common/platform.h"
-#include "common/system_utils.h"
+#include "common/string_utils.h"
+#include "gpu_info_util/SystemInfo.h"
 
 #if defined(ANGLE_PLATFORM_LINUX)
 #    include <sys/utsname.h>
+
+#    include "common/linux/window_system.h"
 #endif
 
 namespace rx
@@ -139,55 +143,7 @@ const uint16_t IntelGen12[] = {
 
     // DG1
     0x4905, 0x4906, 0x4907, 0x4908, 0x4909};
-
-// The following is used to parse generic Vulkan driver versions.
-angle::VersionTriple ParseGenericVulkanDriverVersion(uint32_t driverVersion)
-{
-    // Generic Vulkan driver versions are built using the following format:
-    // (Major << 22) | (Minor << 12) | (Patch)
-    constexpr uint32_t kMinorVersionMask = angle::BitMask<uint32_t>(10);
-    constexpr uint32_t kPatchVersionMask = angle::BitMask<uint32_t>(12);
-    return angle::VersionTriple(driverVersion >> 22, (driverVersion >> 12) & kMinorVersionMask,
-                                driverVersion & kPatchVersionMask);
-}
 }  // anonymous namespace
-
-IntelDriverVersion::IntelDriverVersion(uint32_t buildNumber) : mBuildNumber(buildNumber) {}
-
-IntelDriverVersion::IntelDriverVersion(uint32_t majorVersion, uint32_t minorVersion)
-{
-    // The following format is only used in Windows/Intel drivers.
-    // < Major (18 bits) | Minor (14 bits) >
-#if !defined(ANGLE_PLATFORM_WINDOWS)
-    mBuildNumber = 0;
-#else
-    constexpr uint32_t kMajorVersionMask = angle::BitMask<uint32_t>(18);
-    constexpr uint32_t kMinorVersionMask = angle::BitMask<uint32_t>(14);
-    ASSERT(majorVersion <= kMajorVersionMask && minorVersion <= kMinorVersionMask);
-
-    mBuildNumber = (majorVersion << 14) | minorVersion;
-#endif
-}
-
-bool IntelDriverVersion::operator==(const IntelDriverVersion &version) const
-{
-    return mBuildNumber == version.mBuildNumber;
-}
-
-bool IntelDriverVersion::operator!=(const IntelDriverVersion &version) const
-{
-    return !(*this == version);
-}
-
-bool IntelDriverVersion::operator<(const IntelDriverVersion &version) const
-{
-    return mBuildNumber < version.mBuildNumber;
-}
-
-bool IntelDriverVersion::operator>=(const IntelDriverVersion &version) const
-{
-    return !(*this < version);
-}
 
 bool IsSandyBridge(uint32_t DeviceId)
 {
@@ -290,6 +246,7 @@ std::string GetVendorString(uint32_t vendorId)
             return "NVIDIA";
         case VENDOR_ID_POWERVR:
             return "Imagination Technologies";
+        case VENDOR_ID_QUALCOMM_DXGI:
         case VENDOR_ID_QUALCOMM:
             return "Qualcomm";
         case VENDOR_ID_SAMSUNG:
@@ -311,26 +268,24 @@ std::string GetVendorString(uint32_t vendorId)
     return s.str();
 }
 
-IntelDriverVersion ParseIntelWindowsDriverVersion(uint32_t driverVersion)
+bool operator==(const angle::VersionInfo &a, const angle::VersionTriple &b)
 {
-#if !defined(ANGLE_PLATFORM_WINDOWS)
-    return IntelDriverVersion(0);
-#else
-    // Windows Intel driver versions are built in the following format:
-    // < Major (18 bits) | Minor (14 bits) >
-    constexpr uint32_t kMinorVersionMask = angle::BitMask<uint32_t>(14);
-    return IntelDriverVersion(driverVersion >> 18, driverVersion & kMinorVersionMask);
-#endif
+    return angle::VersionTriple(a.major, a.minor, a.subMinor) == b;
 }
 
-ARMDriverVersion ParseARMVulkanDriverVersion(uint32_t driverVersion)
+bool operator!=(const angle::VersionInfo &a, const angle::VersionTriple &b)
 {
-    return ParseGenericVulkanDriverVersion(driverVersion);
+    return angle::VersionTriple(a.major, a.minor, a.subMinor) != b;
 }
 
-QualcommDriverVersion ParseQualcommVulkanDriverVersion(uint32_t driverVersion)
+bool operator<(const angle::VersionInfo &a, const angle::VersionTriple &b)
 {
-    return ParseGenericVulkanDriverVersion(driverVersion);
+    return angle::VersionTriple(a.major, a.minor, a.subMinor) < b;
+}
+
+bool operator>=(const angle::VersionInfo &a, const angle::VersionTriple &b)
+{
+    return angle::VersionTriple(a.major, a.minor, a.subMinor) >= b;
 }
 
 int GetAndroidSDKVersion()
@@ -344,6 +299,38 @@ int GetAndroidSDKVersion()
 
     return std::atoi(androidSdkLevel.c_str());
 }
+
+bool IsSamsungXclipse()
+{
+#if defined(ANGLE_PLATFORM_ANDROID)
+    std::string socManufacturer;
+    if (!angle::android::GetSystemProperty("ro.soc.manufacturer", &socManufacturer))
+    {
+        return false;
+    }
+
+    angle::ToLower(&socManufacturer);
+    if (socManufacturer != "samsung")
+    {
+        return false;
+    }
+
+    std::string hardwareEgl;
+    if (!angle::android::GetSystemProperty("ro.hardware.egl", &hardwareEgl))
+    {
+        return true;
+    }
+
+    angle::ToLower(&hardwareEgl);
+    if (hardwareEgl == "samsung")
+    {
+        return true;
+    }
+#endif
+
+    return false;
+}
+
 #if !defined(ANGLE_PLATFORM_MACOS)
 OSVersion GetMacOSVersion()
 {
@@ -365,19 +352,19 @@ bool ParseLinuxOSVersion(const char *version, int *major, int *minor, int *patch
 {
     errno = 0;  // reset global error flag.
     char *next;
-    *major = static_cast<int>(strtol(version, &next, 10));
+    *major = static_cast<int>(ANGLE_UNSAFE_TODO(strtol(version, &next, 10)));
     if (next == nullptr || *next != '.' || errno != 0)
     {
         return false;
     }
 
-    *minor = static_cast<int>(strtol(next + 1, &next, 10));
+    *minor = static_cast<int>(ANGLE_UNSAFE_TODO(strtol(next + 1, &next, 10)));
     if (next == nullptr || *next != '.' || errno != 0)
     {
         return false;
     }
 
-    *patch = static_cast<int>(strtol(next + 1, &next, 10));
+    *patch = static_cast<int>(ANGLE_UNSAFE_TODO(strtol(next + 1, &next, 10)));
     if (errno != 0)
     {
         return false;
@@ -406,33 +393,17 @@ OSVersion GetLinuxOSVersion()
     return OSVersion(0, 0, 0);
 }
 
-// There are multiple environment variables that may or may not be set during Wayland
-// sessions, including WAYLAND_DISPLAY, XDG_SESSION_TYPE, and DESKTOP_SESSION
-bool IsWayland()
+bool IsXWayland()
 {
-    static bool checked   = false;
-    static bool isWayland = false;
-    if (!checked)
-    {
-        if (IsLinux())
-        {
-            if (!angle::GetEnvironmentVar("WAYLAND_DISPLAY").empty())
-            {
-                isWayland = true;
-            }
-            else if (angle::GetEnvironmentVar("XDG_SESSION_TYPE") == "wayland")
-            {
-                isWayland = true;
-            }
-            else if (angle::GetEnvironmentVar("DESKTOP_SESSION").find("wayland") !=
-                     std::string::npos)
-            {
-                isWayland = true;
-            }
-        }
-        checked = true;
-    }
-    return isWayland;
+#if defined(ANGLE_PLATFORM_LINUX)
+    // Detects the Wayland session rather than the connection, so callers must be
+    // on an X11 code path for this to mean XWayland. Cached: the session type is
+    // fixed for the life of the process.
+    static const bool isWaylandSession = angle::IsWaylandSession();
+    return isWaylandSession;
+#else
+    return false;
+#endif
 }
 
 }  // namespace rx

@@ -25,35 +25,36 @@
 
 #pragma once
 
-#include "GridPositionsResolver.h"
 #include "RenderGrid.h"
 
-class RenderGrid;
-
 namespace WebCore {
+
+namespace Style {
+enum class GridTrackSizingDirection : bool;
+}
 
 class AncestorSubgridIterator {
 public:
     AncestorSubgridIterator();
-    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, GridTrackSizingDirection);
+    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, Style::GridTrackSizingDirection);
 
-    RenderGrid& operator*();
+    RenderGrid& NODELETE operator*();
 
-    bool operator==(const AncestorSubgridIterator&) const;
+    bool NODELETE operator==(const AncestorSubgridIterator&) const;
 
     AncestorSubgridIterator& operator++();
-    AncestorSubgridIterator begin();
-    AncestorSubgridIterator end();
+    AncestorSubgridIterator NODELETE begin();
+    AncestorSubgridIterator NODELETE end();
 private:
-    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, GridTrackSizingDirection);
-    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, std::optional<GridTrackSizingDirection>);
+    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, Style::GridTrackSizingDirection);
+    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, std::optional<Style::GridTrackSizingDirection>);
 
     const SingleThreadWeakPtr<const RenderGrid> m_firstAncestorSubgrid;
     SingleThreadWeakPtr<RenderGrid> m_currentAncestorSubgrid;
-    const std::optional<GridTrackSizingDirection> m_direction;
+    const std::optional<Style::GridTrackSizingDirection> m_direction;
 
 };
 
-AncestorSubgridIterator ancestorSubgridsOfGridItem(const RenderBox& gridItem, const GridTrackSizingDirection);
+AncestorSubgridIterator ancestorSubgridsOfGridItem(const RenderBox& gridItem, const Style::GridTrackSizingDirection);
 
 } // namespace WebCore

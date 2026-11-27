@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2017 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,22 +27,26 @@
 #include "IconLoader.h"
 
 #include "CachedRawResource.h"
-#include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "CachedResourceRequestInitiatorTypes.h"
-#include "Document.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentResourceLoader.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
 #include "Logging.h"
 #include "ResourceRequest.h"
 #include "SharedBuffer.h"
+#include <WebCore/HTTPStatusCodes.h>
 #include <wtf/text/CString.h>
 
 namespace WebCore {
+
+Ref<IconLoader> IconLoader::create(DocumentLoader& documentLoader, const URL& url)
+{
+    return adoptRef(*new IconLoader(documentLoader, url));
+}
 
 IconLoader::IconLoader(DocumentLoader& documentLoader, const URL& url)
     : m_documentLoader(documentLoader)
@@ -60,11 +64,11 @@ void IconLoader::startLoading()
     if (m_resource)
         return;
 
-    RefPtr frame = m_documentLoader->frame();
+    RefPtr frame = m_documentLoader ? m_documentLoader->frame() : nullptr;
     if (!frame)
         return;
 
-    ResourceRequest resourceRequest = m_url;
+    ResourceRequest resourceRequest = URL { m_url };
     resourceRequest.setPriority(ResourceLoadPriority::Low);
 #if !ERROR_DISABLED
     // Copy this because we may want to access it after transferring the
@@ -73,7 +77,7 @@ void IconLoader::startLoading()
     auto resourceRequestURL = resourceRequest.url();
 #endif
 
-    CachedResourceRequest request(WTFMove(resourceRequest), ResourceLoaderOptions(
+    CachedResourceRequest request(WTF::move(resourceRequest), ResourceLoaderOptions(
         SendCallbackPolicy::SendCallbacks,
         ContentSniffingPolicy::SniffContent,
         DataBufferingPolicy::BufferData,
@@ -89,9 +93,12 @@ void IconLoader::startLoading()
 
     request.setInitiatorType(cachedResourceRequestInitiatorTypes().icon);
 
-    auto cachedResource = frame->document()->protectedCachedResourceLoader()->requestIcon(WTFMove(request));
-    m_resource = cachedResource.value_or(nullptr);
-    if (CachedResourceHandle resource = m_resource)
+    auto cachedResource = protect(protect(frame->document())->cachedResourceLoader())->requestIcon(WTF::move(request));
+    if (cachedResource)
+        m_resource = WTF::move(cachedResource.value());
+    else
+        m_resource = nullptr;
+    if (RefPtr resource = m_resource)
         resource->addClient(*this);
     else
         LOG_ERROR("Failed to start load for icon at url %s (error: %s)", resourceRequestURL.string().ascii().data(), cachedResource.error().localizedDescription().utf8().data());
@@ -99,7 +106,7 @@ void IconLoader::startLoading()
 
 void IconLoader::stopLoading()
 {
-    if (CachedResourceHandle resource = std::exchange(m_resource, nullptr))
+    if (RefPtr resource = std::exchange(m_resource, nullptr))
         resource->removeClient(*this);
 }
 
@@ -109,22 +116,23 @@ void IconLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetri
 
     // If we got a status code indicating an invalid response, then lets
     // ignore the data and not try to decode the error page as an icon.
-    RefPtr data = m_resource->resourceBuffer();
-    int status = m_resource->response().httpStatusCode();
-    if (status && (status < 200 || status > 299))
+    RefPtr data = resource.resourceBuffer();
+    int status = resource.response().httpStatusCode();
+    if (status && !isHttpOkStatus(status))
         data = nullptr;
 
-    constexpr uint8_t pdfMagicNumber[] = { '%', 'P', 'D', 'F' };
-    if (data && data->startsWith(std::span(pdfMagicNumber, std::size(pdfMagicNumber)))) {
-        LOG(IconDatabase, "IconLoader::finishLoading() - Ignoring icon at %s because it appears to be a PDF", m_resource->url().string().ascii().data());
+    constexpr std::array<uint8_t, 4> pdfMagicNumber { '%', 'P', 'D', 'F' };
+    if (data && data->startsWith(pdfMagicNumber)) {
+        LOG(IconDatabase, "IconLoader::finishLoading() - Ignoring icon at %s because it appears to be a PDF", resource.url().string().ascii().data());
         data = nullptr;
     }
 
-    LOG(IconDatabase, "IconLoader::finishLoading() - Committing iconURL %s to database", m_resource->url().string().ascii().data());
+    LOG(IconDatabase, "IconLoader::finishLoading() - Committing iconURL %s to database", resource.url().string().ascii().data());
 
     // DocumentLoader::finishedLoadingIcon destroys this IconLoader as it finishes. This will automatically
     // trigger IconLoader::stopLoading() during destruction, so we should just return here.
-    Ref { m_documentLoader.get() }->finishedLoadingIcon(*this, data.get());
+    if (RefPtr documentLoader = m_documentLoader.get())
+        documentLoader->finishedLoadingIcon(*this, data.get());
 }
 
 }

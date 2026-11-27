@@ -28,47 +28,44 @@
 
 TEST(WTF, SortedArraySet)
 {
-    static constexpr ComparableCaseFoldingASCIILiteral caseFoldingArray[] = {
-        "_",
-        "a",
-        "c",
-        "delightful",
-        "q",
-        "q_",
-        "r/y",
-        "s-z",
-    };
-    static constexpr SortedArraySet caseFoldingSet { caseFoldingArray };
+    static constexpr SortedArraySet caseFoldingSet { WTF::toArray<ComparableCaseFoldingASCIILiteral>({
+        "_"_s,
+        "a"_s,
+        "c"_s,
+        "delightful"_s,
+        "q"_s,
+        "q_"_s,
+        "r/y"_s,
+        "s-z"_s,
+    }) };
 
-    static constexpr ComparableLettersLiteral lettersArray[] = {
-        "a",
-        "c",
-        "delightful",
-        "q",
-        "r/y",
-        "s-z",
-    };
-    static constexpr SortedArraySet lettersSet { lettersArray };
+    static constexpr SortedArraySet lettersSet { WTF::toArray<ComparableLettersLiteral>({
+        "a"_s,
+        "c"_s,
+        "delightful"_s,
+        "q"_s,
+        "r/y"_s,
+        "s-z"_s,
+    }) };
 
-    static constexpr ComparableLettersLiteral scriptTypesArray[] = {
-        "application/ecmascript",
-        "application/javascript",
-        "application/x-ecmascript",
-        "application/x-javascript",
-        "text/ecmascript",
-        "text/javascript",
-        "text/javascript1.0",
-        "text/javascript1.1",
-        "text/javascript1.2",
-        "text/javascript1.3",
-        "text/javascript1.4",
-        "text/javascript1.5",
-        "text/jscript",
-        "text/livescript",
-        "text/x-ecmascript",
-        "text/x-javascript",
-    };
-    static constexpr SortedArraySet scriptTypesSet { scriptTypesArray };
+    static constexpr SortedArraySet scriptTypesSet { WTF::toArray<ComparableLettersLiteral>({
+        "application/ecmascript"_s,
+        "application/javascript"_s,
+        "application/x-ecmascript"_s,
+        "application/x-javascript"_s,
+        "text/ecmascript"_s,
+        "text/javascript"_s,
+        "text/javascript1.0"_s,
+        "text/javascript1.1"_s,
+        "text/javascript1.2"_s,
+        "text/javascript1.3"_s,
+        "text/javascript1.4"_s,
+        "text/javascript1.5"_s,
+        "text/jscript"_s,
+        "text/livescript"_s,
+        "text/x-ecmascript"_s,
+        "text/x-javascript"_s,
+    }) };
 
     EXPECT_FALSE(caseFoldingSet.contains(""_s));
     EXPECT_TRUE(caseFoldingSet.contains("_"_s));
@@ -95,4 +92,29 @@ TEST(WTF, SortedArraySet)
     ASSERT_FALSE(scriptTypesSet.contains("text/plain"_s));
     ASSERT_FALSE(scriptTypesSet.contains("application/json"_s));
     ASSERT_FALSE(scriptTypesSet.contains("foo/javascript"_s));
+}
+
+TEST(WTF, LessThanASCIICaseFoldingDirectComparison)
+{
+    // Direct comparison test.
+    StringView shorter = "ab"_s;
+    ASCIILiteral longer = "abc"_s;
+
+    WTF::ComparableStringView compShorter { shorter };
+    WTF::ComparableLettersLiteral compLonger { longer };
+
+    // "ab" should be less than "abc".
+    bool shorterLessThanLonger = compShorter < compLonger;
+    EXPECT_TRUE(shorterLessThanLonger) << "\"ab\" should be < \"abc\"";
+
+    // "abc" should NOT be less than "ab".
+    bool longerLessThanShorter = compLonger < compShorter;
+    EXPECT_FALSE(longerLessThanShorter) << "\"abc\" should NOT be < \"ab\"";
+
+    // Test with case differences.
+    StringView upperShorter = "AB"_s;
+    WTF::ComparableStringView compUpperShorter { upperShorter };
+
+    bool upperShorterLessThanLonger = compUpperShorter < compLonger;
+    EXPECT_TRUE(upperShorterLessThanLonger) << "\"AB\" should be < \"abc\" (case insensitive)";
 }

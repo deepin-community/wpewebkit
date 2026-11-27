@@ -27,6 +27,7 @@
 #include "GPUBuffer.h"
 
 #include "GPUDevice.h"
+#include "JSDOMConvertNull.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUBufferMapState.h"
 
@@ -35,7 +36,7 @@ namespace WebCore {
 GPUBuffer::~GPUBuffer() = default;
 
 GPUBuffer::GPUBuffer(Ref<WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, GPUDevice& device)
-    : m_backing(WTFMove(backing))
+    : m_backing(WTF::move(backing))
     , m_bufferSize(bufferSize)
     , m_usage(usage)
     , m_mapState(mappedAtCreation ? GPUBufferMapState::Mapped : GPUBufferMapState::Unmapped)
@@ -53,12 +54,13 @@ String GPUBuffer::label() const
 
 void GPUBuffer::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    m_backing->setLabel(WTF::move(label));
 }
 
-void GPUBuffer::mapAsync(GPUMapModeFlags mode, std::optional<GPUSize64> offset, std::optional<GPUSize64> size, MapAsyncPromise&& promise)
+void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<GPUSize64> size, MapAsyncPromise&& promise)
 {
-    if (m_pendingMapPromise) {
+    if (m_mapState != GPUBufferMapState::Unmapped) {
+        m_backing->generateAValidationError();
         promise.reject(Exception { ExceptionCode::OperationError, "pendingMapPromise"_s });
         return;
     }
@@ -66,9 +68,9 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, std::optional<GPUSize64> offset, 
     if (m_mapState == GPUBufferMapState::Unmapped)
         m_mapState = GPUBufferMapState::Pending;
 
-    m_pendingMapPromise = promise;
+    m_pendingMapPromise = makeUnique<MapAsyncPromise>(promise);
     // FIXME: Should this capture a weak pointer to |this| instead?
-    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset.value_or(0), size, [promise = WTFMove(promise), protectedThis = Ref { *this }, offset, size](bool success) mutable {
+    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset, size, [promise = WTF::move(promise), protectedThis = protect(*this), offset, size](bool success) mutable {
         if (!protectedThis->m_pendingMapPromise) {
             if (protectedThis->m_destroyed)
                 promise.reject(Exception { ExceptionCode::OperationError, "buffer destroyed during mapAsync"_s });
@@ -77,10 +79,10 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, std::optional<GPUSize64> offset, 
             return;
         }
 
-        protectedThis->m_pendingMapPromise = std::nullopt;
+        protectedThis->m_pendingMapPromise = nullptr;
         if (success) {
             protectedThis->m_mapState = GPUBufferMapState::Mapped;
-            protectedThis->m_mappedRangeOffset = offset.value_or(0);
+            protectedThis->m_mappedRangeOffset = offset;
             protectedThis->m_mappedRangeSize = size.value_or(protectedThis->m_bufferSize - protectedThis->m_mappedRangeOffset);
             promise.resolve(nullptr);
         } else {
@@ -92,15 +94,17 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, std::optional<GPUSize64> offset, 
     });
 }
 
-static auto makeArrayBuffer(auto source, size_t offset, auto byteLength, auto& cachedArrayBuffers, auto& device, auto& buffer)
+static auto makeArrayBuffer(Variant<std::span<const uint8_t>, size_t> source, size_t offset, auto& cachedArrayBuffers, auto& device, auto& buffer)
 {
     RefPtr<ArrayBuffer> arrayBuffer;
-    if constexpr (std::is_pointer_v<decltype(source)>)
-        arrayBuffer = ArrayBuffer::create({ source, static_cast<size_t>(byteLength) });
-    else
-        arrayBuffer = ArrayBuffer::create(source, byteLength);
+    WTF::visit(WTF::makeVisitor([&](std::span<const uint8_t> source) {
+        arrayBuffer = ArrayBuffer::create(source);
+    }, [&](size_t numberOfElements) {
+        arrayBuffer = ArrayBuffer::create(numberOfElements, 1);
+    }), source);
+
     cachedArrayBuffers.append({ arrayBuffer.get(), offset });
-    cachedArrayBuffers.last().buffer->pin();
+    arrayBuffer->pin();
     if (device)
         device->addBufferToUnmap(buffer);
     return arrayBuffer;
@@ -130,12 +134,11 @@ static bool containsRange(size_t offset, size_t endOffset, const auto& mappedRan
     return false;
 }
 
-ExceptionOr<Ref<JSC::ArrayBuffer>> GPUBuffer::getMappedRange(std::optional<GPUSize64> optionalOffset, std::optional<GPUSize64> optionalSize)
+ExceptionOr<Ref<JSC::ArrayBuffer>> GPUBuffer::getMappedRange(GPUSize64 offset, std::optional<GPUSize64> optionalSize)
 {
     if (m_mapState != GPUBufferMapState::Mapped || m_destroyed)
         return Exception { ExceptionCode::OperationError, "not mapped or destroyed"_s };
 
-    auto offset = optionalOffset.value_or(0);
     if (offset > m_bufferSize)
         return Exception { ExceptionCode::OperationError, "offset > bufferSize"_s };
 
@@ -158,7 +161,7 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> GPUBuffer::getMappedRange(std::optional<GPUSi
         return Exception { ExceptionCode::OperationError, "getMappedRangeFailed because offset + size > mappedRangeSize + mappedRangeOffset"_s };
 
     if (endOffset > m_bufferSize)
-        return Exception { ExceptionCode::OperationError, "validation failed endOffset > bufferSie"_s };
+        return Exception { ExceptionCode::OperationError, "validation failed endOffset > bufferSize"_s };
 
     if (containsRange(offset, endOffset, m_mappedRanges, m_mappedPoints))
         return Exception { ExceptionCode::OperationError, "validation failed - containsRange"_s };
@@ -175,12 +178,12 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> GPUBuffer::getMappedRange(std::optional<GPUSi
         if (!mappedRange.data()) {
             m_arrayBuffers.clear();
             if (m_mappedAtCreation || !size)
-                result = makeArrayBuffer(static_cast<size_t>(0U), 0, 1, m_arrayBuffers, m_device, *this);
+                result = makeArrayBuffer(0U /* numberOfElements */, 0 /* offset */, m_arrayBuffers, m_device, *this);
 
             return;
         }
 
-        result = makeArrayBuffer(mappedRange.data(), offset, size, m_arrayBuffers, m_device, *this);
+        result = makeArrayBuffer(mappedRange.first(size), offset, m_arrayBuffers, m_device, *this);
     });
 
     if (!result)
@@ -192,8 +195,8 @@ ExceptionOr<Ref<JSC::ArrayBuffer>> GPUBuffer::getMappedRange(std::optional<GPUSi
 void GPUBuffer::unmap(ScriptExecutionContext& scriptExecutionContext)
 {
     internalUnmap(scriptExecutionContext);
-    if (m_device)
-        m_device->removeBufferToUnmap(*this);
+    if (RefPtr device = m_device)
+        device->removeBufferToUnmap(*this);
 }
 
 void GPUBuffer::internalUnmap(ScriptExecutionContext& scriptExecutionContext)
@@ -205,7 +208,7 @@ void GPUBuffer::internalUnmap(ScriptExecutionContext& scriptExecutionContext)
     m_mappedPoints.clear();
     if (m_pendingMapPromise) {
         m_pendingMapPromise->reject(Exception { ExceptionCode::AbortError });
-        m_pendingMapPromise = std::nullopt;
+        m_pendingMapPromise = nullptr;
     }
 
     m_mapState = GPUBufferMapState::Unmapped;
@@ -213,7 +216,7 @@ void GPUBuffer::internalUnmap(ScriptExecutionContext& scriptExecutionContext)
     for (auto& arrayBufferAndOffset : m_arrayBuffers) {
         auto& arrayBuffer = arrayBufferAndOffset.buffer;
         if (arrayBuffer && arrayBuffer->data() && arrayBuffer->byteLength()) {
-            m_backing->copy(arrayBuffer->span(), arrayBufferAndOffset.offset);
+            m_backing->copyFrom(arrayBuffer->span(), arrayBufferAndOffset.offset);
             JSC::ArrayBufferContents emptyBuffer;
             arrayBuffer->unpin();
             arrayBuffer->transferTo(scriptExecutionContext.vm(), emptyBuffer);

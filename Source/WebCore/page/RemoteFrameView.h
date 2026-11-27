@@ -25,15 +25,17 @@
 
 #pragma once
 
-#include "FrameView.h"
-#include "RemoteFrame.h"
+#include <WebCore/FrameView.h>
+#include <WebCore/RemoteFrame.h>
+
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class RemoteFrame;
 
 class RemoteFrameView final : public FrameView {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(RemoteFrameView);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteFrameView);
 public:
     static Ref<RemoteFrameView> create(RemoteFrame& frame) { return adoptRef(*new RemoteFrameView(frame)); }
@@ -42,28 +44,41 @@ public:
     void writeRenderTreeAsText(TextStream&, OptionSet<RenderAsTextFlag>) override;
     RemoteFrame& frame() const final { return m_frame; }
 
+    WEBCORE_EXPORT LayoutRect NODELETE layoutViewportRect() const final;
+    std::optional<LayoutRect> visibleRectOfChild(const Frame&) const final;
+
+    // Set the frame rectangle, like setFrameRect, without synching the new rect to other Local/RemoteFrameViews.
+    // When frameRect of a RemoteFrameView changes, it syncs the new rect to other Local/RemoteFrameViews.
+    // RemoteFrameViews on the receiving end will set using this method to avoid repeating the sync.
+    WEBCORE_EXPORT void setFrameRectWithoutSync(const IntRect&);
+
+    OptionSet<FrameOwnerElementAppearance> appearanceOfOwnerElementOfChildFrame(const Frame&) const final;
+    LayoutPoint childFrameOwnerContentBoxLocation(const Frame&) const final;
+    TransformationMatrix childFrameOwnerToRootContentTransform(const Frame&) const final;
+    TransformationMatrix absoluteToChildFrameOwnerLocalTransform(const Frame&) const final;
+
 private:
     WEBCORE_EXPORT RemoteFrameView(RemoteFrame&);
 
     bool isRemoteFrameView() const final { return true; }
-    bool isScrollableOrRubberbandable() final;
-    bool hasScrollableOrRubberbandableAncestor() final;
-    bool shouldPlaceVerticalScrollbarOnLeft() const final;
-    void invalidateScrollbarRect(Scrollbar&, const IntRect&) final;
+    bool NODELETE isScrollableOrRubberbandable() final;
+    bool NODELETE hasScrollableOrRubberbandableAncestor() final;
+    bool NODELETE shouldPlaceVerticalScrollbarOnLeft() const final;
+    void NODELETE invalidateScrollbarRect(Scrollbar&, const IntRect&) final;
     IntRect windowClipRect() const final;
     void paintContents(GraphicsContext&, const IntRect& damageRect, SecurityOriginPaintPolicy, RegionContext*) final;
-    void addedOrRemovedScrollbar() final;
-    void delegatedScrollingModeDidChange() final;
-    void updateScrollCorner() final;
-    bool scrollContentsFastPath(const IntSize& scrollDelta, const IntRect& rectToScroll, const IntRect& clipRect) final;
-    bool isVerticalDocument() const final;
-    bool isFlippedDocument() const final;
-    bool shouldDeferScrollUpdateAfterContentSizeChange() final;
-    void scrollOffsetChangedViaPlatformWidgetImpl(const ScrollOffset&, const ScrollOffset&) final;
-    void unobscuredContentSizeChanged() final;
-    void didFinishProhibitingScrollingWhenChangingContentSize() final;
-    void updateLayerPositionsAfterScrolling() final;
-    void updateCompositingLayersAfterScrolling() final;
+    void NODELETE addedOrRemovedScrollbar() final;
+    void NODELETE delegatedScrollingModeDidChange() final;
+    void NODELETE updateScrollCorner() final;
+    bool NODELETE scrollContentsFastPath(const IntSize& scrollDelta, const IntRect& rectToScroll, const IntRect& clipRect) final;
+    bool NODELETE isVerticalDocument() const final;
+    bool NODELETE isFlippedDocument() const final;
+    bool NODELETE shouldDeferScrollUpdateAfterContentSizeChange() final;
+    void NODELETE scrollOffsetChangedViaPlatformWidgetImpl(const ScrollOffset&, const ScrollOffset&) final;
+    void NODELETE unobscuredContentSizeChanged() final;
+    void NODELETE didFinishProhibitingScrollingWhenChangingContentSize() final;
+    void NODELETE updateLayerPositionsAfterScrolling() final;
+    void NODELETE updateCompositingLayersAfterScrolling() final;
 
     void setFrameRect(const IntRect&) final;
 

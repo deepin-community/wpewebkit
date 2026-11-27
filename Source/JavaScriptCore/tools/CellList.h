@@ -44,11 +44,11 @@ public:
     size_t size() const { return m_cells.size(); }
 
     typedef SegmentedVector<CellProfile, 64> CellProfileVector;
-    CellProfileVector& cells() { return m_cells; }
+    CellProfileVector& cells() LIFETIME_BOUND { return m_cells; }
 
     void add(CellProfile&& profile)
     {
-        m_cells.append(WTFMove(profile));
+        m_cells.append(WTF::move(profile));
         m_mapIsUpToDate = false;
     }
 
@@ -61,7 +61,7 @@ private:
     CellProfileVector m_cells;
 
     bool m_mapIsUpToDate { false };
-    HashMap<HeapCell*, CellProfile*> m_map;
+    UncheckedKeyHashMap<HeapCell*, CellProfile*> m_map;
 };
     
 } // namespace JSC

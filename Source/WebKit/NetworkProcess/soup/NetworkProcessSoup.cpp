@@ -87,7 +87,7 @@ static CString buildAcceptLanguages(const Vector<String>& languages)
         if (quality > 0 && quality < 100) {
             std::array<char, 8> buffer;
             g_ascii_formatd(buffer.data(), 8, "%.2f", quality / 100.0);
-            builder.append(";q="_s, span(buffer.data()));
+            builder.append(";q="_s, unsafeSpan(buffer.data()));
         }
     }
 
@@ -171,7 +171,7 @@ void NetworkProcess::allowSpecificHTTPSCertificateForHost(PAL::SessionID session
 
 void NetworkProcess::clearDiskCache(WallTime modifiedSince, CompletionHandler<void()>&& completionHandler)
 {
-    auto aggregator = CallbackAggregator::create(WTFMove(completionHandler));
+    auto aggregator = CallbackAggregator::create(WTF::move(completionHandler));
     forEachNetworkSession([modifiedSince, &aggregator](NetworkSession& session) {
         if (auto* cache = session.cache())
             cache->clear(modifiedSince, [aggregator] () { });

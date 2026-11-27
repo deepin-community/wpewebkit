@@ -42,24 +42,24 @@ QualifiedName::QualifiedNameImpl::QualifiedNameImpl(const AtomString& prefix, co
     ASSERT(!namespaceURI.isEmpty() || namespaceURI.isNull());
 }
 
-static QualifiedNameComponents makeComponents(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI)
+static QualifiedNameComponents NODELETE makeComponents(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI)
 {
     return { prefix.impl(), localName.impl(), namespaceURI.isEmpty() ? nullptr : namespaceURI.impl() };
 }
 
 QualifiedName::QualifiedName(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI)
-    : m_impl(threadGlobalData().qualifiedNameCache().getOrCreate(makeComponents(prefix, localName, namespaceURI)))
+    : m_impl(threadGlobalDataSingleton().qualifiedNameCache().getOrCreate(makeComponents(prefix, localName, namespaceURI)))
 {
 }
 
 QualifiedName::QualifiedName(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI, Namespace nodeNamespace, NodeName nodeName)
-    : m_impl(threadGlobalData().qualifiedNameCache().getOrCreate(makeComponents(prefix, localName, namespaceURI), nodeNamespace, nodeName))
+    : m_impl(threadGlobalDataSingleton().qualifiedNameCache().getOrCreate(makeComponents(prefix, localName, namespaceURI), nodeNamespace, nodeName))
 {
 }
 
 QualifiedName::QualifiedNameImpl::~QualifiedNameImpl()
 {
-    threadGlobalData().qualifiedNameCache().remove(*this);
+    threadGlobalDataSingleton().qualifiedNameCache().remove(*this);
 }
 
 // Global init routines

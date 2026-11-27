@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,9 @@
 #pragma once
 
 #include "APIObject.h"
-#include "WebProcessProxy.h"
+#include "WebPageProxyIdentifier.h"
+#include <WebCore/PageIdentifier.h>
+#include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
@@ -35,6 +37,7 @@
 #include <wtf/Lock.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/RunLoop.h>
 
 namespace API {
 class FrameInfo;
@@ -42,7 +45,6 @@ class FrameInfo;
 
 namespace WebCore {
 class ResourceError;
-class ResourceResponse;
 }
 
 namespace WebKit {
@@ -50,6 +52,7 @@ namespace WebKit {
 struct URLSchemeTaskParameters;
 class WebURLSchemeHandler;
 class WebPageProxy;
+class WebProcessProxy;
 
 using SyncLoadCompletionHandler = CompletionHandler<void(const WebCore::ResourceResponse&, const WebCore::ResourceError&, Vector<uint8_t>&&)>;
 
@@ -61,9 +64,9 @@ public:
     ~WebURLSchemeTask();
 
     WebCore::ResourceLoaderIdentifier resourceLoaderID() const { ASSERT(RunLoop::isMain()); return m_resourceLoaderID; }
-    WebPageProxyIdentifier pageProxyID() const { ASSERT(RunLoop::isMain()); return m_pageProxyID; }
-    WebCore::PageIdentifier webPageID() const { ASSERT(RunLoop::isMain()); return m_webPageID; }
-    WebProcessProxy* process() { ASSERT(RunLoop::isMain()); return m_process.get(); }
+    std::optional<WebPageProxyIdentifier> pageProxyID() const { ASSERT(RunLoop::isMain()); return m_pageProxyID; }
+    std::optional<WebCore::PageIdentifier> webPageID() const { ASSERT(RunLoop::isMain()); return m_webPageID.asOptional(); }
+    WebProcessProxy& process() { ASSERT(RunLoop::isMain()); return m_process.get(); }
     WebCore::ResourceRequest request() const;
     API::FrameInfo& frameInfo() const { return m_frameInfo.get(); }
 
@@ -82,12 +85,11 @@ public:
     };
     ExceptionType willPerformRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&,  Function<void(WebCore::ResourceRequest&&)>&&);
     ExceptionType didPerformRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&);
-    ExceptionType didReceiveResponse(const WebCore::ResourceResponse&);
+    ExceptionType didReceiveResponse(WebCore::ResourceResponse&&);
     ExceptionType didReceiveData(Ref<WebCore::SharedBuffer>&&);
     ExceptionType didComplete(const WebCore::ResourceError&);
 
     void stop();
-    void pageDestroyed();
 
     void suppressTaskStoppedExceptions() { m_shouldSuppressTaskStoppedExceptions = true; }
 
@@ -98,13 +100,13 @@ private:
 
     bool isSync() const { return !!m_syncCompletionHandler; }
 
-    Ref<WebURLSchemeHandler> m_urlSchemeHandler;
-    RefPtr<WebProcessProxy> m_process;
+    const Ref<WebURLSchemeHandler> m_urlSchemeHandler;
+    const Ref<WebProcessProxy> m_process;
     WebCore::ResourceLoaderIdentifier m_resourceLoaderID;
-    WebPageProxyIdentifier m_pageProxyID;
-    WebCore::PageIdentifier m_webPageID;
+    Markable<WebPageProxyIdentifier> m_pageProxyID;
+    Markable<WebCore::PageIdentifier> m_webPageID;
     WebCore::ResourceRequest m_request WTF_GUARDED_BY_LOCK(m_requestLock);
-    Ref<API::FrameInfo> m_frameInfo;
+    const Ref<API::FrameInfo> m_frameInfo;
     mutable Lock m_requestLock;
     bool m_stopped { false };
     bool m_responseSent { false };

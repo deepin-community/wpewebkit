@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +25,10 @@
 
 #pragma once
 
-#include "GraphicsStyle.h"
-#include "GraphicsTypes.h"
-#include "SourceBrush.h"
-#include "WindRule.h"
+#include <WebCore/GraphicsStyle.h>
+#include <WebCore/GraphicsTypes.h>
+#include <WebCore/SourceBrush.h>
+#include <WebCore/WindRule.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/OptionSet.h>
 
@@ -58,11 +58,15 @@ public:
         ShouldSubpixelQuantizeFonts = 1 << 13,
         ShadowsIgnoreTransforms     = 1 << 14,
         DrawLuminanceMask           = 1 << 15,
-#if HAVE(OS_DARK_MODE_SUPPORT)
-        UseDarkAppearance           = 1 << 16,
-#endif
     };
     using ChangeFlags = OptionSet<Change>;
+
+    struct ChangeIndex {
+        Change toChange() { return static_cast<Change>(1 << value); }
+
+        uint32_t value;
+    };
+    static constexpr ChangeIndex toIndex(GraphicsContextState::Change change) { return { WTF::ctz(std::to_underlying(change)) }; }
 
     static constexpr ChangeFlags basicChangeFlags { Change::StrokeThickness, Change::StrokeBrush, Change::FillBrush };
     static constexpr ChangeFlags strokeChangeFlags { Change::StrokeThickness, Change::StrokeBrush };
@@ -81,22 +85,22 @@ public:
     ChangeFlags changes() const { return m_changeFlags; }
     void didApplyChanges() { m_changeFlags = { }; }
 
-    SourceBrush& fillBrush() { return m_fillBrush; }
-    const SourceBrush& fillBrush() const { return m_fillBrush; }
+    SourceBrush& fillBrush() LIFETIME_BOUND { return m_fillBrush; }
+    const SourceBrush& fillBrush() const LIFETIME_BOUND { return m_fillBrush; }
     void setFillBrush(const SourceBrush& brush) { setProperty(Change::FillBrush, &GraphicsContextState::m_fillBrush, brush); }
     void setFillColor(const Color& color) { setProperty(Change::FillBrush, &GraphicsContextState::m_fillBrush, { color }); }
-    void setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_fillBrush.setGradient(WTFMove(gradient), spaceTransform); m_changeFlags.add(Change::FillBrush); }
-    void setFillPattern(Ref<Pattern>&& pattern) { m_fillBrush.setPattern(WTFMove(pattern)); m_changeFlags.add(Change::FillBrush); }
+    void setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_fillBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::FillBrush); }
+    void setFillPattern(Ref<Pattern>&& pattern) { m_fillBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::FillBrush); }
 
     WindRule fillRule() const { return m_fillRule; }
     void setFillRule(WindRule fillRule) { setProperty(Change::FillRule, &GraphicsContextState::m_fillRule, fillRule); }
 
-    SourceBrush& strokeBrush() { return m_strokeBrush; }
-    const SourceBrush& strokeBrush() const { return m_strokeBrush; }
+    SourceBrush& strokeBrush() LIFETIME_BOUND { return m_strokeBrush; }
+    const SourceBrush& strokeBrush() const LIFETIME_BOUND { return m_strokeBrush; }
     void setStrokeBrush(const SourceBrush& brush) { setProperty(Change::StrokeBrush, &GraphicsContextState::m_strokeBrush, brush); }
     void setStrokeColor(const Color& color) { setProperty(Change::StrokeBrush, &GraphicsContextState::m_strokeBrush, { color }); }
-    void setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_strokeBrush.setGradient(WTFMove(gradient), spaceTransform); m_changeFlags.add(Change::StrokeBrush); }
-    void setStrokePattern(Ref<Pattern>&& pattern) { m_strokeBrush.setPattern(WTFMove(pattern)); m_changeFlags.add(Change::StrokeBrush); }
+    void setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform) { m_strokeBrush.setGradient(WTF::move(gradient), spaceTransform); m_changeFlags.add(Change::StrokeBrush); }
+    void setStrokePattern(Ref<Pattern>&& pattern) { m_strokeBrush.setPattern(WTF::move(pattern)); m_changeFlags.add(Change::StrokeBrush); }
 
     float strokeThickness() const { return m_strokeThickness; }
     void setStrokeThickness(float strokeThickness) { setProperty(Change::StrokeThickness, &GraphicsContextState::m_strokeThickness, strokeThickness); }
@@ -104,13 +108,13 @@ public:
     StrokeStyle strokeStyle() const { return m_strokeStyle; }
     void setStrokeStyle(StrokeStyle strokeStyle) { setProperty(Change::StrokeStyle, &GraphicsContextState::m_strokeStyle, strokeStyle); }
 
-    const CompositeMode& compositeMode() const { return m_compositeMode; }
+    const CompositeMode& compositeMode() const LIFETIME_BOUND { return m_compositeMode; }
     void setCompositeMode(CompositeMode compositeMode) { setProperty(Change::CompositeMode, &GraphicsContextState::m_compositeMode, compositeMode); }
 
-    const std::optional<GraphicsDropShadow>& dropShadow() const { return m_dropShadow; }
+    const std::optional<GraphicsDropShadow>& dropShadow() const LIFETIME_BOUND { return m_dropShadow; }
     void setDropShadow(const std::optional<GraphicsDropShadow>& dropShadow) { setProperty(Change::DropShadow, &GraphicsContextState::m_dropShadow, dropShadow); }
 
-    const std::optional<GraphicsStyle>& style() const { return m_style; }
+    const std::optional<GraphicsStyle>& style() const LIFETIME_BOUND { return m_style; }
     void setStyle(const std::optional<GraphicsStyle>& style) { setProperty(Change::Style, &GraphicsContextState::m_style, style); }
 
     float alpha() const { return m_alpha; }
@@ -137,14 +141,8 @@ public:
     bool drawLuminanceMask() const { return m_drawLuminanceMask; }
     void setDrawLuminanceMask(bool drawLuminanceMask) { setProperty(Change::DrawLuminanceMask, &GraphicsContextState::m_drawLuminanceMask, drawLuminanceMask); }
 
-#if HAVE(OS_DARK_MODE_SUPPORT)
-    bool useDarkAppearance() const { return m_useDarkAppearance; }
-    void setUseDarkAppearance(bool useDarkAppearance) { setProperty(Change::UseDarkAppearance, &GraphicsContextState::m_useDarkAppearance, useDarkAppearance); }
-#endif
-    
-    bool containsOnlyInlineChanges() const;
-    bool containsOnlyInlineStrokeChanges() const;
     void mergeLastChanges(const GraphicsContextState&, const std::optional<GraphicsContextState>& lastDrawingState = std::nullopt);
+    void mergeSingleChange(const GraphicsContextState&, ChangeIndex, const std::optional<GraphicsContextState>& lastDrawingState = std::nullopt);
     void mergeAllChanges(const GraphicsContextState&);
 
     Purpose purpose() const { return m_purpose; }
@@ -152,7 +150,7 @@ public:
     WTF::TextStream& dump(WTF::TextStream&) const;
 
 private:
-    friend struct IPC::ArgumentCoder<GraphicsContextState, void>;
+    friend struct IPC::ArgumentCoder<GraphicsContextState>;
 
     template<typename T>
     void setProperty(Change change, T GraphicsContextState::*property, const T& value)
@@ -196,9 +194,6 @@ private:
     bool m_shouldSubpixelQuantizeFonts { true };
     bool m_shadowsIgnoreTransforms { false };
     bool m_drawLuminanceMask { false };
-#if HAVE(OS_DARK_MODE_SUPPORT)
-    bool m_useDarkAppearance { false };
-#endif
 
     Purpose m_purpose { Purpose::Initial };
 };

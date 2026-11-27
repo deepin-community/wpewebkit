@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,19 +25,20 @@
 
 #pragma once
 
-#include "CopyImageOptions.h"
-#include "DestinationColorSpace.h"
-#include "FloatRect.h"
-#include "GraphicsLayerContentsDisplayDelegate.h"
-#include "GraphicsTypesGL.h"
-#include "ImageBufferAllocator.h"
-#include "ImageBufferBackendParameters.h"
-#include "ImagePaintingOptions.h"
-#include "IntRect.h"
-#include "PixelBufferFormat.h"
-#include "PlatformLayer.h"
-#include "RenderingMode.h"
+#include <WebCore/CopyImageOptions.h>
+#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/FloatRect.h>
+#include <WebCore/GraphicsLayerContentsDisplayDelegate.h>
+#include <WebCore/GraphicsTypesGL.h>
+#include <WebCore/ImageBufferAllocator.h>
+#include <WebCore/ImageBufferBackendParameters.h>
+#include <WebCore/ImagePaintingOptions.h>
+#include <WebCore/IntRect.h>
+#include <WebCore/PixelBufferFormat.h>
+#include <WebCore/PlatformLayer.h>
+#include <WebCore/RenderingMode.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 #if USE(CAIRO)
@@ -46,7 +47,11 @@
 #endif
 
 #if HAVE(IOSURFACE)
-#include "IOSurface.h"
+#include <WebCore/IOSurface.h>
+#endif
+
+#if USE(SKIA)
+class SkSurface;
 #endif
 
 namespace WTF {
@@ -64,7 +69,9 @@ class IOSurfacePool;
 class Image;
 class NativeImage;
 class PixelBuffer;
+class PixelBufferSourceView;
 class ProcessIdentity;
+class SharedBuffer;
 
 enum class PreserveResolution : bool {
     No,
@@ -82,7 +89,7 @@ enum class VolatilityState : uint8_t {
 };
 
 class ThreadSafeImageBufferFlusher {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ThreadSafeImageBufferFlusher);
     WTF_MAKE_NONCOPYABLE(ThreadSafeImageBufferFlusher);
 public:
     ThreadSafeImageBufferFlusher() = default;
@@ -108,11 +115,13 @@ public:
 
     WEBCORE_EXPORT virtual ~ImageBufferBackend();
 
-    WEBCORE_EXPORT static size_t calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
+    WEBCORE_EXPORT static IntSize NODELETE calculateSafeBackendSize(const Parameters&);
+    WEBCORE_EXPORT static size_t NODELETE calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
     WEBCORE_EXPORT static AffineTransform calculateBaseTransform(const Parameters&);
 
     virtual GraphicsContext& context() = 0;
     virtual void flushContext() { }
+    virtual void submitDrawingCommands() { }
 
     virtual RefPtr<NativeImage> copyNativeImage() = 0;
     virtual RefPtr<NativeImage> createNativeImageReference() = 0;
@@ -122,7 +131,9 @@ public:
     virtual void transformToColorSpace(const DestinationColorSpace&) { }
 
     virtual void getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination) = 0;
-    virtual void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
+    virtual void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
+
+    WEBCORE_EXPORT virtual RefPtr<SharedBuffer> sinkIntoPDFDocument();
 
 #if HAVE(IOSURFACE)
     virtual IOSurface* surface() { return nullptr; }
@@ -132,8 +143,19 @@ public:
     virtual RefPtr<cairo_surface_t> createCairoSurface() { return nullptr; }
 #endif
 
+#if USE(SKIA)
+    virtual SkSurface* surface() const { return nullptr; }
+#endif
+
     virtual bool isInUse() const { return false; }
-    virtual void releaseGraphicsContext() { ASSERT_NOT_REACHED(); }
+
+    // Destroys the GraphicsContext, dropping the state it holds. The state can
+    // reference resources owned by other objects, so this is how an ImageBuffer
+    // is detached from its surroundings.
+    virtual void releaseGraphicsContext() { }
+    // Backends that cannot destroy their context must leave hasGraphicsContext() true;
+    // such an ImageBuffer must not be handed to a different owner.
+    virtual bool hasGraphicsContext() const { return true; }
 
     virtual void transferToNewContext(const ImageBufferCreationContext&) { }
 
@@ -154,7 +176,9 @@ public:
 
     virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const { return nullptr; }
 
-    const Parameters& parameters() { return m_parameters; }
+    virtual void prepareForDisplay() { }
+
+    const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
 
     WEBCORE_EXPORT virtual String debugDescription() const = 0;
 
@@ -165,11 +189,16 @@ protected:
 
     IntSize size() const { return m_parameters.backendSize; };
     float resolutionScale() const { return m_parameters.resolutionScale; }
-    const DestinationColorSpace& colorSpace() const { return m_parameters.colorSpace; }
-    ImageBufferPixelFormat pixelFormat() const { return m_parameters.pixelFormat; }
+    const DestinationColorSpace& colorSpace() const LIFETIME_BOUND { return m_parameters.colorSpace; }
+    PixelFormat pixelFormat() const { return m_parameters.bufferFormat.pixelFormat; }
 
-    WEBCORE_EXPORT void getPixelBuffer(const IntRect& srcRect, const uint8_t* data, PixelBuffer& destination);
-    WEBCORE_EXPORT void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat, uint8_t* destination);
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    void NODELETE convertToLuminanceMaskFloat16();
+#endif
+    void convertToLuminanceMaskUint8();
+
+    WEBCORE_EXPORT void getPixelBuffer(const IntRect& srcRect, std::span<const uint8_t> data, PixelBuffer& destination);
+    WEBCORE_EXPORT void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat, std::span<uint8_t> destination);
 
     Parameters m_parameters;
 };

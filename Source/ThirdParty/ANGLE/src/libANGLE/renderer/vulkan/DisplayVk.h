@@ -17,7 +17,24 @@
 
 namespace rx
 {
-class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
+class ThreadSafeDisplayVk : public ThreadSafeDisplayImpl, public vk::ErrorContext
+{
+  public:
+    ThreadSafeDisplayVk(vk::Renderer *renderer) : vk::ErrorContext(renderer) {}
+    ~ThreadSafeDisplayVk() override = default;
+
+    bool testDeviceLost() override;
+    egl::Error restoreLostDevice(const egl::ThreadSafeDisplay *display) override;
+
+    EGLSyncImpl *createSync() override;
+
+    void handleError(VkResult result,
+                     const char *file,
+                     const char *function,
+                     unsigned int line) override;
+};
+
+class DisplayVk : public DisplayImpl, public vk::GlobalOps, public ThreadSafeDisplayVk
 {
   public:
     DisplayVk(const egl::DisplayState &state);
@@ -31,12 +48,11 @@ class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
                            egl::Surface *readSurface,
                            gl::Context *context) override;
 
-    bool testDeviceLost() override;
-    egl::Error restoreLostDevice(const egl::Display *display) override;
-
     std::string getRendererDescription() override;
     std::string getVendorString() override;
     std::string getVersionString(bool includeFullVersion) override;
+
+    vk::Renderer *getRenderer() const { return mRenderer; }
 
     DeviceImpl *createDevice() override;
 
@@ -70,11 +86,8 @@ class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
     StreamProducerImpl *createStreamProducerD3DTexture(egl::Stream::ConsumerType consumerType,
                                                        const egl::AttributeMap &attribs) override;
 
-    EGLSyncImpl *createSync() override;
-
     gl::Version getMaxSupportedESVersion() const override;
     gl::Version getMaxConformantESVersion() const override;
-    Optional<gl::Version> getMaxSupportedDesktopVersion() const override;
 
     egl::Error validateImageClientBuffer(const gl::Context *context,
                                          EGLenum target,
@@ -95,11 +108,6 @@ class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
 
     angle::ScratchBuffer *getScratchBuffer() { return &mScratchBuffer; }
 
-    void handleError(VkResult result,
-                     const char *file,
-                     const char *function,
-                     unsigned int line) override;
-
     void initializeFrontendFeatures(angle::FrontendFeatures *features) const override;
 
     void populateFeatureList(angle::FeatureList *features) override;
@@ -110,6 +118,17 @@ class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
     bool isSurfaceFormatColorspacePairSupported(VkSurfaceKHR surface,
                                                 VkFormat format,
                                                 VkColorSpaceKHR colorspace) const;
+
+    void lockVulkanQueue() override;
+    void unlockVulkanQueue() override;
+
+    egl::Error querySupportedCompressionRates(const egl::Config *configuration,
+                                              const egl::AttributeMap &attributes,
+                                              EGLint *rates,
+                                              EGLint rate_size,
+                                              EGLint *num_rates) const override;
+
+    ThreadSafeDisplayImpl *getThreadSafeDisplayImpl() override { return this; }
 
   protected:
     void generateExtensions(egl::DisplayExtensions *outExtensions) const override;
@@ -130,6 +149,7 @@ class DisplayVk : public DisplayImpl, public vk::Context, public vk::GlobalOps
     std::shared_ptr<angle::WaitableEvent> postMultiThreadWorkerTask(
         const std::shared_ptr<angle::Closure> &task) override;
     void notifyDeviceLost() override;
+    GlobalOps::Api getFrontendApi() const override { return GlobalOps::Api::Egl; }
 
     angle::ScratchBuffer mScratchBuffer;
 

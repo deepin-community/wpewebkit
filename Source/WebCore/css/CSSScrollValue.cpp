@@ -29,21 +29,21 @@
 #include "config.h"
 #include "CSSScrollValue.h"
 
-#include "CSSPrimitiveValueMappings.h"
+#include "StyleKeyword+Mappings.h"
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
-String CSSScrollValue::customCSSText() const
+String CSSScrollValue::customCSSText(const CSS::SerializationContext& context) const
 {
-    auto hasScroller = m_scroller && m_scroller->valueID() != CSSValueNearest;
-    auto hasAxis = m_axis && m_axis->valueID() != CSSValueBlock;
+    auto hasScroller = m_scroller && !isValueID(*m_scroller, CSSValueNearest);
+    auto hasAxis = m_axis && !isValueID(*m_axis, CSSValueBlock);
 
     return makeString(
         "scroll("_s,
-        hasScroller ? m_scroller->cssText() : ""_s,
+        hasScroller ? m_scroller->cssText(context) : ""_s,
         hasScroller && hasAxis ? " "_s : ""_s,
-        hasAxis ? m_axis->cssText() : ""_s,
+        hasAxis ? m_axis->cssText(context) : ""_s,
         ")"_s
     );
 }

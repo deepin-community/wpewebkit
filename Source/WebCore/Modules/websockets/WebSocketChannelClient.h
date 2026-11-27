@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Google Inc.  All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -31,20 +31,11 @@
 #pragma once
 
 #include <wtf/Forward.h>
-#include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class WebSocketChannelClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::WebSocketChannelClient> : std::true_type { };
-}
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
-class WebSocketChannelClient : public CanMakeWeakPtr<WebSocketChannelClient> {
+class WebSocketChannelClient : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebSocketChannelClient, WTF::DestructionThread::Main> {
 public:
     virtual ~WebSocketChannelClient() = default;
     virtual void didConnect() = 0;

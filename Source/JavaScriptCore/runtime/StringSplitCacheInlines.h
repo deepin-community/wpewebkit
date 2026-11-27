@@ -26,13 +26,14 @@
 
 #pragma once
 
+#include "DeferGC.h"
 #include "StringSplitCache.h"
 
 namespace JSC {
 
-inline JSImmutableButterfly* StringSplitCache::get(const String& subject, const String& separator)
+inline JSCellButterfly* StringSplitCache::get(const String& subject, const String& separator)
 {
-    DisallowGC disallowGC;
+    AssertNoGC assertNoGC;
     if (!subject.impl() || !subject.impl()->isAtom())
         return nullptr;
     if (!separator.impl() || !separator.impl()->isAtom())
@@ -54,9 +55,9 @@ inline JSImmutableButterfly* StringSplitCache::get(const String& subject, const 
     return nullptr;
 }
 
-inline void StringSplitCache::set(const String& subject, const String& separator, JSImmutableButterfly* butterfly)
+inline void StringSplitCache::set(const String& subject, const String& separator, JSCellButterfly* butterfly)
 {
-    DisallowGC disallowGC;
+    AssertNoGC assertNoGC;
     if (!subject.impl() || !subject.impl()->isAtom())
         return;
     if (!separator.impl() || !separator.impl()->isAtom())

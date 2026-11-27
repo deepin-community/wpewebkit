@@ -25,18 +25,17 @@
 
 #pragma once
 
-#include "IDBKeyData.h"
-#include "IDBKeyPath.h"
-#include "IDBValue.h"
-#include "IndexedDB.h"
-#include <variant>
+#include <WebCore/IDBKeyData.h>
+#include <WebCore/IDBKeyPath.h>
+#include <WebCore/IDBValue.h>
+#include <WebCore/IndexedDB.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class IDBGetAllResult {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(IDBGetAllResult, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(IDBGetAllResult, WEBCORE_EXPORT);
 public:
     IDBGetAllResult() = default;
 
@@ -51,22 +50,23 @@ public:
     IDBGetAllResult isolatedCopy() const;
 
     IndexedDB::GetAllType type() const { return m_type; }
-    const std::optional<IDBKeyPath>& keyPath() const { return m_keyPath; }
-    WEBCORE_EXPORT const Vector<IDBKeyData>& keys() const;
-    WEBCORE_EXPORT const Vector<IDBValue>& values() const;
+    const std::optional<IDBKeyPath>& keyPath() const LIFETIME_BOUND { return m_keyPath; }
+    WEBCORE_EXPORT const Vector<IDBKeyData>& NODELETE keys() const;
+    WEBCORE_EXPORT const Vector<IDBKeyData>& NODELETE primaryKeys() const;
+    WEBCORE_EXPORT const Vector<IDBValue>& NODELETE values() const;
 
     void addKey(IDBKeyData&&);
+    void addPrimaryKey(IDBKeyData&&);
     void addValue(IDBValue&&);
 
-    WEBCORE_EXPORT Vector<String> allBlobFilePaths() const;
-
 private:
-    friend struct IPC::ArgumentCoder<IDBGetAllResult, void>;
-    IDBGetAllResult(IndexedDB::GetAllType type, Vector<IDBKeyData>&& keys, Vector<IDBValue>&& values, std::optional<IDBKeyPath>&& keyPath)
+    friend struct IPC::ArgumentCoder<IDBGetAllResult>;
+    IDBGetAllResult(IndexedDB::GetAllType type, Vector<IDBKeyData>&& keys, Vector<IDBKeyData>&& primaryKeys, Vector<IDBValue>&& values, std::optional<IDBKeyPath>&& keyPath)
         : m_type(type)
-        , m_keys(WTFMove(keys))
-        , m_values(WTFMove(values))
-        , m_keyPath(WTFMove(keyPath))
+        , m_keys(WTF::move(keys))
+        , m_primaryKeys(WTF::move(primaryKeys))
+        , m_values(WTF::move(values))
+        , m_keyPath(WTF::move(keyPath))
     {
     }
 
@@ -74,6 +74,7 @@ private:
 
     IndexedDB::GetAllType m_type { IndexedDB::GetAllType::Keys };
     Vector<IDBKeyData> m_keys;
+    Vector<IDBKeyData> m_primaryKeys;
     Vector<IDBValue> m_values;
     std::optional<IDBKeyPath> m_keyPath;
 };

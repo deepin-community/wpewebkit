@@ -31,7 +31,6 @@
 #include <string>
 
 #include <wtf/Expected.h>
-#include <wtf/Unexpected.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Ref.h>
 
@@ -45,9 +44,9 @@ template<typename T0, typename T1> std::ostream& operator<<(std::ostream& os, co
 namespace experimental {
 inline namespace fundamentals_v3 {
 
-template<class E> std::ostream& operator<<(std::ostream& os, const Unexpected<E>& u)
+template<class E> std::ostream& operator<<(std::ostream& os, const std::unexpected<E>& u)
 {
-    return os << u.value();
+    return os << u.error();
 }
 
 template<class T, class E> std::ostream& operator<<(std::ostream& os, const Expected<T, E>& e)
@@ -75,20 +74,20 @@ constexpr const char* foof = "foof";
 TEST(WTF_Expected, Unexpected)
 {
     {
-        auto u = Unexpected<int>(42);
-        EXPECT_EQ(u.value(), 42);
+        auto u = std::unexpected<int>(42);
+        EXPECT_EQ(u.error(), 42);
         constexpr auto c = makeUnexpected(42);
-        EXPECT_EQ(c.value(), 42);
+        EXPECT_EQ(c.error(), 42);
         EXPECT_EQ(u, c);
         EXPECT_FALSE(u != c);
     }
     {
         auto c = makeUnexpected(oops);
-        EXPECT_EQ(c.value(), oops);
+        EXPECT_EQ(c.error(), oops);
     }
     {
         auto s = makeUnexpected(std::string(oops));
-        EXPECT_EQ(s.value(), oops);
+        EXPECT_EQ(s.error(), oops);
     }
     {
         constexpr auto s0 = makeUnexpected(oops);
@@ -121,7 +120,7 @@ TEST(WTF_Expected, expected)
         EXPECT_EQ(e.value_or(3.14), 0);
     }
     {
-        constexpr E e;
+        const E e;
         EXPECT_TRUE(e.has_value());
         EXPECT_EQ(e.value(), 0);
         EXPECT_EQ(e.value_or(3.14), 0);
@@ -146,11 +145,11 @@ TEST(WTF_Expected, expected)
         EXPECT_EQ(e4.value_or(3.14), 42);
     }
     {
-        constexpr E c(42);
+        const E c(42);
         EXPECT_TRUE(c.has_value());
         EXPECT_EQ(c.value(), 42);
         EXPECT_EQ(c.value_or(3.14), 42);
-        constexpr const auto c2(c);
+        const auto c2(c);
         EXPECT_TRUE(c2.has_value());
         EXPECT_EQ(c2.value(), 42);
         EXPECT_EQ(c2.value_or(3.14), 42);
@@ -361,7 +360,7 @@ TEST(WTF_Expected, comparison)
     
     NonCopyable<int> a { 5 };
     NonCopyable<int> b { 6 };
-    Unexpected<NonCopyable<double>> c { makeUnexpected(NonCopyable<double> { 5.0 }) };
+    std::unexpected<NonCopyable<double>> c { makeUnexpected(NonCopyable<double> { 5.0 }) };
     Expected<NonCopyable<int>, NonCopyable<double>> d { NonCopyable<int> { 5 } };
     Expected<NonCopyable<int>, NonCopyable<double>> e { makeUnexpected(NonCopyable<double> { 5.0 }) };
 
@@ -420,7 +419,7 @@ TEST(WTF_Expected, destructors)
 static int snowflakes = 0;
 static int melted = 0;
 struct snowflake {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(snowflake);
     static void reset() { snowflakes = melted = 0; }
     snowflake() { ++snowflakes; }
     ~snowflake() { ++melted; }
@@ -440,7 +439,7 @@ TEST(WTF_Expected, unique_ptr)
 
     {
         auto s = makeUnexpected(makeUnique<snowflake>());
-        Unexpected<std::unique_ptr<snowflake>> c(WTFMove(s));
+        std::unexpected<std::unique_ptr<snowflake>> c(WTF::move(s));
         EXPECT_EQ(snowflakes, 1);
         EXPECT_EQ(melted, 0);
     }
@@ -451,7 +450,7 @@ TEST(WTF_Expected, unique_ptr)
     auto plow = [] (std::unique_ptr<snowflake>&& s)
     {
         {
-            std::unique_ptr<snowflake> moved = WTFMove(s);
+            std::unique_ptr<snowflake> moved = WTF::move(s);
             EXPECT_EQ(snowflakes, 1);
             EXPECT_EQ(melted, 0);
         }
@@ -461,7 +460,7 @@ TEST(WTF_Expected, unique_ptr)
 
     {
         Expected<std::unique_ptr<snowflake>, int> s(makeUnique<snowflake>());
-        plow(WTFMove(s).value());
+        plow(WTF::move(s).value());
     }
     EXPECT_EQ(snowflakes, 1);
     EXPECT_EQ(melted, 1);
@@ -469,7 +468,7 @@ TEST(WTF_Expected, unique_ptr)
 
     {
         Expected<int, std::unique_ptr<snowflake>> s(makeUnexpected(makeUnique<snowflake>()));
-        plow(WTFMove(s).error());
+        plow(WTF::move(s).error());
     }
     EXPECT_EQ(snowflakes, 1);
     EXPECT_EQ(melted, 1);
@@ -477,7 +476,7 @@ TEST(WTF_Expected, unique_ptr)
 
     {
         Expected<void, std::unique_ptr<snowflake>> s(makeUnexpected(makeUnique<snowflake>()));
-        plow(WTFMove(s).error());
+        plow(WTF::move(s).error());
     }
     EXPECT_EQ(snowflakes, 1);
     EXPECT_EQ(melted, 1);
@@ -526,7 +525,7 @@ TEST(WTF_Expected, Ref)
 class NeedsStdAddress {
 public:
     NeedsStdAddress(NeedsStdAddress&& other)
-        : m_ptr(WTFMove(other.m_ptr)) { }
+        : m_ptr(WTF::move(other.m_ptr)) { }
     NeedsStdAddress(int& other)
         : m_ptr(&other) { }
     int* operator&() { ASSERT_NOT_REACHED(); return nullptr; }
@@ -537,8 +536,8 @@ private:
 TEST(WTF_Expected, Address)
 {
     NeedsStdAddress a(*new int(3));
-    Expected<NeedsStdAddress, float> b(WTFMove(a));
-    Expected<NeedsStdAddress, float> c(WTFMove(b));
+    Expected<NeedsStdAddress, float> b(WTF::move(a));
+    Expected<NeedsStdAddress, float> c(WTF::move(b));
     (void)c;
 }
 

@@ -30,11 +30,15 @@
 #include "InlineLineTypes.h"
 #include "LayoutElementBox.h"
 #include "SecurityOrigin.h"
+#include "StyleTextAutospace.h"
+#include "StyleWhiteSpaceTrim.h"
 #include <wtf/HashMap.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+class Document;
+
 namespace Layout {
 class InlineTextBox;
 
@@ -51,7 +55,8 @@ private:
     LayoutQueue initializeLayoutQueue(InlineItemPosition startPosition);
     LayoutQueue traverseUntilDamaged(const Box& firstDamagedLayoutBox);
     void breakAndComputeBidiLevels(InlineItemList&);
-    void computeInlineTextItemWidths(InlineItemList&);
+    void computeInlineTextItemWidthsAndTextSpacing(InlineItemList&);
+    void adjustInlineItemsForWhiteSpaceTrim(InlineItemList&);
 
     void handleTextContent(const InlineTextBox&, InlineItemList&, std::optional<size_t> partialContentOffset);
     bool buildInlineItemListForTextFromBreakingPositionsCache(const InlineTextBox&, InlineItemList&);
@@ -61,6 +66,10 @@ private:
     
     bool contentRequiresVisualReordering() const { return m_contentRequiresVisualReordering; }
 
+    void computeInlineBoxBoundaryTextSpacings(const InlineItemList&);
+
+    std::pair<bool, bool> shouldDeferTextMeasurement(const InlineTextBox&) const;
+
     const ElementBox& root() const { return m_root; }
     InlineContentCache& inlineContentCache() { return m_inlineContentCache; }
 
@@ -69,9 +78,12 @@ private:
     const ElementBox& m_root;
     const SecurityOrigin& m_securityOrigin;
 
-    bool m_contentRequiresVisualReordering { false };
-    bool m_isTextAndForcedLineBreakOnlyContent { true };
     size_t m_inlineBoxCount { 0 };
+    bool m_hasTextAndLineBreakOnlyContent { true }; // Note that this is true for cases like <span>text content</span>
+    bool m_contentRequiresVisualReordering { false };
+    bool m_hasTextAutospace { !root().style().textAutospace().isNoAutospace() };
+    bool m_hasWhiteSpaceTrim { !root().style().whiteSpaceTrim().isNone() };
+    std::optional<bool> m_textContentPopulatedFromCache { };
 };
 
 }

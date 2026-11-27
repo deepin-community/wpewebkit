@@ -27,8 +27,8 @@
 
 #if ENABLE(APPLE_PAY)
 
-#include "ApplePayError.h"
-#include "ApplePayPaymentOrderDetails.h"
+#include <WebCore/ApplePayError.h>
+#include <WebCore/ApplePayPaymentOrderDetails.h>
 #include <optional>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
@@ -53,7 +53,7 @@ struct ApplePayPaymentAuthorizationResult {
     std::optional<ApplePayPaymentOrderDetails> orderDetails;
 #endif
 
-    WEBCORE_EXPORT bool isFinalState() const;
+    WEBCORE_EXPORT bool NODELETE isFinalState() const;
 };
 
 }

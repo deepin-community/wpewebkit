@@ -47,7 +47,7 @@ VisitedLinkStore::~VisitedLinkStore()
 }
 
 VisitedLinkStore::VisitedLinkStore()
-    : m_linkHashStore(*this)
+    : m_linkHashStore(makeUniqueRef<SharedStringHashStore>(*this))
 {
 }
 
@@ -60,7 +60,7 @@ void VisitedLinkStore::addProcess(WebProcessProxy& process)
 
     process.addMessageReceiver(Messages::VisitedLinkStore::messageReceiverName(), identifier(), *this);
 
-    if (m_linkHashStore.isEmpty())
+    if (m_linkHashStore->isEmpty())
         return;
 
     sendStoreHandleToProcess(process);
@@ -77,32 +77,32 @@ void VisitedLinkStore::removeProcess(WebProcessProxy& process)
 
 void VisitedLinkStore::addVisitedLinkHash(SharedStringHash linkHash)
 {
-    m_linkHashStore.scheduleAddition(linkHash);
+    m_linkHashStore->scheduleAddition(linkHash);
 }
 
 bool VisitedLinkStore::containsVisitedLinkHash(WebCore::SharedStringHash linkHash)
 {
-    return m_linkHashStore.contains(linkHash);
+    return m_linkHashStore->contains(linkHash);
 }
 
 void VisitedLinkStore::removeVisitedLinkHash(WebCore::SharedStringHash linkHash)
 {
-    m_linkHashStore.scheduleRemoval(linkHash);
+    m_linkHashStore->scheduleRemoval(linkHash);
 }
 
 void VisitedLinkStore::removeAll()
 {
-    m_linkHashStore.clear();
+    m_linkHashStore->clear();
 
-    for (auto& process : m_processes) {
-        ASSERT(process.processPool().processes().containsIf([&](auto& item) { return item.ptr() == &process; }));
-        process.send(Messages::VisitedLinkTableController::RemoveAllVisitedLinks(), identifier());
+    for (Ref process : m_processes) {
+        ASSERT(process->processPool().processes().containsIf([&](auto& item) { return item.ptr() == &process.get(); }));
+        process->send(Messages::VisitedLinkTableController::RemoveAllVisitedLinks(), identifier());
     }
 }
 
 void VisitedLinkStore::addVisitedLinkHashFromPage(WebPageProxyIdentifier pageProxyID, SharedStringHash linkHash)
 {
-    if (auto page = WebProcessProxy::webPage(pageProxyID)) {
+    if (auto* page = WebProcessProxy::webPage(pageProxyID)) {
         if (!page || !page->addsVisitedLinks())
             return;
     }
@@ -114,29 +114,29 @@ void VisitedLinkStore::sendStoreHandleToProcess(WebProcessProxy& process)
 {
     ASSERT(process.processPool().processes().containsIf([&](auto& item) { return item.ptr() == &process; }));
 
-    auto handle = m_linkHashStore.createSharedMemoryHandle();
+    auto handle = m_linkHashStore->createSharedMemoryHandle();
     if (!handle)
         return;
-    process.send(Messages::VisitedLinkTableController::SetVisitedLinkTable(WTFMove(*handle)), identifier());
+    process.send(Messages::VisitedLinkTableController::SetVisitedLinkTable(WTF::move(*handle)), identifier());
 }
 
 void VisitedLinkStore::didInvalidateSharedMemory()
 {
-    for (auto& process : m_processes)
-        sendStoreHandleToProcess(process);
+    for (Ref process : m_processes)
+        sendStoreHandleToProcess(process.get());
 }
 
 void VisitedLinkStore::didUpdateSharedStringHashes(const Vector<WebCore::SharedStringHash>& addedHashes, const Vector<WebCore::SharedStringHash>& removedHashes)
 {
     ASSERT(!addedHashes.isEmpty() || !removedHashes.isEmpty());
 
-    for (auto& process : m_processes) {
-        ASSERT(process.processPool().processes().containsIf([&](auto& item) { return item.ptr() == &process; }));
+    for (Ref process : m_processes) {
+        ASSERT(process->processPool().processes().containsIf([&](auto& item) { return item.ptr() == process.ptr(); }));
 
-        if (addedHashes.size() > 20 || !removedHashes.isEmpty())
-            process.send(Messages::VisitedLinkTableController::AllVisitedLinkStateChanged(), identifier());
+        if (addedHashes.size() > 20 || !removedHashes.isEmpty() || process->throttler().isSuspended())
+            process->send(Messages::VisitedLinkTableController::AllVisitedLinkStateChanged(), identifier());
         else
-            process.send(Messages::VisitedLinkTableController::VisitedLinkStateChanged(addedHashes), identifier());
+            process->send(Messages::VisitedLinkTableController::VisitedLinkStateChanged(addedHashes), identifier());
     }
 }
 

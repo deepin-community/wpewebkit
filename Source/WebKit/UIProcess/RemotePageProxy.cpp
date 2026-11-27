@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,33 +35,134 @@
 #include "NavigationActionData.h"
 #include "PageLoadState.h"
 #include "ProvisionalFrameProxy.h"
+#include "RemoteMediaSessionManagerProxy.h"
 #include "RemotePageDrawingAreaProxy.h"
+#include "RemotePageFullscreenManagerProxy.h"
+#include "RemotePageScreenOrientationManagerProxy.h"
 #include "RemotePageVisitedLinkStoreRegistration.h"
+#include "RemotePageWebAuthenticatorCoordinatorProxy.h"
+#include "RemotePageWebDeviceOrientationUpdateProviderProxy.h"
+#include "UserMediaProcessManager.h"
+#include "WebAuthenticatorCoordinatorProxy.h"
+#include "WebBackForwardList.h"
+#include "WebBackForwardListMessages.h"
 #include "WebFrameProxy.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyMessages.h"
+#include "WebProcessActivityState.h"
 #include "WebProcessMessages.h"
 #include "WebProcessProxy.h"
+#include "WebScreenOrientationManagerProxy.h"
+#include <WebCore/MediaProducer.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/RemoteUserInputEventData.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(FULLSCREEN_API)
+#include "WebFullScreenManagerProxy.h"
+#endif
+
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+#include "RemotePageVideoPresentationManagerProxy.h"
+#include "VideoPresentationManagerProxy.h"
+#endif
+
+#if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
+#include "PlaybackSessionManagerProxy.h"
+#include "RemotePagePlaybackSessionManagerProxy.h"
+#endif
+
+#if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
+#include "WebDeviceOrientationUpdateProviderProxy.h"
+#endif
+
+#if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
+#include "PlaybackSessionManagerProxy.h"
+#include "RemotePagePlaybackSessionManagerProxy.h"
+#endif
+
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=306415
+#include "WebKit-Swift.h"
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemotePageProxy);
 
-RemotePageProxy::RemotePageProxy(WebPageProxy& page, WebProcessProxy& process, const Site& site, WebPageProxyMessageReceiverRegistration* registrationToTransfer)
-    : m_webPageID(page.webPageIDInMainFrameProcess()) // FIXME: We should generate a new identifier so that it will be more obvious when we get things wrong.
+Ref<RemotePageProxy> RemotePageProxy::create(WebPageProxy& page, WebProcessProxy& process, const WebCore::Site& site, WebPageProxyMessageReceiverRegistration* registrationToTransfer, std::optional<WebCore::PageIdentifier> pageIDToTransfer)
+{
+    Ref remotePageProxy = adoptRef(*new RemotePageProxy(page, process, site, registrationToTransfer, pageIDToTransfer));
+    remotePageProxy->initializeAfterAdoption();
+    return remotePageProxy;
+}
+
+RemotePageProxy::RemotePageProxy(WebPageProxy& page, WebProcessProxy& process, const WebCore::Site& site, WebPageProxyMessageReceiverRegistration* registrationToTransfer, std::optional<WebCore::PageIdentifier> pageIDToTransfer)
+    : m_webPageID(pageIDToTransfer.value_or(WebCore::PageIdentifier::generate()))
     , m_process(process)
     , m_page(page)
     , m_site(site)
+    , m_processActivityState(makeUniqueRef<WebProcessActivityState>(*this))
 {
     if (registrationToTransfer)
-        m_messageReceiverRegistration.transferMessageReceivingFrom(*registrationToTransfer, *this);
+        m_messageReceiverRegistration.transferMessageReceivingFrom(*registrationToTransfer, *this, page.backForwardListMessageReceiver());
     else
-        m_messageReceiverRegistration.startReceivingMessages(m_process, m_webPageID, *this);
+        m_messageReceiverRegistration.startReceivingMessages(m_process, m_webPageID, *this, page.backForwardListMessageReceiver());
+}
+
+void RemotePageProxy::initializeAfterAdoption()
+{
+    RefPtr protectedPage = m_page.get();
+    if (!protectedPage)
+        return;
+
+    protectedPage->takeActivitiesOnRemotePage(*this);
+
+#if PLATFORM(MAC) && USE(RUNNINGBOARD)
+    if (protectedPage->preferences().backgroundWebContentRunningBoardThrottlingEnabled())
+        m_process->setRunningBoardThrottlingEnabled();
+#endif
+
+#if ENABLE(IPC_TESTING_API)
+    if (protectedPage->preferences().ipcTestingAPIEnabled() && protectedPage->preferences().ignoreInvalidMessageWhenIPCTestingAPIEnabled())
+        m_process->setIgnoreInvalidMessageForTesting();
+#endif
 
     m_process->addRemotePageProxy(*this);
+
+    protectedPage->didCreateRemotePage(*this);
+}
+
+void RemotePageProxy::disconnect()
+{
+    RefPtr page = m_page;
+    if (page)
+        page->isNoLongerAssociatedWithRemotePage(*this);
+    if (m_drawingArea)
+        m_process->sendPageCloseMessage(page ? std::optional { page->identifier() } : std::nullopt, m_webPageID);
+    m_process->removeRemotePageProxy(*this);
+
+    m_drawingArea = nullptr;
+#if ENABLE(FULLSCREEN_API)
+    m_fullscreenManager = nullptr;
+#endif
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    m_videoPresentationManager = nullptr;
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
+    m_webDeviceOrientationUpdateProvider = nullptr;
+#endif
+#if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
+    m_playbackSessionManager = nullptr;
+#endif
+    m_visitedLinkStoreRegistration = nullptr;
+    m_messageReceiverRegistration.stopReceivingMessages();
+    m_screenOrientationManager = nullptr;
+#if ENABLE(WEB_AUTHN)
+    m_webAuthenticatorCoordinator = nullptr;
+#endif
+#if ASSERT_ENABLED
+    m_disconnected = true;
+#endif
 }
 
 void RemotePageProxy::injectPageIntoNewProcess()
@@ -76,163 +177,227 @@ void RemotePageProxy::injectPageIntoNewProcess()
         return;
     }
 
-    auto* drawingArea = page->drawingArea();
-    RELEASE_ASSERT(drawingArea);
+    Ref drawingArea = *page->drawingArea();
+    m_drawingArea = RemotePageDrawingAreaProxy::create(drawingArea.get(), m_process);
+#if ENABLE(FULLSCREEN_API)
+    m_fullscreenManager = RemotePageFullscreenManagerProxy::create(pageID(), protect(page->fullScreenManager()), m_process);
+#endif
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    m_videoPresentationManager = RemotePageVideoPresentationManagerProxy::create(pageID(), m_process, protect(page->videoPresentationManager()));
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
+    m_webDeviceOrientationUpdateProvider = RemotePageWebDeviceOrientationUpdateProviderProxy::create(pageID(), m_process, page->webDeviceOrientationUpdateProviderProxy());
+#endif
+#if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
+    m_playbackSessionManager = RemotePagePlaybackSessionManagerProxy::create(pageID(), protect(page->playbackSessionManager()), m_process);
+#endif
 
-    m_drawingArea = makeUnique<RemotePageDrawingAreaProxy>(*drawingArea, m_process);
+    if (RefPtr screenOrientationManager = page->screenOrientationManager())
+        m_screenOrientationManager = RemotePageScreenOrientationManagerProxy::create(m_webPageID, screenOrientationManager.get(), m_process);
+
+#if ENABLE(WEB_AUTHN)
+    if (RefPtr authenticatorCoordinator = page->webAuthenticatorCoordinatorProxy())
+        m_webAuthenticatorCoordinator = RemotePageWebAuthenticatorCoordinatorProxy::create(m_webPageID, authenticatorCoordinator.get(), m_process);
+#endif
+
     m_visitedLinkStoreRegistration = makeUnique<RemotePageVisitedLinkStoreRegistration>(*page, m_process);
 
+    RefPtr websitePolicies = page->mainFrameWebsitePolicies();
     m_process->send(
         Messages::WebProcess::CreateWebPage(
             m_webPageID,
-            page->creationParametersForRemotePage(m_process, *drawingArea, RemotePageParameters {
-                URL(page->pageLoadState().url()),
-                page->mainFrame()->frameTreeCreationParameters(),
-                page->mainFrameWebsitePoliciesData() ? std::make_optional(*page->mainFrameWebsitePoliciesData()) : std::nullopt
-            })),
-        0);
+            page->creationParametersForRemotePage(m_process, drawingArea.get(), RemotePageParameters {
+                page->pageLoadState().url(),
+                protect(page->mainFrame())->frameTreeCreationParameters(),
+                websitePolicies ? std::make_optional(websitePolicies->dataForProcess(m_process)) : std::nullopt
+            })
+        ), 0
+    );
 }
 
-void RemotePageProxy::processDidTerminate(WebCore::ProcessIdentifier processIdentifier)
+void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)
 {
-    if (!m_page)
+    RefPtr page = m_page.get();
+    if (!page)
         return;
-    if (auto* drawingArea = m_page->drawingArea())
-        drawingArea->remotePageProcessDidTerminate(processIdentifier);
-    if (RefPtr mainFrame = m_page->mainFrame())
-        mainFrame->remoteProcessDidTerminate(process());
+    if (RefPtr drawingArea = page->drawingArea())
+        drawingArea->remotePageProcessDidTerminate(process.coreProcessIdentifier());
+    if (RefPtr mainFrame = page->mainFrame())
+        mainFrame->remoteProcessDidTerminate(process, WebFrameProxy::ClearFrameTreeSyncData::Yes);
+    page->dispatchProcessDidTerminate(process, reason);
 }
 
 RemotePageProxy::~RemotePageProxy()
 {
-    m_process->removeRemotePageProxy(*this);
+    ASSERT(m_disconnected);
+
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    page->willDestroyRemotePage(*this);
+
+    if (RefPtr client = page->pageClient())
+        client->didStopUsingProcessForSiteIsolation(m_process);
 }
 
 void RemotePageProxy::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    if (decoder.messageName() == Messages::WebPageProxy::DecidePolicyForResponse::name()) {
-        IPC::handleMessageAsync<Messages::WebPageProxy::DecidePolicyForResponse>(connection, decoder, this, &RemotePageProxy::decidePolicyForResponse);
+    if (decoder.messageName() == Messages::WebPageProxy::IsPlayingMediaDidChange::name()) {
+        IPC::handleMessage<Messages::WebPageProxy::IsPlayingMediaDidChange>(connection, decoder, this, &RemotePageProxy::isPlayingMediaDidChange);
         return;
     }
-
-    if (decoder.messageName() == Messages::WebPageProxy::DidCommitLoadForFrame::name()) {
-        IPC::handleMessage<Messages::WebPageProxy::DidCommitLoadForFrame>(connection, decoder, this, &RemotePageProxy::didCommitLoadForFrame);
+    if (decoder.messageName() == Messages::WebPageProxy::SetNetworkRequestsInProgress::name()) {
+        IPC::handleMessage<Messages::WebPageProxy::SetNetworkRequestsInProgress>(connection, decoder, this, &RemotePageProxy::setNetworkRequestsInProgress);
         return;
     }
-
-    if (decoder.messageName() == Messages::WebPageProxy::DecidePolicyForNavigationActionAsync::name()) {
-        IPC::handleMessageAsync<Messages::WebPageProxy::DecidePolicyForNavigationActionAsync>(connection, decoder, this, &RemotePageProxy::decidePolicyForNavigationActionAsync);
+    if (decoder.messageName() == Messages::WebPageProxy::SetCanShortCircuitHorizontalWheelEvents::name()) {
+        IPC::handleMessage<Messages::WebPageProxy::SetCanShortCircuitHorizontalWheelEvents>(connection, decoder, this, &RemotePageProxy::setCanShortCircuitHorizontalWheelEvents);
         return;
     }
-
-    if (decoder.messageName() == Messages::WebPageProxy::DidChangeProvisionalURLForFrame::name()) {
-        IPC::handleMessage<Messages::WebPageProxy::DidChangeProvisionalURLForFrame>(connection, decoder, this, &RemotePageProxy::didChangeProvisionalURLForFrame);
+#if HAVE(VISIBILITY_PROPAGATION_VIEW)
+    if (decoder.messageName() == Messages::WebPageProxy::DidCreateContextInWebProcessForVisibilityPropagation::name()) {
+        IPC::handleMessage<Messages::WebPageProxy::DidCreateContextInWebProcessForVisibilityPropagation>(connection, decoder, this, &RemotePageProxy::didCreateContextInWebProcessForVisibilityPropagation);
         return;
     }
+#endif // HAVE(VISIBILITY_PROPAGATION_VIEW)
 
-    if (decoder.messageName() == Messages::WebPageProxy::DidFailProvisionalLoadForFrame::name()) {
-        IPC::handleMessage<Messages::WebPageProxy::DidFailProvisionalLoadForFrame>(connection, decoder, this, &RemotePageProxy::didFailProvisionalLoadForFrame);
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    if (decoder.messageReceiverName() == Messages::WebBackForwardList::messageReceiverName()) {
+        page->backForwardListMessageReceiver().didReceiveMessage(connection, decoder);
         return;
     }
+    page->didReceiveMessage(connection, decoder);
+}
 
-    if (decoder.messageName() == Messages::WebPageProxy::DidStartProvisionalLoadForFrame::name()) {
-        IPC::handleMessage<Messages::WebPageProxy::DidStartProvisionalLoadForFrame>(connection, decoder, this, &RemotePageProxy::didStartProvisionalLoadForFrame);
-        return;
+void RemotePageProxy::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
+{
+    if (RefPtr page = m_page.get()) {
+        if (decoder.messageReceiverName() == Messages::WebBackForwardList::messageReceiverName())
+            page->backForwardListMessageReceiver().didReceiveSyncMessage(connection, decoder, encoder);
+        else
+            page->didReceiveSyncMessage(connection, decoder, encoder);
     }
-
-    if (decoder.messageName() == Messages::WebPageProxy::HandleMessage::name()) {
-        IPC::handleMessage<Messages::WebPageProxy::HandleMessage>(connection, decoder, this, &RemotePageProxy::handleMessage);
-        return;
-    }
-
-    if (m_page)
-        m_page->didReceiveMessage(connection, decoder);
-}
-
-void RemotePageProxy::handleMessage(const String& messageName, const WebKit::UserData& messageBody)
-{
-    if (!m_page)
-        return;
-    m_page->handleMessageShared(m_process, messageName, messageBody);
-}
-
-void RemotePageProxy::decidePolicyForResponse(FrameInfoData&& frameInfo, std::optional<WebCore::NavigationIdentifier> navigationID, const WebCore::ResourceResponse& response, const WebCore::ResourceRequest& request, bool canShowMIMEType, const String& downloadAttribute, bool isShowingInitialAboutBlank, WebCore::CrossOriginOpenerPolicyValue activeDocumentCOOPValue, CompletionHandler<void(PolicyDecision&&)>&& completionHandler)
-{
-    if (!m_page)
-        return completionHandler({ });
-    m_page->decidePolicyForResponseShared(m_process.copyRef(), m_page->webPageIDInMainFrameProcess(), WTFMove(frameInfo), navigationID, response, request, canShowMIMEType, downloadAttribute, isShowingInitialAboutBlank, activeDocumentCOOPValue, WTFMove(completionHandler));
-}
-
-void RemotePageProxy::didCommitLoadForFrame(IPC::Connection& connection, WebCore::FrameIdentifier frameID, FrameInfoData&& frameInfo, WebCore::ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, const String& mimeType, bool frameHasCustomContentProvider, WebCore::FrameLoadType frameLoadType, const WebCore::CertificateInfo& certificateInfo, bool usedLegacyTLS, bool privateRelayed, bool containsPluginDocument, WebCore::HasInsecureContent hasInsecureContent, WebCore::MouseEventPolicy mouseEventPolicy, const UserData& userData)
-{
-    m_process->didCommitProvisionalLoad();
-    m_page->didCommitLoadForFrame(connection, frameID, WTFMove(frameInfo), WTFMove(request), navigationID, mimeType, frameHasCustomContentProvider, frameLoadType, certificateInfo, usedLegacyTLS, privateRelayed, containsPluginDocument, hasInsecureContent, mouseEventPolicy, userData); // Will delete |this|.
-}
-
-void RemotePageProxy::decidePolicyForNavigationActionAsync(NavigationActionData&& data, CompletionHandler<void(PolicyDecision&&)>&& completionHandler)
-{
-    if (!m_page)
-        return completionHandler({ });
-    m_page->decidePolicyForNavigationActionAsyncShared(m_process.copyRef(), WTFMove(data), WTFMove(completionHandler));
-}
-
-void RemotePageProxy::decidePolicyForNavigationActionSync(NavigationActionData&& data, CompletionHandler<void(PolicyDecision&&)>&& completionHandler)
-{
-    if (!m_page)
-        return completionHandler({ });
-    m_page->decidePolicyForNavigationActionSyncShared(m_process.copyRef(), WTFMove(data), WTFMove(completionHandler));
-}
-
-void RemotePageProxy::didFailProvisionalLoadForFrame(FrameInfoData&& frameInfo, WebCore::ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, const String& provisionalURL, const WebCore::ResourceError& error, WebCore::WillContinueLoading willContinueLoading, const UserData& userData, WebCore::WillInternallyHandleFailure willInternallyHandleFailure)
-{
-    if (!m_page)
-        return;
-
-    RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
-    if (!frame)
-        return;
-
-    m_page->didFailProvisionalLoadForFrameShared(m_process.copyRef(), *frame, WTFMove(frameInfo), WTFMove(request), navigationID, provisionalURL, error, willContinueLoading, userData, willInternallyHandleFailure);
-}
-
-void RemotePageProxy::didStartProvisionalLoadForFrame(WebCore::FrameIdentifier frameID, FrameInfoData&& frameInfo, WebCore::ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, URL&& url, URL&& unreachableURL, const UserData& userData)
-{
-    if (!m_page)
-        return;
-    m_page->didStartProvisionalLoadForFrameShared(protectedProcess(), frameID, WTFMove(frameInfo), WTFMove(request), navigationID, WTFMove(url), WTFMove(unreachableURL), userData);
-}
-
-void RemotePageProxy::didChangeProvisionalURLForFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, URL&& url)
-{
-    if (!m_page)
-        return;
-    m_page->didChangeProvisionalURLForFrameShared(m_process.copyRef(), frameID, navigationID, WTFMove(url));
-}
-
-bool RemotePageProxy::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& encoder)
-{
-    if (decoder.messageName() == Messages::WebPageProxy::DecidePolicyForNavigationActionSync::name())
-        return IPC::handleMessageSynchronous<Messages::WebPageProxy::DecidePolicyForNavigationActionSync>(connection, decoder, encoder, this, &RemotePageProxy::decidePolicyForNavigationActionSync);
-
-    if (m_page)
-        return m_page->didReceiveSyncMessage(connection, decoder, encoder);
-
-    return false;
-}
-
-Ref<WebProcessProxy> RemotePageProxy::protectedProcess() const
-{
-    return m_process;
-}
-
-RefPtr<WebPageProxy> RemotePageProxy::protectedPage() const
-{
-    return m_page.get();
 }
 
 WebPageProxy* RemotePageProxy::page() const
 {
     return m_page.get();
 }
+
+WebProcessActivityState& RemotePageProxy::processActivityState()
+{
+    return m_processActivityState;
+}
+
+void RemotePageProxy::isPlayingMediaDidChange(WebCore::MediaProducerMediaStateFlags newState)
+{
+#if ENABLE(MEDIA_STREAM)
+    bool didStopAudioCapture = m_mediaState.containsAny(WebCore::MediaProducer::IsCapturingAudioMask) && !newState.containsAny(WebCore::MediaProducer::IsCapturingAudioMask);
+    bool didStopVideoCapture = m_mediaState.containsAny(WebCore::MediaProducer::IsCapturingVideoMask) && !newState.containsAny(WebCore::MediaProducer::IsCapturingVideoMask);
+#endif
+
+    m_mediaState = newState;
+
+    RefPtr page = m_page.get();
+    if (!page || page->isClosed())
+        return;
+
+    page->updatePlayingMediaDidChange(WebPageProxy::CanDelayNotification::Yes);
+
+#if ENABLE(MEDIA_STREAM)
+    if (didStopAudioCapture || didStopVideoCapture)
+        UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(m_process);
+#endif
+}
+
+void RemotePageProxy::setNetworkRequestsInProgress(bool hasNetworkRequestsInProgress)
+{
+    m_hasNetworkRequestsInProgress = hasNetworkRequestsInProgress;
+
+    RefPtr page = m_page.get();
+    if (!page || page->isClosed())
+        return;
+
+    page->networkRequestsInProgressDidChange();
+}
+
+void RemotePageProxy::setCanShortCircuitHorizontalWheelEvents(bool canShortCircuitHorizontalWheelEvents)
+{
+    if (m_canShortCircuitHorizontalWheelEvents == canShortCircuitHorizontalWheelEvents)
+        return;
+
+    m_canShortCircuitHorizontalWheelEvents = canShortCircuitHorizontalWheelEvents;
+
+    RefPtr page = m_page.get();
+    if (!page || page->isClosed())
+        return;
+
+    page->updateCanShortCircuitHorizontalWheelEvents();
+}
+
+void RemotePageProxy::setDrawingArea(DrawingAreaProxy* drawingArea)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    RefPtr mainFrame = page->mainFrame();
+    if (!mainFrame)
+        return;
+
+    if (!drawingArea) {
+        m_drawingArea = nullptr;
+        return;
+    }
+
+    m_drawingArea = RemotePageDrawingAreaProxy::create(*drawingArea, m_process);
+    RefPtr websitePolicies = page->mainFrameWebsitePolicies();
+    m_process->send(
+        Messages::WebProcess::CreateWebPage(
+            m_webPageID,
+            page->creationParametersForRemotePage(m_process, *drawingArea, RemotePageParameters {
+                page->pageLoadState().url(),
+                mainFrame->frameTreeCreationParameters(),
+                websitePolicies ? std::make_optional(websitePolicies->dataForProcess(m_process)) : std::nullopt
+            })
+        ), 0
+    );
+}
+
+void RemotePageProxy::setCurrentOrientation(WebCore::ScreenOrientationType orientation)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    if (RefPtr manager = page->screenOrientationManager())
+        manager->setCurrentOrientation(orientation);
+}
+
+#if ENABLE(DEVICE_ORIENTATION)
+void RemotePageProxy::clearDeviceOrientationAndMotionPermissions()
+{
+    m_process->send(Messages::WebPage::ClearDeviceOrientationAndMotionPermissions(), m_webPageID);
+}
+#endif
+
+#if HAVE(VISIBILITY_PROPAGATION_VIEW)
+void RemotePageProxy::didCreateContextInWebProcessForVisibilityPropagation(LayerHostingContextID contextID)
+{
+    m_contextIDForVisibilityPropagationInWebProcess = contextID;
+
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    if (RefPtr client = page->pageClient())
+        client->didStartUsingProcessForSiteIsolation(m_process, contextID);
+
+}
+#endif
 
 }

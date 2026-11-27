@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,12 +27,10 @@
 
 #include "APIObject.h"
 #include "ContentWorldShared.h"
-#include "MessageReceiver.h"
 #include "ScriptMessageHandlerIdentifier.h"
+#include "TransferString.h"
 #include "UserContentControllerIdentifier.h"
-#include "WebPageProxyIdentifier.h"
-#include "WebUserContentControllerProxyMessages.h"
-#include <WebCore/PageIdentifier.h>
+#include "WebUserContentControllerDataTypes.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/HashCountedSet.h>
@@ -49,52 +47,78 @@ namespace API {
 class Array;
 class ContentRuleList;
 class ContentWorld;
+class JSBuffer;
 class UserScript;
 class UserStyleSheet;
 }
 
 namespace WebCore {
-class SecurityOriginData;
+class SharedMemory;
 }
 
 namespace WebKit {
 
+class JavaScriptEvaluationResult;
 class NetworkProcessProxy;
+class WebPageProxy;
 class WebProcessProxy;
-class WebScriptMessageHandler;
-struct FrameInfoData;
 class WebCompiledContentRuleListData;
-struct WebPageCreationParameters;
+class WebScriptMessageHandler;
+
+struct ContentWorldIdentifierType;
+struct FrameInfoData;
 struct UserContentControllerParameters;
+struct WebPageCreationParameters;
+
 enum class InjectUserScriptImmediately : bool;
 
-class WebUserContentControllerProxy : public API::ObjectImpl<API::Object::Type::UserContentController>, public IPC::MessageReceiver, public Identified<UserContentControllerIdentifier> {
+using ContentWorldIdentifier = WebCore::ProcessQualified<ObjectIdentifier<ContentWorldIdentifierType>>;
+
+class WebUserContentControllerProxy : public API::ObjectImpl<API::Object::Type::UserContentController>, public CanMakeWeakPtr<WebUserContentControllerProxy>, public Identified<UserContentControllerIdentifier> {
 public:
+#if ENABLE(WK_WEB_EXTENSIONS)
+    enum class RemoveWebExtensions : bool { No, Yes };
+#endif
+
     static Ref<WebUserContentControllerProxy> create()
-    { 
+    {
         return adoptRef(*new WebUserContentControllerProxy);
     }
+
     WebUserContentControllerProxy();
     ~WebUserContentControllerProxy();
 
-    static WebUserContentControllerProxy* get(UserContentControllerIdentifier);
+    static WebUserContentControllerProxy* NODELETE get(UserContentControllerIdentifier);
 
-    UserContentControllerParameters parameters() const;
+    UserContentControllerParameters parametersForProcess(WebProcessProxy&) const;
 
-    void addProcess(WebProcessProxy&);
-    void removeProcess(WebProcessProxy&);
+    IPC::TransferString cachedTransferString(const String&) const;
+    void resetTransferStringCache();
 
     API::Array& userScripts() { return m_userScripts.get(); }
     void addUserScript(API::UserScript&, InjectUserScriptImmediately);
     void removeUserScript(API::UserScript&);
     void removeAllUserScripts(API::ContentWorld&);
+#if ENABLE(WK_WEB_EXTENSIONS)
+    void removeAllUserScripts(RemoveWebExtensions = RemoveWebExtensions::No);
+#else
     void removeAllUserScripts();
+#endif
+    WebCoreUserScriptData dataFromUserScript(const WebCore::UserScript&) const;
 
     API::Array& userStyleSheets() { return m_userStyleSheets.get(); }
     void addUserStyleSheet(API::UserStyleSheet&);
     void removeUserStyleSheet(API::UserStyleSheet&);
     void removeAllUserStyleSheets(API::ContentWorld&);
+#if ENABLE(WK_WEB_EXTENSIONS)
+    void removeAllUserStyleSheets(RemoveWebExtensions = RemoveWebExtensions::No);
+#else
     void removeAllUserStyleSheets();
+#endif
+    WebCoreUserStyleSheetData dataFromUserStyleSheet(const WebCore::UserStyleSheet&) const;
+
+    void addJSBuffer(Ref<WebCore::SharedMemory>&&, API::ContentWorld&, const String&);
+    void removeJSBuffer(API::ContentWorld&, const String&);
 
     // Returns false if there was a name conflict.
     bool addUserScriptMessageHandler(WebScriptMessageHandler&);
@@ -108,28 +132,27 @@ public:
 
     void addContentRuleList(API::ContentRuleList&, const WTF::URL& extensionBaseURL = { });
     void removeContentRuleList(const String&);
+#if ENABLE(WK_WEB_EXTENSIONS)
+    void removeAllContentRuleLists(RemoveWebExtensions = RemoveWebExtensions::No);
+#else
     void removeAllContentRuleLists();
-    const HashMap<String, std::pair<Ref<API::ContentRuleList>, URL>>& contentExtensionRules() { return m_contentRuleLists; }
+#endif
+
+    const HashMap<String, std::pair<Ref<API::ContentRuleList>, URL>>& contentExtensionRules() LIFETIME_BOUND { return m_contentRuleLists; }
     Vector<std::pair<WebCompiledContentRuleListData, URL>> contentRuleListData() const;
 #endif
 
-    void contentWorldDestroyed(API::ContentWorld&);
-
     bool operator==(const WebUserContentControllerProxy& other) const { return (this == &other); }
 
+    void didPostMessage(WebPageProxy&, FrameInfoData&&, ScriptMessageHandlerIdentifier, JavaScriptEvaluationResult&&, CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)>&&) const;
+
 private:
-    // IPC::MessageReceiver.
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
-
-    void didPostMessage(WebPageProxyIdentifier, FrameInfoData&&, ScriptMessageHandlerIdentifier, std::span<const uint8_t>, CompletionHandler<void(std::span<const uint8_t>, const String&)>&&);
-
-    void addContentWorld(API::ContentWorld&);
-
-    WeakHashSet<WebProcessProxy> m_processes;
-    Ref<API::Array> m_userScripts;
-    Ref<API::Array> m_userStyleSheets;
-    HashMap<ScriptMessageHandlerIdentifier, RefPtr<WebScriptMessageHandler>> m_scriptMessageHandlers;
-    HashSet<ContentWorldIdentifier> m_associatedContentWorlds;
+    mutable WeakHashSet<WebProcessProxy> m_processes;
+    const Ref<API::Array> m_userScripts;
+    const Ref<API::Array> m_userStyleSheets;
+    HashMap<ScriptMessageHandlerIdentifier, Ref<WebScriptMessageHandler>> m_scriptMessageHandlers;
+    HashMap<std::pair<WebKit::ContentWorldIdentifier, String>, Ref<WebCore::SharedMemory>> m_buffers;
+    mutable HashMap<String, IPC::TransferString> m_transferStringCache;
 
 #if ENABLE(CONTENT_EXTENSIONS)
     WeakHashSet<NetworkProcessProxy> m_networkProcesses;
@@ -138,3 +161,8 @@ private:
 };
 
 } // namespace WebKit
+
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebUserContentControllerProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::UserContentController; }
+SPECIALIZE_TYPE_TRAITS_END()

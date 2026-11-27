@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Google Inc.  All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
  * Copyright (C) 2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,11 +31,13 @@
 
 #pragma once
 
-#include "CookieRequestHeaderFieldProxy.h"
+#include <WebCore/CookieRequestHeaderFieldProxy.h>
+#include <WebCore/HTTPHeaderMap.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/WebSocketExtensionDispatcher.h>
+#include <WebCore/WebSocketExtensionProcessor.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
-#include "ResourceResponse.h"
-#include "WebSocketExtensionDispatcher.h"
-#include "WebSocketExtensionProcessor.h"
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -44,7 +46,8 @@ namespace WebCore {
 class ResourceRequest;
 
 class WebSocketHandshake {
-    WTF_MAKE_NONCOPYABLE(WebSocketHandshake); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(WebSocketHandshake, WEBCORE_EXPORT);
+    WTF_MAKE_NONCOPYABLE(WebSocketHandshake);
 public:
     enum Mode {
         Incomplete, Normal, Failed, Connected
@@ -52,26 +55,28 @@ public:
     WEBCORE_EXPORT WebSocketHandshake(const URL&, const String& protocol, const String& userAgent, const String& clientOrigin, bool allowCookies, bool isAppInitiated);
     WEBCORE_EXPORT ~WebSocketHandshake();
 
-    WEBCORE_EXPORT const URL& url() const;
+    WEBCORE_EXPORT const URL& NODELETE url() const;
     void setURL(const URL&);
     WEBCORE_EXPORT URL httpURLForAuthenticationAndCookies() const;
     const String host() const;
 
-    const String& clientProtocol() const;
+    const String& NODELETE clientProtocol() const;
     void setClientProtocol(const String&);
 
-    bool secure() const;
+    bool NODELETE secure() const;
 
     String clientLocation() const;
 
     WEBCORE_EXPORT CString clientHandshakeMessage() const;
-    WEBCORE_EXPORT ResourceRequest clientHandshakeRequest(const Function<String(const URL&)>& cookieRequestHeaderFieldValue) const;
+    WEBCORE_EXPORT ResourceRequest clientHandshakeRequest(NOESCAPE const Function<String(const URL&)>& cookieRequestHeaderFieldValue) const;
+
+    WEBCORE_EXPORT void setClientHandshakeRequestHeaders(const HTTPHeaderMap&);
 
     WEBCORE_EXPORT void reset();
 
     WEBCORE_EXPORT int readServerHandshake(std::span<const uint8_t> header);
-    WEBCORE_EXPORT Mode mode() const;
-    WEBCORE_EXPORT String failureReason() const; // Returns a string indicating the reason of failure if mode() == Failed.
+    WEBCORE_EXPORT Mode NODELETE mode() const;
+    WEBCORE_EXPORT String NODELETE failureReason() const; // Returns a string indicating the reason of failure if mode() == Failed.
 
     WEBCORE_EXPORT String serverWebSocketProtocol() const;
     WEBCORE_EXPORT String serverSetCookie() const;
@@ -80,7 +85,7 @@ public:
     String serverWebSocketAccept() const;
     WEBCORE_EXPORT String acceptedExtensions() const;
 
-    WEBCORE_EXPORT const ResourceResponse& serverHandshakeResponse() const;
+    WEBCORE_EXPORT const ResourceResponse& NODELETE serverHandshakeResponse() const;
 
     WEBCORE_EXPORT void addExtensionProcessor(std::unique_ptr<WebSocketExtensionProcessor>);
 
@@ -104,6 +109,8 @@ private:
     String m_clientOrigin;
     bool m_allowCookies;
     bool m_isAppInitiated;
+
+    HTTPHeaderMap m_clientHandshakeRequestHeaders;
 
     ResourceResponse m_serverHandshakeResponse;
 

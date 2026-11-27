@@ -27,7 +27,7 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include "CaptureDeviceManager.h"
+#include <WebCore/CaptureDeviceManager.h>
 
 namespace WebCore {
 
@@ -36,7 +36,6 @@ public:
 
     struct WindowCaptureDevice {
         CaptureDevice m_device;
-        String m_application;
     };
 
     virtual bool requiresCaptureDevicesEnumeration() const { return false; }

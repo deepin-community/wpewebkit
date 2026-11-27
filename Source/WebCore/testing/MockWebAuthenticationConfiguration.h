@@ -58,7 +58,8 @@ struct MockWebAuthenticationConfiguration {
         NoTags,
         WrongTagType,
         NoConnections,
-        MaliciousPayload
+        MaliciousPayload,
+        HardwareBusy
     };
 
     enum class UserVerification : uint8_t {
@@ -79,6 +80,8 @@ struct MockWebAuthenticationConfiguration {
 
     struct HidConfiguration {
         Vector<String> payloadBase64;
+        Vector<String> expectedCommandsBase64;
+        bool validateExpectedCommands { false };
         HidStage stage { HidStage::Info };
         HidSubStage subStage { HidSubStage::Init };
         HidError error { HidError::Success };
@@ -90,8 +93,9 @@ struct MockWebAuthenticationConfiguration {
         bool expectCancel { false };
         bool supportClientPin { false };
         bool supportInternalUV { false };
-        long maxCredentialCountInList { 1 };
-        long maxCredentialIdLength { 64 };
+        Vector<uint8_t> pinProtocols;
+        int64_t maxCredentialCountInList { 1 };
+        int64_t maxCredentialIdLength { 64 };
     };
 
     struct NfcConfiguration {
@@ -103,6 +107,8 @@ struct MockWebAuthenticationConfiguration {
 
     struct CcidConfiguration {
         Vector<String> payloadBase64;
+        String appletSelectionResponseBase64;
+        String u2fVersionResponseBase64;
     };
 
     bool silentFailure { false };

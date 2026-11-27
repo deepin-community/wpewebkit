@@ -1,6 +1,7 @@
 /*
  * (C) 1999-2003 Lars Knoll (knoll@kde.org)
  * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,6 +22,7 @@
 #pragma once
 
 #include <wtf/IterationStatus.h>
+#include <wtf/NoVirtualDestructorBase.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TypeCasts.h>
@@ -35,31 +37,26 @@ namespace WebCore {
 
 class CSSPrimitiveValue;
 class CSSStyleDeclaration;
-class CSSUnresolvedColor;
+class CSSToLengthConversionData;
 class CachedResource;
-class Color;
 class DeprecatedCSSOMValue;
-class Quad;
-class Rect;
 
-struct Counter;
+struct ComputedStyleDependencies;
 
 enum CSSPropertyID : uint16_t;
 enum CSSValueID : uint16_t;
 
-struct ComputedStyleDependencies {
-    Vector<CSSPropertyID> properties;
-    Vector<CSSPropertyID> rootProperties;
-    bool containerDimensions { false };
-    bool viewportDimensions { false };
-
-    bool isComputationallyIndependent() const { return properties.isEmpty() && rootProperties.isEmpty() && !containerDimensions; }
-};
+namespace CSS {
+struct SerializationContext;
+}
 
 DECLARE_COMPACT_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValue);
-class CSSValue {
+
+// NOTE: This class is non-virtual for memory and performance reasons.
+// Don't go making it virtual again unless you know exactly what you're doing!
+class CSSValue : public NoVirtualDestructorBase {
     WTF_MAKE_NONCOPYABLE(CSSValue);
-    WTF_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSValue);
+    WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSValue, CSSValue);
 public:
     static constexpr unsigned refCountFlagIsStatic = 0x1;
     static constexpr unsigned refCountIncrement = 0x2; // This allows us to ref / deref without disturbing the static CSSValue flag.
@@ -69,102 +66,107 @@ public:
     unsigned refCount() const { return m_refCount / refCountIncrement; }
     bool hasAtLeastOneRef() const { return m_refCount; }
 
-    WEBCORE_EXPORT String cssText() const;
+    WEBCORE_EXPORT String cssText(const CSS::SerializationContext&) const;
 
-    bool isAnchorValue() const { return m_classType == AnchorClass; }
-    bool isAspectRatioValue() const { return m_classType == AspectRatioClass; }
-    bool isBackgroundRepeatValue() const { return m_classType == BackgroundRepeatClass; }
-    bool isBorderImageSliceValue() const { return m_classType == BorderImageSliceClass; }
-    bool isBorderImageWidthValue() const { return m_classType == BorderImageWidthClass; }
-    bool isCalcValue() const { return m_classType == CalculationClass; }
-    bool isCanvasValue() const { return m_classType == CanvasClass; }
-    bool isCircle() const { return m_classType == CircleClass; }
-    bool isConicGradientValue() const { return m_classType == ConicGradientClass; }
-    bool isContentDistributionValue() const { return m_classType == ContentDistributionClass; }
-    bool isCounter() const { return m_classType == CounterClass; }
-    bool isCrossfadeValue() const { return m_classType == CrossfadeClass; }
-    bool isCubicBezierTimingFunctionValue() const { return m_classType == CubicBezierTimingFunctionClass; }
-    bool isCursorImageValue() const { return m_classType == CursorImageClass; }
-    bool isCustomPropertyValue() const { return m_classType == CustomPropertyClass; }
-    bool isDeprecatedLinearGradientValue() const { return m_classType == DeprecatedLinearGradientClass; }
-    bool isDeprecatedRadialGradientValue() const { return m_classType == DeprecatedRadialGradientClass; }
-    bool isEllipse() const { return m_classType == EllipseClass; }
-    bool isFilterImageValue() const { return m_classType == FilterImageClass; }
-    bool isFontFaceSrcLocalValue() const { return m_classType == FontFaceSrcLocalClass; }
-    bool isFontFaceSrcResourceValue() const { return m_classType == FontFaceSrcResourceClass; }
-    bool isFontFeatureValue() const { return m_classType == FontFeatureClass; }
-    bool isFontPaletteValuesOverrideColorsValue() const { return m_classType == FontPaletteValuesOverrideColorsClass; }
-    bool isFontStyleRangeValue() const { return m_classType == FontStyleRangeClass; }
-    bool isFontStyleWithAngleValue() const { return m_classType == FontStyleWithAngleClass; }
-    bool isFontValue() const { return m_classType == FontClass; }
-    bool isFontVariantAlternatesValue() const { return m_classType == FontVariantAlternatesClass; }
-    bool isFontVariationValue() const { return m_classType == FontVariationClass; }
-    bool isFunctionValue() const { return m_classType == FunctionClass; }
-    bool isGridAutoRepeatValue() const { return m_classType == GridAutoRepeatClass; }
-    bool isGridIntegerRepeatValue() const { return m_classType == GridIntegerRepeatClass; }
-    bool isGridLineNamesValue() const { return m_classType == GridLineNamesClass; }
-    bool isGridTemplateAreasValue() const { return m_classType == GridTemplateAreasClass; }
-    bool isImageSetOptionValue() const { return m_classType == ImageSetOptionClass; }
-    bool isImageSetValue() const { return m_classType == ImageSetClass; }
-    bool isImageValue() const { return m_classType == ImageClass; }
-    bool isInsetShape() const { return m_classType == InsetShapeClass; }
-    bool isLineBoxContainValue() const { return m_classType == LineBoxContainClass; }
-    bool isLinearGradientValue() const { return m_classType == LinearGradientClass; }
-    bool isLinearTimingFunctionValue() const { return m_classType == LinearTimingFunctionClass; }
-    bool isNamedImageValue() const { return m_classType == NamedImageClass; }
-    bool isOffsetRotateValue() const { return m_classType == OffsetRotateClass; }
-    bool isPair() const { return m_classType == ValuePairClass; }
-    bool isPath() const { return m_classType == PathClass; }
-    bool isPendingSubstitutionValue() const { return m_classType == PendingSubstitutionValueClass; }
-    bool isPolygon() const { return m_classType == PolygonClass; }
-    bool isPrefixedLinearGradientValue() const { return m_classType == PrefixedLinearGradientClass; }
-    bool isPrefixedRadialGradientValue() const { return m_classType == PrefixedRadialGradientClass; }
-    bool isPrimitiveValue() const { return m_classType == PrimitiveClass; }
-    bool isQuad() const { return m_classType == QuadClass; }
-    bool isRadialGradientValue() const { return m_classType == RadialGradientClass; }
-    bool isRayValue() const { return m_classType == RayClass; }
-    bool isRect() const { return m_classType == RectClass; }
-    bool isRectShape() const { return m_classType == RectShapeClass; }
-    bool isReflectValue() const { return m_classType == ReflectClass; }
-    bool isScrollValue() const { return m_classType == ScrollClass; }
-    bool isShadowValue() const { return m_classType == ShadowClass; }
-    bool isShape() const { return m_classType == ShapeClass; }
-    bool isShapeSegment() const { return m_classType == ShapeSegmentClass; }
-    bool isSpringTimingFunctionValue() const { return m_classType == SpringTimingFunctionClass; }
-    bool isStepsTimingFunctionValue() const { return m_classType == StepsTimingFunctionClass; }
-    bool isSubgridValue() const { return m_classType == SubgridClass; }
-    bool isTransformListValue() const { return m_classType == TransformListClass; }
-    bool isUnicodeRangeValue() const { return m_classType == UnicodeRangeClass; }
-    bool isValueList() const { return m_classType == ValueListClass; }
-    bool isVariableReferenceValue() const { return m_classType == VariableReferenceClass; }
-    bool isViewValue() const { return m_classType == ViewClass; }
-    bool isXywhShape() const { return m_classType == XywhShapeClass; }
-    bool isPaintImageValue() const { return m_classType == PaintImageClass; }
+    bool isAppleColorFilterValue() const { return m_classType == ClassType::AppleColorFilter; }
+    bool isAttrValue() const { return m_classType == ClassType::Attr; }
+    bool isBackgroundRepeatValue() const { return m_classType == ClassType::BackgroundRepeat; }
+    bool isBasicShape() const { return m_classType == ClassType::BasicShape; }
+    bool isBorderImageOutsetValue() const { return m_classType == ClassType::BorderImageOutset; }
+    bool isBorderImageRepeatValue() const { return m_classType == ClassType::BorderImageRepeat; }
+    bool isBorderImageSliceValue() const { return m_classType == ClassType::BorderImageSlice; }
+    bool isBorderImageSourceValue() const { return m_classType == ClassType::BorderImageSource; }
+    bool isBorderImageWidthValue() const { return m_classType == ClassType::BorderImageWidth; }
+    bool isBoxShadowPropertyValue() const { return m_classType == ClassType::BoxShadowProperty; }
+    bool isColorImageValue() const { return m_classType == ClassType::ColorImage; }
+    bool isLightDarkImageValue() const { return m_classType == ClassType::LightDarkImage; }
+    bool isCanvasValue() const { return m_classType == ClassType::Canvas; }
+    bool isClipValue() const { return m_classType == ClassType::Clip; }
+    bool isColor() const { return m_classType == ClassType::Color; }
+#if ENABLE(DARK_MODE_CSS)
+    bool isColorScheme() const { return m_classType == ClassType::ColorScheme; }
+#endif
+    bool isContentValue() const { return m_classType == ClassType::Content; }
+    bool isCrossfadeValue() const { return m_classType == ClassType::Crossfade; }
+    bool isCursorImageValue() const { return m_classType == ClassType::CursorImage; }
+    bool isCustomIdentValue() const { return m_classType == ClassType::CustomIdent; }
+    bool isCustomPropertyValue() const { return m_classType == ClassType::CustomProperty; }
+    bool isDynamicRangeLimitValue() const { return m_classType == ClassType::DynamicRangeLimit; }
+    bool isEasingFunctionValue() const { return m_classType == ClassType::EasingFunction; }
+    bool isFilterImageValue() const { return m_classType == ClassType::FilterImage; }
+    bool isFilterValue() const { return m_classType == ClassType::Filter; }
+    bool isFontFaceSrcLocalValue() const { return m_classType == ClassType::FontFaceSrcLocal; }
+    bool isFontFaceSrcResourceValue() const { return m_classType == ClassType::FontFaceSrcResource; }
+    bool isFontFamilyNameValue() const { return m_classType == ClassType::FontFamilyName; }
+    bool isFontFeatureValue() const { return m_classType == ClassType::FontFeature; }
+    bool isFontStyleRangeValue() const { return m_classType == ClassType::FontStyleRange; }
+    bool isFontStyleWithAngleValue() const { return m_classType == ClassType::FontStyleWithAngle; }
+    bool isFontValue() const { return m_classType == ClassType::Font; }
+    bool isFontVariationValue() const { return m_classType == ClassType::FontVariation; }
+    bool isFunctionValue() const { return m_classType == ClassType::Function; }
+    bool isGradientValue() const { return m_classType == ClassType::Gradient; }
+    bool isGridAutoFlowValue() const { return m_classType == ClassType::GridAutoFlow; }
+    bool isGridLineValue() const { return m_classType == ClassType::GridLineValue; }
+    bool isGridTemplateAreasValue() const { return m_classType == ClassType::GridTemplateAreas; }
+    bool isGridTemplateListValue() const { return m_classType == ClassType::GridTemplateList; }
+    bool isGridTrackSizesValue() const { return m_classType == ClassType::GridTrackSizes; }
+    bool isKeywordValue() const { return m_classType == ClassType::Keyword; }
+    bool isImageSetOptionValue() const { return m_classType == ClassType::ImageSetOption; }
+    bool isImageSetValue() const { return m_classType == ClassType::ImageSet; }
+    bool isImageValue() const { return m_classType == ClassType::Image; }
+    bool isMaskBorderOutsetValue() const { return m_classType == ClassType::MaskBorderOutset; }
+    bool isMaskBorderRepeatValue() const { return m_classType == ClassType::MaskBorderRepeat; }
+    bool isMaskBorderSliceValue() const { return m_classType == ClassType::MaskBorderSlice; }
+    bool isMaskBorderSourceValue() const { return m_classType == ClassType::MaskBorderSource; }
+    bool isMaskBorderWidthValue() const { return m_classType == ClassType::MaskBorderWidth; }
+    bool isNamedImageValue() const { return m_classType == ClassType::NamedImage; }
+    bool isOffsetRotateValue() const { return m_classType == ClassType::OffsetRotate; }
+    bool isPaintImageValue() const { return m_classType == ClassType::PaintImage; }
+    bool isPair() const { return m_classType == ClassType::ValuePair; }
+    bool isPath() const { return m_classType == ClassType::Path; }
+    bool isShorthandSubstitutionValue() const { return m_classType == ClassType::ShorthandSubstitution; }
+    bool isPositionValue() const { return m_classType == ClassType::Position; }
+    bool isPositionXValue() const { return m_classType == ClassType::PositionX; }
+    bool isPositionYValue() const { return m_classType == ClassType::PositionY; }
+    bool isPrimitiveValue() const { return m_classType == ClassType::Primitive; }
+    bool isQuotesValue() const { return m_classType == ClassType::Quotes; }
+    bool isRatioValue() const { return m_classType == ClassType::Ratio; }
+    bool isRayValue() const { return m_classType == ClassType::Ray; }
+    bool isScrollValue() const { return m_classType == ClassType::Scroll; }
+    bool isStringValue() const { return m_classType == ClassType::String; }
+    bool isTextShadowPropertyValue() const { return m_classType == ClassType::TextShadowProperty; }
+    bool isTransformListValue() const { return m_classType == ClassType::TransformList; }
+    bool isURL() const { return m_classType == ClassType::URL; }
+    bool isUnicodeRangeValue() const { return m_classType == ClassType::UnicodeRange; }
+    bool isValueList() const { return m_classType == ClassType::ValueList; }
+    bool isSubstitutionValue() const { return m_classType == ClassType::Substitution; }
+    bool isViewValue() const { return m_classType == ClassType::View; }
+    bool isWebkitBoxReflectValue() const { return m_classType == ClassType::WebkitBoxReflect; }
 
-    bool hasVariableReferences() const { return isVariableReferenceValue() || isPendingSubstitutionValue(); }
-    bool isGradientValue() const { return m_classType >= LinearGradientClass && m_classType <= PrefixedRadialGradientClass; }
-    bool isImageGeneratorValue() const { return m_classType >= CanvasClass && m_classType <= PrefixedRadialGradientClass; }
+    bool hasSubstitutionFunctions() const { return isSubstitutionValue() || isShorthandSubstitutionValue(); }
+    bool isImageGeneratorValue() const { return m_classType >= ClassType::Canvas && m_classType <= ClassType::Gradient; }
     bool isImplicitInitialValue() const { return m_isImplicitInitialValue; }
-    bool containsVector() const { return m_classType >= ValueListClass; }
+    bool containsVector() const { return m_classType >= ClassType::ValueList; }
 
     // NOTE: This returns true for all image-like values except CSSCursorImageValues; these are the values that correspond to the CSS <image> production.
     bool isImage() const { return isImageValue() || isImageSetValue() || isImageGeneratorValue(); }
 
     Ref<DeprecatedCSSOMValue> createDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
-    // FIXME: These three traversing functions are buggy. It should be rewritten with visitChildren.
+    // FIXME: This traversing function is buggy. It should be rewritten with visitChildren.
     // https://bugs.webkit.org/show_bug.cgi?id=270600
-    bool traverseSubresources(const Function<bool(const CachedResource&)>&) const;
-    void setReplacementURLForSubresources(const HashMap<String, String>&);
-    void clearReplacementURLForSubresources();
+    bool traverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&) const;
 
-    IterationStatus visitChildren(const Function<IterationStatus(CSSValue&)>&) const;
+    IterationStatus visitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
     bool mayDependOnBaseURL() const;
 
     // What properties does this value rely on (eg, font-size for em units)
     ComputedStyleDependencies computedStyleDependencies() const;
     void collectComputedStyleDependencies(ComputedStyleDependencies&) const;
+
+    // Checks to see if the provided conversion data is sufficient to resolve the dependencies of the CSSValue.
+    bool canResolveDependenciesWithConversionData(const CSSToLengthConversionData&) const;
 
     bool equals(const CSSValue&) const;
     bool operator==(const CSSValue& other) const { return equals(other); }
@@ -174,126 +176,111 @@ public:
 
     // https://www.w3.org/TR/css-values-4/#local-urls
     // Empty URLs and fragment-only URLs should not be resolved relative to the base URL.
-    static bool isCSSLocalURL(StringView relativeURL);
+    static bool NODELETE isCSSLocalURL(StringView relativeURL);
 
     enum StaticCSSValueTag { StaticCSSValue };
 
     static constexpr size_t ValueSeparatorBits = 2;
     enum ValueSeparator : uint8_t { SpaceSeparator, CommaSeparator, SlashSeparator };
 
-    inline bool isColor() const;
-    inline const Color& color() const;
-
-    inline bool isCustomIdent() const;
-    inline String customIdent() const;
-
-    inline bool isInteger() const;
-    inline int integer() const;
-
     inline const CSSValue& first() const; // CSSValuePair
-    Ref<CSSValue> protectedFirst() const; // CSSValuePair
     inline const CSSValue& second() const; // CSSValuePair
-    Ref<CSSValue> protectedSecond() const; // CSSValuePair
-    inline const Quad& quad() const; // CSSValueQuad
-    inline const Rect& rect() const; // CSSSValueRect
 
-    // FIXME: Should these be named isIdent and ident instead?
-    inline bool isValueID() const;
-    inline CSSValueID valueID() const;
-
-    void customSetReplacementURLForSubresources(const HashMap<String, String>&) { }
-    void customClearReplacementURLForSubresources() { }
     bool customMayDependOnBaseURL() const { return false; }
-    IterationStatus customVisitChildren(const Function<IterationStatus(CSSValue&)>&) const { return IterationStatus::Continue; }
+    IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const { return IterationStatus::Continue; }
+    Ref<DeprecatedCSSOMValue> customCreateDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
+
+    static ASCIILiteral separatorCSSText(ValueSeparator);
 
 protected:
     static const size_t ClassTypeBits = 7;
 
-    // FIXME: Use an enum class here so we don't have to repeat "Class" in every name.
-    enum ClassType {
-        PrimitiveClass,
+    enum class ClassType : uint8_t {
+        Primitive,
 
         // Image classes.
-        ImageClass,
-        ImageSetOptionClass,
-        CursorImageClass,
-
+        Image,
+        ImageSetOption,
+        CursorImage,
         // Image generator classes.
-        CanvasClass,
-        PaintImageClass,
-        NamedImageClass,
-        CrossfadeClass,
-        FilterImageClass,
-        LinearGradientClass,
-        RadialGradientClass,
-        ConicGradientClass,
-        DeprecatedLinearGradientClass,
-        DeprecatedRadialGradientClass,
-        PrefixedLinearGradientClass,
-        PrefixedRadialGradientClass,
-
-        // Timing function classes.
-        LinearTimingFunctionClass,
-        CubicBezierTimingFunctionClass,
-        SpringTimingFunctionClass,
-        StepsTimingFunctionClass,
+        Canvas,
+        PaintImage,
+        NamedImage,
+        ColorImage,
+        LightDarkImage,
+        Crossfade,
+        FilterImage,
+        Gradient,
 
         // Other non-list classes.
-        AnchorClass,
-        AspectRatioClass,
-        BackgroundRepeatClass,
-        BorderImageSliceClass,
-        BorderImageWidthClass,
-        CalculationClass,
-        CircleClass,
-        ContentDistributionClass,
-        CounterClass,
-        CustomPropertyClass,
-        EllipseClass,
-        FontClass,
-        FontFaceSrcLocalClass,
-        FontFaceSrcResourceClass,
-        FontFeatureClass,
-        FontPaletteValuesOverrideColorsClass,
-        FontStyleRangeClass,
-        FontStyleWithAngleClass,
-        FontVariantAlternatesClass,
-        FontVariationClass,
-        GridLineNamesClass,
-        GridTemplateAreasClass,
-        InsetShapeClass,
-        LineBoxContainClass,
-        OffsetRotateClass,
-        PathClass,
-        PendingSubstitutionValueClass,
-        QuadClass,
-        RayClass,
-        RectClass,
-        RectShapeClass,
-        ReflectClass,
-        ScrollClass,
-        ShadowClass,
-        ShapeSegmentClass,
-        UnicodeRangeClass,
-        ValuePairClass,
-        VariableReferenceClass,
-        ViewClass,
-        XywhShapeClass,
+        AppleColorFilter,
+        Attr,
+        BackgroundRepeat,
+        BasicShape,
+        BorderImageOutset,
+        BorderImageRepeat,
+        BorderImageSlice,
+        BorderImageSource,
+        BorderImageWidth,
+        BoxShadowProperty,
+        Clip,
+        Color,
+#if ENABLE(DARK_MODE_CSS)
+        ColorScheme,
+#endif
+        Content,
+        CustomIdent,
+        CustomProperty,
+        DynamicRangeLimit,
+        EasingFunction,
+        Filter,
+        Font,
+        FontFaceSrcLocal,
+        FontFaceSrcResource,
+        FontFamilyName,
+        FontFeature,
+        FontStyleRange,
+        FontStyleWithAngle,
+        FontVariation,
+        GridAutoFlow,
+        GridLineValue,
+        GridTemplateAreas,
+        GridTemplateList,
+        GridTrackSizes,
+        Keyword,
+        MaskBorderOutset,
+        MaskBorderRepeat,
+        MaskBorderSlice,
+        MaskBorderSource,
+        MaskBorderWidth,
+        OffsetRotate,
+        Path,
+        ShorthandSubstitution,
+        Position,
+        PositionX,
+        PositionY,
+        Quotes,
+        Ratio,
+        Ray,
+        Scroll,
+        TextShadowProperty,
+        URL,
+        UnicodeRange,
+        ValuePair,
+        String,
+        Substitution,
+        View,
+        WebkitBoxReflect,
 
         // Classes that contain vectors, which derive from CSSValueContainingVector.
-        ValueListClass,
-        FunctionClass,
-        GridAutoRepeatClass,
-        GridIntegerRepeatClass,
-        ImageSetClass,
-        PolygonClass,
-        ShapeClass,
-        SubgridClass,
-        TransformListClass,
+        ValueList,
+        Function,
+        ImageSet,
+        TransformList,
         // Do not append classes here unless they derive from CSSValueContainingVector.
     };
 
-    constexpr ClassType classType() const { return static_cast<ClassType>(m_classType); }
+    constexpr ClassType classType() const { return m_classType; }
 
     explicit CSSValue(ClassType classType)
         : m_classType(classType)
@@ -305,21 +292,17 @@ protected:
         m_refCount |= refCountFlagIsStatic;
     }
 
-    // NOTE: This class is non-virtual for memory and performance reasons.
-    // Don't go making it virtual again unless you know exactly what you're doing!
-    ~CSSValue() = default;
     WEBCORE_EXPORT void operator delete(CSSValue*, std::destroying_delete_t);
 
     ValueSeparator separator() const { return static_cast<ValueSeparator>(m_valueSeparator); }
-    static ASCIILiteral separatorCSSText(ValueSeparator);
     ASCIILiteral separatorCSSText() const { return separatorCSSText(separator()); };
 
 private:
     template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&);
     template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&) const;
 
-    static inline bool customTraverseSubresources(const Function<bool(const CachedResource&)>&);
-    bool addDerivedHash(Hasher&) const;
+    static inline bool NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
+    bool NODELETE addDerivedHash(Hasher&) const;
 
     mutable unsigned m_refCount { refCountIncrement };
 
@@ -327,15 +310,16 @@ protected:
     // These data members are used by derived classes but here to maximize struct packing.
 
     // CSSPrimitiveValue:
-    unsigned m_primitiveUnitType : 7 { 0 }; // CSSUnitType
-    mutable unsigned m_hasCachedCSSText : 1 { false };
-    unsigned m_isImplicitInitialValue : 1 { false };
+    uint8_t m_primitiveUnitType : 7 { 0 }; // CSSUnitType
+    uint8_t m_isImplicitInitialValue : 1 { false };
 
     // CSSValueList and CSSValuePair:
-    unsigned m_valueSeparator : ValueSeparatorBits { 0 };
+    uint8_t m_valueSeparator : ValueSeparatorBits { 0 };
+
+    mutable uint8_t m_hasCachedCSSText { false };
 
 private:
-    unsigned m_classType : ClassTypeBits; // ClassType
+    ClassType m_classType : ClassTypeBits;
 };
 
 inline void CSSValue::deref() const

@@ -28,7 +28,7 @@
 
 #pragma once
 
-#include "NativeFunction.h"
+#include <JavaScriptCore/NativeFunction.h>
 #include <wtf/Forward.h>
 #include <wtf/NakedPtr.h>
 
@@ -38,6 +38,7 @@ class ArgList;
 class Exception;
 class FunctionExecutable;
 class JSScope;
+class JSValue;
 
 struct CallData {
     enum class Type : uint8_t { None, Native, JS };
@@ -48,6 +49,7 @@ struct CallData {
         struct {
             TaggedNativeFunction function;
             bool isBoundFunction;
+            bool isWasm;
         } native;
         struct {
             FunctionExecutable* functionExecutable;

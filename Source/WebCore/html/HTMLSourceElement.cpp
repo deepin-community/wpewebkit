@@ -26,6 +26,7 @@
 #include "config.h"
 #include "HTMLSourceElement.h"
 
+#include "CSSSerializationContext.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventNames.h"
@@ -49,7 +50,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLSourceElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLSourceElement);
 
 using namespace HTMLNames;
 
@@ -73,22 +74,22 @@ Ref<HTMLSourceElement> HTMLSourceElement::create(Document& document)
     return create(sourceTag, document);
 }
 
-Node::InsertedIntoAncestorResult HTMLSourceElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLSourceElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     RefPtr<Element> parent = parentElement();
     if (parent == &parentOfInsertedTree) {
 #if ENABLE(VIDEO)
-        if (auto* mediaElement = dynamicDowncast<HTMLMediaElement>(*parent))
+        if (RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(*parent))
             mediaElement->sourceWasAdded(*this);
         else
 #endif
 #if ENABLE(MODEL_ELEMENT)
-        if (auto* modelElement = dynamicDowncast<HTMLModelElement>(*parent))
+        if (RefPtr modelElement = dynamicDowncast<HTMLModelElement>(*parent))
             modelElement->sourcesChanged();
         else
 #endif
-        if (auto* pictureElement = dynamicDowncast<HTMLPictureElement>(*parent)) {
+        if (RefPtr pictureElement = dynamicDowncast<HTMLPictureElement>(*parent)) {
             // The new source element only is a relevant mutation if it precedes any img element.
             m_shouldCallSourcesChanged = true;
             for (const Node* node = previousSibling(); node; node = node->previousSibling()) {
@@ -99,20 +100,20 @@ Node::InsertedIntoAncestorResult HTMLSourceElement::insertedIntoAncestor(Inserti
                 pictureElement->sourcesChanged();
         }
     }
-    return InsertedIntoAncestorResult::Done;
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLSourceElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLSourceElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {        
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (!parentNode() && is<Element>(oldParentOfRemovedTree)) {
 #if ENABLE(VIDEO)
-        if (auto* medialElement = dynamicDowncast<HTMLMediaElement>(oldParentOfRemovedTree))
+        if (RefPtr medialElement = dynamicDowncast<HTMLMediaElement>(oldParentOfRemovedTree))
             medialElement->sourceWasRemoved(*this);
         else
 #endif
 #if ENABLE(MODEL_ELEMENT)
-        if (auto* model = dynamicDowncast<HTMLModelElement>(oldParentOfRemovedTree))
+        if (RefPtr model = dynamicDowncast<HTMLModelElement>(oldParentOfRemovedTree))
             model->sourcesChanged();
         else
 #endif
@@ -170,7 +171,7 @@ void HTMLSourceElement::attributeChanged(const QualifiedName& name, const AtomSt
         if (m_shouldCallSourcesChanged && parent)
             downcast<HTMLPictureElement>(*parent).sourcesChanged();
 #if ENABLE(MODEL_ELEMENT)
-        if (auto* parentModelElement = dynamicDowncast<HTMLModelElement>(parent.get()))
+        if (RefPtr parentModelElement = dynamicDowncast<HTMLModelElement>(parent.get()))
             parentModelElement->sourcesChanged();
 #endif
         break;
@@ -183,6 +184,12 @@ void HTMLSourceElement::attributeChanged(const QualifiedName& name, const AtomSt
         RefPtr parent = parentElement();
         if (m_shouldCallSourcesChanged && parent)
             downcast<HTMLPictureElement>(*parent).sourcesChanged();
+#if ENABLE(MODEL_ELEMENT)
+        if (name == mediaAttr) {
+            if (RefPtr parentModelElement = dynamicDowncast<HTMLModelElement>(parent.get()))
+                parentModelElement->sourcesChanged();
+        }
+#endif
         break;
     }
     case AttributeNames::widthAttr:
@@ -205,32 +212,32 @@ const MQ::MediaQueryList& HTMLSourceElement::parsedMediaAttribute(Document& docu
 {
     if (!m_cachedParsedMediaAttribute) {
         auto& value = attributeWithoutSynchronization(mediaAttr);
-        m_cachedParsedMediaAttribute = MQ::MediaQueryParser::parse(value, MediaQueryParserContext { document });
+        m_cachedParsedMediaAttribute = MQ::MediaQueryParser::parse(value, document.cssParserContext());
     }
     return m_cachedParsedMediaAttribute.value();
 }
 
-Attribute HTMLSourceElement::replaceURLsInAttributeValue(const Attribute& attribute, const HashMap<String, String>& replacementURLStrings) const
+Attribute HTMLSourceElement::replaceURLsInAttributeValue(const Attribute& attribute, const CSS::SerializationContext& serializationContext) const
 {
     if (attribute.name() != srcsetAttr)
         return attribute;
 
-    if (replacementURLStrings.isEmpty())
+    if (serializationContext.replacementURLStrings.isEmpty())
         return attribute;
 
-    return Attribute { srcsetAttr, AtomString { replaceURLsInSrcsetAttribute(*this, StringView(attribute.value()), replacementURLStrings) } };
+    return Attribute { srcsetAttr, AtomString { replaceURLsInSrcsetAttribute(*this, StringView(attribute.value()), serializationContext) } };
 }
 
-void HTMLSourceElement::addCandidateSubresourceURLs(ListHashSet<URL>& urls) const
+void HTMLSourceElement::addCandidateSubresourceURLs(OrderedHashSet<URL>& urls) const
 {
     getURLsFromSrcsetAttribute(*this, attributeWithoutSynchronization(srcsetAttr), urls);
 }
 
-Ref<Element> HTMLSourceElement::cloneElementWithoutAttributesAndChildren(Document& targetDocument)
+Ref<Element> HTMLSourceElement::cloneElementWithoutAttributesAndChildren(Document& document, CustomElementRegistry*) const
 {
-    auto clone = create(targetDocument);
+    Ref clone = create(document);
 #if ENABLE(ATTACHMENT_ELEMENT)
-    cloneAttachmentAssociatedElementWithoutAttributesAndChildren(clone, targetDocument);
+    cloneAttachmentAssociatedElementWithoutAttributesAndChildren(clone, document);
 #endif
     return clone;
 }

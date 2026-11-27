@@ -30,24 +30,26 @@
 #include "WebMouseEvent.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/AdvancedPrivacyProtections.h>
+#include <WebCore/BackForwardFrameItemIdentifier.h>
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
+#include <WebCore/NavigationRequester.h>
 #include <WebCore/OwnerPermissionsPolicyData.h>
 #include <WebCore/PrivateClickMeasurement.h>
+#include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
+#include <WebCore/SandboxFlags.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/UserGestureTokenIdentifier.h>
-
-namespace WebCore {
-using SandboxFlags = int;
-}
 
 namespace WebKit {
 
 struct NavigationActionData {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NavigationActionData);
+
     WebCore::NavigationType navigationType { WebCore::NavigationType::Other };
     OptionSet<WebEventModifier> modifiers;
     WebMouseEventButton mouseButton { WebMouseEventButton::None };
@@ -60,18 +62,20 @@ struct NavigationActionData {
     WebCore::FloatPoint clickLocationInRootViewCoordinates;
     WebCore::ResourceResponse redirectResponse;
     bool isRequestFromClientOrUserInput { false };
-    bool treatAsSameOriginNavigation { false };
     bool hasOpenedFrames { false };
     bool openedByDOMWithOpener { false };
     bool hasOpener { false };
-    WebCore::SecurityOriginData requesterOrigin;
-    WebCore::SecurityOriginData requesterTopOrigin;
+    WebCore::NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior { WebCore::NavigationUpgradeToHTTPSBehavior::BasedOnPolicy };
+    bool isInitialFrameSrcLoad { false };
+    bool isContentRuleListRedirect { false };
+    String openedMainFrameName;
     std::optional<WebCore::BackForwardItemIdentifier> targetBackForwardItemIdentifier;
     std::optional<WebCore::BackForwardItemIdentifier> sourceBackForwardItemIdentifier;
     WebCore::LockHistory lockHistory { WebCore::LockHistory::No };
     WebCore::LockBackForwardList lockBackForwardList { WebCore::LockBackForwardList::No };
     WTF::String clientRedirectSourceForHistory;
-    WebCore::SandboxFlags effectiveSandboxFlags { 0 };
+    WebCore::SandboxFlags effectiveSandboxFlags;
+    WebCore::ReferrerPolicy effectiveReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
     std::optional<WebCore::OwnerPermissionsPolicyData> ownerPermissionsPolicy;
     std::optional<WebCore::PrivateClickMeasurement> privateClickMeasurement;
     OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
@@ -83,8 +87,15 @@ struct NavigationActionData {
     std::optional<WebPageProxyIdentifier> originatingPageID;
     FrameInfoData frameInfo;
     std::optional<WebCore::NavigationIdentifier> navigationID;
-    WebCore::ResourceRequest originalRequest;
+    // Sent as nullopt when equal to `request`, to avoid serializing and re-parsing a potentially
+    // very large URL twice. Resolve via originalRequestOrFallback() / fall back to `request`.
+    std::optional<WebCore::ResourceRequest> originalRequest;
     WebCore::ResourceRequest request;
+    String invalidURLString;
+    std::optional<WebCore::NavigationRequester> requester;
+
+    // `originalRequest` is sent as nullopt when it equals `request`; resolve it here.
+    const WebCore::ResourceRequest& originalRequestOrFallback() const { return originalRequest ? *originalRequest : request; }
 };
 
 }

@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include "Identifier.h"
+#include <JavaScriptCore/Identifier.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -36,11 +36,11 @@ class ModuleScopeData : public RefCounted<ModuleScopeData> {
     WTF_MAKE_NONCOPYABLE(ModuleScopeData);
     WTF_MAKE_TZONE_ALLOCATED(ModuleScopeData);
 public:
-    typedef HashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
+    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
 
     static Ref<ModuleScopeData> create() { return adoptRef(*new ModuleScopeData); }
 
-    const IdentifierAliasMap& exportedBindings() const { return m_exportedBindings; }
+    const IdentifierAliasMap& exportedBindings() const LIFETIME_BOUND { return m_exportedBindings; }
 
     bool exportName(const Identifier& exportedName)
     {

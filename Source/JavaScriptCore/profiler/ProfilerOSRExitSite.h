@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
-#include "MacroAssemblerCodeRef.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/MacroAssemblerCodeRef.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace Profiler {
@@ -41,7 +41,7 @@ public:
     {
     }
     
-    const Vector<CodePtr<JSInternalPtrTag>>& codeAddress() const { return m_codeAddresses; }
+    const Vector<CodePtr<JSInternalPtrTag>>& codeAddress() const LIFETIME_BOUND { return m_codeAddresses; }
     
     Ref<JSON::Value> toJSON(Dumper&) const;
 

@@ -26,7 +26,7 @@
 #include "config.h"
 #include <wtf/ThreadAssertions.h>
 
-#include "Utilities.h"
+#include "Helpers/Utilities.h"
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
 
@@ -83,7 +83,7 @@ TEST(WTF_ThreadAssertions, TestMainRunLoopNamedAssertion)
     WTF::initializeMainThread();
 
     bool done = false;
-    RunLoop::main().dispatch([&done] {
+    RunLoop::mainSingleton().dispatch([&done] {
         // Use following to manually ensure compile will fail:
         // testMainRunLoopFunction();
         assertIsMainRunLoop();

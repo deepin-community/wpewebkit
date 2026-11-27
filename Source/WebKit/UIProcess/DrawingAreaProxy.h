@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2010-2020 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,21 +35,13 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <stdint.h>
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/Identified.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/WeakRef.h>
-
-namespace WebKit {
-class DrawingAreaProxy;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::DrawingAreaProxy> : std::true_type { };
-}
 
 #if PLATFORM(COCOA)
 namespace WTF {
@@ -70,18 +62,23 @@ class RemotePageDrawingAreaProxy;
 class WebPageProxy;
 class WebProcessProxy;
 
-#if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
+#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
 struct UpdateInfo;
 #endif
 
-class DrawingAreaProxy : public IPC::MessageReceiver, public IPC::MessageSender, public Identified<DrawingAreaIdentifier> {
+class DrawingAreaProxy : public IPC::MessageReceiver, public IPC::MessageSender, public Identified<DrawingAreaIdentifier>, public CanMakeCheckedPtr<DrawingAreaProxy> {
     WTF_MAKE_TZONE_ALLOCATED(DrawingAreaProxy);
     WTF_MAKE_NONCOPYABLE(DrawingAreaProxy);
-
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DrawingAreaProxy);
 public:
     virtual ~DrawingAreaProxy();
 
-    DrawingAreaType type() const { return m_type; }
+#if ENABLE(TILED_CA_DRAWING_AREA)
+    virtual DrawingAreaType type() const = 0;
+#endif
+
+    virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
+    virtual bool isRemoteLayerTreeDrawingAreaProxyIOS() const { return false; }
 
     void startReceivingMessages(WebProcessProxy&);
     void stopReceivingMessages(WebProcessProxy&);
@@ -89,7 +86,7 @@ public:
 
     virtual WebCore::DelegatedScrollingMode delegatedScrollingMode() const;
 
-    virtual void deviceScaleFactorDidChange() = 0;
+    virtual void deviceScaleFactorDidChange(CompletionHandler<void()>&&) = 0;
     virtual void colorSpaceDidChange() { }
     virtual void windowScreenDidChange(WebCore::PlatformDisplayID) { }
     virtual std::optional<WebCore::FramesPerSecond> displayNominalFramesPerSecond() { return std::nullopt; }
@@ -97,15 +94,14 @@ public:
     // FIXME: These should be pure virtual.
     virtual void setBackingStoreIsDiscardable(bool) { }
 
-    const WebCore::IntSize& size() const { return m_size; }
+    const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
     bool setSize(const WebCore::IntSize&, const WebCore::IntSize& scrollOffset = { });
 
     virtual void minimumSizeForAutoLayoutDidChange() { }
     virtual void sizeToContentAutoSizeMaximumSizeDidChange() { }
-    virtual void windowKindDidChange() { }
 
-    virtual void adjustTransientZoom(double, WebCore::FloatPoint) { }
-    virtual void commitTransientZoom(double, WebCore::FloatPoint) { }
+    virtual void adjustTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */, WebCore::FloatPoint /* originInVisibleRect */) { }
+    virtual void commitTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */) { }
 
     virtual void viewIsBecomingVisible() { }
     virtual void viewIsBecomingInvisible() { }
@@ -117,17 +113,15 @@ public:
 
     virtual void updateDebugIndicator() { }
 
-    virtual void waitForDidUpdateActivityState(ActivityStateChangeID, WebProcessProxy&) { }
+    virtual void waitForDidUpdateActivityState(ActivityStateChangeID) { }
 
     // Hide the content until the currently pending update arrives.
-    virtual void hideContentUntilPendingUpdate() { ASSERT_NOT_REACHED(); }
+    virtual void hideContentUntilPendingUpdate() { hideContentUntilAnyUpdate(); }
 
     // Hide the content until any update arrives.
-    virtual void hideContentUntilAnyUpdate() { ASSERT_NOT_REACHED(); }
+    virtual void hideContentUntilAnyUpdate() { }
 
     virtual bool hasVisibleContent() const { return true; }
-
-    virtual void prepareForAppSuspension() { }
 
 #if PLATFORM(COCOA)
     virtual WTF::MachSendRight createFence();
@@ -138,7 +132,7 @@ public:
     virtual bool shouldCoalesceVisualEditorStateUpdates() const { return false; }
     virtual bool shouldSendWheelEventsToEventDispatcher() const { return false; }
 
-    WebPageProxy& page() const;
+    WebPageProxy* NODELETE page() const;
     virtual void viewWillStartLiveResize() { };
     virtual void viewWillEndLiveResize() { };
 
@@ -156,17 +150,14 @@ public:
 
     virtual void remotePageProcessDidTerminate(WebCore::ProcessIdentifier) { }
 
+    void addOutstandingPresentationUpdateCallback(IPC::Connection&, AsyncReplyID);
+
 protected:
-    DrawingAreaProxy(DrawingAreaType, WebPageProxy&, WebProcessProxy&);
+    DrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
 
-    Ref<WebPageProxy> protectedWebPageProxy() const;
+    WebProcessProxy& webProcessProxy() const { return m_webProcessProxy; }
 
-    DrawingAreaType m_type;
-    WeakRef<WebPageProxy> m_webPageProxy;
-    Ref<WebProcessProxy> m_webProcessProxy;
-
-    WebCore::IntSize m_size;
-    WebCore::IntSize m_scrollOffset;
+    void removeOutstandingPresentationUpdateCallback(IPC::Connection&, AsyncReplyID);
 
 private:
     virtual void sizeDidChange() = 0;
@@ -176,21 +167,41 @@ private:
     virtual void enterAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
     virtual void updateAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
     virtual void didFirstLayerFlush(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
+
+#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
+    virtual void update(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
+    virtual void exitAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
+#endif
+
+    WeakPtr<WebPageProxy> m_webPageProxy;
+    const Ref<WebProcessProxy> m_webProcessProxy;
+
+    WebCore::IntSize m_size;
+    WebCore::IntSize m_scrollOffset;
+
 #if PLATFORM(MAC)
     RunLoop::Timer m_viewExposedRectChangedTimer;
     std::optional<WebCore::FloatRect> m_lastSentViewExposedRect;
 #endif // PLATFORM(MAC)
 
-#if USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
-    virtual void update(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
-    virtual void exitAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
-#endif
+    HashSet<std::pair<IPC::Connection::UniqueID, AsyncReplyID>> m_outstandingPresentationUpdateCallbacks;
 };
 
 } // namespace WebKit
+
+#if ENABLE(TILED_CA_DRAWING_AREA)
 
 #define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA_PROXY(ToValueTypeName, ProxyType) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
     static bool isType(const WebKit::DrawingAreaProxy& proxy) { return proxy.type() == WebKit::ProxyType; } \
 SPECIALIZE_TYPE_TRAITS_END()
 
+#else
+
+// There is only one type of DrawingArea.
+#define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA_PROXY(ToValueTypeName, ProxyType) \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
+    static bool isType(const WebKit::DrawingAreaProxy&) { return true; } \
+SPECIALIZE_TYPE_TRAITS_END()
+
+#endif

@@ -31,7 +31,7 @@
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(BoxGeometry);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BoxGeometry);
 
 BoxGeometry::BoxGeometry(const BoxGeometry& other)
     : m_topLeft(other.m_topLeft)
@@ -56,9 +56,7 @@ BoxGeometry::BoxGeometry(const BoxGeometry& other)
 {
 }
 
-BoxGeometry::~BoxGeometry()
-{
-}
+BoxGeometry::~BoxGeometry() = default;
 
 Rect BoxGeometry::marginBox() const
 {
@@ -100,6 +98,21 @@ Rect BoxGeometry::contentBox() const
     contentBox.setWidth(contentBoxWidth());
     contentBox.setHeight(contentBoxHeight());
     return contentBox;
+}
+
+void BoxGeometry::reset()
+{
+    setTopLeft({ });
+
+    setHorizontalMargin({ });
+    setVerticalMargin({ });
+    setBorder({ });
+    setPadding({ });
+
+    setContentBoxSize({ });
+
+    setVerticalSpaceForScrollbar({ });
+    setHorizontalSpaceForScrollbar({ });
 }
 
 }

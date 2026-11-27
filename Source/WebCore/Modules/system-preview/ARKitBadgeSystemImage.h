@@ -25,53 +25,65 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if USE(SYSTEM_PREVIEW)
 
-#include "Image.h"
-#include "NativeImage.h"
-#include "SystemImage.h"
+#include <WebCore/Image.h>
+#include <WebCore/NativeImage.h>
+#include <WebCore/SystemImage.h>
 #include <optional>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 
 OBJC_CLASS CIContext;
 
 namespace WebCore {
 
 class WEBCORE_EXPORT ARKitBadgeSystemImage final : public SystemImage {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(ARKitBadgeSystemImage, WEBCORE_EXPORT);
 public:
+    struct BadgeMetrics {
+        static constexpr int largeDimension = 70;
+        static constexpr int largeOffset = 20;
+        static constexpr int smallDimension = 35;
+        static constexpr int smallOffset = 8;
+        static constexpr int minimumSizeForLarge = 240;
+    };
     static Ref<ARKitBadgeSystemImage> create(Image& image)
     {
         return adoptRef(*new ARKitBadgeSystemImage(image));
     }
 
-    static Ref<ARKitBadgeSystemImage> create(RenderingResourceIdentifier renderingResourceIdentifier, FloatSize size)
+    static Ref<ARKitBadgeSystemImage> create(std::optional<RenderingResourceIdentifier> renderingResourceIdentifier, FloatSize size)
     {
         return adoptRef(*new ARKitBadgeSystemImage(renderingResourceIdentifier, size));
     }
+
+    static Ref<ARKitBadgeSystemImage> createWithoutImage();
 
     virtual ~ARKitBadgeSystemImage() = default;
 
     void draw(GraphicsContext&, const FloatRect&) const final;
 
     Image* image() const { return m_image.get(); }
-    void setImage(Image& image) { m_image = &image; }
+    void setImage(Image& image) { m_image = image; }
 
-    RenderingResourceIdentifier imageIdentifier() const;
+    std::optional<RenderingResourceIdentifier> imageIdentifier() const;
 
 private:
-    friend struct IPC::ArgumentCoder<ARKitBadgeSystemImage, void>;
+    friend struct IPC::ArgumentCoder<ARKitBadgeSystemImage>;
     ARKitBadgeSystemImage(Image& image)
         : SystemImage(SystemImageType::ARKitBadge)
-        , m_image(&image)
+        , m_image(image)
         , m_imageSize(image.size())
     {
     }
 
-    ARKitBadgeSystemImage(RenderingResourceIdentifier renderingResourceIdentifier, FloatSize size)
+    ARKitBadgeSystemImage(std::optional<RenderingResourceIdentifier> renderingResourceIdentifier, FloatSize size)
         : SystemImage(SystemImageType::ARKitBadge)
         , m_renderingResourceIdentifier(renderingResourceIdentifier)
         , m_imageSize(size)
@@ -79,7 +91,7 @@ private:
     }
 
     RefPtr<Image> m_image;
-    RenderingResourceIdentifier m_renderingResourceIdentifier;
+    Markable<RenderingResourceIdentifier> m_renderingResourceIdentifier;
     FloatSize m_imageSize;
 };
 

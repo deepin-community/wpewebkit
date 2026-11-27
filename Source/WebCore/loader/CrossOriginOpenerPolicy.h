@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/SandboxFlags.h>
 #include <wtf/URL.h>
 #include <wtf/text/WTFString.h>
 
@@ -39,14 +41,13 @@ class SecurityOrigin;
 struct NavigationRequester;
 struct ReportingClient;
 
-using SandboxFlags = int;
-
 // https://html.spec.whatwg.org/multipage/origin.html#cross-origin-opener-policy-value
 enum class CrossOriginOpenerPolicyValue : uint8_t {
     UnsafeNone,
     SameOrigin,
     SameOriginPlusCOEP,
-    SameOriginAllowPopups
+    SameOriginAllowPopups,
+    NoopenerAllowPopups
 };
 
 enum class COOPDisposition : bool { Reporting , Enforce };
@@ -94,6 +95,6 @@ struct CrossOriginOpenerPolicyEnforcementResult {
 
 WEBCORE_EXPORT CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse&);
 WEBCORE_EXPORT std::optional<CrossOriginOpenerPolicyEnforcementResult> doCrossOriginOpenerHandlingOfResponse(ReportingClient&, const ResourceResponse&, const std::optional<NavigationRequester>&, ContentSecurityPolicy* responseCSP, SandboxFlags effectiveSandboxFlags, const String& referrer, bool isDisplayingInitialEmptyDocument, const CrossOriginOpenerPolicyEnforcementResult& currentCoopEnforcementResult);
-WEBCORE_EXPORT bool coopValuesRequireBrowsingContextGroupSwitch(bool isInitialAboutBlank, CrossOriginOpenerPolicyValue activeDocumentCOOPValue, const SecurityOrigin& activeDocumentNavigationOrigin, CrossOriginOpenerPolicyValue responseCOOPValue, const SecurityOrigin& responseOrigin);
+WEBCORE_EXPORT bool coopValuesRequireBrowsingContextGroupSwitch(IsInitialAboutBlank, CrossOriginOpenerPolicyValue activeDocumentCOOPValue, const SecurityOrigin& activeDocumentNavigationOrigin, CrossOriginOpenerPolicyValue responseCOOPValue, const SecurityOrigin& responseOrigin);
 
 } // namespace WebCore

@@ -61,8 +61,8 @@ protected:
     Graph& m_graph;
     
     VM& vm() { return m_graph.m_vm; }
-    CodeBlock* codeBlock() { return m_graph.m_codeBlock; }
-    CodeBlock* profiledBlock() { return m_graph.m_profiledBlock; }
+    CodeBlock* codeBlock() LIFETIME_BOUND { return m_graph.m_codeBlock; }
+    CodeBlock* profiledBlock() LIFETIME_BOUND { return m_graph.m_profiledBlock; }
 
     // This runs validation, and uses the graph dump before the phase if possible.
     void validate();
@@ -87,6 +87,8 @@ bool runAndLog(PhaseType& phase)
 
     if (result && logCompilationChanges(phase.graph().m_plan.mode()))
         dataLogLn(phase.graph().prefix(), "Phase ", phase.name(), " changed the IR.\n");
+    if (Options::dumpIonGraph()) [[unlikely]]
+        phase.graph().appendIonGraphPass(phase.name());
     return result;
 }
 

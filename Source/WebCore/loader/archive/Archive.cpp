@@ -38,16 +38,16 @@ Archive::~Archive() = default;
 
 void Archive::clearAllSubframeArchives()
 {
-    HashSet<Archive*> clearedArchives;
-    clearedArchives.add(this);
+    HashSet<Ref<Archive>> clearedArchives;
+    clearedArchives.add(*this);
     clearAllSubframeArchives(clearedArchives);
 }
 
-void Archive::clearAllSubframeArchives(HashSet<Archive*>& clearedArchives)
+void Archive::clearAllSubframeArchives(HashSet<Ref<Archive>>& clearedArchives)
 {
-    ASSERT(clearedArchives.contains(this));
+    ASSERT(clearedArchives.contains(*this));
     for (auto& archive : m_subframeArchives) {
-        if (clearedArchives.add(archive.ptr()))
+        if (clearedArchives.add(archive).isNewEntry)
             archive->clearAllSubframeArchives(clearedArchives);
     }
     m_subframeArchives.clear();
@@ -58,7 +58,8 @@ Expected<Vector<String>, ArchiveError> Archive::saveResourcesToDisk(const String
     ASSERT(!RunLoop::isMain());
 
     Vector<String> filePaths;
-    if (!m_mainResource)
+    RefPtr mainResource = m_mainResource;
+    if (!mainResource)
         return makeUnexpected(ArchiveError::EmptyResource);
 
     bool hasError = false;
@@ -69,7 +70,7 @@ Expected<Vector<String>, ArchiveError> Archive::saveResourcesToDisk(const String
         }
     });
 
-    auto mainResourceResult = m_mainResource->saveToDisk(directory);
+    auto mainResourceResult = mainResource->saveToDisk(directory);
     if (!mainResourceResult) {
         hasError = true;
         return makeUnexpected(mainResourceResult.error());

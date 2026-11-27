@@ -1,4 +1,4 @@
-# Copyright (C) 2012-2020 Apple Inc. All rights reserved.
+# Copyright (C) 2012-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -20,13 +20,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-messages -> NetworkProcess LegacyReceiver {
+[
+    DispatchedFrom=UI,
+    DispatchedTo=Networking,
+    ExceptionForEnabledBy
+]
+messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     InitializeNetworkProcess(struct WebKit::NetworkProcessCreationParameters processCreationParameters) -> ()
 
     CreateNetworkConnectionToWebProcess(WebCore::ProcessIdentifier processIdentifier, PAL::SessionID sessionID, struct WebKit::NetworkProcessConnectionParameters parameters) -> (std::optional<IPC::ConnectionHandle> connectionHandle, enum:uint8_t WebCore::HTTPCookieAcceptPolicy cookieAcceptPolicy) AllowedWhenWaitingForSyncReply
     SharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier processIdentifier, struct WebKit::SharedPreferencesForWebProcess sharedPreferencesForWebProcess) -> ()
 
     AddAllowedFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, WebCore::RegistrableDomain firstPartyForCookies, enum:bool WebKit::LoadedWebArchive loadedWebArchive) -> ()
+    AddAllowedWebPageProxyIdentifier(WebCore::ProcessIdentifier processIdentifier, WebKit::WebPageProxyIdentifier pageID)
+    AuthorizeDownloadForWebProcess(WebCore::ProcessIdentifier processIdentifier, WebKit::DownloadID downloadID) -> ()
 
 #if USE(SOUP)
     SetIgnoreTLSErrors(PAL::SessionID sessionID, bool ignoreTLSErrors)
@@ -42,28 +49,39 @@ messages -> NetworkProcess LegacyReceiver {
 
     AddWebsiteDataStore(struct WebKit::WebsiteDataStoreParameters websiteDataStoreParameters) AllowedWhenWaitingForSyncReply
     DestroySession(PAL::SessionID sessionID) -> ()
+    EnsureSessionWithDataStoreIdentifierRemoved(WTF::UUID identifier) -> ()
+
+    FetchWebsitesWithUserInteractions(PAL::SessionID sessionID) -> (HashSet<WebCore::RegistrableDomain> websites)
 
     FetchWebsiteData(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, OptionSet<WebKit::WebsiteDataFetchOption> fetchOptions) -> (struct WebKit::WebsiteData websiteData)
-    DeleteWebsiteData(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, WallTime modifiedSince) -> ()
+    DeleteWebsiteData(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, WallTime modifiedSince, HashSet<WebCore::ProcessIdentifier> activeWebProcesses) -> ()
     DeleteWebsiteDataForOrigins(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, Vector<WebCore::SecurityOriginData> origins, Vector<String> cookieHostNames, Vector<String> HSTSCacheHostNames, Vector<WebCore::RegistrableDomain> registrableDomains) -> ()
     RenameOriginInWebsiteData(PAL::SessionID sessionID, WebCore::SecurityOriginData oldOrigin, WebCore::SecurityOriginData newOrigin, OptionSet<WebKit::WebsiteDataType> websiteDataTypes) -> ()
     WebsiteDataOriginDirectoryForTesting(PAL::SessionID sessionID, struct WebCore::ClientOrigin origin, OptionSet<WebKit::WebsiteDataType> websiteDataType) -> (String directory)
+    LastPageLoadNetworkActivityCompletionCodeForTesting(PAL::SessionID sessionID, WebCore::PageIdentifier pageID) -> (enum:uint8_t std::optional<WebKit::NetworkActivityTracker::CompletionCode> completionCode)
 
-    DownloadRequest(PAL::SessionID sessionID, WebKit::DownloadID downloadID, WebCore::ResourceRequest request, std::optional<WebCore::SecurityOriginData> topOrigin, std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, String suggestedFilename)
-    ResumeDownload(PAL::SessionID sessionID, WebKit::DownloadID downloadID, std::span<const uint8_t> resumeData, String path, WebKit::SandboxExtensionHandle sandboxExtensionHandle, enum:bool WebKit::CallDownloadDidStart callDownloadDidStart)
+    DownloadRequest(PAL::SessionID sessionID, WebKit::DownloadID downloadID, WebCore::ResourceRequest request, std::optional<WebCore::SecurityOriginData> topOrigin, enum:bool std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, String suggestedFilename)
+    ResumeDownload(PAL::SessionID sessionID, WebKit::DownloadID downloadID, std::span<const uint8_t> resumeData, String path, WebKit::SandboxExtensionHandle sandboxExtensionHandle, enum:bool WebKit::CallDownloadDidStart callDownloadDidStart, std::span<const uint8_t> activityAccessToken)
     CancelDownload(WebKit::DownloadID downloadID) -> (std::span<const uint8_t> resumeData)
+#if PLATFORM(COCOA)
 #if HAVE(MODERN_DOWNLOADPROGRESS)
-    PublishDownloadProgress(WebKit::DownloadID downloadID, URL url, std::span<const uint8_t> bookmarkData)
+    PublishDownloadProgress(WebKit::DownloadID downloadID, URL url, std::span<const uint8_t> bookmarkData, enum:bool WebKit::UseDownloadPlaceholder useDownloadPlaceholder, std::span<const uint8_t> activityAccessToken)
 #endif
-#if PLATFORM(COCOA) && !HAVE(MODERN_DOWNLOADPROGRESS)
+#if !HAVE(MODERN_DOWNLOADPROGRESS)
     PublishDownloadProgress(WebKit::DownloadID downloadID, URL url, WebKit::SandboxExtensionHandle sandboxExtensionHandle)
 #endif
-    DataTaskWithRequest(WebKit::WebPageProxyIdentifier pageID, PAL::SessionID sessionID, WebCore::ResourceRequest request, std::optional<WebCore::SecurityOriginData> topOrigin, IPC::FormDataReference requestBody) -> (WebKit::DataTaskIdentifier taskIdentifier)
+#endif
+    DataTaskWithRequest(WebKit::WebPageProxyIdentifier pageID, PAL::SessionID sessionID, WebCore::ResourceRequest request, std::optional<WebCore::SecurityOriginData> topOrigin, IPC::FormDataReference requestBody) -> (std::optional<WebKit::DataTaskIdentifier> taskIdentifier)
     CancelDataTask(WebKit::DataTaskIdentifier taskIdentifier, PAL::SessionID sessionID) -> ()
     ApplicationDidEnterBackground()
     ApplicationWillEnterForeground()
 
     FlushCookies(PAL::SessionID sessionID) -> ()
+    FlushNetworkProcessIPC() -> ()
+
+#if PLATFORM(MAC)
+    systemDidWake()
+#endif
 
 #if !PLATFORM(COCOA)
     AllowSpecificHTTPSCertificateForHost(PAL::SessionID sessionID, WebCore::CertificateInfo certificate, String host)
@@ -74,12 +92,15 @@ messages -> NetworkProcess LegacyReceiver {
     SetCacheModelSynchronouslyForTesting(enum:uint8_t WebKit::CacheModel cacheModel) -> () Synchronous
 
     ProcessWillSuspendImminentlyForTestingSync() -> () Synchronous
+    IsStorageSuspendedForTesting(PAL::SessionID sessionID) -> (bool isStorageSuspended)
+    CanPrefetchDNSForTesting(PAL::SessionID sessionID) -> (bool canPrefetchDNS)
+    PrefetchedDNSHostnameCountForTesting() -> (uint64_t count)
     PrepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime) -> ()
     ProcessDidResume(bool forForegroundActivity)
 
     NotifyMediaStreamingActivity(bool activity)
 
-    PreconnectTo(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest request, enum:uint8_t WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain);
+    PreconnectTo(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest request, enum:uint8_t WebCore::StoredCredentialsPolicy storedCredentialsPolicy, enum:bool std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections, uint64_t requiredCookiesVersion);
 
     SetInspectionForServiceWorkersAllowed(PAL::SessionID sessionID, bool inspectable)
 
@@ -102,6 +123,7 @@ messages -> NetworkProcess LegacyReceiver {
     HadUserInteraction(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
     IsRelationshipOnlyInDatabaseOnce(PAL::SessionID sessionID, WebCore::RegistrableDomain subDomain, WebCore::RegistrableDomain topDomain) -> (bool hadUserInteraction)
     HasLocalStorage(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
+    HasLocalStorageOrCookies(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
     GetAllStorageAccessEntries(PAL::SessionID sessionID) -> (Vector<String> domains)
     IsRegisteredAsRedirectingTo(PAL::SessionID sessionID, WebCore::RegistrableDomain redirectedFromDomain, WebCore::RegistrableDomain redirectedToDomain) -> (bool isRedirectingTo)
     IsRegisteredAsSubFrameUnder(PAL::SessionID sessionID, WebCore::RegistrableDomain subFrameDomain, WebCore::RegistrableDomain topFrameDomain) -> (bool isSubframeUnder)
@@ -122,7 +144,6 @@ messages -> NetworkProcess LegacyReceiver {
     SetMinimumTimeBetweenDataRecordsRemoval(PAL::SessionID sessionID, Seconds seconds) -> ()
     SetPruneEntriesDownTo(PAL::SessionID sessionID, uint64_t maximumEntryCount) -> ()
     SetShouldClassifyResourcesBeforeDataRecordsRemoval(PAL::SessionID sessionID, bool value) -> ()
-    SetNotifyPagesWhenDataRecordsWereScanned(PAL::SessionID sessionID, bool value) -> ()
     SetResourceLoadStatisticsTimeAdvanceForTesting(PAL::SessionID sessionID, Seconds time) -> ()
     SetIsRunningResourceLoadStatisticsTest(PAL::SessionID sessionID, bool value) -> ()
     SetResourceLoadStatisticsDebugMode(PAL::SessionID sessionID, bool debugMode) -> ()
@@ -139,6 +160,8 @@ messages -> NetworkProcess LegacyReceiver {
     SetCrossSiteLoadWithLinkDecorationForTesting(PAL::SessionID sessionID, WebCore::RegistrableDomain fromDomain, WebCore::RegistrableDomain toDomain, enum:bool WebKit::DidFilterKnownLinkDecoration didFilterKnownLinkDecoration) -> ()
     ResetCrossSiteLoadsWithLinkDecorationForTesting(PAL::SessionID sessionID) -> ()
     GrantStorageAccessForTesting(PAL::SessionID sessionID, Vector<WebCore::RegistrableDomain> subFrameDomain, WebCore::RegistrableDomain topFrameDomain) -> ()
+    SetStorageAccessPermissionForTesting(PAL::SessionID sessionID, bool granted, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::RegistrableDomain topFrameDomain, WebCore::RegistrableDomain subFrameDomain) -> ()
+    ClearStorageAccessForTesting(PAL::SessionID sessionID) -> ()
     DeleteCookiesForTesting(PAL::SessionID sessionID, WebCore::RegistrableDomain domain, bool includeHttpOnlyCookies) -> ()
     HasIsolatedSession(PAL::SessionID sessionID, WebCore::RegistrableDomain domain) -> (bool hasIsolatedSession)
     CloseITPDatabase(PAL::SessionID sessionID) -> ()
@@ -158,20 +181,25 @@ messages -> NetworkProcess LegacyReceiver {
 
     SetPrivateClickMeasurementDebugMode(PAL::SessionID sessionID, bool debugMode)
 
-    SetBlobRegistryTopOriginPartitioningEnabled(PAL::SessionID sessionID, bool enabled)
     SetShouldSendPrivateTokenIPCForTesting(PAL::SessionID sessionID, bool enabled)
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    SetOptInCookiePartitioningEnabled(PAL::SessionID sessionID, bool enabled)
+#endif
 
     SetSessionIsControlledByAutomation(PAL::SessionID sessionID, bool controlled);
 
     RegisterURLSchemeAsSecure(String scheme)
     RegisterURLSchemeAsBypassingContentSecurityPolicy(String scheme)
     RegisterURLSchemeAsLocal(String scheme)
+#if ENABLE(ALL_LEGACY_REGISTERED_SPECIAL_URL_SCHEMES)
     RegisterURLSchemeAsNoAccess(String scheme)
+#endif
 
     SyncLocalStorage() -> ()
     StoreServiceWorkerRegistrations(PAL::SessionID sessionID) -> ()
 
     StorePrivateClickMeasurement(PAL::SessionID sessionID, WebCore::PrivateClickMeasurement privateClickMeasurement)
+    SimulatePrivateClickMeasurementConversion(PAL::SessionID sessionID, int priority, int triggerData, URL sourceURL, URL destinationURL)
     DumpPrivateClickMeasurement(PAL::SessionID sessionID) -> (String privateClickMeasurementState)
     ClearPrivateClickMeasurement(PAL::SessionID sessionID) -> ()
     SetPrivateClickMeasurementOverrideTimerForTesting(PAL::SessionID sessionID, bool value) -> ()
@@ -188,6 +216,11 @@ messages -> NetworkProcess LegacyReceiver {
 
     SetServiceWorkerFetchTimeoutForTesting(Seconds seconds) -> () Synchronous
     ResetServiceWorkerFetchTimeoutForTesting() -> () Synchronous
+    ClearCrossOriginPreflightResultCacheForTesting() -> () Synchronous
+
+    TerminateIdleServiceWorkers(WebCore::ProcessIdentifier processIdentifier) -> ()
+
+    SetWebProcessSuspended(WebCore::ProcessIdentifier processIdentifier, bool isSuspended)
 
     ResetQuota(PAL::SessionID sessionID) -> ()
     SetOriginQuotaRatioEnabledForTesting(PAL::SessionID sessionID, bool enabled) -> ();
@@ -217,20 +250,25 @@ messages -> NetworkProcess LegacyReceiver {
 
     AddWebPageNetworkParameters(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID, WebKit::WebPageNetworkParameters parameters)
     RemoveWebPageNetworkParameters(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID)
-    CountNonDefaultSessionSets(PAL::SessionID sessionID) -> (size_t count)
+    CountNonDefaultSessionSets(PAL::SessionID sessionID) -> (uint64_t count)
 
-    AllowFileAccessFromWebProcess(WebCore::ProcessIdentifier processIdentifier, String url) -> ()
+    SetCORSDisablingPatternsForPage(WebCore::ProcessIdentifier webProcessIdentifier, WebCore::PageIdentifier pageIdentifier, Vector<String> patterns)
+
+    RecordMessagePortTransferDestinationsForSiteIsolation(Vector<WebCore::MessagePortIdentifier> ports, WebCore::ProcessIdentifier destination) -> ()
+
+    AllowFileAccessFromWebProcess(WebCore::ProcessIdentifier processIdentifier, String url, std::optional<WebKit::SandboxExtensionHandle> sandboxExtensionHandle) -> ()
     AllowFilesAccessFromWebProcess(WebCore::ProcessIdentifier processIdentifier, Vector<String> urls) -> () ReplyCanDispatchOutOfOrder
 
     TerminateRemoteWorkerContextConnectionWhenPossible(enum:uint8_t WebKit::RemoteWorkerType workerType, PAL::SessionID sessionID,  WebCore::RegistrableDomain registrableDomain, WebCore::ProcessIdentifier processIdentifier);
+    RunningOrTerminatingServiceWorkerCountForTesting(PAL::SessionID sessionID) -> (unsigned count)
 
-    GetPendingPushMessage(PAL::SessionID sessionID) -> (std::optional<WebKit::WebPushMessage> message)
+    GetPendingPushMessage(PAL::SessionID sessionID) -> (struct std::optional<WebKit::WebPushMessage> message)
     GetPendingPushMessages(PAL::SessionID sessionID) -> (Vector<WebKit::WebPushMessage> messages)
-    ProcessPushMessage(PAL::SessionID sessionID, struct WebKit::WebPushMessage pushMessage, enum:uint8_t WebCore::PushPermissionState pushPermissionState) -> (bool didSucceed, std::optional<WebCore::NotificationPayload> displayPayload)
+    ProcessPushMessage(PAL::SessionID sessionID, struct WebKit::WebPushMessage pushMessage, enum:uint8_t WebCore::PushPermissionState pushPermissionState, bool builtInNotificationsEnabled) -> (bool didSucceed, std::optional<WebCore::NotificationPayload> displayPayload)
     ProcessNotificationEvent(struct WebCore::NotificationData data, enum:bool WebCore::NotificationEventType eventType) -> (bool didSucceed)
 
     GetAllBackgroundFetchIdentifiers(PAL::SessionID sessionID) -> (Vector<String> fetches);
-    GetBackgroundFetchState(PAL::SessionID sessionID, String identifier) -> (std::optional<WebKit::BackgroundFetchState> state);
+    GetBackgroundFetchState(PAL::SessionID sessionID, String identifier) -> (struct std::optional<WebKit::BackgroundFetchState> state);
     AbortBackgroundFetch(PAL::SessionID sessionID, String identifier) -> ();
     PauseBackgroundFetch(PAL::SessionID sessionID, String identifier) -> ();
     ResumeBackgroundFetch(PAL::SessionID sessionID, String identifier) -> ();
@@ -245,11 +283,34 @@ messages -> NetworkProcess LegacyReceiver {
 
 #if HAVE(NW_PROXY_CONFIG)
     ClearProxyConfigData(PAL::SessionID sessionID)
-    SetProxyConfigData(PAL::SessionID sessionID, Vector<std::pair<Vector<uint8_t>, WTF::UUID>> proxyConfigurations)
+    SetProxyConfigData(PAL::SessionID sessionID, Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>> proxyConfigurations)
 #endif
 
     SetStorageSiteValidationEnabled(PAL::SessionID sessionID, bool enabled)
     SetPersistedDomains(PAL::SessionID sessionsID, HashSet<WebCore::RegistrableDomain> domains)
 
     GetAppBadgeForTesting(PAL::SessionID sessionID) -> (std::optional<uint64_t> badge)
+
+    FetchLocalStorage(PAL::SessionID sessionID) -> (std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorageMap)
+    RestoreLocalStorage(PAL::SessionID sessionID, HashMap<WebCore::ClientOrigin, HashMap<String, String>> localStorageMap) -> (bool succeeded)
+
+    FetchSessionStorage(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID) -> (std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> sessionStorageMap)
+    RestoreSessionStorage(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID, HashMap<WebCore::ClientOrigin, HashMap<String, String>> localStorageMap) -> (bool succeeded)
+
+    SetShouldRelaxThirdPartyCookieBlockingForPage(WebKit::WebPageProxyIdentifier pageID)
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    ResetResourceMonitorThrottlerForTesting(PAL::SessionID sessionID) -> ();
+#endif
+
+    SetDefaultRequestTimeoutInterval(double timeoutInterval)
+
+#if HAVE(WEBCONTENTRESTRICTIONS)
+    AllowEvaluatedURL(struct WebCore::ParentalControlsURLFilterParameters parameters) -> (bool allowed)
+    InstallMockParentalControlsURLFilterForTesting(Vector<URL> blockedURLs) -> ()
+#endif
+
+#if HAVE(ENHANCED_SECURITY_LINKS)
+    IsEnhancedSecurityLink(URL url) -> (bool isEnhancedSecurityLink)
+#endif
 }

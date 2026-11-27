@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,9 +26,12 @@
 #include "config.h"
 #include "LibWebRTCNetwork.h"
 
+#if USE(LIBWEBRTC)
+
 #include "LibWebRTCNetworkMessages.h"
 #include "Logging.h"
 #include "NetworkConnectionToWebProcessMessages.h"
+#include "WebProcess.h"
 #include <WebCore/SharedBuffer.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -37,6 +40,12 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCNetwork);
 
+LibWebRTCNetwork::LibWebRTCNetwork(WebProcess& webProcess)
+    : WebRTCNetworkBase(webProcess)
+    , m_webNetworkMonitor(*this)
+{
+}
+
 LibWebRTCNetwork::~LibWebRTCNetwork()
 {
     ASSERT_NOT_REACHED();
@@ -44,115 +53,119 @@ LibWebRTCNetwork::~LibWebRTCNetwork()
 
 void LibWebRTCNetwork::setAsActive()
 {
-    ASSERT(!m_isActive);
-    m_isActive = true;
-#if USE(LIBWEBRTC)
+    WebRTCNetworkBase::setAsActive();
     if (m_connection)
         setSocketFactoryConnection();
-#endif
 }
 
 void LibWebRTCNetwork::networkProcessCrashed()
 {
     setConnection(nullptr);
 
-#if USE(LIBWEBRTC)
-    m_webNetworkMonitor.networkProcessCrashed();
-#endif
+    protect(monitor())->networkProcessCrashed();
 }
 
 void LibWebRTCNetwork::setConnection(RefPtr<IPC::Connection>&& connection)
 {
-#if USE(LIBWEBRTC)
-    if (m_connection)
-        m_connection->removeMessageReceiver(Messages::LibWebRTCNetwork::messageReceiverName());
-#endif
-    m_connection = WTFMove(connection);
-#if USE(LIBWEBRTC)
-    if (m_isActive)
+    if (RefPtr connection = m_connection)
+        connection->removeMessageReceiver(Messages::LibWebRTCNetwork::messageReceiverName());
+
+    m_connection = WTF::move(connection);
+
+    if (isActive())
         setSocketFactoryConnection();
-    if (m_connection)
-        m_connection->addMessageReceiver(*this, *this, Messages::LibWebRTCNetwork::messageReceiverName());
-#endif
+    if (RefPtr connection = m_connection)
+        connection->addMessageReceiver(*this, *this, Messages::LibWebRTCNetwork::messageReceiverName());
 }
 
-#if USE(LIBWEBRTC)
 void LibWebRTCNetwork::setSocketFactoryConnection()
 {
-    if (!m_connection) {
-        WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this]() mutable {
+    RefPtr connection = m_connection;
+    if (!connection) {
+        WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, protectedThis = Ref { *this }]() mutable {
             m_socketFactory.setConnection(nullptr);
         });
         return;
     }
-    m_connection->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::CreateRTCProvider(), [this, connection = m_connection]() mutable {
+    connection->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::CreateRTCProvider(), [this, protectedThis = Ref { *this }, connection]() mutable {
         if (!connection->isValid())
             return;
 
-        WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, connection = WTFMove(connection)]() mutable {
-            m_socketFactory.setConnection(WTFMove(connection));
+        WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, protectedThis = Ref { *this }, connection = WTF::move(connection)]() mutable {
+            m_socketFactory.setConnection(WTF::move(connection));
         });
     }, 0);
 }
-#endif
 
 void LibWebRTCNetwork::dispatch(Function<void()>&& callback)
 {
-    if (!m_isActive) {
+    if (!isActive()) {
         RELEASE_LOG_ERROR(WebRTC, "Received WebRTCSocket message while libWebRTCNetwork is not active");
         return;
     }
 
-#if USE(LIBWEBRTC)
-    WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread(WTFMove(callback));
-#else
-    UNUSED_PARAM(callback);
-#endif
+    WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread(WTF::move(callback));
 }
 
-#if USE(LIBWEBRTC)
+static webrtc::EcnMarking NODELETE convertToWebRTCEcnMarking(WebRTCNetwork::EcnMarking ecn)
+{
+    switch (ecn) {
+    case WebRTCNetwork::EcnMarking::kNotEct:
+        return webrtc::EcnMarking::kNotEct;
+    case WebRTCNetwork::EcnMarking::kEct1:
+        return webrtc::EcnMarking::kEct1;
+    case WebRTCNetwork::EcnMarking::kEct0:
+        return webrtc::EcnMarking::kEct0;
+    case WebRTCNetwork::EcnMarking::kCe:
+        return webrtc::EcnMarking::kCe;
+    }
+
+    ASSERT_NOT_REACHED();
+    return webrtc::EcnMarking::kNotEct;
+}
+
 void LibWebRTCNetwork::signalAddressReady(WebCore::LibWebRTCSocketIdentifier identifier, const RTCNetwork::SocketAddress& address)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalAddressReady(address.rtcAddress());
 }
 
-void LibWebRTCNetwork::signalReadPacket(WebCore::LibWebRTCSocketIdentifier identifier, std::span<const uint8_t> data, const RTCNetwork::IPAddress& address, uint16_t port, int64_t timestamp)
+void LibWebRTCNetwork::signalReadPacket(WebCore::LibWebRTCSocketIdentifier identifier, std::span<const uint8_t> data, const RTCNetwork::IPAddress& address, uint16_t port, int64_t timestamp, WebRTCNetwork::EcnMarking ecn)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
-        socket->signalReadPacket(data, rtc::SocketAddress(address.rtcAddress(), port), timestamp);
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
+        socket->signalReadPacket(data, webrtc::SocketAddress(address.rtcAddress(), port), timestamp, convertToWebRTCEcnMarking(ecn));
 }
 
 void LibWebRTCNetwork::signalSentPacket(WebCore::LibWebRTCSocketIdentifier identifier, int64_t rtcPacketID, int64_t sendTimeMs)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalSentPacket(rtcPacketID, sendTimeMs);
 }
 
 void LibWebRTCNetwork::signalConnect(WebCore::LibWebRTCSocketIdentifier identifier)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalConnect();
 }
 
 void LibWebRTCNetwork::signalClose(WebCore::LibWebRTCSocketIdentifier identifier, int error)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
         socket->signalClose(error);
 }
 
 void LibWebRTCNetwork::signalUsedInterface(WebCore::LibWebRTCSocketIdentifier identifier, String&& interfaceName)
 {
     ASSERT(!WTF::isMainRunLoop());
-    if (auto* socket = m_socketFactory.socket(identifier))
-        socket->signalUsedInterface(WTFMove(interfaceName));
+    if (CheckedPtr socket = m_socketFactory.socket(identifier))
+        socket->signalUsedInterface(WTF::move(interfaceName));
 }
 
-#endif
-
 } // namespace WebKit
+
+#endif // USE(LIBWEBRTC)

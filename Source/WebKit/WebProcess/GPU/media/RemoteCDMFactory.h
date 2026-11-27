@@ -36,15 +36,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
-namespace WebKit {
-class RemoteCDMFactory;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::RemoteCDMFactory> : std::true_type { };
-}
-
 namespace WebCore {
 class Settings;
 }
@@ -63,18 +54,20 @@ class WebProcess;
 
 class RemoteCDMFactory final
     : public WebCore::CDMFactory
-    , public WebProcessSupplement
-    , public CanMakeWeakPtr<RemoteCDMFactory> {
+    , public WebProcessSupplement {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCDMFactory);
 public:
     explicit RemoteCDMFactory(WebProcess&);
     virtual ~RemoteCDMFactory();
 
+    void ref() const final;
+    void deref() const final;
+
     static ASCIILiteral supplementName();
 
     GPUProcessConnection& gpuProcessConnection();
 
-    void registerFactory(Vector<WebCore::CDMFactory*>&);
+    void registerFactory(Vector<WeakRef<WebCore::CDMFactory>>&);
 
     void didReceiveSessionMessage(IPC::Connection&, IPC::Decoder&);
 
@@ -84,9 +77,10 @@ public:
     void removeInstance(RemoteCDMInstanceIdentifier);
 
 private:
-    std::unique_ptr<WebCore::CDMPrivate> createCDM(const String&, const WebCore::CDMPrivateClient&) final;
+    std::unique_ptr<WebCore::CDMPrivate> createCDM(const String& keySystem, const String& mediaKeysHashSalt, const WebCore::CDMPrivateClient&) final;
     bool supportsKeySystem(const String&) final;
 
+    WeakRef<WebProcess> m_webProcess;
     HashMap<RemoteCDMInstanceSessionIdentifier, WeakPtr<RemoteCDMInstanceSession>> m_sessions;
     HashMap<RemoteCDMIdentifier, std::unique_ptr<RemoteCDM>> m_cdms;
 };

@@ -29,17 +29,15 @@
 #include <functional>
 #include <sqlite3.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/Expected.h>
 #include <wtf/Lock.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Threading.h>
+#include <wtf/Platform.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
-
-#if COMPILER(MSVC)
-#pragma warning(disable: 4800)
-#endif
 
 struct sqlite3;
 
@@ -50,7 +48,7 @@ class SQLiteStatement;
 class SQLiteTransaction;
 
 class SQLiteDatabase final : public CanMakeThreadSafeCheckedPtr<SQLiteDatabase> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(SQLiteDatabase, WEBCORE_EXPORT);
     WTF_MAKE_NONCOPYABLE(SQLiteDatabase);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SQLiteDatabase);
 
@@ -76,6 +74,7 @@ public:
     WEBCORE_EXPORT bool executeCommand(ASCIILiteral);
     
     WEBCORE_EXPORT bool tableExists(StringView);
+    WEBCORE_EXPORT bool indexExists(StringView);
     WEBCORE_EXPORT String tableSQL(StringView);
     WEBCORE_EXPORT String indexSQL(StringView);
     WEBCORE_EXPORT void clearAllTables();
@@ -84,10 +83,8 @@ public:
     
     bool transactionInProgress() const { return m_transactionInProgress; }
 
-    WEBCORE_EXPORT Expected<SQLiteStatement, int> prepareStatementSlow(StringView query);
-    WEBCORE_EXPORT Expected<SQLiteStatement, int> prepareStatement(ASCIILiteral query);
-    WEBCORE_EXPORT Expected<UniqueRef<SQLiteStatement>, int> prepareHeapStatementSlow(StringView query);
-    WEBCORE_EXPORT Expected<UniqueRef<SQLiteStatement>, int> prepareHeapStatement(ASCIILiteral query);
+    WEBCORE_EXPORT std::unique_ptr<SQLiteStatement> prepareStatementSlow(StringView query);
+    WEBCORE_EXPORT std::unique_ptr<SQLiteStatement> prepareStatement(ASCIILiteral query);
 
     // Aborts the current database operation. This is thread safe.
     WEBCORE_EXPORT void interrupt();
@@ -129,19 +126,19 @@ public:
     void setSynchronous(SynchronousPragma);
     
     WEBCORE_EXPORT int lastError();
-    WEBCORE_EXPORT const char* lastErrorMsg();
+    WEBCORE_EXPORT const char* lastErrorMsg() LIFETIME_BOUND;
     
-    sqlite3* sqlite3Handle() const
+    sqlite3* sqlite3Handle() const LIFETIME_BOUND
     {
 #if !PLATFORM(IOS_FAMILY)
-        ASSERT(m_sharable || m_openingThread == &Thread::current() || !m_db);
+        ASSERT(m_sharable || m_openingThreadID == currentThreadID() || !m_db);
 #endif
         return m_db;
     }
     
     void setAuthorizer(DatabaseAuthorizer&);
 
-    Lock& databaseMutex() { return m_lockingMutex; }
+    Lock& databaseMutex() LIFETIME_BOUND { return m_lockingMutex; }
     bool isAutoCommitOn() const;
 
     // The SQLite AUTO_VACUUM pragma can be either NONE, FULL, or INCREMENTAL.
@@ -167,8 +164,6 @@ public:
 #endif
 
     WEBCORE_EXPORT static void useFastMalloc();
-
-    WEBCORE_EXPORT static void setIsDatabaseOpeningForbidden(bool);
 
     WEBCORE_EXPORT void releaseMemory();
 
@@ -200,7 +195,7 @@ private:
     RefPtr<DatabaseAuthorizer> m_authorizer WTF_GUARDED_BY_LOCK(m_authorizerLock);
 
     Lock m_lockingMutex;
-    RefPtr<Thread> m_openingThread { nullptr };
+    uint32_t m_openingThreadID { 0 };
 
     Lock m_databaseClosingMutex;
 

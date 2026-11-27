@@ -25,12 +25,14 @@
 
 #pragma once
 
-#include "ExecutableBaseInlines.h"
-#include "FunctionExecutable.h"
-#include "JSBoundFunction.h"
-#include "JSFunction.h"
-#include "JSRemoteFunction.h"
-#include "NativeExecutable.h"
+#include <JavaScriptCore/ExceptionHelpers.h>
+#include <JavaScriptCore/ExecutableBaseInlines.h>
+#include <JavaScriptCore/FunctionExecutable.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSRemoteFunction.h>
+#include <JavaScriptCore/NativeExecutable.h>
+#include <JavaScriptCore/WebAssemblyFunction.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -72,7 +74,7 @@ inline JSFunction* JSFunction::createWithInvalidatedReallocationWatchpoint(VM& v
 
 inline JSFunction::JSFunction(VM& vm, FunctionExecutable* executable, JSScope* scope, Structure* structure)
     : Base(vm, scope, structure)
-    , m_executableOrRareData(bitwise_cast<uintptr_t>(executable))
+    , m_executableOrRareData(std::bit_cast<uintptr_t>(executable))
 {
     assertTypeInfoFlagInvariants();
 }
@@ -153,10 +155,13 @@ inline bool JSFunction::hasReifiedName() const
 inline double JSFunction::originalLength(VM& vm)
 {
     if (inherits<JSBoundFunction>())
-        return jsCast<JSBoundFunction*>(this)->length(vm);
+        return uncheckedDowncast<JSBoundFunction>(this)->length(vm);
     if (inherits<JSRemoteFunction>())
-        return jsCast<JSRemoteFunction*>(this)->length(vm);
-    ASSERT(!isHostFunction());
+        return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
+    if (isHostFunction()) {
+        // The original length is captured in NativeExecutable at creation time.
+        return uncheckedDowncast<NativeExecutable>(executable())->length();
+    }
     return jsExecutable()->parameterCount();
 }
 
@@ -164,7 +169,7 @@ template<typename... StringTypes>
 ALWAYS_INLINE String makeNameWithOutOfMemoryCheck(JSGlobalObject* globalObject, ThrowScope& throwScope, ASCIILiteral messagePrefix, StringTypes... strings)
 {
     String name = tryMakeString(strings...);
-    if (UNLIKELY(!name)) {
+    if (!name) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope, makeString(messagePrefix, "name is too long"_s));
         return String();
     }
@@ -177,20 +182,27 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (this->inherits<JSBoundFunction>()) {
-        JSString* nameMayBeNull = jsCast<JSBoundFunction*>(this)->nameMayBeNull();
+        JSString* nameMayBeNull = uncheckedDowncast<JSBoundFunction>(this)->nameMayBeNull();
         if (nameMayBeNull)
             RELEASE_AND_RETURN(scope, jsString(globalObject, vm.smallStrings.boundPrefixString(), nameMayBeNull));
         return jsEmptyString(vm);
     }
 
     if (this->inherits<JSRemoteFunction>()) {
-        JSString* nameMayBeNull = jsCast<JSRemoteFunction*>(this)->nameMayBeNull();
+        JSString* nameMayBeNull = uncheckedDowncast<JSRemoteFunction>(this)->nameMayBeNull();
         if (nameMayBeNull)
             return nameMayBeNull;
         return jsEmptyString(vm);
     }
 
-    ASSERT(!isHostFunction());
+    if (isHostFunction()) {
+        // Mirror the JS path below: build a fresh JSString from the original name stored on
+        // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
+        // always returns the original (creation-time) value even after the JSFunction's "name"
+        // property has been reified or mutated.
+        return uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
+    }
+
     const Identifier& ecmaName = jsExecutable()->ecmaName();
     String name;
     // https://tc39.github.io/ecma262/#sec-exports-runtime-semantics-evaluation
@@ -208,14 +220,17 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
         name = makeNameWithOutOfMemoryCheck(globalObject, scope, "Setter "_s, "set "_s, name);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return jsString(vm, WTFMove(name));
+    return jsString(vm, WTF::move(name));
 }
 
 inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
 {
-    // Bound functions are not eagerly generating name and length.
-    // Thus, we can use FunctionRareData's tracking. This is useful to optimize func.bind().bind() case.
-    if (isNonBoundHostFunction())
+    // Plain host, builtin, and JS functions all reify length/name lazily; the original value is
+    // recoverable via originalLength()/originalName() (from NativeExecutable for hosts, from
+    // FunctionExecutable for JS), so the only thing we have to refuse is bound functions
+    // (which set their length/name at bind time, not via FunctionRareData tracking) and any
+    // function whose length or name has since been user-mutated.
+    if (this->inherits<JSBoundFunction>())
         return false;
     FunctionRareData* rareData = this->rareData();
     if (!rareData)
@@ -238,7 +253,7 @@ inline bool JSFunction::canUseAllocationProfiles()
         if (isHostFunction())
             return false;
 
-        VM& vm = globalObject()->vm();
+        VM& vm = this->vm();
         unsigned attributes;
         JSValue prototype = getDirect(vm, vm.propertyNames->prototype, attributes);
         if (!prototype || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
@@ -258,7 +273,7 @@ inline FunctionRareData* JSFunction::ensureRareDataAndObjectAllocationProfile(JS
     FunctionRareData* rareData = this->rareData();
     if (!rareData)
         return allocateAndInitializeRareData(globalObject, inlineCapacity);
-    if (UNLIKELY(!rareData->isObjectAllocationProfileInitialized()))
+    if (!rareData->isObjectAllocationProfileInitialized()) [[unlikely]]
         return initializeRareData(globalObject, inlineCapacity);
     return rareData;
 }
@@ -270,6 +285,59 @@ inline JSString* JSFunction::asStringConcurrently() const
     if (isHostFunction())
         return static_cast<NativeExecutable*>(executable())->asStringConcurrently();
     return jsExecutable()->asStringConcurrently();
+}
+
+inline CallData JSFunction::getCallDataInline(JSCell* cell)
+{
+    // Keep this function OK for invocation from concurrent compilers.
+    CallData callData;
+
+    JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    if (thisObject->isHostFunction()) {
+        callData.type = CallData::Type::Native;
+        callData.native.function = thisObject->nativeFunction();
+        callData.native.isBoundFunction = thisObject->inherits<JSBoundFunction>();
+        callData.native.isWasm = false;
+#if ENABLE(WEBASSEMBLY)
+        callData.native.isWasm = thisObject->inherits<WebAssemblyFunction>();
+#endif
+    } else {
+        callData.type = CallData::Type::JS;
+        callData.js.functionExecutable = thisObject->jsExecutable();
+        callData.js.scope = thisObject->scope();
+    }
+
+    return callData;
+}
+
+inline CallData JSFunction::getConstructDataInline(JSCell* cell)
+{
+    // Keep this function OK for invocation from concurrent compilers.
+    CallData constructData;
+
+    JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    if (thisObject->isHostFunction()) {
+        if (thisObject->inherits<JSBoundFunction>()) {
+            if (uncheckedDowncast<JSBoundFunction>(thisObject)->canConstruct()) {
+                constructData.type = CallData::Type::Native;
+                constructData.native.function = thisObject->nativeConstructor();
+                constructData.native.isBoundFunction = true;
+                constructData.native.isWasm = false;
+            }
+        } else if (thisObject->nativeConstructor() != callHostFunctionAsConstructor) {
+            constructData.type = CallData::Type::Native;
+            constructData.native.function = thisObject->nativeConstructor();
+        }
+    } else {
+        FunctionExecutable* functionExecutable = thisObject->jsExecutable();
+        if (functionExecutable->constructAbility() != ConstructAbility::CannotConstruct) {
+            constructData.type = CallData::Type::JS;
+            constructData.js.functionExecutable = functionExecutable;
+            constructData.js.scope = thisObject->scope();
+        }
+    }
+
+    return constructData;
 }
 
 } // namespace JSC

@@ -25,9 +25,9 @@
 
 #pragma once
 
-#include "DeferGC.h"
+#include <JavaScriptCore/DeferGC.h>
 #include <wtf/Lock.h>
-#include <wtf/NoLock.h>
+#include <wtf/Locker.h>
 
 namespace JSC {
 
@@ -99,7 +99,7 @@ public:
     ConcurrentJSLocker(ConcurrentJSLock& lockable)
         : ConcurrentJSLockerBase(lockable)
 #if !defined(NDEBUG)
-        , m_disallowGC(std::in_place)
+        , m_assertNoGC(std::in_place)
 #endif
     {
     }
@@ -107,7 +107,7 @@ public:
     ConcurrentJSLocker(ConcurrentJSLock* lockable)
         : ConcurrentJSLockerBase(lockable)
 #if !defined(NDEBUG)
-        , m_disallowGC(std::in_place)
+        , m_assertNoGC(std::in_place)
 #endif
     {
     }
@@ -115,7 +115,7 @@ public:
     ConcurrentJSLocker(NoLockingNecessaryTag)
         : ConcurrentJSLockerBase(NoLockingNecessary)
 #if !defined(NDEBUG)
-        , m_disallowGC(std::nullopt)
+        , m_assertNoGC(std::nullopt)
 #endif
     {
     }
@@ -124,7 +124,7 @@ public:
 
 #if !defined(NDEBUG)
 private:
-    std::optional<DisallowGC> m_disallowGC;
+    std::optional<AssertNoGC> m_assertNoGC;
 #endif
 };
 

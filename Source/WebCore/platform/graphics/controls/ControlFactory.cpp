@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,22 +26,25 @@
 #include "config.h"
 #include "ControlFactory.h"
 
+#include "EmptyControlFactory.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-#if !PLATFORM(COCOA)
-std::unique_ptr<ControlFactory> ControlFactory::createControlFactory()
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ControlFactory);
+
+#if !PLATFORM(COCOA) && !USE(THEME_ADWAITA)
+Ref<ControlFactory> ControlFactory::create()
 {
-    RELEASE_ASSERT_NOT_REACHED();
-    return nullptr;
+    return adoptRef(*new EmptyControlFactory());
 }
 #endif
 
-ControlFactory& ControlFactory::sharedControlFactory()
+ControlFactory& ControlFactory::singleton()
 {
-    static NeverDestroyed<std::unique_ptr<ControlFactory>> sharedControlFactory = createControlFactory();
-    return *sharedControlFactory.get();
+    static MainThreadNeverDestroyed<RefPtr<ControlFactory>> shared { create() };
+    return *shared.get();
 }
 
 } // namespace WebCore

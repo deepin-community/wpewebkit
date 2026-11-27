@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StyleAttributeMutationScope.h"
 
+
 namespace WebCore {
 
 unsigned StyleAttributeMutationScope::s_scopeCount = 0;

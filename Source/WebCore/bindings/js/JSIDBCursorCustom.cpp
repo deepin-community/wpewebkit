@@ -29,6 +29,7 @@
 #include "IDBBindingUtilities.h"
 #include "JSDOMBinding.h"
 #include "JSIDBCursorWithValue.h"
+#include "JSValueInWrappedObjectInlines.h"
 #include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
@@ -38,7 +39,7 @@ JSC::JSValue JSIDBCursor::key(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().keyWrapper(), [&](JSC::ThrowScope&) {
-        return toJS(lexicalGlobalObject, lexicalGlobalObject, wrapped().key());
+        return toJS(lexicalGlobalObject, lexicalGlobalObject, protect(wrapped().key()));
     });
 }
 
@@ -46,32 +47,20 @@ JSC::JSValue JSIDBCursor::primaryKey(JSC::JSGlobalObject& lexicalGlobalObject) c
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
     return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().primaryKeyWrapper(), [&](JSC::ThrowScope&) {
-        return toJS(lexicalGlobalObject, lexicalGlobalObject, wrapped().primaryKey());
+        return toJS(lexicalGlobalObject, lexicalGlobalObject, protect(wrapped().primaryKey()));
     });
 }
 
 template<typename Visitor>
-void JSIDBCursor::visitAdditionalChildren(Visitor& visitor)
+void JSIDBCursor::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     auto& cursor = wrapped();
     if (auto* request = cursor.request())
         addWebCoreOpaqueRoot(visitor, *request);
-    cursor.keyWrapper().visit(visitor);
-    cursor.primaryKeyWrapper().visit(visitor);
+    cursor.keyWrapper().visitInGCThread(visitor);
+    cursor.primaryKeyWrapper().visitInGCThread(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSIDBCursor);
-
-JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<IDBCursor>&& cursor)
-{
-    if (is<IDBCursorWithValue>(cursor))
-        return createWrapper<IDBCursorWithValue>(globalObject, WTFMove(cursor));
-    return createWrapper<IDBCursor>(globalObject, WTFMove(cursor));
-}
-
-JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, IDBCursor& cursor)
-{
-    return wrap(lexicalGlobalObject, globalObject, cursor);
-}
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSIDBCursor);
 
 } // namespace WebCore

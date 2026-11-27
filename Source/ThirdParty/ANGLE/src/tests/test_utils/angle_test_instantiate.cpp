@@ -8,6 +8,7 @@
 // tests by platform, so we skip unsupported configs.
 
 #include "test_utils/angle_test_instantiate.h"
+#include "common/unsafe_buffers.h"
 
 #include <algorithm>
 #include <array>
@@ -49,8 +50,7 @@ bool IsEGLConfigSupported(const PlatformParameters &param,
         angle::OpenSharedLibrary(ANGLE_EGL_LIBRARY_NAME, angle::SearchType::ModuleDir));
 #endif
 
-    EGLWindow *eglWindow =
-        EGLWindow::New(param.clientType, param.majorVersion, param.minorVersion, param.profileMask);
+    EGLWindow *eglWindow = EGLWindow::New(param.majorVersion, param.minorVersion);
     ConfigParameters configParams;
     bool result =
         eglWindow->initializeGL(osWindow, eglLibrary.get(), angle::GLESDriverType::AngleEGL,
@@ -76,8 +76,7 @@ bool IsSystemWGLConfigSupported(const PlatformParameters &param, OSWindow *osWin
     std::unique_ptr<angle::Library> openglLibrary(
         angle::OpenSharedLibrary("opengl32", angle::SearchType::SystemDir));
 
-    WGLWindow *wglWindow =
-        WGLWindow::New(param.clientType, param.majorVersion, param.minorVersion, param.profileMask);
+    WGLWindow *wglWindow = WGLWindow::New(param.majorVersion, param.minorVersion);
     ConfigParameters configParams;
     bool result =
         wglWindow->initializeGL(osWindow, openglLibrary.get(), angle::GLESDriverType::SystemWGL,
@@ -98,8 +97,7 @@ bool IsSystemEGLConfigSupported(const PlatformParameters &param, OSWindow *osWin
     eglLibrary.reset(OpenSharedLibraryWithExtension(GetNativeEGLLibraryNameWithExtension(),
                                                     SearchType::SystemDir));
 
-    EGLWindow *eglWindow =
-        EGLWindow::New(param.clientType, param.majorVersion, param.minorVersion, param.profileMask);
+    EGLWindow *eglWindow = EGLWindow::New(param.majorVersion, param.minorVersion);
     ConfigParameters configParams;
     bool result =
         eglWindow->initializeGL(osWindow, eglLibrary.get(), angle::GLESDriverType::SystemEGL,
@@ -190,6 +188,14 @@ std::array<char, kMaxConfigNameLen> gSelectedConfig;
 
 bool gEnableANGLEPerTestCaptureLabel = false;
 
+#if defined(ANGLE_TEST_ENABLE_RENDERDOC_CAPTURE)
+bool gEnableRenderDocCapture = true;
+#else
+bool gEnableRenderDocCapture = false;
+#endif
+
+bool gDisableDebugLayers = false;
+
 bool IsConfigSelected()
 {
     return gSelectedConfig[0] != 0;
@@ -198,11 +204,6 @@ bool IsConfigSelected()
 #if !defined(ANGLE_PLATFORM_APPLE)
 // For Apple platform, see angle_test_instantiate_apple.mm
 bool IsMetalTextureSwizzleAvailable()
-{
-    return false;
-}
-
-bool IsMetalCompressedTexture3DAvailable()
 {
     return false;
 }
@@ -262,7 +263,7 @@ bool IsOzone()
     // for desktop Linux when USE_OZONE && USE_X11 are both defined results in incorrect tests'
     // expectations. We should also rework them and make IsOzone less vague.
     //
-    // TODO(crbug.com/angleproject/4977): make it possible to switch between X11 and Wayland on
+    // TODO(https://anglebug.com/42263550): make it possible to switch between X11 and Wayland on
     // Ozone/Linux builds. Probably, it's possible to identify the WAYLAND backend by checking
     // the WAYLAND_DISPLAY or XDG_SESSION_TYPE env vars. And also make the IsOzone method less
     // vague (read the comment above).
@@ -344,6 +345,11 @@ bool IsAMD()
     return HasSystemVendorID(kVendorID_AMD);
 }
 
+bool IsSamsung()
+{
+    return HasSystemVendorID(kVendorID_Samsung);
+}
+
 bool IsAppleGPU()
 {
     return HasSystemVendorID(kVendorID_Apple);
@@ -359,7 +365,12 @@ bool IsSwiftshaderDevice()
     return HasSystemDeviceID(kVendorID_GOOGLE, kDeviceID_Swiftshader);
 }
 
-bool IsSwiftShaderSupported()
+bool IsLavapipeDevice()
+{
+    return HasSystemDeviceID(kVendorID_Mesa, kDeviceID_Lavapipe);
+}
+
+bool SwiftshaderTestsEnabled()
 {
 #if defined(ANGLE_ENABLE_SWIFTSHADER)
     return true;
@@ -382,8 +393,9 @@ bool IsNVIDIA()
 
 bool IsQualcomm()
 {
-    return HasSystemVendorID(kVendorID_Qualcomm) || IsNexus5X() || IsNexus9() || IsPixelXL() ||
-           IsPixel2() || IsPixel2XL() || IsPixel4() || IsPixel4XL();
+    return HasSystemVendorID(kVendorID_Qualcomm) || HasSystemVendorID(kVendorID_Qualcomm_DXGI) ||
+           IsNexus5X() || IsNexus9() || IsPixelXL() || IsPixel2() || IsPixel2XL() || IsPixel4() ||
+           IsPixel4XL();
 }
 
 bool HasMesa()
@@ -409,13 +421,13 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
             return true;
     }
 
+    if (param.isSwiftshader() && !SwiftshaderTestsEnabled())
+    {
+        return false;
+    }
+
     if (param.isSwiftshader() || IsSwiftshaderDevice())
     {
-        if (!IsSwiftShaderSupported())
-        {
-            return false;
-        }
-
         // TODO: http://crbug.com/swiftshader/145
         // Swiftshader does not currently have all the robustness features
         // we need for ANGLE. In particular, it is unable to detect and recover
@@ -428,14 +440,6 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
             return false;
         }
     }
-
-// Skip test configs that target the desktop OpenGL frontend when it's not enabled.
-#if !defined(ANGLE_ENABLE_GL_DESKTOP_FRONTEND)
-    if (param.isDesktopOpenGLFrontend())
-    {
-        return false;
-    }
-#endif
 
     if (param.driver == GLESDriverType::AngleVulkanSecondariesEGL)
     {
@@ -458,7 +462,6 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
             case GLESDriverType::AngleEGL:
                 switch (param.getRenderer())
                 {
-                    case EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE:
                     case EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE:
                         return true;
                     case EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE:
@@ -466,11 +469,6 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
                         // outdated card with many driver bugs. See http://anglebug.com/42263687
                         return !IsAMD();
                     case EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE:
-                        if (IsARM64())
-                        {
-                            return param.getDeviceType() ==
-                                   EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE;
-                        }
                         return true;
                     case EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE:
                         // ES 3.1+ back-end is not supported properly.
@@ -507,12 +505,8 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
         switch (param.getRenderer())
         {
             case EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE:
-                // ES 3.1+ back-end is not supported properly.
-                if (param.majorVersion == 3 && param.minorVersion > 0)
-                {
-                    return false;
-                }
-                return true;
+                // OpenGL/ES backend has been deprecated on Mac and iOS.
+                return false;
             case EGL_PLATFORM_ANGLE_TYPE_WEBGPU_ANGLE:
                 return true;
             case EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE:
@@ -568,11 +562,9 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
 
     if (IsLinux() || IsAndroid())
     {
-        // We do not support WGL bindings on Linux/Android. We do support system EGL.
+        // We do not support WGL bindings on Linux/Android.
         switch (param.driver)
         {
-            case GLESDriverType::SystemEGL:
-                return param.getRenderer() == EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE;
             case GLESDriverType::SystemWGL:
                 return false;
             case GLESDriverType::ZinkEGL:
@@ -584,19 +576,17 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
 
     if (IsLinux())
     {
-        ASSERT(param.driver == GLESDriverType::AngleEGL);
+        ASSERT(param.driver == GLESDriverType::AngleEGL ||
+               param.driver == GLESDriverType::SystemEGL);
 
-        // Currently we support the OpenGL and Vulkan back-ends on Linux.
+        // Currently we support the OpenGL, Vulkan and WebGPU back-ends on Linux.
         switch (param.getRenderer())
         {
+            case EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE:
             case EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE:
-                return true;
             case EGL_PLATFORM_ANGLE_TYPE_WEBGPU_ANGLE:
-                return true;
             case EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE:
-                // http://issuetracker.google.com/173004081
-                return !IsIntel() || !param.isEnableRequested(Feature::AsyncCommandQueue) ||
-                       param.isDisableRequested(Feature::AsyncCommandQueue);
+                return true;
             default:
                 return false;
         }
@@ -604,7 +594,8 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
 
     if (IsAndroid())
     {
-        ASSERT(param.driver == GLESDriverType::AngleEGL);
+        ASSERT(param.driver == GLESDriverType::AngleEGL ||
+               param.driver == GLESDriverType::SystemEGL);
 
         // Nexus Android devices don't support backing 3.2 contexts
         if (param.eglParameters.majorVersion == 3 && param.eglParameters.minorVersion == 2)
@@ -618,6 +609,7 @@ bool IsConfigAllowlisted(const SystemInfo &systemInfo, const PlatformParameters 
         // Currently we support the GLES and Vulkan back-ends on Android.
         switch (param.getRenderer())
         {
+            case EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE:
             case EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE:
                 return true;
             case EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE:
@@ -674,12 +666,10 @@ bool IsConfigSupported(const PlatformParameters &param)
 
 bool IsPlatformAvailable(const PlatformParameters &param)
 {
-    // Disable "null" device when not on ANGLE or in D3D9.
+    // Disable "null" device when not on ANGLE.
     if (param.getDeviceType() == EGL_PLATFORM_ANGLE_DEVICE_TYPE_NULL_ANGLE)
     {
         if (!IsANGLE(param.driver))
-            return false;
-        if (param.getRenderer() == EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE)
             return false;
     }
 
@@ -687,13 +677,6 @@ bool IsPlatformAvailable(const PlatformParameters &param)
     {
         case EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE:
             break;
-
-        case EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE:
-#if !defined(ANGLE_ENABLE_D3D9)
-            return false;
-#else
-            break;
-#endif
 
         case EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE:
 #if !defined(ANGLE_ENABLE_D3D11)
@@ -816,7 +799,7 @@ std::vector<std::string> GetAvailableTestPlatformNames()
 void SetSelectedConfig(const char *selectedConfig)
 {
     gSelectedConfig.fill(0);
-    strncpy(gSelectedConfig.data(), selectedConfig, kMaxConfigNameLen - 1);
+    ANGLE_UNSAFE_TODO(strncpy(gSelectedConfig.data(), selectedConfig, kMaxConfigNameLen - 1));
 }
 
 GLESDriverType GetDriverTypeFromString(const char *driverName, GLESDriverType defaultDriverType)
@@ -826,22 +809,23 @@ GLESDriverType GetDriverTypeFromString(const char *driverName, GLESDriverType de
         return defaultDriverType;
     }
 
-    if (strcmp(driverName, "angle") == 0)
+    if (ANGLE_UNSAFE_TODO(strcmp(driverName, "angle")) == 0)
     {
         return GLESDriverType::AngleEGL;
     }
 
-    if (strcmp(driverName, "angle-vulkan-secondaries") == 0)
+    if (ANGLE_UNSAFE_TODO(strcmp(driverName, "angle-vulkan-secondaries")) == 0)
     {
         return GLESDriverType::AngleVulkanSecondariesEGL;
     }
 
-    if (strcmp(driverName, "zink") == 0)
+    if (ANGLE_UNSAFE_TODO(strcmp(driverName, "zink")) == 0)
     {
         return GLESDriverType::ZinkEGL;
     }
 
-    if (strcmp(driverName, "native") == 0 || strcmp(driverName, "system") == 0)
+    if (ANGLE_UNSAFE_TODO(strcmp(driverName, "native")) == 0 ||
+        ANGLE_UNSAFE_TODO(strcmp(driverName, "system")) == 0)
     {
         if (IsWindows())
         {
@@ -853,7 +837,7 @@ GLESDriverType GetDriverTypeFromString(const char *driverName, GLESDriverType de
         }
     }
 
-    printf("Unknown driver type: %s\n", driverName);
+    ANGLE_UNSAFE_TODO(printf("Unknown driver type: %s\n", driverName));
     exit(EXIT_FAILURE);
 }
 }  // namespace angle

@@ -30,7 +30,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLMenuElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLMenuElement);
 
 using namespace HTMLNames;
 
@@ -44,5 +44,7 @@ Ref<HTMLMenuElement> HTMLMenuElement::create(const QualifiedName& tagName, Docum
 {
     return adoptRef(*new HTMLMenuElement(tagName, document));
 }
+
+HTMLMenuElement::~HTMLMenuElement() = default;
 
 }

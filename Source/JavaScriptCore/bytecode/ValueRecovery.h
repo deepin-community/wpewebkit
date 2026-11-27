@@ -25,18 +25,30 @@
 
 #pragma once
 
-#include "DFGMinifiedID.h"
-#include "DataFormat.h"
+#include <JavaScriptCore/DFGMinifiedID.h>
+#include <JavaScriptCore/DataFormat.h>
 #if ENABLE(JIT)
-#include "GPRInfo.h"
-#include "FPRInfo.h"
-#include "Reg.h"
+#include <JavaScriptCore/FPRInfo.h>
+#include <JavaScriptCore/GPRInfo.h>
+#include <JavaScriptCore/Reg.h>
 #endif
-#include "JSCJSValue.h"
-#include "MacroAssembler.h"
-#include "VirtualRegister.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/MacroAssembler.h>
+#include <JavaScriptCore/MarkedBlock.h>
+#include <JavaScriptCore/VirtualRegister.h>
 
 namespace JSC {
+
+// A poison value stored into dead variables on OSR exit. This deliberately differs from
+// SCRIBBLE_WORD (0xbadbeef0), which is used to scribble over dead cells in zombie mode.
+static constexpr EncodedJSValue poisonedDeadOSRExitValue = 0xdeadbee0;
+#if USE(JSVALUE64)
+// Must look like a JSCell pointer so that property accesses on a dead variable dereference it and crash.
+static_assert(!(poisonedDeadOSRExitValue & JSValue::NotCellMask), "poisonedDeadOSRExitValue must be classified as a cell pointer");
+// Must not collide with the special empty/deleted sentinels, and must be cell-aligned.
+static_assert(poisonedDeadOSRExitValue != JSValue::ValueEmpty && poisonedDeadOSRExitValue != JSValue::ValueDeleted);
+static_assert(MarkedBlock::isAtomAligned(poisonedDeadOSRExitValue), "poisonedDeadOSRExitValue must be cell-aligned");
+#endif
 
 struct DumpContext;
 struct InlineCallFrame;
@@ -121,7 +133,7 @@ public:
             result.m_technique = InGPR;
         UnionType u;
         u.gpr = gpr;
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
     
@@ -133,7 +145,7 @@ public:
         UnionType u;
         u.pair.tagGPR = tagGPR;
         u.pair.payloadGPR = payloadGPR;
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
 #endif
@@ -148,7 +160,7 @@ public:
             result.m_technique = InFPR;
         UnionType u;
         u.fpr = fpr;
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
     
@@ -187,7 +199,7 @@ public:
         }
         UnionType u;
         u.virtualReg = virtualReg.offset();
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
 
@@ -197,7 +209,7 @@ public:
         ValueRecovery result;
         UnionType u;
         u.virtualReg = virtualReg.offset();
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         result.m_technique = inTag ? Int32TagDisplacedInJSStack : Int32DisplacedInJSStack;
         return result;
     }
@@ -209,7 +221,7 @@ public:
         result.m_technique = Constant;
         UnionType u;
         u.constant = JSValue::encode(value);
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
     
@@ -219,7 +231,7 @@ public:
         result.m_technique = DirectArgumentsThatWereNotCreated;
         UnionType u;
         u.nodeID = id.bits();
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
     
@@ -229,7 +241,7 @@ public:
         result.m_technique = ClonedArgumentsThatWereNotCreated;
         UnionType u;
         u.nodeID = id.bits();
-        result.m_source = WTFMove(u);
+        result.m_source = WTF::move(u);
         return result;
     }
 
@@ -391,7 +403,7 @@ public:
             result.m_technique = m_technique;
             UnionType u;
             u.virtualReg = m_source.get().virtualReg + offset;
-            result.m_source = WTFMove(u);
+            result.m_source = WTF::move(u);
             return result;
         }
             

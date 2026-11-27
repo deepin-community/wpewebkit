@@ -32,7 +32,10 @@
 #include "APILoaderClient.h"
 #include "APINavigation.h"
 #include "APIPageConfiguration.h"
+#include "APISerializedScriptValue.h"
+#include "JavaScriptEvaluationResult.h"
 #include "PageLoadState.h"
+#include "RunJavaScriptParameters.h"
 #include "WebPageGroup.h"
 #include "WebPageProxy.h"
 #include "WebScriptMessageHandler.h"
@@ -51,16 +54,16 @@ namespace WebKit {
 using namespace WebCore;
 
 class ScriptMessageClient final : public WebScriptMessageHandler::Client {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(X);
+    WTF_MAKE_TZONE_ALLOCATED(ScriptMessageClient);
 public:
     ScriptMessageClient(RemoteInspectorProtocolHandler& inspectorProtocolHandler)
         : m_inspectorProtocolHandler(inspectorProtocolHandler) { }
 
     ~ScriptMessageClient() { }
 
-    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, WebCore::SerializedScriptValue& serializedScriptValue) override
+    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
     {
-        auto valueAsString = serializedScriptValue.toString();
+        auto valueAsString = jsMessage.toString();
         auto tokens = StringView { valueAsString }.split(':');
         uint32_t connectionID = 0;
         uint32_t targetID = 0;
@@ -74,34 +77,28 @@ public:
             else if (i == 2)
                 type = token.toString();
             else
-                return;
+                return completionHandler(makeUnexpected(String()));
             ++i;
         }
         if (i != 3)
-            return;
+            return completionHandler(makeUnexpected(String()));
 
-        URL requestURL { page.pageLoadState().url() };
-        m_inspectorProtocolHandler.inspect(requestURL.hostAndPort(), connectionID, targetID, type);
-    }
-    
-    bool supportsAsyncReply() override
-    {
-        return false;
-    }
-    
-    void didPostMessageWithAsyncReply(WebPageProxy&, FrameInfoData&&, API::ContentWorld&, WebCore::SerializedScriptValue&, WTF::Function<void(API::SerializedScriptValue*, const String&)>&&) override
-    {
+        auto& requestURL = page.pageLoadState().url();
+        m_inspectorProtocolHandler->inspect(requestURL.hostAndPort(), connectionID, targetID, type);
+        completionHandler(makeUnexpected(String()));
     }
 
 private:
-    RemoteInspectorProtocolHandler& m_inspectorProtocolHandler;
+    CheckedRef<RemoteInspectorProtocolHandler> m_inspectorProtocolHandler;
 };
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ScriptMessageClient);
+
 class LoaderClient final : public API::LoaderClient {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(LoaderClient);
+    WTF_MAKE_TZONE_ALLOCATED(LoaderClient);
 public:
     LoaderClient(Function<void()>&& loadedCallback)
-        : m_loadedCallback { WTFMove(loadedCallback) } { }
+        : m_loadedCallback { WTF::move(loadedCallback) } { }
 
     void didFinishLoadForFrame(WebKit::WebPageProxy&, WebKit::WebFrameProxy&, API::Navigation*, API::Object*) final
     {
@@ -111,6 +108,8 @@ public:
 private:
     Function<void()> m_loadedCallback;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LoaderClient);
 
 static std::optional<Inspector::DebuggableType> parseDebuggableTypeFromString(const String& debuggableTypeString)
 {
@@ -124,6 +123,8 @@ static std::optional<Inspector::DebuggableType> parseDebuggableTypeFromString(co
         return Inspector::DebuggableType::ServiceWorker;
     if (debuggableTypeString == "web-page"_s)
         return Inspector::DebuggableType::WebPage;
+    if (debuggableTypeString == "wasm-debugger"_s)
+        return Inspector::DebuggableType::WasmDebugger;
 
     return std::nullopt;
 }
@@ -142,10 +143,23 @@ void RemoteInspectorProtocolHandler::inspect(const String& hostAndPort, Connecti
 
 void RemoteInspectorProtocolHandler::runScript(const String& script)
 {
-    m_page.runJavaScriptInMainFrame({ script, JSC::SourceTaintedOrigin::Untainted, URL { }, false, std::nullopt, false, RemoveTransientActivation::Yes },
-        [] (auto&& result) {
-        if (!result.has_value())
-            LOG_ERROR("Exception running script \"%s\"", result.error().message.utf8().data());
+    constexpr bool wantsResult = true;
+    auto scriptString = IPC::TransferString::create(script);
+    if (!scriptString) {
+        LOG_ERROR("Out of memory running script");
+        return;
+    }
+    protect(m_page)->runJavaScriptInMainFrame(WebKit::RunJavaScriptParameters {
+        WTF::move(*scriptString),
+        JSC::SourceTaintedOrigin::Untainted,
+        URL { },
+        WebCore::RunAsAsyncFunction::No,
+        std::nullopt,
+        WebCore::ForceUserGesture::No,
+        RemoveTransientActivation::Yes
+    }, wantsResult, [] (auto&& result) {
+        if (!result && result.error())
+            LOG_ERROR("Exception running script \"%s\"", result.error()->message.utf8().data());
     });
 }
 
@@ -190,11 +204,11 @@ void RemoteInspectorProtocolHandler::platformStartTask(WebPageProxy& pageProxy, 
     m_inspectorClient = makeUnique<RemoteInspectorClient>(requestURL, *this);
 
     // Setup target postMessage listener
-    auto handler = WebScriptMessageHandler::create(makeUnique<ScriptMessageClient>(*this), "inspector"_s, API::ContentWorld::pageContentWorld());
+    auto handler = WebScriptMessageHandler::create(makeUnique<ScriptMessageClient>(*this), "inspector"_s, API::ContentWorld::pageContentWorldSingleton());
     pageProxy.configuration().userContentController().addUserScriptMessageHandler(handler.get());
 
     // Setup loader client to get notified of page load
-    m_page.setLoaderClient(makeUnique<LoaderClient>([this] {
+    protect(m_page)->setLoaderClient(makeUnique<LoaderClient>([this] {
         m_pageLoaded = true;
         updateTargetList();
     }));
@@ -231,9 +245,9 @@ void RemoteInspectorProtocolHandler::platformStartTask(WebPageProxy& pageProxy, 
 
     auto html = htmlBuilder.toString().utf8();
     auto data = SharedBuffer::create(html.span());
-    ResourceResponse response(requestURL, "text/html"_s, html.length(), "UTF-8"_s);
-    task.didReceiveResponse(response);
-    task.didReceiveData(WTFMove(data));
+    ResourceResponse response(WTF::move(requestURL), "text/html"_s, html.length(), "UTF-8"_s);
+    task.didReceiveResponse(WTF::move(response));
+    task.didReceiveData(WTF::move(data));
     task.didComplete(ResourceError());
 }
 

@@ -25,11 +25,13 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(B3_JIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 
-#include "B3Common.h"
-#include "SIMDInfo.h"
-#include "Width.h"
+#include <JavaScriptCore/B3Common.h>
+#include <JavaScriptCore/SIMDInfo.h>
+#include <JavaScriptCore/Width.h>
 #include <wtf/StdLibExtras.h>
 
 #if !ASSERT_ENABLED
@@ -66,7 +68,7 @@ public:
     ~Type() = default;
 
     static const unsigned numberOfPrimitiveTypes = V128 + 1;
-    static Type tupleFromIndex(unsigned index) { ASSERT(!(index & tupleFlag)); return bitwise_cast<Type>(index | tupleFlag); }
+    static Type tupleFromIndex(unsigned index) { ASSERT(!(index & tupleFlag)); return std::bit_cast<Type>(index | tupleFlag); }
 
     TypeKind kind() const { return m_kind & tupleFlag ? Tuple : m_kind; }
     uint32_t tupleIndex() const { ASSERT(m_kind & tupleFlag); return m_kind & tupleIndexMask; }
@@ -76,6 +78,7 @@ public:
     inline bool isFloat() const;
     inline bool isNumeric() const;
     inline bool isTuple() const;
+    inline bool isScalar() const;
     inline bool isVector() const;
 
     friend bool operator==(const Type&, const Type&) = default;
@@ -130,6 +133,11 @@ inline bool Type::isTuple() const
     return kind() == Tuple;
 }
 
+inline bool Type::isScalar() const
+{
+    return isInt() || isFloat();
+}
+
 inline bool Type::isVector() const
 {
     return kind() == V128;
@@ -139,6 +147,11 @@ constexpr Type pointerType()
 {
     if (is32Bit())
         return Int32;
+    return Int64;
+}
+
+constexpr Type wasmRefType()
+{
     return Int64;
 }
 

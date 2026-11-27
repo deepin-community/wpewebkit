@@ -25,19 +25,23 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/Assertions.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MainThread.h>
 
 #define LOG_CHANNEL_PREFIX Test
 
-const char* logTestingSubsystem = "com.webkit.testing";
+#ifdef LOG_CHANNEL_WEBKIT_SUBSYSTEM
+#undef LOG_CHANNEL_WEBKIT_SUBSYSTEM
+#endif
 
-DEFINE_LOG_CHANNEL(Channel1, logTestingSubsystem);
-DEFINE_LOG_CHANNEL(Channel2, logTestingSubsystem);
-DEFINE_LOG_CHANNEL(Channel3, logTestingSubsystem);
-DEFINE_LOG_CHANNEL(Channel4, logTestingSubsystem);
+#define LOG_CHANNEL_WEBKIT_SUBSYSTEM "com.webkit.testing"
+
+DEFINE_LOG_CHANNEL(Channel1);
+DEFINE_LOG_CHANNEL(Channel2);
+DEFINE_LOG_CHANNEL(Channel3);
+DEFINE_LOG_CHANNEL(Channel4);
 
 static WTFLogChannel* testLogChannels[] = {
     &TestChannel1,
@@ -96,7 +100,7 @@ public:
         char* line;
 
         while ((line = fgets(buffer, sizeof(buffer), m_stderr)))
-            result.append(span(line));
+            result.append(unsafeSpan(line));
 
         return result.toString();
     }
@@ -104,7 +108,7 @@ public:
     const Logger& logger() const final { return m_logger.get(); }
     ASCIILiteral logClassName() const final { return "LoggingTest"_s; }
     WTFLogChannel& logChannel() const final { return TestChannel1; }
-    const void* logIdentifier() const final { return reinterpret_cast<const void*>(123456789); }
+    uint64_t logIdentifier() const final { return 123456789; }
 
 private:
 
@@ -280,7 +284,7 @@ TEST_F(LoggingTest, DISABLED_Logger)
     EXPECT_TRUE(logger->enabled());
 
     WTFSetLogChannelLevel(&TestChannel1, WTFLogLevel::Error);
-    EXPECT_TRUE(logger->willLog(TestChannel1, WTFLogLevel::Error));
+    EXPECT_TRUE(logger->willLog(TestChannel1, WTFLogLevel::Error, { }));
     logger->error(TestChannel1, "You're using coconuts!");
     EXPECT_TRUE(output().containsIgnoringASCIICase("You're using coconuts!"_s));
     logger->warning(TestChannel1, "You're using coconuts!");
@@ -290,7 +294,7 @@ TEST_F(LoggingTest, DISABLED_Logger)
     logger->debug(TestChannel1, "You're using coconuts!");
     EXPECT_EQ(0u, output().length());
 
-    logger->error(TestChannel1, Logger::LogSiteIdentifier("LoggingTest::Logger"_s, this) , ": test output");
+    logger->error(TestChannel1, Logger::LogSiteIdentifier("LoggingTest::Logger"_s, reinterpret_cast<uint64_t>(this)) , ": test output");
     EXPECT_TRUE(output().containsIgnoringASCIICase("LoggingTest::Logger("_s));
 
     logger->error(TestChannel1, "What is ", 1, " + " , 12.5F, "?");
@@ -314,10 +318,10 @@ TEST_F(LoggingTest, DISABLED_Logger)
     EXPECT_TRUE(output().containsIgnoringASCIICase("I shall taunt you a second time!"_s));
 
     logger->setEnabled(this, false);
-    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Error));
-    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Warning));
-    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Info));
-    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Debug));
+    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Error, { }));
+    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Warning, { }));
+    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Info, { }));
+    EXPECT_FALSE(logger->willLog(TestChannel1, WTFLogLevel::Debug, { }));
     EXPECT_FALSE(logger->enabled());
     logger->logAlways(TestChannel1, "You've got two empty halves of coconuts");
     EXPECT_EQ(0u, output().length());
@@ -379,7 +383,7 @@ public:
     WTFLogLevel level() const { return m_lastLevel; }
 
 private:
-    void didLogMessage(const WTFLogChannel& channel, WTFLogLevel level, Vector<JSONLogValue>&& logMessage) final
+    void didLogMessage(const WTFLogChannel& channel, WTFLogLevel level, std::optional<WTFLogLocation>, Vector<JSONLogValue>&& logMessage) final
     {
         for (auto& item : logMessage)
             m_logBuffer.append(item.value);

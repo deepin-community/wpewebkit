@@ -23,12 +23,13 @@
 
 #pragma once
 
-#include "Document.h"
-#include "HTMLElement.h"
-#include "HTMLNames.h"
-#include "PrivateClickMeasurement.h"
-#include "SharedStringHash.h"
-#include "URLDecomposition.h"
+#include <WebCore/Document.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/HTMLNames.h>
+#include <WebCore/PrivateClickMeasurement.h>
+#include <WebCore/SharedStringHash.h>
+#include <WebCore/SpeculationRules.h>
+#include <WebCore/URLDecomposition.h>
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
@@ -45,7 +46,7 @@ enum class Relation : uint8_t {
 };
 
 class HTMLAnchorElement : public HTMLElement, public URLDecomposition {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLAnchorElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLAnchorElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLAnchorElement);
 public:
     static Ref<HTMLAnchorElement> create(Document&);
@@ -54,9 +55,8 @@ public:
     virtual ~HTMLAnchorElement();
 
     WEBCORE_EXPORT URL href() const;
-    void setHref(const AtomString&);
 
-    const AtomString& name() const;
+    const AtomString& NODELETE name() const;
 
     WEBCORE_EXPORT String origin() const;
 
@@ -69,7 +69,7 @@ public:
 
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
-    bool hasRel(Relation) const;
+    bool NODELETE hasRel(Relation) const;
     
     inline SharedStringHash visitedLinkHash() const;
 
@@ -79,11 +79,17 @@ public:
     WEBCORE_EXPORT bool isSystemPreviewLink();
 #endif
 
-    void setReferrerPolicyForBindings(const AtomString&);
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const;
 
-    Node::InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode& parentOfInsertedTree) override;
+    Node::NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode& parentOfInsertedTree) override;
+    void postConnectionSteps() override;
+
+    AtomString target() const override;
+
+    void setShouldBePrefetched(SpeculationRules::Eagerness, Vector<String>&& tags, std::optional<ReferrerPolicy>&&);
+
+    WEBCORE_EXPORT String prefetchEagernessForTesting() const;
 
 protected:
     HTMLAnchorElement(const QualifiedName&, Document&);
@@ -93,12 +99,11 @@ protected:
 private:
     bool supportsFocus() const override;
     bool isMouseFocusable() const override;
-    bool isKeyboardFocusable(KeyboardEvent*) const override;
+    bool isKeyboardFocusable(const FocusEventData&) const override;
     void defaultEventHandler(Event&) final;
     void setActive(bool active, Style::InvalidationScope) final;
-    bool isURLAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
     bool canStartSelection() const final;
-    AtomString target() const override;
     int defaultTabIndex() const final;
     bool draggable() const final;
     bool isInteractiveContent() const final;
@@ -120,24 +125,36 @@ private:
         MouseEventWithShiftKey,
         NonMouseEvent,
     };
-    static EventType eventType(Event&);
+    static EventType NODELETE eventType(Event&);
     bool treatLinkAsLiveForEventType(EventType) const;
 
-    Element* rootEditableElementForSelectionOnMouseDown() const;
+    Element* NODELETE rootEditableElementForSelectionOnMouseDown() const;
     void setRootEditableElementForSelectionOnMouseDown(Element*);
     void clearRootEditableElementForSelectionOnMouseDown();
 
     URL fullURL() const final { return href(); }
-    void setFullURL(const URL& fullURL) final { setHref(AtomString { fullURL.string() }); }
+    void setFullURL(const URL&) final;
+
+    void checkForSpeculationRules();
+
+    enum class PrefetchEagerness : uint8_t {
+        None,
+        Conservative,
+        Immediate,
+    };
+
+    PrefetchEagerness m_prefetchEagerness { PrefetchEagerness::None };
+    Vector<String> m_speculationRulesTags;
+    std::optional<ReferrerPolicy> m_prefetchReferrerPolicy;
 
     bool m_hasRootEditableElementForSelectionOnMouseDown { false };
     bool m_wasShiftKeyDownOnMouseDown { false };
     OptionSet<Relation> m_linkRelations;
 
     // This is computed only once and must not be affected by subsequent URL changes.
-    mutable Markable<SharedStringHash, SharedStringHashMarkableTraits> m_storedVisitedLinkHash;
+    mutable Markable<SharedStringHash> m_storedVisitedLinkHash;
 
-    std::unique_ptr<DOMTokenList> m_relList;
+    const std::unique_ptr<DOMTokenList> m_relList;
 };
 
 // Functions shared with the other anchor elements (i.e., SVG).

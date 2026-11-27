@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,9 @@
 
 #pragma once
 
-#include "JSDOMConvertInterface.h"
-#include "WindowProxy.h"
 #include <JavaScriptCore/JSGlobalProxy.h>
+#include <WebCore/JSDOMConvertInterface.h>
+#include <WebCore/WindowProxy.h>
 
 namespace JSC {
 class Debugger;
@@ -44,7 +44,7 @@ class Frame;
 class WEBCORE_EXPORT JSWindowProxy final : public JSC::JSGlobalProxy {
 public:
     using Base = JSC::JSGlobalProxy;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
     static void destroy(JSCell*);
 
     template<typename CellType, JSC::SubspaceAccess> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) { return subspaceForImpl(vm); }
@@ -53,18 +53,17 @@ public:
 
     DECLARE_INFO;
 
-    JSDOMGlobalObject* window() const { return static_cast<JSDOMGlobalObject*>(target()); }
+    JSDOMGlobalObject* window() const { return downcast<JSDOMGlobalObject>(target()); }
 
     void setWindow(JSC::VM&, JSDOMGlobalObject&);
     void setWindow(DOMWindow&);
 
-    WindowProxy* windowProxy() const;
+    WindowProxy* NODELETE windowProxy() const;
 
-    DOMWindow& wrapped() const;
-    static WindowProxy* toWrapped(JSC::VM&, JSC::JSValue);
+    DOMWindow& NODELETE wrapped() const;
+    static WindowProxy* NODELETE toWrapped(JSC::VM&, JSC::JSValue);
 
-    DOMWrapperWorld& world();
-    Ref<DOMWrapperWorld> protectedWorld();
+    DOMWrapperWorld& world() { return m_world; }
 
     void attachDebugger(JSC::Debugger*);
 
@@ -75,19 +74,9 @@ private:
     JSWindowProxy(JSC::VM&, JSC::Structure&, DOMWrapperWorld&);
     ~JSWindowProxy();
     void finishCreation(JSC::VM&, DOMWindow&);
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
+    static JSC::GCClient::IsoSubspace* NODELETE subspaceForImpl(JSC::VM&);
 
-#if ENABLE(WINDOW_PROXY_PROPERTY_ACCESS_NOTIFICATION)
-    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-    static bool getOwnPropertySlotByIndex(JSC::JSObject*, JSC::JSGlobalObject*, unsigned, JSC::PropertySlot&);
-    static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
-    static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
-    static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
-    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned);
-    static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
-#endif
-
-    Ref<DOMWrapperWorld> m_world;
+    const Ref<DOMWrapperWorld> m_world;
 };
 
 // JSWindowProxy is a little odd in that it's not a traditional wrapper and has no back pointer.

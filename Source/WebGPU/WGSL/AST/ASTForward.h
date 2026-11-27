@@ -53,7 +53,6 @@ class Expression;
 class AbstractFloatLiteral;
 class AbstractIntegerLiteral;
 class BinaryExpression;
-class BitcastExpression;
 class BoolLiteral;
 class CallExpression;
 class FieldAccessExpression;
@@ -87,7 +86,6 @@ class IfStatement;
 class LoopStatement;
 class PhonyAssignmentStatement;
 class ReturnStatement;
-class StaticAssertStatement;
 class SwitchStatement;
 class VariableStatement;
 class WhileStatement;
@@ -106,7 +104,7 @@ class VariableQualifier;
 
 struct SwitchClause;
 struct Diagnostic;
-struct Continuing;
+class Continuing;
 
 enum class BinaryOperation : uint8_t;
 enum class ParameterRole : uint8_t;

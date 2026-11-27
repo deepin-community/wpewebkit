@@ -25,6 +25,7 @@
 #include "LayoutIntegrationLineLayout.h"
 #include "RenderCounter.h"
 #include "RenderElement.h"
+#include "RenderObjectDocument.h"
 #include "RenderView.h"
 #include <stdio.h>
 #include <wtf/CheckedArithmetic.h>
@@ -43,8 +44,8 @@ CounterNode::~CounterNode()
     // Ideally this would be an assert and this would never be reached. In reality this happens a lot
     // so we need to handle these cases. The node is still connected to the tree so we need to detach it.
     if (m_parent || m_previousSibling || m_nextSibling || m_firstChild || m_lastChild) {
-        RefPtr<CounterNode> oldParent;
-        RefPtr<CounterNode> oldPreviousSibling;
+        CounterNode* oldParent = nullptr;
+        CounterNode* oldPreviousSibling = nullptr;
         // Instead of calling removeChild() we do this safely as the tree is likely broken if we get here.
         if (m_parent) {
             if (m_parent->m_firstChild == this)
@@ -67,9 +68,9 @@ CounterNode::~CounterNode()
         }
         if (m_firstChild) {
             // The node's children are reparented to the old parent.
-            for (RefPtr child = m_firstChild.get(); child; ) {
-                RefPtr nextChild = child->m_nextSibling.get();
-                RefPtr<CounterNode> nextSibling;
+            for (auto* child = m_firstChild.get(); child; ) {
+                auto* nextChild = child->m_nextSibling.get();
+                CounterNode* nextSibling = nullptr;
                 child->m_parent = oldParent;
                 if (oldPreviousSibling) {
                     nextSibling = oldPreviousSibling->m_nextSibling.get();
@@ -101,14 +102,14 @@ CounterNode* CounterNode::nextInPreOrderAfterChildren(const CounterNode* stayWit
     if (this == stayWithin)
         return nullptr;
 
-    RefPtr current = const_cast<CounterNode*>(this);
-    RefPtr<CounterNode> next;
+    auto* current = const_cast<CounterNode*>(this);
+    CounterNode* next = nullptr;
     while (!(next = current->m_nextSibling.get())) {
         current = current->m_parent.get();
         if (!current || current == stayWithin)
             return nullptr;
     }
-    return next.get();
+    return next;
 }
 
 CounterNode* CounterNode::nextInPreOrder(const CounterNode* stayWithin) const
@@ -347,11 +348,11 @@ static void showTreeAndMark(const CounterNode* node)
         root = root->parent();
 
     for (const CounterNode* current = root; current; current = current->nextInPreOrder()) {
-        fprintf(stderr, "%c", (current == node) ? '*' : ' ');
+        SAFE_FPRINTF(stderr, "%c", (current == node) ? '*' : ' ');
         for (const CounterNode* parent = current; parent && parent != root; parent = parent->parent())
             fprintf(stderr, "    ");
-        fprintf(stderr, "%p %s: %d %d P:%p PS:%p NS:%p R:%p\n",
-            current, current->actsAsReset() ? "reset____" : "increment", current->value(),
+        SAFE_FPRINTF(stderr, "%p %s: %d %d P:%p PS:%p NS:%p R:%p\n",
+            current, current->actsAsReset() ? "reset____"_s : "increment"_s, current->value(),
             current->countInParent(), current->parent(), current->previousSibling(),
             current->nextSibling(), &current->owner());
     }

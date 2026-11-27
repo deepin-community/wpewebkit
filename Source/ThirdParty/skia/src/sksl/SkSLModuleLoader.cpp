@@ -8,8 +8,8 @@
 #include "src/sksl/SkSLModuleLoader.h"
 
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkMutex.h"
-#include "src/base/SkNoDestructor.h"
+#include "include/private/SkMutex.h"
+#include "src/core/SkNoDestructor.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLModule.h"
@@ -57,7 +57,7 @@ static constexpr BuiltinTypePtr kRootTypes[] = {
     TYPE(SquareMat), TYPE(SquareHMat),
     TYPE(Mat),       TYPE(HMat),
 
-    // TODO(skia:12349): generic short/ushort
+    // TODO(skbug.com/40043431): generic short/ushort
     TYPE(GenType),   TYPE(GenIType), TYPE(GenUType),
     TYPE(GenHType),   /* (GenSType)      (GenUSType) */
     TYPE(GenBType),
@@ -96,7 +96,6 @@ struct ModuleLoader::Impl {
     // This mutex is taken when ModuleLoader::Get is called, and released when the returned
     // ModuleLoader object falls out of scope.
     SkMutex fMutex;
-    const BuiltinTypes fBuiltinTypes;
 
     std::unique_ptr<const Module> fRootModule;
 
@@ -108,8 +107,6 @@ struct ModuleLoader::Impl {
     std::unique_ptr<const Module> fComputeModule;           // [GPU] + Compute stage decls
     std::unique_ptr<const Module> fGraphiteVertexModule;    // [Vert] + Graphite vertex helpers
     std::unique_ptr<const Module> fGraphiteFragmentModule;  // [Frag] + Graphite fragment helpers
-    std::unique_ptr<const Module> fGraphiteVertexES2Module; // [Vert] + Graphite vertex ES2 helpers
-    std::unique_ptr<const Module> fGraphiteFragmentES2Module;//[Frag] + Graphite fragment ES2 "  "
 
     std::unique_ptr<const Module> fPublicModule;            // [Shared] minus Private types +
                                                             //     Runtime effect intrinsics
@@ -121,24 +118,20 @@ ModuleLoader ModuleLoader::Get() {
     return ModuleLoader(*sModuleLoaderImpl);
 }
 
-ModuleLoader::ModuleLoader(ModuleLoader::Impl& m) : fModuleLoader(m) {
+ModuleLoader::ModuleLoader()
+        : fLocalImpl(std::make_unique<Impl>())
+        , fModuleLoader(*fLocalImpl) {
+    fModuleLoader.fMutex.acquire();
+}
+
+ModuleLoader::ModuleLoader(ModuleLoader::Impl& m)
+        : fLocalImpl(nullptr)
+        , fModuleLoader(m) {
     fModuleLoader.fMutex.acquire();
 }
 
 ModuleLoader::~ModuleLoader() {
     fModuleLoader.fMutex.release();
-}
-
-void ModuleLoader::unloadModules() {
-    fModuleLoader.fSharedModule           = nullptr;
-    fModuleLoader.fGPUModule              = nullptr;
-    fModuleLoader.fVertexModule           = nullptr;
-    fModuleLoader.fFragmentModule         = nullptr;
-    fModuleLoader.fComputeModule          = nullptr;
-    fModuleLoader.fGraphiteVertexModule   = nullptr;
-    fModuleLoader.fGraphiteFragmentModule = nullptr;
-    fModuleLoader.fPublicModule           = nullptr;
-    fModuleLoader.fRuntimeShaderModule    = nullptr;
 }
 
 ModuleLoader::Impl::Impl() {
@@ -189,16 +182,12 @@ static std::unique_ptr<Module> compile_and_shrink(SkSL::Compiler* compiler,
     return m;
 }
 
-const BuiltinTypes& ModuleLoader::builtinTypes() {
-    return fModuleLoader.fBuiltinTypes;
-}
-
 const Module* ModuleLoader::rootModule() {
     return fModuleLoader.fRootModule.get();
 }
 
 void ModuleLoader::addPublicTypeAliases(const SkSL::Module* module) {
-    const SkSL::BuiltinTypes& types = this->builtinTypes();
+    const SkSL::BuiltinTypes& types = BuiltinTypes::Get();
     SymbolTable* symbols = module->fSymbols.get();
 
     // Add some aliases to the runtime effect modules so that it's friendlier, and more like GLSL.
@@ -328,18 +317,6 @@ const Module* ModuleLoader::loadGraphiteFragmentModule(SkSL::Compiler* compiler)
     return fModuleLoader.fGraphiteFragmentModule.get();
 }
 
-const Module* ModuleLoader::loadGraphiteFragmentES2Module(SkSL::Compiler* compiler) {
-    if (!fModuleLoader.fGraphiteFragmentES2Module) {
-        const Module* fragmentModule = this->loadFragmentModule(compiler);
-        fModuleLoader.fGraphiteFragmentES2Module =
-                compile_and_shrink(compiler,
-                                   ProgramKind::kGraphiteFragmentES2,
-                                   MODULE_DATA(sksl_graphite_frag_es2),
-                                   fragmentModule);
-    }
-    return fModuleLoader.fGraphiteFragmentES2Module.get();
-}
-
 const Module* ModuleLoader::loadGraphiteVertexModule(SkSL::Compiler* compiler) {
     if (!fModuleLoader.fGraphiteVertexModule) {
         const Module* vertexModule = this->loadVertexModule(compiler);
@@ -351,28 +328,17 @@ const Module* ModuleLoader::loadGraphiteVertexModule(SkSL::Compiler* compiler) {
     return fModuleLoader.fGraphiteVertexModule.get();
 }
 
-const Module* ModuleLoader::loadGraphiteVertexES2Module(SkSL::Compiler* compiler) {
-    if (!fModuleLoader.fGraphiteVertexES2Module) {
-        const Module* vertexModule = this->loadVertexModule(compiler);
-        fModuleLoader.fGraphiteVertexES2Module =
-                compile_and_shrink(compiler,
-                                   ProgramKind::kGraphiteVertexES2,
-                                   MODULE_DATA(sksl_graphite_vert_es2),
-                                   vertexModule);
-    }
-    return fModuleLoader.fGraphiteVertexES2Module.get();
-}
-
 void ModuleLoader::Impl::makeRootSymbolTable() {
     auto rootModule = std::make_unique<Module>();
     rootModule->fSymbols = std::make_unique<SymbolTable>(/*builtin=*/true);
 
+    const BuiltinTypes& types = BuiltinTypes::Get();
     for (BuiltinTypePtr rootType : kRootTypes) {
-        rootModule->fSymbols->addWithoutOwnershipOrDie((fBuiltinTypes.*rootType).get());
+        rootModule->fSymbols->addWithoutOwnershipOrDie((types.*rootType).get());
     }
 
     for (BuiltinTypePtr privateType : kPrivateTypes) {
-        rootModule->fSymbols->addWithoutOwnershipOrDie((fBuiltinTypes.*privateType).get());
+        rootModule->fSymbols->addWithoutOwnershipOrDie((types.*privateType).get());
     }
 
     // sk_Caps is "builtin", but all references to it are resolved to Settings, so we don't need to
@@ -381,7 +347,7 @@ void ModuleLoader::Impl::makeRootSymbolTable() {
                                                   /*modifiersPosition=*/Position(),
                                                   Layout{},
                                                   ModifierFlag::kNone,
-                                                  fBuiltinTypes.fSkCaps.get(),
+                                                  types.fSkCaps.get(),
                                                   "sk_Caps",
                                                   /*mangledName=*/"",
                                                   /*builtin=*/false,

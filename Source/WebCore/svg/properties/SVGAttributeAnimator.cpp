@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2021 Apple Inc.  All rights reserved.
+ * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,8 +30,11 @@
 #include "CSSPropertyParser.h"
 #include "MutableStyleProperties.h"
 #include "SVGElementInlines.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAttributeAnimator);
 
 bool SVGAttributeAnimator::isAnimatedStylePropertyAnimator(const SVGElement& targetElement) const
 {
@@ -49,7 +52,7 @@ void SVGAttributeAnimator::applyAnimatedStylePropertyChange(SVGElement& element,
     ASSERT(!element.deletionHasBegun());
     ASSERT(id != CSSPropertyInvalid);
     
-    if (!element.ensureAnimatedSMILStyleProperties().setProperty(id, value))
+    if (!protect(element.ensureAnimatedSMILStyleProperties())->setProperty(id, value))
         return;
     element.invalidateStyle();
 }
@@ -77,7 +80,7 @@ void SVGAttributeAnimator::removeAnimatedStyleProperty(SVGElement& element, CSSP
     ASSERT(!element.deletionHasBegun());
     ASSERT(id != CSSPropertyInvalid);
 
-    element.ensureAnimatedSMILStyleProperties().removeProperty(id);
+    protect(element.ensureAnimatedSMILStyleProperties())->removeProperty(id);
     element.invalidateStyle();
 }
 

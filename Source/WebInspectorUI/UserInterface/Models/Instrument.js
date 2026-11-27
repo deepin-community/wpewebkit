@@ -66,8 +66,11 @@ WI.Instrument = class Instrument
         if (initiatedByBackend)
             return;
 
-        let target = WI.assumingMainTarget();
-        target.TimelineAgent.start();
+        for (let target of WI.targets) {
+            // COMPATIBILITY (macOS 15.4, iOS 18.4): `Timeline.start` did not exist yet for Worker targets.
+            if (target.hasDomain("Timeline"))
+                target.TimelineAgent.start();
+        }
     }
 
     static stopLegacyTimelineAgent(initiatedByBackend)
@@ -82,8 +85,11 @@ WI.Instrument = class Instrument
         if (initiatedByBackend)
             return;
 
-        let target = WI.assumingMainTarget();
-        target.TimelineAgent.stop();
+        for (let target of WI.targets) {
+            // COMPATIBILITY (macOS 15.4, iOS 18.4): `Timeline.stop` did not exist yet for Worker targets.
+            if (target.hasDomain("Timeline"))
+                target.TimelineAgent.stop();
+        }
     }
 
     // Protected

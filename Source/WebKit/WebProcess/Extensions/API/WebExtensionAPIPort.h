@@ -32,6 +32,7 @@
 #include "WebExtensionAPIObject.h"
 #include "WebExtensionMessageSenderParameters.h"
 #include "WebExtensionPortChannelIdentifier.h"
+#include "WebPageProxyIdentifier.h"
 #include <wtf/WeakPtr.h>
 
 OBJC_CLASS NSDictionary;
@@ -50,11 +51,11 @@ public:
     static PortSet get(WebExtensionPortChannelIdentifier);
 
     WebExtensionContentWorldType targetContentWorldType() const { return m_targetContentWorldType; }
-    WebExtensionPortChannelIdentifier channelIdentifier() const { return m_channelIdentifier; }
-    WebPageProxyIdentifier owningPageProxyIdentifier() const { return m_owningPageProxyIdentifier; }
-    const std::optional<WebExtensionMessageSenderParameters>& senderParameters() const { return m_senderParameters; }
+    WebExtensionPortChannelIdentifier channelIdentifier() const { return *m_channelIdentifier; }
+    std::optional<WebPageProxyIdentifier> owningPageProxyIdentifier() const { return m_owningPageProxyIdentifier; }
+    const std::optional<WebExtensionMessageSenderParameters>& senderParameters() const LIFETIME_BOUND { return m_senderParameters; }
 
-    void postMessage(WebFrame&, NSString *, NSString **outExceptionString);
+    void postMessage(WebFrame&, const String&, NSString **outExceptionString);
     void disconnect();
 
     bool isDisconnected() const { return m_disconnected; }
@@ -63,7 +64,7 @@ public:
     NSString *name();
     NSDictionary *sender();
 
-    JSValue *error();
+    JSValue *NODELETE error();
     void setError(JSValue *);
 
     WebExtensionAPIEvent& onMessage();
@@ -89,30 +90,30 @@ private:
         ASSERT(isQuarantined());
     }
 
-    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPage& page, WebExtensionContentWorldType targetContentWorldType, const String& name)
+    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPageProxyIdentifier owningPageProxyIdentifier, WebExtensionContentWorldType targetContentWorldType, const String& name)
         : WebExtensionAPIObject(parentObject)
         , m_targetContentWorldType(targetContentWorldType)
-        , m_owningPageProxyIdentifier(page.webPageProxyIdentifier())
+        , m_owningPageProxyIdentifier(owningPageProxyIdentifier)
         , m_channelIdentifier(WebExtensionPortChannelIdentifier::generate())
         , m_name(name)
     {
         add();
     }
 
-    explicit WebExtensionAPIPort(WebExtensionContentWorldType contentWorldType, WebExtensionAPIRuntimeBase& runtime, WebExtensionContextProxy& context, WebPage& page, WebExtensionContentWorldType targetContentWorldType, const String& name)
+    explicit WebExtensionAPIPort(WebExtensionContentWorldType contentWorldType, WebExtensionAPIRuntimeBase& runtime, WebExtensionContextProxy& context, WebPageProxyIdentifier owningPageProxyIdentifier, WebExtensionContentWorldType targetContentWorldType, const String& name)
         : WebExtensionAPIObject(contentWorldType, runtime, context)
         , m_targetContentWorldType(targetContentWorldType)
-        , m_owningPageProxyIdentifier(page.webPageProxyIdentifier())
+        , m_owningPageProxyIdentifier(owningPageProxyIdentifier)
         , m_channelIdentifier(WebExtensionPortChannelIdentifier::generate())
         , m_name(name)
     {
         add();
     }
 
-    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPage& page, WebExtensionContentWorldType targetContentWorldType, const String& name, const WebExtensionMessageSenderParameters& senderParameters)
+    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPageProxyIdentifier owningPageProxyIdentifier, WebExtensionContentWorldType targetContentWorldType, const String& name, const WebExtensionMessageSenderParameters& senderParameters)
         : WebExtensionAPIObject(parentObject)
         , m_targetContentWorldType(targetContentWorldType)
-        , m_owningPageProxyIdentifier(page.webPageProxyIdentifier())
+        , m_owningPageProxyIdentifier(owningPageProxyIdentifier)
         , m_channelIdentifier(WebExtensionPortChannelIdentifier::generate())
         , m_name(name)
         , m_senderParameters(senderParameters)
@@ -120,10 +121,10 @@ private:
         add();
     }
 
-    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPage& page, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier channelIdentifier, const String& name, const WebExtensionMessageSenderParameters& senderParameters)
+    explicit WebExtensionAPIPort(const WebExtensionAPIObject& parentObject, WebPageProxyIdentifier owningPageProxyIdentifier, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier channelIdentifier, const String& name, const WebExtensionMessageSenderParameters& senderParameters)
         : WebExtensionAPIObject(parentObject)
         , m_targetContentWorldType(targetContentWorldType)
-        , m_owningPageProxyIdentifier(page.webPageProxyIdentifier())
+        , m_owningPageProxyIdentifier(owningPageProxyIdentifier)
         , m_channelIdentifier(channelIdentifier)
         , m_name(name)
         , m_senderParameters(senderParameters)
@@ -134,23 +135,25 @@ private:
     void add();
     void remove();
 
-    void fireMessageEventIfNeeded(id message);
+    void fireMessageEventIfNeeded(id message, bool userGesture);
     void fireDisconnectEventIfNeeded();
 
     WebExtensionContentWorldType m_targetContentWorldType;
-    WebPageProxyIdentifier m_owningPageProxyIdentifier;
-    WebExtensionPortChannelIdentifier m_channelIdentifier;
+    Markable<WebPageProxyIdentifier> m_owningPageProxyIdentifier;
+    Markable<WebExtensionPortChannelIdentifier> m_channelIdentifier;
     bool m_disconnected { false };
 
     String m_name;
     RetainPtr<JSValue> m_error;
     std::optional<WebExtensionMessageSenderParameters> m_senderParameters;
 
-    RefPtr<WebExtensionAPIEvent> m_onMessage;
-    RefPtr<WebExtensionAPIEvent> m_onDisconnect;
+    const RefPtr<WebExtensionAPIEvent> m_onMessage;
+    const RefPtr<WebExtensionAPIEvent> m_onDisconnect;
 #endif
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIPort, port);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

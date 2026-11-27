@@ -25,12 +25,15 @@
 
 #pragma once
 
-#include "IDBError.h"
-#include "IDBObjectStoreIdentifier.h"
-#include "IDBTransactionInfo.h"
+#include <WebCore/IDBError.h>
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBObjectStoreIdentifier.h>
+#include <WebCore/IDBTransactionInfo.h>
+#include <WebCore/IndexKey.h>
 #include <wtf/Deque.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
@@ -53,19 +56,19 @@ class IDBServer;
 class UniqueIDBDatabase;
 class UniqueIDBDatabaseConnection;
 
-class UniqueIDBDatabaseTransaction : public CanMakeWeakPtr<UniqueIDBDatabaseTransaction>, public RefCounted<UniqueIDBDatabaseTransaction> {
+class UniqueIDBDatabaseTransaction : public RefCountedAndCanMakeWeakPtr<UniqueIDBDatabaseTransaction> {
 public:
     static Ref<UniqueIDBDatabaseTransaction> create(UniqueIDBDatabaseConnection&, const IDBTransactionInfo&);
 
-    ~UniqueIDBDatabaseTransaction();
+    WEBCORE_EXPORT ~UniqueIDBDatabaseTransaction();
 
-    UniqueIDBDatabaseConnection* databaseConnection() const;
-    UniqueIDBDatabase* database() const;
-    const IDBTransactionInfo& info() const { return m_transactionInfo; }
-    WEBCORE_EXPORT bool isVersionChange() const;
-    bool isReadOnly() const;
+    WEBCORE_EXPORT UniqueIDBDatabaseConnection* NODELETE databaseConnection() const;
+    UniqueIDBDatabase* NODELETE database() const;
+    const IDBTransactionInfo& info() const LIFETIME_BOUND { return m_transactionInfo; }
+    WEBCORE_EXPORT bool NODELETE isVersionChange() const;
+    bool NODELETE isReadOnly() const;
 
-    IDBDatabaseInfo* originalDatabaseInfo() const;
+    IDBDatabaseInfo* NODELETE originalDatabaseInfo() const;
 
     WEBCORE_EXPORT void abort();
     WEBCORE_EXPORT void abortWithoutCallback();
@@ -78,24 +81,33 @@ public:
     WEBCORE_EXPORT void clearObjectStore(const IDBRequestData&, IDBObjectStoreIdentifier);
     WEBCORE_EXPORT void createIndex(const IDBRequestData&, const IDBIndexInfo&);
     WEBCORE_EXPORT void deleteIndex(const IDBRequestData&, IDBObjectStoreIdentifier, const String& indexName);
-    WEBCORE_EXPORT void renameIndex(const IDBRequestData&, IDBObjectStoreIdentifier, uint64_t indexIdentifier, const String& newName);
-    WEBCORE_EXPORT void putOrAdd(const IDBRequestData&, const IDBKeyData&, const IDBValue&, IndexedDB::ObjectStoreOverwriteMode);
+    WEBCORE_EXPORT void renameIndex(const IDBRequestData&, IDBObjectStoreIdentifier, IDBIndexIdentifier, const String& newName);
+    WEBCORE_EXPORT void putOrAdd(const IDBRequestData&, const IDBKeyData&, const IDBValue&, const IndexIDToIndexKeyMap& indexKeys, IndexedDB::ObjectStoreOverwriteMode);
     WEBCORE_EXPORT void getRecord(const IDBRequestData&, const IDBGetRecordData&);
     WEBCORE_EXPORT void getAllRecords(const IDBRequestData&, const IDBGetAllRecordsData&);
     WEBCORE_EXPORT void getCount(const IDBRequestData&, const IDBKeyRangeData&);
     WEBCORE_EXPORT void deleteRecord(const IDBRequestData&, const IDBKeyRangeData&);
     WEBCORE_EXPORT void openCursor(const IDBRequestData&, const IDBCursorInfo&);
     WEBCORE_EXPORT void iterateCursor(const IDBRequestData&, const IDBIterateCursorData&);
+    void addOpenRequestResult(const IDBError&);
 
     void didActivateInBackingStore(const IDBError&);
 
     const Vector<IDBObjectStoreIdentifier>& objectStoreIdentifiers();
 
     void setSuspensionAbortResult(const IDBError& error) { m_suspensionAbortResult = { error }; }
-    const std::optional<IDBError>& suspensionAbortResult() const { return m_suspensionAbortResult; }
+    const std::optional<IDBError>& suspensionAbortResult() const LIFETIME_BOUND { return m_suspensionAbortResult; }
+
+    uint64_t pendingGenerateIndexKeyRequests() const { return m_pendingGenerateIndexKeyRequests; }
+    WEBCORE_EXPORT void didCreateIndexAsync(const IDBError&);
+    bool generateIndexKeyForRecord(const IDBIndexInfo&, const std::optional<IDBKeyPath>&, const IDBKeyData&, const IDBValue&, std::optional<int64_t> recordID);
+    WEBCORE_EXPORT void didGenerateIndexKeyForRecord(IDBResourceIdentifier createIndexRequestIdentifier, const IDBIndexInfo&, const IDBKeyData&, const IndexKey&, std::optional<int64_t> recordID);
+
+    bool isFinishingOrFinished() const { return m_isFinishingOrFinished; }
 
 private:
     UniqueIDBDatabaseTransaction(UniqueIDBDatabaseConnection&, const IDBTransactionInfo&);
+    void setIsFinishingOrFinished() { m_isFinishingOrFinished = true; }
 
     WeakPtr<UniqueIDBDatabaseConnection> m_databaseConnection;
     IDBTransactionInfo m_transactionInfo;
@@ -106,6 +118,10 @@ private:
 
     std::optional<IDBError> m_suspensionAbortResult;
     Vector<IDBError> m_requestResults;
+
+    uint64_t m_pendingGenerateIndexKeyRequests { 0 };
+    IDBResourceIdentifier m_createIndexRequestIdentifier;
+    bool m_isFinishingOrFinished { false };
 };
 
 } // namespace IDBServer

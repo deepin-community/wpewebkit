@@ -27,7 +27,6 @@
 
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserConsumer+Ident.h"
-#include "CSSPropertyParserHelpers.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
@@ -78,8 +77,8 @@ public:
     RefPtr<CSSValue> finalizeValue()
     {
         if (m_result.isEmpty())
-            return CSSPrimitiveValue::create(CSSValueNormal);
-        return CSSValueList::createSpaceSeparated(WTFMove(m_result));
+            return CSSKeywordValue::create(CSSValueNormal);
+        return CSSValueList::createSpaceSeparated(WTF::move(m_result));
     }
 
 private:

@@ -43,20 +43,43 @@ public:
 
 private:
     void frameDetached() final;
-    void sizeDidChange(WebCore::IntSize) final;
-    void postMessageToRemote(WebCore::FrameIdentifier source, const String& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, const WebCore::MessageWithMessagePorts&) final;
-    void changeLocation(WebCore::FrameLoadRequest&&) final;
+    void frameRectDidChange(WebCore::IntRect) final;
+    void paintContents(WebCore::GraphicsContext&, const WebCore::IntRect&) final;
+    void postMessageToRemote(WebCore::FrameIdentifier source, const WebCore::SecurityOriginData& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, const WebCore::MessageWithMessagePorts&, const std::optional<WebCore::UserGestureTokenData>&) final;
+    void changeLocation(WebCore::FrameLoadRequest&&, std::optional<WebCore::PrivateClickMeasurement>&&) final;
     String renderTreeAsText(size_t baseIndent, OptionSet<WebCore::RenderAsTextFlag>) final;
-    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, Vector<uint8_t>&&, CompletionHandler<void(Vector<uint8_t>, int)>&&) final;
+    String layerTreeAsText(size_t baseIndent, OptionSet<WebCore::LayerTreeAsTextOptions>) final;
+    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, WebCore::AccessibilityRemoteToken, CompletionHandler<void(WebCore::AccessibilityRemoteToken, int)>&&) final;
     void unbindRemoteAccessibilityFrames(int) final;
     void updateRemoteFrameAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint) final;
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    void updateRemoteFrameAccessibilityInheritedState(WebCore::FrameIdentifier, const WebCore::InheritedFrameState&) final;
+#endif
+    bool isWebRemoteFrameClient() const final { return true; }
 
     void closePage() final;
     void focus() final;
     void unfocus() final;
-    void documentURLForConsoleLog(CompletionHandler<void(const URL&)>&&) final;
-    void dispatchDecidePolicyForNavigationAction(const WebCore::NavigationAction&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& redirectResponse, WebCore::FormState*, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier>, std::optional<WebCore::HitTestResult>&&, bool hasOpener, WebCore::SandboxFlags, WebCore::PolicyDecisionMode, WebCore::FramePolicyFunction&&) final;
+    void dispatchDecidePolicyForNavigationAction(const WebCore::NavigationAction&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& redirectResponse, WebCore::FormState*, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier>, std::optional<WebCore::HitTestResult>&&, bool hasOpener, WebCore::NavigationUpgradeToHTTPSBehavior, WebCore::SandboxFlags, WebCore::PolicyDecisionMode, WebCore::FramePolicyFunction&&) final;
+    void updateSandboxFlags(WebCore::SandboxFlags) final;
+    void updateOpener(std::optional<WebCore::FrameIdentifier>) final;
+    void setPrinting(bool printing, WebCore::FloatSize pageSize, WebCore::FloatSize originalPageSize, float maximumShrinkRatio, WebCore::AdjustViewSize) final;
+    void updateScrollingMode(WebCore::ScrollbarMode scrollingMode) final;
+    void reportMixedContentViolation(bool blocked, const URL& target) final;
+    void addResourceTimingFromChild(WebCore::ResourceTiming&&) final;
+    void findFocusableElementDescendingIntoRemoteFrame(WebCore::FocusDirection, const WebCore::FocusEventData&, WebCore::ShouldFocusElement, CompletionHandler<void(WebCore::FoundElementInRemoteFrame)>&&) final;
+    void findFocusableElementContinuingFromFrame(WebCore::FocusDirection, WebCore::FrameIdentifier, const WebCore::FocusEventData&, WebCore::ShouldFocusElement) final;
+    void dispatchCrossOriginBeforeUnloadCheck(const WebCore::SecurityOriginData& navigatingFrameOrigin) final;
 
+    void broadcastAllFrameTreeSyncDataToOtherProcesses(WebCore::FrameTreeSyncData&) final;
+    void broadcastFrameTreeSyncDataToOtherProcesses(const WebCore::FrameTreeSyncSerializationData&) final;
+
+    void didNotifyUserActivation(MonotonicTime) final;
+    void didConsumeUserActivation() final;
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebRemoteFrameClient)
+static bool isType(const WebCore::RemoteFrameClient& client) { return client.isWebRemoteFrameClient(); }
+SPECIALIZE_TYPE_TRAITS_END()

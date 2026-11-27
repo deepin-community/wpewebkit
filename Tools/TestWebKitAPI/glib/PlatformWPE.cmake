@@ -18,10 +18,17 @@ list(APPEND WebKitGLibAPITests_INCLUDE_DIRECTORIES
     ${FORWARDING_HEADERS_WPE_EXTENSION_DIR}
 )
 
-list(APPEND WebKitGLibAPITestsCore_LIBRARIES
-    WebKit::WPEToolingBackends
-)
+if (ENABLE_WPE_LEGACY_API)
+    list(APPEND WebKitGLibAPITestsCore_LIBRARIES WebKit::WPEToolingBackends)
+    list(APPEND WebKitGLibAPITest_LIBRARIES WebKit::WPEToolingBackends)
+endif ()
 
-list(APPEND WebKitGLibAPITest_LIBRARIES
-    WebKit::WPEToolingBackends
-)
+if (ENABLE_WPE_PLATFORM)
+    add_subdirectory(WPEPlatform)
+
+    ADD_WK2_TEST(TestWebViewEditor ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/wpe/TestWebViewEditor.cpp)
+endif ()
+
+if (ENABLE_2022_GLIB_API)
+    ADD_WK2_TEST(TestWebKitFaviconDatabase ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitFaviconDatabase.cpp)
+endif ()

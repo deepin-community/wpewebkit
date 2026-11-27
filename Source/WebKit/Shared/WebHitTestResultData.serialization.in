@@ -39,6 +39,7 @@ struct WebKit::WebHitTestResultData {
     String absolutePDFURL;
     String absoluteLinkURL;
     String absoluteMediaURL;
+    String absoluteModelURL;
     String linkLabel;
     String linkTitle;
     String linkSuggestedFilename;
@@ -54,16 +55,18 @@ struct WebKit::WebHitTestResultData {
     bool isActivePDFAnnotation;
     WebKit::WebHitTestResultData::ElementType elementType;
     std::optional<WebKit::FrameInfoData> frameInfo;
+    std::optional<WebCore::FrameIdentifier> targetFrame;
     std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData;
     String lookupText;
-    String toolTipText;
+    String tooltipText;
     String imageText;
     std::optional<WebCore::SharedMemoryHandle> getImageSharedMemoryHandle();
     RefPtr<WebCore::ShareableBitmap> imageBitmap;
     String sourceImageMIMEType;
-    String linkLocalDataMIMEType;
-    bool hasLocalDataForLinkURL;
     bool hasEntireImage;
+    bool allowsFollowingLink;
+    bool allowsFollowingImageURL;
+    std::optional<WebCore::ResourceResponse> linkLocalResourceResponse;
 
 #if PLATFORM(MAC)
     WebKit::WebHitTestResultPlatformData platformData;

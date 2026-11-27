@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +29,15 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "JSWebExtensionAPINamespace.h"
+#include "JSWebExtensionAPIWebPageNamespace.h"
 #include "JSWebExtensionWrapper.h"
 #include "WebExtensionAPINamespace.h"
+#include "WebExtensionAPIWebPageNamespace.h"
 #include "WebExtensionControllerProxy.h"
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebProcess.h"
+#include <WebCore/Page.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -51,6 +54,11 @@ WebExtensionControllerProxy* WebExtensionContextProxy::extensionControllerProxy(
 void WebExtensionContextProxy::addFrameWithExtensionContent(WebFrame& frame)
 {
     m_extensionContentFrames.add(frame);
+}
+
+bool WebExtensionContextProxy::isURLForThisExtension(const URL& url) const
+{
+    return url.isValid() && url.string().startsWith(m_baseURL.string());
 }
 
 std::optional<WebExtensionTabIdentifier> WebExtensionContextProxy::tabIdentifier(WebPage& page) const
@@ -127,7 +135,7 @@ Vector<Ref<WebPage>> WebExtensionContextProxy::popupPages(std::optional<WebExten
         if (windowIdentifier && entry.value.second && entry.value.second.value() != windowIdentifier.value())
             continue;
 
-        result.append(entry.key);
+        result.append(Ref { entry.key });
     }
 
     return result;
@@ -149,7 +157,7 @@ Vector<Ref<WebPage>> WebExtensionContextProxy::tabPages(std::optional<WebExtensi
         if (windowIdentifier && entry.value.second && entry.value.second.value() != windowIdentifier.value())
             continue;
 
-        result.append(entry.key);
+        result.append(Ref { entry.key });
     }
 
     return result;
@@ -183,26 +191,54 @@ void WebExtensionContextProxy::setStorageAccessLevel(bool allowedInContentScript
     m_isSessionStorageAllowedInContentScripts = allowedInContentScripts;
 }
 
-void WebExtensionContextProxy::enumerateFramesAndNamespaceObjects(const Function<void(WebFrame&, WebExtensionAPINamespace&)>& function, DOMWrapperWorld& world)
+void WebExtensionContextProxy::setContentScriptWorld(WebCore::DOMWrapperWorld& world)
+{
+    m_contentScriptWorld = world;
+    world.setClosedShadowRootIsExposedForExtensions();
+}
+
+void WebExtensionContextProxy::enumerateFramesAndNamespaceObjects(NOESCAPE const Function<void(WebFrame&, WebExtensionAPINamespace&)>& function, Ref<DOMWrapperWorld>&& world)
 {
     m_extensionContentFrames.forEach([&](auto& frame) {
         RefPtr page = frame.page() ? frame.page()->corePage() : nullptr;
         if (!page)
             return;
 
+        // We only support calling jsContextForServiceWorkerWorld() for the normal world.
+        if (page->isServiceWorkerPage() && !world->isNormal())
+            return;
+
         auto context = page->isServiceWorkerPage() ? frame.jsContextForServiceWorkerWorld(world) : frame.jsContextForWorld(world);
         auto globalObject = JSContextGetGlobalObject(context);
 
         RefPtr<WebExtensionAPINamespace> namespaceObjectImpl;
-        auto browserNamespaceObject = JSObjectGetProperty(context, globalObject, toJSString("browser").get(), nullptr);
+        auto browserNamespaceObject = JSObjectGetProperty(context, globalObject, toJSString("browser"_s).get(), nullptr);
         if (browserNamespaceObject && JSValueIsObject(context, browserNamespaceObject))
             namespaceObjectImpl = toWebExtensionAPINamespace(context, browserNamespaceObject);
 
         if (!namespaceObjectImpl) {
-            auto chromeNamespaceObject = JSObjectGetProperty(context, globalObject, toJSString("chrome").get(), nullptr);
+            auto chromeNamespaceObject = JSObjectGetProperty(context, globalObject, toJSString("chrome"_s).get(), nullptr);
             if (chromeNamespaceObject && JSValueIsObject(context, chromeNamespaceObject))
                 namespaceObjectImpl = toWebExtensionAPINamespace(context, chromeNamespaceObject);
         }
+
+        if (!namespaceObjectImpl)
+            return;
+
+        function(frame, *namespaceObjectImpl);
+    });
+}
+
+void WebExtensionContextProxy::enumerateFramesAndWebPageNamespaceObjects(NOESCAPE const Function<void(WebFrame&, WebExtensionAPIWebPageNamespace&)>& function)
+{
+    m_extensionContentFrames.forEach([&](auto& frame) {
+        auto context = frame.jsContextForWorld(mainWorldSingleton());
+        auto globalObject = JSContextGetGlobalObject(context);
+
+        RefPtr<WebExtensionAPIWebPageNamespace> namespaceObjectImpl;
+        auto browserNamespaceObject = JSObjectGetProperty(context, globalObject, toJSString("browser"_s).get(), nullptr);
+        if (browserNamespaceObject && JSValueIsObject(context, browserNamespaceObject))
+            namespaceObjectImpl = toWebExtensionAPIWebPageNamespace(context, browserNamespaceObject);
 
         if (!namespaceObjectImpl)
             return;

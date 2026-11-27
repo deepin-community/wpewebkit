@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,7 @@
 #if ASSERT_ENABLED
 
 #include "BlockFormattingState.h"
+#include "InlineDisplayContent.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutContext.h"
@@ -38,12 +39,15 @@
 #include "LayoutInitialContainingBlock.h"
 #include "LayoutTreeBuilder.h"
 #include "LegacyInlineTextBox.h"
+#include "LegacyRootInlineBox.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderTableCell.h"
 #include "RenderTableSection.h"
 #include "RenderView.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
@@ -187,14 +191,15 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
         // Produce a RenderBox matching margin box.
         auto containingBlockWidth = layoutState.geometryForBox(FormattingContext::containingBlock(layoutBox)).contentBoxWidth();
         auto marginStart = LayoutUnit { };
+        const auto& zoomFactor = layoutBox.style().usedZoomForLength();
         auto& marginStartStyle = layoutBox.style().marginStart();
         if (marginStartStyle.isFixed() || marginStartStyle.isPercent() || marginStartStyle.isCalculated())
-            marginStart = valueForLength(marginStartStyle, containingBlockWidth);
+            marginStart = Style::evaluate<LayoutUnit>(marginStartStyle, containingBlockWidth, zoomFactor);
 
         auto marginEnd = LayoutUnit { };
         auto& marginEndStyle = layoutBox.style().marginEnd();
         if (marginEndStyle.isFixed() || marginEndStyle.isPercent() || marginEndStyle.isCalculated())
-            marginEnd = valueForLength(marginEndStyle, containingBlockWidth);
+            marginEnd = Style::evaluate<LayoutUnit>(marginEndStyle, containingBlockWidth, zoomFactor);
 
         auto marginBefore = boxGeometry.marginBefore();
         auto marginAfter = boxGeometry.marginAfter();
@@ -214,7 +219,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
     };
 
     // rendering does not offset for relative positioned boxes.
-    auto frameRect = renderer.frameRect();
+    auto frameRect = renderer.borderBoxRectInContainer();
     if (renderer.isInFlowPositioned())
         frameRect.move(renderer.offsetForInFlowPosition());
 
@@ -236,11 +241,11 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
         if (renderTableRow && renderTableRow->table()->collapseBorders())
             return false;
         // Section borders are either collapsed or ignored. However they may produce negative padding boxes.
-        if (renderTableSection && (renderTableSection->table()->collapseBorders() || renderer.style().hasBorder()))
+        if (renderTableSection && (renderTableSection->table()->collapseBorders() || renderer.style().border().hasBorder()))
             return false;
     }
     if (!areEssentiallyEqual(frameRect, BoxGeometry::borderBoxRect(boxGeometry))) {
-        outputRect("frameBox"_s, renderer.frameRect(), BoxGeometry::borderBoxRect(boxGeometry));
+        outputRect("frameBox"_s, renderer.borderBoxRectInContainer(), BoxGeometry::borderBoxRect(boxGeometry));
         return true;
     }
 
@@ -260,7 +265,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
         if (!shouldCheckPaddingAndContentBox)
             return false;
         // FIXME: Figure out why trunk/rendering comes back with odd values for <tbody> and <td> content box.
-        if (is<RenderTableCell>(renderer) || is<RenderTableSection>(renderer))
+        if (isAnyOf<RenderTableCell, RenderTableSection>(renderer))
             return false;
         // Tables have 0 content box size for some reason when border collapsing is on.
         auto* renderTable = dynamicDowncast<RenderTable>(renderer);

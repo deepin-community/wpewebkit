@@ -22,12 +22,12 @@
 
 #pragma once
 
-#include "Text.h"
+#include <WebCore/Text.h>
 
 namespace WebCore {
 
 class CDATASection final : public Text {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CDATASection);
+    WTF_MAKE_TZONE_ALLOCATED(CDATASection);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CDATASection);
 public:
     static Ref<CDATASection> create(Document&, String&&);
@@ -36,12 +36,13 @@ private:
     CDATASection(Document&, String&&);
 
     String nodeName() const override;
-    Ref<Node> cloneNodeInternal(Document&, CloningOperation) override;
+    Ref<Node> cloneNodeInternal(Document&, CloningOperation, CustomElementRegistry*) const override;
+    SerializedNode serializeNode(CloningOperation) const override;
     Ref<Text> virtualCreate(String&&) override;
 };
 
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CDATASection)
-    static bool isType(const WebCore::Node& node) { return node.nodeType() == WebCore::Node::CDATA_SECTION_NODE; }
+    static bool isType(const WebCore::Node& node) { return node.nodeType() == WebCore::NodeType::CDATASection; }
 SPECIALIZE_TYPE_TRAITS_END()

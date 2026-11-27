@@ -26,10 +26,10 @@
 
 #pragma once
 
-#include "Structure.h"
-#include "Symbol.h"
-#include "Watchpoint.h"
-#include "WriteBarrierInlines.h"
+#include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/Symbol.h>
+#include <JavaScriptCore/Watchpoint.h>
+#include <JavaScriptCore/WriteBarrier.h>
 
 namespace WTF {
 
@@ -53,7 +53,7 @@ public:
     ALWAYS_INLINE bool checkBrand(Symbol* brand)
     {
         UniquedStringImpl* brandUid = &brand->uid();
-        for (BrandedStructure* currentStructure = this; currentStructure; currentStructure = jsCast<BrandedStructure*>(currentStructure->m_parentBrand.get())) {
+        for (BrandedStructure* currentStructure = this; currentStructure; currentStructure = uncheckedDowncast<BrandedStructure>(currentStructure->m_parentBrand.get())) {
             if (brandUid == currentStructure->m_brand)
                 return true;
         }
@@ -63,7 +63,7 @@ public:
     template<typename Visitor>
     static void visitAdditionalChildren(JSCell* cell, Visitor& visitor)
     {
-        BrandedStructure* thisObject = jsCast<BrandedStructure*>(cell);
+        BrandedStructure* thisObject = uncheckedDowncast<BrandedStructure>(cell);
         visitor.append(thisObject->m_parentBrand);
     }
 
@@ -72,11 +72,6 @@ private:
     BrandedStructure(VM&, BrandedStructure*);
 
     static Structure* create(VM&, Structure*, UniquedStringImpl* brand, DeferredStructureTransitionWatchpointFire* = nullptr);
-
-    void destruct()
-    {
-        m_brand = nullptr;
-    }
 
     CompactRefPtr<UniquedStringImpl> m_brand;
     WriteBarrierStructureID m_parentBrand;

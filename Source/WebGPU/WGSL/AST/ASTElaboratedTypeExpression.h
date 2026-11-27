@@ -35,13 +35,13 @@ class ElaboratedTypeExpression : public Expression {
 public:
     NodeKind kind() const override;
     Identifier& base() { return m_base; }
-    Expression::List& arguments() { return m_arguments; }
+    Expression::List& arguments() LIFETIME_BOUND { return m_arguments; }
 
 private:
     ElaboratedTypeExpression(SourceSpan span, Identifier&& base, Expression::List&& arguments)
         : Expression(span)
-        , m_base(WTFMove(base))
-        , m_arguments(WTFMove(arguments))
+        , m_base(WTF::move(base))
+        , m_arguments(WTF::move(arguments))
     { }
 
     Identifier m_base;

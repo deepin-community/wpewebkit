@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,15 +41,15 @@ public:
         return adoptRef(*new GPUCompilationMessage(backing));
     }
 
-    const String& message() const;
-    GPUCompilationMessageType type() const;
-    uint64_t lineNum() const;
-    uint64_t linePos() const;
-    uint64_t offset() const;
-    uint64_t length() const;
+    const String& NODELETE message() const LIFETIME_BOUND;
+    GPUCompilationMessageType NODELETE type() const;
+    uint64_t NODELETE lineNum() const;
+    uint64_t NODELETE linePos() const;
+    uint64_t NODELETE offset() const;
+    uint64_t NODELETE length() const;
 
-    WebGPU::CompilationMessage& backing() { return m_backing; }
-    const WebGPU::CompilationMessage& backing() const { return m_backing; }
+    WebGPU::CompilationMessage& backing() LIFETIME_BOUND { return m_backing; }
+    const WebGPU::CompilationMessage& backing() const LIFETIME_BOUND { return m_backing; }
 
 private:
     GPUCompilationMessage(WebGPU::CompilationMessage& backing)
@@ -57,7 +57,7 @@ private:
     {
     }
 
-    Ref<WebGPU::CompilationMessage> m_backing;
+    const Ref<WebGPU::CompilationMessage> m_backing;
 };
 
 }

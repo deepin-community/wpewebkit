@@ -32,7 +32,9 @@
 
     [URL, ConvertNullStringTo=Null, RaisesException] DOMString getURL(DOMString resourcePath);
     [NSDictionary] any getManifest();
+    DOMString getVersion();
     double getFrameId(any target);
+    [RaisesException] DOMString getDocumentId(any target);
 
     [MainWorldOnly] void getPlatformInfo([Optional, CallbackHandler] function callback);
     [MainWorldOnly] void getBackgroundPage([Optional, CallbackHandler] function callback);
@@ -44,11 +46,11 @@
 
     [MainWorldOnly] readonly attribute any lastError;
 
-    [ProcessArgumentsLeftToRight, RaisesException, NeedsFrame] void sendMessage([Optional] DOMString extensionID, [Serialization=JSON] any message, [Optional, NSDictionary] any options, [Optional, CallbackHandler] function callback);
-    [RaisesException, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connect([Optional] DOMString extensionID, [Optional, NSDictionary] any options);
+    [ProcessArgumentsLeftToRight, RaisesException, NeedsPageIdentifier, NeedsFrame] void sendMessage([Optional] DOMString extensionID, [Serialization=JSON] any message, [Optional, NSDictionary] any options, [Optional, CallbackHandler] function callback);
+    [RaisesException, NeedsPageIdentifier, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connect([Optional] DOMString extensionID, [Optional, NSDictionary] any options);
 
     [MainWorldOnly, Dynamic, NeedsFrame] void sendNativeMessage([Optional] DOMString applicationID, [Serialization=JSON] any message, [Optional, CallbackHandler] function callback);
-    [MainWorldOnly, Dynamic, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connectNative([Optional] DOMString applicationID);
+    [MainWorldOnly, Dynamic, NeedsPageIdentifier, NeedsScriptContext] WebExtensionAPIPort connectNative([Optional] DOMString applicationID);
 
     readonly attribute WebExtensionAPIEvent onConnect;
     readonly attribute WebExtensionAPIEvent onMessage;

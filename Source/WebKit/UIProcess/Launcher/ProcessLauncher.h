@@ -27,6 +27,9 @@
 
 #include "Connection.h"
 #include <WebCore/ProcessIdentifier.h>
+#include <wtf/AbstractCanMakeCheckedPtr.h>
+#include <wtf/CheckedPtr.h>
+#include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/ProcessID.h>
 #include <wtf/RefPtr.h>
@@ -120,15 +123,18 @@ public:
     using ProcessType = ProcessLaunchType;
     using LaunchOptions = ProcessLaunchOptions;
 
-    class Client {
+    class Client : public AbstractCanMakeCheckedPtr {
     public:
         virtual ~Client() { }
         
-        virtual void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier) = 0;
+        virtual void ref() const = 0;
+        virtual void deref() const = 0;
+        virtual void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier&&) = 0;
         virtual bool shouldConfigureJSCForTesting() const { return false; }
         virtual bool isJITEnabled() const { return true; }
         virtual bool shouldEnableSharedArrayBuffer() const { return false; }
         virtual bool shouldEnableLockdownMode() const { return false; }
+        virtual bool shouldEnableEnhancedSecurity() const { return false; }
         virtual bool shouldDisableJITCage() const { return false; }
 #if PLATFORM(COCOA)
         virtual RefPtr<XPCEventHandler> xpcEventHandler() const { return nullptr; }
@@ -137,7 +143,7 @@ public:
 
     static Ref<ProcessLauncher> create(Client* client, LaunchOptions&& launchOptions)
     {
-        return adoptRef(*new ProcessLauncher(client, WTFMove(launchOptions)));
+        return adoptRef(*new ProcessLauncher(client, WTF::move(launchOptions)));
     }
 
     virtual ~ProcessLauncher();
@@ -149,7 +155,7 @@ public:
     void invalidate();
 
 #if USE(EXTENSIONKIT)
-    const std::optional<ExtensionProcess>& extensionProcess() const { return m_process; }
+    const std::optional<ExtensionProcess>& extensionProcess() const LIFETIME_BOUND { return m_process; }
     void setIsRetryingLaunch() { m_isRetryingLaunch = true; }
     bool isRetryingLaunch() const { return m_isRetryingLaunch; }
     LaunchGrant* launchGrant() const { return m_launchGrant.get(); }
@@ -161,8 +167,9 @@ private:
     ProcessLauncher(Client*, LaunchOptions&&);
 
     void launchProcess();
-    void finishLaunchingProcess(ASCIILiteral name);
-    void didFinishLaunchingProcess(ProcessID, IPC::Connection::Identifier);
+    void finishLaunchingProcess(ASCIILiteral name, int retriesRemaining = 2);
+    void tryFinishLaunchingProcess(ASCIILiteral name, Function<void()>&& onFailure);
+    void didFinishLaunchingProcess(ProcessID, IPC::Connection::Identifier&&);
 
     void platformInvalidate();
     void platformDestroy();
@@ -171,7 +178,7 @@ private:
     void terminateXPCConnection();
 #endif
 
-    Client* m_client;
+    CheckedPtr<Client> m_client;
 
 #if PLATFORM(COCOA)
     OSObjectPtr<xpc_connection_t> m_xpcConnection;
@@ -197,7 +204,6 @@ private:
 
 #if USE(GLIB) && OS(LINUX)
     GSocketMonitor m_socketMonitor;
-    int m_pidServerSocket { -1 };
 #endif
 };
 

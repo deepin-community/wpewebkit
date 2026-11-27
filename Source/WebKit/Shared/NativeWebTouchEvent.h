@@ -36,13 +36,14 @@
 #if PLATFORM(IOS_FAMILY)
 #include "WKTouchEventsGestureRecognizerTypes.h"
 #elif PLATFORM(GTK)
-#include <WebCore/GRefPtrGtk.h>
-#include <WebCore/GUniquePtrGtk.h>
+#include "GRefPtrGtk.h"
+#include "GUniquePtrGtk.h"
 #elif USE(LIBWPE)
 #include <wpe/wpe.h>
 #endif
 
 #if PLATFORM(WPE) && ENABLE(WPE_PLATFORM)
+#include <wpe/GRefPtrWPE.h>
 typedef struct _WPEEvent WPEEvent;
 #endif
 
@@ -62,13 +63,20 @@ public:
 #endif
 #elif PLATFORM(GTK)
     NativeWebTouchEvent(GdkEvent*, Vector<WebPlatformTouchPoint>&&);
+    NativeWebTouchEvent(WebEventType, OptionSet<WebEventModifier>, Vector<WebPlatformTouchPoint>&&);
     NativeWebTouchEvent(const NativeWebTouchEvent&);
     const GdkEvent* nativeEvent() const { return m_nativeEvent.get(); }
-#elif USE(LIBWPE)
+    NativeWebTouchEvent& operator=(NativeWebTouchEvent&&) = default;
+    bool isNativeWebTouchEvent() const final { return true; }
+#elif PLATFORM(WPE)
+    bool isNativeWebTouchEvent() const final { return true; }
+#if USE(LIBWPE)
     NativeWebTouchEvent(struct wpe_input_touch_event*, float deviceScaleFactor);
     const struct wpe_input_touch_event_raw* nativeFallbackTouchPoint() const { return &m_fallbackTouchPoint; }
-#if PLATFORM(WPE) && ENABLE(WPE_PLATFORM)
+#endif
+#if ENABLE(WPE_PLATFORM)
     NativeWebTouchEvent(WPEEvent*, Vector<WebPlatformTouchPoint>&&);
+    WPEEvent* nativeEvent() const { return m_nativeEvent.get(); }
 #endif
 #elif PLATFORM(WIN)
     NativeWebTouchEvent();
@@ -85,8 +93,13 @@ private:
     GRefPtr<GdkEvent> m_nativeEvent;
 #elif PLATFORM(GTK)
     GUniquePtr<GdkEvent> m_nativeEvent;
-#elif USE(LIBWPE)
+#elif PLATFORM(WPE)
+#if USE(LIBWPE)
     struct wpe_input_touch_event_raw m_fallbackTouchPoint;
+#endif
+#if ENABLE(WPE_PLATFORM)
+    GRefPtr<WPEEvent> m_nativeEvent;
+#endif
 #endif
 };
 

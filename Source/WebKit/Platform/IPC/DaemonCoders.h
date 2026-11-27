@@ -57,11 +57,12 @@ template<typename T, typename = void> struct Coder;
 template<typename T> struct Coder<T, typename std::enable_if_t<std::is_arithmetic_v<T>>> {
     template<typename Encoder> static void encode(Encoder& encoder, T value)
     {
-        encoder.encodeFixedLengthData({ reinterpret_cast<const uint8_t*>(&value), sizeof(T) });
+        encoder.encodeFixedLengthData(asByteSpan(value));
     }
+
     template<typename Decoder> static std::optional<T> decode(Decoder& decoder)
     {
-        if (T result; decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(&result), sizeof(T)))
+        if (T result; decoder.decodeFixedLengthData(asMutableByteSpan(result)))
             return result;
         return std::nullopt;
     }
@@ -87,7 +88,7 @@ template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t min
             decoder >> element;
             if (!element)
                 return std::nullopt;
-            vector.append(WTFMove(*element));
+            vector.append(WTF::move(*element));
         }
         vector.shrinkToFit();
         return vector;
@@ -126,7 +127,7 @@ template<> struct Coder<WTF::URL> {
         decoder >> string;
         if (!string)
             return std::nullopt;
-        return { WTF::URL(WTFMove(*string)) };
+        return { WTF::URL(WTF::move(*string)) };
     }
 };
 
@@ -145,7 +146,7 @@ template<> struct Coder<WTF::String> {
         encoder << string.length() << is8Bit;
 
         if (is8Bit)
-            encoder.encodeFixedLengthData(string.span8());
+            encoder.encodeFixedLengthData(byteCast<uint8_t>(string.span8()));
         else
             encoder.encodeFixedLengthData(asBytes(string.span16()));
     }
@@ -157,9 +158,9 @@ template<> struct Coder<WTF::String> {
         if (!decoder.template bufferIsLargeEnoughToContain<CharacterType>(length))
             return std::nullopt;
 
-        CharacterType* buffer;
+        std::span<CharacterType> buffer;
         String string = String::createUninitialized(length, buffer);
-        if (!decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(buffer), length * sizeof(CharacterType)))
+        if (!decoder.decodeFixedLengthData(asMutableByteSpan(buffer)))
             return std::nullopt;
 
         return string;
@@ -184,8 +185,8 @@ template<> struct Coder<WTF::String> {
             return std::nullopt;
 
         if (*is8Bit)
-            return decodeStringText<LChar>(decoder, *length);
-        return decodeStringText<UChar>(decoder, *length);
+            return decodeStringText<Latin1Character>(decoder, *length);
+        return decodeStringText<char16_t>(decoder, *length);
     }
 };
 

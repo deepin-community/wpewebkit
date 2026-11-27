@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,12 +25,12 @@
 
 #pragma once
 
-#include "FilterEffect.h"
-#include "FilterImageVector.h"
-#include "ImageBufferAllocator.h"
-#include <wtf/FastMalloc.h>
+#include <WebCore/FilterEffect.h>
+#include <WebCore/FilterImageVector.h>
+#include <WebCore/ImageBufferAllocator.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -38,14 +38,14 @@ class FilterEffect;
 class FilterImage;
 
 class FilterResults {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(FilterResults, WEBCORE_EXPORT);
 public:
     WEBCORE_EXPORT FilterResults(std::unique_ptr<ImageBufferAllocator>&& = nullptr);
 
     ImageBufferAllocator& allocator() const { return *m_allocator; }
 
     FilterImage* effectResult(FilterEffect&) const;
-    void setEffectResult(FilterEffect&, const FilterImageVector& inputs, Ref<FilterImage>&& result);
+    void setEffectResult(FilterEffect&, std::span<const Ref<FilterImage>> inputs, Ref<FilterImage>&& result);
     void clearEffectResult(FilterEffect&);
 
 private:

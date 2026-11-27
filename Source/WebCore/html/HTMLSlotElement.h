@@ -30,10 +30,10 @@
 namespace WebCore {
 
 class HTMLSlotElement final : public HTMLElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLSlotElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLSlotElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLSlotElement);
 public:
-    using ElementOrText = std::variant<RefPtr<Element>, RefPtr<Text>>;
+    using ElementOrText = Variant<Ref<Element>, Ref<Text>>;
 
     static Ref<HTMLSlotElement> create(const QualifiedName&, Document&);
 
@@ -45,7 +45,7 @@ public:
     Vector<Ref<Element>> assignedElements(const AssignedNodesOptions&) const;
 
     void assign(FixedVector<ElementOrText>&&);
-    const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>& manuallyAssignedNodes() const { return m_manuallyAssignedNodes; }
+    const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>& manuallyAssignedNodes() const LIFETIME_BOUND { return m_manuallyAssignedNodes; }
     void removeManuallyAssignedNode(Node&);
 
     void enqueueSlotChangeEvent();
@@ -55,18 +55,19 @@ public:
 
     bool isInInsertedIntoAncestor() const { return m_isInInsertedIntoAncestor; }
 
+    void updateAccessibilityOnSlotChange() const;
 private:
     HTMLSlotElement(const QualifiedName&, Document&);
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void childrenChanged(const ChildChange&) final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
+    void postConnectionSteps() final;
 
     bool m_inSignalSlotList { false };
     bool m_isInInsertedIntoAncestor { false };
     Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>> m_manuallyAssignedNodes;
 };
 
-}
-
+} // namespace WebCore

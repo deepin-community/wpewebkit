@@ -5,7 +5,7 @@
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2009-2010. All rights reserved.
  * Copyright (C) 2014 Adobe Systems Incorporated. All rights reserved.
- * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,15 +26,19 @@
 #include "config.h"
 #include "SVGMaskElement.h"
 
+#include "ContainerNodeInlines.h"
 #include "LegacyRenderSVGResourceMaskerInlines.h"
 #include "NodeName.h"
 #include "RenderElementInlines.h"
+#include "RenderObjectInlines.h"
 #include "RenderSVGResourceMasker.h"
 #include "SVGElementInlines.h"
-#include "SVGLayerTransformComputation.h"
 #include "SVGNames.h"
+#include "SVGParsingError.h"
+#include "SVGPropertyOwnerRegistry.h"
 #include "SVGRenderSupport.h"
 #include "SVGStringList.h"
+#include "SVGTransformComputation.h"
 #include "SVGUnitTypes.h"
 #include "StyleResolver.h"
 #include <wtf/NeverDestroyed.h>
@@ -42,7 +46,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGMaskElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGMaskElement);
 
 inline SVGMaskElement::SVGMaskElement(const QualifiedName& tagName, Document& document)
     : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
@@ -52,15 +56,16 @@ inline SVGMaskElement::SVGMaskElement(const QualifiedName& tagName, Document& do
     // Spec: If the width/height attribute is not specified, the effect is as if a value of "120%" were specified.
     ASSERT(hasTagName(SVGNames::maskTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGMaskElement::m_x>();
         PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGMaskElement::m_y>();
         PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGMaskElement::m_width>();
         PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGMaskElement::m_height>();
         PropertyRegistry::registerProperty<SVGNames::maskUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGMaskElement::m_maskUnits>();
         PropertyRegistry::registerProperty<SVGNames::maskContentUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGMaskElement::m_maskContentUnits>();
-    });
+    }
 }
 
 Ref<SVGMaskElement> SVGMaskElement::create(const QualifiedName& tagName, Document& document)
@@ -70,31 +75,31 @@ Ref<SVGMaskElement> SVGMaskElement::create(const QualifiedName& tagName, Documen
 
 void SVGMaskElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
-    SVGParsingError parseError = NoError;
+    auto parseError = SVGParsingError::None;
     switch (name.nodeName()) {
     case AttributeNames::maskUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(newValue);
+        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
         if (propertyValue > 0)
             Ref { m_maskUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
         break;
     }
     case AttributeNames::maskContentUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(newValue);
+        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
         if (propertyValue > 0)
             Ref { m_maskContentUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
         break;
     }
     case AttributeNames::xAttr:
-        Ref { m_x }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError));
+        Ref { m_x }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
         break;
     case AttributeNames::yAttr:
-        Ref { m_y }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError));
+        Ref { m_y }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "-10%"_s));
         break;
     case AttributeNames::widthAttr:
-        Ref { m_width }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError));
+        Ref { m_width }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Width, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
         break;
     case AttributeNames::heightAttr:
-        Ref { m_height }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError));
+        Ref { m_height }->setBaseValInternal(SVGLengthValue::construct(SVGLengthMode::Height, newValue, parseError, SVGLengthNegativeValuesMode::Allow, "120%"_s));
         break;
     default:
         break;
@@ -109,7 +114,7 @@ void SVGMaskElement::svgAttributeChanged(const QualifiedName& attrName)
 {
     if (PropertyRegistry::isAnimatedLengthAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
-        setPresentationalHintStyleIsDirty();
+        updateSVGRendererForElementChange();
         return;
     }
 
@@ -146,11 +151,11 @@ void SVGMaskElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGMaskElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGMaskElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
-        return createRenderer<RenderSVGResourceMasker>(*this, WTFMove(style));
-    return createRenderer<LegacyRenderSVGResourceMasker>(*this, WTFMove(style));
+        return createRenderer<RenderSVGResourceMasker>(*this, WTF::move(style));
+    return createRenderer<LegacyRenderSVGResourceMasker>(*this, WTF::move(style));
 }
 
 FloatRect SVGMaskElement::calculateMaskContentRepaintRect(RepaintRectCalculation repaintRectCalculation)
@@ -160,22 +165,22 @@ FloatRect SVGMaskElement::calculateMaskContentRepaintRect(RepaintRectCalculation
         if (!document().settings().layerBasedSVGEngineEnabled())
             return std::nullopt;
 
-        if (!(renderer()->isTransformed() || child.isTransformed()) || !child.hasLayer())
+        if (!child.isTransformed())
             return std::nullopt;
 
         ASSERT(child.isSVGLayerAwareRenderer());
         ASSERT(!child.isRenderSVGRoot());
 
-        auto transform = SVGLayerTransformComputation(child).computeAccumulatedTransform(downcast<RenderLayerModelObject>(renderer()), TransformState::TrackSVGCTMMatrix);
-        return transform.isIdentity() ? std::nullopt : std::make_optional(WTFMove(transform));
+        auto transform = SVGTransformComputation(child).computeAccumulatedTransform(downcast<RenderLayerModelObject>(renderer()), TransformState::TrackSVGCTMMatrix);
+        return transform.isIdentity() ? std::nullopt : std::make_optional(WTF::move(transform));
     };
     FloatRect maskRepaintRect;
-    for (auto* childNode = firstChild(); childNode; childNode = childNode->nextSibling()) {
-        CheckedPtr renderer = childNode->renderer();
-        if (!childNode->isSVGElement() || !renderer)
+    for (RefPtr childNode = firstChild(); childNode; childNode = childNode->nextSibling()) {
+        CheckedPtr renderer = dynamicDowncast<RenderElement>(childNode->renderer());
+        if (!renderer || !childNode->isSVGElement())
             continue;
-        const auto& style = renderer->style();
-        if (style.display() == DisplayType::None || style.usedVisibility() != Visibility::Visible)
+        CheckedRef style = renderer->style();
+        if (style->display() == Style::DisplayType::None || style->usedVisibility() != Visibility::Visible)
             continue;
         auto r = renderer->repaintRectInLocalCoordinates(repaintRectCalculation);
         if (auto transform = transformationMatrixFromChild(downcast<RenderLayerModelObject>(*renderer)))

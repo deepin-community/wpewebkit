@@ -42,7 +42,7 @@ CommandResult::CommandResult(RefPtr<JSON::Value>&& result, std::optional<ErrorCo
     : m_errorCode(errorCode)
 {
     if (!m_errorCode) {
-        m_result = WTFMove(result);
+        m_result = WTF::move(result);
         return;
     }
 
@@ -53,13 +53,18 @@ CommandResult::CommandResult(RefPtr<JSON::Value>&& result, std::optional<ErrorCo
     if (!errorObject)
         return;
 
-    auto error = errorObject->getInteger("code"_s);
-    if (!error)
-        return;
-
     auto errorMessage = errorObject->getString("message"_s);
     if (!errorMessage)
         return;
+
+    auto error = errorObject->getInteger("code"_s);
+    if (!error) {
+        // Locally generated error bodies don't have the error code set,
+        // which comes from the InspectorProtocol used to talk to the browser.
+        if (m_errorCode == ErrorCode::UnknownError)
+            m_errorMessage = errorMessage;
+        return;
+    }
 
     switch (*error) {
     case ProtocolErrorCode::ParseError:
@@ -130,9 +135,14 @@ unsigned CommandResult::httpStatusCode() const
     if (!m_errorCode)
         return 200;
 
+    return errorCodeToHTTPStatusCode(m_errorCode.value());
+}
+
+unsigned CommandResult::errorCodeToHTTPStatusCode(ErrorCode errorCode)
+{
     // §6.6 Handling Errors.
     // https://www.w3.org/TR/webdriver/#handling-errors
-    switch (m_errorCode.value()) {
+    switch (errorCode) {
     case ErrorCode::ElementClickIntercepted:
     case ErrorCode::ElementNotSelectable:
     case ErrorCode::ElementNotInteractable:
@@ -170,8 +180,12 @@ unsigned CommandResult::httpStatusCode() const
 String CommandResult::errorString() const
 {
     ASSERT(isError());
+    return errorCodeToString(m_errorCode.value_or(ErrorCode::UnknownError));
+}
 
-    switch (m_errorCode.value()) {
+String CommandResult::errorCodeToString(ErrorCode errorCode)
+{
+    switch (errorCode) {
     case ErrorCode::ElementClickIntercepted:
         return "element click intercepted"_s;
     case ErrorCode::ElementNotSelectable:

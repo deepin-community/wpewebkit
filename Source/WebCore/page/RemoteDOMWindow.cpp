@@ -26,6 +26,8 @@
 #include "config.h"
 #include "RemoteDOMWindow.h"
 
+#include "Document.h"
+#include "ExceptionOr.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "LocalDOMWindow.h"
@@ -36,16 +38,17 @@
 #include "RemoteFrameClient.h"
 #include "SecurityOrigin.h"
 #include "SerializedScriptValue.h"
+#include "UserGestureIndicator.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RemoteDOMWindow);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteDOMWindow);
 
 RemoteDOMWindow::RemoteDOMWindow(RemoteFrame& frame, GlobalWindowIdentifier&& identifier)
-    : DOMWindow(WTFMove(identifier), DOMWindowType::Remote)
+    : DOMWindow(WTF::move(identifier), DOMWindowType::Remote)
     , m_frame(frame)
 {
 }
@@ -93,12 +96,6 @@ unsigned RemoteDOMWindow::length() const
     return m_frame->tree().childCount();
 }
 
-void RemoteDOMWindow::setOpener(WindowProxy*)
-{
-    // FIXME: <rdar://118263373> Implement.
-    // JSDOMWindow::setOpener has some security checks. Are they needed here?
-}
-
 ExceptionOr<void> RemoteDOMWindow::postMessage(JSC::JSGlobalObject& lexicalGlobalObject, LocalDOMWindow& incumbentWindow, JSC::JSValue message, WindowPostMessageOptions&& options)
 {
     RefPtr sourceDocument = incumbentWindow.document();
@@ -118,41 +115,40 @@ ExceptionOr<void> RemoteDOMWindow::postMessage(JSC::JSGlobalObject& lexicalGloba
         target = origin->data();
 
     Vector<Ref<MessagePort>> ports;
-    auto messageData = SerializedScriptValue::create(lexicalGlobalObject, message, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WindowPostMessage);
+    auto messageData = SerializedScriptValue::create(lexicalGlobalObject, message, WTF::move(options.transfer), ports, SerializationForStorage::No);
     if (messageData.hasException())
         return messageData.releaseException();
 
-    auto disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    auto disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException())
         return messageData.releaseException();
 
     // Capture the source of the message. We need to do this synchronously
     // in order to capture the source of the message correctly.
-    auto sourceOrigin = sourceDocument->securityOrigin().toString();
+    auto sourceOrigin = sourceDocument->securityOrigin().data();
+
+    RefPtr userGestureToForward = UserGestureIndicator::currentUserGesture();
 
     MessageWithMessagePorts messageWithPorts { messageData.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
-    if (auto* remoteFrame = frame())
-        remoteFrame->client().postMessageToRemote(sourceFrame->frameID(), sourceOrigin, remoteFrame->frameID(), target, messageWithPorts);
+    if (RefPtr remoteFrame = frame())
+        remoteFrame->client().postMessageToRemote(sourceFrame->frameID(), sourceOrigin, remoteFrame->frameID(), target, messageWithPorts, userGestureToForward ? std::optional(userGestureToForward->data()) : std::nullopt);
     return { };
 }
 
-void RemoteDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, SetLocationLocking locking)
+void RemoteDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, SetLocationLocking locking, CanNavigateState navigationState)
 {
-    // FIXME: Add some or all of the security checks in LocalDOMWindow::setLocation. <rdar://116500603>
-    // FIXME: Refactor this duplicate code to share with LocalDOMWindow::setLocation. <rdar://116500603>
+    if (!passesSetLocationSecurityChecks(activeWindow, completedURL, navigationState))
+        return;
 
     RefPtr activeDocument = activeWindow.document();
     if (!activeDocument)
         return;
-
     RefPtr frame = this->frame();
-    if (!activeDocument->canNavigate(frame.get(), completedURL))
-        return;
 
     // We want a new history item if we are processing a user gesture.
     LockHistory lockHistory = (locking != SetLocationLocking::LockHistoryBasedOnGestureState || !UserGestureIndicator::processingUserGesture()) ? LockHistory::Yes : LockHistory::No;
     LockBackForwardList lockBackForwardList = (locking != SetLocationLocking::LockHistoryBasedOnGestureState) ? LockBackForwardList::Yes : LockBackForwardList::No;
-    frame->checkedNavigationScheduler()->scheduleLocationChange(*activeDocument, activeDocument->securityOrigin(),
+    protect(frame->navigationScheduler())->scheduleLocationChange(*activeDocument, protect(activeDocument->securityOrigin()),
         // FIXME: What if activeDocument()->frame() is 0?
         completedURL, activeDocument->frame()->loader().outgoingReferrer(),
         lockHistory, lockBackForwardList,

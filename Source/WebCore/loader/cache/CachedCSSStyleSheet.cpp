@@ -44,14 +44,14 @@
 namespace WebCore {
 
 CachedCSSStyleSheet::CachedCSSStyleSheet(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar)
-    : CachedResource(WTFMove(request), Type::CSSStyleSheet, sessionID, cookieJar)
+    : CachedResource(WTF::move(request), Type::CSSStyleSheet, sessionID, cookieJar)
     , m_decoder(TextResourceDecoder::create(cssContentTypeAtom(), request.charset()))
 {
 }
 
 CachedCSSStyleSheet::~CachedCSSStyleSheet()
 {
-    if (RefPtr parsedStyleSheetCache = m_parsedStyleSheetCache)
+    if (auto* parsedStyleSheetCache = m_parsedStyleSheetCache.get())
         parsedStyleSheetCache->removedFromMemoryCache();
 }
 
@@ -64,17 +64,17 @@ void CachedCSSStyleSheet::didAddClient(CachedResourceClient& client)
     CachedResource::didAddClient(client);
 
     if (!isLoading())
-        downcast<CachedStyleSheetClient>(client).setCSSStyleSheet(m_resourceRequest.url().string(), response().url(), String::fromLatin1(m_decoder->encoding().name()), this);
+        downcast<CachedStyleSheetClient>(client).setCSSStyleSheet(m_resourceRequest.url().string(), response().url(), m_decoder->encoding().name(), this);
 }
 
 void CachedCSSStyleSheet::setEncoding(const String& chs)
 {
-    protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
+    protect(m_decoder)->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
-String CachedCSSStyleSheet::encoding() const
+ASCIILiteral CachedCSSStyleSheet::encoding() const
 {
-    return String::fromLatin1(protectedDecoder()->encoding().name());
+    return m_decoder->encoding().name();
 }
 
 const String CachedCSSStyleSheet::sheetText(MIMETypeCheckHint mimeTypeCheckHint, bool* hasValidMIMEType, bool* hasHTTPStatusOK) const
@@ -82,22 +82,25 @@ const String CachedCSSStyleSheet::sheetText(MIMETypeCheckHint mimeTypeCheckHint,
     // Ensure hasValidMIMEType and hasHTTPStatusOK always get set (even if m_data is null or empty) — which in turn
     // ensures that if the MIME type isn't text/css or the HTTP status isn't an OK status, we never load the resource.
     // https://html.spec.whatwg.org/#link-type-stylesheet:process-the-linked-resource
-    if (!canUseSheet(mimeTypeCheckHint, hasValidMIMEType, hasHTTPStatusOK) || !m_data || m_data->isEmpty())
+    if (!canUseSheet(mimeTypeCheckHint, hasValidMIMEType, hasHTTPStatusOK))
+        return String();
+    RefPtr data = m_data;
+    if (!data || data->isEmpty())
         return String();
 
     if (!m_decodedSheetText.isNull())
         return m_decodedSheetText;
 
     // Don't cache the decoded text, regenerating is cheap and it can use quite a bit of memory.
-    return protectedDecoder()->decodeAndFlush(m_data->makeContiguous()->span());
+    return protect(m_decoder)->decodeAndFlush(data->makeContiguous()->span());
 }
 
 void CachedCSSStyleSheet::setBodyDataFrom(const CachedResource& resource)
 {
     ASSERT(resource.type() == type());
-    const CachedCSSStyleSheet& sheet = static_cast<const CachedCSSStyleSheet&>(resource);
+    const auto& sheet = downcast<const CachedCSSStyleSheet>(resource);
 
-    CachedResource::setBodyDataFrom(resource);
+    CachedResource::setBodyDataFrom(sheet);
 
     m_decoder = sheet.m_decoder;
     m_decodedSheetText = sheet.m_decodedSheetText;
@@ -111,8 +114,8 @@ void CachedCSSStyleSheet::finishLoading(const FragmentedSharedBuffer* data, cons
         Ref contiguousData = data->makeContiguous();
         setEncodedSize(data->size());
         // Decode the data to find out the encoding and keep the sheet text around during checkNotify()
-        m_decodedSheetText = protectedDecoder()->decodeAndFlush(contiguousData->span());
-        m_data = WTFMove(contiguousData);
+        m_decodedSheetText = protect(m_decoder)->decodeAndFlush(contiguousData->span());
+        m_data = WTF::move(contiguousData);
     } else {
         m_data = nullptr;
         setEncodedSize(0);
@@ -123,19 +126,14 @@ void CachedCSSStyleSheet::finishLoading(const FragmentedSharedBuffer* data, cons
     m_decodedSheetText = String();
 }
 
-Ref<TextResourceDecoder> CachedCSSStyleSheet::protectedDecoder() const
-{
-    return m_decoder;
-}
-
 void CachedCSSStyleSheet::checkNotify(const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
 {
     if (isLoading())
         return;
 
     CachedResourceClientWalker<CachedStyleSheetClient> walker(*this);
-    while (CachedStyleSheetClient* c = walker.next())
-        c->setCSSStyleSheet(m_resourceRequest.url().string(), response().url(), String::fromLatin1(protectedDecoder()->encoding().name()), this);
+    while (RefPtr client = walker.next())
+        client->setCSSStyleSheet(m_resourceRequest.url().string(), response().url(), m_decoder->encoding().name(), this);
 }
 
 String CachedCSSStyleSheet::responseMIMEType() const
@@ -196,7 +194,7 @@ void CachedCSSStyleSheet::destroyDecodedData()
     if (!m_parsedStyleSheetCache)
         return;
 
-    Ref { *m_parsedStyleSheetCache }->removedFromMemoryCache();
+    m_parsedStyleSheetCache->removedFromMemoryCache();
     m_parsedStyleSheetCache = nullptr;
 
     setDecodedSize(0);
@@ -229,7 +227,7 @@ void CachedCSSStyleSheet::saveParsedStyleSheet(Ref<StyleSheetContents>&& sheet)
 {
     ASSERT(sheet->isCacheable());
 
-    if (RefPtr parsedStyleSheetCache = m_parsedStyleSheetCache)
+    if (auto* parsedStyleSheetCache = m_parsedStyleSheetCache.get())
         parsedStyleSheetCache->removedFromMemoryCache();
     m_parsedStyleSheetCache = sheet.copyRef();
     sheet->addedToMemoryCache();

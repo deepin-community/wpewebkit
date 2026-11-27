@@ -25,7 +25,7 @@
  */
 
 #include "config.h"
-#include "FontCascade.h"
+#include "FontCascadeInlines.h"
 
 #if USE(CAIRO)
 
@@ -35,14 +35,9 @@
 
 namespace WebCore {
 
-bool FontCascade::canReturnFallbackFontsForComplexText()
+bool FontCascade::canUseGlyphDisplayList(const Style::ComputedStyle&)
 {
-    return false;
-}
-
-bool FontCascade::canExpandAroundIdeographsInComplexText()
-{
-    return false;
+    return true;
 }
 
 static bool characterSequenceIsEmoji(SurrogatePairAwareTextIterator& iterator, char32_t firstCharacter, unsigned firstClusterLength)
@@ -98,8 +93,9 @@ static bool characterSequenceIsEmoji(SurrogatePairAwareTextIterator& iterator, c
     return false;
 }
 
-const Font* FontCascade::fontForCombiningCharacterSequence(StringView stringView) const
+RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView stringView) const
 {
+    Ref fonts = *this->fonts();
     auto normalizedString = normalizedNFC(stringView);
 
     // Code below relies on normalizedNFC never narrowing a 16-bit input string into an 8-bit output string.
@@ -123,14 +119,17 @@ const Font* FontCascade::fontForCombiningCharacterSequence(StringView stringView
     else if (characters[length - 1] == 0xFE0F)
         preferColoredFont = true;
 
-    RefPtr baseFont = glyphDataForCharacter(character, false, NormalVariant).font.get();
+    RefPtr baseFont = glyphDataForCharacter(character, false, FontVariant::Normal).font.get();
     if (baseFont
         && (clusterLength == length || baseFont->canRenderCombiningCharacterSequence(normalizedString.view))
         && (!preferColoredFont || baseFont->platformData().isColorBitmapFont()))
         return baseFont.get();
 
-    for (unsigned i = 0; !fallbackRangesAt(i).isNull(); ++i) {
-        RefPtr fallbackFont = fallbackRangesAt(i).fontForCharacter(character);
+    for (unsigned fallbackIndex = 0; ; ++fallbackIndex) {
+        auto& fontRanges = fallbackRangesAt(fonts, fallbackIndex);
+        if (fontRanges.isNull())
+            break;
+        RefPtr fallbackFont = fontRanges.fontForCharacter(character);
         if (!fallbackFont || fallbackFont == baseFont)
             continue;
 
@@ -138,7 +137,7 @@ const Font* FontCascade::fontForCombiningCharacterSequence(StringView stringView
             return fallbackFont.get();
     }
 
-    const auto& originalFont = fallbackRangesAt(0).fontForFirstRange();
+    const auto& originalFont = fallbackRangesAt(fonts, 0).fontForFirstRange();
     if (auto systemFallback = FontCache::forCurrentThread().systemFallbackForCharacterCluster(m_fontDescription, originalFont, IsForPlatformFont::No, preferColoredFont ? FontCache::PreferColoredFont::Yes : FontCache::PreferColoredFont::No, normalizedString.view)) {
         if (systemFallback->canRenderCombiningCharacterSequence(normalizedString.view) && (!preferColoredFont || systemFallback->platformData().isColorBitmapFont()))
             return systemFallback.get();

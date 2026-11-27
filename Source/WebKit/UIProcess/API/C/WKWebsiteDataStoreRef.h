@@ -42,6 +42,13 @@ extern "C" {
 
 typedef uint32_t WKCacheModel;
 
+enum WKThirdPartyCookieBlockingPolicy {
+    kWKThirdPartyCookieBlockingPolicyAll = 0,
+    kWKThirdPartyCookieBlockingPolicyAllOnlyOnSitesWithoutUserInteraction,
+    kWKThirdPartyCookieBlockingPolicyAllExceptPartitioned,
+};
+typedef enum WKThirdPartyCookieBlockingPolicy WKThirdPartyCookieBlockingPolicy;
+
 WK_EXPORT WKTypeID WKWebsiteDataStoreGetTypeID();
 
 WK_EXPORT WKWebsiteDataStoreRef WKWebsiteDataStoreGetDefaultDataStore();
@@ -52,6 +59,7 @@ WK_EXPORT WKHTTPCookieStoreRef WKWebsiteDataStoreGetHTTPCookieStore(WKWebsiteDat
 
 WK_EXPORT void WKWebsiteDataStoreSetServiceWorkerFetchTimeoutForTesting(WKWebsiteDataStoreRef dataStore, double seconds);
 WK_EXPORT void WKWebsiteDataStoreResetServiceWorkerFetchTimeoutForTesting(WKWebsiteDataStoreRef dataStore);
+WK_EXPORT void WKWebsiteDataStoreClearCrossOriginPreflightResultCacheForTesting(WKWebsiteDataStoreRef dataStore);
 
 WK_EXPORT void WKWebsiteDataStoreSetAllowsAnySSLCertificateForWebSocketTesting(WKWebsiteDataStoreRef dataStore, bool allows) WK_C_API_DEPRECATED;
 WK_EXPORT void WKWebsiteDataStoreTerminateNetworkProcess(WKWebsiteDataStoreRef dataStore);
@@ -110,7 +118,6 @@ typedef void (*WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecordsFuncti
 WK_EXPORT void WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecords(WKWebsiteDataStoreRef dataStoreRef, void* context, WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecordsFunction callback);
 typedef void (*WKWebsiteDataStoreStatisticsUpdateCookieBlockingFunction)(void* functionContext);
 WK_EXPORT void WKWebsiteDataStoreStatisticsUpdateCookieBlocking(WKWebsiteDataStoreRef dataStoreRef, void* context, WKWebsiteDataStoreStatisticsUpdateCookieBlockingFunction completionHandler);
-WK_EXPORT void WKWebsiteDataStoreSetStatisticsNotifyPagesWhenDataRecordsWereScanned(WKWebsiteDataStoreRef dataStoreRef, bool value);
 typedef void (*WKWebsiteDataStoreSetStatisticsIsRunningTestFunction)(void* functionContext);
 WK_EXPORT void WKWebsiteDataStoreSetResourceLoadStatisticsTimeAdvanceForTesting(WKWebsiteDataStoreRef dataStoreRef, double value, void* context, WKWebsiteDataStoreSetStatisticsIsRunningTestFunction callback);
 WK_EXPORT void WKWebsiteDataStoreSetStatisticsIsRunningTest(WKWebsiteDataStoreRef dataStoreRef, bool value, void* context, WKWebsiteDataStoreSetStatisticsIsRunningTestFunction callback);
@@ -138,7 +145,7 @@ WK_EXPORT void WKWebsiteDataStoreHasAppBoundSession(WKWebsiteDataStoreRef dataSt
 typedef void (*WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTestingFunction)(void* functionContext);
 WK_EXPORT void WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTesting(WKWebsiteDataStoreRef dataStoreRef, bool enabled, void* context, WKWebsiteDataStoreSetResourceLoadStatisticsShouldDowngradeReferrerForTestingFunction completionHandler);
 typedef void (*WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTestingFunction)(void* functionContext);
-WK_EXPORT void WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting(WKWebsiteDataStoreRef dataStoreRef, bool enabled, bool onlyOnSitesWithoutUserInteraction, void* context, WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTestingFunction completionHandler);
+WK_EXPORT void WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting(WKWebsiteDataStoreRef dataStoreRef, bool enabled, WKThirdPartyCookieBlockingPolicy, void* context, WKWebsiteDataStoreSetResourceLoadStatisticsShouldBlockThirdPartyCookiesForTestingFunction completionHandler);
 typedef void (*WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTestingFunction)(void* functionContext);
 WK_EXPORT void WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(WKWebsiteDataStoreRef dataStoreRef, bool enabled, void* context, WKWebsiteDataStoreSetResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTestingFunction completionHandler);
 typedef void (*WKWebsiteDataStoreSetResourceLoadStatisticsToSameSiteStrictCookiesForTestingFunction)(void* functionContext);
@@ -221,6 +228,18 @@ WK_EXPORT void WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess(WKWebsite
 
 typedef void (*KWebsiteDataStoreSetOriginQuotaRatioEnabledCallback)(void* functionContext);
 WK_EXPORT void WKWebsiteDataStoreSetOriginQuotaRatioEnabled(WKWebsiteDataStoreRef dataStoreRef, bool enabled, void* context, KWebsiteDataStoreSetOriginQuotaRatioEnabledCallback callback);
+
+typedef void (*KWebsiteDataStoreResetResourceMonitorThrottler)(void* functionContext);
+WK_EXPORT void WKWebsiteDataStoreResetResourceMonitorThrottler(WKWebsiteDataStoreRef dataStoreRef, void* context, KWebsiteDataStoreResetResourceMonitorThrottler callback);
+
+typedef void (*WKWebsiteDataStoreSetStorageAccessPermissionForTestingFunction)(void* functionContext);
+WK_EXPORT void WKWebsiteDataStoreSetStorageAccessPermissionForTesting(WKWebsiteDataStoreRef dataStoreRef, WKPageRef pageRef, bool granted, WKStringRef topFrame, WKStringRef subFrame, void* context, WKWebsiteDataStoreSetStorageAccessPermissionForTestingFunction completionHandler);
+
+typedef void (*WKWebsiteDataStoreSetStorageAccessForTestingFunction)(void* functionContext);
+WK_EXPORT void WKWebsiteDataStoreSetStorageAccessForTesting(WKWebsiteDataStoreRef dataStoreRef, bool blocked, void* context, WKWebsiteDataStoreSetStorageAccessForTestingFunction completionHandler);
+
+typedef void (*WKWebsiteDataStoreFlushNetworkProcessIPCCallback)(void* context);
+WK_EXPORT void WKWebsiteDataStoreFlushNetworkProcessIPC(WKWebsiteDataStoreRef dataStore, void* context, WKWebsiteDataStoreFlushNetworkProcessIPCCallback callback);
 
 #ifdef __cplusplus
 }

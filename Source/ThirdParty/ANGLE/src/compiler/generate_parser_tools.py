@@ -13,8 +13,13 @@ import subprocess
 import sys
 
 is_linux = platform.system() == 'Linux'
+is_mac = platform.system() == 'Darwin'
 is_windows = platform.system() == 'Windows'
 
+license_note = """/* Apple Note: For the avoidance of doubt, Apple elects to distribute this file under the terms of
+ * the BSD license. */
+
+"""
 
 def get_tool_path_platform(tool_name, platform):
     exe_path = os.path.join(sys.path[0], '..', '..', '..', 'tools', 'flex-bison', platform)
@@ -25,6 +30,9 @@ def get_tool_path_platform(tool_name, platform):
 def get_tool_path(tool_name):
     if is_linux:
         platform = 'linux'
+        ext = ''
+    elif is_mac:
+        platform = 'mac'
         ext = ''
     else:
         assert (is_windows)
@@ -40,7 +48,9 @@ def get_tool_file_sha1s():
         get_tool_path_platform('bison', 'linux'),
         get_tool_path_platform('flex.exe', 'windows'),
         get_tool_path_platform('bison.exe', 'windows'),
-        get_tool_path_platform('m4.exe', 'windows')
+        get_tool_path_platform('m4.exe', 'windows'),
+        get_tool_path_platform('flex', 'mac'),
+        get_tool_path_platform('bison', 'mac'),
     ]
 
     files += [
@@ -116,6 +126,15 @@ def run_bison(basename, generate_header):
 
     process = subprocess.Popen(bison_args, env=bison_env, cwd=sys.path[0])
     process.communicate()
+
+    for fn in [output_source] + ([output_header] if generate_header else []):
+        with open(fn, 'r') as output_file:
+            text = output_file.read()
+
+        with open(fn, 'w') as output_file:
+            output_file.write(license_note)
+            output_file.write(text)
+
     return process.returncode
 
 

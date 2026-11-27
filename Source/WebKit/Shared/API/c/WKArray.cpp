@@ -28,31 +28,34 @@
 
 #include "APIArray.h"
 #include "WKAPICast.h"
+#include <wtf/StdLibExtras.h>
 
 WKTypeID WKArrayGetTypeID()
 {
     return WebKit::toAPI(API::Array::APIType);
 }
 
-WKArrayRef WKArrayCreate(WKTypeRef* values, size_t numberOfValues)
+WKArrayRef WKArrayCreate(WKTypeRef* rawValues, size_t numberOfValues)
 {
+    auto values = unsafeMakeSpan(rawValues, numberOfValues);
     Vector<RefPtr<API::Object>> elements(numberOfValues, [values](size_t i) -> RefPtr<API::Object> {
         return WebKit::toImpl(values[i]);
     });
-    return WebKit::toAPI(&API::Array::create(WTFMove(elements)).leakRef());
+    return WebKit::toAPILeakingRef(API::Array::create(WTF::move(elements)));
 }
 
-WKArrayRef WKArrayCreateAdoptingValues(WKTypeRef* values, size_t numberOfValues)
+WKArrayRef WKArrayCreateAdoptingValues(WKTypeRef* rawValues, size_t numberOfValues)
 {
+    auto values = unsafeMakeSpan(rawValues, numberOfValues);
     Vector<RefPtr<API::Object>> elements(numberOfValues, [values](size_t i) {
         return adoptRef(WebKit::toImpl(values[i]));
     });
-    return WebKit::toAPI(&API::Array::create(WTFMove(elements)).leakRef());
+    return WebKit::toAPILeakingRef(API::Array::create(WTF::move(elements)));
 }
 
 WKTypeRef WKArrayGetItemAtIndex(WKArrayRef arrayRef, size_t index)
 {
-    return WebKit::toAPI(WebKit::toImpl(arrayRef)->at(index));
+    return WebKit::toAPI(protect(WebKit::toImpl(arrayRef)->at(index)).get());
 }
 
 size_t WKArrayGetSize(WKArrayRef arrayRef)

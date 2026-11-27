@@ -28,6 +28,7 @@
 
 #include "JSSubscriptionObserverCallback.h"
 #include "ScriptExecutionContext.h"
+#include "Subscriber.h"
 #include "SubscriptionObserver.h"
 
 namespace WebCore {
@@ -39,71 +40,63 @@ Ref<InternalObserverFromScript> InternalObserverFromScript::create(ScriptExecuti
     return internalObserver;
 }
 
-Ref<InternalObserverFromScript> InternalObserverFromScript::create(ScriptExecutionContext& context, SubscriptionObserver& subscription)
+Ref<InternalObserverFromScript> InternalObserverFromScript::create(ScriptExecutionContext& context, SubscriptionObserver&& subscription)
 {
-    Ref internalObserver = adoptRef(*new InternalObserverFromScript(context, subscription));
+    Ref internalObserver = adoptRef(*new InternalObserverFromScript(context, WTF::move(subscription)));
     internalObserver->suspendIfNeeded();
     return internalObserver;
 }
 
 void InternalObserverFromScript::next(JSC::JSValue value)
 {
-    if (m_next)
-        m_next->handleEvent(value);
+    if (RefPtr next = m_next)
+        next->invoke(value);
 }
 
-void InternalObserverFromScript::error(JSC::JSValue error)
+void InternalObserverFromScript::error(JSC::JSValue value)
 {
-    if (m_error) {
-        m_error->handleEvent(error);
+    if (RefPtr error = m_error) {
+        error->invoke(value);
         return;
     }
 
-    InternalObserver::error(error);
+    InternalObserver::error(value);
 }
 
 void InternalObserverFromScript::complete()
 {
-    if (m_complete)
-        m_complete->handleEvent();
+    if (RefPtr complete = m_complete)
+        complete->invoke();
 
     m_active = false;
 }
 
-void InternalObserverFromScript::visitAdditionalChildren(JSC::AbstractSlotVisitor& visitor) const
+void InternalObserverFromScript::visitAdditionalChildrenInGCThread(JSC::AbstractSlotVisitor& visitor) const
 {
-    if (m_next)
-        m_next->visitJSFunction(visitor);
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* next = m_next.get())
+        SUPPRESS_UNCOUNTED_ARG next->visitJSFunctionInGCThread(visitor);
 
-    if (m_error)
-        m_error->visitJSFunction(visitor);
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* error = m_error.get())
+        SUPPRESS_UNCOUNTED_ARG error->visitJSFunctionInGCThread(visitor);
 
-    if (m_complete)
-        m_complete->visitJSFunction(visitor);
-}
-
-void InternalObserverFromScript::visitAdditionalChildren(JSC::SlotVisitor& visitor) const
-{
-    if (m_next)
-        m_next->visitJSFunction(visitor);
-
-    if (m_error)
-        m_error->visitJSFunction(visitor);
-
-    if (m_complete)
-        m_complete->visitJSFunction(visitor);
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* complete = m_complete.get())
+        SUPPRESS_UNCOUNTED_ARG complete->visitJSFunctionInGCThread(visitor);
 }
 
 InternalObserverFromScript::InternalObserverFromScript(ScriptExecutionContext& context, RefPtr<JSSubscriptionObserverCallback> callback)
     : InternalObserver(context)
     , m_next(callback)
     , m_error(nullptr)
-    , m_complete(nullptr) { }
+    , m_complete(nullptr)
+{
+}
 
-InternalObserverFromScript::InternalObserverFromScript(ScriptExecutionContext& context, SubscriptionObserver& subscription)
+InternalObserverFromScript::InternalObserverFromScript(ScriptExecutionContext& context, SubscriptionObserver&& subscription)
     : InternalObserver(context)
-    , m_next(subscription.next)
-    , m_error(subscription.error)
-    , m_complete(subscription.complete) { }
+    , m_next(WTF::move(subscription.next))
+    , m_error(WTF::move(subscription.error))
+    , m_complete(WTF::move(subscription.complete))
+{
+}
 
 } // namespace WebCore

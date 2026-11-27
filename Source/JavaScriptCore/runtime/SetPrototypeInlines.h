@@ -25,9 +25,28 @@
 
 #pragma once
 
+#include "JSGlobalObject.h"
+#include "JSSet.h"
 #include "SetPrototype.h"
 
 namespace JSC {
+
+ALWAYS_INLINE bool setPrimordialWatchpointIsValid(VM& vm, JSSet* object)
+{
+    JSGlobalObject* globalObject = object->realm();
+
+    if (globalObject->jsSetPrototype() != object->getPrototypeDirect())
+        return false;
+
+    ASSERT(globalObject->setPrimordialPropertiesWatchpointSet().state() != ClearWatchpoint);
+    if (globalObject->setPrimordialPropertiesWatchpointSet().state() != IsWatched)
+        return false;
+
+    if (!object->hasCustomProperties())
+        return true;
+
+    return object->getDirectOffset(vm, vm.propertyNames->has) == invalidOffset && object->getDirectOffset(vm, vm.propertyNames->keys) == invalidOffset;
+}
 
 inline Structure* SetPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {

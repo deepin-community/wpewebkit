@@ -18,8 +18,10 @@
  */
 
 #include "config.h"
-#include "WebKitWebViewBackend.h"
 
+#if USE(LIBWPE)
+
+#include "WebKitWebViewBackend.h"
 #include "WebKitWebViewBackendPrivate.h"
 
 /**
@@ -117,18 +119,7 @@ struct wpe_view_backend* webkit_web_view_backend_get_wpe_backend(WebKitWebViewBa
 }
 
 namespace WTF {
-
-template <> WebKitWebViewBackend* refGPtr(WebKitWebViewBackend* ptr)
-{
-    if (ptr)
-        webkitWebViewBackendRef(ptr);
-    return ptr;
+WTF_DEFINE_GREF_TRAITS(WebKitWebViewBackend, webkitWebViewBackendRef, webkitWebViewBackendUnref)
 }
 
-template <> void derefGPtr(WebKitWebViewBackend* ptr)
-{
-    if (ptr)
-        webkitWebViewBackendUnref(ptr);
-}
-
-}
+#endif // USE(LIBWPE)

@@ -7,6 +7,7 @@
 // VulkanHelper.cpp : Helper for allocating & managing vulkan external objects.
 
 #include "test_utils/VulkanHelper.h"
+#include "common/unsafe_buffers.h"
 
 #include <vector>
 
@@ -14,7 +15,7 @@
 #include "common/debug.h"
 #include "common/system_utils.h"
 #include "common/vulkan/vulkan_icd.h"
-#include "test_utils/ANGLETest.h"
+#include "util/util_gl.h"
 #include "vulkan/vulkan_core.h"
 
 namespace angle
@@ -65,8 +66,10 @@ bool HasExtension(const std::vector<VkExtensionProperties> instanceExtensions,
 {
     for (const auto &extensionProperties : instanceExtensions)
     {
-        if (!strcmp(extensionProperties.extensionName, extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(extensionProperties.extensionName, extensionName)))
+        {
             return true;
+        }
     }
 
     return false;
@@ -76,8 +79,10 @@ bool HasExtension(const std::vector<const char *> enabledExtensions, const char 
 {
     for (const char *enabledExtension : enabledExtensions)
     {
-        if (!strcmp(enabledExtension, extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(enabledExtension, extensionName)))
+        {
             return true;
+        }
     }
 
     return false;
@@ -86,10 +91,12 @@ bool HasExtension(const std::vector<const char *> enabledExtensions, const char 
 bool HasExtension(const char *const *enabledExtensions, const char *extensionName)
 {
     size_t i = 0;
-    while (enabledExtensions[i])
+    while (ANGLE_UNSAFE_TODO(enabledExtensions[i]))
     {
-        if (!strcmp(enabledExtensions[i], extensionName))
+        if (!ANGLE_UNSAFE_TODO(strcmp(enabledExtensions[i], extensionName)))
+        {
             return true;
+        }
         i++;
     }
     return false;
@@ -103,7 +110,7 @@ uint32_t FindMemoryType(const VkPhysicalDeviceMemoryProperties &memoryProperties
     {
         ASSERT(memoryIndex < memoryProperties.memoryTypeCount);
 
-        if ((memoryProperties.memoryTypes[memoryIndex].propertyFlags &
+        if ((ANGLE_UNSAFE_TODO(memoryProperties.memoryTypes[memoryIndex]).propertyFlags &
              requiredMemoryPropertyFlags) == requiredMemoryPropertyFlags)
         {
             return static_cast<uint32_t>(memoryIndex);
@@ -149,6 +156,23 @@ void ImageMemoryBarrier(VkCommandBuffer commandBuffer,
 }
 
 }  // namespace
+
+void VulkanQueueMutex::init(EGLDisplay dpy)
+{
+    display = dpy;
+}
+
+void VulkanQueueMutex::lock()
+{
+    eglLockVulkanQueueANGLE(display);
+    ASSERT_EGL_SUCCESS();
+}
+
+void VulkanQueueMutex::unlock()
+{
+    eglUnlockVulkanQueueANGLE(display);
+    ASSERT_EGL_SUCCESS();
+}
 
 VulkanHelper::VulkanHelper() {}
 
@@ -239,9 +263,13 @@ void VulkanHelper::initialize(bool useSwiftshader, bool enableValidationLayers)
 
     ASSERT(physicalDevices.size() > 0);
 
-    VkPhysicalDeviceProperties physicalDeviceProperties;
-    ChoosePhysicalDevice(vkGetPhysicalDeviceProperties, physicalDevices, icd, 0, 0,
-                         &mPhysicalDevice, &physicalDeviceProperties);
+    VkPhysicalDeviceProperties2 physicalDeviceProperties2;
+    VkPhysicalDeviceIDProperties physicalDeviceIDProperties;
+    VkPhysicalDeviceDriverProperties driverProperties;
+    ChoosePhysicalDevice(vkGetPhysicalDeviceProperties2, physicalDevices, icd, 0, 0, nullptr,
+                         nullptr, static_cast<VkDriverId>(0), &mPhysicalDevice,
+                         &physicalDeviceProperties2, &physicalDeviceIDProperties,
+                         &driverProperties);
 
     vkGetPhysicalDeviceMemoryProperties(mPhysicalDevice, &mMemoryProperties);
 
@@ -403,6 +431,8 @@ void VulkanHelper::initializeFromANGLE()
     mGraphicsQueue = reinterpret_cast<VkQueue>(result);
     EXPECT_NE(mGraphicsQueue, static_cast<VkQueue>(VK_NULL_HANDLE));
 
+    mGraphicsQueueMutex.init(display);
+
     EXPECT_EGL_TRUE(eglQueryDeviceAttribEXT(device, EGL_VULKAN_QUEUE_FAMILIY_INDEX_ANGLE, &result));
     mGraphicsQueueFamilyIndex = static_cast<uint32_t>(result);
 
@@ -451,6 +481,22 @@ void VulkanHelper::initializeFromANGLE()
     vkGetSemaphoreZirconHandleFUCHSIA = reinterpret_cast<PFN_vkGetSemaphoreZirconHandleFUCHSIA>(
         vkGetInstanceProcAddr(mInstance, "vkGetSemaphoreZirconHandleFUCHSIA"));
     ASSERT(!mHasExternalSemaphoreFuchsia || vkGetSemaphoreZirconHandleFUCHSIA);
+
+    EGLAttrib featureCount = 0;
+    EXPECT_TRUE(eglQueryDisplayAttribANGLE(display, EGL_FEATURE_COUNT_ANGLE, &featureCount));
+    for (EGLint index = 0; index < featureCount; ++index)
+    {
+        const char *name   = eglQueryStringiANGLE(display, EGL_FEATURE_NAME_ANGLE, index);
+        const char *status = eglQueryStringiANGLE(display, EGL_FEATURE_STATUS_ANGLE, index);
+        ASSERT(name != nullptr);
+        ASSERT(status != nullptr);
+
+        if (ANGLE_UNSAFE_TODO(strcmp(name, "supportsUnifiedImageLayouts")) == 0)
+        {
+            mHasUnifiedImageLayouts = ANGLE_UNSAFE_TODO(strcmp(status, "enabled")) == 0;
+            break;
+        }
+    }
 }
 
 VkResult VulkanHelper::createImage2D(VkFormat format,
@@ -580,6 +626,7 @@ bool VulkanHelper::canCreateImageExternal(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DExternal(VkFormat format,
+                                             VkImageTiling tiling,
                                              VkImageCreateFlags createFlags,
                                              VkImageUsageFlags usageFlags,
                                              const void *imageCreateInfoPNext,
@@ -605,7 +652,7 @@ VkResult VulkanHelper::createImage2DExternal(VkFormat format,
         /* .mipLevels = */ 1,
         /* .arrayLayers = */ 1,
         /* .samples = */ VK_SAMPLE_COUNT_1_BIT,
-        /* .tiling = */ VK_IMAGE_TILING_OPTIMAL,
+        /* .tiling = */ tiling,
         /* .usage = */ usageFlags,
         /* .sharingMode = */ VK_SHARING_MODE_EXCLUSIVE,
         /* .queueFamilyIndexCount = */ 0,
@@ -685,6 +732,7 @@ bool VulkanHelper::canCreateImageOpaqueFd(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DOpaqueFd(VkFormat format,
+                                             VkImageTiling tiling,
                                              VkImageCreateFlags createFlags,
                                              VkImageUsageFlags usageFlags,
                                              const void *imageCreateInfoPNext,
@@ -693,8 +741,8 @@ VkResult VulkanHelper::createImage2DOpaqueFd(VkFormat format,
                                              VkDeviceMemory *deviceMemoryOut,
                                              VkDeviceSize *deviceMemorySizeOut)
 {
-    return createImage2DExternal(format, createFlags, usageFlags, imageCreateInfoPNext, extent,
-                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, imageOut,
+    return createImage2DExternal(format, tiling, createFlags, usageFlags, imageCreateInfoPNext,
+                                 extent, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, imageOut,
                                  deviceMemoryOut, deviceMemorySizeOut);
 }
 
@@ -726,6 +774,7 @@ bool VulkanHelper::canCreateImageZirconVmo(VkFormat format,
 }
 
 VkResult VulkanHelper::createImage2DZirconVmo(VkFormat format,
+                                              VkImageTiling tiling,
                                               VkImageCreateFlags createFlags,
                                               VkImageUsageFlags usageFlags,
                                               const void *imageCreateInfoPNext,
@@ -734,9 +783,9 @@ VkResult VulkanHelper::createImage2DZirconVmo(VkFormat format,
                                               VkDeviceMemory *deviceMemoryOut,
                                               VkDeviceSize *deviceMemorySizeOut)
 {
-    return createImage2DExternal(format, createFlags, usageFlags, imageCreateInfoPNext, extent,
-                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_ZIRCON_VMO_BIT_FUCHSIA, imageOut,
-                                 deviceMemoryOut, deviceMemorySizeOut);
+    return createImage2DExternal(format, tiling, createFlags, usageFlags, imageCreateInfoPNext,
+                                 extent, VK_EXTERNAL_MEMORY_HANDLE_TYPE_ZIRCON_VMO_BIT_FUCHSIA,
+                                 imageOut, deviceMemoryOut, deviceMemorySizeOut);
 }
 
 VkResult VulkanHelper::exportMemoryZirconVmo(VkDeviceMemory deviceMemory, zx_handle_t *vmo)
@@ -926,6 +975,7 @@ void VulkanHelper::releaseImageAndSignalSemaphore(VkImage image,
     };
     constexpr uint32_t submitCount = std::extent<decltype(submits)>();
 
+    std::unique_lock<VulkanQueueMutex> queueLock = getGraphicsQueueLock();
     const VkFence fence = VK_NULL_HANDLE;
     result              = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
     ASSERT(result == VK_SUCCESS);
@@ -955,6 +1005,7 @@ void VulkanHelper::signalSemaphore(VkSemaphore semaphore)
     };
     constexpr uint32_t submitCount = std::extent<decltype(submits)>();
 
+    std::unique_lock<VulkanQueueMutex> queueLock = getGraphicsQueueLock();
     const VkFence fence = VK_NULL_HANDLE;
     result              = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
     ASSERT(result == VK_SUCCESS);
@@ -1021,6 +1072,7 @@ void VulkanHelper::waitSemaphoreAndAcquireImage(VkImage image,
     };
     constexpr uint32_t submitCount = std::extent<decltype(submits)>();
 
+    std::unique_lock<VulkanQueueMutex> queueLock = getGraphicsQueueLock();
     const VkFence fence = VK_NULL_HANDLE;
     result              = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
     ASSERT(result == VK_SUCCESS);
@@ -1121,35 +1173,35 @@ void VulkanHelper::readPixels(VkImage srcImage,
     };
     constexpr uint32_t bufferImageCopyCount = std::extent<decltype(bufferImageCopies)>();
 
-    if (srcImageLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-    {
-        VkImageMemoryBarrier imageMemoryBarriers = {
-            /* .sType = */ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            /* .pNext = */ nullptr,
-            /* .srcAccessMask = */ VK_ACCESS_TRANSFER_WRITE_BIT,
-            /* .dstAccessMask = */ VK_ACCESS_TRANSFER_READ_BIT,
-            /* .oldLayout = */ srcImageLayout,
-            /* .newLayout = */ VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            /* .srcQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
-            /* .dstQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
-            /* .image = */ srcImage,
-            /* .subresourceRange = */
-            {
-                /* .aspectMask = */ VK_IMAGE_ASPECT_COLOR_BIT,
-                /* .baseMipLevel = */ 0,
-                /* .levelCount = */ 1,
-                /* .baseArrayLayer = */ 0,
-                /* .layerCount = */ 1,
-            },
+    const VkImageLayout dstImageLayout =
+        mHasUnifiedImageLayouts ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
-        };
-        vkCmdPipelineBarrier(commandBuffers[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                             &imageMemoryBarriers);
-        srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    }
+    // Assume the worst and issue a barrier, previous usage is unknown.
+    VkImageMemoryBarrier imageMemoryBarriers = {
+        /* .sType = */ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        /* .pNext = */ nullptr,
+        /* .srcAccessMask = */ VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
+        /* .dstAccessMask = */ VK_ACCESS_TRANSFER_READ_BIT,
+        /* .oldLayout = */ srcImageLayout,
+        /* .newLayout = */ dstImageLayout,
+        /* .srcQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
+        /* .dstQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
+        /* .image = */ srcImage,
+        /* .subresourceRange = */
+        {
+            /* .aspectMask = */ VK_IMAGE_ASPECT_COLOR_BIT,
+            /* .baseMipLevel = */ 0,
+            /* .levelCount = */ 1,
+            /* .baseArrayLayer = */ 0,
+            /* .layerCount = */ 1,
+        },
 
-    vkCmdCopyImageToBuffer(commandBuffers[0], srcImage, srcImageLayout, stagingBuffer,
+    };
+    vkCmdPipelineBarrier(commandBuffers[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &imageMemoryBarriers);
+
+    vkCmdCopyImageToBuffer(commandBuffers[0], srcImage, dstImageLayout, stagingBuffer,
                            bufferImageCopyCount, bufferImageCopies);
 
     VkMemoryBarrier memoryBarriers[] = {
@@ -1181,12 +1233,15 @@ void VulkanHelper::readPixels(VkImage srcImage,
     };
     constexpr uint32_t submitCount = std::extent<decltype(submits)>();
 
-    const VkFence fence = VK_NULL_HANDLE;
-    result              = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
-    ASSERT(result == VK_SUCCESS);
+    {
+        std::unique_lock<VulkanQueueMutex> queueLock = getGraphicsQueueLock();
+        const VkFence fence                          = VK_NULL_HANDLE;
+        result = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
+        ASSERT(result == VK_SUCCESS);
 
-    result = vkQueueWaitIdle(mGraphicsQueue);
-    ASSERT(result == VK_SUCCESS);
+        result = vkQueueWaitIdle(mGraphicsQueue);
+        ASSERT(result == VK_SUCCESS);
+    }
 
     vkFreeCommandBuffers(mDevice, mCommandPool, commandBufferCount, commandBuffers);
 
@@ -1209,7 +1264,7 @@ void VulkanHelper::readPixels(VkImage srcImage,
     result = vkInvalidateMappedMemoryRanges(mDevice, memoryRangeCount, memoryRanges);
     ASSERT(result == VK_SUCCESS);
 
-    memcpy(pixels, stagingMemory, pixelsSize);
+    ANGLE_UNSAFE_TODO(memcpy(pixels, stagingMemory, pixelsSize));
 
     vkDestroyBuffer(mDevice, stagingBuffer, nullptr);
 
@@ -1218,16 +1273,19 @@ void VulkanHelper::readPixels(VkImage srcImage,
 }
 
 void VulkanHelper::writePixels(VkImage dstImage,
-                               VkImageLayout imageLayout,
+                               VkImageLayout srcImageLayout,
                                VkFormat imageFormat,
                                VkOffset3D imageOffset,
                                VkExtent3D imageExtent,
                                const void *pixels,
                                size_t pixelsSize)
 {
-    ASSERT(imageFormat == VK_FORMAT_B8G8R8A8_UNORM || imageFormat == VK_FORMAT_R8G8B8A8_UNORM);
+    ASSERT(imageFormat == VK_FORMAT_B8G8R8A8_UNORM || imageFormat == VK_FORMAT_R8G8B8A8_UNORM ||
+           imageFormat == VK_FORMAT_R4G4B4A4_UNORM_PACK16);
     ASSERT(imageExtent.depth == 1);
-    ASSERT(pixelsSize == 4 * imageExtent.width * imageExtent.height);
+
+    uint32_t pixelSize = imageFormat == VK_FORMAT_R4G4B4A4_UNORM_PACK16 ? 2 : 4;
+    ASSERT(pixelsSize == pixelSize * imageExtent.width * imageExtent.height);
 
     VkBufferCreateInfo bufferCreateInfo = {
         /* .sType = */ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1290,7 +1348,7 @@ void VulkanHelper::writePixels(VkImage dstImage,
     result = vkInvalidateMappedMemoryRanges(mDevice, memoryRangeCount, memoryRanges);
     ASSERT(result == VK_SUCCESS);
 
-    memcpy(stagingMemory, pixels, pixelsSize);
+    ANGLE_UNSAFE_TODO(memcpy(stagingMemory, pixels, pixelsSize));
 
     vkUnmapMemory(mDevice, deviceMemory);
 
@@ -1328,34 +1386,33 @@ void VulkanHelper::writePixels(VkImage dstImage,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0 /* dependencyFlags */,
                          memoryBarrierCount, memoryBarriers, 0, nullptr, 0, nullptr);
 
-    // Memory-barrier for image to Transfer-Write.
-    if (imageLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-    {
-        VkImageMemoryBarrier imageMemoryBarriers = {
-            /* .sType = */ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            /* .pNext = */ nullptr,
-            /* .srcAccessMask = */ VK_ACCESS_NONE,
-            /* .dstAccessMask = */ VK_ACCESS_TRANSFER_WRITE_BIT,
-            /* .oldLayout = */ imageLayout,
-            /* .newLayout = */ VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            /* .srcQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
-            /* .dstQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
-            /* .image = */ dstImage,
-            /* .subresourceRange = */
-            {
-                /* .aspectMask = */ VK_IMAGE_ASPECT_COLOR_BIT,
-                /* .baseMipLevel = */ 0,
-                /* .levelCount = */ 1,
-                /* .baseArrayLayer = */ 0,
-                /* .layerCount = */ 1,
-            },
+    const VkImageLayout dstImageLayout =
+        mHasUnifiedImageLayouts ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
-        };
-        vkCmdPipelineBarrier(commandBuffers[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                             &imageMemoryBarriers);
-        imageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    }
+    // Assume the worst and issue a barrier, previous usage is unknown.
+    VkImageMemoryBarrier imageMemoryBarriers = {
+        /* .sType = */ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        /* .pNext = */ nullptr,
+        /* .srcAccessMask = */ VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
+        /* .dstAccessMask = */ VK_ACCESS_TRANSFER_WRITE_BIT,
+        /* .oldLayout = */ srcImageLayout,
+        /* .newLayout = */ dstImageLayout,
+        /* .srcQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
+        /* .dstQueueFamilyIndex = */ mGraphicsQueueFamilyIndex,
+        /* .image = */ dstImage,
+        /* .subresourceRange = */
+        {
+            /* .aspectMask = */ VK_IMAGE_ASPECT_COLOR_BIT,
+            /* .baseMipLevel = */ 0,
+            /* .levelCount = */ 1,
+            /* .baseArrayLayer = */ 0,
+            /* .layerCount = */ 1,
+        },
+
+    };
+    vkCmdPipelineBarrier(commandBuffers[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &imageMemoryBarriers);
 
     // Issue the buffer to image copy.
     VkBufferImageCopy bufferImageCopies[] = {
@@ -1377,7 +1434,7 @@ void VulkanHelper::writePixels(VkImage dstImage,
 
     constexpr uint32_t bufferImageCopyCount = std::extent<decltype(bufferImageCopies)>();
 
-    vkCmdCopyBufferToImage(commandBuffers[0], stagingBuffer, dstImage, imageLayout,
+    vkCmdCopyBufferToImage(commandBuffers[0], stagingBuffer, dstImage, dstImageLayout,
                            bufferImageCopyCount, bufferImageCopies);
 
     result = vkEndCommandBuffer(commandBuffers[0]);
@@ -1398,12 +1455,15 @@ void VulkanHelper::writePixels(VkImage dstImage,
     };
     constexpr uint32_t submitCount = std::extent<decltype(submits)>();
 
-    const VkFence fence = VK_NULL_HANDLE;
-    result              = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
-    ASSERT(result == VK_SUCCESS);
+    {
+        std::unique_lock<VulkanQueueMutex> queueLock = getGraphicsQueueLock();
+        const VkFence fence                          = VK_NULL_HANDLE;
+        result = vkQueueSubmit(mGraphicsQueue, submitCount, submits, fence);
+        ASSERT(result == VK_SUCCESS);
 
-    result = vkQueueWaitIdle(mGraphicsQueue);
-    ASSERT(result == VK_SUCCESS);
+        result = vkQueueWaitIdle(mGraphicsQueue);
+        ASSERT(result == VK_SUCCESS);
+    }
 
     vkFreeCommandBuffers(mDevice, mCommandPool, commandBufferCount, commandBuffers);
     vkDestroyBuffer(mDevice, stagingBuffer, nullptr);

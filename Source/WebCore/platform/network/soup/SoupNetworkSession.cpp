@@ -32,7 +32,6 @@
 #include "AuthenticationChallenge.h"
 #include "GUniquePtrSoup.h"
 #include "Logging.h"
-#include "SoupVersioning.h"
 #include "WebKitAutoconfigProxyResolver.h"
 #include <glib/gstdio.h>
 #include <libsoup/soup.h>
@@ -40,10 +39,14 @@
 #include <wtf/FileSystem.h>
 #include <wtf/HashSet.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/CString.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SoupNetworkSession);
 
 static CString& initialAcceptLanguages()
 {
@@ -84,8 +87,8 @@ private:
         if (!certificateData)
             return String();
 
-        auto digest = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
-        digest->addBytes(std::span { certificateData->data, certificateData->len });
+        auto digest = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
+        digest->addBytes(span(certificateData));
 
         return base64EncodeToString(digest->computeHash());
     }
@@ -100,20 +103,25 @@ SoupNetworkSession::SoupNetworkSession(PAL::SessionID sessionID)
     static const int maxConnections = 256;
     static const int maxConnectionsPerHost = 6;
 
+    // libsoup's default idle-timeout is 60s. Raise it to 115s, matching
+    // Firefox's network.http.keep-alive.timeout default, to keep connections
+    // warm for same-origin renavigation within a browsing session.
+    // Firefox flags a problem with IIS7 servers' default timeout of 120s, so
+    // the timeout chosen is a little shorter to keep a reserve for cases
+    // when the packet is lost or delayed on the route.
+    static const int idleTimeout = 115;
+
     m_soupSession = adoptGRef(soup_session_new_with_options(
         "max-conns", maxConnections,
         "max-conns-per-host", maxConnectionsPerHost,
+        "idle-timeout", idleTimeout,
         "timeout", 0,
         nullptr));
 
     soup_session_add_feature_by_type(m_soupSession.get(), SOUP_TYPE_CONTENT_SNIFFER);
     soup_session_add_feature_by_type(m_soupSession.get(), SOUP_TYPE_AUTH_NTLM);
-#if SOUP_CHECK_VERSION(2, 67, 1)
     soup_session_add_feature_by_type(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER);
-#endif
-#if SOUP_CHECK_VERSION(2, 67, 90)
     soup_session_add_feature_by_type(m_soupSession.get(), SOUP_TYPE_WEBSOCKET_EXTENSION_MANAGER);
-#endif
 
     if (!initialAcceptLanguages().isNull())
         setAcceptLanguages(initialAcceptLanguages());
@@ -139,7 +147,10 @@ SoupNetworkSession::SoupNetworkSession(PAL::SessionID sessionID)
     setupLogger();
 }
 
-SoupNetworkSession::~SoupNetworkSession() = default;
+SoupNetworkSession::~SoupNetworkSession()
+{
+    soup_session_abort(m_soupSession.get());
+}
 
 void SoupNetworkSession::setupLogger()
 {
@@ -147,11 +158,7 @@ void SoupNetworkSession::setupLogger()
     if (LogNetwork.state != WTFLogChannelState::On || soup_session_get_feature(m_soupSession.get(), SOUP_TYPE_LOGGER))
         return;
 
-#if USE(SOUP2)
-    GRefPtr<SoupLogger> logger = adoptGRef(soup_logger_new(SOUP_LOGGER_LOG_BODY, -1));
-#else
     GRefPtr<SoupLogger> logger = adoptGRef(soup_logger_new(SOUP_LOGGER_LOG_BODY));
-#endif
     soup_session_add_feature(m_soupSession.get(), SOUP_SESSION_FEATURE(logger.get()));
     soup_logger_set_printer(logger.get(), soupLogPrinter, nullptr, nullptr);
 #endif
@@ -174,7 +181,6 @@ void SoupNetworkSession::setHSTSPersistentStorage(const String& directory)
     if (m_sessionID.isEphemeral())
         return;
 
-#if SOUP_CHECK_VERSION(2, 67, 1)
     if (!FileSystem::makeAllDirectories(directory)) {
         RELEASE_LOG_ERROR(Network, "Unable to create the HSTS storage directory \"%s\". Using a memory enforcer instead.", directory.utf8().data());
         return;
@@ -185,14 +191,10 @@ void SoupNetworkSession::setHSTSPersistentStorage(const String& directory)
     GRefPtr<SoupHSTSEnforcer> enforcer = adoptGRef(soup_hsts_enforcer_db_new(dbFilename.get()));
     soup_session_remove_feature_by_type(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER);
     soup_session_add_feature(m_soupSession.get(), SOUP_SESSION_FEATURE(enforcer.get()));
-#else
-    UNUSED_PARAM(directory);
-#endif
 }
 
 void SoupNetworkSession::getHostNamesWithHSTSCache(HashSet<String>& hostNames)
 {
-#if SOUP_CHECK_VERSION(2, 67, 91)
     auto* enforcer = SOUP_HSTS_ENFORCER(soup_session_get_feature(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER));
     ASSERT(enforcer);
 
@@ -201,14 +203,10 @@ void SoupNetworkSession::getHostNamesWithHSTSCache(HashSet<String>& hostNames)
         GUniquePtr<gchar> domain(static_cast<gchar*>(iter->data));
         hostNames.add(String::fromUTF8(domain.get()));
     }
-#else
-    UNUSED_PARAM(hostNames);
-#endif
 }
 
 void SoupNetworkSession::deleteHSTSCacheForHostNames(const Vector<String>& hostNames)
 {
-#if SOUP_CHECK_VERSION(2, 67, 1)
     auto* enforcer = SOUP_HSTS_ENFORCER(soup_session_get_feature(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER));
     ASSERT(enforcer);
 
@@ -216,43 +214,29 @@ void SoupNetworkSession::deleteHSTSCacheForHostNames(const Vector<String>& hostN
         GUniquePtr<SoupHSTSPolicy> policy(soup_hsts_policy_new(hostName.utf8().data(), SOUP_HSTS_POLICY_MAX_AGE_PAST, FALSE));
         soup_hsts_enforcer_set_policy(enforcer, policy.get());
     }
-#else
-    UNUSED_PARAM(hostNames);
-#endif
 }
 
 void SoupNetworkSession::clearHSTSCache(WallTime modifiedSince)
 {
-#if SOUP_CHECK_VERSION(2, 67, 91)
     auto* enforcer = SOUP_HSTS_ENFORCER(soup_session_get_feature(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER));
     ASSERT(enforcer);
 
     GUniquePtr<GList> policies(soup_hsts_enforcer_get_policies(enforcer, FALSE));
     for (GList* iter = policies.get(); iter != nullptr; iter = iter->next) {
         GUniquePtr<SoupHSTSPolicy> policy(static_cast<SoupHSTSPolicy*>(iter->data));
-#if USE(SOUP2)
-        auto modified = soup_date_to_time_t(policy.get()->expires) - policy.get()->max_age;
-#else
         auto modified = g_date_time_to_unix(soup_hsts_policy_get_expires(policy.get())) - soup_hsts_policy_get_max_age(policy.get());
-#endif
         if (modified >= modifiedSince.secondsSinceEpoch().seconds()) {
             GUniquePtr<SoupHSTSPolicy> newPolicy(soup_hsts_policy_new(soup_hsts_policy_get_domain(policy.get()), SOUP_HSTS_POLICY_MAX_AGE_PAST, FALSE));
             soup_hsts_enforcer_set_policy(enforcer, newPolicy.get());
         }
     }
-#else
-    UNUSED_PARAM(modifiedSince);
-#endif
 }
 
-static inline bool stringIsNumeric(const char* str)
+static inline bool stringIsNumeric(const std::string_view& str)
 {
-    while (*str) {
-        if (!g_ascii_isdigit(*str))
-            return false;
-        str++;
-    }
-    return true;
+    return std::all_of(str.cbegin(), str.cend(), [](const auto c) {
+        return WTF::isASCIIDigit(c);
+    });
 }
 
 // Old versions of WebKit created this cache.
@@ -268,7 +252,8 @@ void SoupNetworkSession::clearOldSoupCache(const String& cacheDirectory)
         return;
 
     while (const char* name = g_dir_read_name(dir.get())) {
-        if (!g_str_has_prefix(name, "soup.cache") && !stringIsNumeric(name))
+        const auto nameView = std::string_view(name);
+        if (!nameView.starts_with("soup.cache") && !stringIsNumeric(nameView))
             continue;
 
         GUniquePtr<gchar> filename(g_build_filename(cachePath.data(), name, nullptr));
@@ -297,8 +282,13 @@ void SoupNetworkSession::setProxySettings(const SoupNetworkProxySettings& settin
         resolver = adoptGRef(g_simple_proxy_resolver_new(nullptr, nullptr));
         if (!m_proxySettings.defaultProxyURL.isNull())
             g_simple_proxy_resolver_set_default_proxy(G_SIMPLE_PROXY_RESOLVER(resolver.get()), m_proxySettings.defaultProxyURL.data());
-        if (m_proxySettings.ignoreHosts)
-            g_simple_proxy_resolver_set_ignore_hosts(G_SIMPLE_PROXY_RESOLVER(resolver.get()), m_proxySettings.ignoreHosts.get());
+        if (!m_proxySettings.ignoreHosts.isEmpty()) {
+            auto ignoreHosts = m_proxySettings.ignoreHosts.map([](const CString& host) {
+                return const_cast<char*>(host.data());
+            });
+            ignoreHosts.append(nullptr);
+            g_simple_proxy_resolver_set_ignore_hosts(G_SIMPLE_PROXY_RESOLVER(resolver.get()), ignoreHosts.mutableSpan().data());
+        }
         for (const auto& iter : m_proxySettings.proxyMap)
             g_simple_proxy_resolver_set_uri_proxy(G_SIMPLE_PROXY_RESOLVER(resolver.get()), iter.key.data(), iter.value.data());
         break;

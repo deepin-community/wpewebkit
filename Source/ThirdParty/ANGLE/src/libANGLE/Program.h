@@ -106,6 +106,38 @@ void LogLinkMismatch(InfoLog &infoLog,
 
 bool IsActiveInterfaceBlock(const sh::InterfaceBlock &interfaceBlock);
 
+// Header prepended to the program binary blob.  All fields are uncompressed, followed by the
+// payload.
+ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
+class ProgramBinaryHeader
+{
+  public:
+    static constexpr uint32_t kProgramBinaryMagic = 0x414E474C;  // "ANGL"
+
+    void setData(uint32_t magic, uint32_t crc, uint64_t uncompressedSize)
+    {
+        mMagic            = magic;
+        mCRC              = crc;
+        mUncompressedSize = uncompressedSize;
+    }
+
+    void getData(uint32_t *magicOut, uint32_t *crcOut, uint64_t *uncompressedSizeOut) const
+    {
+        *magicOut            = mMagic;
+        *crcOut              = mCRC;
+        *uncompressedSizeOut = mUncompressedSize;
+    }
+
+  private:
+    uint32_t mMagic;
+    uint32_t mCRC;
+    uint64_t mUncompressedSize;
+};
+ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
+
+constexpr size_t kProgramBinaryHeaderSize = sizeof(ProgramBinaryHeader);
+static_assert(kProgramBinaryHeaderSize == 16, "ProgramBinaryHeader size mismatch");
+
 // Struct used for correlating uniforms/elements of uniform arrays to handles
 ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
 struct VariableLocation
@@ -188,6 +220,12 @@ class ProgramBindings final : angle::NonCopyable
     angle::HashMap<std::string, GLuint> mBindings;
 };
 
+enum class BindLocationPolicy
+{
+    AcceptIndexing,
+    IgnoreIndexing,
+};
+
 // Uniforms and Fragment Outputs require special treatment due to array notation (e.g., "[0]")
 class ProgramAliasedBindings final : angle::NonCopyable
 {
@@ -195,7 +233,7 @@ class ProgramAliasedBindings final : angle::NonCopyable
     ProgramAliasedBindings();
     ~ProgramAliasedBindings();
 
-    void bindLocation(GLuint index, const std::string &name);
+    void bindLocation(GLuint index, const std::string &name, BindLocationPolicy policy);
     int getBindingByName(const std::string &name) const;
     int getBindingByLocation(GLuint location) const;
     template <typename T>
@@ -382,7 +420,7 @@ class Program final : public LabeledObject, public angle::Subject
     {
         // This function helps ensure the program binary is cached, even if the backend waits for
         // post-link tasks without the knowledge of the front-end.
-        if (!mIsBinaryCached && !mState.mBinaryRetrieveableHint &&
+        if (!mIsBinaryCached && !mState.mExecutable->mBinaryRetrieveableHint &&
             mState.mExecutable->mPostLinkSubTasks.empty())
         {
             cacheProgramBinaryIfNotAlready(context);
@@ -461,9 +499,9 @@ class Program final : public LabeledObject, public angle::Subject
     }
 
     // Try to resolve linking. Inlined to make sure its overhead is as low as possible.
-    void resolveLink(const Context *context)
+    ANGLE_INLINE void resolveLink(const Context *context)
     {
-        if (mLinkingState)
+        if (ANGLE_UNLIKELY(mLinkingState))
         {
             resolveLinkImpl(context);
         }
@@ -501,6 +539,7 @@ class Program final : public LabeledObject, public angle::Subject
 
     void unlink();
     void setupExecutableForLink(const Context *context);
+    void syncExecutableOnSuccessfulLink();
     void deleteSelf(const Context *context);
 
     angle::Result linkJobImpl(const Caps &caps,

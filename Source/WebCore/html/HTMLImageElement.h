@@ -23,13 +23,14 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
-#include "AttachmentAssociatedElement.h"
-#include "DecodingOptions.h"
-#include "FormAssociatedElement.h"
-#include "GraphicsTypes.h"
-#include "HTMLElement.h"
-#include "MediaQuery.h"
+#include <WebCore/ActiveDOMObject.h>
+#include <WebCore/AttachmentAssociatedElement.h>
+#include <WebCore/DecodingOptions.h>
+#include <WebCore/FormAssociatedElement.h>
+#include <WebCore/GraphicsTypes.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/MediaQuery.h>
+#include <wtf/Platform.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -41,6 +42,7 @@ class HTMLFormElement;
 class HTMLImageLoader;
 class HTMLMapElement;
 class Image;
+class SecurityOrigin;
 
 struct ImageCandidate;
 
@@ -55,11 +57,11 @@ class HTMLImageElement
 #endif
     , public FormAssociatedElement
     , public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLImageElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLImageElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLImageElement);
 public:
     static Ref<HTMLImageElement> create(Document&);
-    static Ref<HTMLImageElement> create(const QualifiedName&, Document&, HTMLFormElement* = nullptr);
+    static Ref<HTMLImageElement> create(const QualifiedName&, Document&);
     static Ref<HTMLImageElement> createForLegacyFactoryFunction(Document&, std::optional<unsigned> width, std::optional<unsigned> height);
 
     virtual ~HTMLImageElement();
@@ -67,6 +69,7 @@ public:
     // ActiveDOMObject.
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
+    USING_CAN_MAKE_WEAKPTR(HTMLElement);
 
     void formOwnerRemovedFromTree(const Node& formRoot);
 
@@ -75,47 +78,31 @@ public:
 
     WEBCORE_EXPORT unsigned naturalWidth() const;
     WEBCORE_EXPORT unsigned naturalHeight() const;
-    const URL& currentURL() const { return m_currentURL; }
+    const URL& currentURL() const LIFETIME_BOUND { return m_currentURL; }
     WEBCORE_EXPORT const AtomString& currentSrc();
 
     bool isServerMap() const;
 
-    const AtomString& altText() const;
+    const AtomString& NODELETE altText() const;
 
-    CompositeOperator compositeOperator() const { return m_compositeOperator; }
+    WEBCORE_EXPORT CachedImage* NODELETE cachedImage() const;
 
-    WEBCORE_EXPORT CachedImage* cachedImage() const;
+    void NODELETE setLoadManually(bool);
 
-    void setLoadManually(bool);
-
-    bool matchesUsemap(const AtomString&) const;
+    bool NODELETE matchesUsemap(const AtomString&) const;
     RefPtr<HTMLMapElement> associatedMapElement() const;
 
-    WEBCORE_EXPORT const AtomString& alt() const;
-
-    WEBCORE_EXPORT void setHeight(unsigned);
-
-    URL src() const;
-    void setSrc(const AtomString&);
-
-    WEBCORE_EXPORT void setCrossOrigin(const AtomString&);
     WEBCORE_EXPORT String crossOrigin() const;
-
-    WEBCORE_EXPORT void setWidth(unsigned);
-
     WEBCORE_EXPORT int x() const;
     WEBCORE_EXPORT int y() const;
-
-    WEBCORE_EXPORT bool complete() const;
-
-    void setDecoding(AtomString&&);
+    WEBCORE_EXPORT bool NODELETE complete() const;
     String decoding() const;
 
     DecodingMode decodingMode() const;
     
     WEBCORE_EXPORT void decode(Ref<DeferredPromise>&&);
 
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
     bool willRespondToMouseClickEventsWithEditability(Editability) const override;
 
     enum class IgnoreTouchCallout : bool { No, Yes };
@@ -126,18 +113,18 @@ public:
     void setAttachmentElement(Ref<HTMLAttachmentElement>&&) final;
 #endif
 
-    WEBCORE_EXPORT size_t pendingDecodePromisesCountForTesting() const;
+    WEBCORE_EXPORT size_t NODELETE pendingDecodePromisesCountForTesting() const;
 
     bool canContainRangeEndPoint() const override { return false; }
 
-    const AtomString& imageSourceURL() const override;
+    String imageSourceURL() const override;
     
 #if ENABLE(SERVICE_CONTROLS)
     bool isImageMenuEnabled() const { return m_isImageMenuEnabled; }
     void setImageMenuEnabled(bool value) { m_isImageMenuEnabled = value; }
 #endif
 
-    HTMLPictureElement* pictureElement() const;
+    HTMLPictureElement* NODELETE pictureElement() const;
     void setPictureElement(HTMLPictureElement*);
 
 #if USE(SYSTEM_PREVIEW)
@@ -151,44 +138,47 @@ public:
     void loadDeferredImage();
 
     AtomString srcsetForBindings() const;
-    void setSrcsetForBindings(const AtomString&);
 
-    bool usesSrcsetOrPicture() const;
+    bool NODELETE usesSrcsetOrPicture() const;
 
-    const AtomString& loadingForBindings() const;
-    void setLoadingForBindings(const AtomString&);
+    enum LoadingValues { Lazy, Eager };
 
     bool isLazyLoadable() const;
     static bool hasLazyLoadableAttributeValue(StringView);
+    bool hasAutoSizes() const;
+    static bool hasAutoSizesAttributeValue(StringView);
+    void scheduleAutoSizesResolution();
 
-    bool isDeferred() const;
+    bool NODELETE isDeferred() const;
+
+    static bool isSupportedImageSourceType(const String& typeAttribute);
 
     bool isDroppedImagePlaceholder() const { return m_isDroppedImagePlaceholder; }
     void setIsDroppedImagePlaceholder() { m_isDroppedImagePlaceholder = true; }
 
+    void NODELETE setIsUserAgentShadowRootResource();
+
     void evaluateDynamicMediaQueryDependencies();
 
-    void setReferrerPolicyForBindings(const AtomString&);
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const;
 
-    bool allowsOrientationOverride() const;
+    bool NODELETE allowsOrientationOverride() const;
 
     bool allowsAnimation() const;
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     WEBCORE_EXPORT void setAllowsAnimation(std::optional<bool>);
 #endif
 
-    void setFetchPriorityForBindings(const AtomString&);
     String fetchPriorityForBindings() const;
-    RequestPriority fetchPriorityHint() const;
+    RequestPriority fetchPriority() const;
 
     bool originClean(const SecurityOrigin&) const;
 
     Image* image() const;
 
 protected:
-    HTMLImageElement(const QualifiedName&, Document&, HTMLFormElement* = nullptr);
+    HTMLImageElement(const QualifiedName&, Document&);
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) override;
 
@@ -204,32 +194,33 @@ private:
     void invalidateAttributeMapping();
     void collectExtraStyleForPresentationalHints(MutableStyleProperties&) override;
 
-    Ref<Element> cloneElementWithoutAttributesAndChildren(Document& targetDocument) final;
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
 
     void didAttachRenderers() override;
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void setBestFitURLAndDPRFromImageCandidate(const ImageCandidate&);
 
     bool canStartSelection() const override;
 
-    bool isURLAttribute(const Attribute&) const override;
-    bool attributeContainsURL(const Attribute&) const override;
-    String completeURLsInAttributeValue(const URL& base, const Attribute&, ResolveURLs = ResolveURLs::Yes) const override;
-    Attribute replaceURLsInAttributeValue(const Attribute&, const HashMap<String, String>&) const override;
+    bool NODELETE isURLAttribute(const Attribute&) const override;
+    bool NODELETE attributeContainsURL(const Attribute&) const override;
+    String completeURLsInAttributeValue(const URL& base, const Attribute&, ResolveURLs = ResolveURLs::YesExcludingURLsForPrivacy) const override;
+    Attribute replaceURLsInAttributeValue(const Attribute&, const CSS::SerializationContext&) const override;
 
     bool isDraggableIgnoringAttributes() const final { return true; }
 
-    void addSubresourceAttributeURLs(ListHashSet<URL>&) const override;
-    void addCandidateSubresourceURLs(ListHashSet<URL>&) const override;
+    void addSubresourceAttributeURLs(OrderedHashSet<URL>&) const override;
+    void addCandidateSubresourceURLs(OrderedHashSet<URL>&) const override;
 
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
-    void removedFromAncestor(RemovalType, ContainerNode&) override;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
+    void removingSteps(RemovalType, ContainerNode&) override;
 
-    bool isFormListedElement() const final { return false; }
-    FormAssociatedElement* asFormAssociatedElement() final { return this; }
+    bool NODELETE isFormListedElement() const final { return false; }
+    FormAssociatedElement* NODELETE asFormAssociatedElement() final { return this; }
     HTMLImageElement& asHTMLElement() final { return *this; }
     const HTMLImageElement& asHTMLElement() const final { return *this; }
 
@@ -248,28 +239,27 @@ private:
 
     ImageCandidate bestFitSourceFromPictureElement();
 
+    std::optional<float> autoSizesLayoutWidth() const;
+
     void copyNonAttributePropertiesFromElement(const Element&) final;
 
-    float effectiveImageDevicePixelRatio() const;
-    
 #if ENABLE(SERVICE_CONTROLS)
     bool childShouldCreateRenderer(const Node&) const override;
 #endif
 
-    HTMLSourceElement* sourceElement() const;
+    HTMLSourceElement* NODELETE sourceElement() const;
     void setSourceElement(HTMLSourceElement*);
 
     IntersectionObserverData& ensureIntersectionObserverData() final;
-    IntersectionObserverData* intersectionObserverDataIfExists() final;
+    IntersectionObserverData* NODELETE intersectionObserverDataIfExists() const final;
 
-    std::unique_ptr<HTMLImageLoader> m_imageLoader;
+    const std::unique_ptr<HTMLImageLoader> m_imageLoader;
     std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;
 
     AtomString m_bestFitImageURL;
     URL m_currentURL;
     AtomString m_currentSrc;
     AtomString m_parsedUsemap;
-    CompositeOperator m_compositeOperator;
     float m_imageDevicePixelRatio;
 #if ENABLE(SERVICE_CONTROLS)
     bool m_isImageMenuEnabled { false };

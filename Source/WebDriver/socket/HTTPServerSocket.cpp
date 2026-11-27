@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "HTTPServer.h"
+
+#include "Logging.h"
 #include <wtf/text/StringBuilder.h>
 
 namespace WebDriver {
@@ -73,20 +75,37 @@ void HTTPRequestHandler::reset()
     m_parser = { };
 }
 
+static String headerValue(const Vector<String>& headers, ASCIILiteral name)
+{
+    for (const auto& header : headers) {
+        if (header.length() > name.length() && header[name.length()] == ':' && header.startsWithIgnoringASCIICase(name))
+            return header.substring(name.length() + 1).trim(isASCIIWhitespace<char16_t>);
+    }
+    return { };
+}
+
 void HTTPRequestHandler::didReceive(RemoteInspectorSocketEndpoint&, ConnectionID, Vector<uint8_t>&& data)
 {
-    switch (m_parser.parse(WTFMove(data))) {
+    switch (m_parser.parse(WTF::move(data))) {
     case HTTPParser::Phase::Complete: {
         auto message = m_parser.pullMessage();
+        auto& headers = message.requestHeaders;
+        auto result = validateRequestHeaders(headerValue(headers, "Host"_s), headerValue(headers, "Origin"_s), message.method, headerValue(headers, "Content-Type"_s));
+        if (!result) {
+            RELEASE_LOG_ERROR(WebDriverClassic, "Rejected HTTP request: %s", result.error().utf8().data());
+            sendResponse(rejectedRequestResponse(result.error()));
+            return;
+        }
+
         HTTPRequestHandler::Request request {
             message.method,
             message.path,
-            reinterpret_cast<const char*>(message.requestBody.data()),
+            reinterpret_cast<const char*>(message.requestBody.span().data()),
             static_cast<size_t>(message.requestBody.size())
         };
 
-        handleRequest(WTFMove(request), [this](HTTPRequestHandler::Response&& response) {
-            sendResponse(WTFMove(response));
+        handleRequest(WTF::move(request), [this](HTTPRequestHandler::Response&& response) {
+            sendResponse(WTF::move(response));
         });
         break;
     }
@@ -96,7 +115,7 @@ void HTTPRequestHandler::didReceive(RemoteInspectorSocketEndpoint&, ConnectionID
             "text/html; charset=utf-8",
             "<h1>Bad client</h1> Invalid HTML format"_s,
         };
-        sendResponse(WTFMove(response));
+        sendResponse(WTF::move(response));
         return;
     }
     default:
@@ -107,7 +126,7 @@ void HTTPRequestHandler::didReceive(RemoteInspectorSocketEndpoint&, ConnectionID
 void HTTPRequestHandler::sendResponse(HTTPRequestHandler::Response&& response)
 {
     auto& endpoint = RemoteInspectorSocketEndpoint::singleton();
-    endpoint.send(m_client.value(), packHTTPMessage(WTFMove(response)).utf8().span());
+    endpoint.send(m_client.value(), byteCast<uint8_t>(packHTTPMessage(WTF::move(response)).utf8().span()));
     reset();
 }
 

@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "FilterEffect.h"
+#include <WebCore/FilterEffect.h>
 
 namespace WebCore {
 
@@ -32,14 +32,16 @@ enum class MorphologyOperatorType : uint8_t {
     Dilate
 };
 
-class FEMorphology : public FilterEffect {
+class FEMorphology final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEMorphology);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEMorphology);
 public:
     WEBCORE_EXPORT static Ref<FEMorphology> create(MorphologyOperatorType, float radiusX, float radiusY, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FEMorphology&) const;
 
     MorphologyOperatorType morphologyOperator() const { return m_type; }
-    bool setMorphologyOperator(MorphologyOperatorType);
+    bool NODELETE setMorphologyOperator(MorphologyOperatorType);
 
     float radiusX() const { return m_radiusX; }
     bool setRadiusX(float);
@@ -54,8 +56,10 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
-    bool resultIsAlphaImage(const FilterImageVector& inputs) const override;
+    bool resultIsAlphaImage(std::span<const Ref<FilterImage>> inputs) const override;
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;

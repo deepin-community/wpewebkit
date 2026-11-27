@@ -27,15 +27,7 @@
 
 #include <gst/gst.h>
 #include <wtf/HashMap.h>
-
-namespace WebCore {
-class GStreamerPeerConnectionBackend;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::GStreamerPeerConnectionBackend> : std::true_type { };
-}
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -52,22 +44,19 @@ class RealtimeMediaSourceGStreamer;
 class RealtimeOutgoingAudioSourceGStreamer;
 class RealtimeOutgoingVideoSourceGStreamer;
 
-struct GStreamerIceCandidate {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
-    unsigned sdpMLineIndex;
-    String candidate;
-};
-
 class GStreamerPeerConnectionBackend final : public PeerConnectionBackend {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerPeerConnectionBackend);
 public:
-    explicit GStreamerPeerConnectionBackend(RTCPeerConnection&);
+    using UDPPortsRange = std::optional<std::pair<int, int>>;
+    explicit GStreamerPeerConnectionBackend(RTCPeerConnection&, UDPPortsRange&&);
     ~GStreamerPeerConnectionBackend();
 
     GStreamerRtpSenderBackend& backendFromRTPSender(RTCRtpSender&);
-    RefPtr<RTCRtpSender> findExistingSender(const Vector<RefPtr<RTCRtpTransceiver>>&, GStreamerRtpSenderBackend&);
+
+    void dispatchSenderBitrateRequest(const GRefPtr<GstWebRTCDTLSTransport>&, uint32_t bitrate);
 
 private:
+    void prepareForClose() final;
     void close() final;
     void doCreateOffer(RTCOfferOptions&&) final;
     void doCreateAnswer(RTCAnswerOptions&&) final;
@@ -82,7 +71,6 @@ private:
     void getStats(RTCRtpSender&, Ref<DeferredPromise>&&) final;
     void getStats(RTCRtpReceiver&, Ref<DeferredPromise>&&) final;
 
-    void emulatePlatformEvent(const String&) final { }
     void applyRotationForOutgoingVideoSources() final;
 
     void gatherDecoderImplementationName(Function<void(String&&)>&&) final;
@@ -91,9 +79,14 @@ private:
 
     std::optional<bool> canTrickleIceCandidates() const final;
 
+    void startGatheringStatLogs(Function<void(String&&)>&&) final;
+    void stopGatheringStatLogs() final;
+    void provideStatLogs(String&&);
+    friend class RtcEventLogOutput;
+
     friend class GStreamerMediaEndpoint;
     friend class GStreamerRtpSenderBackend;
-    RTCPeerConnection& connection() { return m_peerConnection; }
+    RTCPeerConnection& connection();
 
     void getStatsSucceeded(const DeferredPromise&, Ref<RTCStatsReport>&&);
 
@@ -103,19 +96,20 @@ private:
     ExceptionOr<Ref<RTCRtpTransceiver>> addTransceiver(const String&, const RTCRtpTransceiverInit&, IgnoreNegotiationNeededFlag) final;
     ExceptionOr<Ref<RTCRtpTransceiver>> addTransceiver(Ref<MediaStreamTrack>&&, const RTCRtpTransceiverInit&) final;
 
-    GStreamerRtpSenderBackend::Source createLinkedSourceForTrack(MediaStreamTrack&);
+    GStreamerRtpSenderBackend::Source createSourceForTrack(MediaStreamTrack&);
 
-    RTCRtpTransceiver* existingTransceiver(WTF::Function<bool(GStreamerRtpTransceiverBackend&)>&&);
-    RTCRtpTransceiver& newRemoteTransceiver(std::unique_ptr<GStreamerRtpTransceiverBackend>&&, RealtimeMediaSource::Type, String&&);
+    RefPtr<RTCRtpTransceiver> existingTransceiver(WTF::Function<bool(GStreamerRtpTransceiverBackend&)>&&);
+    Ref<RTCRtpTransceiver> addInternalTransceiver(UniqueRef<GStreamerRtpTransceiverBackend>&&, RealtimeMediaSource::Type, String&&);
+    void removeTransceiver(const RTCRtpTransceiver&);
 
-    void collectTransceivers() final;
+    void collectTransceivers(Vector<Ref<RTCRtpTransceiver>>&&) final;
 
     bool isLocalDescriptionSet() const final { return m_isLocalDescriptionSet; }
 
     template<typename T>
     ExceptionOr<Ref<RTCRtpTransceiver>> addTransceiverFromTrackOrKind(T&& trackOrKind, const RTCRtpTransceiverInit&, IgnoreNegotiationNeededFlag);
 
-    Ref<RTCRtpReceiver> createReceiver(std::unique_ptr<GStreamerRtpReceiverBackend>&&, const String& trackKind, const String& trackId);
+    Ref<RTCRtpReceiver> createReceiver(UniqueRef<GStreamerRtpReceiverBackend>&&, const String& trackKind, const String& trackId);
 
     void suspend() final;
     void resume() final;
@@ -123,13 +117,20 @@ private:
     void setReconfiguring(bool isReconfiguring) { m_isReconfiguring = isReconfiguring; }
     bool isReconfiguring() const { return m_isReconfiguring; }
 
+    void trackWasReplaced(const String& previousId, const String& newId);
+
     void tearDown();
+
+    UDPPortsRange udpPortsRange() const { return m_udpPortsRange; }
+    UDPPortsRange m_udpPortsRange;
 
     Ref<GStreamerMediaEndpoint> m_endpoint;
     bool m_isLocalDescriptionSet { false };
     bool m_isRemoteDescriptionSet { false };
 
     bool m_isReconfiguring { false };
+
+    Function<void(String&&)> m_rtcStatsLogCallback;
 };
 
 } // namespace WebCore

@@ -32,6 +32,7 @@
 #endif
 #include <wtf/Forward.h>
 #include <wtf/RetainPtr.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 
@@ -52,19 +53,21 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     explicit SendCVPixelBuffer(const RetainPtr<CVPixelBufferRef>& s0)
-        : m_arguments(s0)
+        : m_s0(s0)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        SUPPRESS_FORWARD_DECL_ARG encoder << m_s0;
     }
 
 private:
-    std::tuple<const RetainPtr<CVPixelBufferRef>&> m_arguments;
+    SUPPRESS_FORWARD_DECL_MEMBER const RetainPtr<CVPixelBufferRef>& m_s0;
 };
 #endif
 
@@ -77,19 +80,50 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithCVPixelBuffer_ReceiveCVPixelBufferReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<RetainPtr<CVPixelBufferRef>>;
     using Reply = CompletionHandler<void(RetainPtr<CVPixelBufferRef>&&)>;
     using Promise = WTF::NativePromise<RetainPtr<CVPixelBufferRef>, IPC::Error>;
-    auto&& arguments()
+    ReceiveCVPixelBuffer()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
+};
+#endif
+
+#if USE(AVFOUNDATION)
+class ReceiveCVPixelBufferReply {
+public:
+    using Arguments = std::tuple<RetainPtr<CVPixelBufferRef>>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithCVPixelBuffer_ReceiveCVPixelBufferReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    explicit ReceiveCVPixelBufferReply(const RetainPtr<CVPixelBufferRef>& r0)
+        : m_r0(r0)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        SUPPRESS_FORWARD_DECL_ARG encoder << m_r0;
+    }
+
+private:
+    SUPPRESS_FORWARD_DECL_MEMBER const RetainPtr<CVPixelBufferRef>& m_r0;
 };
 #endif
 

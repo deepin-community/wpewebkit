@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2004-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,19 +26,14 @@
 
 #pragma once
 
-#include "Color.h"
-#include "DecodingOptions.h"
-#include "FloatRect.h"
-#include "FloatSize.h"
-#include "GraphicsTypes.h"
-#include "ImageAdapter.h"
-#include "ImageOrientation.h"
-#include "ImagePaintingOptions.h"
-#include "ImageTypes.h"
-#include "NativeImage.h"
-#include "Timer.h"
-#include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
+#include <WebCore/DecodingOptions.h>
+#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/FloatRect.h>
+#include <WebCore/ImageAdapter.h>
+#include <WebCore/ImageOrientation.h>
+#include <WebCore/ImagePaintingOptions.h>
+#include <WebCore/ImageTypes.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -46,17 +41,21 @@
 namespace WebCore {
 
 class AffineTransform;
+class Document;
 class FloatPoint;
 class FloatSize;
-class GraphicsContext;
 class FragmentedSharedBuffer;
+class GraphicsContext;
+class NativeImage;
 class ShareableBitmap;
-struct Length;
+class Timer;
+
+enum class CompositeOperator : uint8_t;
 
 // This class gets notified when an image creates or destroys decoded frames and when it advances animation frames.
 class ImageObserver;
 
-class Image : public RefCounted<Image>, public CanMakeWeakPtr<Image> {
+class Image : public RefCountedAndCanMakeWeakPtr<Image> {
     friend class CachedSubimage;
     friend class GraphicsContext;
 public:
@@ -65,24 +64,26 @@ public:
     WEBCORE_EXPORT static RefPtr<Image> create(ImageObserver&);
     WEBCORE_EXPORT static std::optional<Ref<Image>> create(RefPtr<ShareableBitmap>&&);
     WEBCORE_EXPORT static bool supportsType(const String&);
-    static bool isPDFResource(const String& mimeType, const URL&);
 
     virtual bool isBitmapImage() const { return false; }
     virtual bool isGeneratedImage() const { return false; }
     virtual bool isCrossfadeGeneratedImage() const { return false; }
     virtual bool isNamedImageGeneratedImage() const { return false; }
     virtual bool isGradientImage() const { return false; }
-    virtual bool isSVGImage() const { return false; }
-    virtual bool isSVGImageForContainer() const { return false; }
+    virtual bool NODELETE isSVGImage() const { return false; }
+    virtual bool NODELETE isSVGImageForContainer() const { return false; }
     virtual bool isSVGResourceImage() const { return false; }
     virtual bool isPDFDocumentImage() const { return false; }
     virtual bool isCustomPaintImage() const { return false; }
 
-    bool drawsSVGImage() const { return isSVGImage() || isSVGImageForContainer(); }
+    virtual void subresourcesAreFinished(Document*, CompletionHandler<void()>&&);
+
+    bool NODELETE drawsSVGImage() const { return isSVGImage() || isSVGImageForContainer(); }
 
     virtual unsigned frameCount() const { return 1; }
 
     virtual bool currentFrameKnownToBeOpaque() const = 0;
+    virtual bool currentFrameIsComplete() const = 0;
     virtual bool isAnimated() const { return false; }
 
     // Derived classes should override this if their rendering could leak
@@ -95,12 +96,16 @@ public:
 
     virtual void setContainerSize(const FloatSize&) { }
     virtual bool usesContainerSize() const { return false; }
+    virtual bool hasIntrinsicWidth() const { return true; }
+    virtual bool hasIntrinsicHeight() const { return true; }
+    // FIXME: hasRelativeWidth/Height should be deduplicated with hasIntrinsicWidth/Height.
     virtual bool hasRelativeWidth() const { return false; }
     virtual bool hasRelativeHeight() const { return false; }
-    virtual void computeIntrinsicDimensions(Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio);
+    virtual void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio);
+    virtual bool hasNaturalAspectRatio() const { return true; }
 
     virtual FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const = 0;
-    virtual FloatSize sourceSize(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const { return size(orientation); }
+    virtual FloatSize sourceSize(ImageOrientation = ImageOrientation::Orientation::FromImage) const;
     virtual bool hasDensityCorrectedSize() const { return false; }
     FloatRect rect() const { return FloatRect(FloatPoint(), size()); }
     float width() const { return size().width(); }
@@ -109,7 +114,11 @@ public:
     virtual ImageOrientation orientation() const { return ImageOrientation::Orientation::FromImage; }
 
     WEBCORE_EXPORT EncodedDataStatus setData(RefPtr<FragmentedSharedBuffer>&& data, bool allDataReceived);
-    virtual EncodedDataStatus dataChanged(bool /*allDataReceived*/) { return EncodedDataStatus::Unknown; }
+    virtual EncodedDataStatus dataChanged(bool /* allDataReceived */) { return EncodedDataStatus::Unknown; }
+
+    // Can be called after final setData() to replace encoded data with an identical copy of the
+    // data (e.g. to replace a dirty copy of the data with a clean copy of the data).
+    bool tryReplaceData(Ref<FragmentedSharedBuffer>&& data);
 
     virtual String uti() const { return String(); } // null string if unknown
     virtual String filenameExtension() const { return String(); } // null string if unknown
@@ -121,6 +130,7 @@ public:
     const FragmentedSharedBuffer* data() const { return m_encodedImageData.get(); }
 
     virtual DestinationColorSpace colorSpace();
+    virtual bool hasHDRContent() const { return false; }
 
     // Animation begins whenever someone draws the image, so startAnimation() is not normally called.
     // It will automatically pause once all observers no longer want to render the image anywhere.
@@ -129,15 +139,15 @@ public:
     virtual void stopAnimation() {}
     virtual void resetAnimation() {}
     virtual bool isAnimating() const { return false; }
-    bool animationPending() const { return m_animationStartTimer && m_animationStartTimer->isActive(); }
+    WEBCORE_EXPORT bool NODELETE animationPending() const;
     std::optional<bool> allowsAnimation() const { return m_allowsAnimation; }
     void setAllowsAnimation(std::optional<bool> allowsAnimation) { m_allowsAnimation = allowsAnimation; }
     static bool systemAllowsAnimationControls() { return gSystemAllowsAnimationControls; }
-    WEBCORE_EXPORT static void setSystemAllowsAnimationControls(bool allowsControls);
+    WEBCORE_EXPORT static void NODELETE setSystemAllowsAnimationControls(bool allowsControls);
 
     // Typically the CachedImage that owns us.
-    RefPtr<ImageObserver> imageObserver() const;
-    void setImageObserver(RefPtr<ImageObserver>&&);
+    RefPtr<ImageObserver> NODELETE imageObserver() const;
+    void NODELETE setImageObserver(RefPtr<ImageObserver>&&);
 
     WEBCORE_EXPORT ImageAdapter& adapter();
     void invalidateAdapter();
@@ -148,10 +158,10 @@ public:
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
-    virtual RefPtr<NativeImage> nativeImage(const DestinationColorSpace& = DestinationColorSpace::SRGB()) { return nullptr; }
-    virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned) { return nativeImage(); }
-    virtual RefPtr<NativeImage> currentNativeImage() { return nativeImage(); }
-    virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation = ImageOrientation::Orientation::FromImage) { return currentNativeImage(); }
+    virtual RefPtr<NativeImage> nativeImage(const DestinationColorSpace& = DestinationColorSpace::SRGB());
+    virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned);
+    virtual RefPtr<NativeImage> currentNativeImage();
+    virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation = ImageOrientation::Orientation::FromImage);
 
     virtual void drawPattern(GraphicsContext&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { });
 
@@ -159,11 +169,15 @@ public:
     virtual bool hasSolidColor() { return false; }
 #endif
 #if ENABLE(QUICKLOOK_FULLSCREEN)
-    virtual bool shouldUseQuickLookForFullscreen() const { return false; }
+    virtual bool isPanorama() const { return false; }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
     virtual bool isSpatial() const { return false; }
+#endif
+
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    virtual bool isMaybePanoramic() const { return false; }
 #endif
 
     virtual void dump(WTF::TextStream&) const;
@@ -182,7 +196,10 @@ protected:
     ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, ImagePaintingOptions = { });
 
     // Supporting tiled drawing
-    virtual std::optional<Color> singlePixelSolidColor() const { return std::nullopt; }
+    virtual std::optional<Color> singlePixelSolidColor() const;
+
+    virtual bool canReplaceData() const { return false; }
+    virtual void dataReplaced() { }
 
 private:
     RefPtr<FragmentedSharedBuffer> m_encodedImageData;
@@ -192,10 +209,10 @@ private:
     // A value of true or false will override the default Page::imageAnimationEnabled state.
     std::optional<bool> m_allowsAnimation { std::nullopt };
     std::unique_ptr<Timer> m_animationStartTimer;
-    static bool gSystemAllowsAnimationControls;
+    WEBCORE_EXPORT static bool gSystemAllowsAnimationControls;
 };
 
-WTF::TextStream& operator<<(WTF::TextStream&, const Image&);
+WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const Image&);
 
 } // namespace WebCore
 

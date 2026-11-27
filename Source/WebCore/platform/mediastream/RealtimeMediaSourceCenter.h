@@ -32,11 +32,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
 #if ENABLE(MEDIA_STREAM)
 
-#include "ExceptionOr.h"
-#include "MediaStreamRequest.h"
-#include "RealtimeMediaSource.h"
+#include <WebCore/MediaStreamRequest.h>
+#include <WebCore/RealtimeMediaSource.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Function.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
@@ -48,15 +49,6 @@
 #endif
 
 namespace WebCore {
-class RealtimeMediaSourceCenterObserver;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::RealtimeMediaSourceCenterObserver> : std::true_type { };
-}
-
-namespace WebCore {
 
 class CaptureDevice;
 class CaptureDeviceManager;
@@ -65,7 +57,7 @@ class TrackSourceInfo;
 
 struct MediaConstraints;
 
-class WEBCORE_EXPORT RealtimeMediaSourceCenterObserver : public CanMakeWeakPtr<RealtimeMediaSourceCenterObserver> {
+class WEBCORE_EXPORT RealtimeMediaSourceCenterObserver : public AbstractRefCountedAndCanMakeWeakPtr<RealtimeMediaSourceCenterObserver> {
 public:
     virtual ~RealtimeMediaSourceCenterObserver();
 
@@ -73,15 +65,18 @@ public:
     virtual void deviceWillBeRemoved(const String& persistentId) = 0;
 };
 
-class WEBCORE_EXPORT RealtimeMediaSourceCenter : public ThreadSafeRefCounted<RealtimeMediaSourceCenter, WTF::DestructionThread::MainRunLoop> {
+class WEBCORE_EXPORT RealtimeMediaSourceCenter : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RealtimeMediaSourceCenter, WTF::DestructionThread::MainRunLoop> {
 public:
     ~RealtimeMediaSourceCenter();
 
     WEBCORE_EXPORT static RealtimeMediaSourceCenter& singleton();
 
-    using ValidConstraintsHandler = Function<void(Vector<CaptureDevice>&& audioDeviceUIDs, Vector<CaptureDevice>&& videoDeviceUIDs)>;
-    using InvalidConstraintsHandler = Function<void(MediaConstraintType)>;
-    WEBCORE_EXPORT void validateRequestConstraints(ValidConstraintsHandler&&, InvalidConstraintsHandler&&, const MediaStreamRequest&, MediaDeviceHashSalts&&);
+    struct ValidDevices {
+        Vector<CaptureDevice> audioDevices;
+        Vector<CaptureDevice> videoDevices;
+    };
+    using ValidateHandler = CompletionHandler<void(Expected<ValidDevices, MediaConstraintType>&&)>;
+    WEBCORE_EXPORT void validateRequestConstraints(ValidateHandler&&, const MediaStreamRequest&, MediaDeviceHashSalts&&);
 
     using NewMediaStreamHandler = Function<void(Expected<Ref<MediaStreamPrivate>, CaptureSourceError>&&)>;
     void createMediaStream(Ref<const Logger>&&, NewMediaStreamHandler&&, MediaDeviceHashSalts&&, CaptureDevice&& audioDevice, CaptureDevice&& videoDevice, const MediaStreamRequest&);
@@ -90,16 +85,16 @@ public:
     WEBCORE_EXPORT std::optional<RealtimeMediaSourceCapabilities> getCapabilities(const CaptureDevice&);
 
     WEBCORE_EXPORT AudioCaptureFactory& audioCaptureFactory();
-    WEBCORE_EXPORT void setAudioCaptureFactory(AudioCaptureFactory&);
-    WEBCORE_EXPORT void unsetAudioCaptureFactory(AudioCaptureFactory&);
+    WEBCORE_EXPORT void NODELETE setAudioCaptureFactory(AudioCaptureFactory&);
+    WEBCORE_EXPORT void NODELETE unsetAudioCaptureFactory(AudioCaptureFactory&);
 
-    WEBCORE_EXPORT VideoCaptureFactory& videoCaptureFactory();
-    WEBCORE_EXPORT void setVideoCaptureFactory(VideoCaptureFactory&);
-    WEBCORE_EXPORT void unsetVideoCaptureFactory(VideoCaptureFactory&);
+    WEBCORE_EXPORT VideoCaptureFactory& NODELETE videoCaptureFactory();
+    WEBCORE_EXPORT void NODELETE setVideoCaptureFactory(VideoCaptureFactory&);
+    WEBCORE_EXPORT void NODELETE unsetVideoCaptureFactory(VideoCaptureFactory&);
 
-    WEBCORE_EXPORT DisplayCaptureFactory& displayCaptureFactory();
-    WEBCORE_EXPORT void setDisplayCaptureFactory(DisplayCaptureFactory&);
-    WEBCORE_EXPORT void unsetDisplayCaptureFactory(DisplayCaptureFactory&);
+    WEBCORE_EXPORT DisplayCaptureFactory& NODELETE displayCaptureFactory();
+    WEBCORE_EXPORT void NODELETE setDisplayCaptureFactory(DisplayCaptureFactory&);
+    WEBCORE_EXPORT void NODELETE unsetDisplayCaptureFactory(DisplayCaptureFactory&);
 
     WEBCORE_EXPORT static String hashStringWithSalt(const String& id, const String& hashSalt);
 
@@ -112,7 +107,7 @@ public:
     WEBCORE_EXPORT static bool shouldInterruptAudioOnPageVisibilityChange();
 
 #if ENABLE(APP_PRIVACY_REPORT)
-    void setIdentity(OSObjectPtr<tcc_identity_t>&& identity) { m_identity = WTFMove(identity); }
+    void setIdentity(OSObjectPtr<tcc_identity_t>&& identity) { m_identity = WTF::move(identity); }
     OSObjectPtr<tcc_identity_t> identity() const { return m_identity; }
     bool hasIdentity() const { return !!m_identity; }
 #endif
@@ -122,13 +117,15 @@ public:
     void setCurrentMediaEnvironment(String&&);
 #endif
 
+    Expected<ValidDevices, MediaConstraintType> validateRequestConstraintsAfterEnumeration(const MediaStreamRequest&, const MediaDeviceHashSalts&);
+
 private:
     RealtimeMediaSourceCenter();
     friend class NeverDestroyed<RealtimeMediaSourceCenter>;
 
     AudioCaptureFactory& defaultAudioCaptureFactory();
-    VideoCaptureFactory& defaultVideoCaptureFactory();
-    DisplayCaptureFactory& defaultDisplayCaptureFactory();
+    VideoCaptureFactory& NODELETE defaultVideoCaptureFactory();
+    DisplayCaptureFactory& NODELETE defaultDisplayCaptureFactory();
 
     struct DeviceInfo {
         double fitnessScore;
@@ -137,7 +134,6 @@ private:
 
     void getDisplayMediaDevices(const MediaStreamRequest&, MediaDeviceHashSalts&&, Vector<DeviceInfo>&, MediaConstraintType&);
     void getUserMediaDevices(const MediaStreamRequest&, MediaDeviceHashSalts&&, Vector<DeviceInfo>& audioDevices, Vector<DeviceInfo>& videoDevices, MediaConstraintType&);
-    void validateRequestConstraintsAfterEnumeration(ValidConstraintsHandler&&, InvalidConstraintsHandler&&, const MediaStreamRequest&, MediaDeviceHashSalts&&);
     void enumerateDevices(bool shouldEnumerateCamera, bool shouldEnumerateDisplay, bool shouldEnumerateMicrophone, bool shouldEnumerateSpeakers, CompletionHandler<void()>&&);
 
     RunLoop::Timer m_debounceTimer;
@@ -149,7 +145,6 @@ private:
     VideoCaptureFactory* m_videoCaptureFactoryOverride { nullptr };
     DisplayCaptureFactory* m_displayCaptureFactoryOverride { nullptr };
 
-    bool m_shouldInterruptAudioOnPageVisibilityChange { false };
 
 #if ENABLE(APP_PRIVACY_REPORT)
     OSObjectPtr<tcc_identity_t> m_identity;

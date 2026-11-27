@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "File.h"
-#include "SharedBuffer.h"
+#include <WebCore/File.h>
+#include <WebCore/SharedBuffer.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -52,4 +52,4 @@ struct ShareDataWithParsedURL {
     ShareDataOriginator originator;
 };
     
-}
+} // namespace WebCore

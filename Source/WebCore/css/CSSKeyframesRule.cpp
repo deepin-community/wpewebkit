@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +27,9 @@
 #include "CSSKeyframesRule.h"
 
 #include "CSSKeyframeRule.h"
+#include "CSSMarkup.h"
 #include "CSSParser.h"
+#include "CSSPropertyParserConsumer+Animations.h"
 #include "CSSRuleList.h"
 #include "CSSStyleSheet.h"
 #include "Document.h"
@@ -69,21 +71,26 @@ void StyleRuleKeyframes::parserAppendKeyframe(RefPtr<StyleRuleKeyframe>&& keyfra
 
 void StyleRuleKeyframes::wrapperAppendKeyframe(Ref<StyleRuleKeyframe>&& keyframe)
 {
-    m_keyframes.append(WTFMove(keyframe));
+    m_keyframes.append(WTF::move(keyframe));
 }
 
 void StyleRuleKeyframes::wrapperRemoveKeyframe(unsigned index)
 {
-    m_keyframes.remove(index);
+    m_keyframes.removeAt(index);
 }
 
 std::optional<size_t> StyleRuleKeyframes::findKeyframeIndex(const String& key) const
 {
-    auto keys = CSSParser::parseKeyframeKeyList(key);
+    auto keys = CSSPropertyParserHelpers::parseKeyframeKeyList(key, strictCSSParserContext());
     if (keys.isEmpty())
         return std::nullopt;
+
+    auto convertedKeys = keys.map([](auto& pair) -> StyleRuleKeyframe::Key {
+        return { pair.first, pair.second };
+    });
+
     for (auto i = m_keyframes.size(); i--; ) {
-        if (m_keyframes[i]->keys() == keys)
+        if (m_keyframes[i]->keys() == convertedKeys)
             return i;
     }
     return std::nullopt;
@@ -115,21 +122,20 @@ void CSSKeyframesRule::setName(const AtomString& name)
 {
     CSSStyleSheet::RuleMutationScope mutationScope(this);
 
-    m_keyframesRule->setName(name);
+    protect(m_keyframesRule)->setName(name);
 }
 
 void CSSKeyframesRule::appendRule(const String& ruleText)
 {
     ASSERT(m_childRuleCSSOMWrappers.size() == m_keyframesRule->keyframes().size());
 
-    CSSParser parser(parserContext());
-    RefPtr<StyleRuleKeyframe> keyframe = parser.parseKeyframeRule(ruleText);
+    auto keyframe = CSSParser::parseKeyframeRule(ruleText, parserContext());
     if (!keyframe)
         return;
 
     CSSStyleSheet::RuleMutationScope mutationScope(this);
 
-    m_keyframesRule->wrapperAppendKeyframe(keyframe.releaseNonNull());
+    protect(m_keyframesRule)->wrapperAppendKeyframe(keyframe.releaseNonNull());
 
     m_childRuleCSSOMWrappers.grow(length());
 }
@@ -138,31 +144,35 @@ void CSSKeyframesRule::deleteRule(const String& s)
 {
     ASSERT(m_childRuleCSSOMWrappers.size() == m_keyframesRule->keyframes().size());
 
-    auto i = m_keyframesRule->findKeyframeIndex(s);
+    auto i = protect(m_keyframesRule)->findKeyframeIndex(s);
     if (!i)
         return;
 
     CSSStyleSheet::RuleMutationScope mutationScope(this);
 
-    m_keyframesRule->wrapperRemoveKeyframe(*i);
+    protect(m_keyframesRule)->wrapperRemoveKeyframe(*i);
 
     if (m_childRuleCSSOMWrappers[*i])
         m_childRuleCSSOMWrappers[*i]->setParentRule(nullptr);
-    m_childRuleCSSOMWrappers.remove(*i);
+    m_childRuleCSSOMWrappers.removeAt(*i);
 }
 
 CSSKeyframeRule* CSSKeyframesRule::findRule(const String& s)
 {
-    auto i = m_keyframesRule->findKeyframeIndex(s);
+    auto i = protect(m_keyframesRule)->findKeyframeIndex(s);
     return i ? item(*i) : nullptr;
 }
 
 String CSSKeyframesRule::cssText() const
 {
     StringBuilder result;
-    result.append("@keyframes "_s, name(), " { \n"_s);
+
+    result.append("@keyframes "_s);
+    serializeIdentifier(result, name());
+    result.append(" { \n"_s);
+
     for (unsigned i = 0, size = length(); i < size; ++i)
-        result.append("  "_s, m_keyframesRule->keyframes()[i]->cssText(), '\n');
+        result.append("  "_s, protect(m_keyframesRule)->keyframes()[i]->cssText(), '\n');
     result.append('}');
     return result.toString();
 }
@@ -186,7 +196,7 @@ CSSKeyframeRule* CSSKeyframesRule::item(unsigned index) const
 CSSRuleList& CSSKeyframesRule::cssRules()
 {
     if (!m_ruleListCSSOMWrapper)
-        m_ruleListCSSOMWrapper = makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSKeyframesRule>>(*this);
+        lazyInitialize(m_ruleListCSSOMWrapper, makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSKeyframesRule>>(*this));
     return *m_ruleListCSSOMWrapper;
 }
 

@@ -42,9 +42,9 @@ class TextEncoding;
 PAL_EXPORT std::unique_ptr<TextCodec> newTextCodec(const TextEncoding&);
 
 // Only TextEncoding should use the following functions directly.
-ASCIILiteral atomCanonicalTextEncodingName(const char* alias);
+ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral alias);
 ASCIILiteral atomCanonicalTextEncodingName(StringView);
-bool noExtendedTextEncodingNameUsed();
+bool NODELETE noExtendedTextEncodingNameUsed();
 bool isJapaneseEncoding(ASCIILiteral canonicalEncodingName);
 bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName);
 

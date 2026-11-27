@@ -27,9 +27,9 @@
 #include "ArgumentCoders.h"
 #include "Connection.h"
 #include "MessageNames.h"
-#include <WebCore/ImageData.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 
@@ -49,19 +49,21 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     explicit SendImageData(const RefPtr<WebCore::ImageData>& s0)
-        : m_arguments(s0)
+        : m_s0(s0)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        SUPPRESS_FORWARD_DECL_ARG encoder << m_s0;
     }
 
 private:
-    std::tuple<const RefPtr<WebCore::ImageData>&> m_arguments;
+    SUPPRESS_FORWARD_DECL_MEMBER const RefPtr<WebCore::ImageData>& m_s0;
 };
 
 class ReceiveImageData {
@@ -72,19 +74,48 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithImageData_ReceiveImageDataReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<RefPtr<WebCore::ImageData>>;
     using Reply = CompletionHandler<void(RefPtr<WebCore::ImageData>&&)>;
     using Promise = WTF::NativePromise<RefPtr<WebCore::ImageData>, IPC::Error>;
-    auto&& arguments()
+    ReceiveImageData()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
+};
+
+class ReceiveImageDataReply {
+public:
+    using Arguments = std::tuple<RefPtr<WebCore::ImageData>>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithImageData_ReceiveImageDataReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    explicit ReceiveImageDataReply(const RefPtr<WebCore::ImageData>& r0)
+        : m_r0(r0)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        SUPPRESS_FORWARD_DECL_ARG encoder << m_r0;
+    }
+
+private:
+    SUPPRESS_FORWARD_DECL_MEMBER const RefPtr<WebCore::ImageData>& m_r0;
 };
 
 } // namespace TestWithImageData

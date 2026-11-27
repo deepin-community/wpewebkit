@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,13 +32,14 @@
 #include "MessageSenderInlines.h"
 #include "NavigationActionData.h"
 #include "WebFrame.h"
+#include "WebLocalFrameLoaderClient.h"
 #include "WebMouseEvent.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/FrameLoader.h>
 #include <WebCore/HitTestResult.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/PolicyChecker.h>
 
 #if PLATFORM(COCOA)
@@ -47,35 +48,35 @@
 
 #define WebFrameLoaderClient_PREFIX_PARAMETERS "%p - [webFrame=%p, webFrameID=%" PRIu64 ", webPage=%p, webPageID=%" PRIu64 "] WebFrameLoaderClient::"
 #define WebFrameLoaderClient_WEBFRAME (&webFrame())
-#define WebFrameLoaderClient_WEBFRAMEID (webFrame().frameID().object().toUInt64())
+#define WebFrameLoaderClient_WEBFRAMEID (webFrame().frameID().toUInt64())
 #define WebFrameLoaderClient_WEBPAGE (webFrame().page())
 #define WebFrameLoaderClient_WEBPAGEID (WebFrameLoaderClient_WEBPAGE ? WebFrameLoaderClient_WEBPAGE->identifier().toUInt64() : 0)
 
-#define WebFrameLoaderClient_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, WebFrameLoaderClient_PREFIX_PARAMETERS fmt, this, WebFrameLoaderClient_WEBFRAME, WebFrameLoaderClient_WEBFRAMEID, WebFrameLoaderClient_WEBPAGE, WebFrameLoaderClient_WEBPAGEID, ##__VA_ARGS__)
-#define WebFrameLoaderClient_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, WebFrameLoaderClient_PREFIX_PARAMETERS fmt, this, WebFrameLoaderClient_WEBFRAME, WebFrameLoaderClient_WEBFRAMEID, WebFrameLoaderClient_WEBPAGE, WebFrameLoaderClient_WEBPAGEID, ##__VA_ARGS__)
+#define WebFrameLoaderClient_RELEASE_LOG(fmt, ...) RELEASE_LOG_FORWARDABLE(Network, fmt, WebFrameLoaderClient_WEBFRAMEID, WebFrameLoaderClient_WEBPAGEID, ##__VA_ARGS__)
+#define WebFrameLoaderClient_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR_FORWARDABLE(Network, fmt, WebFrameLoaderClient_WEBFRAMEID, WebFrameLoaderClient_WEBPAGEID, ##__VA_ARGS__)
 
 namespace WebKit {
 using namespace WebCore;
 
 WebFrameLoaderClient::WebFrameLoaderClient(Ref<WebFrame>&& frame, ScopeExit<Function<void()>>&& frameInvalidator)
-    : m_frame(WTFMove(frame))
-    , m_frameInvalidator(WTFMove(frameInvalidator))
+    : m_frame(WTF::move(frame))
+    , m_frameInvalidator(WTF::move(frameInvalidator))
 {
 }
 
 WebFrameLoaderClient::~WebFrameLoaderClient() = default;
 
-std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, SandboxFlags sandboxFlags) const
+std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior, SandboxFlags sandboxFlags) const
 {
     RefPtr webPage = m_frame->page();
     if (!webPage) {
-        WebFrameLoaderClient_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because there's no web page");
+        WebFrameLoaderClient_RELEASE_LOG_ERROR(WebFrameLoaderClientNavigationActionDataNoWebPage);
         return std::nullopt;
     }
 
     // Always ignore requests with empty URLs.
     if (request.isEmpty()) {
-        WebFrameLoaderClient_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because request is empty");
+        WebFrameLoaderClient_RELEASE_LOG_ERROR(WebFrameLoaderClientNavigationActionDataEmptyRequest);
         return std::nullopt;
     }
 
@@ -86,7 +87,7 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
 
     auto& requester = *navigationAction.requester();
     if (!requester.frameID) {
-        WebFrameLoaderClient_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because frame does not exist");
+        WebFrameLoaderClient_RELEASE_LOG_ERROR(WebFrameLoaderClientNavigationActionDataNoFrame);
         return std::nullopt;
     }
 
@@ -96,21 +97,36 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
     if (auto parentFrame = requestingFrame ? requestingFrame->parentFrame() : nullptr)
         parentFrameID = parentFrame->frameID();
 
-    FrameInfoData originatingFrameInfoData {
-        navigationAction.initiatedByMainFrame() == InitiatedByMainFrame::Yes,
+    RefPtr coreLocalFrame = m_frame->coreLocalFrame();
+    RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
+
+    auto originator = webPage->takeMainFrameNavigationInitiator();
+
+    bool originatingFrameIsMain = navigationAction.initiatedByMainFrame() == InitiatedByMainFrame::Yes;
+    if (!originatingFrameIsMain) {
+        if (RefPtr originatingFrame = WebProcess::singleton().webFrame(originatingFrameID))
+            originatingFrameIsMain = originatingFrame->isMainFrame();
+    }
+
+    std::optional<WebPageProxyIdentifier> originatingPageID;
+    if (RefPtr webPage = requester.pageID ? WebProcess::singleton().webPage(*requester.pageID) : nullptr)
+        originatingPageID = webPage->webPageProxyIdentifier();
+
+    auto originatingFrameInfoData = originator ? FrameInfoData { WTF::move(*originator) } : FrameInfoData {
+        originatingFrameIsMain,
         FrameType::Local,
-        ResourceRequest { requester.url },
+        ResourceRequest { URL { requester.url } },
         requester.securityOrigin->data(),
+        requester.topOrigin->data(),
         { },
-        WTFMove(originatingFrameID),
-        WTFMove(parentFrameID),
+        WTF::move(originatingFrameID),
+        originatingPageID,
+        WTF::move(parentFrameID),
+        document ? std::optional { document->identifier() } : std::nullopt,
+        requestingFrame ? requestingFrame->certificateInfo() : CertificateInfo(),
         getCurrentProcessID(),
         requestingFrame ? requestingFrame->isFocused() : false
     };
-
-    std::optional<WebPageProxyIdentifier> originatingPageID;
-    if (auto* webPage = requester.pageID ? WebProcess::singleton().webPage(*requester.pageID) : nullptr)
-        originatingPageID = webPage->webPageProxyIdentifier();
 
     // FIXME: When we receive a redirect after the navigation policy has been decided for the initial request,
     // the provisional load's DocumentLoader needs to receive navigation policy decisions. We need a better model for this state.
@@ -120,6 +136,14 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         ownerPermissionsPolicy = coreFrame->ownerPermissionsPolicy();
 
     auto& mouseEventData = navigationAction.mouseEventData();
+
+    // Avoid serializing (and re-parsing in the UIProcess) the navigation URL twice: when the
+    // original request is equal to the current request, send nullopt and let the receiver fall
+    // back to `request`. See NavigationActionData::originalRequestOrFallback().
+    std::optional<WebCore::ResourceRequest> originalRequest;
+    if (navigationAction.originalRequest() != request)
+        originalRequest = navigationAction.originalRequest();
+
     return NavigationActionData {
         navigationAction.type(),
         modifiersForNavigationAction(navigationAction),
@@ -133,77 +157,132 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         mouseEventData ? mouseEventData->locationInRootViewCoordinates : FloatPoint(),
         redirectResponse,
         navigationAction.isRequestFromClientOrUserInput(),
-        navigationAction.treatAsSameOriginNavigation(),
         navigationAction.hasOpenedFrames(),
         navigationAction.openedByDOMWithOpener(),
         hasOpener,
-        requester.securityOrigin->data(),
-        requester.topOrigin->data(),
+        navigationUpgradeToHTTPSBehavior,
+        navigationAction.isInitialFrameSrcLoad(),
+        navigationAction.isContentRuleListRedirect(),
+        { },
         navigationAction.targetBackForwardItemIdentifier(),
         navigationAction.sourceBackForwardItemIdentifier(),
         navigationAction.lockHistory(),
         navigationAction.lockBackForwardList(),
         clientRedirectSourceForHistory,
         sandboxFlags,
-        WTFMove(ownerPermissionsPolicy),
+        ReferrerPolicy::EmptyString,
+        WTF::move(ownerPermissionsPolicy),
         navigationAction.privateClickMeasurement(),
         requestingFrame ? requestingFrame->advancedPrivacyProtections() : OptionSet<AdvancedPrivacyProtections> { },
         requestingFrame ? requestingFrame->originatorAdvancedPrivacyProtections() : OptionSet<AdvancedPrivacyProtections> { },
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
-        hitTestResult ? std::optional(WebKit::WebHitTestResultData(WTFMove(*hitTestResult), false)) : std::nullopt,
+        hitTestResult ? std::optional(WebKit::WebHitTestResultData(WTF::move(*hitTestResult), false)) : std::nullopt,
 #endif
-        WTFMove(originatingFrameInfoData),
+        WTF::move(originatingFrameInfoData),
         originatingPageID,
         m_frame->info(),
         navigationID,
-        navigationAction.originalRequest(),
-        request
+        WTF::move(originalRequest),
+        request,
+        request.url().isValid() ? String() : request.url().string(),
+        requester,
     };
 }
 
-void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse, FormState*, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, SandboxFlags sandboxFlags, PolicyDecisionMode policyDecisionMode, FramePolicyFunction&& function)
+void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse, FormState*, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior, SandboxFlags sandboxFlags, PolicyDecisionMode policyDecisionMode, FramePolicyFunction&& function)
 {
     LOG(Loading, "WebProcess %i - dispatchDecidePolicyForNavigationAction to request url %s", getCurrentProcessID(), request.url().string().utf8().data());
 
-    auto navigationActionData = this->navigationActionData(navigationAction, request, redirectResponse, clientRedirectSourceForHistory, navigationID, WTFMove(hitTestResult), hasOpener, sandboxFlags);
+    auto navigationActionData = this->navigationActionData(navigationAction, request, redirectResponse, clientRedirectSourceForHistory, navigationID, WTF::move(hitTestResult), hasOpener, navigationUpgradeToHTTPSBehavior, sandboxFlags);
     if (!navigationActionData)
         return function(PolicyAction::Ignore);
 
     RefPtr webPage = m_frame->page();
 
-    uint64_t listenerID = m_frame->setUpPolicyListener(WTFMove(function), WebFrame::ForNavigationAction::Yes);
+    uint64_t listenerID = m_frame->setUpPolicyListener(WTF::move(function), WebFrame::ForNavigationAction::Yes);
 
     // Notify the UIProcess.
     if (policyDecisionMode == PolicyDecisionMode::Synchronous) {
+        bool shouldUseSyncIPCForFragmentNavigations = false;
 #if PLATFORM(COCOA)
-        if (navigationAction.processingUserGesture() || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::AsyncFragmentNavigationPolicyDecision)) {
+        shouldUseSyncIPCForFragmentNavigations = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::AsyncFragmentNavigationPolicyDecision);
+#endif
+        if (navigationAction.processingUserGesture() || navigationAction.isFromNavigationAPI() || shouldUseSyncIPCForFragmentNavigations) {
             auto sendResult = webPage->sendSync(Messages::WebPageProxy::DecidePolicyForNavigationActionSync(*navigationActionData));
             if (!sendResult.succeeded()) {
-                WebFrameLoaderClient_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because of failing to send sync IPC with error %" PUBLIC_LOG_STRING, IPC::errorAsString(sendResult.error()).characters());
+                WebFrameLoaderClient_RELEASE_LOG_ERROR(WebFrameLoaderClientDispatchDecidePolicyForNavigationActionSyncIpcFailed, (uint8_t)sendResult.error());
                 m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { });
                 return;
             }
 
             auto [policyDecision] = sendResult.takeReply();
-            WebFrameLoaderClient_RELEASE_LOG(Network, "dispatchDecidePolicyForNavigationAction: Got policyAction %u from sync IPC", (unsigned)policyDecision.policyAction);
+            WebFrameLoaderClient_RELEASE_LOG(WebFrameLoaderClientDispatchDecidePolicyForNavigationActionGotPolicyActionFromSyncIpc, toString(policyDecision.policyAction).characters());
             m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { policyDecision.isNavigatingToAppBoundDomain, policyDecision.policyAction, { }, policyDecision.downloadID });
             return;
         }
-#endif
         webPage->sendWithAsyncReply(Messages::WebPageProxy::DecidePolicyForNavigationActionAsync(*navigationActionData), [] (PolicyDecision&&) { });
         m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { std::nullopt, PolicyAction::Use });
         return;
     }
 
     ASSERT(policyDecisionMode == PolicyDecisionMode::Asynchronous);
-    webPage->sendWithAsyncReply(Messages::WebPageProxy::DecidePolicyForNavigationActionAsync(*navigationActionData), [thisPointerForLog = this, frame = m_frame, listenerID] (PolicyDecision&& policyDecision) {
-#if RELEASE_LOG_DISABLED
-        UNUSED_PARAM(thisPointerForLog);
-#endif
-        RELEASE_LOG(Network, WebFrameLoaderClient_PREFIX_PARAMETERS "dispatchDecidePolicyForNavigationAction: Got policyAction %u from async IPC", thisPointerForLog, frame.ptr(), frame->frameID().object().toUInt64(), frame->page(), frame->page() ? frame->page()->identifier().toUInt64() : 0, (unsigned)policyDecision.policyAction);
+    webPage->sendWithAsyncReply(Messages::WebPageProxy::DecidePolicyForNavigationActionAsync(*navigationActionData), [weakFrame = WeakPtr { m_frame }, listenerID, webPageID = WebFrameLoaderClient_WEBPAGEID] (PolicyDecision&& policyDecision) {
+        RefPtr frame = weakFrame.get();
+        if (!frame)
+            return;
 
-        frame->didReceivePolicyDecision(listenerID, WTFMove(policyDecision));
+        RELEASE_LOG_FORWARDABLE(Network, WebFrameLoaderClientDispatchDecidePolicyForNavigationActionGotPolicyActionFromAsyncIpc, frame->frameID().toUInt64(), webPageID, toString(policyDecision.policyAction).characters());
+
+        frame->didReceivePolicyDecision(listenerID, WTF::move(policyDecision));
     });
+}
+
+void WebFrameLoaderClient::updateSandboxFlags(SandboxFlags sandboxFlags)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::UpdateSandboxFlags(m_frame->frameID(), sandboxFlags));
+}
+
+void WebFrameLoaderClient::updateReferrerPolicy(ReferrerPolicy referrerPolicy)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::UpdateReferrerPolicy(m_frame->frameID(), referrerPolicy));
+}
+
+void WebFrameLoaderClient::updateOpener(std::optional<WebCore::FrameIdentifier> newFrameOpenerIdentifier)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::UpdateOpener(m_frame->frameID(), newFrameOpenerIdentifier));
+}
+
+void WebFrameLoaderClient::setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize adjustViewSize)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::SetFramePrinting(m_frame->frameID(), printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize));
+}
+
+void WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::BroadcastAllFrameTreeSyncData(m_frame->frameID(), data));
+}
+
+void WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(const FrameTreeSyncSerializationData& data)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::BroadcastFrameTreeSyncData(m_frame->frameID(), data));
+}
+
+void WebFrameLoaderClient::didNotifyUserActivation(MonotonicTime activationTime)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::DidNotifyUserActivation(m_frame->frameID(), activationTime));
+}
+
+void WebFrameLoaderClient::didConsumeUserActivation()
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::DidConsumeUserActivation(m_frame->frameID()));
 }
 
 }

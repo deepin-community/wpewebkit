@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,16 +40,16 @@ class WebUserContentController;
 
 class WebPageGroupProxy : public RefCounted<WebPageGroupProxy> {
 public:
-    static Ref<WebPageGroupProxy> create(const WebPageGroupData&);
+    static Ref<WebPageGroupProxy> create(WebPageGroupData&&);
     virtual ~WebPageGroupProxy();
 
-    const String& identifier() const { return m_data.identifier; }
+    const String& identifier() const LIFETIME_BOUND { return m_data.identifier; }
     PageGroupIdentifier pageGroupID() const { return m_data.pageGroupID; }
     // Namespace IDs for local storage namespaces are currently equivalent to web page group IDs.
-    WebCore::PageGroup* corePageGroup() const;
+    WebCore::PageGroup* NODELETE corePageGroup() const;
 
 private:
-    WebPageGroupProxy(const WebPageGroupData&);
+    WebPageGroupProxy(WebPageGroupData&&);
 
     WebPageGroupData m_data;
     WeakPtr<WebCore::PageGroup> m_pageGroup;

@@ -30,7 +30,6 @@
 
 #include "DOMStringList.h"
 #include "EventTarget.h"
-#include "ExceptionOr.h"
 #include "ScriptWrappable.h"
 #include <wtf/WeakPtr.h>
 
@@ -39,11 +38,14 @@ namespace WebCore {
 class DOMWindow;
 class Frame;
 class LocalDOMWindow;
+template<typename> class ExceptionOr;
 
 class Location final : public ScriptWrappable, public RefCounted<Location> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(Location);
+    WTF_MAKE_TZONE_ALLOCATED(Location);
 public:
     static Ref<Location> create(DOMWindow& window) { return adoptRef(*new Location(window)); }
+
+    ~Location();
 
     ExceptionOr<void> setHref(LocalDOMWindow& incumbentWindow, LocalDOMWindow& firstWindow, const String&);
     String href() const;
@@ -71,20 +73,21 @@ public:
     String toString() const { return href(); }
 
     Ref<DOMStringList> ancestorOrigins() const;
+    DOMStringList* cachedAncestorOrigins() const { return m_ancestorOrigins.get(); }
 
     DOMWindow* window() { return m_window.get(); }
-    RefPtr<DOMWindow> protectedWindow();
 
-    const URL& url() const;
+    const URL& url() const LIFETIME_BOUND;
 
 private:
     explicit Location(DOMWindow&);
 
     ExceptionOr<void> setLocation(LocalDOMWindow& incumbentWindow, LocalDOMWindow& firstWindow, const String&);
 
-    Frame* frame();
-    const Frame* frame() const;
+    Frame* NODELETE frame();
+    const Frame* NODELETE frame() const;
 
+    mutable RefPtr<DOMStringList> m_ancestorOrigins;
     WeakPtr<DOMWindow, WeakPtrImplWithEventTargetData> m_window;
 };
 

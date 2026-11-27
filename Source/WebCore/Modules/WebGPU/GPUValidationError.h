@@ -36,30 +36,25 @@ class GPUValidationError : public RefCounted<GPUValidationError> {
 public:
     static Ref<GPUValidationError> create(String&& message)
     {
-        return adoptRef(*new GPUValidationError(WTFMove(message)));
+        return adoptRef(*new GPUValidationError(WTF::move(message)));
     }
 
     static Ref<GPUValidationError> create(Ref<WebGPU::ValidationError>&& backing)
     {
-        return adoptRef(*new GPUValidationError(WTFMove(backing)));
+        return adoptRef(*new GPUValidationError(WTF::move(backing)));
     }
 
-    const String& message() const;
+    ~GPUValidationError();
+
+    const String& NODELETE message() const LIFETIME_BOUND;
 
     WebGPU::ValidationError* backing() { return m_backing.get(); }
     const WebGPU::ValidationError* backing() const { return m_backing.get(); }
     String stack() const { return "_"_s; }
 
 private:
-    GPUValidationError(String&& message)
-        : m_message(WTFMove(message))
-    {
-    }
-
-    GPUValidationError(Ref<WebGPU::ValidationError>&& backing)
-        : m_backing(WTFMove(backing))
-    {
-    }
+    GPUValidationError(String&& message);
+    GPUValidationError(Ref<WebGPU::ValidationError>&&);
 
     String m_message;
     RefPtr<WebGPU::ValidationError> m_backing;

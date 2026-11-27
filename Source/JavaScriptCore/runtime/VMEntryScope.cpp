@@ -33,7 +33,6 @@
 #include "WasmCapabilities.h"
 #include "WasmMachineThreads.h"
 #include "Watchdog.h"
-#include <wtf/WTFConfig.h>
 
 namespace JSC {
 
@@ -41,8 +40,8 @@ void VMEntryScope::setUpSlow()
 {
     m_vm.entryScope = this;
 
-    auto& thread = Thread::current();
-    if (UNLIKELY(!thread.isJSThread())) {
+    auto& thread = Thread::currentSingleton();
+    if (!thread.isJSThread()) [[unlikely]] {
         Thread::registerJSThread(thread);
 
         if (Wasm::isSupported())
@@ -52,7 +51,7 @@ void VMEntryScope::setUpSlow()
 #endif
     }
 
-    if (UNLIKELY(m_vm.hasAnyEntryScopeServiceRequest() || m_vm.hasTimeZoneChange()))
+    if (m_vm.hasAnyEntryScopeServiceRequest()) [[unlikely]]
         m_vm.executeEntryScopeServicesOnEntry();
 }
 
@@ -62,7 +61,7 @@ void VMEntryScope::tearDownSlow()
 
     m_vm.entryScope = nullptr;
 
-    if (UNLIKELY(m_vm.hasAnyEntryScopeServiceRequest()))
+    if (m_vm.hasAnyEntryScopeServiceRequest()) [[unlikely]]
         m_vm.executeEntryScopeServicesOnExit();
 }
 

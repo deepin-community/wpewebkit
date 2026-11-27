@@ -8,6 +8,7 @@
 
 #include "compiler/translator/tree_ops/RewriteArrayOfArrayOfOpaqueUniforms.h"
 
+#include "common/span.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/ImmutableStringBuilder.h"
 #include "compiler/translator/SymbolTable.h"
@@ -124,7 +125,7 @@ TIntermTyped *RewriteArrayOfArraySubscriptExpression(TCompiler *compiler,
                                                      const UniformMap &uniformMap)
 {
     // Only interested in opaque uniforms.
-    if (!IsOpaqueType(node->getType().getBasicType()))
+    if (!IsOpaqueType(node->getType().getBasicType()) || node->getOp() == EOpComma)
     {
         return nullptr;
     }
@@ -158,11 +159,9 @@ TIntermTyped *RewriteArrayOfArraySubscriptExpression(TCompiler *compiler,
 
     // Since the opaque uniforms are fully subscripted, we know exactly how many EOpIndex* nodes
     // there should be.
-    for (size_t dimIndex = 0; dimIndex < data.mSubArraySizes.size(); ++dimIndex)
+    for (unsigned int subArraySize : data.mSubArraySizes)
     {
         ASSERT(node);
-
-        unsigned int subArraySize = data.mSubArraySizes[dimIndex];
 
         switch (node->getOp())
         {
@@ -278,7 +277,7 @@ class RewriteArrayOfArrayOfOpaqueUniformsTraverser : public TIntermTraverser
         UniformData &data = mUniformMap[uniformVariable];
 
         // Calculate the accumulated dimension products.  See UniformData::mSubArraySizes.
-        const TSpan<const unsigned int> &arraySizes = type.getArraySizes();
+        const angle::Span<const unsigned int> &arraySizes = type.getArraySizes();
         mUniformMap[uniformVariable].mSubArraySizes.resize(arraySizes.size());
         unsigned int runningProduct = 1;
         for (size_t dimension = 0; dimension < arraySizes.size(); ++dimension)

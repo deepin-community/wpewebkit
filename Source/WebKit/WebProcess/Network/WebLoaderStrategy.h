@@ -31,10 +31,12 @@
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceLoader.h>
 #include <WebCore/ResourceResponse.h>
+#include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakRef.h>
 
 namespace WebCore {
 struct FetchOptions;
@@ -45,14 +47,19 @@ namespace WebKit {
 class NetworkProcessConnection;
 class WebFrame;
 class WebPage;
+class WebProcess;
 class WebURLSchemeTaskProxy;
 
-class WebLoaderStrategy final : public WebCore::LoaderStrategy {
+class WebLoaderStrategy final : public WebCore::LoaderStrategy, public CanMakeWeakPtr<WebLoaderStrategy> {
     WTF_MAKE_TZONE_ALLOCATED(WebLoaderStrategy);
     WTF_MAKE_NONCOPYABLE(WebLoaderStrategy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebLoaderStrategy);
 public:
-    WebLoaderStrategy();
+    explicit WebLoaderStrategy(WebProcess&);
     ~WebLoaderStrategy() final;
+
+    void NODELETE ref() const;
+    void deref() const;
     
     void loadResource(WebCore::LocalFrame&, WebCore::CachedResource&, WebCore::ResourceRequest&&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(RefPtr<WebCore::SubresourceLoader>&&)>&&) final;
     void loadResourceSynchronously(WebCore::FrameLoader&, WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&, WebCore::ClientCredentialPolicy, const WebCore::FetchOptions&, const WebCore::HTTPHeaderMap&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>& data) final;
@@ -73,7 +80,7 @@ public:
     void didFinishPingLoad(WebCore::ResourceLoaderIdentifier pingLoadIdentifier, WebCore::ResourceError&&, WebCore::ResourceResponse&&);
 
     void preconnectTo(WebCore::ResourceRequest&&, WebPage&, WebFrame&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&& = nullptr);
-    void preconnectTo(WebCore::FrameLoader&, const URL&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
+    void preconnectTo(WebCore::FrameLoader&, WebCore::ResourceRequest&&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
     void didFinishPreconnection(WebCore::ResourceLoaderIdentifier preconnectionIdentifier, WebCore::ResourceError&&);
 
     void setCaptureExtraNetworkLoadMetricsEnabled(bool) final;
@@ -101,10 +108,27 @@ private:
     void scheduleInternallyFailedLoad(WebCore::ResourceLoader&);
     void internallyFailedLoadTimerFired();
     void startLocalLoad(WebCore::ResourceLoader&);
-    bool tryLoadingUsingURLSchemeHandler(WebCore::ResourceLoader&, const WebResourceLoader::TrackingParameters&);
+    bool tryLoadingUsingURLSchemeHandler(WebCore::ResourceLoader&, const std::optional<WebResourceLoader::TrackingParameters>&);
 #if ENABLE(PDFJS)
-    bool tryLoadingUsingPDFJSHandler(WebCore::ResourceLoader&, const WebResourceLoader::TrackingParameters&);
+    bool tryLoadingUsingPDFJSHandler(WebCore::ResourceLoader&, const std::optional<WebResourceLoader::TrackingParameters>&);
 #endif
+
+    WebCore::ResourceError cancelledError(const WebCore::ResourceRequest&) const final;
+    WebCore::ResourceError blockedError(const WebCore::ResourceRequest&) const final;
+    bool isBlockedError(const WebCore::ResourceError&) const final;
+    WebCore::ResourceError blockedByContentBlockerError(const WebCore::ResourceRequest&) const final;
+    WebCore::ResourceError cannotShowURLError(const WebCore::ResourceRequest&) const final;
+    WebCore::ResourceError interruptedForPolicyChangeError(const WebCore::ResourceRequest&) const final;
+#if ENABLE(CONTENT_FILTERING)
+    WebCore::ResourceError blockedByContentFilterError(const WebCore::ResourceRequest&) const final;
+#endif
+
+    WebCore::ResourceError cannotShowMIMETypeError(const WebCore::ResourceResponse&) const final;
+    WebCore::ResourceError fileDoesNotExistError(const WebCore::ResourceResponse&) const final;
+    WebCore::ResourceError httpsUpgradeRedirectLoopError(const WebCore::ResourceRequest&) const final;
+    WebCore::ResourceError httpNavigationWithHTTPSOnlyError(const WebCore::ResourceRequest&) const final;
+    bool isHttpNavigationWithHTTPSOnlyError(const WebCore::ResourceError&) const final;
+    WebCore::ResourceError pluginWillHandleLoadError(const WebCore::ResourceResponse&) const final;
 
     struct SyncLoadResult {
         WebCore::ResourceResponse response;
@@ -124,7 +148,7 @@ private:
     void isResourceLoadFinished(WebCore::CachedResource&, CompletionHandler<void(bool)>&&) final;
 
     void setResourceLoadSchedulingMode(WebCore::Page&, WebCore::LoadSchedulingMode) final;
-    void prioritizeResourceLoads(const Vector<WebCore::SubresourceLoader*>&) final;
+    void prioritizeResourceLoads(const Vector<Ref<WebCore::SubresourceLoader>>&) final;
 
     Vector<WebCore::ResourceLoaderIdentifier> ongoingLoads() const final
     {
@@ -133,10 +157,11 @@ private:
         });
     }
 
-    HashSet<RefPtr<WebCore::ResourceLoader>> m_internallyFailedResourceLoaders;
+    WeakRef<WebProcess> m_webProcess;
+    HashSet<Ref<WebCore::ResourceLoader>> m_internallyFailedResourceLoaders;
     RunLoop::Timer m_internallyFailedLoadTimer;
-    
-    HashMap<WebCore::ResourceLoaderIdentifier, RefPtr<WebResourceLoader>> m_webResourceLoaders;
+
+    HashMap<WebCore::ResourceLoaderIdentifier, Ref<WebResourceLoader>> m_webResourceLoaders;
     HashMap<WebCore::ResourceLoaderIdentifier, WeakRef<WebURLSchemeTaskProxy>> m_urlSchemeTasks;
     HashMap<WebCore::ResourceLoaderIdentifier, PingLoadCompletionHandler> m_pingLoadCompletionHandlers;
     HashMap<WebCore::ResourceLoaderIdentifier, PreconnectCompletionHandler> m_preconnectCompletionHandlers;

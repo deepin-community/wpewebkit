@@ -27,7 +27,9 @@
 #include "JSWeakObjectMapRefPrivate.h"
 
 #include "APICast.h"
+#include "JSCJSValueInlines.h"
 #include "JSCallbackObject.h"
+#include "JSGlobalObjectInlines.h"
 #include "JSWeakObjectMapRefInternal.h"
 #include "WeakGCMapInlines.h"
 
@@ -44,7 +46,7 @@ JSWeakObjectMapRef JSWeakObjectMapCreate(JSContextRef context, void* privateData
     JSLockHolder locker(vm);
     auto map = OpaqueJSWeakObjectMap::create(vm, privateData, callback);
     globalObject->registerWeakMap(map.ptr());
-    return map.ptr();
+    return map.unsafePtr();
 }
 
 void JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSObjectRef object)
@@ -73,7 +75,7 @@ JSObjectRef JSWeakObjectMapGet(JSContextRef ctx, JSWeakObjectMapRef map, void* k
     }
     JSGlobalObject* globalObject = toJS(ctx);
     JSLockHolder locker(globalObject);
-    return toRef(jsCast<JSObject*>(map->map().get(key)));
+    return toRef(map->map().get(key));
 }
 
 void JSWeakObjectMapRemove(JSContextRef ctx, JSWeakObjectMapRef map, void* key)

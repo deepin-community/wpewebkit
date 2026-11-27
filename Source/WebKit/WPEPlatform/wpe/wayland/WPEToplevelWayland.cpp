@@ -26,11 +26,15 @@
 #include "config.h"
 #include "WPEToplevelWayland.h"
 
-#include "WPEBufferDMABufFormats.h"
+#include "GRefPtrWPE.h"
+#include "WPEBufferFormats.h"
 #include "WPEDisplayWaylandPrivate.h"
 #include "WPEToplevelWaylandPrivate.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
+#if USE(XDG_DECORATION_UNSTABLE_V1)
+#include "xdg-decoration-unstable-v1-client-protocol.h"
+#endif
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <wtf/Vector.h>
@@ -46,7 +50,7 @@
 #endif
 
 struct DMABufFeedback {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DMABufFeedback);
 
     struct FormatTable {
         struct Data {
@@ -59,7 +63,7 @@ struct DMABufFeedback {
         FormatTable& operator=(const FormatTable&) = delete;
         FormatTable(FormatTable&& other)
         {
-            *this = WTFMove(other);
+            *this = WTF::move(other);
         }
 
         FormatTable(unsigned size, Data* data)
@@ -118,9 +122,9 @@ struct DMABufFeedback {
     DMABufFeedback& operator=(const DMABufFeedback&) = delete;
 
     DMABufFeedback(DMABufFeedback&& other)
-        : formatTable(WTFMove(other.formatTable))
-        , pendingTranche(WTFMove(other.pendingTranche))
-        , tranches(WTFMove(other.tranches))
+        : formatTable(WTF::move(other.formatTable))
+        , pendingTranche(WTF::move(other.pendingTranche))
+        , tranches(WTF::move(other.tranches))
     {
 #if USE(LIBDRM)
         memcpy(&mainDevice, &other.mainDevice, sizeof(dev_t));
@@ -152,12 +156,12 @@ struct DMABufFeedback {
     }
 #endif
 
-    CString drmDevice() const
+    const dev_t* device() const
     {
 #if USE(LIBDRM)
-        return drmDeviceForUsage(&mainDevice, false);
+        return &mainDevice;
 #else
-        return { };
+        return nullptr;
 #endif
     }
 
@@ -168,12 +172,11 @@ struct DMABufFeedback {
             memset(&targetDevice, 0, sizeof(dev_t));
 #endif
         }
-        ~Tranche() = default;
         Tranche(const Tranche&) = delete;
         Tranche& operator=(const Tranche&) = delete;
         Tranche(Tranche&& other)
             : flags(other.flags)
-            , formats(WTFMove(other.formats))
+            , formats(WTF::move(other.formats))
         {
             other.flags = 0;
 #if USE(LIBDRM)
@@ -182,12 +185,12 @@ struct DMABufFeedback {
 #endif
         }
 
-        CString drmDevice() const
+        const dev_t* device() const
         {
 #if USE(LIBDRM)
-            return drmDeviceForUsage(&targetDevice, flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT);
+            return &targetDevice;
 #else
-            return { };
+            return nullptr;
 #endif
         }
 
@@ -201,7 +204,7 @@ struct DMABufFeedback {
     std::pair<uint32_t, uint64_t> format(uint16_t index)
     {
         ASSERT(index < formatTable.size);
-        if (UNLIKELY(index >= formatTable.size))
+        if (index >= formatTable.size) [[unlikely]]
             return { 0, 0 };
 
         return { formatTable.data[index].format, formatTable.data[index].modifier };
@@ -218,17 +221,26 @@ struct DMABufFeedback {
 /**
  * WPEToplevelWayland:
  *
+ * A [class@WPEPlatform.Toplevel] implementation for Wayland.
+ *
+ * [class@ToplevelWayland] is the [class@WPEPlatform.Toplevel] implementation
+ * used by [class@DisplayWayland]. It is backed by an `xdg_toplevel` and its
+ * Wayland surface can be accessed with [method@ToplevelWayland.get_wl_surface].
  */
 struct _WPEToplevelWaylandPrivate {
     struct wl_surface* wlSurface;
     struct xdg_surface* xdgSurface;
     struct xdg_toplevel* xdgToplevel;
 
+#if USE(XDG_DECORATION_UNSTABLE_V1)
+    struct zxdg_toplevel_decoration_v1* xdgToplevelDecoration;
+#endif
+
     struct zwp_linux_dmabuf_feedback_v1* dmabufFeedback;
     struct zwp_linux_surface_synchronization_v1* surfaceSync;
     std::unique_ptr<DMABufFeedback> pendingDMABufFeedback;
     std::unique_ptr<DMABufFeedback> committedDMABufFeedback;
-    GRefPtr<WPEBufferDMABufFormats> preferredDMABufFormats;
+    GRefPtr<WPEBufferFormats> preferredBufferFormats;
 
     bool hasPointer;
     bool isFocused;
@@ -321,10 +333,7 @@ const struct xdg_toplevel_listener xdgToplevelListener = {
         }
 
         uint32_t pendingState = 0;
-        const auto* stateData = static_cast<uint32_t*>(states->data);
-        for (size_t i = 0; i < states->size; i++) {
-            uint32_t state = stateData[i];
-
+        for (auto state : unsafeMakeSpan(static_cast<uint32_t*>(states->data), states->size / sizeof(uint32_t))) {
             switch (state) {
             case XDG_TOPLEVEL_STATE_FULLSCREEN:
                 pendingState |= WPE_TOPLEVEL_STATE_FULLSCREEN;
@@ -453,16 +462,16 @@ static const struct zwp_linux_dmabuf_feedback_v1_listener linuxDMABufFeedbackLis
         // one. Return early and skip emitting the signal if there is no usable formats table in the end.
         if (!priv->pendingDMABufFeedback->formatTable) {
             if (priv->committedDMABufFeedback && priv->committedDMABufFeedback->formatTable)
-                priv->pendingDMABufFeedback->formatTable = WTFMove(priv->committedDMABufFeedback->formatTable);
+                priv->pendingDMABufFeedback->formatTable = WTF::move(priv->committedDMABufFeedback->formatTable);
             else {
                 priv->pendingDMABufFeedback.reset();
                 return;
             }
         }
 
-        priv->committedDMABufFeedback = WTFMove(priv->pendingDMABufFeedback);
-        priv->preferredDMABufFormats = nullptr;
-        wpe_toplevel_preferred_dma_buf_formats_changed(toplevel);
+        priv->committedDMABufFeedback = WTF::move(priv->pendingDMABufFeedback);
+        priv->preferredBufferFormats = nullptr;
+        wpe_toplevel_preferred_buffer_formats_changed(toplevel);
     },
     // format_table
     [](void* data, struct zwp_linux_dmabuf_feedback_v1*, int32_t fd, uint32_t size)
@@ -494,7 +503,7 @@ static const struct zwp_linux_dmabuf_feedback_v1_listener linuxDMABufFeedbackLis
         if (!priv->pendingDMABufFeedback)
             return;
 
-        priv->pendingDMABufFeedback->tranches.append(WTFMove(priv->pendingDMABufFeedback->pendingTranche));
+        priv->pendingDMABufFeedback->tranches.append(WTF::move(priv->pendingDMABufFeedback->pendingTranche));
     },
     // tranche_target_device
     [](void* data, struct zwp_linux_dmabuf_feedback_v1*, struct wl_array* device)
@@ -557,6 +566,15 @@ static void wpeToplevelWaylandConstructed(GObject *object)
             const char* title = defaultTitle();
             xdg_toplevel_set_title(priv->xdgToplevel, title ? title : "");
             xdg_toplevel_set_app_id(priv->xdgToplevel, WTF::applicationID().data());
+#if USE(XDG_DECORATION_UNSTABLE_V1)
+            if (auto* xdgDecorationManager = wpeDisplayWaylandGetXDGDecorationManager(display)) {
+                // Even when asking for server-side decorations, the compositor may prefer
+                // client-side ones. This could be detected by attaching a listener, but that
+                // is pointless because painting client-side decorations is not supported.
+                priv->xdgToplevelDecoration = zxdg_decoration_manager_v1_get_toplevel_decoration(xdgDecorationManager, priv->xdgToplevel);
+                zxdg_toplevel_decoration_v1_set_mode(priv->xdgToplevelDecoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+            }
+#endif // USE(XDG_DECORATION_UNSTABLE_V1)
             wl_surface_commit(priv->wlSurface);
         }
     }
@@ -587,6 +605,11 @@ static void wpeToplevelWaylandDispose(GObject* object)
     auto* priv = WPE_TOPLEVEL_WAYLAND(object)->priv;
     priv->currentScreen = nullptr;
     priv->screens.clear();
+
+#if USE(XDG_DECORATION_UNSTABLE_V1)
+    g_clear_pointer(&priv->xdgToplevelDecoration, zxdg_toplevel_decoration_v1_destroy);
+#endif
+
     g_clear_pointer(&priv->xdgToplevel, xdg_toplevel_destroy);
     g_clear_pointer(&priv->dmabufFeedback, zwp_linux_dmabuf_feedback_v1_destroy);
     g_clear_pointer(&priv->surfaceSync, zwp_linux_surface_synchronization_v1_destroy);
@@ -654,31 +677,57 @@ static gboolean wpeToplevelWaylandSetMinimized(WPEToplevel* toplevel)
     return TRUE;
 }
 
-static WPEBufferDMABufFormats* wpeToplevelWaylandGetPreferredDMABufFormats(WPEToplevel* toplevel)
+static GRefPtr<WPEDRMDevice> wpeToplevelWaylandGetDRMDevice(WPEToplevel* toplevel, const dev_t* device)
+{
+#if USE(LIBDRM)
+    drmDevicePtr drmDevice;
+    if (drmGetDeviceFromDevId(*device, 0, &drmDevice))
+        return nullptr;
+
+    GRefPtr<WPEDRMDevice> displayDevice;
+    if (drmDevice->available_nodes & (1 << DRM_NODE_PRIMARY)) {
+        auto* display = wpe_toplevel_get_display(toplevel);
+        displayDevice = display ? wpe_display_get_drm_device(display) : nullptr;
+        if (!displayDevice || g_strcmp0(drmDevice->nodes[DRM_NODE_PRIMARY], wpe_drm_device_get_primary_node(displayDevice.get()))) {
+            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            displayDevice = adoptGRef(wpe_drm_device_new(drmDevice->nodes[DRM_NODE_PRIMARY],
+                drmDevice->available_nodes & (1 << DRM_NODE_RENDER) ? drmDevice->nodes[DRM_NODE_RENDER] : nullptr));
+            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        }
+    }
+
+    drmFreeDevice(&drmDevice);
+    return displayDevice;
+#else
+    return nullptr;
+#endif
+}
+
+static WPEBufferFormats* wpeToplevelWaylandGetPreferredBufferFormats(WPEToplevel* toplevel)
 {
     auto* priv = WPE_TOPLEVEL_WAYLAND(toplevel)->priv;
-    if (priv->preferredDMABufFormats)
-        return priv->preferredDMABufFormats.get();
+    if (priv->preferredBufferFormats)
+        return priv->preferredBufferFormats.get();
 
     if (!priv->committedDMABufFeedback)
         return nullptr;
 
-    auto mainDevice = priv->committedDMABufFeedback->drmDevice();
-    auto* builder = wpe_buffer_dma_buf_formats_builder_new(mainDevice.data());
+    auto mainDevice = wpeToplevelWaylandGetDRMDevice(toplevel, priv->committedDMABufFeedback->device());
+    auto* builder = wpe_buffer_formats_builder_new(mainDevice.get());
     for (const auto& tranche : priv->committedDMABufFeedback->tranches) {
-        WPEBufferDMABufFormatUsage usage = tranche.flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT ? WPE_BUFFER_DMA_BUF_FORMAT_USAGE_SCANOUT : WPE_BUFFER_DMA_BUF_FORMAT_USAGE_RENDERING;
-        auto targetDevice = tranche.drmDevice();
-        wpe_buffer_dma_buf_formats_builder_append_group(builder, targetDevice.data(), usage);
+        WPEBufferFormatUsage usage = tranche.flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT ? WPE_BUFFER_FORMAT_USAGE_SCANOUT : WPE_BUFFER_FORMAT_USAGE_RENDERING;
+        auto targetDevice = wpeToplevelWaylandGetDRMDevice(toplevel, tranche.device());
+        wpe_buffer_formats_builder_append_group(builder, targetDevice.get(), usage);
 
         for (const auto& format : tranche.formats) {
             auto [fourcc, modifier] = priv->committedDMABufFeedback->format(format);
-            if (LIKELY(fourcc))
-                wpe_buffer_dma_buf_formats_builder_append_format(builder, fourcc, modifier);
+            if (fourcc) [[likely]]
+                wpe_buffer_formats_builder_append_format(builder, fourcc, modifier);
         }
     }
 
-    priv->preferredDMABufFormats = adoptGRef(wpe_buffer_dma_buf_formats_builder_end(builder));
-    return priv->preferredDMABufFormats.get();
+    priv->preferredBufferFormats = adoptGRef(wpe_buffer_formats_builder_end(builder));
+    return priv->preferredBufferFormats.get();
 }
 
 static void wpeToplevelWaylandSetTitle(WPEToplevel* toplevel, const char* title)
@@ -722,7 +771,7 @@ static void wpe_toplevel_wayland_class_init(WPEToplevelWaylandClass* toplevelWay
     toplevelClass->set_fullscreen = wpeToplevelWaylandSetFullscreen;
     toplevelClass->set_maximized = wpeToplevelWaylandSetMaximized;
     toplevelClass->set_minimized = wpeToplevelWaylandSetMinimized;
-    toplevelClass->get_preferred_dma_buf_formats = wpeToplevelWaylandGetPreferredDMABufFormats;
+    toplevelClass->get_preferred_buffer_formats = wpeToplevelWaylandGetPreferredBufferFormats;
     toplevelClass->set_title = wpeToplevelWaylandSetTitle;
 }
 
@@ -755,7 +804,7 @@ static bool regionsEqual(WPERectangle* rectsA, unsigned rectsACount, WPERectangl
 void wpeToplevelWaylandSetOpaqueRectangles(WPEToplevelWayland* toplevel, WPERectangle* rects, unsigned rectsCount)
 {
     auto* priv = toplevel->priv;
-    if (regionsEqual(priv->opaqueRegion.rects.data(), priv->opaqueRegion.rects.size(), rects, rectsCount))
+    if (regionsEqual(priv->opaqueRegion.rects.mutableSpan().data(), priv->opaqueRegion.rects.size(), rects, rectsCount))
         return;
 
     priv->opaqueRegion.rects.clear();
@@ -877,19 +926,6 @@ void wpeToplevelWaylandViewVisibilityChanged(WPEToplevelWayland* toplevel, WPEVi
 struct zwp_linux_surface_synchronization_v1* wpeToplevelWaylandGetSurfaceSync(WPEToplevelWayland* toplevel)
 {
     return toplevel->priv->surfaceSync;
-}
-
-/**
- * wpe_toplevel_wayland_new:
- * @display: a #WPEDisplayWayland
- *
- * Create a new #WPEToplevel on @display.
- *
- * Returns: (transfer full): a #WPEToplevel
- */
-WPEToplevel* wpe_toplevel_wayland_new(WPEDisplayWayland* display)
-{
-    return WPE_TOPLEVEL(g_object_new(WPE_TYPE_TOPLEVEL_WAYLAND, "display", display, nullptr));
 }
 
 /**

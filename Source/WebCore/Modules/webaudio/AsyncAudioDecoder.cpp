@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, Google Inc. All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,23 +29,29 @@
 #include "AsyncAudioDecoder.h"
 
 #include "AudioBuffer.h"
-#include <JavaScriptCore/GenericTypedArrayViewInlines.h>
-#include <JavaScriptCore/TypedArrayAdaptors.h>
+#include "SharedBuffer.h"
 #include <wtf/NativePromise.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AsyncAudioDecoder);
 
 AsyncAudioDecoder::AsyncAudioDecoder()
     : m_runLoop(RunLoop::create("Audio Decoder"_s, ThreadType::Audio))
 {
 }
 
-Ref<DecodingTaskPromise> AsyncAudioDecoder::decodeAsync(Ref<ArrayBuffer>&& audioData, float sampleRate)
+AsyncAudioDecoder::~AsyncAudioDecoder()
 {
-    return WTF::invokeAsync(m_runLoop, [audioData = WTFMove(audioData), sampleRate] () mutable {
+    m_runLoop->dispatch([] {
+        RunLoop::currentSingleton().stop();
+    });
+}
+Ref<DecodingTaskPromise> AsyncAudioDecoder::decodeAsync(Ref<SharedBuffer>&& audioData, float sampleRate)
+{
+    return WTF::invokeAsync(m_runLoop, [audioData = WTF::move(audioData), sampleRate] () mutable {
         auto audioBuffer = AudioBuffer::createFromAudioFileData(audioData->span(), false, sampleRate);
-        // The ArrayBuffer must be deleted on the main thread, send it back there to be derefed.
-        callOnMainThread([audioData = WTFMove(audioData)] { });
         if (!audioBuffer)
             return DecodingTaskPromise::createAndReject(Exception { ExceptionCode::EncodingError, "Decoding failed"_s });
         return DecodingTaskPromise::createAndResolve(audioBuffer.releaseNonNull());

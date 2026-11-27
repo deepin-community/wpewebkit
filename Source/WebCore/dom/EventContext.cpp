@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,8 +36,11 @@
 #include "LocalDOMWindow.h"
 #include "MouseEvent.h"
 #include "TouchEvent.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventContext);
 
 void EventContext::handleLocalEvents(Event& event, EventInvokePhase phase) const
 {
@@ -70,12 +73,17 @@ void EventContext::handleLocalEvents(Event& event, EventInvokePhase phase) const
     }
 #endif
 
-    if (!m_node || UNLIKELY(m_type == Type::Window)) {
-        protectedCurrentTarget()->fireEventListeners(event, phase);
+    if (!m_node) {
+        protect(currentTarget())->fireEventListeners(event, phase);
         return;
     }
 
-    if (UNLIKELY(m_contextNodeIsFormElement)) {
+    if (m_type == Type::Window) [[unlikely]] {
+        protect(currentTarget())->fireEventListeners(event, phase);
+        return;
+    }
+
+    if (m_contextNodeIsFormElement) [[unlikely]] {
         ASSERT(is<HTMLFormElement>(*m_node));
         auto& eventNames = WebCore::eventNames();
         if ((event.type() == eventNames.submitEvent || event.type() == eventNames.resetEvent)
@@ -88,13 +96,7 @@ void EventContext::handleLocalEvents(Event& event, EventInvokePhase phase) const
     if (!m_node->hasEventTargetData())
         return;
 
-    if (event.isTrusted() && is<MouseEvent>(event) && !event.isWheelEvent() && !m_node->document().settings().sendMouseEventsToDisabledFormControlsEnabled()) {
-        auto* element = dynamicDowncast<Element>(m_node.get());
-        if (element && element->isDisabledFormControl())
-            return;
-    }
-
-    protectedNode()->fireEventListeners(event, phase);
+    protect(node())->fireEventListeners(event, phase);
 }
 
 #if ENABLE(TOUCH_EVENTS)

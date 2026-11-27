@@ -69,13 +69,15 @@ def main():
 
 #pragma once
 
-#include "ThreadGlobalData.h"
+#include <WebCore/ThreadGlobalData.h>
 #include <array>
 #include <functional>
+#include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringHash.h>
+#include <wtf/text/StringView.h>
 
 namespace WebCore {
 
@@ -131,7 +133,7 @@ private:
 };
 
 struct EventNames {
-    WTF_MAKE_NONCOPYABLE(EventNames); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(EventNames); WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventNames);
 public:''')
 
         for name in sorted(event_names_input.keys()):
@@ -153,6 +155,17 @@ public:''')
     }
 ''')
         writeln(f'    std::array<const AtomString, {len(event_names_input)}> allEventNames() const;')
+        writeln(f'')
+        writeln(f'    static constexpr std::array timedEvents {{')
+        for name in category_map['EventTimingEligible']:
+            entry = event_names_input[name]
+            conditional = entry.get('conditional', None)
+            writeln(f'#if {conditional}') if conditional else None
+            writeln(f'        EventType::{name},')
+            writeln(f'#endif') if conditional else None
+        writeln(f'    }};')
+        writeln(f'')
+        writeln(f'    const AtomString& eventNameFromEventType(EventType) const;')
         writeln('''
 private:
     EventNames();
@@ -162,9 +175,12 @@ private:
 
 const EventNames& eventNames();
 
+// Unlike eventNames(), this is thread-safe: it matches by content rather than by AtomString identity.
+bool isEventHandlerAttributeName(StringView);
+
 inline const EventNames& eventNames()
 {
-    return threadGlobalData().eventNames();
+    return threadGlobalDataSingleton().eventNames();
 }
 
 inline EventTypeInfo EventNames::typeInfoForEvent(const AtomString& eventType) const
@@ -178,7 +194,7 @@ inline EventTypeInfo EventNames::typeInfoForEvent(const AtomString& eventType) c
         def writeln(text):
             output_file.write(text + '\n')
         writeln('''/*
- * Copyright (C) 2005-2024 Apple Inc.
+ * Copyright (C) 2005-2024 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -200,19 +216,36 @@ inline EventTypeInfo EventNames::typeInfoForEvent(const AtomString& eventType) c
 #include "config.h"
 #include "EventNames.h"
 
-namespace WebCore {
+#include <wtf/SortedArrayMap.h>
 
-EventNames::EventNames()''')
+namespace WebCore {
+''')
+
+        # Generate static constexpr StaticStringImpl declarations
+        for name in sorted(event_names_input.keys()):
+            conditional = event_names_input[name].get('conditional', None)
+            if conditional:
+                writeln(f'#if {conditional}')
+            writeln(f'static constexpr StringImpl::StaticStringImpl {name}Data("{name}", StringImpl::StringAtom);')
+            if conditional:
+                writeln('#endif')
+
+        writeln('')
+
+        # Generate constructor using StaticStringImpl references
+        writeln('EventNames::EventNames()')
 
         delimiter = ':'
         for name in sorted(event_names_input.keys()):
             conditional = event_names_input[name].get('conditional', None)
             if conditional:
                 writeln(f'#if {conditional}')
-            writeln(f'    {delimiter} {name}Event(\"{name}\"_s)')
+            writeln(f'    {delimiter} {name}Event({name}Data)')
             delimiter = ','
             if conditional:
                 writeln('#endif')
+
+        # m_typeInfoMap uses already-initialized member variables as keys
         writeln(f'    {delimiter} m_typeInfoMap({{')
         for name in sorted(event_names_input.keys()):
             entry = event_names_input[name]
@@ -246,7 +279,38 @@ EventNames::EventNames()''')
             writeln(f'        {name}Event,')
             if conditional:
                 writeln(f'#endif')
-        writeln('''    } };
+        writeln('''    } };''')
+        writeln('}')
+        writeln('')
+        # Content-keyed and immutable, so unlike an AtomString-keyed table this is safe to share
+        # between threads: AtomStrings are per-thread and compare by pointer identity.
+        writeln('static constexpr SortedArraySet eventHandlerAttributeNameSet { WTF::toArray<ComparableASCIILiteral>({')
+        for name in sorted(event_names_input.keys(), key=lambda name: 'on' + name.lower()):
+            conditional = event_names_input[name].get('conditional', None)
+            if conditional:
+                writeln(f'#if {conditional}')
+            writeln(f'    "on{name.lower()}"_s,')
+            if conditional:
+                writeln(f'#endif')
+        writeln('}) };')
+        writeln('')
+        writeln('bool isEventHandlerAttributeName(StringView name)')
+        writeln('{')
+        writeln('    return eventHandlerAttributeNameSet.contains(name);')
+        writeln('}')
+        writeln('')
+        writeln(f'static constexpr std::array<const AtomString EventNames::*, {len(event_names_input)}> eventStringInEventNames {{')
+        for name in sorted(event_names_input.keys()):
+            entry = event_names_input[name]
+            conditional = entry.get('conditional', None)
+            writeln(f'#if {conditional}') if conditional else None
+            writeln(f'    &EventNames::{name}Event,')
+            writeln(f'#endif') if conditional else None
+        writeln('};')
+        writeln('''
+const AtomString& EventNames::eventNameFromEventType(EventType type) const {
+    auto typeAsIndex = static_cast<size_t>(type) - 1;
+    return this->*(eventStringInEventNames[typeAsIndex]);
 }
 
 } // namespace WebCore''')

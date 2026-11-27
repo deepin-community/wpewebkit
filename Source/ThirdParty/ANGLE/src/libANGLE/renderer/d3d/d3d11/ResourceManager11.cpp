@@ -9,6 +9,7 @@
 #include "libANGLE/renderer/d3d/d3d11/ResourceManager11.h"
 
 #include "common/debug.h"
+#include "libANGLE/histogram_macros.h"
 #include "libANGLE/renderer/d3d/d3d11/Renderer11.h"
 #include "libANGLE/renderer/d3d/d3d11/formatutils11.h"
 
@@ -124,14 +125,6 @@ HRESULT CreateResource(ID3D11Device *device,
 }
 
 HRESULT CreateResource(ID3D11Device *device,
-                       const ShaderData *desc,
-                       void * /*initData*/,
-                       ID3D11ComputeShader **resourceOut)
-{
-    return device->CreateComputeShader(desc->get(), desc->size(), nullptr, resourceOut);
-}
-
-HRESULT CreateResource(ID3D11Device *device,
                        const D3D11_DEPTH_STENCIL_DESC *desc,
                        void * /*initData*/,
                        ID3D11DepthStencilState **resourceOut)
@@ -178,6 +171,7 @@ HRESULT CreateResource(ID3D11Device *device,
                        void * /*initData*/,
                        ID3D11PixelShader **resourceOut)
 {
+    SCOPED_ANGLE_HISTOGRAM_TIMER_US("GPU.ANGLE.D3D11.CreatePixelShaderUs");
     return device->CreatePixelShader(desc->get(), desc->size(), nullptr, resourceOut);
 }
 
@@ -250,6 +244,7 @@ HRESULT CreateResource(ID3D11Device *device,
                        void * /*initData*/,
                        ID3D11VertexShader **resourceOut)
 {
+    SCOPED_ANGLE_HISTOGRAM_TIMER_US("GPU.ANGLE.D3D11.CreateVertexShaderUs");
     return device->CreateVertexShader(desc->get(), desc->size(), nullptr, resourceOut);
 }
 
@@ -314,7 +309,7 @@ DXGI_FORMAT GetTypedColorFormatForClearing(DXGI_FORMAT dxgiFormat)
         case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
         case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
             UNREACHABLE();
-            [[fallthrough]];
+            return dxgiFormat;
         default:
             return dxgiFormat;
     }
@@ -451,7 +446,8 @@ static_assert(kResourceTypeErrors[NumResourceTypes - 1] != nullptr,
 }  // anonymous namespace
 
 // ResourceManager11 Implementation.
-ResourceManager11::ResourceManager11() : mInitializeAllocations(false)
+ResourceManager11::ResourceManager11(Renderer11 *renderer)
+    : mRenderer(renderer), mInitializeAllocations(false)
 {
     for (auto &count : mAllocatedResourceCounts)
     {
@@ -484,7 +480,7 @@ angle::Result ResourceManager11::allocate(d3d::Context *context,
                                           Resource11<T> *resourceOut)
 {
     ID3D11Device *device = renderer->getDevice();
-    T *resource          = nullptr;
+    angle::ComPtr<T> resource;
 
     GetInitDataFromD3D11<T> *shadowInitData = initData;
     if (!shadowInitData && mInitializeAllocations)
@@ -497,12 +493,12 @@ angle::Result ResourceManager11::allocate(d3d::Context *context,
 
     if (!shadowInitData && mInitializeAllocations)
     {
-        ANGLE_TRY(ClearResource(context, renderer, desc, resource));
+        ANGLE_TRY(ClearResource(context, renderer, desc, resource.Get()));
     }
 
     ASSERT(resource);
     incrResource(GetResourceTypeFromD3D11<T>(), ComputeMemoryUsage(desc));
-    *resourceOut = std::move(Resource11<T>(resource, this));
+    *resourceOut = std::move(Resource11<T>(std::move(resource), this));
     return angle::Result::Continue;
 }
 
@@ -531,6 +527,15 @@ void ResourceManager11::decrResource(ResourceType resourceType, uint64_t memoryS
 void ResourceManager11::onReleaseGeneric(ResourceType resourceType, ID3D11DeviceChild *resource)
 {
     ASSERT(resource);
+    // Only Buffer needs to notify StateManager11 here: mCurrentVertexBuffers and mAppliedIB are the
+    // only caches in StateManager11 that store raw COM pointers and re-submit cached slots to D3D11
+    // (via IASetVertexBuffers). Other resource types (textures/views, shaders, input layouts, and
+    // state objects) are tracked via integer serials or value structs and never re-submit cached
+    // pointers to D3D11.
+    if (resourceType == ResourceType::Buffer)
+    {
+        mRenderer->getStateManager()->onReleaseBuffer(static_cast<ID3D11Buffer *>(resource));
+    }
     decrResource(resourceType, ComputeGenericMemoryUsage(resourceType, resource));
 }
 

@@ -28,20 +28,21 @@
 #if USE(SKIA)
 
 #include "FilterEffectApplier.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class FEDropShadow;
 
 class FEDropShadowSkiaApplier final : public FilterEffectConcreteApplier<FEDropShadow> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FEDropShadowSkiaApplier);
     using Base = FilterEffectConcreteApplier<FEDropShadow>;
 
 public:
     using Base::Base;
 
 private:
-    bool apply(const Filter&, const FilterImageVector&, FilterImage&) const final;
+    bool apply(const Filter&, std::span<const Ref<FilterImage>>, FilterImage&) const final;
 };
 
 } // namespace WebCore

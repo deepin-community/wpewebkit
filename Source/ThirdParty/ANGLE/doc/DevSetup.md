@@ -6,11 +6,11 @@ ANGLE provides OpenGL ES 3.1 and EGL 1.5 libraries and tests. You can use these 
 
 ### Version Control
 
-ANGLE uses git for version control. Helpful documentation can be found at [http://git-scm.com/documentation](http://git-scm.com/documentation).
+ANGLE uses git for version control. Helpful documentation can be found at [http://git-scm.com/install](http://git-scm.com/install).
 
 ### Required First Setup (do this first)
 
-Note: If you are building inside a Chromium checkout [see these instructions instead](https://chromium.googlesource.com/angle/angle/+/HEAD/doc/BuildingAngleForChromiumDevelopment.md).
+Note: If you are building inside a Chromium checkout (i.e. to build the Chrome browser) [see these instructions instead](https://chromium.googlesource.com/angle/angle/+/HEAD/doc/BuildingAngleForChromiumDevelopment.md).  Otherwise, continue to build a standalone version of ANGLE (e.g. for a layered driver on Android).
 
 Required on all platforms:
 
@@ -30,7 +30,7 @@ On Windows:
    * The SDK is required for GN-generated Visual Studio projects, the D3D Debug runtime, and the latest HLSL Compiler runtime.
  * (optional) See the [Chromium Windows build instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/windows_build_instructions.md) for more info.
 
-On Linux:
+On Linux (required for Android development):
 
  * Dependencies will be handled later (see `install-build-deps.sh` below).
 
@@ -58,7 +58,10 @@ On Linux only, you need to install all the necessary dependencies before going f
 
 If building for Android (which requires Linux), switch to the [Android steps](https://chromium.googlesource.com/angle/angle.git/+/HEAD/doc/DevSetupAndroid.md) at this point.
 
-After this completes successfully, you are ready to generate the ninja files:
+### Building the code
+
+After the above completes successfully, you are ready to generate the ninja
+files:
 ```
 gn gen out/Debug
 ```
@@ -80,6 +83,10 @@ is_debug = true/false                (use false for release builds. is_debug = t
 angle_assert_always_on = true/false  (enables release asserts and runtime debug layers)
 is_clang = false (NOT RECOMMENDED)   (to use system default compiler instead of clang)
 ```
+
+When building with clang, we expect the build to run against a copy of clang
+that includes the chrome clang plugin. To build against an ordinary copy of
+clang lacking this plugin, set `clang_use_chrome_plugins = false`.
 
 For a release build run `gn args out/Release` and set `is_debug = false`.
 Optionally set `angle_assert_always_on = true` for Release testing.
@@ -176,6 +183,23 @@ Once the build completes, all ANGLE libraries, tests, and samples will be locate
 ### Building ANGLE for Android
 
 See the Android specific [documentation](DevSetupAndroid.md#ANGLE-for-Android).
+
+### Building ANGLE for iOS simulator
+
+This is currently possible only from Chromium checkout.
+Follow [Chromium for iOS build instructions](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/ios/build_instructions.md).
+GN args used by [ANGLE for iOS builder](https://ci.chromium.org/ui/p/chromium/builders/luci.chromium.ci/ios-angle-builder) are supported, e.g.:
+```
+dcheck_always_on = true
+enable_run_ios_unittests_with_xctest = true
+is_component_build = false
+is_debug = false
+symbol_level = 1
+target_cpu = "x64"
+target_environment = "simulator"
+target_os = "ios"
+```
+Building `angle_end2end_tests` and `angle_white_box_tests` targets is supported.
 
 ## Application Development with ANGLE
 

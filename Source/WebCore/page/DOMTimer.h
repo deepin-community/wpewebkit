@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008, 2014 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008, 2014 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,14 +26,10 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
-#include "EventLoop.h"
-#include "UserGestureIndicator.h"
-#include <memory>
-#include <wtf/MonotonicTime.h>
-#include <wtf/RefCounted.h>
+#include <WebCore/ActiveDOMObject.h>
+#include <WebCore/EventLoop.h>
 #include <wtf/Seconds.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -41,22 +37,23 @@ class DOMTimerFireState;
 class Document;
 class ImminentlyScheduledWorkScope;
 class ScheduledAction;
+class UserGestureToken;
 
-class DOMTimer final : public RefCounted<DOMTimer>, public ActiveDOMObject, public CanMakeWeakPtr<DOMTimer> {
+class DOMTimer final : public RefCounted<DOMTimer>, public ActiveDOMObject {
     WTF_MAKE_NONCOPYABLE(DOMTimer);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(DOMTimer);
 public:
-    WEBCORE_EXPORT virtual ~DOMTimer();
-
-    // ActiveDOMObject.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    static Seconds defaultMinimumInterval() { return 4_ms; }
-    static Seconds defaultAlignmentInterval() { return 0_s; }
-    static Seconds defaultAlignmentIntervalInLowPowerOrThermallyMitigatedMode() { return 30_ms; }
-    static Seconds nonInteractedCrossOriginFrameAlignmentInterval() { return 30_ms; }
-    static Seconds hiddenPageAlignmentInterval() { return 1_s; }
+    WEBCORE_EXPORT virtual ~DOMTimer();
+
+    static constexpr Seconds defaultMinimumInterval() { return 4_ms; }
+    static constexpr Seconds minimumAlignmentForMaximallyNestedTimers() { return 4_ms; }
+    static constexpr Seconds defaultAlignmentInterval() { return 0_s; }
+    static constexpr Seconds defaultAlignmentIntervalInLowPowerOrThermallyMitigatedMode() { return 30_ms; }
+    static constexpr Seconds nonInteractedCrossOriginFrameAlignmentInterval() { return 30_ms; }
+    static constexpr Seconds hiddenPageAlignmentInterval() { return 1_s; }
 
     enum class Type : bool { SingleShot, Repeating };
     static int install(ScriptExecutionContext&, std::unique_ptr<ScheduledAction>, Seconds timeout, Type);
@@ -67,7 +64,7 @@ public:
     // setting for the context has changed).
     void updateTimerIntervalIfNecessary();
 
-    static void scriptDidInteractWithPlugin();
+    static void NODELETE scriptDidInteractWithPlugin();
 
     EventLoopTimerHandle timer() const { return m_timer; }
     bool hasReachedMaxNestingLevel() const { return m_hasReachedMaxNestingLevel; }
@@ -78,7 +75,7 @@ private:
 
     WEBCORE_EXPORT Seconds intervalClampedToMinimum() const;
 
-    bool isDOMTimersThrottlingEnabled(const Document&) const;
+    bool NODELETE isDOMTimersThrottlingEnabled(const Document&) const;
     void updateThrottlingStateIfNecessary(const DOMTimerFireState&);
 
     void fired();
@@ -95,7 +92,7 @@ private:
         ShouldNotThrottle
     };
 
-    int m_timeoutId;
+    int m_timeoutId { 0 };
     int m_nestingLevel;
     EventLoopTimerHandle m_timer;
     Function<void(ScriptExecutionContext&)> m_action;

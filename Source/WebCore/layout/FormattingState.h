@@ -26,7 +26,7 @@
 #pragma once
 
 #include "FormattingContext.h"
-#include "LayoutState.h"
+#include <WebCore/LayoutState.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -37,7 +37,7 @@ enum class StyleDiff;
 
 class FormattingState {
     WTF_MAKE_NONCOPYABLE(FormattingState);
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(FormattingState);
+    WTF_MAKE_TZONE_ALLOCATED(FormattingState);
 public:
     void setIntrinsicWidthConstraintsForBox(const Box&, IntrinsicWidthConstraints);
     std::optional<IntrinsicWidthConstraints> intrinsicWidthConstraintsForBox(const Box&) const;
@@ -50,10 +50,10 @@ public:
     bool isTableFormattingState() const { return m_type == Type::Table; }
     bool isFlexFormattingState() const { return m_type == Type::Flex; }
 
-    LayoutState& layoutState() const { return m_layoutState; }
+    LayoutState& layoutState() const LIFETIME_BOUND { return m_layoutState; }
 
     // FIXME: We need to find a way to limit access to mutable geometry.
-    BoxGeometry& boxGeometry(const Box& layoutBox);
+    BoxGeometry& boxGeometry(const Box& layoutBox) LIFETIME_BOUND;
 
 protected:
     enum class Type { Block, Table, Flex };
@@ -61,7 +61,7 @@ protected:
     ~FormattingState();
 
 private:
-    LayoutState& m_layoutState;
+    const CheckedRef<LayoutState> m_layoutState;
     HashMap<const Box*, IntrinsicWidthConstraints> m_intrinsicWidthConstraintsForBoxes;
     std::optional<IntrinsicWidthConstraints> m_intrinsicWidthConstraints;
     Type m_type;
@@ -70,7 +70,7 @@ private:
 inline void FormattingState::setIntrinsicWidthConstraintsForBox(const Box& layoutBox, IntrinsicWidthConstraints intrinsicWidthConstraints)
 {
     ASSERT(!m_intrinsicWidthConstraintsForBoxes.contains(&layoutBox));
-    ASSERT(&m_layoutState.formattingStateForFormattingContext(FormattingContext::formattingContextRoot(layoutBox)) == this);
+    ASSERT(&m_layoutState->formattingStateForFormattingContext(FormattingContext::formattingContextRoot(layoutBox)) == this);
     m_intrinsicWidthConstraintsForBoxes.set(&layoutBox, intrinsicWidthConstraints);
 }
 
@@ -82,7 +82,7 @@ inline void FormattingState::clearIntrinsicWidthConstraints(const Box& layoutBox
 
 inline std::optional<IntrinsicWidthConstraints> FormattingState::intrinsicWidthConstraintsForBox(const Box& layoutBox) const
 {
-    ASSERT(&m_layoutState.formattingStateForFormattingContext(FormattingContext::formattingContextRoot(layoutBox)) == this);
+    ASSERT(&m_layoutState->formattingStateForFormattingContext(FormattingContext::formattingContextRoot(layoutBox)) == this);
     auto iterator = m_intrinsicWidthConstraintsForBoxes.find(&layoutBox);
     if (iterator == m_intrinsicWidthConstraintsForBoxes.end())
         return { };

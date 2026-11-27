@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011, 2017 Igalia S.L.
- * Portions Copyright (c) 2011 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2011 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,10 @@
 
 #pragma once
 
+#include "APIIconLoadingClient.h"
+#include "CallbackID.h"
 #include "EditingRange.h"
-#include "RendererBufferFormat.h"
+#include "RendererBufferDescription.h"
 #include "UserMessage.h"
 #include "WebContextMenuItemData.h"
 #include "WebEvent.h"
@@ -49,14 +51,15 @@ class WebKitWebResourceLoadManager;
 
 WebKit::WebPageProxy& webkitWebViewGetPage(WebKitWebView*);
 void webkitWebViewWillStartLoad(WebKitWebView*);
-void webkitWebViewLoadChanged(WebKitWebView*, WebKitLoadEvent);
+void webkitWebViewLoadChanged(WebKitWebView*, WebKitLoadEvent, API::Navigation* = nullptr);
 void webkitWebViewLoadFailed(WebKitWebView*, WebKitLoadEvent, const char* failingURI, GError*);
 void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView*, const char* failingURI, GError*, GTlsCertificateFlags, GTlsCertificate*);
-#if PLATFORM(GTK)
-void webkitWebViewGetLoadDecisionForIcon(WebKitWebView*, const WebCore::LinkIcon&, Function<void(bool)>&&);
+#if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
+void webkitWebViewGetLoadDecisionForIcons(WebKitWebView*, const HashMap<WebKit::CallbackID, WebCore::LinkIcon>&, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&&);
 void webkitWebViewSetIcon(WebKitWebView*, const WebCore::LinkIcon&, API::Data&);
+void webkitWebViewUpdatePageIcons(WebKitWebView*);
 #endif
-RefPtr<WebKit::WebPageProxy> webkitWebViewCreateNewPage(WebKitWebView*, Ref<API::PageConfiguration>&&, WebCore::WindowFeatures&&, WebKitNavigationAction*);
+RefPtr<WebKit::WebPageProxy> webkitWebViewCreateNewPage(WebKitWebView*, Ref<API::PageConfiguration>&&, WebKitNavigationAction*);
 void webkitWebViewReadyToShowPage(WebKitWebView*);
 void webkitWebViewRunAsModal(WebKitWebView*);
 void webkitWebViewClosePage(WebKitWebView*);
@@ -97,12 +100,15 @@ void webkitWebViewWebProcessTerminated(WebKitWebView*, WebKitWebProcessTerminati
 void webkitWebViewIsPlayingAudioChanged(WebKitWebView*);
 void webkitWebViewMediaCaptureStateDidChange(WebKitWebView*, WebCore::MediaProducer::MediaStateFlags);
 void webkitWebViewSelectionDidChange(WebKitWebView*);
+void webkitWebViewDidChangePageScale(WebKitWebView*);
 WebKitWebsiteDataManager* webkitWebViewGetWebsiteDataManager(WebKitWebView*);
 void webkitWebViewPermissionStateQuery(WebKitWebView*, WebKitPermissionStateQuery*);
 
 #if PLATFORM(GTK)
 bool webkitWebViewEmitRunColorChooser(WebKitWebView*, WebKitColorChooserRequest*);
 #endif
+
+void webkitWebViewEmitThemeColorChanged(WebKitWebView*);
 
 bool webkitWebViewShowOptionMenu(WebKitWebView*, const WebCore::IntRect&, WebKitOptionMenu*);
 
@@ -113,8 +119,8 @@ void webkitWebViewDidChangePageID(WebKitWebView*);
 void webkitWebViewDidReceiveUserMessage(WebKitWebView*, WebKit::UserMessage&&, CompletionHandler<void(WebKit::UserMessage&&)>&&);
 
 #if ENABLE(POINTER_LOCK)
-void webkitWebViewRequestPointerLock(WebKitWebView*);
-void webkitWebViewDenyPointerLockRequest(WebKitWebView*);
+void webkitWebViewRequestPointerLock(WebKitWebView*, CompletionHandler<void(bool)>&&);
+void webkitWebViewDenyPointerLockRequest(CompletionHandler<void(bool)>&&);
 void webkitWebViewDidLosePointerLock(WebKitWebView*);
 #endif
 
@@ -128,5 +134,9 @@ guint createShowOptionMenuSignal(WebKitWebViewClass*);
 guint createContextMenuSignal(WebKitWebViewClass*);
 
 #if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
-WebKit::RendererBufferFormat webkitWebViewGetRendererBufferFormat(WebKitWebView*);
+WebKit::RendererBufferDescription webkitWebViewGetRendererBufferDescription(WebKitWebView*);
+#endif
+
+#if ENABLE(WEBXR) && USE(OPENXR)
+void webkitWebViewSetIsImmersiveModeEnabled(WebKitWebView*, bool);
 #endif

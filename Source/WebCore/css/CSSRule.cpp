@@ -22,15 +22,20 @@
 #include "config.h"
 #include "CSSRule.h"
 
+#include "CSSScopeRule.h"
+#include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "StyleRule.h"
 #include "StyleSheetContents.h"
+#include "WebCoreOpaqueRoot.h"
+#include "css/parser/CSSParserEnum.h"
 
 namespace WebCore {
 
-struct SameSizeAsCSSRule : public RefCounted<SameSizeAsCSSRule> {
+struct SameSizeAsCSSRule : public RefCountedAndCanMakeWeakPtr<SameSizeAsCSSRule> {
     virtual ~SameSizeAsCSSRule();
     unsigned char bitfields;
+    Lock opaqueRootLockForGC;
     void* pointerUnion;
 };
 
@@ -44,7 +49,7 @@ unsigned short CSSRule::typeForCSSOM() const
     if (styleRuleType() >= firstUnexposedStyleRuleType)
         return 0;
 
-    return enumToUnderlyingType(styleRuleType());
+    return std::to_underlying(styleRuleType());
 }
 
 ExceptionOr<void> CSSRule::setCssText(const String&)
@@ -52,15 +57,29 @@ ExceptionOr<void> CSSRule::setCssText(const String&)
     return { };
 }
 
+WebCoreOpaqueRoot CSSRule::opaqueRootForGCThread()
+{
+    // Runs on the parallel GC marker threads concurrently with each other and with the
+    // conducting mutator, so this is deliberately limited to reading the parent links under
+    // opaqueRootLockForGC(). Note that parentStyleSheet() is not used for the parent-rule hop:
+    // it walks the same links without taking any of the locks.
+    Locker locker { opaqueRootLockForGC() };
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* parentRule = this->parentRule())
+        return parentRule->opaqueRootForGCThread();
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* parentStyleSheet = this->parentStyleSheet())
+        return parentStyleSheet->opaqueRootForGCThread();
+    return WebCoreOpaqueRoot { this };
+}
+
 const CSSParserContext& CSSRule::parserContext() const
 {
-    CSSStyleSheet* styleSheet = parentStyleSheet();
+    RefPtr styleSheet = parentStyleSheet();
     return styleSheet ? styleSheet->contents().parserContext() : strictCSSParserContext();
 }
 
 bool CSSRule::hasStyleRuleAncestor() const
 {
-    auto current = this->parentRule();
+    RefPtr current = this->parentRule();
     while (current) {
         if (current->styleRuleType() == StyleRuleType::Style)
             return true;
@@ -68,6 +87,18 @@ bool CSSRule::hasStyleRuleAncestor() const
         current = current->parentRule();
     }
     return false;
+}
+
+CSSParserEnum::NestedContext CSSRule::nestedContext() const
+{
+    for (RefPtr parentRule = this->parentRule(); parentRule; parentRule = parentRule->parentRule()) {
+        if (is<CSSStyleRule>(*parentRule))
+            return CSSParserEnum::NestedContextType::Style;
+        if (is<CSSScopeRule>(*parentRule))
+            return CSSParserEnum::NestedContextType::Scope;
+    }
+
+    return { };
 }
 
 RefPtr<StyleRuleWithNesting> CSSRule::prepareChildStyleRuleForNesting(StyleRule&)

@@ -35,23 +35,33 @@
 #include "ModelConnectionToWebProcess.h"
 #include "ModelProcessConnectionParameters.h"
 #include "ModelProcessCreationParameters.h"
+#include "ModelProcessModelPlayerProxy.h"
 #include "ModelProcessProxyMessages.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcessPoolMessages.h"
 #include <WebCore/CommonAtomStrings.h>
 #include <WebCore/LogInitialization.h>
 #include <WebCore/MemoryRelease.h>
-#include <wtf/Algorithms.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/LogInitialization.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/text/AtomString.h>
 
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS)
+#include "SharedFileHandle.h"
+#if HAVE(CORE_RE)
+#include <WebKitAdditions/WKREEngine.h>
+#endif
+#endif
+
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ModelProcess);
 
 // We wouldn't want the ModelProcess to repeatedly exit then relaunch when under memory pressure. In particular, we need to make sure the
 // WebProcess has a chance to schedule work after the ModelProcess gets launched. For this reason, we make sure that the ModelProcess never
@@ -59,39 +69,49 @@ namespace WebKit {
 // work in the ModelProcess.
 constexpr Seconds minimumLifetimeBeforeIdleExit { 5_s };
 
+Ref<ModelProcess> ModelProcess::create(AuxiliaryProcessInitializationParameters&& parameters)
+{
+    return adoptRef(*new ModelProcess(WTF::move(parameters)));
+}
+
 ModelProcess::ModelProcess(AuxiliaryProcessInitializationParameters&& parameters)
     : m_idleExitTimer(*this, &ModelProcess::tryExitIfUnused)
 {
-    initialize(WTFMove(parameters));
+    initialize(WTF::move(parameters));
     RELEASE_LOG(Process, "%p - ModelProcess::ModelProcess:", this);
 }
 
 ModelProcess::~ModelProcess() = default;
 
-void ModelProcess::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)
-{
-    if (messageReceiverMap().dispatchMessage(connection, decoder))
-        return;
-
-    if (decoder.messageReceiverName() == Messages::AuxiliaryProcess::messageReceiverName()) {
-        AuxiliaryProcess::didReceiveMessage(connection, decoder);
-        return;
-    }
-
-    didReceiveModelProcessMessage(connection, decoder);
-}
-
-void ModelProcess::createModelConnectionToWebProcess(WebCore::ProcessIdentifier identifier, PAL::SessionID sessionID, IPC::Connection::Handle&& connectionHandle, ModelProcessConnectionParameters&& parameters, CompletionHandler<void()>&& completionHandler)
+void ModelProcess::createModelConnectionToWebProcess(
+    WebCore::ProcessIdentifier identifier,
+    PAL::SessionID sessionID,
+    IPC::Connection::Handle&& connectionHandle,
+    ModelProcessConnectionParameters&& parameters,
+    const std::optional<String>& attributionTaskID,
+    CompletionHandler<void()>&& completionHandler)
 {
     RELEASE_LOG(Process, "%p - ModelProcess::createModelConnectionToWebProcess: processIdentifier=%" PRIu64, this, identifier.toUInt64());
 
-    auto reply = makeScopeExit(WTFMove(completionHandler));
+    auto reply = makeScopeExit(WTF::move(completionHandler));
     // If sender exited before we received the identifier, the identifier
     // may not be valid.
     if (!connectionHandle)
         return;
 
-    auto newConnection = ModelConnectionToWebProcess::create(*this, identifier, sessionID, WTFMove(connectionHandle), WTFMove(parameters));
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && HAVE(CORE_RE)
+    WKREEngine::singleton().initializeWithSharedSimulationConnectionGetterIfNeeded([identifier, weakThis = WeakPtr { *this }] (CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&& completionHandler) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis) {
+            completionHandler(std::nullopt);
+            return;
+        }
+
+        protectedThis->requestSharedSimulationConnection(identifier, WTF::move(completionHandler));
+    });
+#endif
+
+    auto newConnection = ModelConnectionToWebProcess::create(*this, identifier, sessionID, WTF::move(connectionHandle), WTF::move(parameters), attributionTaskID);
 
 #if ENABLE(IPC_TESTING_API)
     if (parameters.ignoreInvalidMessageForTesting)
@@ -99,7 +119,14 @@ void ModelProcess::createModelConnectionToWebProcess(WebCore::ProcessIdentifier 
 #endif
 
     ASSERT(!m_webProcessConnections.contains(identifier));
-    m_webProcessConnections.add(identifier, WTFMove(newConnection));
+    m_webProcessConnections.add(identifier, WTF::move(newConnection));
+}
+
+void ModelProcess::sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier identifier, SharedPreferencesForWebProcess&& sharedPreferencesForWebProcess, CompletionHandler<void()>&& completionHandler)
+{
+    if (RefPtr connection = m_webProcessConnections.get(identifier))
+        connection->updateSharedPreferencesForWebProcess(WTF::move(sharedPreferencesForWebProcess));
+    completionHandler();
 }
 
 void ModelProcess::removeModelConnectionToWebProcess(ModelConnectionToWebProcess& connection)
@@ -177,9 +204,15 @@ void ModelProcess::lowMemoryHandler(Critical critical, Synchronous synchronous)
 
 void ModelProcess::initializeModelProcess(ModelProcessCreationParameters&& parameters, CompletionHandler<void()>&& completionHandler)
 {
-    CompletionHandlerCallingScope callCompletionHandler(WTFMove(completionHandler));
+    CompletionHandlerCallingScope callCompletionHandler(WTF::move(completionHandler));
 
-    applyProcessCreationParameters(parameters.auxiliaryProcessParameters);
+    m_debugEntityMemoryLimit = parameters.debugEntityMemoryLimit;
+    m_debugImmersiveEntityMemoryLimit = parameters.debugImmersiveEntityMemoryLimit;
+#if HAVE(CORE_RE)
+    WKREEngine::enableRestrictiveRenderingMode(parameters.restrictiveRenderingMode);
+#endif
+
+    applyProcessCreationParameters(WTF::move(parameters.auxiliaryProcessParameters));
     RELEASE_LOG(Process, "%p - ModelProcess::initializeModelProcess:", this);
     WTF::Thread::setCurrentThreadIsUserInitiated();
     WebCore::initializeCommonAtomStrings();
@@ -190,12 +223,12 @@ void ModelProcess::initializeModelProcess(ModelProcessCreationParameters&& param
     });
     memoryPressureHandler.install();
 
-    m_applicationVisibleName = WTFMove(parameters.applicationVisibleName);
+    m_applicationVisibleName = WTF::move(parameters.applicationVisibleName);
 
     // Match the QoS of the UIProcess since the model process is doing rendering on its behalf.
     WTF::Thread::setCurrentThreadIsUserInteractive(0);
 
-    WebCore::setPresentingApplicationPID(parameters.parentPID);
+    setLegacyPresentingApplicationPID(parameters.parentPID);
 
 #if USE(OS_STATE)
     registerWithStateDumper("ModelProcess state"_s);
@@ -225,9 +258,21 @@ ModelConnectionToWebProcess* ModelProcess::webProcessConnection(WebCore::Process
     return m_webProcessConnections.get(identifier);
 }
 
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS) && HAVE(CORE_RE)
+void ModelProcess::requestSharedSimulationConnection(WebCore::ProcessIdentifier webProcessIdentifier, CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&& completionHandler)
+{
+    parentProcessConnection()->sendWithAsyncReply(Messages::ModelProcessProxy::RequestSharedSimulationConnection(webProcessIdentifier), WTF::move(completionHandler));
+}
+#endif
+
 void ModelProcess::webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
 {
     completionHandler(ModelConnectionToWebProcess::objectCountForTesting());
+}
+
+void ModelProcess::modelPlayerCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    completionHandler(ModelProcessModelPlayerProxy::objectCountForTesting());
 }
 
 void ModelProcess::addSession(PAL::SessionID sessionID)

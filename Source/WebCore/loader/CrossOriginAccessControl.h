@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2020 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,10 +26,10 @@
 
 #pragma once
 
-#include "HTTPHeaderNames.h"
-#include "ReferrerPolicy.h"
-#include "ResourceResponse.h"
-#include "StoredCredentialsPolicy.h"
+#include <WebCore/HTTPHeaderNames.h>
+#include <WebCore/ReferrerPolicy.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/StoredCredentialsPolicy.h>
 #include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/OptionSet.h>
@@ -79,10 +79,10 @@ WEBCORE_EXPORT void cleanHTTPRequestHeadersForAccessControl(ResourceRequest&, Op
 
 class WEBCORE_EXPORT CrossOriginAccessControlCheckDisabler {
 public:
-    static CrossOriginAccessControlCheckDisabler& singleton();
+    static CrossOriginAccessControlCheckDisabler& NODELETE singleton();
     virtual ~CrossOriginAccessControlCheckDisabler() = default;
-    void setCrossOriginAccessControlCheckEnabled(bool);
-    virtual bool crossOriginAccessControlCheckEnabled() const;
+    void NODELETE setCrossOriginAccessControlCheckEnabled(bool);
+    virtual bool NODELETE crossOriginAccessControlCheckEnabled() const;
 private:
     bool m_accessControlCheckEnabled { true };
 };

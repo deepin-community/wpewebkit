@@ -38,14 +38,14 @@ using namespace WebCore;
  * Controls text search in a #WebKitWebView.
  *
  * A #WebKitFindController is used to search text in a #WebKitWebView. You
- * can get a #WebKitWebView<!-- -->'s #WebKitFindController with
+ * can get a #WebKitWebView's #WebKitFindController with
  * webkit_web_view_get_find_controller(), and later use it to search
  * for text using webkit_find_controller_search(), or get the
  * number of matches using webkit_find_controller_count_matches(). The
  * operations are asynchronous and trigger signals when ready, such as
  * #WebKitFindController::found-text,
  * #WebKitFindController::failed-to-find-text or
- * #WebKitFindController::counted-matches<!-- -->.
+ * #WebKitFindController::counted-matches.
  *
  */
 
@@ -79,7 +79,7 @@ struct _WebKitFindControllerPrivate {
     WebKitWebView* webView;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitFindController, webkit_find_controller, G_TYPE_OBJECT, GObject)
 
@@ -229,7 +229,7 @@ static void webkit_find_controller_class_init(WebKitFindControllerClass* findCla
     /**
      * WebKitFindController:web-view:
      *
-     * The #WebKitWebView this controller is associated to.
+     * The #WebKitWebView this controller is associated with.
      */
     g_object_class_install_property(gObjectClass,
                                     PROP_WEB_VIEW,
@@ -356,7 +356,7 @@ guint webkit_find_controller_get_max_match_count(WebKitFindController* findContr
  * webkit_find_controller_get_web_view:
  * @find_controller: the #WebKitFindController
  *
- * Gets the #WebKitWebView this find controller is associated to.
+ * Gets the #WebKitWebView this find controller is associated with.
  *
  * Do
  * not dereference the returned instance as it belongs to the
@@ -381,6 +381,8 @@ static void webKitFindControllerPerform(WebKitFindController* findController, We
     }
 
     OptionSet<WebKit::FindOptions> findOptions = priv->findOptions;
+    findOptions.add(WebKit::FindOptions::DetermineMatchIndex);
+
     if (operation == FindOperation)
         // Unconditionally highlight text matches when the search
         // starts. WK1 API was forcing clients to enable/disable

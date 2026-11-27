@@ -8,8 +8,8 @@
 #include "src/gpu/graphite/UploadBufferManager.h"
 
 #include "include/gpu/graphite/Recording.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkTFitsIn.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkTFitsIn.h"
 #include "src/gpu/graphite/Buffer.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/CommandBuffer.h"
@@ -46,13 +46,14 @@ std::tuple<void* /*mappedPtr*/, BindBufferInfo> UploadBufferManager::makeBindInf
     }
 
     uint32_t requiredAlignment32 = std::max(SkTo<uint32_t>(requiredAlignment), fMinAlignment);
-    uint32_t requiredBytes32 = SkAlignTo(SkTo<uint32_t>(requiredBytes), requiredAlignment32);
+    uint32_t requiredBytes32 = SkAlignNonPow2(SkTo<uint32_t>(requiredBytes), requiredAlignment32);
     if (requiredBytes32 > kReusedBufferSize) {
         // Create a dedicated buffer for this request.
-        sk_sp<Buffer> buffer = fResourceProvider->findOrCreateBuffer(requiredBytes32,
-                                                                     BufferType::kXferCpuToGpu,
-                                                                     AccessPattern::kHostVisible,
-                                                                     std::move(label));
+        sk_sp<Buffer> buffer = fResourceProvider->findOrCreateNonShareableBuffer(
+                requiredBytes32,
+                BufferType::kXferCpuToGpu,
+                AccessPattern::kHostVisible,
+                label);
         void* bufferMapPtr = buffer ? buffer->map() : nullptr;
         if (!bufferMapPtr) {
             // Unlike [Draw|Static]BufferManager, the UploadManager does not track if any buffer
@@ -73,16 +74,17 @@ std::tuple<void* /*mappedPtr*/, BindBufferInfo> UploadBufferManager::makeBindInf
     }
 
     // Try to reuse an already-allocated buffer.
-    fReusedBufferOffset = SkAlignTo(fReusedBufferOffset, requiredAlignment32);
+    fReusedBufferOffset = SkAlignNonPow2(fReusedBufferOffset, requiredAlignment32);
     if (fReusedBuffer && requiredBytes32 > fReusedBuffer->size() - fReusedBufferOffset) {
         fUsedBuffers.push_back(std::move(fReusedBuffer));
     }
 
     if (!fReusedBuffer) {
-        fReusedBuffer = fResourceProvider->findOrCreateBuffer(kReusedBufferSize,
-                                                              BufferType::kXferCpuToGpu,
-                                                              AccessPattern::kHostVisible,
-                                                              std::move(label));
+        fReusedBuffer = fResourceProvider->findOrCreateNonShareableBuffer(
+                kReusedBufferSize,
+                BufferType::kXferCpuToGpu,
+                AccessPattern::kHostVisible,
+                label);
         fReusedBufferOffset = 0;
         if (!fReusedBuffer || !fReusedBuffer->map()) {
             fReusedBuffer = nullptr;

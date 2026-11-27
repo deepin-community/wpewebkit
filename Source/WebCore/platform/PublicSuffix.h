@@ -27,16 +27,17 @@
 
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/HashTraits.h>
+#include <wtf/Packed.h>
 #include <wtf/text/StringHash.h>
 
 namespace WebCore {
 
 class PublicSuffix {
 public:
-    static PublicSuffix fromRawString(String&& string) { return PublicSuffix(WTFMove(string)); }
+    static PublicSuffix fromRawString(String&& string) { return PublicSuffix(WTF::move(string)); }
     PublicSuffix() = default;
     bool isValid() const { return !m_string.isEmpty(); }
-    const String& string() const { return m_string; }
+    const String& string() const LIFETIME_BOUND { return m_string; }
     PublicSuffix isolatedCopy() const { return fromRawString(crossThreadCopy(m_string)); }
 
     PublicSuffix(WTF::HashTableDeletedValueType)
@@ -52,7 +53,7 @@ public:
     };
 
 private:
-    explicit PublicSuffix(String&& string) : m_string(WTFMove(string)) { }
+    explicit PublicSuffix(String&& string) : m_string(WTF::move(string)) { }
 
     String m_string;
 };

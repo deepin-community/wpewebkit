@@ -27,17 +27,19 @@
 
 #include "CSSPropertyNames.h"
 #include "CSSValueKeywords.h"
+#include "ContainerNodeInlines.h"
 #include "ElementInlines.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
 #include "HTMLTableElement.h"
 #include "NodeName.h"
+#include "RenderElementInlines.h"
 #include "RenderTableCell.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLTableCellElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLTableCellElement);
 
 using namespace HTMLNames;
 
@@ -58,12 +60,6 @@ unsigned HTMLTableCellElement::colSpan() const
 }
 
 unsigned HTMLTableCellElement::rowSpan() const
-{
-    // FIXME: a rowSpan equal to 0 should be allowed, and mean that the cell is to span all the remaining rows in the row group.
-    return std::max(1u, rowSpanForBindings());
-}
-
-unsigned HTMLTableCellElement::rowSpanForBindings() const
 {
     return clampHTMLNonNegativeIntegerToRange(attributeWithoutSynchronization(rowspanAttr), minRowspan, maxRowspan, defaultRowspan);
 }
@@ -103,11 +99,9 @@ void HTMLTableCellElement::collectPresentationalHintsForAttribute(const Qualifie
         addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueNowrap);
         break;
     case AttributeNames::widthAttr:
-        // width="0" is not allowed for compatibility with WinIE.
         addHTMLLengthToStyle(style, CSSPropertyWidth, value, AllowZeroValue::No);
         break;
     case AttributeNames::heightAttr:
-        // width="0" is not allowed for compatibility with WinIE.
         addHTMLLengthToStyle(style, CSSPropertyHeight, value, AllowZeroValue::No);
         break;
     default:
@@ -148,9 +142,9 @@ String HTMLTableCellElement::axis() const
     return attributeWithoutSynchronization(axisAttr);
 }
 
-void HTMLTableCellElement::setColSpan(unsigned n)
+void HTMLTableCellElement::setColSpan(unsigned number)
 {
-    setAttributeWithoutSynchronization(colspanAttr, AtomString::number(limitToOnlyHTMLNonNegative(n, 1)));
+    setAttributeWithoutSynchronization(colspanAttr, AtomString::number(limitToOnlyHTMLNonNegative(number, 1)));
 }
 
 String HTMLTableCellElement::headers() const
@@ -158,9 +152,9 @@ String HTMLTableCellElement::headers() const
     return attributeWithoutSynchronization(headersAttr);
 }
 
-void HTMLTableCellElement::setRowSpanForBindings(unsigned n)
+void HTMLTableCellElement::setRowSpan(unsigned number)
 {
-    setAttributeWithoutSynchronization(rowspanAttr, AtomString::number(limitToOnlyHTMLNonNegative(n, 1)));
+    setAttributeWithoutSynchronization(rowspanAttr, AtomString::number(limitToOnlyHTMLNonNegative(number, 1)));
 }
 
 const AtomString& HTMLTableCellElement::scope() const
@@ -184,25 +178,20 @@ const AtomString& HTMLTableCellElement::scope() const
     return emptyAtom();
 }
 
-void HTMLTableCellElement::setScope(const AtomString& scope)
-{
-    setAttributeWithoutSynchronization(scopeAttr, scope);
-}
-
-void HTMLTableCellElement::addSubresourceAttributeURLs(ListHashSet<URL>& urls) const
+void HTMLTableCellElement::addSubresourceAttributeURLs(OrderedHashSet<URL>& urls) const
 {
     HTMLTablePartElement::addSubresourceAttributeURLs(urls);
 
-    addSubresourceURL(urls, document().completeURL(attributeWithoutSynchronization(backgroundAttr)));
+    addSubresourceURL(urls, protect(document())->encodingParseURL(attributeWithoutSynchronization(backgroundAttr)));
 }
 
 HTMLTableCellElement* HTMLTableCellElement::cellAbove() const
 {
-    auto* tableCellRenderer = dynamicDowncast<RenderTableCell>(renderer());
+    CheckedPtr tableCellRenderer = dynamicDowncast<RenderTableCell>(renderer());
     if (!tableCellRenderer)
         return nullptr;
 
-    auto* cellAboveRenderer = tableCellRenderer->table()->cellAbove(tableCellRenderer);
+    CheckedPtr cellAboveRenderer = protect(tableCellRenderer->table())->cellAbove(tableCellRenderer.get());
     if (!cellAboveRenderer)
         return nullptr;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Google Inc.  All rights reserved.
+ * Copyright (C) 2012 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -34,25 +34,28 @@
 #include "WebSocketExtensionProcessor.h"
 #include "WebSocketFrame.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
 class WebSocketExtensionDeflateFrame final : public WebSocketExtensionProcessor {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(WebSocketExtensionDeflateFrame);
 public:
     explicit WebSocketExtensionDeflateFrame(WebSocketDeflateFramer&);
 
 private:
     String handshakeString() final;
     bool processResponse(const HashMap<String, String>&) final;
-    String failureReason() final { return m_failureReason; }
+    String NODELETE failureReason() final { return m_failureReason; }
 
     WebSocketDeflateFramer& m_framer;
     bool m_responseProcessed { false };
     String m_failureReason;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocketExtensionDeflateFrame);
 
 // FXIME: Remove vendor prefix after the specification matured.
 WebSocketExtensionDeflateFrame::WebSocketExtensionDeflateFrame(WebSocketDeflateFramer& framer)
@@ -61,7 +64,7 @@ WebSocketExtensionDeflateFrame::WebSocketExtensionDeflateFrame(WebSocketDeflateF
 {
 }
 
-String WebSocketExtensionDeflateFrame::handshakeString()
+String NODELETE WebSocketExtensionDeflateFrame::handshakeString()
 {
     return extensionToken(); // No parameter
 }
@@ -106,6 +109,8 @@ bool WebSocketExtensionDeflateFrame::processResponse(const HashMap<String, Strin
     return true;
 }
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DeflateResultHolder);
+
 DeflateResultHolder::DeflateResultHolder(WebSocketDeflateFramer& framer)
     : m_framer(framer)
 {
@@ -121,6 +126,8 @@ void DeflateResultHolder::fail(const String& failureReason)
     m_succeeded = false;
     m_failureReason = failureReason;
 }
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InflateResultHolder);
 
 InflateResultHolder::InflateResultHolder(WebSocketDeflateFramer& framer)
     : m_framer(framer)

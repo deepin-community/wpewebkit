@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
- * Portions Copyright (c) 2010 Motorola Mobility, Inc.  All rights reserved.
+ * Portions Copyright (c) 2010 Motorola Mobility, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -77,7 +77,6 @@ typedef const struct OpaqueWKWebArchiveResource* WKWebArchiveResourceRef;
 
 /* WebKit2 main API types */
 
-typedef const struct OpaqueWKApplicationCacheManager* WKApplicationCacheManagerRef;
 typedef const struct OpaqueWKAuthenticationChallenge* WKAuthenticationChallengeRef;
 typedef const struct OpaqueWKAuthenticationDecisionListener* WKAuthenticationDecisionListenerRef;
 typedef const struct OpaqueWKBackForwardList* WKBackForwardListRef;
@@ -106,6 +105,7 @@ typedef const struct OpaqueWKHitTestResult* WKHitTestResultRef;
 typedef const struct OpaqueWKIconDatabase* WKIconDatabaseRef;
 typedef const struct OpaqueWKInspector* WKInspectorRef;
 typedef const struct OpaqueWKInternalDebugFeature* WKInternalDebugFeatureRef;
+typedef const struct OpaqueWKJSHandle* WKJSHandleRef;
 typedef const struct OpaqueWKKeyValueStorageManager* WKKeyValueStorageManagerRef;
 typedef const struct OpaqueWKMessageListener* WKMessageListenerRef;
 typedef const struct OpaqueWKNavigationAction* WKNavigationActionRef;
@@ -130,12 +130,12 @@ typedef const struct OpaqueWKPageRunJavaScriptPromptResultListener* WKPageRunJav
 typedef const struct OpaqueWKPageRequestStorageAccessConfirmResultListener* WKPageRequestStorageAccessConfirmResultListenerRef;
 typedef const struct OpaqueWKResourceLoadStatisticsManager* WKResourceLoadStatisticsManagerRef;
 typedef const struct OpaqueWKTextChecker* WKTextCheckerRef;
+typedef const struct OpaqueWKScriptMessage* WKScriptMessageRef;
 typedef const struct OpaqueWKSession* WKSessionRef;
 typedef const struct OpaqueWKSessionState* WKSessionStateRef;
 typedef const struct OpaqueWKUserContentController* WKUserContentControllerRef;
 typedef const struct OpaqueWKUserContentExtensionStore* WKUserContentExtensionStoreRef;
 typedef const struct OpaqueWKUserContentFilter* WKUserContentFilterRef;
-typedef const struct OpaqueWKUserMediaPermissionCheck* WKUserMediaPermissionCheckRef;
 typedef const struct OpaqueWKUserMediaPermissionRequest* WKUserMediaPermissionRequestRef;
 typedef const struct OpaqueWKUserScript* WKUserScriptRef;
 typedef const struct OpaqueWKViewportAttributes* WKViewportAttributesRef;
@@ -143,10 +143,10 @@ typedef const struct OpaqueWKWebsiteDataConfigurationStore* WKWebsiteDataStoreCo
 typedef const struct OpaqueWKWebsiteDataStore* WKWebsiteDataStoreRef;
 typedef const struct OpaqueWKWebsitePolicies* WKWebsitePoliciesRef;
 typedef const struct OpaqueWKWindowFeatures* WKWindowFeaturesRef;
-typedef const struct OpaqueWKSpeechRecognitionPermissionCallback* WKSpeechRecognitionPermissionCallbackRef;
 typedef const struct OpaqueWKMediaKeySystemPermissionRequest* WKMediaKeySystemPermissionRequestRef;
 typedef const struct OpaqueWKMediaKeySystemPermissionCallback* WKMediaKeySystemPermissionCallbackRef;
 typedef const struct OpaqueWKQueryPermissionResultCallback* WKQueryPermissionResultCallbackRef;
+typedef const struct OpaqueWKCompletionListener* WKCompletionListenerRef;
 
 /* WebKit2 Bundle types */
 

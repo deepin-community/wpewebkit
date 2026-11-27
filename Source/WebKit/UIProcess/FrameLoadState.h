@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,31 +25,33 @@
 
 #pragma once
 
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/URL.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebKit {
-class FrameLoadStateObserver;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::FrameLoadStateObserver> : std::true_type { };
-}
+enum class IsMainFrame : bool;
 
-namespace WebKit {
-
-class FrameLoadStateObserver : public CanMakeWeakPtr<FrameLoadStateObserver> {
+class FrameLoadStateObserver : public AbstractRefCountedAndCanMakeWeakPtr<FrameLoadStateObserver> {
 public:
     virtual ~FrameLoadStateObserver() = default;
+
     virtual void didReceiveProvisionalURL(const URL&) { }
+    virtual void didStartProvisionalLoad(const URL&) { }
+    virtual void didFailProvisionalLoad(const URL&) { }
+    virtual void didFailLoad(const URL&) { }
     virtual void didCancelProvisionalLoad() { }
     virtual void didCommitProvisionalLoad() { }
-    virtual void didFinishLoad() { }
+    virtual void didCommitProvisionalLoad(IsMainFrame) { }
+    virtual void didFinishLoad(IsMainFrame, const URL&) { }
 };
 
 class FrameLoadState {
 public:
+    FrameLoadState(IsMainFrame isMainFrame)
+        : m_isMainFrame(isMainFrame) { }
+
     ~FrameLoadState();
 
     enum class State {
@@ -61,9 +63,9 @@ public:
     void addObserver(FrameLoadStateObserver&);
     void removeObserver(FrameLoadStateObserver&);
 
-    void didStartProvisionalLoad(const URL&);
-    void didExplicitOpen(const URL&);
-    void didReceiveServerRedirectForProvisionalLoad(const URL&);
+    void didStartProvisionalLoad(URL&&);
+    void didExplicitOpen(URL&&);
+    void didReceiveServerRedirectForProvisionalLoad(URL&&);
     void didFailProvisionalLoad();
     void didSuspend();
 
@@ -71,17 +73,22 @@ public:
     void didFinishLoad();
     void didFailLoad();
 
-    void didSameDocumentNotification(const URL&);
+    void didSameDocumentNotification(URL&&);
 
     State state() const { return m_state; }
-    const URL& url() const { return m_url; }
-    void setURL(const URL&);
-    const URL& provisionalURL() const { return m_provisionalURL; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    void setURL(URL&&);
+    const URL& provisionalURL() const LIFETIME_BOUND { return m_provisionalURL; }
 
     void setUnreachableURL(const URL&);
-    const URL& unreachableURL() const { return m_unreachableURL; }
+    const URL& unreachableURL() const LIFETIME_BOUND { return m_unreachableURL; }
+
+    IsMainFrame isMainFrame() const { return m_isMainFrame; }
 
 private:
+    void forEachObserver(NOESCAPE const Function<void(FrameLoadStateObserver&)>&);
+
+    const IsMainFrame m_isMainFrame;
     State m_state { State::Finished };
     URL m_url;
     URL m_provisionalURL;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,9 +26,7 @@
 #include "config.h"
 #include "WebAnimationUtilities.h"
 
-#include "Animation.h"
 #include "AnimationEventBase.h"
-#include "AnimationList.h"
 #include "AnimationPlaybackEvent.h"
 #include "CSSAnimation.h"
 #include "CSSAnimationEvent.h"
@@ -38,8 +36,13 @@
 #include "CSSTransition.h"
 #include "CSSTransitionEvent.h"
 #include "Element.h"
+#include "EventTargetInlines.h"
+#include "HTMLDialogElement.h"
 #include "KeyframeEffectStack.h"
+#include "NodeDocument.h"
 #include "ScriptExecutionContext.h"
+#include "StyleAnimations.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleOriginatedAnimation.h"
 #include "ViewTransition.h"
 #include "WebAnimation.h"
@@ -62,43 +65,47 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
     //     - any other pseudo-elements not mentioned specifically in this list, sorted in ascending order by the Unicode codepoints that make up each selector
     //     - ::after
     //     - element children
-    enum SortingIndex : uint8_t { NotPseudo, Marker, Before, FirstLetter, FirstLine, GrammarError, Highlight, WebKitScrollbar, Selection, SpellingError, TargetText, After, ViewTransition, ViewTransitionGroup, ViewTransitionImagePair, ViewTransitionOld, ViewTransitionNew, Other };
+    enum SortingIndex : uint8_t { NotPseudo, Marker, Before, FirstLetter, FirstLine, GrammarError, Highlight, WebKitScrollbar, Selection, SpellingError, TargetText, Checkmark, After, PickerIcon, ViewTransition, ViewTransitionGroup, ViewTransitionImagePair, ViewTransitionOld, ViewTransitionNew, Other };
     auto sortingIndex = [](const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier) -> SortingIndex {
         if (!pseudoElementIdentifier)
             return NotPseudo;
 
-        switch (pseudoElementIdentifier->pseudoId) {
-        case PseudoId::Marker:
+        switch (pseudoElementIdentifier->type) {
+        case PseudoElementType::Marker:
             return Marker;
-        case PseudoId::Before:
+        case PseudoElementType::Before:
             return Before;
-        case PseudoId::FirstLetter:
+        case PseudoElementType::FirstLetter:
             return FirstLetter;
-        case PseudoId::FirstLine:
+        case PseudoElementType::FirstLine:
             return FirstLine;
-        case PseudoId::GrammarError:
+        case PseudoElementType::GrammarError:
             return GrammarError;
-        case PseudoId::Highlight:
+        case PseudoElementType::Highlight:
             return Highlight;
-        case PseudoId::WebKitScrollbar:
+        case PseudoElementType::WebKitScrollbar:
             return WebKitScrollbar;
-        case PseudoId::Selection:
+        case PseudoElementType::Selection:
             return Selection;
-        case PseudoId::SpellingError:
+        case PseudoElementType::SpellingError:
             return SpellingError;
-        case PseudoId::TargetText:
+        case PseudoElementType::TargetText:
             return TargetText;
-        case PseudoId::After:
+        case PseudoElementType::After:
             return After;
-        case PseudoId::ViewTransition:
+        case PseudoElementType::Checkmark:
+            return Checkmark;
+        case PseudoElementType::PickerIcon:
+            return PickerIcon;
+        case PseudoElementType::ViewTransition:
             return ViewTransition;
-        case PseudoId::ViewTransitionGroup:
+        case PseudoElementType::ViewTransitionGroup:
             return ViewTransitionGroup;
-        case PseudoId::ViewTransitionImagePair:
+        case PseudoElementType::ViewTransitionImagePair:
             return ViewTransitionImagePair;
-        case PseudoId::ViewTransitionOld:
+        case PseudoElementType::ViewTransitionOld:
             return ViewTransitionOld;
-        case PseudoId::ViewTransitionNew:
+        case PseudoElementType::ViewTransitionNew:
             return ViewTransitionNew;
         default:
             ASSERT_NOT_REACHED();
@@ -106,17 +113,17 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
         }
     };
 
-    auto& aReferenceElement = a.element;
-    auto& bReferenceElement = b.element;
+    Ref aReferenceElement = a.element;
+    Ref bReferenceElement = b.element;
 
-    if (&aReferenceElement == &bReferenceElement) {
-        if (isNamedViewTransitionPseudoElement(a.pseudoElementIdentifier) && isNamedViewTransitionPseudoElement(b.pseudoElementIdentifier) && a.pseudoElementIdentifier->nameArgument != b.pseudoElementIdentifier->nameArgument) {
-            RefPtr activeViewTransition = aReferenceElement.document().activeViewTransition();
+    if (aReferenceElement.ptr() == bReferenceElement.ptr()) {
+        if (isNamedViewTransitionPseudoElement(a.pseudoElementIdentifier) && isNamedViewTransitionPseudoElement(b.pseudoElementIdentifier) && a.pseudoElementIdentifier->nameOrPart != b.pseudoElementIdentifier->nameOrPart) {
+            auto* activeViewTransition = aReferenceElement->document().activeViewTransition();
             ASSERT(activeViewTransition);
             for (auto& key : activeViewTransition->namedElements().keys()) {
-                if (key == a.pseudoElementIdentifier->nameArgument)
+                if (key == a.pseudoElementIdentifier->nameOrPart)
                     return true;
-                if (key == b.pseudoElementIdentifier->nameArgument)
+                if (key == b.pseudoElementIdentifier->nameOrPart)
                     return false;
             }
             return false;
@@ -128,7 +135,7 @@ static bool compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeO
         return aSortingIndex < bSortingIndex;
     }
 
-    return is_lt(treeOrder<Tree>(aReferenceElement, bReferenceElement));
+    return is_lt(treeOrder<Tree>(aReferenceElement.get(), bReferenceElement.get()));
 }
 
 static bool compareCSSTransitions(const CSSTransition& a, const CSSTransition& b)
@@ -164,16 +171,16 @@ static bool compareCSSAnimations(const CSSAnimation& a, const CSSAnimation& b)
         return compareStyleOriginatedAnimationOwningElementPositionsInDocumentTreeOrder(*aOwningElement, *bOwningElement);
 
     // Sort A and B based on their position in the computed value of the animation-name property of the (common) owning element.
-    auto* cssAnimationList = aOwningElement->ensureKeyframeEffectStack().cssAnimationList();
+    auto& cssAnimationList = aOwningElement->ensureKeyframeEffectStack().cssAnimationList();
     ASSERT(cssAnimationList);
-    ASSERT(!cssAnimationList->isEmpty());
+    ASSERT(!cssAnimationList->isInitial());
 
-    auto& aBackingAnimation = a.backingAnimation();
-    auto& bBackingAnimation = b.backingAnimation();
-    for (auto& animation : *cssAnimationList) {
-        if (animation.ptr() == &aBackingAnimation)
+    auto& aBackingAnimation = a.backingStyleAnimation();
+    auto& bBackingAnimation = b.backingStyleAnimation();
+    for (auto& animation : cssAnimationList->usedValues()) {
+        if (animation.sortingIdentity() == aBackingAnimation.sortingIdentity())
             return true;
-        if (animation.ptr() == &bBackingAnimation)
+        if (animation.sortingIdentity() == bBackingAnimation.sortingIdentity())
             return false;
     }
 
@@ -233,8 +240,8 @@ static std::optional<bool> compareStyleOriginatedAnimationEvents(const Animation
     if (aScheduledTime != bScheduledTime)
         return aScheduledTime < bScheduledTime;
 
-    auto* aTarget = a.target();
-    auto* bTarget = b.target();
+    RefPtr aTarget = a.target();
+    RefPtr bTarget = b.target();
     if (aTarget == bTarget)
         return false;
 
@@ -288,8 +295,8 @@ bool compareAnimationEventsByCompositeOrder(const AnimationEventBase& a, const A
         }
 
         // JS-originated animations sort last based on their position in the global animation list.
-        auto* aAnimation = a.animation();
-        auto* bAnimation = b.animation();
+        RefPtr aAnimation = a.animation();
+        RefPtr bAnimation = b.animation();
         if (aAnimation == bAnimation)
             return false;
 
@@ -325,42 +332,49 @@ String pseudoElementIdentifierAsString(const std::optional<Style::PseudoElementI
     static NeverDestroyed<const String> selection(MAKE_STATIC_STRING_IMPL("::selection"));
     static NeverDestroyed<const String> spellingError(MAKE_STATIC_STRING_IMPL("::spelling-error"));
     static NeverDestroyed<const String> targetText(MAKE_STATIC_STRING_IMPL("::target-text"));
+    static NeverDestroyed<const String> checkmark(MAKE_STATIC_STRING_IMPL("::checkmark"));
+    static NeverDestroyed<const String> pickerIcon(MAKE_STATIC_STRING_IMPL("::picker-icon"));
     static NeverDestroyed<const String> viewTransition(MAKE_STATIC_STRING_IMPL("::view-transition"));
     static NeverDestroyed<const String> webkitScrollbar(MAKE_STATIC_STRING_IMPL("::-webkit-scrollbar"));
-    switch (pseudoElementIdentifier->pseudoId) {
-    case PseudoId::After:
+    switch (pseudoElementIdentifier->type) {
+    case PseudoElementType::After:
         return after;
-    case PseudoId::Before:
+    case PseudoElementType::Before:
         return before;
-    case PseudoId::FirstLetter:
+    case PseudoElementType::FirstLetter:
         return firstLetter;
-    case PseudoId::FirstLine:
+    case PseudoElementType::FirstLine:
         return firstLine;
-    case PseudoId::GrammarError:
+    case PseudoElementType::GrammarError:
         return grammarError;
-    case PseudoId::Highlight:
-        return makeString("::highlight"_s, '(', pseudoElementIdentifier->nameArgument, ')');
-    case PseudoId::Marker:
+    case PseudoElementType::Highlight:
+        return makeString("::highlight"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
+    case PseudoElementType::Marker:
         return marker;
-    case PseudoId::Selection:
+    case PseudoElementType::Selection:
         return selection;
-    case PseudoId::SpellingError:
+    case PseudoElementType::SpellingError:
         return spellingError;
-    case PseudoId::TargetText:
+    case PseudoElementType::TargetText:
         return targetText;
-    case PseudoId::ViewTransition:
+    case PseudoElementType::Checkmark:
+        return checkmark;
+    case PseudoElementType::PickerIcon:
+        return pickerIcon;
+    case PseudoElementType::ViewTransition:
         return viewTransition;
-    case PseudoId::ViewTransitionGroup:
-        return makeString("::view-transition-group"_s, '(', pseudoElementIdentifier->nameArgument, ')');
-    case PseudoId::ViewTransitionImagePair:
-        return makeString("::view-transition-image-pair"_s, '(', pseudoElementIdentifier->nameArgument, ')');
-    case PseudoId::ViewTransitionOld:
-        return makeString("::view-transition-old"_s, '(', pseudoElementIdentifier->nameArgument, ')');
-    case PseudoId::ViewTransitionNew:
-        return makeString("::view-transition-new"_s, '(', pseudoElementIdentifier->nameArgument, ')');
-    case PseudoId::WebKitScrollbar:
+    case PseudoElementType::ViewTransitionGroup:
+        return makeString("::view-transition-group"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
+    case PseudoElementType::ViewTransitionImagePair:
+        return makeString("::view-transition-image-pair"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
+    case PseudoElementType::ViewTransitionOld:
+        return makeString("::view-transition-old"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
+    case PseudoElementType::ViewTransitionNew:
+        return makeString("::view-transition-new"_s, '(', pseudoElementIdentifier->nameOrPart, ')');
+    case PseudoElementType::WebKitScrollbar:
         return webkitScrollbar;
     default:
+        ASSERT(pseudoElementIdentifier->type != PseudoElementType::UserAgentPartFallback);
         return emptyString();
     }
 }
@@ -370,11 +384,15 @@ std::pair<bool, std::optional<Style::PseudoElementIdentifier>> pseudoElementIden
 {
     // https://drafts.csswg.org/web-animations-1/#dom-keyframeeffect-pseudoelement
     if (pseudoElement.isNull())
-        return { true, std::nullopt };
+        return { true, { } };
 
     // FIXME: We should always have a document for accurate settings.
     auto parserContext = document ? CSSSelectorParserContext { *document } : CSSSelectorParserContext { CSSParserContext { HTMLStandardMode } };
-    return CSSSelectorParser::parsePseudoElement(pseudoElement, parserContext);
+    auto identifier = CSSSelectorParser::parsePseudoElement(pseudoElement, parserContext);
+    // FIXME: Add API support for UserAgentPartFallback pseudo-elements like ::picker(select).
+    if (identifier && identifier->type == PseudoElementType::UserAgentPartFallback)
+        return { true, std::nullopt };
+    return { !!identifier, identifier };
 }
 
 AtomString animatablePropertyAsString(AnimatableCSSProperty property)
@@ -387,6 +405,52 @@ AtomString animatablePropertyAsString(AnimatableCSSProperty property)
             return customProperty;
         }
     );
+}
+
+bool styleHasDisplayTransition(const Style::ComputedStyle& style, const Element& element)
+{
+    // FIXME: Best-effort disablement of this feature for elements participating in the top layer as
+    // that requires some more specification design work that has not happened yet.
+    if (element.popoverState() != PopoverState::None || is<HTMLDialogElement>(element))
+        return false;
+
+    if (style.transitions().isInitial())
+        return false;
+
+    for (auto& transition : style.transitions().usedValues()) {
+        auto result = WTF::switchOn(transition.property(),
+            [&](const CSS::Keyword::All&) {
+                return transition.behavior() == TransitionBehavior::AllowDiscrete;
+            },
+            [&](const CSS::Keyword::None&) {
+                return false;
+            },
+            [&](const Style::SingleTransitionProperty::UnknownProperty&) {
+                return false;
+            },
+            [&](const Style::SingleTransitionProperty::CustomProperty&) {
+                return false;
+            },
+            [&](const Style::SingleTransitionProperty::SingleProperty& property) {
+                if (property.propertyID == CSSPropertyDisplay)
+                    return transition.behavior() == TransitionBehavior::AllowDiscrete;
+                return false;
+            }
+        );
+
+        if (result)
+            return true;
+    }
+
+    return false;
+}
+
+bool animatablePropertiesContainTransformRelatedProperty(const HashSet<AnimatableCSSProperty>& properties)
+{
+    return properties.contains(CSSPropertyTranslate)
+        || properties.contains(CSSPropertyScale)
+        || properties.contains(CSSPropertyRotate)
+        || properties.contains(CSSPropertyTransform);
 }
 
 } // namespace WebCore

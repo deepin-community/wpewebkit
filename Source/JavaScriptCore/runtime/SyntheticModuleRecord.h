@@ -25,13 +25,13 @@
 
 #pragma once
 
-#include "AbstractModuleRecord.h"
-#include "SourceCode.h"
+#include <JavaScriptCore/AbstractModuleRecord.h>
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/SourceCode.h>
 
 namespace JSC {
 
 class JSGlobalObject;
-class JSInternalPromise;
 
 // https://tc39.es/proposal-json-modules/#sec-synthetic-module-records
 class SyntheticModuleRecord final : public AbstractModuleRecord {
@@ -41,7 +41,9 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static constexpr bool needsDestruction = true;
+    DECLARE_VISIT_CHILDREN;
+
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
     template<typename CellType, SubspaceAccess mode>
@@ -55,8 +57,8 @@ public:
 
     static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
 
-    Synchronousness link(JSGlobalObject*, JSValue scriptFetcher);
-    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
+    Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+    JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
 
 private:
     SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey);
@@ -65,8 +67,6 @@ private:
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
 
     void finishCreation(JSGlobalObject*, VM&);
-
-    DECLARE_VISIT_CHILDREN;
 };
 
 } // namespace JSC

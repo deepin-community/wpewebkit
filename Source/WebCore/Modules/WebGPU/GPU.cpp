@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,11 @@
 #include "config.h"
 #include "GPU.h"
 
+#include "GPUAdapter.h"
 #include "GPUPresentationContext.h"
 #include "GPUPresentationContextDescriptor.h"
+#include "GPURequestAdapterOptions.h"
+#include "GPUTextureFormat.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUAdapter.h"
 #include "JSWGSLLanguageFeatures.h"
@@ -36,14 +39,14 @@
 namespace WebCore {
 
 GPU::GPU(Ref<WebGPU::GPU>&& backing)
-    : m_backing(WTFMove(backing))
+    : m_backing(WTF::move(backing))
     , m_wgslLanguageFeatures(WGSLLanguageFeatures::create())
 {
 }
 
 GPU::~GPU() = default;
 
-static WebGPU::RequestAdapterOptions convertToBacking(const std::optional<GPURequestAdapterOptions>& options)
+static WebGPU::RequestAdapterOptions NODELETE convertToBacking(const std::optional<GPURequestAdapterOptions>& options)
 {
     if (!options)
         return { std::nullopt, false };
@@ -58,7 +61,7 @@ struct GPU::PendingRequestAdapterArguments {
 
 void GPU::requestAdapter(const std::optional<GPURequestAdapterOptions>& options, RequestAdapterPromise&& promise)
 {
-    m_backing->requestAdapter(convertToBacking(options), [promise = WTFMove(promise)](RefPtr<WebGPU::Adapter>&& adapter) mutable {
+    m_backing->requestAdapter(convertToBacking(options), [promise = WTF::move(promise)](RefPtr<WebGPU::Adapter>&& adapter) mutable {
         if (!adapter) {
             promise.resolve(nullptr);
             return;
@@ -70,11 +73,6 @@ void GPU::requestAdapter(const std::optional<GPURequestAdapterOptions>& options,
 GPUTextureFormat GPU::getPreferredCanvasFormat() const
 {
     return GPUTextureFormat::Bgra8unorm;
-}
-
-Ref<WGSLLanguageFeatures> GPU::wgslLanguageFeatures() const
-{
-    return m_wgslLanguageFeatures;
 }
 
 RefPtr<GPUPresentationContext> GPU::createPresentationContext(const GPUPresentationContextDescriptor& presentationContextDescriptor)

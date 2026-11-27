@@ -32,14 +32,18 @@
 #include "RemoteXRProjectionLayerMessages.h"
 #include "WebGPUConvertToBackingContext.h"
 #include <WebCore/ImageBuffer.h>
+#include <WebCore/PlatformXR.h>
 #include <WebCore/WebGPUTextureFormat.h>
+#include <wtf/MachSendRight.h>
 
 namespace WebKit::WebGPU {
 
-RemoteXRProjectionLayerProxy::RemoteXRProjectionLayerProxy(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteXRProjectionLayerProxy);
+
+RemoteXRProjectionLayerProxy::RemoteXRProjectionLayerProxy(Ref<RemoteGPUProxy>&& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
     : m_backing(identifier)
     , m_convertToBackingContext(convertToBackingContext)
-    , m_parent(parent)
+    , m_parent(WTF::move(parent))
 {
 }
 
@@ -49,29 +53,44 @@ RemoteXRProjectionLayerProxy::~RemoteXRProjectionLayerProxy()
     UNUSED_VARIABLE(sendResult);
 }
 
-void RemoteXRProjectionLayerProxy::startFrame()
+#if PLATFORM(COCOA)
+void RemoteXRProjectionLayerProxy::startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, PlatformXR::RateMapDescription&& rateMapDescription)
 {
-    auto sendResult = send(Messages::RemoteXRProjectionLayer::StartFrame());
+#if PLATFORM(VISION)
+    auto sendResult = send(Messages::RemoteXRProjectionLayer::StartFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, WTF::move(rateMapDescription)));
     UNUSED_VARIABLE(sendResult);
+#else
+    UNUSED_VARIABLE(frameIndex);
+    UNUSED_VARIABLE(colorBuffer);
+    UNUSED_VARIABLE(depthBuffer);
+    UNUSED_VARIABLE(completionSyncEvent);
+    UNUSED_VARIABLE(reusableTextureIndex);
+    UNUSED_VARIABLE(rateMapDescription);
+#endif
 }
+#endif
 
+#if PLATFORM(COCOA)
 void RemoteXRProjectionLayerProxy::endFrame()
+#else
+void RemoteXRProjectionLayerProxy::endFrame(PlatformXR::DeviceLayer&)
+#endif
 {
     auto sendResult = send(Messages::RemoteXRProjectionLayer::EndFrame());
     UNUSED_VARIABLE(sendResult);
 }
 
-uint32_t RemoteXRProjectionLayerProxy::textureWidth() const
+uint32_t RemoteXRProjectionLayerProxy::colorTextureWidth() const
 {
     return 0;
 }
 
-uint32_t RemoteXRProjectionLayerProxy::textureHeight() const
+uint32_t RemoteXRProjectionLayerProxy::colorTextureHeight() const
 {
     return 0;
 }
 
-uint32_t RemoteXRProjectionLayerProxy::textureArrayLength() const
+uint32_t RemoteXRProjectionLayerProxy::colorTextureArrayLength() const
 {
     return 0;
 }
@@ -83,7 +102,7 @@ bool RemoteXRProjectionLayerProxy::ignoreDepthValues() const
 
 std::optional<float> RemoteXRProjectionLayerProxy::fixedFoveation() const
 {
-    return 0.f;
+    return 1.f;
 }
 
 void RemoteXRProjectionLayerProxy::setFixedFoveation(std::optional<float>)
@@ -91,12 +110,12 @@ void RemoteXRProjectionLayerProxy::setFixedFoveation(std::optional<float>)
     return;
 }
 
-WebCore::WebGPU::WebXRRigidTransform* RemoteXRProjectionLayerProxy::deltaPose() const
+WebCore::WebXRRigidTransform* RemoteXRProjectionLayerProxy::deltaPose() const
 {
     return nullptr;
 }
 
-void RemoteXRProjectionLayerProxy::setDeltaPose(WebCore::WebGPU::WebXRRigidTransform*)
+void RemoteXRProjectionLayerProxy::setDeltaPose(WebCore::WebXRRigidTransform*)
 {
     return;
 }

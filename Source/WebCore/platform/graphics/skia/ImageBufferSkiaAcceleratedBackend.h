@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Igalia S.L.
+ * Copyright (C) 2024, 2025 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,28 +26,28 @@
 #pragma once
 
 #if USE(SKIA)
-
 #include "ImageBuffer.h"
 #include "ImageBufferSkiaSurfaceBackend.h"
+
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkPictureRecorder.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
 #include <wtf/TZoneMalloc.h>
 
-#if USE(NICOSIA)
-#include "NicosiaContentLayer.h"
-#endif
+class GrDirectContext;
 
 namespace WebCore {
 
-class BitmapTexture;
+class GraphicsContextSkia;
+class SkiaSwitchableCanvas;
 
-class ImageBufferSkiaAcceleratedBackend final : public ImageBufferSkiaSurfaceBackend
-#if USE(NICOSIA)
-    , public Nicosia::ContentLayer::Client
-#endif
-{
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ImageBufferSkiaAcceleratedBackend);
+class ImageBufferSkiaAcceleratedBackend final : public ImageBufferSkiaSurfaceBackend {
+    WTF_MAKE_TZONE_ALLOCATED(ImageBufferSkiaAcceleratedBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferSkiaAcceleratedBackend);
 public:
     static std::unique_ptr<ImageBufferSkiaAcceleratedBackend> create(const Parameters&, const ImageBufferCreationContext&);
+    static std::unique_ptr<ImageBufferSkiaAcceleratedBackend> create(const Parameters&, const ImageBufferCreationContext&, sk_sp<SkSurface>&&);
     ~ImageBufferSkiaAcceleratedBackend();
 
     static constexpr RenderingMode renderingMode = RenderingMode::Accelerated;
@@ -55,23 +55,30 @@ public:
 private:
     ImageBufferSkiaAcceleratedBackend(const Parameters&, sk_sp<SkSurface>&&);
 
+    GraphicsContext& context() final;
+    void flushContext() final;
+    void prepareForDisplay() final;
+
     RefPtr<NativeImage> copyNativeImage() final;
     RefPtr<NativeImage> createNativeImageReference() final;
 
     void getPixelBuffer(const IntRect&, PixelBuffer&) final;
-    void putPixelBuffer(const PixelBuffer&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) final;
+    void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) final;
 
-#if USE(NICOSIA)
+    GrDirectContext* grContext() const;
+    void replayCanvasRecordingContextIfNeeded();
+    void ensureCanvasRecordingContext();
+
+#if USE(COORDINATED_GRAPHICS)
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const final;
-    void swapBuffersIfNeeded() final;
 
-    RefPtr<Nicosia::ContentLayer> m_contentLayer;
     RefPtr<GraphicsLayerContentsDisplayDelegate> m_layerContentsDisplayDelegate;
-    struct {
-        RefPtr<BitmapTexture> back;
-        RefPtr<BitmapTexture> front;
-    } m_texture;
 #endif
+
+    bool m_hasActiveRecording : 1 { false };
+    SkPictureRecorder m_pictureRecorder;
+    std::unique_ptr<SkiaSwitchableCanvas> m_switchableCanvas;
+    std::unique_ptr<GraphicsContextSkia> m_canvasRecordingContext;
 };
 
 } // namespace WebCore

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +28,7 @@
 #include "DummyModelPlayer.h"
 
 #include "Model.h"
+#include "ModelPlayerGraphicsLayerConfiguration.h"
 #include "ResourceError.h"
 
 namespace WebCore {
@@ -38,25 +40,20 @@ Ref<DummyModelPlayer> DummyModelPlayer::create(ModelPlayerClient& client)
 
 DummyModelPlayer::DummyModelPlayer(ModelPlayerClient& client)
     : m_client { client }
+    , m_id(ModelPlayerIdentifier::generate())
 {
 }
 
 DummyModelPlayer::~DummyModelPlayer() = default;
 
-void DummyModelPlayer::load(Model& model, LayoutSize)
+void DummyModelPlayer::load(Model& model, LayoutSize, bool)
 {
-    if (m_client)
-        m_client->didFailLoading(*this, ResourceError { errorDomainWebKitInternal, 0, model.url(), "Trying to load model via DummyModelPlayer"_s });
+    if (RefPtr client = m_client)
+        client->didFailLoading(*this, ResourceError { errorDomainWebKitInternal, 0, model.url(), "Trying to load model via DummyModelPlayer"_s });
 }
 
-PlatformLayer* DummyModelPlayer::layer()
+void DummyModelPlayer::configureGraphicsLayer(GraphicsLayer&, ModelPlayerGraphicsLayerConfiguration&&)
 {
-    return nullptr;
-}
-
-std::optional<LayerHostingContextIdentifier> DummyModelPlayer::layerHostingContextIdentifier()
-{
-    return std::nullopt;
 }
 
 void DummyModelPlayer::sizeDidChange(LayoutSize)
@@ -115,23 +112,13 @@ void DummyModelPlayer::setAnimationCurrentTime(Seconds, CompletionHandler<void(b
 {
 }
 
-void DummyModelPlayer::hasAudio(CompletionHandler<void(std::optional<bool>&&)>&&)
-{
-}
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
 
-void DummyModelPlayer::isMuted(CompletionHandler<void(std::optional<bool>&&)>&&)
-{
-}
-
-void DummyModelPlayer::setIsMuted(bool, CompletionHandler<void(bool success)>&&)
-{
-}
-
-#if PLATFORM(COCOA)
-Vector<RetainPtr<id>> DummyModelPlayer::accessibilityChildren()
+ModelPlayerAccessibilityChildren DummyModelPlayer::accessibilityChildren()
 {
     return { };
 }
+
 #endif
 
-}
+} // namespace WebCore

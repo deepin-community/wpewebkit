@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "JSType.h"
-#include <wtf/Float16.h>
+#include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/JSType.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC {
@@ -187,7 +187,7 @@ inline size_t elementSize(JSType type)
     return elementSize(typedArrayType(type));
 }
 
-const ClassInfo* constructorClassInfoForType(TypedArrayType);
+const ClassInfo* NODELETE constructorClassInfoForType(TypedArrayType);
 
 inline TypedArrayType typedArrayTypeForType(JSType type)
 {

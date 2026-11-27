@@ -56,7 +56,6 @@ public:
         uint64_t maxBufferSize,
         uint32_t maxVertexAttributes,
         uint32_t maxVertexBufferArrayStride,
-        uint32_t maxInterStageShaderComponents,
         uint32_t maxInterStageShaderVariables,
         uint32_t maxColorAttachments,
         uint32_t maxColorAttachmentBytesPerSample,
@@ -65,7 +64,11 @@ public:
         uint32_t maxComputeWorkgroupSizeX,
         uint32_t maxComputeWorkgroupSizeY,
         uint32_t maxComputeWorkgroupSizeZ,
-        uint32_t maxComputeWorkgroupsPerDimension)
+        uint32_t maxComputeWorkgroupsPerDimension,
+        uint32_t maxStorageBuffersInFragmentStage,
+        uint32_t maxStorageTexturesInFragmentStage,
+        uint32_t maxStorageBuffersInVertexStage,
+        uint32_t maxStorageTexturesInVertexStage)
     {
         return adoptRef(*new SupportedLimits(
             maxTextureDimension1D,
@@ -90,7 +93,6 @@ public:
             maxBufferSize,
             maxVertexAttributes,
             maxVertexBufferArrayStride,
-            maxInterStageShaderComponents,
             maxInterStageShaderVariables,
             maxColorAttachments,
             maxColorAttachmentBytesPerSample,
@@ -99,7 +101,11 @@ public:
             maxComputeWorkgroupSizeX,
             maxComputeWorkgroupSizeY,
             maxComputeWorkgroupSizeZ,
-            maxComputeWorkgroupsPerDimension));
+            maxComputeWorkgroupsPerDimension,
+            maxStorageBuffersInFragmentStage,
+            maxStorageTexturesInFragmentStage,
+            maxStorageBuffersInVertexStage,
+            maxStorageTexturesInVertexStage));
     }
 
     static Ref<SupportedLimits> clone(const SupportedLimits& limits)
@@ -127,7 +133,6 @@ public:
             limits.maxBufferSize(),
             limits.maxVertexAttributes(),
             limits.maxVertexBufferArrayStride(),
-            limits.maxInterStageShaderComponents(),
             limits.maxInterStageShaderVariables(),
             limits.maxColorAttachments(),
             limits.maxColorAttachmentBytesPerSample(),
@@ -136,7 +141,11 @@ public:
             limits.maxComputeWorkgroupSizeX(),
             limits.maxComputeWorkgroupSizeY(),
             limits.maxComputeWorkgroupSizeZ(),
-            limits.maxComputeWorkgroupsPerDimension()));
+            limits.maxComputeWorkgroupsPerDimension(),
+            limits.maxStorageBuffersInFragmentStage(),
+            limits.maxStorageTexturesInFragmentStage(),
+            limits.maxStorageBuffersInVertexStage(),
+            limits.maxStorageTexturesInVertexStage()));
     }
 
     uint32_t maxTextureDimension1D() const { return m_maxTextureDimension1D; }
@@ -161,7 +170,6 @@ public:
     uint64_t maxBufferSize() const { return m_maxBufferSize; }
     uint32_t maxVertexAttributes() const { return m_maxVertexAttributes; }
     uint32_t maxVertexBufferArrayStride() const { return m_maxVertexBufferArrayStride; }
-    uint32_t maxInterStageShaderComponents() const { return m_maxInterStageShaderComponents; }
     uint32_t maxInterStageShaderVariables() const { return m_maxInterStageShaderVariables; }
     uint32_t maxColorAttachments() const { return m_maxColorAttachments; }
     uint32_t maxColorAttachmentBytesPerSample() const { return m_maxColorAttachmentBytesPerSample; }
@@ -171,6 +179,10 @@ public:
     uint32_t maxComputeWorkgroupSizeY() const { return m_maxComputeWorkgroupSizeY; }
     uint32_t maxComputeWorkgroupSizeZ() const { return m_maxComputeWorkgroupSizeZ; }
     uint32_t maxComputeWorkgroupsPerDimension() const { return m_maxComputeWorkgroupsPerDimension; }
+    uint32_t maxStorageBuffersInFragmentStage() const { return m_maxStorageBuffersInFragmentStage; }
+    uint32_t maxStorageTexturesInFragmentStage() const { return m_maxStorageTexturesInFragmentStage; }
+    uint32_t maxStorageBuffersInVertexStage() const { return m_maxStorageBuffersInVertexStage; }
+    uint32_t maxStorageTexturesInVertexStage() const { return m_maxStorageTexturesInVertexStage; }
 
 private:
     SupportedLimits(
@@ -196,7 +208,6 @@ private:
         uint64_t maxBufferSize,
         uint32_t maxVertexAttributes,
         uint32_t maxVertexBufferArrayStride,
-        uint32_t maxInterStageShaderComponents,
         uint32_t maxInterStageShaderVariables,
         uint32_t maxColorAttachments,
         uint32_t maxColorAttachmentBytesPerSample,
@@ -205,7 +216,11 @@ private:
         uint32_t maxComputeWorkgroupSizeX,
         uint32_t maxComputeWorkgroupSizeY,
         uint32_t maxComputeWorkgroupSizeZ,
-        uint32_t maxComputeWorkgroupsPerDimension)
+        uint32_t maxComputeWorkgroupsPerDimension,
+        uint32_t maxStorageBuffersInFragmentStage,
+        uint32_t maxStorageTexturesInFragmentStage,
+        uint32_t maxStorageBuffersInVertexStage,
+        uint32_t maxStorageTexturesInVertexStage)
             : m_maxTextureDimension1D(maxTextureDimension1D)
             , m_maxTextureDimension2D(maxTextureDimension2D)
             , m_maxTextureDimension3D(maxTextureDimension3D)
@@ -228,7 +243,6 @@ private:
             , m_maxBufferSize(maxBufferSize)
             , m_maxVertexAttributes(maxVertexAttributes)
             , m_maxVertexBufferArrayStride(maxVertexBufferArrayStride)
-            , m_maxInterStageShaderComponents(maxInterStageShaderComponents)
             , m_maxInterStageShaderVariables(maxInterStageShaderVariables)
             , m_maxColorAttachments(maxColorAttachments)
             , m_maxColorAttachmentBytesPerSample(maxColorAttachmentBytesPerSample)
@@ -238,6 +252,10 @@ private:
             , m_maxComputeWorkgroupSizeY(maxComputeWorkgroupSizeY)
             , m_maxComputeWorkgroupSizeZ(maxComputeWorkgroupSizeZ)
             , m_maxComputeWorkgroupsPerDimension(maxComputeWorkgroupsPerDimension)
+            , m_maxStorageBuffersInFragmentStage(maxStorageBuffersInFragmentStage)
+            , m_maxStorageTexturesInFragmentStage(maxStorageTexturesInFragmentStage)
+            , m_maxStorageBuffersInVertexStage(maxStorageBuffersInVertexStage)
+            , m_maxStorageTexturesInVertexStage(maxStorageTexturesInVertexStage)
     {
     }
 
@@ -268,7 +286,6 @@ private:
     uint64_t m_maxBufferSize { 0 };
     uint32_t m_maxVertexAttributes { 0 };
     uint32_t m_maxVertexBufferArrayStride { 0 };
-    uint32_t m_maxInterStageShaderComponents { 0 };
     uint32_t m_maxInterStageShaderVariables { 0 };
     uint32_t m_maxColorAttachments { 0 };
     uint32_t m_maxColorAttachmentBytesPerSample { 0 };
@@ -278,6 +295,10 @@ private:
     uint32_t m_maxComputeWorkgroupSizeY { 0 };
     uint32_t m_maxComputeWorkgroupSizeZ { 0 };
     uint32_t m_maxComputeWorkgroupsPerDimension { 0 };
+    uint32_t m_maxStorageBuffersInFragmentStage { 0 };
+    uint32_t m_maxStorageTexturesInFragmentStage { 0 };
+    uint32_t m_maxStorageBuffersInVertexStage { 0 };
+    uint32_t m_maxStorageTexturesInVertexStage { 0 };
 };
 
 } // namespace WebCore::WebGPU

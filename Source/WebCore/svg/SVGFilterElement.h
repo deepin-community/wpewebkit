@@ -26,21 +26,22 @@
 #include "SVGElement.h"
 #include "SVGURIReference.h"
 #include "SVGUnitTypes.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class SVGFilterElement final : public SVGElement, public SVGURIReference {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFilterElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFilterElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFilterElement);
 public:
     static Ref<SVGFilterElement> create(const QualifiedName&, Document&);
 
     SVGUnitTypes::SVGUnitType filterUnits() const { return m_filterUnits->currentValue<SVGUnitTypes::SVGUnitType>(); }
     SVGUnitTypes::SVGUnitType primitiveUnits() const { return m_primitiveUnits->currentValue<SVGUnitTypes::SVGUnitType>(); }
-    const SVGLengthValue& x() const { return m_x->currentValue(); }
-    const SVGLengthValue& y() const { return m_y->currentValue(); }
-    const SVGLengthValue& width() const { return m_width->currentValue(); }
-    const SVGLengthValue& height() const { return m_height->currentValue(); }
+    const SVGLengthValue& x() const LIFETIME_BOUND { return m_x->currentValue(); }
+    const SVGLengthValue& y() const LIFETIME_BOUND { return m_y->currentValue(); }
+    const SVGLengthValue& width() const LIFETIME_BOUND { return m_width->currentValue(); }
+    const SVGLengthValue& height() const LIFETIME_BOUND { return m_height->currentValue(); }
 
     SVGAnimatedEnumeration& filterUnitsAnimated() { return m_filterUnits; }
     SVGAnimatedEnumeration& primitiveUnitsAnimated() { return m_primitiveUnits; }
@@ -49,10 +50,10 @@ public:
     SVGAnimatedLength& widthAnimated() { return m_width; }
     SVGAnimatedLength& heightAnimated() { return m_height; }
 
+    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFilterElement, SVGElement, SVGURIReference>;
+
 private:
     SVGFilterElement(const QualifiedName&, Document&);
-
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFilterElement, SVGElement, SVGURIReference>;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     void svgAttributeChanged(const QualifiedName&) final;
@@ -60,17 +61,17 @@ private:
 
     bool needsPendingResourceHandling() const final { return false; }
 
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool childShouldCreateRenderer(const Node&) const final;
 
     bool selfHasRelativeLengths() const final { return true; }
 
-    Ref<SVGAnimatedEnumeration> m_filterUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) };
-    Ref<SVGAnimatedEnumeration> m_primitiveUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_USERSPACEONUSE) };
-    Ref<SVGAnimatedLength> m_x { SVGAnimatedLength::create(this, SVGLengthMode::Width, "-10%"_s) };
-    Ref<SVGAnimatedLength> m_y { SVGAnimatedLength::create(this, SVGLengthMode::Height, "-10%"_s) };
-    Ref<SVGAnimatedLength> m_width { SVGAnimatedLength::create(this, SVGLengthMode::Width, "120%"_s) };
-    Ref<SVGAnimatedLength> m_height { SVGAnimatedLength::create(this, SVGLengthMode::Height, "120%"_s) };
+    const Ref<SVGAnimatedEnumeration> m_filterUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) };
+    const Ref<SVGAnimatedEnumeration> m_primitiveUnits { SVGAnimatedEnumeration::create(this, SVGUnitTypes::SVG_UNIT_TYPE_USERSPACEONUSE) };
+    const Ref<SVGAnimatedLength> m_x { SVGAnimatedLength::create(this, SVGLengthMode::Width, "-10%"_s) };
+    const Ref<SVGAnimatedLength> m_y { SVGAnimatedLength::create(this, SVGLengthMode::Height, "-10%"_s) };
+    const Ref<SVGAnimatedLength> m_width { SVGAnimatedLength::create(this, SVGLengthMode::Width, "120%"_s) };
+    const Ref<SVGAnimatedLength> m_height { SVGAnimatedLength::create(this, SVGLengthMode::Height, "120%"_s) };
 };
 
 } // namespace WebCore

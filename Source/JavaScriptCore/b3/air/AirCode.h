@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,9 +40,12 @@
 #include "StackAlignment.h"
 #include <wtf/HashSet.h>
 #include <wtf/IndexMap.h>
+#include <wtf/JSONValues.h>
+#include <wtf/SequesteredMalloc.h>
 #include <wtf/SmallSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -51,6 +54,7 @@ class CCallHelpers;
 namespace B3 {
 
 class Procedure;
+class WasmBoundsCheckValue;
 
 #if !ASSERT_ENABLED
 IGNORE_RETURN_TYPE_WARNINGS_BEGIN
@@ -65,13 +69,13 @@ class CFG;
 class Code;
 class Disassembler;
 
-typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, GPRReg);
+typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
 typedef void PrologueGeneratorFunction(CCallHelpers&, Code&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
 
-extern const char* const tierName;
+inline constexpr ASCIILiteral tierName { "Air "_s };
 
 // This is an IR that is very close to the bare metal. It requires about 40x more bytes than the
 // generated machine code - for example if you're generating 1MB of machine code, you need about
@@ -79,7 +83,7 @@ extern const char* const tierName;
 
 class Code {
     WTF_MAKE_NONCOPYABLE(Code);
-    WTF_MAKE_TZONE_ALLOCATED(Code);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(Code);
 public:
     ~Code();
 
@@ -99,14 +103,14 @@ public:
     // This is the set of registers that Air is allowed to emit code to mutate. It's derived from
     // regsInPriorityOrder. Any registers not in this set are said to be "pinned".
     RegisterSet mutableRegs() const { return m_mutableRegs.toRegisterSet().includeWholeRegisterWidth(); }
-    
-    bool isPinned(Reg reg) const { return !mutableRegs().contains(reg, IgnoreVectors); }
-    void pinRegister(Reg);
-    
+
+    bool isPinned(Reg reg) const { return pinnedRegisters().contains(reg, IgnoreVectors); }
+    JS_EXPORT_PRIVATE void pinRegister(Reg);
+
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool needsUsedRegisters() const;
+    bool NODELETE needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -141,16 +145,21 @@ public:
         }
         ASSERT_NOT_REACHED();
     }
-    
+
+    template<Bank bank, typename Func>
+    void forEachTmp(const Func& func)
+    {
+        unsigned numTmps = this->numTmps(bank);
+        for (unsigned i = 0; i < numTmps; ++i)
+            func(Tmp::tmpForIndex(bank, i));
+    }
+
     template<typename Func>
     void forEachTmp(const Func& func)
     {
-        for (unsigned bankIndex = 0; bankIndex < numBanks; ++bankIndex) {
-            Bank bank = static_cast<Bank>(bankIndex);
-            unsigned numTmps = this->numTmps(bank);
-            for (unsigned i = 0; i < numTmps; ++i)
-                func(Tmp::tmpForIndex(bank, i));
-        }
+        static_assert(numBanks == 2);
+        forEachTmp<GP>(func);
+        forEachTmp<FP>(func);
     }
 
     unsigned callArgAreaSizeInBytes() const { return m_callArgAreaSize; }
@@ -181,17 +190,17 @@ public:
     // Note that this is not the same thing as proc().numEntrypoints(). This value here may be zero
     // until we lower EntrySwitch.
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
-    const Vector<FrequentedBlock>& entrypoints() const { return m_entrypoints; }
+    const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool isEntrypoint(BasicBlock*) const;
+    bool NODELETE isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> entrypointIndex(BasicBlock*) const;
+    std::optional<unsigned> NODELETE entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
     void setPrologueForEntrypoint(unsigned entrypointIndex, Ref<PrologueGenerator>&& generator)
     {
-        m_prologueGenerators[entrypointIndex] = WTFMove(generator);
+        m_prologueGenerators[entrypointIndex] = WTF::move(generator);
     }
     const Ref<PrologueGenerator>& prologueGeneratorForEntrypoint(unsigned entrypointIndex)
     {
@@ -235,7 +244,7 @@ public:
     RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
     
     // This just tells you what the callee saves are.
-    RegisterSetBuilder calleeSaveRegisters() const { return m_calleeSaveRegisters; }
+    RegisterSet calleeSaveRegisters() const { return m_calleeSaveRegisters; }
 
     // Recomputes predecessors and deletes unreachable blocks.
     JS_EXPORT_PRIVATE void resetReachability();
@@ -248,15 +257,15 @@ public:
 
     // This is used by phases that optimize the block list. You shouldn't use this unless you really know
     // what you're doing.
-    Vector<std::unique_ptr<BasicBlock>>& blockList() { return m_blocks; }
+    Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned findFirstBlockIndex(unsigned index) const;
+    JS_EXPORT_PRIVATE unsigned NODELETE findFirstBlockIndex(unsigned index) const;
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned findNextBlockIndex(unsigned index) const;
+    unsigned NODELETE findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* findNextBlock(BasicBlock*) const;
+    BasicBlock* NODELETE findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -293,25 +302,16 @@ public:
         unsigned m_index;
     };
 
-    iterator begin() const { return iterator(*this, 0); }
-    iterator end() const { return iterator(*this, size()); }
+    iterator begin() const LIFETIME_BOUND { return iterator(*this, 0); }
+    iterator end() const LIFETIME_BOUND { return iterator(*this, size()); }
 
-    const SparseCollection<StackSlot>& stackSlots() const { return m_stackSlots; }
-    SparseCollection<StackSlot>& stackSlots() { return m_stackSlots; }
+    const SparseCollection<StackSlot>& stackSlots() const LIFETIME_BOUND { return m_stackSlots; }
+    SparseCollection<StackSlot>& stackSlots() LIFETIME_BOUND { return m_stackSlots; }
 
-    const SparseCollection<Special>& specials() const { return m_specials; }
-    SparseCollection<Special>& specials() { return m_specials; }
+    const SparseCollection<Special>& specials() const LIFETIME_BOUND { return m_specials; }
+    SparseCollection<Special>& specials() LIFETIME_BOUND { return m_specials; }
 
-    template<typename Callback>
-    void forAllTmps(const Callback& callback) const
-    {
-        for (unsigned i = m_numGPTmps; i--;)
-            callback(Tmp::gpTmpForIndex(i));
-        for (unsigned i = m_numFPTmps; i--;)
-            callback(Tmp::fpTmpForIndex(i));
-    }
-
-    void addFastTmp(Tmp);
+    JS_EXPORT_PRIVATE void addFastTmp(Tmp);
 
     template<typename Functor>
     void forEachFastTmp(const Functor& functor) const
@@ -346,14 +346,14 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool usesSIMD() const;
+    bool NODELETE usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {
-        m_disassembler = WTFMove(disassembler);
+        m_disassembler = WTF::move(disassembler);
         forcePreservationOfB3Origins();
     }
-    Disassembler* disassembler() { return m_disassembler.get(); }
+    Disassembler* disassembler() LIFETIME_BOUND { return m_disassembler.get(); }
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
@@ -365,7 +365,10 @@ public:
 
     void setForceIRCRegisterAllocation() { m_forceIRC = true; }
     bool forceIRCRegisterAllocation() { return m_forceIRC; }
-    
+
+    void setIonGraphPasses(Ref<JSON::Array>&&);
+    void appendIonGraphPass(ASCIILiteral);
+
 private:
     friend class ::JSC::B3::Procedure;
     friend class BlockInsertionSet;
@@ -394,7 +397,7 @@ private:
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
     std::unique_ptr<CFG> m_cfg;
-    SmallSet<Tmp, TmpHash, 2> m_fastTmps;
+    SmallSet<Tmp, DefaultHash<Tmp>, HashTraits<Tmp>, 2> m_fastTmps;
     CCallSpecial* m_cCallSpecial { nullptr };
     unsigned m_numGPTmps { 0 };
     unsigned m_numFPTmps { 0 };
@@ -405,7 +408,7 @@ private:
     bool m_preserveB3Origins { true };
     bool m_forceIRC { false };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
-    RegisterSetBuilder m_calleeSaveRegisters;
+    RegisterSet m_calleeSaveRegisters;
     StackSlot* m_calleeSaveStackSlot { nullptr };
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
@@ -413,7 +416,8 @@ private:
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;
-    Ref<PrologueGenerator> m_defaultPrologueGenerator;
+    const Ref<PrologueGenerator> m_defaultPrologueGenerator;
+    RefPtr<JSON::Array> m_ionGraphPasses;
 };
 
 } } } // namespace JSC::B3::Air

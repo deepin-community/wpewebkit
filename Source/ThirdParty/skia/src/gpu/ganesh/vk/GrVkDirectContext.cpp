@@ -5,12 +5,13 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkContext.h"
 #include "include/gpu/ganesh/vk/GrVkDirectContext.h"
 
-#include "include/gpu/GrContextOptions.h"
-#include "include/gpu/GrContextThreadSafeProxy.h"
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
+#include "include/gpu/ganesh/GrContextThreadSafeProxy.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrTypes.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/vk/GrVkContextThreadSafeProxy.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
@@ -35,3 +36,12 @@ sk_sp<GrDirectContext> MakeVulkan(const skgpu::VulkanBackendContext& backendCont
     return direct;
 }
 }  // namespace GrDirectContexts
+
+namespace SkContexts {
+
+std::unique_ptr<SkContext> MakeGanesh(const skgpu::VulkanBackendContext& vkContext,
+                            const SkContextOptions& options) {
+    return nullptr;
+}
+
+}  // namespace SkContexts

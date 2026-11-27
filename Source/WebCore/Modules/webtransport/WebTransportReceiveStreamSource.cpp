@@ -26,18 +26,42 @@
 #include "config.h"
 #include "WebTransportReceiveStreamSource.h"
 
+#include "JSDOMException.h"
+#include "JSDOMGlobalObject.h"
+#include "JSDOMPromiseDeferred.h"
+#include "JSWebTransportError.h"
+#include "JSWebTransportReceiveStream.h"
+#include "ReadableByteStreamController.h"
+#include "ReadableStream.h"
+#include "WebTransport.h"
+#include "WebTransportError.h"
+#include "WebTransportSession.h"
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/HeapCellInlines.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <wtf/Scope.h>
+#include <wtf/StdLibExtras.h>
+
 namespace WebCore {
 
-void WebTransportReceiveStreamSource::doCancel()
-{
-    m_isCancelled = true;
-}
-
-void WebTransportReceiveStreamSource::receiveIncomingStream()
+bool WebTransportReceiveStreamSource::receiveIncomingStream(JSC::JSGlobalObject& globalObject, Ref<WebTransportReceiveStream>& stream)
 {
     if (m_isCancelled)
-        return;
-    // FIXME: Add parameters and implement.
+        return false;
+    auto& jsDOMGlobalObject = downcast<JSDOMGlobalObject>(globalObject);
+    Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
+    auto value = toJS(&globalObject, &jsDOMGlobalObject, stream.get());
+    if (!controller().enqueue(value)) {
+        doCancel({ });
+        return false;
+    }
+    return true;
+}
+
+void WebTransportReceiveStreamSource::doCancel(JSC::JSValue)
+{
+    m_isCancelled = true;
+    cancelFinished();
 }
 
 }

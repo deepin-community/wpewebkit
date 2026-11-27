@@ -25,12 +25,15 @@
 
 #pragma once
 
-#include "DragActions.h"
-#include "DragImage.h"
-#include "IntPoint.h"
-#include "IntRect.h"
-#include "SimpleRange.h"
+#include <WebCore/Document.h>
+#include <WebCore/DragActions.h>
+#include <WebCore/DragImage.h>
+#include <WebCore/IntPoint.h>
+#include <WebCore/IntRect.h>
+#include <WebCore/SimpleRange.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/Platform.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
 #include <wtf/WeakRef.h>
 
@@ -55,17 +58,21 @@ struct DragState;
 struct PromisedAttachmentInfo;
 struct RemoteUserInputEventData;
 
-class DragController {
-    WTF_MAKE_NONCOPYABLE(DragController); WTF_MAKE_FAST_ALLOCATED;
+enum class DragEventHandled : bool;
+using DragEventTargetData = Variant<DragEventHandled, FrameIdentifier>;
+
+class DragController : public CanMakeSingleThreadWeakPtr<DragController> {
+    WTF_MAKE_TZONE_ALLOCATED(DragController);
+    WTF_MAKE_NONCOPYABLE(DragController);
 public:
     DragController(Page&, std::unique_ptr<DragClient>&&);
     ~DragController();
 
-    static DragOperation platformGenericDragOperation();
+    static DragOperation NODELETE platformGenericDragOperation();
 
-    WEBCORE_EXPORT std::variant<std::optional<DragOperation>, RemoteUserInputEventData> dragEnteredOrUpdated(LocalFrame&, DragData&&);
+    WEBCORE_EXPORT Variant<std::optional<DragOperation>, RemoteUserInputEventData> dragEnteredOrUpdated(LocalFrame&, DragData&&);
     WEBCORE_EXPORT void dragExited(LocalFrame&, DragData&&);
-    WEBCORE_EXPORT bool performDragOperation(DragData&&);
+    WEBCORE_EXPORT DragEventTargetData performDragOperation(DragData&&, LocalFrame&);
     WEBCORE_EXPORT void dragCancelled();
 
     bool mouseIsOverFileInput() const { return m_fileInputElementUnderMouse; }
@@ -76,31 +83,30 @@ public:
     void setDidInitiateDrag(bool initiated) { m_didInitiateDrag = initiated; }
     bool didInitiateDrag() const { return m_didInitiateDrag; }
     OptionSet<DragOperation> sourceDragOperationMask() const { return m_sourceDragOperationMask; }
-    const URL& draggingImageURL() const { return m_draggingImageURL; }
+    const URL& draggingImageURL() const LIFETIME_BOUND { return m_draggingImageURL; }
     void setDragOffset(const IntPoint& offset) { m_dragOffset = offset; }
-    const IntPoint& dragOffset() const { return m_dragOffset; }
+    const IntPoint& dragOffset() const LIFETIME_BOUND { return m_dragOffset; }
     OptionSet<DragSourceAction> dragSourceAction() const { return m_dragSourceAction; }
     DragHandlingMethod dragHandlingMethod() const { return m_dragHandlingMethod; }
 
     Document* documentUnderMouse() const { return m_documentUnderMouse.get(); }
-    RefPtr<Document> protectedDocumentUnderMouse() const { return m_documentUnderMouse; }
     OptionSet<DragDestinationAction> dragDestinationActionMask() const { return m_dragDestinationActionMask; }
     OptionSet<DragSourceAction> delegateDragSourceAction(const IntPoint& rootViewPoint);
 
-    Element* draggableElement(const LocalFrame*, Element* start, const IntPoint&, DragState&) const;
+    RefPtr<Element> draggableElement(const LocalFrame*, Element* start, const IntPoint&, DragState&) const;
     WEBCORE_EXPORT void dragEnded();
 
     WEBCORE_EXPORT void placeDragCaret(const IntPoint&);
 
-    const Vector<Ref<HTMLImageElement>>& droppedImagePlaceholders() const { return m_droppedImagePlaceholders; }
-    const std::optional<SimpleRange>& droppedImagePlaceholderRange() const { return m_droppedImagePlaceholderRange; }
+    const Vector<Ref<HTMLImageElement>>& droppedImagePlaceholders() const LIFETIME_BOUND { return m_droppedImagePlaceholders; }
+    const std::optional<SimpleRange>& droppedImagePlaceholderRange() const LIFETIME_BOUND { return m_droppedImagePlaceholderRange; }
 
     WEBCORE_EXPORT void finalizeDroppedImagePlaceholder(HTMLImageElement&, CompletionHandler<void()>&&);
     WEBCORE_EXPORT void insertDroppedImagePlaceholdersAtCaret(const Vector<IntSize>& imageSizes);
 
     void prepareForDragStart(LocalFrame& sourceFrame, OptionSet<DragSourceAction>, Element& sourceElement, DataTransfer&, const IntPoint& dragOrigin) const;
-    bool startDrag(LocalFrame& src, const DragState&, OptionSet<DragOperation>, const PlatformMouseEvent& dragEvent, const IntPoint& dragOrigin, HasNonDefaultPasteboardData);
-    static const IntSize& maxDragImageSize();
+    bool startDrag(LocalFrame& src, const DragState&, OptionSet<DragOperation>, const PlatformMouseEvent& dragEvent, const IntPoint& dragOrigin, HasNonDefaultPasteboardData, const std::optional<FrameIdentifier>& rootFrameID);
+    static const IntSize& NODELETE maxDragImageSize();
 
     static const int MaxOriginalImageArea;
     static const int DragIconRightInset;
@@ -118,7 +124,7 @@ private:
     std::optional<DragOperation> dragOperation(const DragData&);
     void clearDragCaret();
     bool dragIsMove(FrameSelection&, const DragData&);
-    bool isCopyKeyDown(const DragData&);
+    bool NODELETE isCopyKeyDown(const DragData&);
 
     void mouseMovedIntoDocument(RefPtr<Document>&&);
     bool shouldUseCachedImageForDragImage(const Image&) const;
@@ -127,8 +133,7 @@ private:
     std::optional<HitTestResult> hitTestResultForDragStart(LocalFrame&, Element&, const IntPoint&) const;
 
     void doImageDrag(Element&, const IntPoint&, const IntRect&, LocalFrame&, IntPoint&, const DragState&, PromisedAttachmentInfo&&);
-    void doSystemDrag(DragImage, const IntPoint&, const IntPoint&, LocalFrame&, const DragState&, PromisedAttachmentInfo&&);
-
+    void doSystemDrag(DragImage, const IntPoint&, const IntPoint&, LocalFrame&, const DragState&, PromisedAttachmentInfo&&, const std::optional<FrameIdentifier>&);
     void beginDrag(DragItem, LocalFrame&, const IntPoint& mouseDownPoint, const IntPoint& mouseDraggedPoint, DataTransfer&, DragSourceAction);
 
     bool canLoadDataFromDraggingPasteboard() const
@@ -140,14 +145,13 @@ private:
 #endif
     }
 
-    DragClient& client() const { return *m_client; }
+    DragClient& client() const LIFETIME_BOUND { return *m_client; }
 
     bool tryToUpdateDroppedImagePlaceholders(const DragData&);
     void removeAllDroppedImagePlaceholders();
 
     void cleanupAfterSystemDrag();
     void declareAndWriteDragImage(DataTransfer&, Element&, const URL&, const String& label);
-    Ref<Page> protectedPage() const;
 
     WeakRef<Page> m_page;
     std::unique_ptr<DragClient> m_client;

@@ -28,6 +28,7 @@
 #include "ShadowRoot.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
@@ -42,16 +43,17 @@ class HTMLSlotElement;
 class Node;
 
 class SlotAssignment {
-    WTF_MAKE_NONCOPYABLE(SlotAssignment); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(SlotAssignment);
+    WTF_MAKE_NONCOPYABLE(SlotAssignment);
 public:
     SlotAssignment() = default;
     virtual ~SlotAssignment() = default;
 
     // These functions are only useful for NamedSlotAssignment but it's here to avoid virtual function calls in perf critical code paths.
-    void resolveSlotsBeforeNodeInsertionOrRemoval();
-    void willRemoveAllChildren();
+    inline void resolveSlotsBeforeNodeInsertionOrRemoval();
+    inline void willRemoveAllChildren();
 
-    virtual HTMLSlotElement* findAssignedSlot(const Node&) = 0;
+    virtual HTMLSlotElement* NODELETE findAssignedSlot(const Node&) = 0;
     virtual const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) = 0;
 
     virtual void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) = 0;
@@ -64,7 +66,7 @@ public:
     virtual void hostChildElementDidChange(const Element&, ShadowRoot&) = 0;
     virtual void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue, ShadowRoot&) = 0;
 
-    virtual void willRemoveAssignedNode(const Node&, ShadowRoot&) = 0;
+    virtual void willRemoveAssignedNode(Node&, ShadowRoot&) = 0;
     virtual void didRemoveAllChildrenOfShadowHost(ShadowRoot&) = 0;
     virtual void didMutateTextNodesOfShadowHost(ShadowRoot&) = 0;
 
@@ -76,7 +78,8 @@ protected:
 };
 
 class NamedSlotAssignment : public SlotAssignment {
-    WTF_MAKE_NONCOPYABLE(NamedSlotAssignment); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(NamedSlotAssignment);
+    WTF_MAKE_NONCOPYABLE(NamedSlotAssignment);
 public:
     NamedSlotAssignment();
     virtual ~NamedSlotAssignment();
@@ -87,7 +90,7 @@ protected:
     void didChangeSlot(const AtomString&, ShadowRoot&);
 
 private:
-    HTMLSlotElement* findAssignedSlot(const Node&) final;
+    HTMLSlotElement* NODELETE findAssignedSlot(const Node&) final;
 
     void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) final;
     void addSlotElementByName(const AtomString&, HTMLSlotElement&, ShadowRoot&) final;
@@ -97,7 +100,7 @@ private:
     void slotFallbackDidChange(HTMLSlotElement&, ShadowRoot&) final;
 
     const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) final;
-    void willRemoveAssignedNode(const Node&, ShadowRoot&) final;
+    void willRemoveAssignedNode(Node&, ShadowRoot&) final;
 
     void didRemoveAllChildrenOfShadowHost(ShadowRoot&) final;
     void didMutateTextNodesOfShadowHost(ShadowRoot&) final;
@@ -105,7 +108,7 @@ private:
     void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue, ShadowRoot&) final;
 
     struct Slot {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED(Slot);
     public:
         bool hasSlotElements() { return !!elementCount; }
         bool hasDuplicatedSlotElements() { return elementCount > 1; }
@@ -122,9 +125,9 @@ private:
     enum class SlotMutationType { Insertion, Removal };
     void resolveSlotsAfterSlotMutation(ShadowRoot&, SlotMutationType, ContainerNode* oldParentOfRemovedTree = nullptr);
 
-    virtual const AtomString& slotNameForHostChild(const Node&) const;
+    virtual const AtomString& NODELETE slotNameForHostChild(const Node&) const;
 
-    HTMLSlotElement* findFirstSlotElement(Slot&);
+    HTMLSlotElement* NODELETE findFirstSlotElement(Slot&);
 
     void assignSlots(ShadowRoot&);
     void assignToSlot(Node& child, const AtomString& slotName);
@@ -143,7 +146,7 @@ class ManualSlotAssignment : public SlotAssignment {
 public:
     ManualSlotAssignment() = default;
 
-    HTMLSlotElement* findAssignedSlot(const Node&) final;
+    HTMLSlotElement* NODELETE findAssignedSlot(const Node&) final;
 
     const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) final;
     void renameSlotElement(HTMLSlotElement&, const AtomString&, const AtomString&, ShadowRoot&) final;
@@ -156,7 +159,7 @@ public:
     void hostChildElementDidChange(const Element&, ShadowRoot&) final;
     void hostChildElementDidChangeSlotAttribute(Element&, const AtomString&, const AtomString&, ShadowRoot&) final;
 
-    void willRemoveAssignedNode(const Node&, ShadowRoot&) final;
+    void willRemoveAssignedNode(Node&, ShadowRoot&) final;
     void didRemoveAllChildrenOfShadowHost(ShadowRoot&) final;
     void didMutateTextNodesOfShadowHost(ShadowRoot&) final;
 
@@ -169,6 +172,14 @@ private:
     uint64_t m_slottableVersion { 0 };
     unsigned m_slotElementCount { 0 };
 };
+
+inline HTMLSlotElement* ShadowRoot::findAssignedSlot(const Node& node)
+{
+    ASSERT(node.parentNode() == host());
+    if (m_slotAssignment) [[unlikely]]
+        return m_slotAssignment->findAssignedSlot(node);
+    return nullptr;
+}
 
 inline void SlotAssignment::resolveSlotsBeforeNodeInsertionOrRemoval()
 {
@@ -184,31 +195,31 @@ inline void SlotAssignment::willRemoveAllChildren()
 
 inline void ShadowRoot::resolveSlotsBeforeNodeInsertionOrRemoval()
 {
-    if (UNLIKELY(m_slotAssignment))
+    if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->resolveSlotsBeforeNodeInsertionOrRemoval();
 }
 
 inline void ShadowRoot::willRemoveAllChildren(ContainerNode&)
 {
-    if (UNLIKELY(m_slotAssignment))
+    if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->willRemoveAllChildren();
 }
 
 inline void ShadowRoot::didRemoveAllChildrenOfShadowHost()
 {
-    if (UNLIKELY(m_slotAssignment))
+    if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->didRemoveAllChildrenOfShadowHost(*this);
 }
 
 inline void ShadowRoot::didMutateTextNodesOfShadowHost()
 {
-    if (UNLIKELY(m_slotAssignment))
+    if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->didMutateTextNodesOfShadowHost(*this);
 }
 
 inline void ShadowRoot::hostChildElementDidChange(const Element& childElement)
 {
-    if (UNLIKELY(m_slotAssignment))
+    if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->hostChildElementDidChange(childElement, *this);
 }
 
@@ -219,7 +230,7 @@ inline void ShadowRoot::hostChildElementDidChangeSlotAttribute(Element& element,
     m_slotAssignment->hostChildElementDidChangeSlotAttribute(element, oldValue, newValue, *this);
 }
 
-inline void ShadowRoot::willRemoveAssignedNode(const Node& node)
+inline void ShadowRoot::willRemoveAssignedNode(Node& node)
 {
     if (m_slotAssignment)
         m_slotAssignment->willRemoveAssignedNode(node, *this);

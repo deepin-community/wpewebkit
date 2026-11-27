@@ -78,9 +78,9 @@ void StringDumper::visit(ShaderModule& shaderModule)
     }
 }
 
-void StringDumper::visit(DiagnosticDirective&)
+void StringDumper::visit(Diagnostic& diagnostic)
 {
-    // FIXME: we still don't do anything with diagnostics
+    m_out.print("diagnostic("_s, diagnostic.severity, ", "_s, diagnostic.triggeringRule, ')');
 }
 
 // Attribute
@@ -130,6 +130,12 @@ void StringDumper::visit(WorkgroupSizeAttribute& workgroupSize)
     m_out.print(")");
 }
 
+void StringDumper::visit(DiagnosticAttribute& attribute)
+{
+    m_out.print("@"_s);
+    visit(attribute.diagnostic());
+}
+
 // Declaration
 void StringDumper::visit(Function& function)
 {
@@ -160,12 +166,7 @@ void StringDumper::visit(Function& function)
 
 void StringDumper::visit(Structure& structure)
 {
-    m_out.print(m_indent);
-    if (!structure.attributes().isEmpty()) {
-        visitVector(structure.attributes(), " ");
-        m_out.print("\n", m_indent);
-    }
-    m_out.print("struct ", structure.name(), " {");
+    m_out.print(m_indent, "struct ", structure.name(), " {");
     if (!structure.members().isEmpty()) {
         m_out.print("\n");
         {

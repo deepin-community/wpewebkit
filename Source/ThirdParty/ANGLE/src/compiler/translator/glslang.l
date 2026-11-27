@@ -24,8 +24,10 @@ WHICH GENERATES THE GLSL ES LEXER (glslang_lex_autogen.cpp).
 // glslang.l:
 //   Lexer for the OpenGL shading language.
 
+#include <stdint.h>
+
 // Ignore errors in auto-generated code.
-#if defined(__GNUC__)
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-variable"
@@ -49,6 +51,11 @@ WHICH GENERATES THE GLSL ES LEXER (glslang_lex_autogen.cpp).
 #pragma clang diagnostic ignored "-Wextra-semi-stmt"
 #pragma clang diagnostic ignored "-Wunreachable-code"
 #endif
+
+// Rename yyalloc/yyrealloc/yyfree during flex generation to allow macro definitions.
+#define yyalloc yyalloc_FLEXGEN
+#define yyrealloc yyrealloc_FLEXGEN
+#define yyfree yyfree_FLEXGEN
 }
 
 %{
@@ -82,6 +89,14 @@ using namespace sh;
 #define YY_INPUT(buf, result, max_size) \
     result = string_input(buf, max_size, yyscanner);
 
+// Undefine renames and define yyalloc/yyrealloc/yyfree as macros for typed malloc support.
+#undef yyalloc
+#undef yyrealloc
+#undef yyfree
+#define yyalloc(size, yyscanner) malloc(size)
+#define yyrealloc(ptr, size, yyscanner) realloc((ptr), (size))
+#define yyfree(ptr, yyscanner) free(ptr)
+
 static yy_size_t string_input(char* buf, yy_size_t max_size, yyscan_t yyscanner);
 static int check_type(yyscan_t yyscanner);
 static int reserved_word(yyscan_t yyscanner);
@@ -112,14 +127,14 @@ static int ES3_reserved_ES3_extension_ES3_1_keyword(TParseContext *context, TExt
 static int ES3_reserved_ES3_extension_ES3_2_keyword(TParseContext *context, TExtension extension, int token);
 static int ES3_1_reserved_ES3_1_extension_ES3_2_keyword_2(TParseContext *context, TExtension extension1, TExtension extension2, int token1, int token2);
 static int ES3_and_3_1_reserved_ES3_1_extension_ES3_2_keyword_2(TParseContext *context, TExtension extension1, TExtension extension2, int token1, int token2);
-static int WEBGL_video_texture_extension(TParseContext *context, int token);
 static int uint_constant(TParseContext *context);
 static int int_constant(TParseContext *context);
-static int float_constant(yyscan_t yyscanner);
+static int float_constant(TParseContext* context, yyscan_t yyscanner);
 static int floatsuffix_check(TParseContext* context);
 static int yuvcscstandardext_constant(TParseContext *context);
 %}
 
+%option noyyalloc noyyrealloc noyyfree
 %option noyywrap nounput never-interactive
 %option yylineno reentrant bison-bridge bison-locations
 %option extra-type="TParseContext*"
@@ -234,9 +249,9 @@ O           [0-7]
 "samplerCubeShadow"    { return ES3_keyword(context, SAMPLERCUBESHADOW); }
 "sampler2DArrayShadow" { return ES3_keyword(context, SAMPLER2DARRAYSHADOW); }
 "__samplerExternal2DY2YEXT"   { return ES3_extension(context, TExtension::EXT_YUV_target, SAMPLEREXTERNAL2DY2YEXT); }
-"sampler2DMSArray"     { return ES3_reserved_ES3_1_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, SAMPLER2DMSARRAY); }
-"isampler2DMSArray"    { return ES3_reserved_ES3_1_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, ISAMPLER2DMSARRAY); }
-"usampler2DMSArray"    { return ES3_reserved_ES3_1_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, USAMPLER2DMSARRAY); }
+"sampler2DMSArray"     { return ES3_reserved_ES3_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, SAMPLER2DMSARRAY); }
+"isampler2DMSArray"    { return ES3_reserved_ES3_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, ISAMPLER2DMSARRAY); }
+"usampler2DMSArray"    { return ES3_reserved_ES3_extension_ES3_2_keyword(context, TExtension::OES_texture_storage_multisample_2d_array, USAMPLER2DMSARRAY); }
 "samplerCubeArray"     { return ES3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_cube_map_array, TExtension::EXT_texture_cube_map_array, SAMPLERCUBEARRAYOES, SAMPLERCUBEARRAYEXT); }
 "samplerBuffer"        { return ES3_and_3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_buffer, TExtension::EXT_texture_buffer, SAMPLERBUFFER, SAMPLERBUFFER); }
 "samplerCubeArrayShadow"    { return ES3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_cube_map_array, TExtension::EXT_texture_cube_map_array, SAMPLERCUBEARRAYSHADOWOES, SAMPLERCUBEARRAYSHADOWEXT); }
@@ -244,7 +259,6 @@ O           [0-7]
 "isamplerBuffer"       { return ES3_and_3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_buffer, TExtension::EXT_texture_buffer, ISAMPLERBUFFER, ISAMPLERBUFFER); }
 "usamplerCubeArray"    { return ES3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_cube_map_array, TExtension::EXT_texture_cube_map_array, USAMPLERCUBEARRAYOES, USAMPLERCUBEARRAYEXT); }
 "usamplerBuffer"       { return ES3_and_3_1_reserved_ES3_1_extension_ES3_2_keyword_2(context, TExtension::OES_texture_buffer, TExtension::EXT_texture_buffer, USAMPLERBUFFER, USAMPLERBUFFER); }
-"samplerVideoWEBGL"    { return WEBGL_video_texture_extension(context, SAMPLERVIDEOWEBGL); }
 "struct"       { return STRUCT; }
 
 "layout"  { return ES2_extensions_ES3_keyword(context, TExtension::EXT_shader_framebuffer_fetch, TExtension::EXT_shader_framebuffer_fetch_non_coherent, TExtension::KHR_blend_equation_advanced, LAYOUT); }
@@ -382,9 +396,9 @@ O           [0-7]
 "fvec3"        |
 "fvec4"        |
 
+"sampler2DRectShadow" |
 "sampler1D"    |
 "sampler1DShadow" |
-"sampler2DRectShadow" |
 
 "sizeof"       |
 "cast"         |
@@ -405,9 +419,9 @@ O           [0-7]
 0{O}+[uU]         { return uint_constant(context); }
 {D}+[uU]          { return uint_constant(context); }
 
-{D}+{E}           { return float_constant(yyscanner); }
-{D}+"."{D}*({E})? { return float_constant(yyscanner); }
-"."{D}+({E})?     { return float_constant(yyscanner); }
+{D}+{E}           { return float_constant(context, yyscanner); }
+{D}+"."{D}*({E})? { return float_constant(context, yyscanner); }
+"."{D}+({E})?     { return float_constant(context, yyscanner); }
 
 {D}+{E}[fF]           { return floatsuffix_check(context); }
 {D}+"."{D}*({E})?[fF] { return floatsuffix_check(context); }
@@ -607,22 +621,6 @@ int ES3_1_keyword(TParseContext *context, int token)
     }
 
     // Otherwise can be used as an identifier/type name
-    yylval->lex.string = AllocatePoolCharArray(yytext, yyleng);
-    return check_type(yyscanner);
-}
-
-int WEBGL_video_texture_extension(TParseContext *context, int token)
-{
-    // Available with WEBGL_video_texture_extension
-    if (context->isExtensionEnabled(TExtension::WEBGL_video_texture))
-    {
-        return token;
-    }
-
-    // Otherwise can be used as an identifier/type name
-    struct yyguts_t* yyg = (struct yyguts_t*) context->getScanner();
-    yyscan_t yyscanner = (yyscan_t) context->getScanner();
-
     yylval->lex.string = AllocatePoolCharArray(yytext, yyleng);
     return check_type(yyscanner);
 }
@@ -863,7 +861,7 @@ int floatsuffix_check(TParseContext* context)
 
     std::string text = yytext;
     text.resize(text.size() - 1);
-    if (!strtof_clamp(text, &(yylval->lex.f)))
+    if (!strtof_clamp(text, &(yylval->lex.f), context->getCompileOptions().preserveDenorms))
         yyextra->warning(*yylloc, "Float overflow", yytext);
 
     return(FLOATCONSTANT);
@@ -888,10 +886,10 @@ int int_constant(TParseContext *context) {
     return INTCONSTANT;
 }
 
-int float_constant(yyscan_t yyscanner) {
+int float_constant(TParseContext* context, yyscan_t yyscanner) {
     struct yyguts_t* yyg = (struct yyguts_t*) yyscanner;
 
-    if (!strtof_clamp(yytext, &(yylval->lex.f)))
+    if (!strtof_clamp(yytext, &(yylval->lex.f), context->getCompileOptions().preserveDenorms))
         yyextra->warning(*yylloc, "Float overflow", yytext);
     return FLOATCONSTANT;
 }
@@ -943,9 +941,7 @@ int glslang_scan(size_t count, const char* const string[], const int length[],
     if (!preprocessor->init(count, string, length))
         return 1;
 
-    if (context->getFragmentPrecisionHigh())
-        preprocessor->predefineMacro("GL_FRAGMENT_PRECISION_HIGH", 1);
-
+    preprocessor->predefineMacro("GL_FRAGMENT_PRECISION_HIGH", 1);
     preprocessor->setMaxTokenSize(sh::GetGlobalMaxTokenSize(context->getShaderSpec()));
 
     return 0;

@@ -27,9 +27,10 @@
 #include "config.h"
 #include "VisibleUnits.h"
 
+#include "BoundaryPointInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Editing.h"
+#include "EditingInlines.h"
 #include "HTMLBRElement.h"
 #include "HTMLElement.h"
 #include "HTMLNames.h"
@@ -39,43 +40,46 @@
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineRunAndOffset.h"
 #include "NodeTraversal.h"
+#include "PositionInlines.h"
 #include "Range.h"
 #include "RenderBlockFlow.h"
-#include "RenderStyleInlines.h"
+#include "RenderObjectStyle.h"
 #include "RenderedPosition.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include "TextBoundaries.h"
 #include "TextIterator.h"
 #include "VisibleSelection.h"
 #include <unicode/ubrk.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextBreakIterator.h>
 
 namespace WebCore {
 
-static Node* previousLeafWithSameEditability(Node* node, EditableType editableType)
+static RefPtr<Node> previousLeafWithSameEditability(Node* node, EditableType editableType)
 {
     bool editable = hasEditableStyle(*node, editableType);
-    node = previousLeafNode(node);
-    while (node) {
-        if (editable == hasEditableStyle(*node, editableType))
-            return node;
-        node = previousLeafNode(node);
+    RefPtr previousNode = previousLeafNode(node);
+    while (previousNode) {
+        if (editable == hasEditableStyle(*previousNode, editableType))
+            return previousNode;
+        previousNode = previousLeafNode(previousNode.get());
     }
     return nullptr;
 }
 
-static Node* nextLeafWithSameEditability(Node* node, EditableType editableType)
+static RefPtr<Node> nextLeafWithSameEditability(Node* node, EditableType editableType)
 {
     if (!node)
         return nullptr;
     
     bool editable = hasEditableStyle(*node, editableType);
-    node = nextLeafNode(node);
-    while (node) {
-        if (editable == hasEditableStyle(*node, editableType))
-            return node;
-        node = nextLeafNode(node);
+    RefPtr nextNode = nextLeafNode(node);
+    while (nextNode) {
+        if (editable == hasEditableStyle(*nextNode, editableType))
+            return nextNode;
+        nextNode = nextLeafNode(nextNode.get());
     }
     return nullptr;
 }
@@ -93,10 +97,10 @@ static Position previousLineCandidatePosition(Node* node, const VisiblePosition&
         if (highestEditableRoot(firstPositionInOrBeforeNode(previousNode.get()), editableType) != highestRoot)
             break;
 
-        Position pos = previousNode->hasTagName(HTMLNames::brTag) ? positionBeforeNode(previousNode.get()) :
+        Position pos = previousNode->hasTagName(HTMLNames::brTag) ? positionBeforeNode(*previousNode) :
             makeDeprecatedLegacyPosition(previousNode.get(), caretMaxOffset(*previousNode));
         
-        if (pos.isCandidate())
+        if (pos.isCandidate(visiblePosition.allowUserSelectNone()))
             return pos;
 
         previousNode = previousLeafWithSameEditability(previousNode.get(), editableType);
@@ -109,7 +113,7 @@ static Position nextLineCandidatePosition(Node* node, const VisiblePosition& vis
     RefPtr highestRoot = highestEditableRoot(visiblePosition.deepEquivalent(), editableType);
     RefPtr nextNode = nextLeafWithSameEditability(node, editableType);
     while (nextNode && (!nextNode->renderer() || inSameLine(firstPositionInOrBeforeNode(nextNode.get()), visiblePosition)))
-        nextNode = nextLeafWithSameEditability(nextNode.get(), ContentIsEditable);
+        nextNode = nextLeafWithSameEditability(nextNode.get(), editableType);
 
     while (nextNode && !nextNode->isShadowRoot()) {
         if (highestEditableRoot(firstPositionInOrBeforeNode(nextNode.get()), editableType) != highestRoot)
@@ -118,7 +122,7 @@ static Position nextLineCandidatePosition(Node* node, const VisiblePosition& vis
         Position pos;
         pos = makeDeprecatedLegacyPosition(nextNode.get(), caretMinOffset(*nextNode));
         
-        if (pos.isCandidate())
+        if (pos.isCandidate(visiblePosition.allowUserSelectNone()))
             return pos;
 
         nextNode = nextLeafWithSameEditability(nextNode.get(), editableType);
@@ -243,7 +247,7 @@ static const InlineIterator::LeafBoxIterator logicallyNextBox(const VisiblePosit
 }
 
 static UBreakIterator* wordBreakIteratorForMinOffsetBoundary(const VisiblePosition& visiblePosition, InlineIterator::TextBoxIterator textBox,
-    unsigned& previousBoxLength, bool& previousBoxInDifferentLine, Vector<UChar, 1024>& string)
+    unsigned& previousBoxLength, bool& previousBoxInDifferentLine, Vector<char16_t, 1024>& string)
 {
     previousBoxInDifferentLine = false;
 
@@ -268,7 +272,7 @@ static UBreakIterator* wordBreakIteratorForMinOffsetBoundary(const VisiblePositi
 }
 
 static UBreakIterator* wordBreakIteratorForMaxOffsetBoundary(const VisiblePosition& visiblePosition, InlineIterator::TextBoxIterator textBox,
-    bool& nextBoxInDifferentLine, Vector<UChar, 1024>& string)
+    bool& nextBoxInDifferentLine, Vector<char16_t, 1024>& string)
 {
     nextBoxInDifferentLine = false;
 
@@ -316,7 +320,7 @@ static VisiblePosition visualWordPosition(const VisiblePosition& visiblePosition
     if (visiblePosition.isNull() || !visiblePosition.deepEquivalent().document())
         return VisiblePosition();
 
-    visiblePosition.deepEquivalent().document()->updateLayoutIgnorePendingStylesheets();
+    protect(visiblePosition.deepEquivalent().document())->updateLayoutIgnorePendingStylesheets();
 
     TextDirection blockDirection = directionOfEnclosingBlock(visiblePosition.deepEquivalent());
     InlineIterator::LeafBoxIterator previouslyVisitedBox;
@@ -324,7 +328,7 @@ static VisiblePosition visualWordPosition(const VisiblePosition& visiblePosition
     std::optional<VisiblePosition> previousPosition;
     UBreakIterator* iter = nullptr;
 
-    Vector<UChar, 1024> string;
+    Vector<char16_t, 1024> string;
 
     while (1) {
         VisiblePosition adjacentCharacterPosition = direction == MoveRight ? current.right(true) : current.left(true); 
@@ -417,26 +421,26 @@ VisiblePosition rightWordPosition(const VisiblePosition& visiblePosition, bool s
 }
 
 
-static void prepend(Vector<UChar, 1024>& buffer, StringView string)
+static void prepend(Vector<char16_t, 1024>& buffer, StringView string)
 {
     unsigned oldSize = buffer.size();
     unsigned length = string.length();
     buffer.grow(oldSize + length);
-    memmove(buffer.data() + length, buffer.data(), oldSize * sizeof(UChar));
+    memmoveSpan(buffer.mutableSpan().subspan(length), buffer.span().first(oldSize));
     for (unsigned i = 0; i < length; ++i)
         buffer[i] = string[i];
 }
 
-static void prependRepeatedCharacter(Vector<UChar, 1024>& buffer, UChar character, unsigned count)
+static void prependRepeatedCharacter(Vector<char16_t, 1024>& buffer, char16_t character, unsigned count)
 {
     unsigned oldSize = buffer.size();
     buffer.grow(oldSize + count);
-    memmove(buffer.data() + count, buffer.data(), oldSize * sizeof(UChar));
+    memmoveSpan(buffer.mutableSpan().subspan(count), buffer.span().first(oldSize));
     for (unsigned i = 0; i < count; ++i)
         buffer[i] = character;
 }
 
-static void appendRepeatedCharacter(Vector<UChar, 1024>& buffer, UChar character, unsigned count)
+static void appendRepeatedCharacter(Vector<char16_t, 1024>& buffer, char16_t character, unsigned count)
 {
     unsigned oldSize = buffer.size();
     buffer.grow(oldSize + count);
@@ -444,7 +448,7 @@ static void appendRepeatedCharacter(Vector<UChar, 1024>& buffer, UChar character
         buffer[oldSize + i] = character;
 }
 
-unsigned suffixLengthForRange(const SimpleRange& forwardsScanRange, Vector<UChar, 1024>& string)
+unsigned suffixLengthForRange(const SimpleRange& forwardsScanRange, Vector<char16_t, 1024>& string)
 {
     unsigned suffixLength = 0;
     TextIterator forwardsIterator(forwardsScanRange);
@@ -460,7 +464,7 @@ unsigned suffixLengthForRange(const SimpleRange& forwardsScanRange, Vector<UChar
     return suffixLength;
 }
 
-unsigned prefixLengthForRange(const SimpleRange& backwardsScanRange, Vector<UChar, 1024>& string)
+unsigned prefixLengthForRange(const SimpleRange& backwardsScanRange, Vector<char16_t, 1024>& string)
 {
     unsigned prefixLength = 0;
     SimplifiedBackwardsTextIterator backwardsIterator(backwardsScanRange);
@@ -476,7 +480,7 @@ unsigned prefixLengthForRange(const SimpleRange& backwardsScanRange, Vector<UCha
     return prefixLength;
 }
 
-unsigned backwardSearchForBoundaryWithTextIterator(SimplifiedBackwardsTextIterator& it, Vector<UChar, 1024>& string, unsigned suffixLength, BoundarySearchFunction searchFunction)
+unsigned backwardSearchForBoundaryWithTextIterator(SimplifiedBackwardsTextIterator& it, Vector<char16_t, 1024>& string, unsigned suffixLength, BoundarySearchFunction searchFunction)
 {
     unsigned next = 0;
     bool needMoreContext = false;
@@ -506,7 +510,7 @@ unsigned backwardSearchForBoundaryWithTextIterator(SimplifiedBackwardsTextIterat
     return next;
 }
 
-unsigned forwardSearchForBoundaryWithTextIterator(TextIterator& it, Vector<UChar, 1024>& string, unsigned prefixLength, BoundarySearchFunction searchFunction)
+unsigned forwardSearchForBoundaryWithTextIterator(TextIterator& it, Vector<char16_t, 1024>& string, unsigned prefixLength, BoundarySearchFunction searchFunction)
 {
     unsigned next = 0;
     bool needMoreContext = false;
@@ -545,7 +549,7 @@ static VisiblePosition previousBoundary(const VisiblePosition& position, Boundar
     if (!boundary)
         return { };
 
-    Vector<UChar, 1024> string;
+    Vector<char16_t, 1024> string;
     unsigned suffixLength = 0;
 
     auto searchRange = makeSimpleRange(makeBoundaryPointBeforeNodeContents(*boundary), position);
@@ -568,13 +572,13 @@ static VisiblePosition previousBoundary(const VisiblePosition& position, Boundar
     unsigned next = backwardSearchForBoundaryWithTextIterator(it, string, suffixLength, searchFunction);
 
     if (!next)
-        return it.atEnd() ? makeDeprecatedLegacyPosition(searchRange->start) : position;
+        return it.atEnd() ? VisiblePosition(makeDeprecatedLegacyPosition(searchRange->start), VisiblePosition::defaultAffinity, position.allowUserSelectNone()) : position;
 
-    auto& node = (it.atEnd() ? *searchRange : it.range()).start.container.get();
-    auto* textNode = dynamicDowncast<Text>(node);
+    Ref node = (it.atEnd() ? *searchRange : it.range()).start.container;
+    RefPtr textNode = dynamicDowncast<Text>(node);
     if (textNode && !suffixLength && next <= textNode->length()) {
         // The next variable contains a usable index into a text node.
-        return makeDeprecatedLegacyPosition(&node, next);
+        return VisiblePosition(makeDeprecatedLegacyPosition(node.ptr(), next), VisiblePosition::defaultAffinity, position.allowUserSelectNone());
     }
 
     // Use the character iterator to translate the next value into a DOM position.
@@ -582,7 +586,7 @@ static VisiblePosition previousBoundary(const VisiblePosition& position, Boundar
     if (next < string.size() - suffixLength)
         charIt.advance(string.size() - suffixLength - next);
     // FIXME: charIt can get out of shadow host.
-    return makeDeprecatedLegacyPosition(charIt.range().end);
+    return VisiblePosition(makeDeprecatedLegacyPosition(charIt.range().end), VisiblePosition::defaultAffinity, position.allowUserSelectNone());
 }
 
 static VisiblePosition nextBoundary(const VisiblePosition& c, BoundarySearchFunction searchFunction)
@@ -594,7 +598,7 @@ static VisiblePosition nextBoundary(const VisiblePosition& c, BoundarySearchFunc
 
     Ref boundaryDocument = boundary->document();
 
-    Vector<UChar, 1024> string;
+    Vector<char16_t, 1024> string;
     unsigned prefixLength = 0;
 
     if (requiresContextForWordBoundary(c.characterAfter())) {
@@ -632,7 +636,7 @@ static VisiblePosition nextBoundary(const VisiblePosition& c, BoundarySearchFunc
         }
     }
 
-    return VisiblePosition(pos, Affinity::Upstream);
+    return VisiblePosition(pos, Affinity::Upstream, c.allowUserSelectNone());
 }
 
 // ---------
@@ -754,7 +758,7 @@ static VisiblePosition startPositionForLine(const VisiblePosition& c, LineEndpoi
     InlineIterator::LineLogicalOrderCache orderCache;
 
     RefPtr<Node> startNode;
-    auto startBox = mode == UseLogicalOrdering ? InlineIterator::firstLeafOnLineInLogicalOrderWithNode(lineBox, orderCache) : lineBox->firstLeafBox();
+    auto startBox = mode == UseLogicalOrdering ? InlineIterator::firstLeafOnLineInLogicalOrderWithNode(lineBox, orderCache) : lineBox->lineLeftmostLeafBox();
     // Generated content (e.g. list markers and CSS :before and :after pseudoelements) have no corresponding DOM element,
     // and so cannot be represented by a VisiblePosition. Use whatever follows instead.
     while (true) {
@@ -768,12 +772,12 @@ static VisiblePosition startPositionForLine(const VisiblePosition& c, LineEndpoi
         if (mode == UseLogicalOrdering)
             startBox = InlineIterator::nextLeafOnLineInLogicalOrder(startBox, orderCache);
         else
-            startBox.traverseNextOnLine();
+            startBox.traverseLineRightwardOnLine();
     }
 
-    RefPtr startTextNode = dynamicDowncast<Text>(*startNode);
-    return startTextNode ? Position(startTextNode.releaseNonNull(), downcast<InlineIterator::TextBox>(*startBox).start())
-        : positionBeforeNode(startNode.get());
+    if (RefPtr startTextNode = dynamicDowncast<Text>(*startNode))
+        return VisiblePosition(Position(startTextNode.releaseNonNull(), downcast<InlineIterator::TextBox>(*startBox).start()), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
+    return positionBeforeNode(*startNode);
 }
 
 static VisiblePosition startOfLine(const VisiblePosition& c, LineEndpointComputationMode mode, bool* reachedBoundary)
@@ -787,7 +791,7 @@ static VisiblePosition startOfLine(const VisiblePosition& c, LineEndpointComputa
     if (mode == UseLogicalOrdering) {
         if (auto editableRoot = highestEditableRoot(c.deepEquivalent())) {
             if (!editableRoot->contains(visPos.deepEquivalent().containerNode())) {
-                VisiblePosition newPosition = firstPositionInNode(editableRoot.get());
+                VisiblePosition newPosition = firstPositionInNode(*editableRoot);
                 if (reachedBoundary)
                     *reachedBoundary = c == newPosition;
                 return newPosition;
@@ -827,7 +831,7 @@ static VisiblePosition endPositionForLine(const VisiblePosition& c, LineEndpoint
     InlineIterator::LineLogicalOrderCache orderCache;
 
     RefPtr<Node> endNode;
-    auto endBox = mode == UseLogicalOrdering ? InlineIterator::lastLeafOnLineInLogicalOrder(lineBox, orderCache) : lineBox->lastLeafBox();
+    auto endBox = mode == UseLogicalOrdering ? InlineIterator::lastLeafOnLineInLogicalOrder(lineBox, orderCache) : lineBox->lineRightmostLeafBox();
     // Generated content (e.g. list markers and CSS :before and :after pseudoelements) have no corresponding DOM element,
     // and so cannot be represented by a VisiblePosition. Use whatever precedes instead.
     while (true) {
@@ -841,22 +845,22 @@ static VisiblePosition endPositionForLine(const VisiblePosition& c, LineEndpoint
         if (mode == UseLogicalOrdering)
             endBox = InlineIterator::previousLeafOnLineInLogicalOrder(endBox, orderCache);
         else
-            endBox.traversePreviousOnLine();
+            endBox.traverseLineLeftwardOnLine();
     }
 
     Position pos;
     if (is<HTMLBRElement>(*endNode))
-        pos = positionBeforeNode(endNode.get());
+        pos = positionBeforeNode(*endNode);
     else if (RefPtr endTextNode = dynamicDowncast<Text>(*endNode); endTextNode && is<InlineIterator::TextBox>(*endBox)) {
         auto& endTextBox = downcast<InlineIterator::TextBox>(*endBox);
         int endOffset = endTextBox.start();
         if (!endTextBox.isLineBreak())
             endOffset += endTextBox.length();
-        pos = Position(endTextNode.releaseNonNull(), endOffset);
+        pos = Position(endTextNode.releaseNonNull(), convertOffsetInTextFragmentToNodeOffset(endTextBox.renderer(), endOffset));
     } else
-        pos = positionAfterNode(endNode.get());
-    
-    return VisiblePosition(pos, Affinity::Upstream);
+        pos = positionAfterNode(*endNode);
+
+    return VisiblePosition(pos, Affinity::Upstream, c.allowUserSelectNone());
 }
 
 static bool inSameLogicalLine(const VisiblePosition& a, const VisiblePosition& b)
@@ -883,7 +887,7 @@ static VisiblePosition endOfLine(const VisiblePosition& c, LineEndpointComputati
 
         if (RefPtr editableRoot = highestEditableRoot(c.deepEquivalent())) {
             if (!editableRoot->contains(visPos.deepEquivalent().containerNode())) {
-                VisiblePosition newPosition = lastPositionInNode(editableRoot.get());
+                VisiblePosition newPosition = lastPositionInNode(*editableRoot);
                 if (reachedBoundary)
                     *reachedBoundary = c == newPosition;
                 return newPosition;
@@ -941,10 +945,10 @@ bool isLogicalEndOfLine(const VisiblePosition& p)
 
 static inline LayoutPoint absoluteLineDirectionPointToLocalPointInBlock(InlineIterator::LineBoxIterator& lineBox, LayoutUnit lineDirectionPoint)
 {
-    auto& root = lineBox->formattingContextRoot();
-    auto absoluteBlockPoint = root.localToAbsolute(FloatPoint()) - toFloatSize(root.scrollPosition());
+    CheckedRef root = lineBox->formattingContextRoot();
+    auto absoluteBlockPoint = root->localToAbsolute(FloatPoint()) - toFloatSize(root->scrollPosition());
 
-    if (root.isHorizontalWritingMode())
+    if (root->isHorizontalWritingMode())
         return LayoutPoint(lineDirectionPoint - absoluteBlockPoint.x(), contentStartInBlockDirection(*lineBox));
 
     return LayoutPoint(contentStartInBlockDirection(*lineBox), lineDirectionPoint - absoluteBlockPoint.y());
@@ -960,12 +964,12 @@ static Element* rootEditableOrDocumentElement(Node& node, EditableType editableT
 VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, LayoutUnit lineDirectionPoint, EditableType editableType)
 {
     Position p = visiblePosition.deepEquivalent();
-    auto node = p.protectedDeprecatedNode();
+    RefPtr node = p.deprecatedNode();
 
     if (!node)
         return VisiblePosition();
     
-    node->protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    protect(node->document())->updateLayoutIgnorePendingStylesheets();
     
     CheckedPtr renderer = node->renderer();
     if (!renderer)
@@ -976,7 +980,7 @@ VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, Lay
         lineBox = box->lineBox()->previous();
         // We want to skip zero height boxes.
         // This could happen in case it is a LegacyRootInlineBox with trailing floats.
-        if (!lineBox || !lineBox->logicalHeight() || !lineBox->firstLeafBox())
+        if (!lineBox || !lineBox->logicalHeight() || !lineBox->lineLeftmostLeafBox())
             lineBox = { };
     }
 
@@ -997,31 +1001,33 @@ VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, Lay
         if (!box)
             return VisiblePosition();
         CheckedRef renderer = box->renderer();
-        RefPtr node = renderer->node();
+        RefPtr node = renderer->nonPseudoNode();
         if (node && editingIgnoresContent(*node))
-            return positionInParentBeforeNode(node.get());
+            return positionInParentBeforeNode(*node);
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
-        return const_cast<RenderObject&>(renderer.get()).positionForPoint(pointInLine, HitTestSource::Script, nullptr);
+        CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer.get());
+        auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script);
     }
-    
+
     // Could not find a previous line. This means we must already be on the first line.
     // Move to the start of the content in this block, which effectively moves us
     // to the start of the line we're on.
     RefPtr rootElement = rootEditableOrDocumentElement(*node, editableType);
     if (!rootElement)
         return VisiblePosition();
-    return firstPositionInNode(rootElement.get());
+    return firstPositionInNode(*rootElement);
 }
 
 VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutUnit lineDirectionPoint, EditableType editableType)
 {
     Position p = visiblePosition.deepEquivalent();
-    auto node = p.protectedDeprecatedNode();
+    RefPtr node = p.deprecatedNode();
     if (!node)
         return VisiblePosition();
     
-    node->protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    protect(node->document())->updateLayoutIgnorePendingStylesheets();
 
     if (!node->renderer())
         return VisiblePosition();
@@ -1031,14 +1037,14 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
         lineBox = box->lineBox()->next();
         // We want to skip zero height boxes.
         // This could happen in case it is a LegacyRootInlineBox with trailing floats.
-        if (!lineBox || !lineBox->logicalHeight() || !lineBox->firstLeafBox())
+        if (!lineBox || !lineBox->logicalHeight() || !lineBox->lineLeftmostLeafBox())
             lineBox = { };
     }
 
     if (!lineBox) {
         // FIXME: We need do the same in previousLinePosition.
         if (RefPtr child = node->traverseToChildAt(p.deprecatedEditingOffset()))
-            node = WTFMove(child);
+            node = WTF::move(child);
         else
             node = node->lastDescendant();
         Position position = nextLineCandidatePosition(node.get(), visiblePosition, editableType);
@@ -1046,7 +1052,7 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
             RenderedPosition renderedPosition(position);
             lineBox = renderedPosition.lineBox();
             if (!lineBox)
-                return position;
+                return VisiblePosition(position, VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
         }
     }
     
@@ -1057,12 +1063,14 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
         if (!box)
             return VisiblePosition();
         CheckedRef renderer = box->renderer();
-        RefPtr node = renderer->node();
+        RefPtr node = renderer->nonPseudoNode();
         if (node && editingIgnoresContent(*node))
-            return positionInParentBeforeNode(node.get());
+            return VisiblePosition(positionInParentBeforeNode(*node), VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
-        return const_cast<RenderObject&>(renderer.get()).positionForPoint(pointInLine, HitTestSource::Script, nullptr);
+        CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer.get());
+        auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script, visiblePosition.allowUserSelectNone());
     }
 
     // Could not find a next line. This means we must already be on the last line.
@@ -1071,7 +1079,7 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
     RefPtr rootElement = rootEditableOrDocumentElement(*node, editableType);
     if (!rootElement)
         return VisiblePosition();
-    return lastPositionInNode(rootElement.get());
+    return VisiblePosition(lastPositionInNode(*rootElement), VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
 }
 
 // ---------
@@ -1141,8 +1149,8 @@ RefPtr<Node> findStartOfParagraph(Node* startNode, Node* highestRoot, Node* star
             n = NodeTraversal::previousPostOrder(*n, startBlock);
             continue;
         }
-        const RenderStyle& style = r->style();
-        if (style.visibility() != Visibility::Visible) {
+        CheckedRef style = r->style();
+        if (style->visibility() != Visibility::Visible) {
             n = NodeTraversal::previousPostOrder(*n, startBlock);
             continue;
         }
@@ -1153,7 +1161,7 @@ RefPtr<Node> findStartOfParagraph(Node* startNode, Node* highestRoot, Node* star
         if (CheckedPtr renderText = dynamicDowncast<RenderText>(*r); renderText && renderText->hasRenderedText()) {
             ASSERT_WITH_SECURITY_IMPLICATION(is<Text>(*n));
             type = Position::PositionIsOffsetInAnchor;
-            if (style.preserveNewline()) {
+            if (style->preserveNewline()) {
                 auto& text = renderText->text();
                 int i = text.length();
                 int o = offset;
@@ -1200,8 +1208,8 @@ RefPtr<Node> findEndOfParagraph(Node* startNode, Node* highestRoot, Node* stayIn
             n = NodeTraversal::next(*n, stayInsideBlock);
             continue;
         }
-        const RenderStyle& style = r->style();
-        if (style.visibility() != Visibility::Visible) {
+        CheckedRef style = r->style();
+        if (style->visibility() != Visibility::Visible) {
             n = NodeTraversal::next(*n, stayInsideBlock);
             continue;
         }
@@ -1214,7 +1222,7 @@ RefPtr<Node> findEndOfParagraph(Node* startNode, Node* highestRoot, Node* stayIn
         if (CheckedPtr renderText = dynamicDowncast<RenderText>(*r); renderText && renderText->hasRenderedText()) {
             ASSERT_WITH_SECURITY_IMPLICATION(is<Text>(*n));
             type = Position::PositionIsOffsetInAnchor;
-            if (style.preserveNewline()) {
+            if (style->preserveNewline()) {
                 auto& text = renderText->text();
                 int o = n == startNode ? offset : 0;
                 int length = text.length();
@@ -1226,7 +1234,7 @@ RefPtr<Node> findEndOfParagraph(Node* startNode, Node* highestRoot, Node* stayIn
                 }
             }
             node = n;
-            offset = r->caretMaxOffset();
+            offset = caretMaxOffset(*n);
             n = NodeTraversal::next(*n, stayInsideBlock);
         } else if (editingIgnoresContent(*n) || isRenderedTable(n.get())) {
             node = n;
@@ -1241,13 +1249,13 @@ RefPtr<Node> findEndOfParagraph(Node* startNode, Node* highestRoot, Node* stayIn
 VisiblePosition startOfParagraph(const VisiblePosition& c, EditingBoundaryCrossingRule boundaryCrossingRule)
 {
     auto p = c.deepEquivalent();
-    auto startNode = p.protectedDeprecatedNode();
+    RefPtr startNode = p.deprecatedNode();
 
     if (!startNode)
         return VisiblePosition();
 
     if (isRenderedAsNonInlineTableImageOrHR(startNode.get()))
-        return positionBeforeNode(startNode.get());
+        return positionBeforeNode(*startNode);
 
     RefPtr startBlock = enclosingBlock(startNode.get());
 
@@ -1258,14 +1266,14 @@ VisiblePosition startOfParagraph(const VisiblePosition& c, EditingBoundaryCrossi
     RefPtr node = findStartOfParagraph(startNode.get(), highestRoot.get(), startBlock.get(), offset, type, boundaryCrossingRule);
 
     if (RefPtr textNode = dynamicDowncast<Text>(node))
-        return Position(WTFMove(textNode), offset);
+        return VisiblePosition(Position(WTF::move(textNode), offset), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
 
     if (type == Position::PositionIsOffsetInAnchor) {
         ASSERT(type == Position::PositionIsOffsetInAnchor || !offset);
-        return Position(WTFMove(node), offset, type);
+        return VisiblePosition(Position(WTF::move(node), offset, type), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
     }
 
-    return Position(WTFMove(node), type);
+    return VisiblePosition(Position(WTF::move(node), type), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
 }
 
 VisiblePosition endOfParagraph(const VisiblePosition& c, EditingBoundaryCrossingRule boundaryCrossingRule)
@@ -1274,10 +1282,10 @@ VisiblePosition endOfParagraph(const VisiblePosition& c, EditingBoundaryCrossing
         return VisiblePosition();
 
     auto p = c.deepEquivalent();
-    auto startNode = p.protectedDeprecatedNode();
+    RefPtr startNode = p.deprecatedNode();
 
     if (isRenderedAsNonInlineTableImageOrHR(startNode.get()))
-        return positionAfterNode(startNode.get());
+        return positionAfterNode(*startNode);
 
     RefPtr stayInsideBlock = enclosingBlock(startNode.get());
 
@@ -1288,12 +1296,12 @@ VisiblePosition endOfParagraph(const VisiblePosition& c, EditingBoundaryCrossing
     RefPtr node = findEndOfParagraph(startNode.get(), highestRoot.get(), stayInsideBlock.get(), offset, type, boundaryCrossingRule);
 
     if (RefPtr textNode = dynamicDowncast<Text>(node))
-        return Position(WTFMove(textNode), offset);
+        return VisiblePosition(Position(WTF::move(textNode), offset), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
 
     if (type == Position::PositionIsOffsetInAnchor)
-        return Position(WTFMove(node), offset, type);
+        return VisiblePosition(Position(WTF::move(node), offset, type), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
 
-    return Position(WTFMove(node), type);
+    return VisiblePosition(Position(WTF::move(node), type), VisiblePosition::defaultAffinity, c.allowUserSelectNone());
 }
 
 // FIXME: isStartOfParagraph(startOfNextParagraph(pos)) is not always true
@@ -1358,23 +1366,23 @@ VisiblePosition startOfBlock(const VisiblePosition& visiblePosition, EditingBoun
 {
     Position position = visiblePosition.deepEquivalent();
     RefPtr<Node> startBlock;
-    if (!position.containerNode() || !(startBlock = enclosingBlock(position.protectedContainerNode(), rule)))
+    if (!position.containerNode() || !(startBlock = enclosingBlock(protect(position.containerNode()), rule)))
         return VisiblePosition();
-    return firstPositionInNode(startBlock.get());
+    return VisiblePosition(firstPositionInNode(*startBlock), VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
 }
 
 VisiblePosition endOfBlock(const VisiblePosition& visiblePosition, EditingBoundaryCrossingRule rule)
 {
     Position position = visiblePosition.deepEquivalent();
     RefPtr<Node> endBlock;
-    if (!position.containerNode() || !(endBlock = enclosingBlock(position.protectedContainerNode(), rule)))
+    if (!position.containerNode() || !(endBlock = enclosingBlock(protect(position.containerNode()), rule)))
         return VisiblePosition();
-    return lastPositionInNode(endBlock.get());
+    return VisiblePosition(lastPositionInNode(*endBlock), VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
 }
 
 bool inSameBlock(const VisiblePosition& a, const VisiblePosition& b)
 {
-    return !a.isNull() && enclosingBlock(a.deepEquivalent().protectedContainerNode()) == enclosingBlock(b.deepEquivalent().protectedContainerNode());
+    return !a.isNull() && enclosingBlock(protect(a.deepEquivalent().containerNode())) == enclosingBlock(protect(b.deepEquivalent().containerNode()));
 }
 
 bool isStartOfBlock(const VisiblePosition& pos)
@@ -1406,7 +1414,7 @@ VisiblePosition startOfDocument(const Node* node)
 
 VisiblePosition startOfDocument(const VisiblePosition& c)
 {
-    return startOfDocument(c.deepEquivalent().protectedDeprecatedNode().get());
+    return startOfDocument(protect(c.deepEquivalent().deprecatedNode()).get());
 }
 
 VisiblePosition endOfDocument(const Node* node)
@@ -1427,7 +1435,7 @@ VisiblePosition endOfDocument(const Node* node)
 
 VisiblePosition endOfDocument(const VisiblePosition& c)
 {
-    return endOfDocument(c.deepEquivalent().protectedDeprecatedNode().get());
+    return endOfDocument(protect(c.deepEquivalent().deprecatedNode()).get());
 }
 
 bool isStartOfDocument(const VisiblePosition& p)
@@ -1445,13 +1453,13 @@ bool isEndOfDocument(const VisiblePosition& p)
 VisiblePosition startOfEditableContent(const VisiblePosition& visiblePosition)
 {
     RefPtr highestRoot = highestEditableRoot(visiblePosition.deepEquivalent());
-    return highestRoot ? firstPositionInNode(highestRoot.get()) : VisiblePosition { };
+    return highestRoot ? firstPositionInNode(*highestRoot) : VisiblePosition { };
 }
 
 VisiblePosition endOfEditableContent(const VisiblePosition& visiblePosition)
 {
     RefPtr highestRoot = highestEditableRoot(visiblePosition.deepEquivalent());
-    return highestRoot ? lastPositionInNode(highestRoot.get()) : VisiblePosition { };
+    return highestRoot ? lastPositionInNode(*highestRoot) : VisiblePosition { };
 }
 
 bool isEndOfEditableOrNonEditableContent(const VisiblePosition& p)
@@ -1469,7 +1477,7 @@ VisiblePosition rightBoundaryOfLine(const VisiblePosition& c, TextDirection dire
     return direction == TextDirection::LTR ? logicalEndOfLine(c, reachedBoundary) : logicalStartOfLine(c, reachedBoundary);
 }
 
-static bool directionIsDownstream(SelectionDirection direction)
+static bool NODELETE directionIsDownstream(SelectionDirection direction)
 {
     if (direction == SelectionDirection::Backward)
         return false;
@@ -1696,7 +1704,7 @@ static VisiblePosition nextSentenceBoundaryInDirection(const VisiblePosition& vp
             if (newResult == result)
                 break;
 
-            result = WTFMove(newResult);
+            result = WTF::move(newResult);
         }
     } while (areVisiblePositionsInSameTreeScope(result, vp) && (useDownstream ? (result < vp) : (result > vp)));
 
@@ -1836,7 +1844,7 @@ std::ptrdiff_t distanceBetweenPositions(const VisiblePosition& a, const VisibleP
 void charactersAroundPosition(const VisiblePosition& position, char32_t& oneAfter, char32_t& oneBefore, char32_t& twoBefore)
 {
     const int maxCharacters = 3;
-    char32_t characters[maxCharacters] = { 0 };
+    std::array<char32_t, maxCharacters> characters = { };
 
     if (position.isNull() || isStartOfDocument(position))
         return;

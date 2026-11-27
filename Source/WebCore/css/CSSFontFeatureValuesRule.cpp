@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,9 @@
 #include "CSSFontFeatureValuesRule.h"
 
 #include "CSSMarkup.h"
+#include "CSSPropertyParserConsumer+Font.h"
+#include "CSSStyleSheet.h"
+#include "CSSTokenizer.h"
 
 namespace WebCore {
 
@@ -45,7 +48,7 @@ String CSSFontFeatureValuesRule::cssText() const
         for (auto element : elements) {
             if (!first)
                 builder.append(separator);
-            builder.append(serializeFontFamily(element));
+            serializeFontFamily(builder, element);
             first = false;
         }
     };
@@ -57,7 +60,7 @@ String CSSFontFeatureValuesRule::cssText() const
         if (!tags.isEmpty()) {
             builder.append('@', variantName, " { "_s);
             for (auto tag : tags) {
-                serializeIdentifier(tag.key, builder);
+                serializeIdentifier(builder, tag.key);
                 builder.append(':');
                 for (auto integer : tag.value)
                     builder.append(' ', integer);
@@ -82,7 +85,20 @@ String CSSFontFeatureValuesRule::cssText() const
 
 void CSSFontFeatureValuesRule::reattach(StyleRuleBase& rule)
 {
-    m_fontFeatureValuesRule = static_cast<StyleRuleFontFeatureValues&>(rule);
+    m_fontFeatureValuesRule = downcast<StyleRuleFontFeatureValues>(rule);
+}
+
+// https://drafts.csswg.org/css-fonts/#dom-cssfontfeaturevaluesrule-fontfamily
+void CSSFontFeatureValuesRule::setFontFamily(const String& fontFamily)
+{
+    CSSTokenizer tokenizer(fontFamily);
+    auto tokenRange = tokenizer.tokenRange();
+    auto fontFamilies = CSSPropertyParserHelpers::consumeFontFeatureValuesPreludeFamilyNameList(tokenRange, parserContext());
+    if (fontFamilies.isEmpty() || !tokenRange.atEnd())
+        return;
+
+    CSSStyleSheet::RuleMutationScope mutationScope(this);
+    protect(m_fontFeatureValuesRule)->setFontFamilies(WTF::move(fontFamilies));
 }
 
 CSSFontFeatureValuesBlockRule::CSSFontFeatureValuesBlockRule(StyleRuleFontFeatureValuesBlock& block , CSSStyleSheet* parent)
@@ -102,7 +118,7 @@ String CSSFontFeatureValuesBlockRule::cssText() const
 
 void CSSFontFeatureValuesBlockRule::reattach(StyleRuleBase& rule)
 {
-    m_fontFeatureValuesBlockRule = static_cast<StyleRuleFontFeatureValuesBlock&>(rule);
+    m_fontFeatureValuesBlockRule = downcast<StyleRuleFontFeatureValuesBlock>(rule);
 }
 
 } // namespace WebCore

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "SharedBufferTest.h"
 
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 
@@ -38,8 +39,8 @@ void FragmentedSharedBufferTest::SetUp()
     // create temp file
     auto result = FileSystem::openTemporaryFile("tempTestFile"_s);
     m_tempFilePath = result.first;
-    FileSystem::writeToFile(result.second, testData().span8());
-    FileSystem::closeFile(result.second);
+    result.second.write(byteCast<uint8_t>(testData().span()));
+    result.second = { };
 
     m_tempEmptyFilePath = FileSystem::createTemporaryFile("tempEmptyTestFile"_s);
 }

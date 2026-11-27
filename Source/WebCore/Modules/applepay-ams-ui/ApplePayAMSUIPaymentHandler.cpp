@@ -29,10 +29,14 @@
 #if ENABLE(APPLE_PAY_AMS_UI) && ENABLE(PAYMENT_REQUEST)
 
 #include "ApplePayAMSUIRequest.h"
-#include "Document.h"
+#include "ContextDestructionObserverInlines.h"
+#include "DocumentPage.h"
 #include "JSApplePayAMSUIRequest.h"
-#include "JSDOMConvert.h"
+#include "JSDOMBindingFacade.h"
 #include "Page.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/StrongInlines.h>
 
 namespace WebCore {
 
@@ -50,7 +54,7 @@ static ExceptionOr<ApplePayAMSUIRequest> convertAndValidateApplePayAMSUIRequest(
     if (!applePayAMSUIRequest.engagementRequest.startsWith('{'))
         return Exception { ExceptionCode::TypeError, "Member ApplePayAMSUIRequest.engagementRequest is required and must be a JSON-serializable object"_s };
 
-    return WTFMove(applePayAMSUIRequest);
+    return WTF::move(applePayAMSUIRequest);
 }
 
 ExceptionOr<void> ApplePayAMSUIPaymentHandler::validateData(Document& document, JSC::JSValue data)
@@ -90,7 +94,7 @@ void ApplePayAMSUIPaymentHandler::finishSession(std::optional<bool>&& result)
         JSC::VM& vm = lexicalGlobalObject.vm();
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-        auto* object = constructEmptyObject(&lexicalGlobalObject);
+        auto* object = WebCore::constructEmptyObject(&lexicalGlobalObject);
         object->putDirect(vm, JSC::Identifier::fromString(vm, "success"_s), JSC::jsBoolean(success));
 
         RETURN_IF_EXCEPTION(throwScope, { });
@@ -133,7 +137,8 @@ ExceptionOr<void> ApplePayAMSUIPaymentHandler::show(Document&)
 {
     ASSERT(m_applePayAMSUIRequest);
 
-    if (!page().startApplePayAMSUISession(page().mainFrameURL(), *this, *m_applePayAMSUIRequest))
+    Ref page = this->page();
+    if (!page->startApplePayAMSUISession(page->mainFrameURL(), *this, *m_applePayAMSUIRequest))
         return Exception { ExceptionCode::AbortError };
 
     return { };
@@ -141,12 +146,12 @@ ExceptionOr<void> ApplePayAMSUIPaymentHandler::show(Document&)
 
 void ApplePayAMSUIPaymentHandler::hide()
 {
-    page().abortApplePayAMSUISession(*this);
+    protect(page())->abortApplePayAMSUISession(*this);
 }
 
 void ApplePayAMSUIPaymentHandler::canMakePayment(Document& document, Function<void(bool)>&& completionHandler)
 {
-    auto* page = document.page();
+    RefPtr page = document.page();
     completionHandler(page && !page->hasActiveApplePayAMSUISession());
 }
 
@@ -170,7 +175,7 @@ ExceptionOr<void> ApplePayAMSUIPaymentHandler::complete(Document&, std::optional
 
 ExceptionOr<void> ApplePayAMSUIPaymentHandler::retry(PaymentValidationErrors&&)
 {
-    return show(document());
+    return show(protect(document()).get());
 }
 
 } // namespace WebCore

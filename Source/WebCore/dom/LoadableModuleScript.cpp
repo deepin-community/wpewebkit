@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple, Inc. All Rights Reserved.
+ * Copyright (C) 2016 Apple, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,23 +35,19 @@
 
 namespace WebCore {
 
-Ref<LoadableModuleScript> LoadableModuleScript::create(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriorityHint, const AtomString& crossOriginMode, const String& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree)
+Ref<LoadableModuleScript> LoadableModuleScript::create(IsInline isInline, const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriority, const AtomString& crossOriginMode, const AtomString& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree)
 {
-    return adoptRef(*new LoadableModuleScript(nonce, integrity, policy, fetchPriorityHint, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree));
+    return adoptRef(*new LoadableModuleScript(isInline, nonce, integrity, policy, fetchPriority, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree));
 }
 
-LoadableModuleScript::LoadableModuleScript(const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriorityHint, const AtomString& crossOriginMode, const String& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree)
-    : LoadableScript(nonce, policy, fetchPriorityHint, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree)
+LoadableModuleScript::LoadableModuleScript(IsInline isInline, const AtomString& nonce, const AtomString& integrity, ReferrerPolicy policy, RequestPriority fetchPriority, const AtomString& crossOriginMode, const AtomString& charset, const AtomString& initiatorType, bool isInUserAgentShadowTree)
+    : LoadableScript(nonce, policy, fetchPriority, crossOriginMode, charset, initiatorType, isInUserAgentShadowTree)
     , m_parameters(ModuleFetchParameters::create(JSC::ScriptFetchParameters::Type::JavaScript, integrity, /* isTopLevelModule */ true))
+    , m_isInline(isInline == IsInline::Yes)
 {
 }
 
 LoadableModuleScript::~LoadableModuleScript() = default;
-
-bool LoadableModuleScript::isLoaded() const
-{
-    return m_isLoaded;
-}
 
 bool LoadableModuleScript::hasError() const
 {
@@ -63,21 +59,16 @@ std::optional<LoadableScript::Error> LoadableModuleScript::takeError()
     return std::exchange(m_error, std::nullopt);
 }
 
-bool LoadableModuleScript::wasCanceled() const
-{
-    return m_wasCanceled;
-}
-
 void LoadableModuleScript::notifyLoadCompleted(UniquedStringImpl& moduleKey)
 {
-    m_moduleKey = &moduleKey;
+    m_moduleKey = moduleKey;
     m_isLoaded = true;
     notifyClientFinished();
 }
 
 void LoadableModuleScript::notifyLoadFailed(LoadableScript::Error&& error)
 {
-    m_error = WTFMove(error);
+    m_error = WTF::move(error);
     m_isLoaded = true;
     notifyClientFinished();
 }

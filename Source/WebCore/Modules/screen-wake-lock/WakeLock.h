@@ -43,12 +43,16 @@ public:
         return adoptRef(*new WakeLock(document));
     }
 
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void request(WakeLockType, Ref<DeferredPromise>&&);
 
 private:
     explicit WakeLock(Document*);
 
-    Document* document();
+    Document* NODELETE document();
 
     bool m_wasPreviouslyAuthorizedDueToTransientActivation { false };
 };

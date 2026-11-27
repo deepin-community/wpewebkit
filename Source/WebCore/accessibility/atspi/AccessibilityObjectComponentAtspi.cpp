@@ -29,7 +29,9 @@
 #include "Document.h"
 #include "LocalFrameView.h"
 #include "RenderLayer.h"
-#include "RenderStyleInlines.h"
+#include "RenderObjectStyle.h"
+#include "StyleComputedStyle+GettersInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 
@@ -112,8 +114,9 @@ AccessibilityObjectAtspi* AccessibilityObjectAtspi::hitTest(const IntPoint& poin
         }
     }
 
-    m_coreObject->updateChildrenIfNecessary();
-    if (auto* coreObject = m_coreObject->accessibilityHitTest(convertedPoint))
+    if (auto* axObject = dynamicDowncast<AccessibilityObject>(m_coreObject.get()))
+        axObject->updateChildrenIfNecessary();
+    if (RefPtr coreObject = m_coreObject->accessibilityHitTest(convertedPoint))
         return coreObject->wrapper();
 
     return nullptr;
@@ -146,9 +149,10 @@ bool AccessibilityObjectAtspi::focus() const
     if (!m_coreObject)
         return false;
 
-    m_coreObject->setFocused(true);
-    m_coreObject->updateBackingStore();
-    return m_coreObject->isFocused();
+    Ref coreObject = *m_coreObject;
+    coreObject->setFocused(true);
+    coreObject->updateBackingStore();
+    return coreObject->isFocused();
 }
 
 float AccessibilityObjectAtspi::opacity() const
@@ -157,14 +161,14 @@ float AccessibilityObjectAtspi::opacity() const
         return 1;
 
     if (auto* renderer = m_coreObject->renderer())
-        return renderer->style().opacity();
+        return Style::evaluate<float>(renderer->style().opacity());
 
     return 1;
 }
 
 void AccessibilityObjectAtspi::scrollToMakeVisible(Atspi::ScrollType scrollType) const
 {
-    auto* liveObject = dynamicDowncast<AccessibilityObject>(m_coreObject);
+    auto* liveObject = dynamicDowncast<AccessibilityObject>(m_coreObject.get());
     if (!liveObject)
         return;
 
@@ -210,7 +214,7 @@ void AccessibilityObjectAtspi::scrollToPoint(const IntPoint& point, Atspi::Coord
         if (auto* frameView = m_coreObject->documentFrameView())
             convertedPoint = frameView->contentsToWindow(frameView->screenToContents(point));
     }
-    m_coreObject->scrollToGlobalPoint(WTFMove(convertedPoint));
+    m_coreObject->scrollToGlobalPoint(WTF::move(convertedPoint));
 }
 
 } // namespace WebCore

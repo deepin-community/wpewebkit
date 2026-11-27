@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +32,6 @@
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUCommandEncoderDescriptor.h>
 #include <WebCore/WebGPUDevice.h>
-#include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
@@ -49,12 +48,12 @@ class RemoteDeviceProxy final : public WebCore::WebGPU::Device {
 public:
     static Ref<RemoteDeviceProxy> create(Ref<WebCore::WebGPU::SupportedFeatures>&& features, Ref<WebCore::WebGPU::SupportedLimits>&& limits, RemoteAdapterProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, WebGPUIdentifier queueIdentifier)
     {
-        return adoptRef(*new RemoteDeviceProxy(WTFMove(features), WTFMove(limits), parent, convertToBackingContext, identifier, queueIdentifier));
+        return adoptRef(*new RemoteDeviceProxy(WTF::move(features), WTF::move(limits), parent, convertToBackingContext, identifier, queueIdentifier));
     }
 
     virtual ~RemoteDeviceProxy();
 
-    RemoteAdapterProxy& parent() { return m_parent; }
+    RemoteAdapterProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
     WebGPUIdentifier backing() const { return m_backing; }
 
@@ -69,17 +68,17 @@ private:
     RemoteDeviceProxy& operator=(RemoteDeviceProxy&&) = delete;
 
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
     template<typename T, typename C>
-    WARN_UNUSED_RETURN IPC::StreamClientConnection::AsyncReplyID sendWithAsyncReply(T&& message, C&& completionHandler)
+    [[nodiscard]] std::optional<IPC::StreamClientConnection::AsyncReplyID> sendWithAsyncReply(T&& message, C&& completionHandler)
     {
-        return root().streamClientConnection().sendWithAsyncReply(WTFMove(message), completionHandler, backing());
+        return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
-    Ref<WebCore::WebGPU::Queue> queue() final;
+    Ref<WebCore::WebGPU::Queue> NODELETE queue() final;
 
     void destroy() final;
 
@@ -103,6 +102,8 @@ private:
     void createRenderPipelineAsync(const WebCore::WebGPU::RenderPipelineDescriptor&, CompletionHandler<void(RefPtr<WebCore::WebGPU::RenderPipeline>&&, String&&)>&&) final;
 
     RefPtr<WebCore::WebGPU::CommandEncoder> createCommandEncoder(const std::optional<WebCore::WebGPU::CommandEncoderDescriptor>&) final;
+    Ref<WebCore::WebGPU::CommandEncoder> createInvalidCommandEncoder();
+    Ref<WebCore::WebGPU::BindGroupLayout> createEmptyBindGroupLayout();
     RefPtr<WebCore::WebGPU::RenderBundleEncoder> createRenderBundleEncoder(const WebCore::WebGPU::RenderBundleEncoderDescriptor&) final;
 
     RefPtr<WebCore::WebGPU::QuerySet> createQuerySet(const WebCore::WebGPU::QuerySetDescriptor&) final;
@@ -114,20 +115,34 @@ private:
     void setLabelInternal(const String&) final;
     void resolveDeviceLostPromise(CompletionHandler<void(WebCore::WebGPU::DeviceLostReason)>&&) final;
 
-    Deque<CompletionHandler<void(Ref<WebCore::WebGPU::ComputePipeline>&&)>> m_createComputePipelineAsyncCallbacks;
-    Deque<CompletionHandler<void(Ref<WebCore::WebGPU::RenderPipeline>&&)>> m_createRenderPipelineAsyncCallbacks;
-    Deque<CompletionHandler<void(std::optional<WebCore::WebGPU::Error>&&)>> m_popErrorScopeCallbacks;
+    Ref<WebCore::WebGPU::BindGroupLayout> NODELETE emptyBindGroupLayout() const final;
+
+    Ref<WebCore::WebGPU::CommandEncoder> NODELETE invalidCommandEncoder() final;
+    Ref<WebCore::WebGPU::CommandBuffer> NODELETE invalidCommandBuffer() final;
+    Ref<WebCore::WebGPU::RenderPassEncoder> NODELETE invalidRenderPassEncoder() final;
+    Ref<WebCore::WebGPU::ComputePassEncoder> NODELETE invalidComputePassEncoder() final;
+    void pauseAllErrorReporting(bool pause) final;
+
+    bool isRemoteDeviceProxy() const final { return true; }
 
     WebGPUIdentifier m_backing;
-    WebGPUIdentifier m_queueBacking;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteAdapterProxy> m_parent;
-    Ref<RemoteQueueProxy> m_queue;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteAdapterProxy> m_parent;
+    const Ref<RemoteQueueProxy> m_queue;
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     WebKit::SharedVideoFrameWriter m_sharedVideoFrameWriter;
 #endif
+    const Ref<WebCore::WebGPU::CommandEncoder> m_invalidCommandEncoder;
+    const Ref<WebCore::WebGPU::RenderPassEncoder> m_invalidRenderPassEncoder;
+    const Ref<WebCore::WebGPU::ComputePassEncoder> m_invalidComputePassEncoder;
+    const Ref<WebCore::WebGPU::CommandBuffer> m_invalidCommandBuffer;
+    const Ref<WebCore::WebGPU::BindGroupLayout> m_emptyBindGroupLayout;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteDeviceProxy)
+    static bool isType(const WebCore::WebGPU::Device& device) { return device.isRemoteDeviceProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

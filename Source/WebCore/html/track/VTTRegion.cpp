@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2013 Google Inc.  All rights reserved.
- * Copyright (C) 2014 Apple Inc.  All rights reserved.
+ * Copyright (C) 2013 Google Inc. All rights reserved.
+ * Copyright (C) 2014 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -34,6 +34,8 @@
 
 #if ENABLE(VIDEO)
 
+#include "ContainerNodeInlines.h"
+#include "ContextDestructionObserverInlines.h"
 #include "DOMRect.h"
 #include "DOMTokenList.h"
 #include "ElementChildIteratorInlines.h"
@@ -61,6 +63,10 @@ VTTRegion::VTTRegion(ScriptExecutionContext& context)
     : ContextDestructionObserver(&context)
     , m_id(emptyString())
     , m_scrollTimer(*this, &VTTRegion::scrollTimerFired)
+#if !RELEASE_LOG_DISABLED
+    , m_logger(&downcast<Document>(context).logger())
+    , m_logIdentifier(uniqueLogIdentifier())
+#endif
 {
 }
 
@@ -145,8 +151,8 @@ void VTTRegion::setRegionSettings(const String& inputString)
 
     while (!input.isAtEnd()) {
         // Step 1 - Split input on spaces.
-        input.skipWhile<isASCIIWhitespace<UChar>>();
-        VTTScanner::Run valueRun = input.collectUntil<isASCIIWhitespace<UChar>>();
+        input.skipWhile<isASCIIWhitespace<char16_t>>();
+        VTTScanner::Run valueRun = input.collectUntil<isASCIIWhitespace<char16_t>>();
         auto settingValue = input.extractString(valueRun);
         VTTScanner setting(settingValue);
 
@@ -164,30 +170,30 @@ void VTTRegion::setRegionSettings(const String& inputString)
 
 VTTRegion::RegionSetting VTTRegion::scanSettingName(VTTScanner& input)
 {
-    if (input.scan("id:"))
+    if (input.scan("id:"_span8))
         return Id;
-    if (input.scan("lines:"))
+    if (input.scan("lines:"_span8))
         return Lines;
-    if (input.scan("width:"))
+    if (input.scan("width:"_span8))
         return Width;
-    if (input.scan("viewportanchor:"))
+    if (input.scan("viewportanchor:"_span8))
         return ViewportAnchor;
-    if (input.scan("regionanchor:"))
+    if (input.scan("regionanchor:"_span8))
         return RegionAnchor;
-    if (input.scan("scroll:"))
+    if (input.scan("scroll:"_span8))
         return Scroll;
 
     return None;
 }
 
-static inline bool parsedEntireRun(const VTTScanner& input, const VTTScanner::Run& run)
+static inline bool NODELETE parsedEntireRun(const VTTScanner& input, const VTTScanner::Run& run)
 {
     return input.isAt(run.end()); 
 }
 
 void VTTRegion::parseSettingValue(RegionSetting setting, VTTScanner& input)
 {
-    VTTScanner::Run valueRun = input.collectUntil<isASCIIWhitespace<UChar>>();
+    VTTScanner::Run valueRun = input.collectUntil<isASCIIWhitespace<char16_t>>();
 
     switch (setting) {
     case Id: {
@@ -197,11 +203,11 @@ void VTTRegion::parseSettingValue(RegionSetting setting, VTTScanner& input)
         break;
     }
     case Width: {
-        float floatWidth;
+        double floatWidth;
         if (WebVTTParser::parseFloatPercentageValue(input, floatWidth) && parsedEntireRun(input, valueRun))
             m_width = floatWidth;
         else
-            LOG(Media, "VTTRegion::parseSettingValue, invalid Width");
+            ERROR_LOG(LOGIDENTIFIER, "invalid Width");
         break;
     }
     case Lines: {
@@ -209,7 +215,7 @@ void VTTRegion::parseSettingValue(RegionSetting setting, VTTScanner& input)
         if (input.scanDigits(number) && parsedEntireRun(input, valueRun))
             m_lines = number;
         else
-            LOG(Media, "VTTRegion::parseSettingValue, invalid Lines");
+            ERROR_LOG(LOGIDENTIFIER, "invalid Lines");
         break;
     }
     case RegionAnchor: {
@@ -217,7 +223,7 @@ void VTTRegion::parseSettingValue(RegionSetting setting, VTTScanner& input)
         if (WebVTTParser::parseFloatPercentageValuePair(input, ',', anchor) && parsedEntireRun(input, valueRun))
             m_regionAnchor = anchor;
         else
-            LOG(Media, "VTTRegion::parseSettingValue, invalid RegionAnchor");
+            ERROR_LOG(LOGIDENTIFIER, "invalid RegionAnchor");
         break;
     }
     case ViewportAnchor: {
@@ -225,14 +231,14 @@ void VTTRegion::parseSettingValue(RegionSetting setting, VTTScanner& input)
         if (WebVTTParser::parseFloatPercentageValuePair(input, ',', anchor) && parsedEntireRun(input, valueRun))
             m_viewportAnchor = anchor;
         else
-            LOG(Media, "VTTRegion::parseSettingValue, invalid ViewportAnchor");
+            ERROR_LOG(LOGIDENTIFIER, "invalid ViewportAnchor");
         break;
     }
     case Scroll:
         if (input.scanRun(valueRun, upKeyword()))
             m_scroll = ScrollSetting::Up;
         else
-            LOG(Media, "VTTRegion::parseSettingValue, invalid Scroll");
+            ERROR_LOG(LOGIDENTIFIER, "invalid Scroll");
         break;
     case None:
         break;
@@ -269,13 +275,13 @@ void VTTRegion::displayLastTextTrackCueBox()
 
     // If it's a scrolling region, add the scrolling class.
     if (scroll() == ScrollSetting::Up)
-        m_cueContainer->classList().add(textTrackCueContainerScrollingClass());
+        protect(m_cueContainer->classList())->add(textTrackCueContainerScrollingClass());
 
     float regionBottom = m_regionDisplayTree->boundingClientRect().maxY();
 
     // Find first cue that is not entirely displayed and scroll it upwards.
-    for (auto& child : childrenOfType<Element>(*m_cueContainer)) {
-        auto rect = child.boundingClientRect();
+    for (Ref child : childrenOfType<Element>(*m_cueContainer)) {
+        auto rect = child->boundingClientRect();
         float childTop = rect.y();
         float childBottom = rect.maxY();
 
@@ -294,12 +300,12 @@ void VTTRegion::displayLastTextTrackCueBox()
 
 void VTTRegion::willRemoveTextTrackCueBox(VTTCueBox* box)
 {
-    LOG(Media, "VTTRegion::willRemoveTextTrackCueBox");
+    DEBUG_LOG(LOGIDENTIFIER);
     ASSERT(m_cueContainer->contains(box));
 
     double boxHeight = box->boundingClientRect().height();
 
-    m_cueContainer->classList().remove(textTrackCueContainerScrollingClass());
+    protect(m_cueContainer->classList())->remove(textTrackCueContainerScrollingClass());
 
     m_currentTop += boxHeight;
     m_cueContainer->setInlineStyleProperty(CSSPropertyTop, m_currentTop, CSSUnitType::CSS_PX);
@@ -308,7 +314,7 @@ void VTTRegion::willRemoveTextTrackCueBox(VTTCueBox* box)
 HTMLDivElement& VTTRegion::getDisplayTree()
 {
     if (!m_regionDisplayTree) {
-        m_regionDisplayTree = HTMLDivElement::create(downcast<Document>(*scriptExecutionContext()));
+        lazyInitialize(m_regionDisplayTree, HTMLDivElement::create(*protect(document())));
         m_regionDisplayTree->setUserAgentPart(UserAgentParts::webkitMediaTextTrackRegion());
         m_recalculateStyles = true;
     }
@@ -331,7 +337,7 @@ void VTTRegion::prepareRegionDisplayTree()
     // The cue container is used to wrap the cues and it is the object which is
     // gradually scrolled out as multiple cues are appended to the region.
     if (!m_cueContainer) {
-        m_cueContainer = HTMLDivElement::create(downcast<Document>(*scriptExecutionContext()));
+        lazyInitialize(m_cueContainer, HTMLDivElement::create(*protect(document())));
         m_cueContainer->setUserAgentPart(UserAgentParts::webkitMediaTextTrackRegionContainer());
         m_regionDisplayTree->appendChild(*m_cueContainer);
     }
@@ -372,11 +378,13 @@ void VTTRegion::prepareRegionDisplayTree()
     // 7.5 Every WebVTT region object is initialised with the following CSS
 
     m_recalculateStyles = false;
+
+    m_regionDisplayTree->setAttributeWithoutSynchronization(HTMLNames::idAttr, AtomString(id()));
 }
 
 void VTTRegion::startTimer()
 {
-    LOG(Media, "VTTRegion::startTimer");
+    DEBUG_LOG(LOGIDENTIFIER);
 
     if (m_scrollTimer.isActive())
         return;
@@ -387,7 +395,7 @@ void VTTRegion::startTimer()
 
 void VTTRegion::stopTimer()
 {
-    LOG(Media, "VTTRegion::stopTimer");
+    DEBUG_LOG(LOGIDENTIFIER);
 
     if (m_scrollTimer.isActive())
         m_scrollTimer.stop();
@@ -395,11 +403,38 @@ void VTTRegion::stopTimer()
 
 void VTTRegion::scrollTimerFired()
 {
-    LOG(Media, "VTTRegion::scrollTimerFired");
+    DEBUG_LOG(LOGIDENTIFIER);
 
     stopTimer();
     displayLastTextTrackCueBox();
 }
+
+Document* VTTRegion::document() const
+{
+    return downcast<Document>(scriptExecutionContext());
+}
+
+#if !RELEASE_LOG_DISABLED
+ASCIILiteral VTTRegion::logClassName() const
+{
+    return "VTTRegion"_s;
+}
+
+WTFLogChannel& VTTRegion::logChannel() const
+{
+    return LogMedia;
+}
+
+const Logger& VTTRegion::logger() const
+{
+    return *m_logger;
+}
+
+uint64_t VTTRegion::logIdentifier() const
+{
+    return m_logIdentifier;
+}
+#endif
 
 } // namespace WebCore
 

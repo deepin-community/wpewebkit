@@ -25,19 +25,18 @@
 
 #pragma once
 
-#include "IntPoint.h"
-#include "LayoutUnit.h"
+#include <WebCore/IntPoint.h>
+#include <WebCore/LayoutUnit.h>
+#include <wtf/Platform.h>
+#include <wtf/SwiftBridging.h>
+#include <wtf/TZoneMalloc.h>
 
 #if USE(CG)
 typedef struct CGRect CGRect;
 #endif
 
 #if PLATFORM(MAC)
-#ifdef NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES
 typedef struct CGRect NSRect;
-#else
-typedef struct _NSRect NSRect;
-#endif
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -68,7 +67,7 @@ class FloatRect;
 class LayoutRect;
 
 class IntRect {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(IntRect);
 public:
     IntRect() = default;
     IntRect(const IntPoint& location, const IntSize& size)
@@ -169,8 +168,8 @@ public:
     IntPoint minXMaxYCorner() const { return IntPoint(m_location.x(), m_location.y() + m_size.height()); } // typically bottomLeft
     IntPoint maxXMaxYCorner() const { return IntPoint(m_location.x() + m_size.width(), m_location.y() + m_size.height()); } // typically bottomRight
     
-    WEBCORE_EXPORT bool intersects(const IntRect&) const;
-    WEBCORE_EXPORT bool contains(const IntRect&) const;
+    WEBCORE_EXPORT bool NODELETE intersects(const IntRect&) const;
+    WEBCORE_EXPORT bool NODELETE contains(const IntRect&) const;
 
     // This checks to see if the rect contains x,y in the traditional sense.
     // Equivalent to checking if the rect contains a 1x1 rect below and to the right of (px,py).
@@ -194,16 +193,16 @@ public:
     }
     void inflate(int d) { inflateX(d); inflateY(d); }
     void inflate(IntSize size) { inflateX(size.width()); inflateY(size.height()); }
-    WEBCORE_EXPORT void scale(float s);
+    WEBCORE_EXPORT void NODELETE scale(float s);
 
-    IntSize differenceToPoint(const IntPoint&) const;
+    WEBCORE_EXPORT IntSize NODELETE differenceToPoint(const IntPoint&) const;
     int distanceSquaredToPoint(const IntPoint& p) const { return differenceToPoint(p).diagonalLengthSquared(); }
 
     IntRect transposedRect() const { return IntRect(m_location.transposedPoint(), m_size.transposedSize()); }
 
     // Return false if x + width or y + height overflows.
-    WEBCORE_EXPORT bool isValid() const;
-    WEBCORE_EXPORT IntRect WARN_UNUSED_RETURN toRectWithExtentsClippedToNumericLimits() const;
+    WEBCORE_EXPORT bool NODELETE isValid() const;
+    [[nodiscard]] WEBCORE_EXPORT IntRect NODELETE toRectWithExtentsClippedToNumericLimits() const;
 
     friend bool operator==(const IntRect&, const IntRect&) = default;
 
@@ -221,19 +220,15 @@ public:
     WEBCORE_EXPORT operator CGRect() const;
 #endif
 
-#if PLATFORM(MAC) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-    WEBCORE_EXPORT operator NSRect() const;
-#endif
-
 #if USE(SKIA)
     IntRect(const SkIRect&);
-    operator SkIRect() const;
+    WEBCORE_EXPORT operator SkIRect() const;
 #endif
 
 private:
     IntPoint m_location;
     IntSize m_size;
-};
+} SWIFT_ESCAPABLE;
 
 inline IntRect intersection(const IntRect& a, const IntRect& b)
 {
@@ -263,10 +258,6 @@ inline IntRect operator-(const IntRect& r, const IntPoint& offset)
 
 #if USE(CG)
 WEBCORE_EXPORT IntRect enclosingIntRect(const CGRect&);
-#endif
-
-#if PLATFORM(MAC) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-WEBCORE_EXPORT IntRect enclosingIntRect(const NSRect&);
 #endif
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const IntRect&);

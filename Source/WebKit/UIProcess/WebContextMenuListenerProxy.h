@@ -28,24 +28,17 @@
 #if ENABLE(CONTEXT_MENUS)
 
 #include "APIObject.h"
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/WeakPtr.h>
-
-namespace WebKit {
-struct WebContextMenuListenerProxyClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::WebContextMenuListenerProxyClient> : std::true_type { };
-}
 
 namespace WebKit {
 
 class WebContextMenuItem;
 
-struct WebContextMenuListenerProxyClient : CanMakeWeakPtr<WebContextMenuListenerProxyClient> {
+struct WebContextMenuListenerProxyClient : AbstractRefCountedAndCanMakeWeakPtr<WebContextMenuListenerProxyClient> {
     virtual ~WebContextMenuListenerProxyClient() = default;
+
     virtual void useContextMenuItems(Vector<Ref<WebContextMenuItem>>&&) = 0;
 };
 
@@ -67,5 +60,9 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebContextMenuListenerProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::ContextMenuListener; }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(CONTEXT_MENUS)

@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,22 +22,25 @@
 
 #pragma once
 
-#include "Color.h"
-#include "FilterEffect.h"
+#include <WebCore/Color.h>
+#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/FilterEffect.h>
 
 namespace WebCore {
 
-class FEFlood : public FilterEffect {
+class FEFlood final : public FilterEffect {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FEFlood);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FEFlood);
 public:
     WEBCORE_EXPORT static Ref<FEFlood> create(const Color& floodColor, float floodOpacity, DestinationColorSpace = DestinationColorSpace::SRGB());
 
     bool operator==(const FEFlood&) const;
 
-    const Color& floodColor() const { return m_floodColor; }
-    bool setFloodColor(const Color&);
+    const Color& floodColor() const LIFETIME_BOUND { return m_floodColor; }
+    bool NODELETE setFloodColor(const Color&);
 
     float floodOpacity() const { return m_floodOpacity; }
-    bool setFloodOpacity(float);
+    bool NODELETE setFloodOpacity(float);
 
 #if !USE(CG) && !USE(SKIA)
     // feFlood does not perform color interpolation of any kind, so the result is always in the current
@@ -54,6 +57,8 @@ private:
 
     FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
+    OptionSet<FilterRenderingMode> supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const override;
+    std::unique_ptr<FilterEffectApplier> createAcceleratedApplier() const override;
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;

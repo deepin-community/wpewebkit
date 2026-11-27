@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc.  All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,19 +28,23 @@
 #include "DecodingOptions.h"
 #include "ImageTypes.h"
 #include "Timer.h"
-#include <wtf/FastMalloc.h>
+#include <wtf/CanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
 class BitmapImageSource;
 class ImageFrame;
 
-class ImageFrameAnimator {
-    WTF_MAKE_FAST_ALLOCATED;
+class ImageFrameAnimator : public CanMakeWeakPtr<ImageFrameAnimator> {
+    WTF_MAKE_TZONE_ALLOCATED(ImageFrameAnimator);
 public:
-    static std::unique_ptr<ImageFrameAnimator> create(BitmapImageSource&);
+    explicit ImageFrameAnimator(BitmapImageSource&);
 
-    ImageFrameAnimator(BitmapImageSource&);
+    void ref() const;
+    void deref() const;
+
     ~ImageFrameAnimator();
 
     bool imageFrameDecodeAtIndexHasFinished(unsigned index, ImageAnimatingState, DecodingStatus);
@@ -50,7 +54,7 @@ public:
     void stopAnimation();
     void resetAnimation();
     bool isAnimating() const { return !!m_frameTimer; }
-    bool isAnimationAllowed() const;
+    bool NODELETE isAnimationAllowed() const;
 
     bool hasEverAnimated() const { return !!m_desiredFrameStartTime; }
     unsigned currentFrameIndex() const { return m_currentFrameIndex; }
@@ -66,9 +70,9 @@ private:
 
     unsigned nextFrameIndex() const { return (m_currentFrameIndex + 1) % m_frameCount; }
 
-    const char* sourceUTF8() const;
+    CString sourceUTF8() const;
 
-    BitmapImageSource& m_source;
+    ThreadSafeWeakRef<BitmapImageSource> m_source;
     unsigned m_frameCount { 0 };
     RepetitionCount m_repetitionCount { RepetitionCountNone };
 

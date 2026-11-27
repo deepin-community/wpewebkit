@@ -99,7 +99,7 @@ template<> struct DefaultHash<MoveOnly> {
     static constexpr bool hasHashInValue = true; // This is not correct, but for debugging of RobinHoodHashSet.
 };
 
-template<> class StringTypeAdapter<MoveOnly, void> {
+template<> class StringTypeAdapter<MoveOnly> {
 public:
     StringTypeAdapter(const MoveOnly& moveOnly)
         : m_moveOnly { moveOnly }
@@ -108,7 +108,7 @@ public:
 
     unsigned length() const { return StringTypeAdapter<unsigned>(m_moveOnly.value()).length(); }
     bool is8Bit() const { return StringTypeAdapter<unsigned>(m_moveOnly.value()).is8Bit(); }
-    template<typename CharacterType> void writeTo(CharacterType* destination) const
+    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) const
     {
         StringTypeAdapter<unsigned>(m_moveOnly.value()).writeTo(destination);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,11 +41,15 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteSampleBufferDisplayLayerManager);
 
-RemoteSampleBufferDisplayLayerManager::RemoteSampleBufferDisplayLayerManager(GPUConnectionToWebProcess& gpuConnectionToWebProcess)
+RemoteSampleBufferDisplayLayerManager::RemoteSampleBufferDisplayLayerManager(GPUConnectionToWebProcess& gpuConnectionToWebProcess, SharedPreferencesForWebProcess& sharedPreferencesForWebProcess)
     : m_connectionToWebProcess(gpuConnectionToWebProcess)
     , m_connection(gpuConnectionToWebProcess.connection())
+    , m_sharedPreferencesForWebProcess(sharedPreferencesForWebProcess)
     , m_queue(gpuConnectionToWebProcess.gpuProcess().videoMediaStreamTrackRendererQueue())
 {
+    m_queue->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess] {
+        m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
+    });
 }
 
 void RemoteSampleBufferDisplayLayerManager::startListeningForIPC()
@@ -53,8 +57,9 @@ void RemoteSampleBufferDisplayLayerManager::startListeningForIPC()
     auto connection = m_connectionToWebProcess.get();
     if (!connection)
         return;
-    connection->connection().addWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayer::messageReceiverName(), m_queue, *this);
-    connection->connection().addWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayerManager::messageReceiverName(), m_queue, *this);
+    Ref ipcConnection = connection->connection();
+    ipcConnection->addWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayer::messageReceiverName(), m_queue, *this);
+    ipcConnection->addWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayerManager::messageReceiverName(), m_queue, *this);
 }
 
 RemoteSampleBufferDisplayLayerManager::~RemoteSampleBufferDisplayLayerManager() = default;
@@ -64,44 +69,44 @@ void RemoteSampleBufferDisplayLayerManager::close()
     auto connection = m_connectionToWebProcess.get();
     if (!connection)
         return;
-    connection->connection().removeWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayer::messageReceiverName());
-    connection->connection().removeWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayerManager::messageReceiverName());
+    Ref ipcConnection = connection->connection();
+    ipcConnection->removeWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayer::messageReceiverName());
+    ipcConnection->removeWorkQueueMessageReceiver(Messages::RemoteSampleBufferDisplayLayerManager::messageReceiverName());
     m_queue->dispatch([this, protectedThis = Ref { *this }] {
         Locker lock(m_layersLock);
-        callOnMainRunLoop([layers = WTFMove(m_layers)] { });
+        callOnMainRunLoop([layers = WTF::move(m_layers)] { });
     });
 }
 
 bool RemoteSampleBufferDisplayLayerManager::dispatchMessage(IPC::Connection& connection, IPC::Decoder& decoder)
 {
-    if (!decoder.destinationID())
+    if (!ObjectIdentifier<SampleBufferDisplayLayerIdentifierType>::isValidIdentifier(decoder.destinationID()))
         return false;
 
-    auto identifier = LegacyNullableObjectIdentifier<SampleBufferDisplayLayerIdentifierType>(decoder.destinationID());
+    auto identifier = ObjectIdentifier<SampleBufferDisplayLayerIdentifierType>(decoder.destinationID());
     Locker lock(m_layersLock);
-    if (auto* layer = m_layers.get(identifier))
+    if (RefPtr layer = m_layers.get(identifier))
         layer->didReceiveMessage(connection, decoder);
     return true;
 }
 
 void RemoteSampleBufferDisplayLayerManager::createLayer(SampleBufferDisplayLayerIdentifier identifier, bool hideRootLayer, WebCore::IntSize size, bool shouldMaintainAspectRatio, bool canShowWhileLocked, LayerCreationCallback&& callback)
 {
-    callOnMainRunLoop([this, protectedThis = Ref { *this }, identifier, hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked, callback = WTFMove(callback)]() mutable {
+    callOnMainRunLoop([this, protectedThis = Ref { *this }, identifier, hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked, callback = WTF::move(callback)]() mutable {
         auto connection = m_connectionToWebProcess.get();
         if (!connection)
             return callback({ });
-        auto layer = RemoteSampleBufferDisplayLayer::create(*connection, identifier, m_connection.copyRef());
+        auto layer = RemoteSampleBufferDisplayLayer::create(*connection, identifier, m_connection.copyRef(), protectedThis);
         if (!layer) {
             callback({ });
             return;
         }
-        auto& layerReference = *layer;
-        layerReference.initialize(hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked, [this, protectedThis = Ref { *this }, callback = WTFMove(callback), identifier, layer = layer.releaseNonNull()](auto layerId) mutable {
-            m_queue->dispatch([this, protectedThis = WTFMove(protectedThis), callback = WTFMove(callback), identifier, layer = WTFMove(layer), layerId = WTFMove(layerId)]() mutable {
-                Locker lock(m_layersLock);
-                ASSERT(!m_layers.contains(identifier));
-                m_layers.add(identifier, WTFMove(layer));
-                callback(WTFMove(layerId));
+        layer->initialize(hideRootLayer, size, shouldMaintainAspectRatio, canShowWhileLocked, [this, protectedThis = Ref { *this }, callback = WTF::move(callback), identifier, layer = Ref { *layer }](auto hostingContext) mutable {
+            m_queue->dispatch([protectedThis = Ref { *this }, callback = WTF::move(callback), identifier, layer = WTF::move(layer), hostingContext = WTF::move(hostingContext)]() mutable {
+                Locker lock(protectedThis->m_layersLock);
+                ASSERT(!protectedThis->m_layers.contains(identifier));
+                protectedThis->m_layers.add(identifier, WTF::move(layer));
+                callback(WTF::move(hostingContext));
             });
         });
     });
@@ -110,10 +115,10 @@ void RemoteSampleBufferDisplayLayerManager::createLayer(SampleBufferDisplayLayer
 void RemoteSampleBufferDisplayLayerManager::releaseLayer(SampleBufferDisplayLayerIdentifier identifier)
 {
     callOnMainRunLoop([this, protectedThis = Ref { *this }, identifier]() mutable {
-        m_queue->dispatch([this, protectedThis = WTFMove(protectedThis), identifier] {
-            Locker lock(m_layersLock);
-            ASSERT(m_layers.contains(identifier));
-            callOnMainRunLoop([layer = m_layers.take(identifier)] { });
+        m_queue->dispatch([protectedThis = Ref { *this }, identifier] {
+            Locker lock(protectedThis->m_layersLock);
+            ASSERT(protectedThis->m_layers.contains(identifier));
+            callOnMainRunLoop([layer = protectedThis->m_layers.take(identifier)] { });
         });
     });
 }
@@ -124,11 +129,18 @@ bool RemoteSampleBufferDisplayLayerManager::allowsExitUnderMemoryPressure() cons
     return m_layers.isEmpty();
 }
 
-void RemoteSampleBufferDisplayLayerManager::updateSampleBufferDisplayLayerBoundsAndPosition(SampleBufferDisplayLayerIdentifier identifier, WebCore::FloatRect bounds, std::optional<MachSendRight>&& sendRight)
+void RemoteSampleBufferDisplayLayerManager::updateSampleBufferDisplayLayerBoundsAndPosition(SampleBufferDisplayLayerIdentifier identifier, WebCore::FloatRect bounds, std::optional<MachSendRightAnnotated>&& sendRight)
 {
     Locker lock(m_layersLock);
-    if (auto* layer = m_layers.get(identifier))
-        layer->updateBoundsAndPosition(bounds, WTFMove(sendRight));
+    if (RefPtr layer = m_layers.get(identifier))
+        layer->updateBoundsAndPosition(bounds, WTF::move(sendRight));
+}
+
+void RemoteSampleBufferDisplayLayerManager::updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess sharedPreferencesForWebProcess)
+{
+    m_queue->dispatch([this, protectedThis = Ref { *this }, sharedPreferencesForWebProcess = WTF::move(sharedPreferencesForWebProcess)] {
+        m_sharedPreferencesForWebProcess = sharedPreferencesForWebProcess;
+    });
 }
 
 }

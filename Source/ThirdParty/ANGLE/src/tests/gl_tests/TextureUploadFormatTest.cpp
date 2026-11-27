@@ -3,11 +3,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// Texture upload format tests:
+// TextureUploadFormatTest.cpp:
 //   Test all texture unpack/upload formats for sampling correctness.
 //
 
 #include "common/mathutil.h"
+#include "common/unsafe_buffers.h"
 #include "image_util/copyimage.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -16,8 +17,19 @@ using namespace angle;
 
 namespace
 {
+enum class UploadSource
+{
+    ClientMemory,
+    PBO,
+};
 
 class TextureUploadFormatTest : public ANGLETest<>
+{
+  protected:
+    void TestAll(UploadSource uploadSource);
+};
+
+class TextureUploadFormatTest_ES3 : public TextureUploadFormatTest
 {};
 
 struct TexFormat final
@@ -118,7 +130,7 @@ template <typename DestT, typename SrcT, size_t SrcN>
 void ZeroAndCopy(DestT &dest, const SrcT (&src)[SrcN])
 {
     dest.fill(0);
-    memcpy(dest.data(), src, sizeof(SrcT) * SrcN);
+    ANGLE_UNSAFE_TODO(memcpy(dest.data(), src, sizeof(SrcT) * SrcN));
 }
 
 std::string EnumStr(const GLenum v)
@@ -131,23 +143,21 @@ std::string EnumStr(const GLenum v)
 template <typename ColorT, typename DestT>
 void EncodeThenZeroAndCopy(DestT &dest, const float srcVals[4])
 {
-    ColorF srcValsF(srcVals[0], srcVals[1], srcVals[2], srcVals[3]);
+    ColorF srcValsF = ANGLE_UNSAFE_TODO(ColorF(srcVals[0], srcVals[1], srcVals[2], srcVals[3]));
 
     ColorT encoded;
     ColorT::writeColor(&encoded, &srcValsF);
 
     dest.fill(0);
-    memcpy(dest.data(), &encoded, sizeof(ColorT));
+    ANGLE_UNSAFE_TODO(memcpy(dest.data(), &encoded, sizeof(ColorT)));
 }
 }  // anonymous namespace
 
 // Upload (1,2,5,3) to integer formats, and (1,2,5,3)/8.0 to float formats.
 // Draw a point into a 1x1 renderbuffer and readback the result for comparison with expectations.
 // Test all internalFormat/unpackFormat/unpackType combinations from ES3.0.
-TEST_P(TextureUploadFormatTest, All)
+void TextureUploadFormatTest::TestAll(UploadSource uploadSource)
 {
-    ANGLE_SKIP_TEST_IF(IsD3D9());
-
     constexpr char kVertShaderES2[]     = R"(
         void main()
         {
@@ -179,7 +189,7 @@ TEST_P(TextureUploadFormatTest, All)
     glBindFramebuffer(GL_FRAMEBUFFER, backbufferFB);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, backbufferRB);
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     glViewport(0, 0, 1, 1);
 
@@ -224,6 +234,7 @@ TEST_P(TextureUploadFormatTest, All)
         const auto actual = ReadColor(0, 0);
 
         GLColor expected;
+        std::optional<GLColor> alternativeExpected;
         switch (format.unpackFormat)
         {
             case GL_RGBA:
@@ -238,20 +249,10 @@ TEST_P(TextureUploadFormatTest, All)
                 break;
             case GL_DEPTH_COMPONENT:
             case GL_DEPTH_STENCIL:
-                // Metal back-end requires swizzle feature to return (depth, 0, 0, 1) from sampling
-                // a depth texture.
-                // http://anglebug.com/42263796
-                if (IsMetal() && !IsMetalTextureSwizzleAvailable())
-                {
-                    // If texture swizzle is not supported, we should only compare the first
-                    // component.
-                    expected = {refVals[0], actual[1], actual[2], actual[3]};
-                }
-                else
-                {
-
-                    expected = {refVals[0], 0, 0, 255};
-                }
+                expected = {refVals[0], 0, 0, 255};
+                // The green and blue channels are undefined. Some backends treat these textures are
+                // luminance while others return 0 in g/b channels.
+                alternativeExpected = {refVals[0], refVals[0], refVals[0], 255};
                 break;
             case GL_RED:
                 expected = {refVals[0], 0, 0, 255};
@@ -283,12 +284,13 @@ TEST_P(TextureUploadFormatTest, All)
 
         ASSERT_GL_NO_ERROR();
         auto result = actual.ExpectNear(expected, err);
-        if (!result)
+        if (!result && alternativeExpected.has_value())
         {
-            result << " [" << EnumStr(format.internalFormat) << "/" << EnumStr(format.unpackFormat)
-                   << "/" << EnumStr(format.unpackType) << " " << info << "]";
+            result = actual.ExpectNear(*alternativeExpected, err);
         }
-        EXPECT_TRUE(result);
+        EXPECT_TRUE(result) << " [" << EnumStr(format.internalFormat) << "/"
+                            << EnumStr(format.unpackFormat) << "/" << EnumStr(format.unpackType)
+                            << " " << info << "]";
     };
 
     // Provide buffers for test data, and a func to run the test on both the data directly, and on
@@ -298,8 +300,25 @@ TEST_P(TextureUploadFormatTest, All)
     std::array<uint8_t, sizeof(float) * 4> srcBuffer;
 
     std::array<uint8_t, srcBuffer.size() * 2> subrectBuffer;
+
+    GLBuffer pboBuffer;
+    const bool usePBO = uploadSource == UploadSource::PBO;
+    if (usePBO)
+    {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboBuffer);
+        glBufferData(GL_PIXEL_UNPACK_BUFFER, subrectBuffer.size(), nullptr, GL_DYNAMIC_DRAW);
+    }
+
     const auto fnTest = [&](const TexFormat &format, const GLColor &err) {
-        fnTestData(format, srcBuffer.data(), err, "simple");
+        if (usePBO)
+        {
+            glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, srcBuffer.size(), srcBuffer.data());
+            fnTestData(format, nullptr, err, "simple");
+        }
+        else
+        {
+            fnTestData(format, srcBuffer.data(), err, "simple");
+        }
 
         if (!hasSubrectUploads)
             return;
@@ -309,8 +328,17 @@ TEST_P(TextureUploadFormatTest, All)
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 1);
 
         subrectBuffer.fill(0);
-        memcpy(subrectBuffer.data() + bytesPerPixel, srcBuffer.data(), bytesPerPixel);
-        fnTestData(format, subrectBuffer.data(), err, "subrect");
+        ANGLE_UNSAFE_TODO(
+            memcpy(subrectBuffer.data() + bytesPerPixel, srcBuffer.data(), bytesPerPixel));
+        if (usePBO)
+        {
+            glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, subrectBuffer.size(), subrectBuffer.data());
+            fnTestData(format, nullptr, err, "simple");
+        }
+        else
+        {
+            fnTestData(format, subrectBuffer.data(), err, "subrect");
+        }
 
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
     };
@@ -346,6 +374,15 @@ TEST_P(TextureUploadFormatTest, All)
         fnTest(TexFormat(GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE), {1, 1, 1, 1});
         fnTest(TexFormat(GL_LUMINANCE, GL_LUMINANCE, GL_UNSIGNED_BYTE), {1, 1, 1, 0});
         fnTest(TexFormat(GL_ALPHA, GL_ALPHA, GL_UNSIGNED_BYTE), {0, 0, 0, 1});
+        if (IsGLExtensionEnabled("GL_OES_required_internalformat"))
+        {
+            fnTest(TexFormat(GL_LUMINANCE4_ALPHA4_OES, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE),
+                   {4, 4, 4, 4});
+            fnTest(TexFormat(GL_LUMINANCE8_ALPHA8_OES, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE),
+                   {1, 1, 1, 1});
+            fnTest(TexFormat(GL_LUMINANCE8_OES, GL_LUMINANCE, GL_UNSIGNED_BYTE), {1, 1, 1, 0});
+            fnTest(TexFormat(GL_ALPHA8_OES, GL_ALPHA, GL_UNSIGNED_BYTE), {0, 0, 0, 1});
+        }
     }
 
     // RGBA+BYTE
@@ -392,6 +429,7 @@ TEST_P(TextureUploadFormatTest, All)
         ZeroAndCopy(srcBuffer, src);
 
         fnTest(TexFormat(GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1), {8, 8, 8, 255});
+        fnTest(TexFormat(GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1), {8, 8, 8, 255});
     }
 
     // RGBA+UNSIGNED_INT_2_10_10_10_REV
@@ -629,4 +667,181 @@ TEST_P(TextureUploadFormatTest, All)
     EXPECT_GL_NO_ERROR();
 }
 
+// Test uploadings without PBO
+TEST_P(TextureUploadFormatTest, All)
+{
+    TestAll(UploadSource::ClientMemory);
+}
+
+// Test uploadings with PBO
+TEST_P(TextureUploadFormatTest_ES3, AllWithPBO)
+{
+    TestAll(UploadSource::PBO);
+}
+
+// Test invalid upload format combinations in ES2
+TEST_P(TextureUploadFormatTest, InvalidTypeAndFormat)
+{
+    constexpr std::array<uint32_t, 16> kData{};
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    if (IsGLExtensionEnabled("GL_OES_rgb8_rgba8") && IsGLExtensionEnabled("GL_OES_texture_float"))
+    {
+        // Regression test for when the format check for GL_UNSIGNED_INT_2_10_10_10_REV_EXT
+        // accidentally allowed all formats.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 0, GL_RGB, GL_FLOAT, kData.data());
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+
+    if (IsGLExtensionEnabled("GL_OES_required_internalformat") &&
+        IsGLExtensionEnabled("GL_OES_texture_float"))
+    {
+        // Regression test for when the format check for GL_UNSIGNED_INT_2_10_10_10_REV_EXT
+        // accidentally allowed all formats.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565_OES, 1, 1, 0, GL_RGB, GL_FLOAT, kData.data());
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+}
+
+// ES3 table 3.3 admits both GL_UNSIGNED_BYTE and GL_UNSIGNED_SHORT_5_6_5 against a texture
+// defined with the unsized internal format GL_RGB, so glTexSubImage2D may use either type
+// regardless of which one created the level. Backends that convert during upload key their load
+// function tables on the effective sized format instead, where GL_RGB8 had no
+// GL_UNSIGNED_SHORT_5_6_5 entry; the lookup fell through to a load function that writes nothing,
+// so the texture kept whatever the scratch conversion row already held.
+TEST_P(TextureUploadFormatTest_ES3, UnsizedRGBSubImageTypeChange)
+{
+    constexpr GLsizei kSize  = 4;
+    constexpr size_t kTexels = kSize * kSize;
+    constexpr GLColor kTolerance{1, 1, 1, 0};
+
+    // Every channel differs between these, so a conversion that swaps or drops one fails as
+    // loudly as a conversion that never runs.
+    constexpr std::array<uint16_t, 4> kColors{0xF800, 0x07E0, 0x001F, 0x4D18};
+
+    // Uploaded by glTexImage2D and then covered by each sub-upload. No pattern colour decodes to
+    // magenta, so a sub-upload that never reaches the texture reads back as this.
+    constexpr uint16_t kPrime565 = 0xF81F;
+
+    // 5:6:5 -> 8:8:8 as ES3 2.1.6.1 defines it. Bit replication, which is what the load functions
+    // actually do, differs from this by at most one, hence kTolerance.
+    const auto expand565 = [](uint16_t rgb565) {
+        const unsigned r = (rgb565 >> 11) & 0x1F;
+        const unsigned g = (rgb565 >> 5) & 0x3F;
+        const unsigned b = rgb565 & 0x1F;
+        return GLColor(static_cast<GLubyte>((r * 255 + 15) / 31),
+                       static_cast<GLubyte>((g * 255 + 31) / 63),
+                       static_cast<GLubyte>((b * 255 + 15) / 31), 255);
+    };
+
+    // The same image in both types. Expanding the 5:6:5 pattern to bytes rather than the other way
+    // round keeps one expectation valid for both destinations, because a level created as 5:6:5
+    // requantizes the byte source back to exactly the pattern it came from.
+    std::array<uint16_t, kTexels> pattern565;
+    std::array<GLubyte, kTexels * 3> patternRGB8;
+    std::array<GLColor, kTexels> patternExpected;
+    std::array<uint16_t, kTexels> prime565;
+    std::array<GLubyte, kTexels * 3> primeRGB8;
+    std::array<GLColor, kTexels> primeExpected;
+    for (size_t i = 0; i < kTexels; ++i)
+    {
+        const size_t x = i % kSize, y = i / kSize;
+
+        pattern565[i]          = kColors[(x + y) % kColors.size()];
+        patternExpected[i]     = expand565(pattern565[i]);
+        patternRGB8[i * 3 + 0] = patternExpected[i].R;
+        patternRGB8[i * 3 + 1] = patternExpected[i].G;
+        patternRGB8[i * 3 + 2] = patternExpected[i].B;
+
+        prime565[i]          = kPrime565;
+        primeExpected[i]     = expand565(kPrime565);
+        primeRGB8[i * 3 + 0] = primeExpected[i].R;
+        primeRGB8[i * 3 + 1] = primeExpected[i].G;
+        primeRGB8[i * 3 + 2] = primeExpected[i].B;
+    }
+
+    struct UploadType
+    {
+        const char *name;
+        GLenum type;
+        const void *pattern;
+        const void *prime;
+    };
+    const std::array<UploadType, 2> kTypes{
+        UploadType{"GL_UNSIGNED_BYTE", GL_UNSIGNED_BYTE, patternRGB8.data(), primeRGB8.data()},
+        UploadType{"GL_UNSIGNED_SHORT_5_6_5", GL_UNSIGNED_SHORT_5_6_5, pattern565.data(),
+                   prime565.data()},
+    };
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    for (const UploadType &create : kTypes)
+    {
+        for (const UploadType &update : kTypes)
+        {
+            const std::string info =
+                std::string("create(") + create.name + ") update(" + update.name + ")";
+
+
+            GLTexture texture;
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, kSize, kSize, 0, GL_RGB, create.type,
+                         create.prime);
+            ASSERT_GL_NO_ERROR() << info;
+
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+            ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER))
+                << info;
+
+            const auto checkRect = [&](const std::array<GLColor, kTexels> &expected,
+                                       const char *stage) {
+                std::array<GLColor, kTexels> actual;
+                glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, actual.data());
+                EXPECT_GL_NO_ERROR() << info;
+                for (size_t i = 0; i < kTexels; ++i)
+                {
+                    EXPECT_TRUE(actual[i].ExpectNear(expected[i], kTolerance))
+                        << info << " " << stage << " texel " << i;
+                }
+            };
+
+            // Without this the sub-upload below could not tell "wrote the right thing" apart from
+            // "wrote nothing over a level that was already correct".
+            checkRect(primeExpected, "prime");
+
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kSize, kSize, GL_RGB, update.type,
+                            update.pattern);
+            EXPECT_GL_NO_ERROR() << info;
+
+            checkRect(patternExpected, "update");
+        }
+    }
+}
+
+// ES3 table 3.2 pairs GL_UNSIGNED_SHORT_5_6_5 with the sized internal format GL_RGB565 alone, and
+// table 3.3 does not apply to sized internal formats, so the sub-upload that
+// UnsizedRGBSubImageTypeChange requires to succeed must still be rejected against GL_RGB8.
+TEST_P(TextureUploadFormatTest_ES3, SizedRGB8RejectsShort565SubImage)
+{
+    constexpr GLsizei kSize = 4;
+    constexpr std::array<GLubyte, kSize * kSize * 3> kRGB8{};
+    constexpr std::array<uint16_t, kSize * kSize> k565{};
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, kSize, kSize, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                 kRGB8.data());
+    ASSERT_GL_NO_ERROR();
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kSize, kSize, GL_RGB, GL_UNSIGNED_SHORT_5_6_5,
+                    k565.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(TextureUploadFormatTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TextureUploadFormatTest_ES3);
+ANGLE_INSTANTIATE_TEST_ES3(TextureUploadFormatTest_ES3);

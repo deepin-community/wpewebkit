@@ -35,9 +35,8 @@ namespace Symbols {
 
 #define INITIALIZE_BUILTIN_STATIC_SYMBOLS(name) SymbolImpl::StaticSymbolImpl name##Symbol { "Symbol." #name };
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_SYMBOLS)
+JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_SYMBOLS)
 #undef INITIALIZE_BUILTIN_STATIC_SYMBOLS
-
-SymbolImpl::StaticSymbolImpl intlLegacyConstructedSymbol { "IntlLegacyConstructedSymbol" };
 
 #define INITIALIZE_BUILTIN_PRIVATE_NAMES(name) SymbolImpl::StaticSymbolImpl name##PrivateName { #name, SymbolImpl::s_flagIsPrivate };
 JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
@@ -76,7 +75,7 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES_IN_JSC)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_NAMES_IN_JSC)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_SYMBOLS_IN_JSC)
-    , m_intlLegacyConstructedSymbol(JSC::Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::intlLegacyConstructedSymbol)))
+    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_SYMBOLS_IN_JSC)
     , m_dollarVMName(Identifier::fromString(vm, "$vm"_s))
     , m_dollarVMPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::dollarVMPrivateName)))
     , m_polyProtoPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::polyProtoPrivateName)))
@@ -84,6 +83,7 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY)
+    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_EXPLICIT_RESOURCE_MANAGEMENT_WELL_KNOWN_SYMBOL(INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY)
     m_privateNameSet.add(static_cast<SymbolImpl*>(m_dollarVMPrivateName.impl()));
 }
 
@@ -93,18 +93,18 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
 #undef INITIALIZE_WELL_KNOWN_SYMBOL_PUBLIC_TO_PRIVATE_ENTRY
 
 
-using LCharBuffer = WTF::HashTranslatorCharBuffer<LChar>;
-using UCharBuffer = WTF::HashTranslatorCharBuffer<UChar>;
+using Latin1Buffer = WTF::HashTranslatorCharBuffer<Latin1Character>;
+using UTF16Buffer = WTF::HashTranslatorCharBuffer<char16_t>;
 
 template<typename CharacterType>
 struct CharBufferSeacher {
     using Buffer = WTF::HashTranslatorCharBuffer<CharacterType>;
-    static unsigned hash(const Buffer& buf)
+    static unsigned NODELETE hash(const Buffer& buf)
     {
         return buf.hash;
     }
 
-    static bool equal(const String& str, const Buffer& buf)
+    static bool NODELETE equal(const String& str, const Buffer& buf)
     {
         return WTF::equal(str.impl(), buf.characters);
     }
@@ -132,47 +132,47 @@ static SymbolImpl* lookUpWellKnownSymbolImpl(const BuiltinNames::WellKnownSymbol
     return iterator->value;
 }
 
-PrivateSymbolImpl* BuiltinNames::lookUpPrivateName(std::span<const LChar> characters) const
+PrivateSymbolImpl* BuiltinNames::lookUpPrivateName(std::span<const Latin1Character> characters) const
 {
-    LCharBuffer buffer { characters };
+    Latin1Buffer buffer { characters };
     return lookUpPrivateNameImpl(m_privateNameSet, buffer);
 }
 
-PrivateSymbolImpl* BuiltinNames::lookUpPrivateName(std::span<const UChar> characters) const
+PrivateSymbolImpl* BuiltinNames::lookUpPrivateName(std::span<const char16_t> characters) const
 {
-    UCharBuffer buffer { characters };
+    UTF16Buffer buffer { characters };
     return lookUpPrivateNameImpl(m_privateNameSet, buffer);
 }
 
 PrivateSymbolImpl* BuiltinNames::lookUpPrivateName(const String& string) const
 {
     if (string.is8Bit()) {
-        LCharBuffer buffer { string.span8(), string.hash() };
+        Latin1Buffer buffer { string.span8(), string.hash() };
         return lookUpPrivateNameImpl(m_privateNameSet, buffer);
     }
-    UCharBuffer buffer { string.span16(), string.hash() };
+    UTF16Buffer buffer { string.span16(), string.hash() };
     return lookUpPrivateNameImpl(m_privateNameSet, buffer);
 }
 
-SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(std::span<const LChar> characters) const
+SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(std::span<const Latin1Character> characters) const
 {
-    LCharBuffer buffer { characters };
+    Latin1Buffer buffer { characters };
     return lookUpWellKnownSymbolImpl(m_wellKnownSymbolsMap, buffer);
 }
 
-SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(std::span<const UChar> characters) const
+SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(std::span<const char16_t> characters) const
 {
-    UCharBuffer buffer { characters };
+    UTF16Buffer buffer { characters };
     return lookUpWellKnownSymbolImpl(m_wellKnownSymbolsMap, buffer);
 }
 
 SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(const String& string) const
 {
     if (string.is8Bit()) {
-        LCharBuffer buffer { string.span8(), string.hash() };
+        Latin1Buffer buffer { string.span8(), string.hash() };
         return lookUpWellKnownSymbolImpl(m_wellKnownSymbolsMap, buffer);
     }
-    UCharBuffer buffer { string.span16(), string.hash() };
+    UTF16Buffer buffer { string.span16(), string.hash() };
     return lookUpWellKnownSymbolImpl(m_wellKnownSymbolsMap, buffer);
 }
 

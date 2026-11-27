@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,20 +23,21 @@
 #pragma once
 
 #include "FilterEffectApplier.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class FEDisplacementMap;
 
 class FEDisplacementMapSoftwareApplier final : public FilterEffectConcreteApplier<FEDisplacementMap> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FEDisplacementMapSoftwareApplier);
     using Base = FilterEffectConcreteApplier<FEDisplacementMap>;
 
 public:
     FEDisplacementMapSoftwareApplier(const FEDisplacementMap&);
 
 private:
-    bool apply(const Filter&, const FilterImageVector& inputs, FilterImage& result) const final;
+    bool apply(const Filter&, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const final;
 
     static inline unsigned byteOffsetOfPixel(unsigned x, unsigned y, unsigned rowBytes)
     {
@@ -44,8 +45,8 @@ private:
         return x * bytesPerPixel + y * rowBytes;
     }
 
-    int xChannelIndex() const;
-    int yChannelIndex() const;
+    int NODELETE xChannelIndex() const;
+    int NODELETE yChannelIndex() const;
 };
 
 } // namespace WebCore

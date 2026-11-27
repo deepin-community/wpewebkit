@@ -26,23 +26,28 @@
 #include "config.h"
 #include "APISerializedScriptValue.h"
 
-#include "WKMutableArray.h"
-#include "WKMutableDictionary.h"
-#include "WKNumber.h"
-#include "WKString.h"
 #include <JavaScriptCore/JSRemoteInspector.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#include <wtf/CanMakeWeakPtr.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
+#include <wtf/RuntimeApplicationChecks.h>
 
 namespace API {
 
 static constexpr auto SharedJSContextWKMaxIdleTime = 10_s;
 
-class SharedJSContextWK {
+class SharedJSContextWK : public CanMakeWeakPtr<SharedJSContextWK> {
 public:
-    SharedJSContextWK()
-        : m_timer(RunLoop::main(), this, &SharedJSContextWK::releaseContextIfNecessary)
+    static SharedJSContextWK& singleton()
     {
+        static MainRunLoopNeverDestroyed<SharedJSContextWK> sharedContext;
+        return sharedContext.get();
     }
+
+    // Do nothing since this is a singleton.
+    void ref() const { }
+    void deref() const { }
 
     JSRetainPtr<JSGlobalContextRef> ensureContext()
     {
@@ -80,83 +85,21 @@ public:
     }
 
 private:
+    friend class NeverDestroyed<SharedJSContextWK, MainRunLoopAccessTraits>;
+
+    SharedJSContextWK()
+        : m_timer(RunLoop::mainSingleton(), "SharedJSContextWK::Timer"_s, this, &SharedJSContextWK::releaseContextIfNecessary)
+    {
+    }
+
     JSRetainPtr<JSGlobalContextRef> m_context;
     RunLoop::Timer m_timer;
     MonotonicTime m_lastUseTime;
 };
 
-static SharedJSContextWK& sharedContext()
+JSRetainPtr<JSGlobalContextRef> SerializedScriptValue::deserializationContext()
 {
-    static MainThreadNeverDestroyed<SharedJSContextWK> sharedContext;
-    return sharedContext.get();
-}
-
-static WKRetainPtr<WKTypeRef> valueToWKObject(JSContextRef context, JSValueRef value)
-{
-    auto jsToWKString = [] (JSStringRef input) {
-        size_t bufferSize = JSStringGetMaximumUTF8CStringSize(input);
-        Vector<char> buffer(bufferSize);
-        size_t utf8Length = JSStringGetUTF8CString(input, buffer.data(), bufferSize);
-        ASSERT(buffer[utf8Length - 1] == '\0');
-        return adoptWK(WKStringCreateWithUTF8CStringWithLength(buffer.data(), utf8Length - 1));
-    };
-
-    if (!JSValueIsObject(context, value)) {
-        if (JSValueIsBoolean(context, value))
-            return adoptWK(WKBooleanCreate(JSValueToBoolean(context, value)));
-        if (JSValueIsNumber(context, value))
-            return adoptWK(WKDoubleCreate(JSValueToNumber(context, value, nullptr)));
-        if (JSValueIsString(context, value)) {
-            JSStringRef jsString = JSValueToStringCopy(context, value, nullptr);
-            WKRetainPtr result = jsToWKString(jsString);
-            JSStringRelease(jsString);
-            return result;
-        }
-        return nullptr;
-    }
-
-    JSObjectRef object = JSValueToObject(context, value, nullptr);
-
-    if (JSValueIsArray(context, value)) {
-        JSStringRef jsString = JSStringCreateWithUTF8CString("length");
-        JSValueRef lengthPropertyName = JSValueMakeString(context, jsString);
-        JSStringRelease(jsString);
-        JSValueRef lengthValue = JSObjectGetPropertyForKey(context, object, lengthPropertyName, nullptr);
-        double lengthDouble = JSValueToNumber(context, lengthValue, nullptr);
-        if (lengthDouble < 0 || lengthDouble > static_cast<double>(std::numeric_limits<size_t>::max()))
-            return nullptr;
-        size_t length = lengthDouble;
-        WKRetainPtr result = adoptWK(WKMutableArrayCreateWithCapacity(length));
-        for (size_t i = 0; i < length; ++i)
-            WKArrayAppendItem(result.get(), valueToWKObject(context, JSObjectGetPropertyAtIndex(context, object, i, nullptr)).get());
-        return result;
-    }
-
-    JSPropertyNameArrayRef names = JSObjectCopyPropertyNames(context, object);
-    size_t length = JSPropertyNameArrayGetCount(names);
-    auto result = adoptWK(WKMutableDictionaryCreateWithCapacity(length));
-    for (size_t i = 0; i < length; i++) {
-        JSStringRef jsKey = JSPropertyNameArrayGetNameAtIndex(names, i);
-        WKRetainPtr key = jsToWKString(jsKey);
-        WKRetainPtr value = valueToWKObject(context, JSObjectGetPropertyForKey(context, object, JSValueMakeString(context, jsKey), nullptr));
-        WKDictionarySetItem(result.get(), key.get(), value.get());
-    }
-    JSPropertyNameArrayRelease(names);
-
-    return result;
-}
-
-WKRetainPtr<WKTypeRef> SerializedScriptValue::deserializeWK(WebCore::SerializedScriptValue& serializedScriptValue)
-{
-    ASSERT(RunLoop::isMain());
-    JSRetainPtr context = sharedContext().ensureContext();
-    ASSERT(context);
-
-    JSValueRef value = serializedScriptValue.deserialize(context.get(), nullptr);
-    if (!value)
-        return nullptr;
-
-    return valueToWKObject(context.get(), value);
+    return SharedJSContextWK::singleton().ensureContext();
 }
 
 } // API

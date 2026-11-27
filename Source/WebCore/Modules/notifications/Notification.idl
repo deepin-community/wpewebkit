@@ -38,7 +38,7 @@
     ExportMacro=WEBCORE_EXPORT,
     Exposed=(Window,DedicatedWorker,ServiceWorker)
 ] interface Notification : EventTarget {
-    [CallWith=CurrentScriptExecutionContext] constructor(DOMString title, optional NotificationOptions options);
+    [CallWith=CurrentScriptExecutionContext] constructor(DOMString title, optional NotificationOptions options = {});
 
     [CallWith=CurrentScriptExecutionContext] static readonly attribute NotificationPermission permission;
     [Exposed=Window, CallWith=CurrentDocument] static Promise<NotificationPermission> requestPermission(optional NotificationPermissionCallback? deprecatedCallback);
@@ -48,7 +48,7 @@
     attribute EventHandler onclick;
     attribute EventHandler onerror;
 
-    [Conditional=DECLARATIVE_WEB_PUSH, EnabledBySetting=DeclarativeWebPush] readonly attribute USVString defaultAction;
+    [Conditional=DECLARATIVE_WEB_PUSH, EnabledBySetting=DeclarativeWebPush] readonly attribute USVString navigate;
     readonly attribute DOMString title;
     readonly attribute NotificationDirection dir;
     readonly attribute DOMString lang;

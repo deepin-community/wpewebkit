@@ -26,19 +26,23 @@
 #include "RenderTextControl.h"
 
 namespace WebCore {
+class RenderTextControlInnerBlock;
 
 class RenderTextControlSingleLine : public RenderTextControl {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderTextControlSingleLine);
+    WTF_MAKE_TZONE_ALLOCATED(RenderTextControlSingleLine);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlSingleLine);
 public:
-    RenderTextControlSingleLine(Type, HTMLInputElement&, RenderStyle&&);
+    RenderTextControlSingleLine(Type, HTMLInputElement&, Style::ComputedStyle&&);
     virtual ~RenderTextControlSingleLine();
+
+    RenderTextControlInnerBlock* innerTextRenderer() const;
+
+    bool innerTextElementHasNonVisibleOverflow() const;
 
 protected:
     HTMLElement* containerElement() const;
     HTMLElement* innerBlockElement() const;
-    HTMLInputElement& inputElement() const;
-    Ref<HTMLInputElement> protectedInputElement() const;
+    HTMLInputElement& NODELETE inputElement() const;
 
 private:
     void textFormControlElement() const = delete;
@@ -59,6 +63,7 @@ private:
     int scrollHeight() const override;
     void setScrollLeft(int, const ScrollPositionChangeOptions&) override;
     void setScrollTop(int, const ScrollPositionChangeOptions&) override;
+    void setScrollPosition(const ScrollPosition&, const ScrollPositionChangeOptions&) override;
     bool scroll(ScrollDirection, ScrollGranularity, unsigned stepCount = 1, Element** stopElement = nullptr, RenderBox* startBox = nullptr, const IntPoint& wheelEventAbsolutePoint = IntPoint()) final;
     bool logicalScroll(ScrollLogicalDirection, ScrollGranularity, unsigned stepCount = 1, Element** stopElement = nullptr) final;
 
@@ -67,7 +72,7 @@ private:
     LayoutUnit preferredContentLogicalWidth(float charWidth) const override;
     LayoutUnit computeControlLogicalHeight(LayoutUnit lineHeight, LayoutUnit nonContentHeight) const override;
     
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     HTMLElement* innerSpinButtonElement() const;
 };
@@ -85,20 +90,15 @@ inline HTMLElement* RenderTextControlSingleLine::innerBlockElement() const
 // ----------------------------
 
 class RenderTextControlInnerBlock final : public RenderBlockFlow {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderTextControlInnerBlock);
+    WTF_MAKE_TZONE_ALLOCATED(RenderTextControlInnerBlock);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTextControlInnerBlock);
 public:
-    RenderTextControlInnerBlock(Element&, RenderStyle&&);
+    RenderTextControlInnerBlock(Element&, Style::ComputedStyle&&);
     virtual ~RenderTextControlInnerBlock();
 
 private:
     bool hasLineIfEmpty() const override { return true; }
-    bool canBeProgramaticallyScrolled() const override
-    {
-        if (auto* shadowHost = dynamicDowncast<HTMLInputElement>(element()->shadowHost()))
-            return !shadowHost->hasAutoFillStrongPasswordButton();
-        return true;
-    }
+    bool canBeProgramaticallyScrolled() const override;
 };
 
 } // namespace WebCore

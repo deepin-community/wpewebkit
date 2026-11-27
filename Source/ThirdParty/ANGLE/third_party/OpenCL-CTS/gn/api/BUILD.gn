@@ -4,7 +4,7 @@
 
 import("//third_party/OpenCL-CTS/gn/angle_ocl_cts.gni")
 
-ocl_cts_binary("api") {
+ocl_cts_source_set("api") {
   include_dirs =
       [ "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api" ]
   sources = [
@@ -41,6 +41,7 @@ ocl_cts_binary("api") {
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api/test_retain.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api/test_retain_program.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api/test_sub_group_dispatch.cpp",
+    "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api/test_wg_suggested_local_work_size.cpp",
     "$angle_root/third_party/OpenCL-CTS/src/test_conformance/api/test_zero_sized_enqueue.cpp",
   ]
 }

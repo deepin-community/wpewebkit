@@ -25,13 +25,14 @@
 
 #pragma once
 
-#include "AttributionSecondsUntilSendData.h"
-#include "AttributionTimeToSendData.h"
-#include "AttributionTriggerData.h"
-#include "EphemeralNonce.h"
-#include "PCMSites.h"
-#include "RegistrableDomain.h"
+#include <WebCore/AttributionSecondsUntilSendData.h>
+#include <WebCore/AttributionTimeToSendData.h>
+#include <WebCore/AttributionTriggerData.h>
+#include <WebCore/EphemeralNonce.h>
+#include <WebCore/PCMSites.h>
+#include <WebCore/RegistrableDomain.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/Platform.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
 
@@ -59,37 +60,37 @@ public:
     }
 
     PrivateClickMeasurement(SourceID&& sourceID, PCM::SourceSite&& sourceSite, PCM::AttributionDestinationSite&& destinationSite, WallTime&& timeOfAdClick, PCM::AttributionEphemeral&& isEphemeral, std::optional<uint64_t>&& adamID, std::optional<PCM::AttributionTriggerData>&& attributionTriggerData, PCM::AttributionTimeToSendData&& timesToSend, std::optional<PCM::EphemeralNonce>&& ephemeralSourceNonce, String&& sourceApplicationBundleID)
-        : m_sourceID(WTFMove(sourceID))
-        , m_sourceSite(WTFMove(sourceSite))
-        , m_destinationSite(WTFMove(destinationSite))
-        , m_timeOfAdClick(WTFMove(timeOfAdClick))
-        , m_isEphemeral(WTFMove(isEphemeral))
-        , m_adamID(WTFMove(adamID))
-        , m_attributionTriggerData(WTFMove(attributionTriggerData))
-        , m_timesToSend(WTFMove(timesToSend))
-        , m_ephemeralSourceNonce(WTFMove(ephemeralSourceNonce))
-        , m_sourceApplicationBundleID(WTFMove(sourceApplicationBundleID))
+        : m_sourceID(WTF::move(sourceID))
+        , m_sourceSite(WTF::move(sourceSite))
+        , m_destinationSite(WTF::move(destinationSite))
+        , m_timeOfAdClick(WTF::move(timeOfAdClick))
+        , m_isEphemeral(WTF::move(isEphemeral))
+        , m_adamID(WTF::move(adamID))
+        , m_attributionTriggerData(WTF::move(attributionTriggerData))
+        , m_timesToSend(WTF::move(timesToSend))
+        , m_ephemeralSourceNonce(WTF::move(ephemeralSourceNonce))
+        , m_sourceApplicationBundleID(WTF::move(sourceApplicationBundleID))
     {
     }
     
-    WEBCORE_EXPORT static const Seconds maxAge();
+    WEBCORE_EXPORT static const Seconds NODELETE maxAge();
     WEBCORE_EXPORT bool isNeitherSameSiteNorCrossSiteTriggeringEvent(const RegistrableDomain& redirectDomain, const URL& firstPartyURL, const PCM::AttributionTriggerData&);
     WEBCORE_EXPORT static Expected<PCM::AttributionTriggerData, String> parseAttributionRequest(const URL& redirectURL);
     WEBCORE_EXPORT PCM::AttributionSecondsUntilSendData attributeAndGetEarliestTimeToSend(PCM::AttributionTriggerData&&, IsRunningLayoutTest);
-    WEBCORE_EXPORT bool hasHigherPriorityThan(const PrivateClickMeasurement&) const;
+    WEBCORE_EXPORT bool NODELETE hasHigherPriorityThan(const PrivateClickMeasurement&) const;
     WEBCORE_EXPORT URL attributionReportClickSourceURL() const;
     WEBCORE_EXPORT URL attributionReportClickDestinationURL() const;
     WEBCORE_EXPORT Ref<JSON::Object> attributionReportJSON() const;
     const PCM::SourceSite& sourceSite() const { return m_sourceSite; };
     const PCM::AttributionDestinationSite& destinationSite() const { return m_destinationSite; };
     WallTime timeOfAdClick() const { return m_timeOfAdClick; }
-    WEBCORE_EXPORT bool hasPreviouslyBeenReported();
+    WEBCORE_EXPORT bool NODELETE hasPreviouslyBeenReported();
     PCM::AttributionTimeToSendData timesToSend() const { return m_timesToSend; };
     void setTimesToSend(PCM::AttributionTimeToSendData data) { m_timesToSend = data; }
-    const SourceID& sourceID() const { return m_sourceID; }
-    const std::optional<PCM::AttributionTriggerData>& attributionTriggerData() const { return m_attributionTriggerData; }
-    void setAttribution(PCM::AttributionTriggerData&& attributionTriggerData) { m_attributionTriggerData = WTFMove(attributionTriggerData); }
-    const String& sourceApplicationBundleID() const { return m_sourceApplicationBundleID; }
+    const SourceID& sourceID() const LIFETIME_BOUND { return m_sourceID; }
+    const std::optional<PCM::AttributionTriggerData>& attributionTriggerData() const LIFETIME_BOUND { return m_attributionTriggerData; }
+    void setAttribution(PCM::AttributionTriggerData&& attributionTriggerData) { m_attributionTriggerData = WTF::move(attributionTriggerData); }
+    const String& sourceApplicationBundleID() const LIFETIME_BOUND { return m_sourceApplicationBundleID; }
     WEBCORE_EXPORT void setSourceApplicationBundleIDForTesting(const String&);
 
     PCM::AttributionEphemeral isEphemeral() const { return m_isEphemeral; }
@@ -114,9 +115,9 @@ public:
     WEBCORE_EXPORT static Expected<PCM::DestinationSecretToken, String> calculateAndUpdateDestinationSecretToken(const String& serverResponseBase64URL, PCM::DestinationUnlinkableToken&);
 #endif
 
-    PCM::SourceUnlinkableToken& sourceUnlinkableToken() { return m_sourceUnlinkableToken; }
+    PCM::SourceUnlinkableToken& sourceUnlinkableToken() LIFETIME_BOUND { return m_sourceUnlinkableToken; }
     void setSourceUnlinkableTokenValue(const String& value) { m_sourceUnlinkableToken.valueBase64URL = value; }
-    const std::optional<PCM::SourceSecretToken>& sourceSecretToken() const { return m_sourceSecretToken; }
+    const std::optional<PCM::SourceSecretToken>& sourceSecretToken() const LIFETIME_BOUND { return m_sourceSecretToken; }
     WEBCORE_EXPORT void setSourceSecretToken(PCM::SourceSecretToken&&);
     WEBCORE_EXPORT void setDestinationSecretToken(PCM::DestinationSecretToken&&);
 

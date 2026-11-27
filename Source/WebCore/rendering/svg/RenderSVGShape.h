@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2006 Apple Inc.
+ * Copyright (C) 2006 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Google, Inc.
  * Copyright (C) 2011 Renata Hodovan <reni@webkit.org>
  * Copyright (C) 2011 University of Szeged
@@ -42,7 +42,7 @@ class GraphicsContextStateSaver;
 class SVGGraphicsElement;
 
 class RenderSVGShape : public RenderSVGModelObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGShape);
+    WTF_MAKE_TZONE_ALLOCATED(RenderSVGShape);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGShape);
 public:
     friend FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement&);
@@ -61,11 +61,10 @@ public:
         GlobalCoordinateSpace,
         LocalCoordinateSpace
     };
-    RenderSVGShape(Type, SVGGraphicsElement&, RenderStyle&&);
+    RenderSVGShape(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGShape();
 
     inline SVGGraphicsElement& graphicsElement() const;
-    inline Ref<SVGGraphicsElement> protectedGraphicsElement() const;
 
     void setNeedsShapeUpdate() { m_needsShapeUpdate = true; }
 
@@ -80,7 +79,7 @@ public:
     FloatPoint getPointAtLength(float distance) const;
 
     bool hasPath() const { return m_path.get(); }
-    Path& path() const
+    Path& path() const LIFETIME_BOUND
     {
         ASSERT(m_path);
         return *m_path;
@@ -89,27 +88,32 @@ public:
 
     ShapeType shapeType() const { return m_shapeType; }
 
+    bool fillRequiresClip() const { return m_fillRequiresClip; }
+    void setFillRequiresClip(bool fillRequiresClip) const { m_fillRequiresClip = fillRequiresClip; }
+
     FloatRect objectBoundingBox() const final { return m_fillBoundingBox; }
     FloatRect strokeBoundingBox() const final;
     FloatRect approximateStrokeBoundingBox() const;
     FloatRect repaintRectInLocalCoordinates(RepaintRectCalculation = RepaintRectCalculation::Fast) const final { return SVGBoundingBoxComputation::computeRepaintBoundingBox(*this); }
+    FloatRect decoratedBoundingBox() const final { return SVGBoundingBoxComputation::computeDecoratedBoundingBox(*this); }
 
     bool needsHasSVGTransformFlags() const final;
 
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const final;
+    void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
 
     AffineTransform nonScalingStrokeTransform() const;
 
 protected:
     void element() const = delete;
 
-    Path& ensurePath();
+    Path& ensurePath() LIFETIME_BOUND;
 
     virtual void updateShapeFromElement() = 0;
-    virtual bool isEmpty() const;
+    virtual bool NODELETE isEmpty() const;
     virtual bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace);
     virtual bool shapeDependentFillContains(const FloatPoint&, const WindRule) const;
     float strokeWidth() const;
+    float strokeWidthForMarkerUnits() const;
 
     inline bool hasNonScalingStroke() const;
     Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
@@ -136,21 +140,22 @@ private:
     
     std::unique_ptr<Path> createPath() const;
 
-    void fillShape(const RenderStyle&, GraphicsContext&);
-    void strokeShape(const RenderStyle&, GraphicsContext&);
+    void fillShape(const Style::ComputedStyle&, GraphicsContext&);
+    void strokeShape(const Style::ComputedStyle&, GraphicsContext&);
     void fillStrokeMarkers(PaintInfo&);
     virtual void drawMarkers(PaintInfo&) { }
 
-    void styleWillChange(StyleDifference, const RenderStyle& newStyle) override;
+    void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
 
     FloatRect calculateApproximateStrokeBoundingBox() const;
 
 protected:
     FloatRect m_fillBoundingBox;
-    mutable Markable<FloatRect, FloatRect::MarkableTraits> m_strokeBoundingBox;
-    mutable Markable<FloatRect, FloatRect::MarkableTraits> m_approximateStrokeBoundingBox;
+    mutable Markable<FloatRect> m_strokeBoundingBox;
+    mutable Markable<FloatRect> m_approximateStrokeBoundingBox;
 private:
     bool m_needsShapeUpdate { true };
+    mutable bool m_fillRequiresClip : 1 { true };
 protected:
     ShapeType m_shapeType : 3 { ShapeType::Empty };
 private:

@@ -25,10 +25,9 @@
 
 #pragma once
 
-#include "IntRect.h"
+#include <WebCore/FrameIdentifier.h>
+#include <WebCore/IntRect.h>
 #include <wtf/Vector.h>
-
-#if ENABLE(DATALIST_ELEMENT)
 
 namespace WebCore {
 
@@ -48,8 +47,7 @@ struct DataListSuggestionInformation {
     DataListSuggestionActivationType activationType;
     Vector<DataListSuggestion> suggestions;
     IntRect elementRect;
+    std::optional<FrameIdentifier> rootFrameID;
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(DATALIST_ELEMENT)

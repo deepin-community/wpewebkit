@@ -28,21 +28,22 @@
 
 #if ENABLE(VIDEO) && USE(GSTREAMER) && USE(SKIA)
 
+#include "ColorSpaceSkia.h"
 #include "NotImplemented.h"
-#include <skia/ColorSpaceSkia.h>
+#include "PlatformVideoColorSpace.h"
 #include <skia/core/SkImage.h>
 
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
 ImageGStreamer::ImageGStreamer(GRefPtr<GstSample>&& sample)
-    : m_sample(WTFMove(sample))
+    : m_sample(WTF::move(sample))
 {
     GstBuffer* buffer = gst_sample_get_buffer(m_sample.get());
-    if (UNLIKELY(!GST_IS_BUFFER(buffer)))
+    if (!GST_IS_BUFFER(buffer)) [[unlikely]]
         return;
 
     GstMappedFrame videoFrame(m_sample, GST_MAP_READ);
@@ -150,7 +151,8 @@ ImageGStreamer::ImageGStreamer(GRefPtr<GstSample>&& sample)
     // Copy the buffer data. Keeping the whole mapped GstVideoFrame alive would increase memory
     // pressure and the file descriptor(s) associated with the buffer pool open. We only need the
     // data here.
-    SkPixmap pixmap(imageInfo, videoFrame.planeData(0), videoFrame.planeStride(0));
+    auto planeData = videoFrame.planeData(0);
+    SkPixmap pixmap(imageInfo, planeData.data(), videoFrame.planeStride(0));
     m_image = SkImages::RasterFromPixmapCopy(pixmap);
 
     if (auto* cropMeta = gst_buffer_get_video_crop_meta(buffer))

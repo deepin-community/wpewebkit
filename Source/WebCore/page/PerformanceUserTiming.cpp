@@ -31,6 +31,7 @@
 #include "FrameDestructionObserverInlines.h"
 #include "InspectorInstrumentation.h"
 #include "MessagePort.h"
+#include "Performance.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
 #include "PerformanceTiming.h"
@@ -38,36 +39,38 @@
 #include "WorkerOrWorkletGlobalScope.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/SortedArrayMap.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceUserTiming);
+
 using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
 
-static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> restrictedMarkMappings[] = {
-    { "connectEnd", &PerformanceTiming::connectEnd },
-    { "connectStart", &PerformanceTiming::connectStart },
-    { "domComplete", &PerformanceTiming::domComplete },
-    { "domContentLoadedEventEnd", &PerformanceTiming::domContentLoadedEventEnd },
-    { "domContentLoadedEventStart", &PerformanceTiming::domContentLoadedEventStart },
-    { "domInteractive", &PerformanceTiming::domInteractive },
-    { "domLoading", &PerformanceTiming::domLoading },
-    { "domainLookupEnd", &PerformanceTiming::domainLookupEnd },
-    { "domainLookupStart", &PerformanceTiming::domainLookupStart },
-    { "fetchStart", &PerformanceTiming::fetchStart },
-    { "loadEventEnd", &PerformanceTiming::loadEventEnd },
-    { "loadEventStart", &PerformanceTiming::loadEventStart },
-    { "navigationStart", &PerformanceTiming::navigationStart },
-    { "redirectEnd", &PerformanceTiming::redirectEnd },
-    { "redirectStart", &PerformanceTiming::redirectStart },
-    { "requestStart", &PerformanceTiming::requestStart },
-    { "responseEnd", &PerformanceTiming::responseEnd },
-    { "responseStart", &PerformanceTiming::responseStart },
-    { "secureConnectionStart", &PerformanceTiming::secureConnectionStart },
-    { "unloadEventEnd", &PerformanceTiming::unloadEventEnd },
-    { "unloadEventStart", &PerformanceTiming::unloadEventStart },
-};
-static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
+static constexpr SortedArrayMap restrictedMarkFunctions { WTF::toArray<std::pair<ComparableASCIILiteral, NavigationTimingFunction>>({
+    { "connectEnd"_s, &PerformanceTiming::connectEnd },
+    { "connectStart"_s, &PerformanceTiming::connectStart },
+    { "domComplete"_s, &PerformanceTiming::domComplete },
+    { "domContentLoadedEventEnd"_s, &PerformanceTiming::domContentLoadedEventEnd },
+    { "domContentLoadedEventStart"_s, &PerformanceTiming::domContentLoadedEventStart },
+    { "domInteractive"_s, &PerformanceTiming::domInteractive },
+    { "domLoading"_s, &PerformanceTiming::domLoading },
+    { "domainLookupEnd"_s, &PerformanceTiming::domainLookupEnd },
+    { "domainLookupStart"_s, &PerformanceTiming::domainLookupStart },
+    { "fetchStart"_s, &PerformanceTiming::fetchStart },
+    { "loadEventEnd"_s, &PerformanceTiming::loadEventEnd },
+    { "loadEventStart"_s, &PerformanceTiming::loadEventStart },
+    { "navigationStart"_s, &PerformanceTiming::navigationStart },
+    { "redirectEnd"_s, &PerformanceTiming::redirectEnd },
+    { "redirectStart"_s, &PerformanceTiming::redirectStart },
+    { "requestStart"_s, &PerformanceTiming::requestStart },
+    { "responseEnd"_s, &PerformanceTiming::responseEnd },
+    { "responseStart"_s, &PerformanceTiming::responseStart },
+    { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
+    { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
+    { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
+}) };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 {
@@ -101,10 +104,9 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
     if (markOptions && markOptions->startTime)
         timestamp = m_performance->monotonicTimeFromRelativeTime(*markOptions->startTime);
 
-    RefPtr document = dynamicDowncast<Document>(context);
-    InspectorInstrumentation::performanceMark(context.get(), markName, timestamp, document ? document->protectedFrame().get() : nullptr);
+    InspectorInstrumentation::performanceMark(context.get(), markName, timestamp);
 
-    auto mark = PerformanceMark::create(globalObject, context, markName, WTFMove(markOptions));
+    auto mark = PerformanceMark::create(globalObject, context, markName, WTF::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
 
@@ -117,7 +119,7 @@ void PerformanceUserTiming::clearMarks(const String& markName)
     clearPerformanceEntries(m_marksMap, markName);
 }
 
-ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
+ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const Variant<String, double>& mark) const
 {
     return WTF::switchOn(mark, [&](auto& value) {
         return convertMarkToTimestamp(value);
@@ -134,11 +136,10 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& 
             if (*function == &PerformanceTiming::navigationStart)
                 return 0.0;
 
-            // PerformanceTiming should always be non-null for the Document ScriptExecutionContext.
-            ASSERT(m_performance->timing());
-            auto timing = m_performance->timing();
+            // PerformanceTiming is only available for the Document ScriptExecutionContext.
+            Ref timing = protect(m_performance)->timing();
             auto startTime = timing->navigationStart();
-            auto endTime = ((*timing).*(*function))();
+            auto endTime = ((timing.get()).*(*function))();
             if (!endTime)
                 return Exception { ExceptionCode::InvalidAccessError };
             return endTime - startTime;
@@ -147,7 +148,7 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& 
 
     auto iterator = m_marksMap.find(mark);
     if (iterator != m_marksMap.end())
-        return iterator->value.last()->startTime();
+        return protect(iterator->value.last())->startTime();
 
     return Exception { ExceptionCode::SyntaxError, makeString("No mark named '"_s, mark, "' exists"_s) };
 }
@@ -168,7 +169,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
             return end.releaseException();
         endTime = end.returnValue();
     } else
-        endTime = m_performance->now();
+        endTime = protect(m_performance)->now();
 
     double startTime;
     if (!startMark.isNull()) {
@@ -178,7 +179,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
         startTime = start.returnValue();
     } else
         startTime = 0.0;
-        
+
     auto measure = PerformanceMeasure::create(measureName, startTime, endTime, SerializedScriptValue::nullValue());
     if (measure.hasException())
         return measure.releaseException();
@@ -204,7 +205,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
             return duration.releaseException();
         endTime = start.returnValue() + duration.returnValue();
     } else
-        endTime = m_performance->now();
+        endTime = protect(m_performance)->now();
 
     double startTime;
     if (measureOptions.start) {
@@ -229,7 +230,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
         detail = JSC::jsNull();
 
     Vector<Ref<MessagePort>> ignoredMessagePorts;
-    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts);
+    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts, SerializationForStorage::No);
     if (serializedDetail.hasException())
         return serializedDetail.releaseException();
 
@@ -241,34 +242,33 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
     return measure.releaseReturnValue();
 }
 
-static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
+static bool NODELETE isEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
 {
-    return !measureOptions.detail.isUndefined() || measureOptions.start || measureOptions.duration || measureOptions.end;
+    return measureOptions.detail.isUndefined()
+        && !measureOptions.start
+        && !measureOptions.duration
+        && !measureOptions.end;
 }
 
-ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
+ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, StartOrMeasureOptions&& startOrMeasureOptions, const String& endMark)
 {
-    if (startOrMeasureOptions) {
-        return WTF::switchOn(*startOrMeasureOptions,
-            [&] (const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
-                if (isNonEmptyDictionary(measureOptions)) {
-                    if (!endMark.isNull())
-                        return Exception { ExceptionCode::TypeError };
-                    if (!measureOptions.start && !measureOptions.end)
-                        return Exception { ExceptionCode::TypeError };
-                    if (measureOptions.start && measureOptions.duration && measureOptions.end)
-                        return Exception { ExceptionCode::TypeError };
-                }
+    return WTF::switchOn(startOrMeasureOptions,
+        [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
+            if (isEmptyDictionary(measureOptions))
+                return measure(measureName, { }, endMark);
 
-                return measure(globalObject, measureName, measureOptions);
-            },
-            [&] (const String& startMark) {
-                return measure(measureName, startMark, endMark);
-            }
-        );
-    }
-
-    return measure(measureName, { }, endMark);
+            if (!endMark.isNull())
+                return Exception { ExceptionCode::TypeError };
+            if (!measureOptions.start && !measureOptions.end)
+                return Exception { ExceptionCode::TypeError };
+            if (measureOptions.start && measureOptions.duration && measureOptions.end)
+                return Exception { ExceptionCode::TypeError };
+            return measure(globalObject, measureName, measureOptions);
+        },
+        [&](const String& startMark) {
+            return measure(measureName, startMark, endMark);
+        }
+    );
 }
 
 void PerformanceUserTiming::clearMeasures(const String& measureName)

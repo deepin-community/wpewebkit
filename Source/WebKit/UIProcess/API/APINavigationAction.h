@@ -45,17 +45,17 @@ public:
 
     FrameInfo* sourceFrame() const { return m_sourceFrame.get(); }
     FrameInfo* targetFrame() const { return m_targetFrame.get(); }
-    const WTF::String& targetFrameName() const { return m_targetFrameName; }
+    const WTF::String& targetFrameName() const LIFETIME_BOUND { return m_targetFrameName; }
 
-    const WebCore::ResourceRequest& request() const { return m_request; }
-    const WTF::URL& originalURL() const { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
+    const WebCore::ResourceRequest& request() const LIFETIME_BOUND { return m_request; }
+    const WTF::URL& originalURL() const LIFETIME_BOUND { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
 
     WebCore::NavigationType navigationType() const { return m_navigationActionData.navigationType; }
     OptionSet<WebKit::WebEventModifier> modifiers() const { return m_navigationActionData.modifiers; }
     WebKit::WebMouseEventButton mouseButton() const { return m_navigationActionData.mouseButton; }
     WebKit::WebMouseEventSyntheticClickType syntheticClickType() const { return m_navigationActionData.syntheticClickType; }
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
-    const std::optional<WebKit::WebHitTestResultData>& webHitTestResultData() const { return m_navigationActionData.webHitTestResultData; }
+    const std::optional<WebKit::WebHitTestResultData>& webHitTestResultData() const LIFETIME_BOUND { return m_navigationActionData.webHitTestResultData; }
 #endif
     WebCore::FloatPoint clickLocationInRootViewCoordinates() const { return m_navigationActionData.clickLocationInRootViewCoordinates; }
     bool canHandleRequest() const { return m_navigationActionData.canHandleRequest; }
@@ -63,10 +63,12 @@ public:
     bool shouldOpenAppLinks() const { return m_shouldOpenAppLinks && m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllow; }
     bool shouldPerformDownload() const { return !m_navigationActionData.downloadAttribute.isNull(); }
     bool isRedirect() const { return !m_navigationActionData.redirectResponse.isNull(); }
+    bool isContentRuleListRedirect() const { return m_navigationActionData.isContentRuleListRedirect; }
     bool hasOpener() const { return m_navigationActionData.hasOpener; }
     WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy() const { return m_navigationActionData.shouldOpenExternalURLsPolicy; }
 
     bool isProcessingUserGesture() const { return m_userInitiatedAction; }
+    bool isProcessingUnconsumedUserGesture() const { return m_userInitiatedAction && !m_userInitiatedAction->consumed(); }
     UserInitiatedAction* userInitiatedAction() const { return m_userInitiatedAction.get(); }
 
     Navigation* mainFrameNavigation() const { return m_mainFrameNavigation.get(); }
@@ -76,24 +78,26 @@ public:
     void unsetShouldPerformSOAuthorization() { m_shouldPerformSOAuthorization = false; }
 #endif
 
-    const WebKit::NavigationActionData& data() const { return m_navigationActionData; }
+    const WebKit::NavigationActionData& data() const LIFETIME_BOUND { return m_navigationActionData; }
+    std::optional<WebCore::FrameIdentifier> mainFrameIDBeforeNavigationActionDecision() { return m_mainFrameIDBeforeNavigationDecision; }
     
 private:
-    NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, const WTF::String& targetFrameName, WebCore::ResourceRequest&& request, const WTF::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction, API::Navigation* mainFrameNavigation)
+    NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, const WTF::String& targetFrameName, WebCore::ResourceRequest&& request, const WTF::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction, API::Navigation* mainFrameNavigation, std::optional<WebCore::FrameIdentifier> mainFrameIDBeforeNavigationActionDecision)
         : m_sourceFrame(sourceFrame)
         , m_targetFrame(targetFrame)
         , m_targetFrameName(targetFrameName)
-        , m_request(WTFMove(request))
+        , m_request(WTF::move(request))
         , m_originalURL(originalURL)
         , m_shouldOpenAppLinks(shouldOpenAppLinks)
-        , m_userInitiatedAction(WTFMove(userInitiatedAction))
-        , m_navigationActionData(WTFMove(navigationActionData))
+        , m_userInitiatedAction(WTF::move(userInitiatedAction))
+        , m_navigationActionData(WTF::move(navigationActionData))
         , m_mainFrameNavigation(mainFrameNavigation)
+        , m_mainFrameIDBeforeNavigationDecision(mainFrameIDBeforeNavigationActionDecision)
     {
     }
 
     NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, const WTF::String& targetFrameName, WebCore::ResourceRequest&& request, const WTF::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction)
-        : NavigationAction(WTFMove(navigationActionData), sourceFrame, targetFrame, targetFrameName, WTFMove(request), originalURL, shouldOpenAppLinks, WTFMove(userInitiatedAction), nullptr)
+        : NavigationAction(WTF::move(navigationActionData), sourceFrame, targetFrame, targetFrameName, WTF::move(request), originalURL, shouldOpenAppLinks, WTF::move(userInitiatedAction), nullptr, std::nullopt)
     {
     }
 
@@ -111,8 +115,11 @@ private:
 
     RefPtr<UserInitiatedAction> m_userInitiatedAction;
 
-    WebKit::NavigationActionData m_navigationActionData;
+    const WebKit::NavigationActionData m_navigationActionData;
     RefPtr<Navigation> m_mainFrameNavigation;
+    std::optional<WebCore::FrameIdentifier> m_mainFrameIDBeforeNavigationDecision;
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(NavigationAction);

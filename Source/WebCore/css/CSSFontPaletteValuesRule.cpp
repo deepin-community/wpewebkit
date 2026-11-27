@@ -29,7 +29,6 @@
 #include "CSSMarkup.h"
 #include "ColorSerialization.h"
 #include "JSDOMMapLike.h"
-#include "PropertySetCSSStyleDeclaration.h"
 #include "StyleProperties.h"
 #include "StyleRule.h"
 #include <wtf/text/MakeString.h>
@@ -90,7 +89,11 @@ String CSSFontPaletteValuesRule::overrideColors() const
 String CSSFontPaletteValuesRule::cssText() const
 {
     StringBuilder builder;
-    builder.append("@font-palette-values "_s, name(), " { "_s);
+
+    builder.append("@font-palette-values "_s);
+    serializeIdentifier(builder, name());
+    builder.append(" { "_s);
+
     if (!m_fontPaletteValuesRule->fontFamilies().isEmpty())
         builder.append("font-family: "_s, fontFamily(), "; "_s);
 

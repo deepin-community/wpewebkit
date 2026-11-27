@@ -21,9 +21,13 @@
 
 #include "BitmapTexture.h"
 #include "Image.h"
+#include "NativeImage.h"
 #include "TextureMapper.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureMapperTile);
 
 class GraphicsLayer;
 

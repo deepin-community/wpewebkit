@@ -26,6 +26,7 @@
 #include "config.h"
 #include "SessionHost.h"
 
+#include "Logging.h"
 #include "WebDriverService.h"
 #include <gio/gio.h>
 #include <wtf/NeverDestroyed.h>
@@ -77,7 +78,7 @@ const SocketConnection::MessageHandlers& SessionHost::messageHandlers()
                 if (!g_strcmp0(type, "Automation"))
                     targetList.append({ targetID, name, static_cast<bool>(isPaired) });
             }
-            sessionHost.setTargetList(connectionID, WTFMove(targetList));
+            sessionHost.setTargetList(connectionID, WTF::move(targetList));
         }}
     },
     { "SendMessageToFrontend", std::pair<CString, SocketConnection::MessageCallback> { "(tts)",
@@ -95,7 +96,7 @@ const SocketConnection::MessageHandlers& SessionHost::messageHandlers()
 
 void SessionHost::connectToBrowser(Function<void (std::optional<String> error)>&& completionHandler)
 {
-    launchBrowser(WTFMove(completionHandler));
+    launchBrowser(WTF::move(completionHandler));
 }
 
 bool SessionHost::isConnected() const
@@ -105,12 +106,12 @@ bool SessionHost::isConnected() const
 }
 
 struct ConnectToBrowserAsyncData {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ConnectToBrowserAsyncData);
     ConnectToBrowserAsyncData(SessionHost* sessionHost, GUniquePtr<char>&& inspectorAddress, GCancellable* cancellable, Function<void(std::optional<String>)>&& completionHandler)
         : sessionHost(sessionHost)
-        , inspectorAddress(WTFMove(inspectorAddress))
+        , inspectorAddress(WTF::move(inspectorAddress))
         , cancellable(cancellable)
-        , completionHandler(WTFMove(completionHandler))
+        , completionHandler(WTF::move(completionHandler))
     {
     }
 
@@ -118,6 +119,7 @@ struct ConnectToBrowserAsyncData {
     GUniquePtr<char> inspectorAddress;
     GRefPtr<GCancellable> cancellable;
     Function<void (std::optional<String> error)> completionHandler;
+    unsigned connectionAttemptCount { 0 };
 };
 
 static guint16 freePort()
@@ -151,7 +153,8 @@ void SessionHost::launchBrowser(Function<void (std::optional<String> error)>&& c
     );
     if (!targetIp.isEmpty()) {
         m_isRemoteBrowser = true;
-        connectToBrowser(makeUnique<ConnectToBrowserAsyncData>(this, WTFMove(inspectorAddress), m_cancellable.get(), WTFMove(completionHandler)));
+        RELEASE_LOG_INFO(SessionHost, "Attaching to already running RemoteInspector at %s", inspectorAddress.get());
+        connectToBrowser(makeUnique<ConnectToBrowserAsyncData>(this, WTF::move(inspectorAddress), m_cancellable.get(), WTF::move(completionHandler)));
         return;
     }
 
@@ -167,11 +170,20 @@ void SessionHost::launchBrowser(Function<void (std::optional<String> error)>&& c
     for (unsigned i = 0; i < browserArgumentsSize; ++i)
         args.get()[i + 1] = g_strdup(m_capabilities.browserArguments.value()[i].utf8().data());
 
+    RELEASE_LOG_INFO(SessionHost, "Spawning local browser: %s with %zu argument(s)", args.get()[0], browserArgumentsSize);
+
     GUniqueOutPtr<GError> error;
     m_browser = adoptGRef(g_subprocess_launcher_spawnv(launcher.get(), args.get(), &error.outPtr()));
     if (error) {
+        RELEASE_LOG_ERROR(SessionHost, "Failed to spawn browser %s: %s", args.get()[0], error->message);
         completionHandler(String::fromUTF8(error->message));
         return;
+    }
+
+    if (const auto* identifier = g_subprocess_get_identifier(m_browser.get())) {
+        auto processID = g_ascii_strtoull(identifier, nullptr, 10);
+        if (processID > 0)
+            m_capabilities.processID = processID;
     }
 
     g_subprocess_wait_async(m_browser.get(), m_cancellable.get(), [](GObject* browser, GAsyncResult* result, gpointer userData) {
@@ -183,7 +195,7 @@ void SessionHost::launchBrowser(Function<void (std::optional<String> error)>&& c
         sessionHost->m_browser = nullptr;
     }, this);
 
-    connectToBrowser(makeUnique<ConnectToBrowserAsyncData>(this, WTFMove(inspectorAddress), m_cancellable.get(), WTFMove(completionHandler)));
+    connectToBrowser(makeUnique<ConnectToBrowserAsyncData>(this, WTF::move(inspectorAddress), m_cancellable.get(), WTF::move(completionHandler)));
 }
 
 void SessionHost::connectToBrowser(std::unique_ptr<ConnectToBrowserAsyncData>&& data)
@@ -191,7 +203,10 @@ void SessionHost::connectToBrowser(std::unique_ptr<ConnectToBrowserAsyncData>&& 
     if (!m_browser && !m_isRemoteBrowser)
         return;
 
-    RunLoop::main().dispatchAfter(100_ms, [connectToBrowserData = WTFMove(data)]() mutable {
+    if (!data->connectionAttemptCount)
+        RELEASE_LOG_INFO(SessionHost, "Connecting to RemoteInspector at %s", data->inspectorAddress.get());
+
+    RunLoop::mainSingleton().dispatchAfter(100_ms, [connectToBrowserData = WTF::move(data)]() mutable {
         auto* data = connectToBrowserData.release();
         if (g_cancellable_is_cancelled(data->cancellable.get()))
             return;
@@ -207,14 +222,19 @@ void SessionHost::connectToBrowser(std::unique_ptr<ConnectToBrowserAsyncData>&& 
                         return;
 
                     if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED)) {
-                        data->sessionHost->connectToBrowser(WTFMove(data));
+                        data->connectionAttemptCount++;
+                        if (!(data->connectionAttemptCount % 10))
+                            RELEASE_LOG_INFO(SessionHost, "Still attempting connection to %s (attempt %u)", data->inspectorAddress.get(), data->connectionAttemptCount);
+                        data->sessionHost->connectToBrowser(WTF::move(data));
                         return;
                     }
+                    RELEASE_LOG_ERROR(SessionHost, "Failed to connect to %s: %s", data->inspectorAddress.get(), error->message);
                     data->completionHandler(String::fromUTF8(error->message));
                     return;
                 }
 
-                data->sessionHost->setupConnection(SocketConnection::create(WTFMove(connection), messageHandlers(), data->sessionHost));
+                RELEASE_LOG_INFO(SessionHost, "Connected to RemoteInspector at %s after %u attempt(s)", data->inspectorAddress.get(), data->connectionAttemptCount + 1);
+                data->sessionHost->setupConnection(SocketConnection::create(WTF::move(connection), messageHandlers(), data->sessionHost));
                 data->completionHandler(std::nullopt);
         }, data);
     });
@@ -222,6 +242,13 @@ void SessionHost::connectToBrowser(std::unique_ptr<ConnectToBrowserAsyncData>&& 
 
 void SessionHost::connectionDidClose()
 {
+    Ref<SessionHost> protectedThis(*this);
+
+    if (!m_targetIp.isEmpty())
+        RELEASE_LOG_INFO(SessionHost, "RemoteInspector at %s:%u closed connection", m_targetIp.utf8().data(), m_targetPort);
+    else
+        RELEASE_LOG_INFO(SessionHost, "Inspector connection closed (local browser)");
+
     m_browser = nullptr;
     m_isRemoteBrowser = false;
 
@@ -234,7 +261,7 @@ void SessionHost::connectionDidClose()
 void SessionHost::setupConnection(Ref<SocketConnection>&& connection)
 {
     ASSERT(!m_socketConnection);
-    m_socketConnection = WTFMove(connection);
+    m_socketConnection = WTF::move(connection);
 }
 
 static bool matchBrowserOptions(const String& browserName, const String& browserVersion, const Capabilities& capabilities)
@@ -329,7 +356,7 @@ void SessionHost::startAutomationSession(Function<void (bool, std::optional<Stri
 {
     ASSERT(m_socketConnection);
     ASSERT(!m_startSessionCompletionHandler);
-    m_startSessionCompletionHandler = WTFMove(completionHandler);
+    m_startSessionCompletionHandler = WTF::move(completionHandler);
     m_sessionID = createVersion4UUIDString();
     GVariantBuilder builder;
     m_socketConnection->sendMessage("StartAutomationSession", g_variant_new("(sa{sv})", m_sessionID.utf8().data(), buildSessionCapabilities(&builder) ? &builder : nullptr));
@@ -355,6 +382,7 @@ void SessionHost::setTargetList(uint64_t connectionID, Vector<Target>&& targetLi
         // such as WebPage (this can be ignored), or if the server has removed the Automation target
         // because the session has ended (in this case, we must reset our state).
         if (m_connectionID) {
+            RELEASE_LOG_INFO(SessionHost, "Remote browser removed all automation targets; disconnecting");
             if (m_socketConnection)
                 m_socketConnection->close();
             connectionDidClose();
@@ -389,11 +417,6 @@ void SessionHost::sendMessageToBackend(const String& message)
     ASSERT(m_connectionID);
     ASSERT(m_target.id);
     m_socketConnection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", m_connectionID, m_target.id, message.utf8().data()));
-}
-
-bool SessionHost::isRemoteBrowser() const
-{
-    return m_isRemoteBrowser;
 }
 
 } // namespace WebDriver

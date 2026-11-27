@@ -25,14 +25,14 @@
 
 #pragma once
 
-#include "CryptoAlgorithmIdentifier.h"
 #include <CommonCrypto/CommonCryptor.h>
 #include <CommonCrypto/CommonRandom.h>
+#include <WebCore/CryptoAlgorithmIdentifier.h>
 #include <pal/spi/cocoa/CommonCryptoSPI.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
 
-bool getCommonCryptoDigestAlgorithm(CryptoAlgorithmIdentifier, CCDigestAlgorithm&);
+bool NODELETE getCommonCryptoDigestAlgorithm(CryptoAlgorithmIdentifier, CCDigestAlgorithm&);
 
 } // namespace WebCore

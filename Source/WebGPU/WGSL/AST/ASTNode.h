@@ -56,7 +56,6 @@ enum class NodeKind : uint8_t {
 
     // Expression
     BinaryExpression,
-    BitcastExpression,
     CallExpression,
     FieldAccessExpression,
     IdentifierExpression,
@@ -96,7 +95,6 @@ enum class NodeKind : uint8_t {
     LoopStatement,
     PhonyAssignmentStatement,
     ReturnStatement,
-    StaticAssertStatement,
     SwitchStatement,
     VariableStatement,
     WhileStatement,
@@ -121,7 +119,7 @@ public:
     virtual ~Node() = default;
 
     virtual NodeKind kind() const { return NodeKind::Unknown; };
-    const SourceSpan& span() const { return m_span; }
+    const SourceSpan& span() const LIFETIME_BOUND { return m_span; }
 
 protected:
     Node(SourceSpan span)

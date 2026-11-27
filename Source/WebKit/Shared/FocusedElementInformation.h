@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include "ArgumentCoders.h"
+#include "ColorControlSupportsAlpha.h"
+#include "FrameInfoData.h"
 #include "IdentifierTypes.h"
 #include <WebCore/AutocapitalizeTypes.h>
 #include <WebCore/Autofill.h>
@@ -60,10 +61,37 @@ enum class InputType : uint8_t {
     Time,
     Select,
     Drawing,
-#if ENABLE(INPUT_TYPE_COLOR)
     Color
-#endif
 };
+
+inline bool isSingleLineInputType(InputType type)
+{
+    switch (type) {
+    case InputType::None:
+    case InputType::ContentEditable:
+    case InputType::TextArea:
+        return false;
+    case InputType::Text:
+    case InputType::Password:
+    case InputType::Search:
+    case InputType::Email:
+    case InputType::URL:
+    case InputType::Phone:
+    case InputType::Number:
+    case InputType::NumberPad:
+    case InputType::Date:
+    case InputType::DateTimeLocal:
+    case InputType::Month:
+    case InputType::Week:
+    case InputType::Time:
+    case InputType::Select:
+    case InputType::Drawing:
+    case InputType::Color:
+        return true;
+    }
+    ASSERT_NOT_REACHED();
+    return false;
+}
 
 #if PLATFORM(IOS_FAMILY)
 struct OptionItem {
@@ -102,6 +130,7 @@ struct FocusedElementInformation {
     bool isMultiSelect { false };
     bool isReadOnly {false };
     bool allowsUserScaling { false };
+    bool usesBaseAppearancePicker { false };
     bool allowsUserScalingIgnoringAlwaysScalable { false };
     bool insideFixedPosition { false };
     bool hasPlainText { false };
@@ -123,14 +152,11 @@ struct FocusedElementInformation {
     String placeholder;
     String label;
     String ariaLabel;
-#if ENABLE(DATALIST_ELEMENT)
     bool hasSuggestions { false };
     bool isFocusingWithDataListDropdown { false };
-#if ENABLE(INPUT_TYPE_COLOR)
     WebCore::Color colorValue;
+    ColorControlSupportsAlpha supportsAlpha { ColorControlSupportsAlpha::No };
     Vector<WebCore::Color> suggestedColors;
-#endif
-#endif
     bool hasEverBeenPasswordField { false };
     bool shouldSynthesizeKeyEventsForEditing { false };
     bool isSpellCheckingEnabled { true };
@@ -138,13 +164,21 @@ struct FocusedElementInformation {
     bool shouldAvoidResizingWhenInputViewBoundsChange { false };
     bool shouldAvoidScrollingWhenFocusedContentIsVisible { false };
     bool shouldUseLegacySelectPopoverDismissalBehaviorInDataActivation { false };
+    bool shouldHideSoftTopScrollEdgeEffect { false };
     bool isFocusingWithValidationMessage { false };
     bool preventScroll { false };
 
     FocusedElementInformationIdentifier identifier;
     Markable<WebCore::ScrollingNodeID> containerScrollingNodeID;
 
-    WebCore::FrameIdentifier frameID;
+    std::optional<FrameInfoData> frame;
+
+    std::optional<WebCore::FrameIdentifier> frameID() const
+    {
+        if (frame)
+            return frame->frameID;
+        return std::nullopt;
+    }
 };
 #endif
 

@@ -35,10 +35,17 @@
 #include <WebCore/PageIdentifier.h>
 #include <memory>
 #include <pal/SessionID.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMalloc.h>
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
 #include "LayerHostingContext.h"
+#endif
+
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS)
+namespace IPC {
+class SharedFileHandle;
+}
 #endif
 
 namespace WebKit {
@@ -47,10 +54,12 @@ class WebProcessProxy;
 class WebsiteDataStore;
 struct ModelProcessConnectionParameters;
 struct ModelProcessCreationParameters;
+struct SharedPreferencesForWebProcess;
 
 class ModelProcessProxy final : public AuxiliaryProcessProxy {
     WTF_MAKE_TZONE_ALLOCATED(ModelProcessProxy);
     WTF_MAKE_NONCOPYABLE(ModelProcessProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ModelProcessProxy);
     friend LazyNeverDestroyed<ModelProcessProxy>;
 public:
     static Ref<ModelProcessProxy> getOrCreate();
@@ -58,11 +67,13 @@ public:
     ~ModelProcessProxy();
 
     void createModelProcessConnection(WebProcessProxy&, IPC::Connection::Handle&& connectionIdentifier, ModelProcessConnectionParameters&&);
+    void sharedPreferencesForWebProcessDidChange(WebProcessProxy&, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
 
     void updateProcessAssertion();
 
     void terminateForTesting();
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
+    void modelPlayerCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
     void removeSession(PAL::SessionID);
 
@@ -85,17 +96,16 @@ private:
     void modelProcessExited(ProcessTerminationReason);
 
     // ProcessThrottlerClient
-    ASCIILiteral clientName() const final { return "ModelProcess"_s; }
     void sendPrepareToSuspend(IsSuspensionImminent, double remainingRunTime, CompletionHandler<void()>&&) final;
     void sendProcessDidResume(ResumeReason) final;
 
     // ProcessLauncher::Client
-    void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier) override;
+    void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier&&) override;
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     void didClose(IPC::Connection&) override;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, int32_t indexOfObjectFailingDecoding) override;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) override;
 
     // ResponsivenessTimer::Client
     void didBecomeUnresponsive() final;
@@ -106,11 +116,23 @@ private:
     void didCreateContextForVisibilityPropagation(WebPageProxyIdentifier, WebCore::PageIdentifier, LayerHostingContextID);
 #endif
 
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS)
+    void requestSharedSimulationConnection(WebCore::ProcessIdentifier, CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&&);
+#endif
+
+#if PLATFORM(COCOA)
+    void updateModelProcessCreationParameters(ModelProcessCreationParameters&);
+#endif
+
     ModelProcessCreationParameters processCreationParameters();
 
-    ProcessThrottler::ActivityVariant m_activityFromWebProcesses;
+    RefPtr<ProcessThrottler::Activity> m_activityFromWebProcesses;
 
     HashSet<PAL::SessionID> m_sessionIDs;
+
+#if PLATFORM(VISION) && ENABLE(GPU_PROCESS)
+    bool m_didInitializeSharedSimulationConnection { false };
+#endif
 };
 
 } // namespace WebKit

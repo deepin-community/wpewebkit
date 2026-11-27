@@ -30,8 +30,16 @@
 
 #include "CBORReader.h"
 #include "CBORWriter.h"
+#include "CredentialPropertiesOutput.h"
+#include <wtf/text/Base64.h>
 
 namespace WebCore {
+
+static bool booleanValue(const cbor::CBORValue::MapValue& map, ASCIILiteral key)
+{
+    auto iterator = map.find(cbor::CBORValue(key));
+    return iterator != map.end() && iterator->second.isBool() && iterator->second.getBool();
+}
 
 std::optional<AuthenticationExtensionsClientOutputs> AuthenticationExtensionsClientOutputs::fromCBOR(const Vector<uint8_t>& buffer)
 {
@@ -47,9 +55,7 @@ std::optional<AuthenticationExtensionsClientOutputs> AuthenticationExtensionsCli
     it = decodedMap.find(cbor::CBORValue("credProps"));
     if (it != decodedMap.end() && it->second.isMap()) {
         CredentialPropertiesOutput credProps;
-        it = it->second.getMap().find(cbor::CBORValue("rk"));
-        if (it != decodedMap.end() && it->second.isBool())
-            credProps.rk = it->second.getBool();
+        credProps.rk = booleanValue(it->second.getMap(), "rk"_s);
         clientOutputs.credProps = credProps;
     }
 
@@ -65,7 +71,7 @@ std::optional<AuthenticationExtensionsClientOutputs> AuthenticationExtensionsCli
         largeBlobIt = largeBlobMap.find(cbor::CBORValue("blob"));
         if (largeBlobIt != largeBlobMap.end() && largeBlobIt->second.isByteString()) {
             RefPtr<ArrayBuffer> blob = ArrayBuffer::create(largeBlobIt->second.getByteString());
-            largeBlob.blob = WTFMove(blob);
+            largeBlob.blob = WTF::move(blob);
         }
 
         largeBlobIt = largeBlobMap.find(cbor::CBORValue("written"));
@@ -94,8 +100,8 @@ Vector<uint8_t> AuthenticationExtensionsClientOutputs::toCBOR() const
         if (largeBlob->supported)
             largeBlobMap[cbor::CBORValue("supported")] = cbor::CBORValue(largeBlob->supported.value());
 
-        if (largeBlob->blob)
-            largeBlobMap[cbor::CBORValue("blob")] = cbor::CBORValue(largeBlob->blob->toVector());
+        if (RefPtr blob = largeBlob->blob)
+            largeBlobMap[cbor::CBORValue("blob")] = cbor::CBORValue(blob->toVector());
 
         if (largeBlob->written)
             largeBlobMap[cbor::CBORValue("written")] = cbor::CBORValue(largeBlob->written.value());
@@ -103,10 +109,40 @@ Vector<uint8_t> AuthenticationExtensionsClientOutputs::toCBOR() const
         clientOutputsMap[cbor::CBORValue("largeBlob")] = cbor::CBORValue(largeBlobMap);
     }
 
-    auto clientOutputs = cbor::CBORWriter::write(cbor::CBORValue(WTFMove(clientOutputsMap)));
+    auto clientOutputs = cbor::CBORWriter::write(cbor::CBORValue(WTF::move(clientOutputsMap)));
     ASSERT(clientOutputs);
 
     return *clientOutputs;
+}
+
+AuthenticationExtensionsClientOutputsJSON AuthenticationExtensionsClientOutputs::toJSON() const
+{
+    AuthenticationExtensionsClientOutputsJSON result;
+    result.appid = appid;
+    result.credProps = credProps;
+    RefPtr<ArrayBuffer> blob;
+    if (largeBlob) {
+        blob = largeBlob->blob;
+        result.largeBlob = AuthenticationExtensionsClientOutputsJSON::LargeBlobOutputsJSON {
+            largeBlob->supported,
+            blob ? base64URLEncodeToString(blob->span()) : nullString(),
+            largeBlob->written,
+        };
+    }
+    if (prf) {
+        std::optional<AuthenticationExtensionsClientOutputsJSON::PRFValuesJSON> prfValues;
+        if (prf->results) {
+            prfValues = AuthenticationExtensionsClientOutputsJSON::PRFValuesJSON {
+                base64URLEncodeToString(prf->results->first->span()),
+                prf->results->second ? base64URLEncodeToString(prf->results->second->span()) : nullString(),
+            };
+        }
+        result.prf = AuthenticationExtensionsClientOutputsJSON::PRFOutputsJSON {
+            prf->enabled,
+            WTF::move(prfValues),
+        };
+    }
+    return result;
 }
 
 } // namespace WebCore

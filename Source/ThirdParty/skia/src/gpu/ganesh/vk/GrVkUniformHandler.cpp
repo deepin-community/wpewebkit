@@ -9,7 +9,7 @@
 
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/vk/GrVkBackendSurface.h"
 #include "include/gpu/vk/VulkanTypes.h"
 #include "src/core/SkSLTypeShared.h"
@@ -184,7 +184,7 @@ static uint32_t get_aligned_offset(uint32_t* currentOffset,
                                    int layout) {
     uint32_t alignmentMask = sksltype_to_alignment_mask(type);
     // For std140 layout we must make arrays align to 16 bytes.
-    // TODO(skia:13380): make sure 2x3 and 3x2 matrices are handled properly once SkSLType adds
+    // TODO(skbug.com/40044465): make sure 2x3 and 3x2 matrices are handled properly once SkSLType adds
     // support for non-square matrices
     if (layout == GrVkUniformHandler::kStd140Layout &&
         (arrayCount || type == SkSLType::kFloat2x2 || type == SkSLType::kHalf2x2)) {

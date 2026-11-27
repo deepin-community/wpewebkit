@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include "BidiContext.h"
-#include "LegacyInlineFlowBox.h"
-#include "RenderBox.h"
-#include <wtf/FastMalloc.h>
+#include <WebCore/BidiContext.h>
+#include <WebCore/LegacyInlineFlowBox.h>
+#include <WebCore/RenderBox.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -36,13 +36,13 @@ struct BidiStatus;
 struct GapRects;
 
 class LegacyRootInlineBox : public LegacyInlineFlowBox, public CanMakeWeakPtr<LegacyRootInlineBox>, public CanMakeCheckedPtr<LegacyRootInlineBox> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRootInlineBox);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRootInlineBox);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRootInlineBox);
 public:
     explicit LegacyRootInlineBox(RenderBlockFlow&);
     virtual ~LegacyRootInlineBox();
 
-    RenderBlockFlow& blockFlow() const;
+    RenderBlockFlow& NODELETE blockFlow() const;
 
     LegacyRootInlineBox* nextRootBox() const;
     LegacyRootInlineBox* prevRootBox() const;
@@ -57,8 +57,8 @@ public:
     LayoutUnit lineBoxBottom() const { return m_lineBoxBottom; }
     LayoutUnit lineBoxHeight() const { return lineBoxBottom() - lineBoxTop(); }
 
-    LayoutUnit selectionTop() const;
-    LayoutUnit selectionBottom() const;
+    LayoutUnit NODELETE selectionTop() const;
+    LayoutUnit NODELETE selectionBottom() const;
     LayoutUnit selectionHeight() const { return std::max<LayoutUnit>(0, selectionBottom() - selectionTop()); }
 
     LayoutUnit selectionTopAdjustedForPrecedingBlock() const;
@@ -72,17 +72,12 @@ public:
         m_lineBoxBottom = lineBoxBottom;
     }
 
-    LayoutUnit baselinePosition(FontBaseline baselineType) const final;
-    LayoutUnit lineHeight() const final;
-
     RenderObject::HighlightState selectionState() const final;
-    const LegacyInlineBox* firstSelectedBox() const;
-    const LegacyInlineBox* lastSelectedBox() const;
+    const LegacyInlineBox* firstSelectedBox() const LIFETIME_BOUND;
+    const LegacyInlineBox* lastSelectedBox() const LIFETIME_BOUND;
 
-    void extractLineBoxFromRenderObject() final;
-    void attachLineBoxToRenderObject() final;
-    void removeLineBoxFromRenderObject() final;
-    
+    void NODELETE removeLineBoxFromRenderObject() final;
+
     FontBaseline baselineType() const { return static_cast<FontBaseline>(m_baselineType); }
     
     LayoutUnit logicalTopVisualOverflow() const

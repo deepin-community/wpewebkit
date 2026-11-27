@@ -25,12 +25,12 @@
 
 #pragma once
 
-#include "OrderedHashTable.h"
+#include <JavaScriptCore/JSOrderedHashTable.h>
 
 namespace JSC {
 
-class JSMap final : public OrderedHashMap {
-    using Base = OrderedHashMap;
+class JSMap final : public JSOrderedHashMap {
+    using Base = JSOrderedHashMap;
 public:
 
     DECLARE_EXPORT_INFO;
@@ -59,7 +59,7 @@ public:
     ALWAYS_INLINE void set(JSGlobalObject*, JSValue key, JSValue);
 
     static bool isSetFastAndNonObservable(Structure*);
-    bool isIteratorProtocolFastAndNonObservable();
+    ALWAYS_INLINE bool isIteratorProtocolFastAndNonObservable();
     JSMap* clone(JSGlobalObject*, VM&, Structure*);
 
 private:

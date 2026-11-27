@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2024, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,12 +27,14 @@
 
 #include "APICast.h"
 #include "JSGlobalObjectInlines.h"
-#include "MarkedJSValueRefArray.h"
+#include "MarkedVector.h"
 #include <JavaScriptCore/JSContextRefPrivate.h>
 #include <JavaScriptCore/JSObjectRefPrivate.h>
 #include <JavaScriptCore/JavaScript.h>
+#include <thread>
 #include <wtf/DataLog.h>
 #include <wtf/Expected.h>
+#include <wtf/MainThread.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/Vector.h>
@@ -43,7 +45,11 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+extern "C" void initializeWTFForTesting();
 extern "C" void configureJSCForTesting();
+extern "C" int testLaunchJSCFromNonMainThread(const char* filter);
 extern "C" int testCAPIViaCpp(const char* filter);
 extern "C" void JSSynchronousGarbageCollectForDebugging(JSContextRef);
 
@@ -104,37 +110,8 @@ private:
     JSGlobalContextRef m_context;
 };
 
-template<typename T>
-class APIVector : protected Vector<T> {
-    using Base = Vector<T>;
-public:
-    APIVector(APIContext& context)
-        : Base()
-        , m_context(context)
-    {
-    }
-
-    ~APIVector()
-    {
-        for (auto& value : *this)
-            JSValueUnprotect(m_context, value);
-    }
-
-    using Vector<T>::operator[];
-    using Vector<T>::size;
-    using Vector<T>::begin;
-    using Vector<T>::end;
-    using typename Vector<T>::iterator;
-
-    void append(T value)
-    {
-        JSValueProtect(m_context, value);
-        Base::append(WTFMove(value));
-    }
-
-private:
-    APIContext& m_context;
-};
+template<typename T, size_t passedInlineCapacity = 8, class OverflowHandler = WTF::CrashOnOverflow>
+using MarkedVector = JSC::MarkedVector<T, passedInlineCapacity, OverflowHandler>;
 
 class TestAPI {
 public:
@@ -156,11 +133,12 @@ public:
     void topCallFrameAccess();
     void markedJSValueArrayAndGC();
     void classDefinitionWithJSSubclass();
+    void classDefinitionRetainsParentClass();
     void proxyReturnedWithJSSubclassing();
     void testJSObjectSetOnGlobalObjectSubclassDefinition();
     void testBigInt();
 
-    int failed() const { return m_failed; }
+    int NODELETE failed() const { return m_failed; }
 
 private:
 
@@ -185,8 +163,8 @@ private:
     bool scriptResultIs(ScriptResult, JSValueRef);
 
     // Ways to make sets of interesting things.
-    APIVector<JSObjectRef> interestingObjects();
-    APIVector<JSValueRef> interestingKeys();
+    MarkedVector<JSObjectRef> interestingObjects();
+    MarkedVector<JSValueRef> interestingKeys();
 
     int m_failed { 0 };
     APIContext context;
@@ -199,7 +177,7 @@ TestAPI::ScriptResult TestAPI::evaluateScript(const char* script, JSObjectRef th
 
     JSValueRef result = JSEvaluateScript(context, scriptAPIString, thisObject, nullptr, 0, &exception);
     if (exception)
-        return Unexpected<JSValueRef>(exception);
+        return std::unexpected<JSValueRef>(exception);
     return ScriptResult(result);
 }
 
@@ -223,7 +201,7 @@ TestAPI::ScriptResult TestAPI::callFunction(const char* functionSource, Argument
     }
 
     RELEASE_ASSERT(exception);
-    return Unexpected<JSValueRef>(exception);
+    return std::unexpected<JSValueRef>(exception);
 }
 
 template<typename... ArgumentTypes>
@@ -270,9 +248,9 @@ void TestAPI::checkJSAndAPIMatch(const JSFunctor& jsFunctor, const APIFunctor& a
     }
 }
 
-APIVector<JSObjectRef> TestAPI::interestingObjects()
+MarkedVector<JSObjectRef> TestAPI::interestingObjects()
 {
-    APIVector<JSObjectRef> result(context);
+    MarkedVector<JSObjectRef> result;
     JSObjectRef array = JSValueToObject(context, evaluateScript(
         "[{}, [], { [Symbol.iterator]: 1 }, new Date(), new String('str'), new Map(), new Set(), new WeakMap(), new WeakSet(), new Error(), new Number(42), new Boolean(), { get length() { throw new Error(); } }];").value(), nullptr);
 
@@ -287,9 +265,9 @@ APIVector<JSObjectRef> TestAPI::interestingObjects()
     return result;
 }
 
-APIVector<JSValueRef> TestAPI::interestingKeys()
+MarkedVector<JSValueRef> TestAPI::interestingKeys()
 {
-    APIVector<JSValueRef> result(context);
+    MarkedVector<JSValueRef> result;
     JSObjectRef array = JSValueToObject(context, evaluateScript("[{}, [], 1, Symbol.iterator, 'length']").value(), nullptr);
 
     APIString lengthString("length");
@@ -583,7 +561,7 @@ void TestAPI::promiseUnhandledRejectionFromUnhandledRejectionCallback()
     JSGlobalContextSetUnhandledRejectionCallback(context, callbackFunction, &exception);
     check(!exception, "setting unhandled rejection callback should not throw");
 
-    callFunction("(function () { Promise.reject(); })");
+    std::ignore = callFunction("(function () { Promise.reject(); })");
     check(!exception && callbackCallCount == 2, "unhandled rejection from unhandled rejection callback should also trigger the callback");
 }
 
@@ -601,10 +579,10 @@ void TestAPI::promiseEarlyHandledRejections()
     JSGlobalContextSetUnhandledRejectionCallback(context, callbackFunction, &exception);
     check(!exception, "setting unhandled rejection callback should not throw");
 
-    callFunction("(function () { const p = Promise.reject(); p.catch(() => {}); })");
+    std::ignore = callFunction("(function () { const p = Promise.reject(); p.catch(() => {}); })");
     check(!callbackCalled, "unhandled rejection callback should not be called for synchronous early-handled rejection");
 
-    callFunction("(function () { const p = Promise.reject(); Promise.resolve().then(() => { p.catch(() => {}); }); })");
+    std::ignore = callFunction("(function () { const p = Promise.reject(); Promise.resolve().then(() => { p.catch(() => {}); }); })");
     check(!callbackCalled, "unhandled rejection callback should not be called for asynchronous early-handled rejection");
 }
 
@@ -654,10 +632,10 @@ void TestAPI::markedJSValueArrayAndGC()
     auto testMarkedJSValueArray = [&] (unsigned count) {
         auto* globalObject = toJS(context);
         JSC::JSLockHolder locker(globalObject->vm());
-        JSC::MarkedJSValueRefArray values(context, count);
+        JSC::MarkedVector<JSValueRef> values(count);
         for (unsigned index = 0; index < count; ++index) {
             JSValueRef string = JSValueMakeString(context, APIString(makeString("Prefix"_s, index)));
-            values[index] = string;
+            values.append(string);
         }
         JSSynchronousGarbageCollectForDebugging(context);
         bool ok = true;
@@ -694,6 +672,32 @@ void TestAPI::classDefinitionWithJSSubclass()
     JSClassRelease(jsClass);
 }
 
+void TestAPI::classDefinitionRetainsParentClass()
+{
+    // A JSClass must retain its JSClassDefinition.parentClass. Otherwise, releasing
+    // the caller's reference to the parent leaves the child with a dangling pointer
+    // that is dereferenced when the child materializes its prototype chain.
+    JSClassDefinition parentDefinition = kJSClassDefinitionEmpty;
+    parentDefinition.className = "Parent";
+    JSClassRef parentClass = JSClassCreate(&parentDefinition);
+
+    JSClassDefinition childDefinition = kJSClassDefinitionEmpty;
+    childDefinition.className = "Child";
+    childDefinition.parentClass = parentClass;
+    JSClassRef childClass = JSClassCreate(&childDefinition);
+
+    // Drop the caller's reference to the parent. If the child did not retain it, the
+    // OpaqueJSClass is now freed and the child holds a dangling parentClass pointer.
+    JSClassRelease(parentClass);
+
+    // Making an object of the child class walks the parent chain to build the
+    // prototype, dereferencing parentClass. This is a use-after-free without the fix.
+    JSObjectRef object = JSObjectMake(context, childClass, nullptr);
+    check(JSValueIsObject(context, object), "creating an object of a class with a released parent class should succeed");
+
+    JSClassRelease(childClass);
+}
+
 void TestAPI::proxyReturnedWithJSSubclassing()
 {
     const static JSClassDefinition definition = kJSClassDefinitionEmpty;
@@ -715,7 +719,19 @@ void TestAPI::proxyReturnedWithJSSubclassing()
     JSObjectRef subclass = const_cast<JSObjectRef>(result.value());
 
     check(scriptResultIs(evaluateScript("globalThis.triggeredProxy"), JSValueMakeUndefined(context)), "creating a subclass should not have triggered the proxy");
+
+    // As testapi.c defines ASSERT_ENABLED unconditionally, we use NDEBUG here instead.
+#ifdef NDEBUG
+    // In a debug build using CLoop, the following test may fail with a stack overflow because
+    // executing its code involves 3 nested calls to CLoop::execute, which requires a very large
+    // stack frame when compiled with '-O0'. The frame size was reduced to an acceptable level by
+    // https://bugs.webkit.org/show_bug.cgi?id=295796, but it still is close to the threshold.
+    // If the failure returns, more work is needed to further reduce the frame size.
     check(functionReturnsTrue("(function (subclass, Superclass) { return subclass.__proto__ == Superclass.prototype; })", subclass, Superclass), "proxy's prototype should match Superclass.prototype");
+#else
+    UNUSED_VARIABLE(subclass);
+    UNUSED_VARIABLE(Superclass);
+#endif
 }
 
 void TestAPI::testJSObjectSetOnGlobalObjectSubclassDefinition()
@@ -1180,9 +1196,17 @@ void TestAPI::testBigInt()
     }
 }
 
+
+
+void initializeWTFForTesting(void)
+{
+    WTF::initializeMainThread();
+}
+
 void configureJSCForTesting()
 {
     JSC::Config::configureForTesting();
+    JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 }
 
 #define RUN(test) do {                                 \
@@ -1222,6 +1246,7 @@ int testCAPIViaCpp(const char* filter)
     RUN(promiseEarlyHandledRejections());
     RUN(markedJSValueArrayAndGC());
     RUN(classDefinitionWithJSSubclass());
+    RUN(classDefinitionRetainsParentClass());
     RUN(proxyReturnedWithJSSubclassing());
     RUN(testJSObjectSetOnGlobalObjectSubclassDefinition());
 
@@ -1258,3 +1283,19 @@ int testCAPIViaCpp(const char* filter)
     dataLogLn("C-API tests in C++ had ", failed.load(), " failures");
     return failed.load();
 }
+
+int testLaunchJSCFromNonMainThread(const char* filter)
+{
+    // FIXME: Support filtering for this test without triggering WTF::initializeThread.
+    if (filter)
+        return 0;
+
+    std::thread other([] {
+        TestAPI tester;
+    });
+
+    other.join();
+    return 0;
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

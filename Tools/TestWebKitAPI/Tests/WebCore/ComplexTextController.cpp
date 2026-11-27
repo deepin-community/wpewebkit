@@ -27,7 +27,9 @@
 
 #include <JavaScriptCore/InitializeThreading.h>
 #include <WebCore/ComplexTextController.h>
-#include <WebCore/FontCascade.h>
+#include <WebCore/FontCascadeInlines.h>
+#include <WebCore/FontSelector.h>
+#include <WebCore/TextRun.h>
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
 
@@ -49,7 +51,7 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceWithLeftRunInRTL)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(80);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
     auto spaceWidth = font.primaryFont().spaceWidth();
 
@@ -58,14 +60,13 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceWithLeftRunInRTL)
 
     FloatSize initialAdvance = FloatSize(-15.15625, 18.046875);
 
-    UChar characters[] = { 0x644, 0x637, 0x641, 0x627, 0x64b, 0x20 };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 6> characters { 0x644, 0x637, 0x641, 0x627, 0x64b, 0x20 };
     TextRun textRun { StringView(characters) };
-    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(21.875, 0) }, { FloatPoint() }, { 5 }, { 5 }, FloatSize(), font.primaryFont(), characters, 0, charactersLength, 5, 6, false);
-    auto run2 = ComplexTextController::ComplexTextRun::create(advances, origins, { 193, 377, 447, 431, 458 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 0, 5, false);
+    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(21.875, 0) }, { FloatPoint() }, { 5 }, { 5 }, FloatSize(), font.primaryFont(), std::span { characters }, 0, 5, 6, false);
+    auto run2 = ComplexTextController::ComplexTextRun::create(advances, origins, { 193, 377, 447, 431, 458 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 0, 5, false);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run1));
-    runs.append(WTFMove(run2));
+    runs.append(WTF::move(run1));
+    runs.append(WTF::move(run2));
     ComplexTextController controller(font, textRun, runs);
 
     float totalWidth = 0;
@@ -96,7 +97,7 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceInRTL)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(80);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
     Vector<FloatSize> advances = { FloatSize(), FloatSize(21.640625, 0.0), FloatSize(42.3046875, 0.0), FloatSize(55.8984375, 0.0), FloatSize(22.34375, 0.0) };
@@ -104,12 +105,11 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceInRTL)
 
     FloatSize initialAdvance = FloatSize(-15.15625, 18.046875);
 
-    UChar characters[] = { 0x644, 0x637, 0x641, 0x627, 0x64b };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 5> characters { 0x644, 0x637, 0x641, 0x627, 0x64b };
     TextRun textRun { StringView(characters) };
-    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 193, 377, 447, 431, 458 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 0, 5, false);
+    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 193, 377, 447, 431, 458 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 0, 5, false);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run));
+    runs.append(WTF::move(run));
     ComplexTextController controller(font, textRun, runs);
 
     float totalWidth = 0;
@@ -140,7 +140,7 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceWithLeftRunInLTR)
     FontCascadeDescription description;
     description.setOneFamily("LucidaGrande"_s);
     description.setComputedSize(80);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
     auto spaceWidth = font.primaryFont().spaceWidth();
 
@@ -149,14 +149,13 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceWithLeftRunInLTR)
 
     FloatSize initialAdvance = FloatSize(28.144531, 0);
 
-    UChar characters[] = { 0x20, 0x61, 0x20e3 };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 3> characters { 0x20, 0x61, 0x20e3 };
     TextRun textRun { StringView(characters) };
-    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(spaceWidth, 0) }, { FloatPoint() }, { 5 }, { 0 }, FloatSize(), font.primaryFont(), characters, 0, charactersLength, 0, 1, true);
-    auto run2 = ComplexTextController::ComplexTextRun::create(advances, origins, { 68, 1471 }, { 1, 2 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 1, 3, true);
+    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(spaceWidth, 0) }, { FloatPoint() }, { 5 }, { 0 }, FloatSize(), font.primaryFont(), std::span { characters }, 0, 0, 1, true);
+    auto run2 = ComplexTextController::ComplexTextRun::create(advances, origins, { 68, 1471 }, { 1, 2 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 1, 3, true);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run1));
-    runs.append(WTFMove(run2));
+    runs.append(WTF::move(run1));
+    runs.append(WTF::move(run2));
     ComplexTextController controller(font, textRun, runs);
 
     EXPECT_NEAR(controller.totalAdvance().width(), spaceWidth + 76.347656 + initialAdvance.width(), 0.0001);
@@ -183,7 +182,7 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceInLTR)
     FontCascadeDescription description;
     description.setOneFamily("LucidaGrande"_s);
     description.setComputedSize(80);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
     Vector<FloatSize> advances = { FloatSize(76.347656, 0.000000), FloatSize(0.000000, 0.000000) };
@@ -191,12 +190,11 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceInLTR)
 
     FloatSize initialAdvance = FloatSize(28.144531, 0);
 
-    UChar characters[] = { 0x61, 0x20e3 };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 2> characters { 0x61, 0x20e3 };
     TextRun textRun { StringView(characters) };
-    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 68, 1471 }, { 0, 1 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 0, 2, true);
+    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 68, 1471 }, { 0, 1 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 0, 2, true);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run));
+    runs.append(WTF::move(run));
     ComplexTextController controller(font, textRun, runs);
 
     EXPECT_NEAR(controller.totalAdvance().width(), 76.347656 + initialAdvance.width(), 0.0001);
@@ -220,21 +218,20 @@ TEST_F(ComplexTextControllerTest, InitialAdvanceInRTLNoOrigins)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(48);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
     FloatSize initialAdvance = FloatSize(4.33996383363472, 12.368896925859);
 
-    UChar characters[] = { 0x633, 0x20, 0x627, 0x650 };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 4> characters { 0x633, 0x20, 0x627, 0x650 };
     TextRun textRun { StringView(characters) };
-    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(-4.33996383363472, -12.368896925859), FloatSize(14.0397830018083, 0) }, { }, { 884, 240 }, { 3, 2 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 2, 4, false);
-    auto run2 = ComplexTextController::ComplexTextRun::create({ FloatSize(12.0, 0) }, { }, { 3 }, { 1 }, FloatSize(), font.primaryFont(), characters, 0, charactersLength, 1, 2, false);
-    auto run3 = ComplexTextController::ComplexTextRun::create({ FloatSize(43.8119349005425, 0) }, { }, { 276 }, { 0 }, FloatSize(), font.primaryFont(), characters, 0, charactersLength, 0, 1, false);
+    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(-4.33996383363472, -12.368896925859), FloatSize(14.0397830018083, 0) }, { }, { 884, 240 }, { 3, 2 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 2, 4, false);
+    auto run2 = ComplexTextController::ComplexTextRun::create({ FloatSize(12.0, 0) }, { }, { 3 }, { 1 }, FloatSize(), font.primaryFont(), std::span { characters }, 0, 1, 2, false);
+    auto run3 = ComplexTextController::ComplexTextRun::create({ FloatSize(43.8119349005425, 0) }, { }, { 276 }, { 0 }, FloatSize(), font.primaryFont(), std::span { characters }, 0, 0, 1, false);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run1));
-    runs.append(WTFMove(run2));
-    runs.append(WTFMove(run3));
+    runs.append(WTF::move(run1));
+    runs.append(WTF::move(run2));
+    runs.append(WTF::move(run3));
     ComplexTextController controller(font, textRun, runs);
 
     float totalWidth = 14.0397830018083 + 12.0 + 43.8119349005425;
@@ -266,15 +263,14 @@ TEST_F(ComplexTextControllerTest, LeftExpansion)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(48);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
-    UChar characters[] = { 'a' };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 1> characters { 'a' };
     TextRun textRun(StringView(characters), 0, 100, ExpansionBehavior::forceLeftOnly());
-    auto run = ComplexTextController::ComplexTextRun::create({ FloatSize(24, 0) }, { }, { 16 }, { 0 }, FloatSize(), font.primaryFont(), characters, 0, charactersLength, 0, 1, true);
+    auto run = ComplexTextController::ComplexTextRun::create({ FloatSize(24, 0) }, { }, { 16 }, { 0 }, FloatSize(), font.primaryFont(), std::span { characters }, 0, 0, 1, true);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run));
+    runs.append(WTF::move(run));
     ComplexTextController controller(font, textRun, runs);
 
     float totalWidth = 100 + 24;
@@ -296,17 +292,16 @@ TEST_F(ComplexTextControllerTest, VerticalAdvances)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(48);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
-    UChar characters[] = { 'a', 'b', 'c', 'd' };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 4> characters { 'a', 'b', 'c', 'd' };
     TextRun textRun { StringView(characters) };
-    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(0, 1), FloatSize(0, 2) }, { FloatPoint(0, 4), FloatPoint(0, 8) }, { 16, 17 }, { 0, 1 }, FloatSize(0, 16), font.primaryFont(), characters, 0, charactersLength, 0, 2, true);
-    auto run2 = ComplexTextController::ComplexTextRun::create({ FloatSize(0, 32), FloatSize(0, 64) }, { FloatPoint(0, 128), FloatPoint(0, 256) }, { 18, 19 }, { 2, 3 }, FloatSize(0, 512), font.primaryFont(), characters, 0, charactersLength, 2, 4, true);
+    auto run1 = ComplexTextController::ComplexTextRun::create({ FloatSize(0, 1), FloatSize(0, 2) }, { FloatPoint(0, 4), FloatPoint(0, 8) }, { 16, 17 }, { 0, 1 }, FloatSize(0, 16), font.primaryFont(), std::span { characters }, 0, 0, 2, true);
+    auto run2 = ComplexTextController::ComplexTextRun::create({ FloatSize(0, 32), FloatSize(0, 64) }, { FloatPoint(0, 128), FloatPoint(0, 256) }, { 18, 19 }, { 2, 3 }, FloatSize(0, 512), font.primaryFont(), std::span { characters }, 0, 2, 4, true);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run1));
-    runs.append(WTFMove(run2));
+    runs.append(WTF::move(run1));
+    runs.append(WTF::move(run2));
     ComplexTextController controller(font, textRun, runs);
 
     EXPECT_NEAR(controller.totalAdvance().width(), 0, 0.0001);
@@ -340,7 +335,7 @@ TEST_F(ComplexTextControllerTest, TotalWidthWithJustification)
     FontCascadeDescription description;
     description.setOneFamily("Times"_s);
     description.setComputedSize(80);
-    FontCascade font(WTFMove(description));
+    FontCascade font(WTF::move(description));
     font.update();
 
     Vector<FloatSize> advances = { FloatSize(1, 0), FloatSize(2, 0), FloatSize(4, 0), FloatSize(8, 0), FloatSize(16, 0) };
@@ -348,12 +343,11 @@ TEST_F(ComplexTextControllerTest, TotalWidthWithJustification)
 
     FloatSize initialAdvance = FloatSize();
 
-    UChar characters[] = { 0x644, ' ', 0x644, ' ', 0x644 };
-    size_t charactersLength = std::size(characters);
+    std::array<char16_t, 5> characters { 0x644, ' ', 0x644, ' ', 0x644 };
     TextRun textRun(StringView(characters), 0, 14, ExpansionBehavior::defaultBehavior(), TextDirection::RTL);
-    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 5, 6, 7, 8, 9 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), characters, 0, charactersLength, 0, 5, false);
+    auto run = ComplexTextController::ComplexTextRun::create(advances, origins, { 5, 6, 7, 8, 9 }, { 4, 3, 2, 1, 0 }, initialAdvance, font.primaryFont(), std::span { characters }, 0, 0, 5, false);
     Vector<Ref<ComplexTextController::ComplexTextRun>> runs;
-    runs.append(WTFMove(run));
+    runs.append(WTF::move(run));
     ComplexTextController controller(font, textRun, runs);
 
     EXPECT_NEAR(controller.totalAdvance().width(), 1 + 20 + 7 + 4 + 20 + 7 + 16, 0.0001);

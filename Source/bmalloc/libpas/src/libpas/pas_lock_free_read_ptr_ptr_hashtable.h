@@ -26,9 +26,10 @@
 #ifndef PAS_LOCK_FREE_READ_PTR_PTR_HASHTABLE_H
 #define PAS_LOCK_FREE_READ_PTR_PTR_HASHTABLE_H
 
-#include "pas_log.h"
 #include "pas_utils.h"
-#include <unistd.h>
+
+#if !PAS_OS(WINDOWS)
+#endif
 
 PAS_BEGIN_EXTERN_C;
 

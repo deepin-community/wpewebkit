@@ -29,24 +29,23 @@
 
 #pragma once
 
-#include "LayoutUnit.h"
+#include <WebCore/LayoutUnit.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
 class FloatingObject;
 class RenderBlockFlow;
 class RenderObject;
-class RenderStyle;
-
 struct LineSegment;
 
 class LineWidth {
 public:
-    LineWidth(RenderBlockFlow&, bool isFirstLine);
+    LineWidth(RenderBlockFlow&);
 
-    bool fitsOnLine(bool ignoringTrailingSpace = false) const;
-    bool fitsOnLineIncludingExtraWidth(float extra) const;
-    bool fitsOnLineExcludingTrailingWhitespace(float extra) const;
+    bool NODELETE fitsOnLine(bool ignoringTrailingSpace = false) const;
+    bool NODELETE fitsOnLineIncludingExtraWidth(float extra) const;
+    bool NODELETE fitsOnLineExcludingTrailingWhitespace(float extra) const;
 
     float currentWidth() const { return m_committedWidth + m_uncommittedWidth; }
     // FIXME: We should eventually replace these three functions by ones that work on a higher abstraction.
@@ -58,8 +57,7 @@ public:
     bool hasCommitted() const { return m_hasCommitted; }
     bool hasCommittedReplaced() const { return m_hasCommittedReplaced; }
 
-    void updateAvailableWidth(LayoutUnit minimumHeight = 0_lu);
-    void shrinkAvailableWidthForNewFloatIfNeeded(const FloatingObject&);
+    void updateAvailableWidth();
     void addUncommittedWidth(float delta)
     {
         m_uncommittedWidth += delta;
@@ -69,19 +67,15 @@ public:
         addUncommittedWidth(delta);
         m_hasUncommittedReplaced = true;
     }
-    void commit();
-    void fitBelowFloats(bool isFirstLine = false);
-    void setTrailingWhitespaceWidth(float collapsedWhitespace, float borderPaddingMargin = 0);
-
-    bool isFirstLine() const { return m_isFirstLine; }
+    void NODELETE commit();
+    void NODELETE setTrailingWhitespaceWidth(float collapsedWhitespace, float borderPaddingMargin = 0);
 
 private:
     void computeAvailableWidthFromLeftAndRight();
-    bool fitsOnLineExcludingTrailingCollapsedWhitespace() const;
-    void updateLineDimension(LayoutUnit newLineTop, LayoutUnit newLineWidth, float newLineLeft, float newLineRight);
-    void wrapNextToShapeOutside(bool isFirstLine);
+    bool NODELETE fitsOnLineExcludingTrailingCollapsedWhitespace() const;
+    void NODELETE updateLineDimension(LayoutUnit newLineTop, LayoutUnit newLineWidth, float newLineLeft, float newLineRight);
 
-    RenderBlockFlow& m_block;
+    const CheckedRef<RenderBlockFlow> m_block;
     float m_uncommittedWidth { 0 };
     float m_committedWidth { 0 };
     float m_trailingWhitespaceWidth { 0 };
@@ -89,7 +83,6 @@ private:
     float m_left { 0 };
     float m_right { 0 };
     float m_availableWidth { 0 };
-    bool m_isFirstLine { true };
     bool m_hasCommitted { false };
     bool m_hasCommittedReplaced { false };
     bool m_hasUncommittedReplaced { false };

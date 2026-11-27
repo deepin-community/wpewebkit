@@ -26,11 +26,10 @@
 
 #pragma once
 
-#if ENABLE(DATE_AND_TIME_INPUT_TYPES)
-
 #include "HTMLDivElement.h"
 
 #include <wtf/GregorianDateTime.h>
+#include <wtf/ValueOrReference.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -46,9 +45,11 @@ namespace WebCore {
 
 class DateComponents;
 class DateTimeFieldElement;
-class RenderStyle;
-
 struct DateTimeFieldsState;
+
+namespace Style {
+class ComputedStyle;
+}
 
 enum class DateTimePlaceholderIfNoValue : bool { No, Yes };
 
@@ -62,12 +63,14 @@ public:
     virtual bool isFieldOwnerDisabled() const = 0;
     virtual bool isFieldOwnerReadOnly() const = 0;
     virtual bool isFieldOwnerHorizontal() const = 0;
+    virtual bool didFieldOwnerTransferFocusToPicker() = 0;
+    virtual void didSuppressBlurDueToPickerFocusTransfer() = 0;
     virtual AtomString localeIdentifier() const = 0;
     virtual const GregorianDateTime& placeholderDate() const = 0;
 };
 
 class DateTimeFieldElement : public HTMLDivElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(DateTimeFieldElement);
+    WTF_MAKE_TZONE_ALLOCATED(DateTimeFieldElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DateTimeFieldElement);
 public:
     enum EventBehavior : bool { DispatchNoEvent, DispatchInputAndChangeEvents };
@@ -84,7 +87,7 @@ public:
     virtual void setValueAsInteger(int, EventBehavior = DispatchNoEvent) = 0;
     virtual void stepDown() = 0;
     virtual void stepUp() = 0;
-    virtual String value() const = 0;
+    virtual ValueOrReference<String> value() const = 0;
     virtual String placeholderValue() const = 0;
 
 protected:
@@ -92,16 +95,19 @@ protected:
     Locale& localeForOwner() const;
     AtomString localeIdentifier() const;
     void updateVisibleValue(EventBehavior);
-    virtual void adjustMinInlineSize(RenderStyle&) const = 0;
+    virtual void adjustMinInlineSize(Style::ComputedStyle&) const = 0;
     virtual int valueAsInteger() const = 0;
     virtual int placeholderValueAsInteger() const = 0;
     virtual void handleKeyboardEvent(KeyboardEvent&) = 0;
     virtual void handleBlurEvent(Event&);
 
 private:
-    std::optional<Style::ResolvedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
+    std::optional<Style::UnadjustedStyle> resolveCustomStyle(const Style::ResolutionContext&, const Style::ComputedStyle*) final;
 
     bool supportsFocus() const override;
+
+    bool transferredFocusToPicker() const final;
+    void didSuppressBlurDueToPickerFocusTransfer() final;
 
     void defaultKeyboardEventHandler(KeyboardEvent&);
     bool isFieldOwnerDisabled() const;
@@ -109,8 +115,8 @@ private:
     bool isFieldOwnerHorizontal() const;
 
     WeakPtr<DateTimeFieldElementFieldOwner> m_fieldOwner;
+
+    bool m_hadValueAtLastValueUpdate { false };
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(DATE_AND_TIME_INPUT_TYPES)

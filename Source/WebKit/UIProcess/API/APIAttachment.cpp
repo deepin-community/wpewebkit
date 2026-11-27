@@ -46,23 +46,23 @@ Attachment::Attachment(const WTF::String& identifier, WebKit::WebPageProxy& webP
 {
 }
 
-Attachment::~Attachment()
-{
-}
+Attachment::~Attachment() = default;
 
 void Attachment::updateAttributes(CompletionHandler<void()>&& callback)
 {
-    if (!m_webPage) {
+    RefPtr webPage = m_webPage.get();
+
+    if (!webPage) {
         callback();
         return;
     }
 
-    if (m_webPage->willUpdateAttachmentAttributes(*this) == WebKit::WebPageProxy::ShouldUpdateAttachmentAttributes::No) {
+    if (webPage->willUpdateAttachmentAttributes(*this) == WebKit::WebPageProxy::ShouldUpdateAttachmentAttributes::No) {
         callback();
         return;
     }
 
-    m_webPage->updateAttachmentAttributes(*this, WTFMove(callback));
+    webPage->updateAttachmentAttributes(*this, WTF::move(callback));
 }
 
 void Attachment::invalidate()

@@ -10,6 +10,7 @@ add_custom_target(TestWebKitAPI-forwarding-headers
 
 list(APPEND TestWebKit_DEPENDENCIES TestWebKitAPI-forwarding-headers)
 add_dependencies(TestWebKitAPIInjectedBundle TestWebKitAPI-forwarding-headers)
+add_dependencies(WebKitGLibAPITestsCore TestWebKitAPI-forwarding-headers)
 
 set(test_main_SOURCES generic/main.cpp)
 
@@ -17,19 +18,19 @@ set(test_main_SOURCES generic/main.cpp)
 list(APPEND TestWTF_SOURCES
     ${test_main_SOURCES}
 
+    Tests/WTF/glib/ActivityObserver.cpp
+    Tests/WTF/glib/FilePathWatcher.cpp
+    Tests/WTF/glib/GMallocString.cpp
     Tests/WTF/glib/GRefPtr.cpp
     Tests/WTF/glib/GUniquePtr.cpp
     Tests/WTF/glib/GWeakPtr.cpp
+    Tests/WTF/glib/TimeZoneGLib.cpp
     Tests/WTF/glib/WorkQueueGLib.cpp
 )
 
-list(APPEND TestWTF_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
-)
-
 # TestJavaScriptCore
-list(APPEND TestJavaScriptCore_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
+list(APPEND TestJavaScriptCore_SOURCES
+    ${test_main_SOURCES}
 )
 
 # TestWebCore
@@ -37,18 +38,24 @@ list(APPEND TestWebCore_SOURCES
     ${test_main_SOURCES}
 
     Tests/WebCore/UserAgentQuirks.cpp
+    Tests/WebCore/ImageDecoderTests.cpp
+
+    Tests/WebCore/glib/BitmapTexturePool.cpp
+    Tests/WebCore/glib/Damage.cpp
+    Tests/WebCore/glib/GraphicsContextGLTextureMapper.cpp
+    Tests/WebCore/glib/RunLoopObserver.cpp
+    Tests/WebCore/glib/SkiaCompositingLayerDamage.cpp
+
     Tests/WebCore/gstreamer/GStreamerTest.cpp
     Tests/WebCore/gstreamer/GstElementHarness.cpp
     Tests/WebCore/gstreamer/GstMappedBuffer.cpp
 )
 
 list(APPEND TestWebCore_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
     ${GSTREAMER_INCLUDE_DIRS}
     ${GSTREAMER_AUDIO_INCLUDE_DIRS}
     ${GSTREAMER_PBUTILS_INCLUDE_DIRS}
     ${GSTREAMER_VIDEO_INCLUDE_DIRS}
-    ${LIBSOUP_INCLUDE_DIRS}
 )
 
 list(APPEND TestWebCore_LIBRARIES
@@ -58,10 +65,9 @@ list(APPEND TestWebCore_LIBRARIES
 
 # TestWebKit
 list(APPEND TestWebKit_SOURCES
-    ${test_main_SOURCES}
-
     wpe/PlatformUtilitiesWPE.cpp
     wpe/PlatformWebViewWPE.cpp
+    wpe/WebKitTestMain.cpp
 )
 
 list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
@@ -69,14 +75,16 @@ list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
     ${FORWARDING_HEADERS_DIR}
 )
 
-list(APPEND TestWebKit_SYSTEM_INCLUDE_DIRECTORIES
-    ${GIO_UNIX_INCLUDE_DIRS}
-    ${GLIB_INCLUDE_DIRS}
-)
+if (ENABLE_WPE_LEGACY_API)
+    list(APPEND TestWebKit_PRIVATE_LIBRARIES WebKit::WPEToolingBackends)
+endif ()
 
-list(APPEND TestWebKit_PRIVATE_LIBRARIES
-    WebKit::WPEToolingBackends
-)
+if (ENABLE_WPE_PLATFORM)
+    list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
+        ${WPEPlatform_DERIVED_SOURCES_DIR}
+        ${WEBKIT_DIR}/WPEPlatform
+    )
+endif ()
 
 # TestWebKitAPIBase
 target_include_directories(TestWebKitAPIBase PRIVATE
@@ -91,16 +99,11 @@ target_sources(TestWebKitAPIInjectedBundle PRIVATE
 target_include_directories(TestWebKitAPIInjectedBundle PRIVATE
     ${CMAKE_SOURCE_DIR}/Source
     ${FORWARDING_HEADERS_DIR}
-    ${GLIB_INCLUDE_DIRS}
 )
 
 # TestJSC
 set(TestJSC_SOURCES
     Tests/JavaScriptCore/glib/TestJSC.cpp
-)
-
-set(TestJSC_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
 )
 
 set(TestJSC_PRIVATE_INCLUDE_DIRECTORIES
@@ -109,18 +112,25 @@ set(TestJSC_PRIVATE_INCLUDE_DIRECTORIES
     "${JavaScriptCoreGLib_DERIVED_SOURCES_DIR}/jsc"
 )
 
-set(TestJSC_LIBRARIES
-    ${GLIB_LIBRARIES}
-    ${GLIB_GMODULE_LIBRARIES}
-)
-
-set(TestJSC_FRAMEWORKS
-    JavaScriptCore
-    WTF
-)
-
-if (NOT USE_SYSTEM_MALLOC)
-    list(APPEND TestJSC_FRAMEWORKS bmalloc)
+# If developer_mode is enabled, to reduce binary bloat, link this binaries
+# against the shared libWPEWebKit library rather than embedding the object
+# files from the frameworks (statically linking).
+# See detailed explanation at Source/JavaScriptCore/shell/PlatformWPE.cmake
+if (DEVELOPER_MODE)
+    list(APPEND TestJSC_PRIVATE_INCLUDE_DIRECTORIES
+        "${JavaScriptCoreGLib_FRAMEWORK_HEADERS_DIR}"
+        "${JavaScriptCoreGLib_DERIVED_SOURCES_DIR}"
+    )
+    set(TestJSC_FRAMEWORKS WebKit)
+    set(TestJavaScriptCore_FRAMEWORKS WebKit)
+else ()
+    set(TestJSC_FRAMEWORKS
+        JavaScriptCore
+        WTF
+    )
+    if (NOT USE_SYSTEM_MALLOC)
+        list(APPEND TestJSC_FRAMEWORKS bmalloc)
+    endif ()
 endif ()
 
 set(TestJSC_DEFINITIONS

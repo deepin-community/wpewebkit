@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebPermissionControllerProxy.h"
 
+#include "MessageSenderInlines.h"
 #include "WebPageProxy.h"
 #include "WebPermissionControllerProxyMessages.h"
 #include "WebProcessProxy.h"
@@ -40,6 +41,8 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakHashSet.h>
 
+#define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, m_process->connection(), completion)
+
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebPermissionControllerProxy);
@@ -47,24 +50,35 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebPermissionControllerProxy);
 WebPermissionControllerProxy::WebPermissionControllerProxy(WebProcessProxy& process)
     : m_process(process)
 {
-    m_process.addMessageReceiver(Messages::WebPermissionControllerProxy::messageReceiverName(), *this);
+    process.addMessageReceiver(Messages::WebPermissionControllerProxy::messageReceiverName(), *this);
 }
 
 WebPermissionControllerProxy::~WebPermissionControllerProxy()
 {
-    m_process.removeMessageReceiver(Messages::WebPermissionControllerProxy::messageReceiverName());
+    m_process->removeMessageReceiver(Messages::WebPermissionControllerProxy::messageReceiverName());
+}
+
+void WebPermissionControllerProxy::ref() const
+{
+    m_process->ref();
+}
+
+void WebPermissionControllerProxy::deref() const
+{
+    m_process->deref();
 }
 
 void WebPermissionControllerProxy::query(const WebCore::ClientOrigin& clientOrigin, const WebCore::PermissionDescriptor& descriptor, std::optional<WebPageProxyIdentifier> identifier, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
 {
-    auto webPageProxy = identifier ? m_process.webPage(identifier.value()) : mostReasonableWebPageProxy(clientOrigin.topOrigin, source);
+    MESSAGE_CHECK_COMPLETION(identifier || (source == WebCore::PermissionQuerySource::SharedWorker || source == WebCore::PermissionQuerySource::ServiceWorker), completionHandler(std::nullopt));
 
+    RefPtr webPageProxy = identifier ? RefPtr { m_process->webPage(identifier.value()) } : mostReasonableWebPageProxy(clientOrigin.topOrigin, source);
     if (!webPageProxy) {
         completionHandler(WebCore::PermissionState::Prompt);
         return;
     }
 
-    webPageProxy->queryPermission(clientOrigin, descriptor, WTFMove(completionHandler));
+    webPageProxy->queryPermission(clientOrigin, descriptor, WTF::move(completionHandler));
 }
 
 RefPtr<WebPageProxy> WebPermissionControllerProxy::mostReasonableWebPageProxy(const WebCore::SecurityOriginData& topOrigin, WebCore::PermissionQuerySource source) const
@@ -83,20 +97,20 @@ RefPtr<WebPageProxy> WebPermissionControllerProxy::mostReasonableWebPageProxy(co
                 // The most reasonable webPageProxy is the newest one (the one with the greatest identifier).
                 if (webPageProxy && webPageProxy->identifier() > potentialWebPageProxy->identifier())
                     continue;
-                webPageProxy = WTFMove(potentialWebPageProxy);
+                webPageProxy = WTF::move(potentialWebPageProxy);
             }
         }
     };
 
-    Vector<Ref<WebProcessProxy>> currentProcess { Ref { m_process } };
+    Vector<Ref<WebProcessProxy>> currentProcess { m_process.get() };
     findWebPageProxy(&currentProcess);
 
     switch (source) {
     case WebCore::PermissionQuerySource::ServiceWorker:
-        findWebPageProxy(m_process.serviceWorkerClientProcesses());
+        findWebPageProxy(m_process->serviceWorkerClientProcesses());
         break;
     case WebCore::PermissionQuerySource::SharedWorker:
-        findWebPageProxy(m_process.sharedWorkerClientProcesses());
+        findWebPageProxy(m_process->sharedWorkerClientProcesses());
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -105,4 +119,11 @@ RefPtr<WebPageProxy> WebPermissionControllerProxy::mostReasonableWebPageProxy(co
     return webPageProxy;
 }
 
+std::optional<SharedPreferencesForWebProcess> WebPermissionControllerProxy::sharedPreferencesForWebProcess() const
+{
+    return m_process->sharedPreferencesForWebProcess();
+}
+
 } // namespace WebKit
+
+#undef MESSAGE_CHECK_COMPLETION

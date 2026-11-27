@@ -39,8 +39,10 @@
 #include <wtf/text/StringBuilder.h>
 
 #if HAVE(MACH_EXCEPTIONS)
-#include <dispatch/dispatch.h>
+#include <wtf/darwin/DispatchExtras.h>
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 using JSC::Options;
 
@@ -59,14 +61,14 @@ static JSValueRef currentCPUTimeAsJSFunctionCallback(JSContextRef ctx, JSObjectR
 }
 
 bool shouldTerminateCallbackWasCalled = false;
-static bool shouldTerminateCallback(JSContextRef, void*)
+static bool NODELETE shouldTerminateCallback(JSContextRef, void*)
 {
     shouldTerminateCallbackWasCalled = true;
     return true;
 }
 
 bool cancelTerminateCallbackWasCalled = false;
-static bool cancelTerminateCallback(JSContextRef, void*)
+static bool NODELETE cancelTerminateCallback(JSContextRef, void*)
 {
     cancelTerminateCallbackWasCalled = true;
     return false;
@@ -86,7 +88,7 @@ static bool extendTerminateCallback(JSContextRef ctx, void*)
 
 #if HAVE(MACH_EXCEPTIONS)
 bool dispatchTerminateCallbackCalled = false;
-static bool dispatchTermitateCallback(JSContextRef, void*)
+static bool NODELETE dispatchTermitateCallback(JSContextRef, void*)
 {
     dispatchTerminateCallbackCalled = true;
     return true;
@@ -531,7 +533,7 @@ int testExecutionTimeLimit()
             Seconds& endTimeRef = endTime;
 
             dispatch_group_t group = dispatch_group_create();
-            dispatch_group_async(group, dispatch_get_global_queue(0, 0), ^{
+            dispatch_group_async(group, globalDispatchQueueSingleton(0, 0), ^{
                 startTimeRef = CPUTime::forCurrentThread();
                 JSEvaluateScript(contextRef, scriptRef, nullptr, nullptr, 1, &exceptionRef);
                 endTimeRef = CPUTime::forCurrentThread();
@@ -564,3 +566,5 @@ int testExecutionTimeLimit()
     
     return failed;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

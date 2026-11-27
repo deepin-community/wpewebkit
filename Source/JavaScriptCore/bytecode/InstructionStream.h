@@ -26,22 +26,29 @@
 
 #pragma once
 
-#include "BytecodeIndex.h"
-#include "Instruction.h"
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/Instruction.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/Vector.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(InstructionStream);
 
+struct InstructionStreamBufferMalloc final : public InstructionStreamMalloc {
+    static constexpr ALWAYS_INLINE size_t nextCapacity(size_t capacity) { return capacity + capacity; }
+};
+
 template<typename InstructionType>
 class InstructionStream {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InstructionStream);
 
     template<typename> friend class InstructionStreamWriter;
     friend class CachedInstructionStream;
 public:
-    using InstructionBuffer = Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamMalloc>;
+    using InstructionBuffer = Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc>;
 
     size_t sizeInBytes() const
     {
@@ -53,7 +60,7 @@ public:
 private:
     template<class InstructionBuffer>
     class BaseRef {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BaseRef);
 
         template<typename> friend class InstructionStream;
 
@@ -156,12 +163,12 @@ private:
     };
 
 public:
-    inline iterator begin() const
+    inline iterator begin() const LIFETIME_BOUND
     {
         return iterator { m_instructions, 0 };
     }
 
-    inline iterator end() const
+    inline iterator end() const LIFETIME_BOUND
     {
         return iterator { m_instructions, m_instructions.size() };
     }
@@ -180,18 +187,18 @@ public:
 
     const void* rawPointer() const
     {
-        return m_instructions.data();
+        return m_instructions.span().data();
     }
 
     bool contains(InstructionType* instruction) const
     {
-        const uint8_t* pointer = bitwise_cast<const uint8_t*>(instruction);
-        return pointer >= m_instructions.data() && pointer < (m_instructions.data() + m_instructions.size());
+        auto* pointer = std::bit_cast<const uint8_t*>(instruction);
+        return pointer >= m_instructions.begin() && pointer < m_instructions.end();
     }
 
 protected:
     explicit InstructionStream(InstructionBuffer&& instructions)
-        : m_instructions(WTFMove(instructions))
+        : m_instructions(WTF::move(instructions))
     { }
 
     InstructionBuffer m_instructions;
@@ -215,7 +222,7 @@ public:
     {
         RELEASE_ASSERT(!m_instructions.size());
         RELEASE_ASSERT(!buffer.size());
-        m_instructions = WTFMove(buffer);
+        m_instructions = WTF::move(buffer);
     }
 
     inline MutableRef ref(Offset offset)
@@ -235,43 +242,24 @@ public:
         return m_position;
     }
 
-    void write(uint8_t byte)
+    template<typename... Args>
+        requires (sizeof...(Args) > 0 && (... && std::integral<Args>))
+    void write(Args... args)
     {
-        ASSERT(!m_finalized);
-        if (m_position < m_instructions.size())
-            m_instructions[m_position++] = byte;
-        else {
-            m_instructions.append(byte);
-            m_position++;
-        }
+        constexpr size_t totalSize = (sizeof(Args) + ...);
+        auto* p = static_cast<uint8_t*>(reserve<totalSize>());
+        ((WTF::unalignedStore(p, args), p += sizeof(args)), ...);
     }
 
-    void write(uint16_t h)
+    template<size_t size>
+    uint8_t* reserve()
     {
         ASSERT(!m_finalized);
-        uint8_t bytes[2];
-        std::memcpy(bytes, &h, sizeof(h));
-
-        // Though not always obvious, we don't have to invert the order of the
-        // bytes written here for CPU(BIG_ENDIAN). This is because the incoming
-        // i value is already ordered in big endian on CPU(BIG_EDNDIAN) platforms.
-        write(bytes[0]);
-        write(bytes[1]);
-    }
-
-    void write(uint32_t i)
-    {
-        ASSERT(!m_finalized);
-        uint8_t bytes[4];
-        std::memcpy(bytes, &i, sizeof(i));
-
-        // Though not always obvious, we don't have to invert the order of the
-        // bytes written here for CPU(BIG_ENDIAN). This is because the incoming
-        // i value is already ordered in big endian on CPU(BIG_EDNDIAN) platforms.
-        write(bytes[0]);
-        write(bytes[1]);
-        write(bytes[2]);
-        write(bytes[3]);
+        if ((m_position + size) > m_instructions.size())
+            m_instructions.grow(m_position + size);
+        auto* result = m_instructions.mutableSpan().data() + m_position;
+        m_position += size;
+        return result;
     }
 
     void rewind(MutableRef& ref)
@@ -285,7 +273,7 @@ public:
     {
         m_finalized = true;
         m_instructions.shrinkToFit();
-        return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTFMove(m_instructions)) };
+        return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTF::move(m_instructions)) };
     }
 
     std::unique_ptr<InstructionStream<InstructionType>> finalize(InstructionBuffer& usedBuffer)
@@ -294,11 +282,11 @@ public:
 
         InstructionBuffer resultBuffer(m_instructions.size());
         RELEASE_ASSERT(m_instructions.sizeInBytes() == resultBuffer.sizeInBytes());
-        memcpy(resultBuffer.data(), m_instructions.data(), m_instructions.sizeInBytes());
+        memcpy(resultBuffer.mutableSpan().data(), m_instructions.span().data(), m_instructions.sizeInBytes());
 
-        usedBuffer = WTFMove(m_instructions);
+        usedBuffer = WTF::move(m_instructions);
 
-        return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTFMove(resultBuffer)) };
+        return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTF::move(resultBuffer)) };
     }
 
     MutableRef ref()
@@ -357,6 +345,7 @@ private:
 
 using JSInstructionStream = InstructionStream<JSInstruction>;
 using JSInstructionStreamWriter = InstructionStreamWriter<JSInstruction>;
-using WasmInstructionStream = InstructionStream<WasmInstruction>;
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

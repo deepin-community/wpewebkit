@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2023 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,9 +28,13 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "IPCEvent.h"
+#include "ImageBufferSet.h"
+#include "ImageBufferSetIdentifier.h"
 #include "PrepareBackingStoreBuffersData.h"
-#include "RemoteImageBufferSetIdentifier.h"
+#include "RemoteGraphicsContextIdentifier.h"
+#include "RemoteImageBufferSetConfiguration.h"
 #include "RenderingUpdateID.h"
+#include "ScopedActiveMessageReceiveQueue.h"
 #include "StreamConnectionWorkQueue.h"
 #include "StreamMessageReceiver.h"
 #include <WebCore/ImageBuffer.h>
@@ -41,17 +45,18 @@
 
 namespace WebKit {
 
+class RemoteImageBufferGraphicsContext;
 class RemoteRenderingBackend;
 
-class RemoteImageBufferSet : public IPC::StreamMessageReceiver {
+class RemoteImageBufferSet : public IPC::StreamMessageReceiver, public ImageBufferSet {
 public:
-    static Ref<RemoteImageBufferSet> create(RemoteImageBufferSetIdentifier, WebCore::RenderingResourceIdentifier displayListIdentifier, RemoteRenderingBackend&);
+    static Ref<RemoteImageBufferSet> create(ImageBufferSetIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     ~RemoteImageBufferSet();
     void stopListeningForIPC();
 
     // Ensures frontBuffer is valid, either by swapping an existing back
     // buffer, or allocating a new one.
-    void ensureBufferForDisplay(ImageBufferSetPrepareBufferForDisplayInputData&, SwapBuffersDisplayRequirement&);
+    void ensureBufferForDisplay(ImageBufferSetPrepareBufferForDisplayInputData&, SwapBuffersDisplayRequirement&, bool isSync);
 
     // Initializes the contents of the new front buffer using the previous
     // frames (if applicable), clips to the dirty region, and clears the pixels
@@ -60,17 +65,21 @@ public:
 
     bool makeBuffersVolatile(OptionSet<BufferInSetType> requestedBuffers, OptionSet<BufferInSetType>& volatileBuffers, bool forcePurge);
 
+    bool isPreparingForDisplay() const { return m_context.get(); }
+
 private:
-    RemoteImageBufferSet(RemoteImageBufferSetIdentifier, WebCore::RenderingResourceIdentifier, RemoteRenderingBackend&);
+    RemoteImageBufferSet(ImageBufferSetIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
+
     void startListeningForIPC();
-    IPC::StreamConnectionWorkQueue& workQueue() const;
+    IPC::StreamConnectionWorkQueue& NODELETE workQueue() const;
 
     // IPC::StreamMessageReceiver
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 
     // Messages
-    void updateConfiguration(const WebCore::FloatSize&, WebCore::RenderingMode, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::ImageBufferPixelFormat);
-    void endPrepareForDisplay(RenderingUpdateID);
+    void updateConfiguration(const RemoteImageBufferSetConfiguration&);
+    void endPrepareForDisplay(RenderingUpdateID, CompletionHandler<void(ImageBufferSetPrepareBufferForDisplayOutputData, RenderingUpdateID)>&&);
+    void submitDrawingCommands();
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     void dynamicContentScalingDisplayList(CompletionHandler<void(std::optional<WebCore::DynamicContentScalingDisplayList>&&)>&&);
@@ -79,29 +88,13 @@ private:
 
     bool isOpaque() const
     {
-        return m_pixelFormat == WebCore::ImageBufferPixelFormat::RGB10 || m_pixelFormat == WebCore::ImageBufferPixelFormat::BGRX8;
+        return pixelFormatIsOpaque(m_configuration.bufferFormat.pixelFormat);
     }
 
-    const RemoteImageBufferSetIdentifier m_identifier;
-    const WebCore::RenderingResourceIdentifier m_displayListIdentifier;
-    RefPtr<RemoteRenderingBackend> m_backend;
-
-    RefPtr<WebCore::ImageBuffer> m_frontBuffer;
-    RefPtr<WebCore::ImageBuffer> m_backBuffer;
-    RefPtr<WebCore::ImageBuffer> m_secondaryBackBuffer;
-
-    RefPtr<WebCore::ImageBuffer> m_previousFrontBuffer;
-
-    WebCore::FloatSize m_logicalSize;
-    WebCore::RenderingMode m_renderingMode;
-    WebCore::RenderingPurpose m_purpose;
-    float m_resolutionScale { 1.0f };
-    WebCore::DestinationColorSpace m_colorSpace { WebCore::DestinationColorSpace::SRGB() };
-    WebCore::ImageBufferPixelFormat m_pixelFormat;
-    bool m_frontBufferIsCleared { false };
-    bool m_displayListCreated { false };
-
-    std::optional<WebCore::IntRect> m_previouslyPaintedRect;
+    const RemoteGraphicsContextIdentifier m_contextIdentifier;
+    const Ref<RemoteRenderingBackend> m_renderingBackend;
+    RemoteImageBufferSetConfiguration m_configuration;
+    IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferGraphicsContext> m_context;
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     WebCore::DynamicContentScalingResourceCache m_dynamicContentScalingResourceCache;

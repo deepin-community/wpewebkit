@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2011, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Tetsuharu Ohzeki <tetsuharu.ohzeki@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,30 +34,35 @@ namespace JSC { namespace Yarr {
 
 class SyntaxChecker {
 public:
-    void assertionBOL() { }
-    void assertionEOL() { }
-    void assertionWordBoundary(bool) { }
-    void atomPatternCharacter(char32_t) { }
-    void atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { }
-    void atomCharacterClassBegin(bool = false) { }
-    void atomCharacterClassAtom(UChar) { }
-    void atomCharacterClassRange(UChar, UChar) { }
-    void atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
-    void atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
-    void atomCharacterClassSetOp(CharacterClassSetOp) { }
-    void atomCharacterClassPushNested() { }
-    void atomCharacterClassPopNested() { }
-    void atomCharacterClassEnd() { }
-    void atomParenthesesSubpatternBegin(bool = true, std::optional<String> = std::nullopt) { }
-    void atomParentheticalAssertionBegin(bool, MatchDirection) { }
-    void atomParenthesesEnd() { }
-    void atomBackReference(unsigned) { }
-    void atomNamedBackReference(const String&) { }
-    void atomNamedForwardReference(const String&) { }
-    void quantifyAtom(unsigned, unsigned, bool) { }
-    void disjunction(CreateDisjunctionPurpose) { }
-    void resetForReparsing() { }
+    void NODELETE assertionBOL() { }
+    void NODELETE assertionEOL() { }
+    void NODELETE assertionWordBoundary(bool) { }
+    void NODELETE atomPatternCharacter(char32_t, bool) { }
+    void NODELETE atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { }
+    void NODELETE atomCharacterClassBegin(bool = false) { }
+    void NODELETE atomCharacterClassAtom(char16_t) { }
+    void NODELETE atomCharacterClassRange(char16_t, char16_t) { }
+    void NODELETE atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
+    void NODELETE atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
+    void NODELETE atomCharacterClassSetOp(CharacterClassSetOp) { }
+    void NODELETE atomCharacterClassPushNested(bool) { }
+    void NODELETE atomCharacterClassPopNested(bool) { }
+    void NODELETE atomCharacterClassEnd() { }
+    void NODELETE atomParenthesesSubpatternBegin(bool, std::optional<String> = std::nullopt) { }
+    void NODELETE atomParentheticalAssertionBegin(bool, MatchDirection) { }
+    void NODELETE atomParentheticalModifierBegin(OptionSet<Flags>, OptionSet<Flags>) { }
+    void NODELETE atomParenthesesEnd() { }
+    void NODELETE atomBackReference(unsigned) { }
+    void NODELETE atomNamedBackReference(const String&) { }
+    void NODELETE atomNamedForwardReference(const String&) { }
+    void NODELETE quantifyAtom(unsigned, unsigned, bool) { }
+    void NODELETE disjunction(CreateDisjunctionPurpose) { }
+    void NODELETE resetForReparsing() { }
+
+    constexpr static bool NODELETE abortedDueToError() { return false; }
+    constexpr static ErrorCode NODELETE abortErrorCode() { return ErrorCode::NoError; }
 };
+static_assert(YarrSyntaxCheckable<SyntaxChecker>);
 
 ErrorCode checkSyntax(StringView pattern, StringView flags)
 {

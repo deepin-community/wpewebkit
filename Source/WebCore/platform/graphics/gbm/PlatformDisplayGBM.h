@@ -38,11 +38,13 @@ public:
 
     virtual ~PlatformDisplayGBM();
 private:
-    PlatformDisplayGBM(std::unique_ptr<GLDisplay>&&, struct gbm_device*);
+    PlatformDisplayGBM(Ref<GLDisplay>&&, struct gbm_device*);
 
     Type type() const override { return PlatformDisplay::Type::GBM; }
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_PLATFORM_DISPLAY(PlatformDisplayGBM, GBM)
 
 #endif // USE(GBM)

@@ -45,7 +45,7 @@ class PlatformLayerDisplayDelegate final : public WebCore::GraphicsLayerContents
 public:
     static Ref<PlatformLayerDisplayDelegate> create(PlatformLayerContainer&& platformLayer)
     {
-        return adoptRef(*new PlatformLayerDisplayDelegate(WTFMove(platformLayer)));
+        return adoptRef(*new PlatformLayerDisplayDelegate(WTF::move(platformLayer)));
     }
 
     PlatformLayer* platformLayer() const final
@@ -55,7 +55,7 @@ public:
 
 private:
     PlatformLayerDisplayDelegate(PlatformLayerContainer&& platformLayer)
-        : m_platformLayer(WTFMove(platformLayer))
+        : m_platformLayer(WTF::move(platformLayer))
     {
     }
 
@@ -63,18 +63,20 @@ private:
 };
 
 class RemoteGraphicsContextGLProxyWC final : public RemoteGraphicsContextGLProxy {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RemoteGraphicsContextGLProxyWC);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteGraphicsContextGLProxyWC);
 public:
     // RemoteGraphicsContextGLProxy overrides.
     void prepareForDisplay() final;
     RefPtr<WebCore::GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() final { return m_layerContentsDisplayDelegate.ptr(); }
 private:
-    RemoteGraphicsContextGLProxyWC(const WebCore::GraphicsContextGLAttributes& attributes, WTF::SerialFunctionDispatcher& dispatcher)
-        : RemoteGraphicsContextGLProxy(attributes, dispatcher)
+    explicit RemoteGraphicsContextGLProxyWC(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)
+        : RemoteGraphicsContextGLProxy(attributes, renderingBackend)
         , m_layerContentsDisplayDelegate(PlatformLayerDisplayDelegate::create(makeUnique<WCPlatformLayerGCGL>()))
     {
     }
 
-    Ref<PlatformLayerDisplayDelegate> m_layerContentsDisplayDelegate;
+    const Ref<PlatformLayerDisplayDelegate> m_layerContentsDisplayDelegate;
     friend class RemoteGraphicsContextGLProxy;
 };
 
@@ -88,15 +90,17 @@ void RemoteGraphicsContextGLProxyWC::prepareForDisplay()
         return;
     }
     auto& [contentBuffer] = sendResult.reply();
-    if (contentBuffer)
-        static_cast<WCPlatformLayerGCGL*>(m_layerContentsDisplayDelegate->platformLayer())->addContentBufferIdentifier(*contentBuffer);
+    if (!contentBuffer)
+        return;
+    m_hasPreparedForDisplay = true;
+    static_cast<WCPlatformLayerGCGL*>(m_layerContentsDisplayDelegate->platformLayer())->addContentBufferIdentifier(*contentBuffer);
 }
 
 }
 
-Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(const WebCore::GraphicsContextGLAttributes& attributes, SerialFunctionDispatcher& dispatcher)
+Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)
 {
-    return adoptRef(*new RemoteGraphicsContextGLProxyWC(attributes, dispatcher));
+    return adoptRef(*new RemoteGraphicsContextGLProxyWC(attributes, renderingBackend));
 }
 
 }

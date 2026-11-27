@@ -27,23 +27,25 @@
 
 #if ENABLE(VIDEO)
 
-#include "HTMLVideoElement.h"
-#include "RenderMedia.h"
+#include <WebCore/RenderMedia.h>
 
 namespace WebCore {
 
+class HTMLVideoElement;
+
 class RenderVideo final : public RenderMedia {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderVideo);
+    WTF_MAKE_TZONE_ALLOCATED(RenderVideo);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderVideo);
 public:
-    RenderVideo(HTMLVideoElement&, RenderStyle&&);
+    RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& videoElement() const;
+    WEBCORE_EXPORT HTMLVideoElement& NODELETE videoElement() const;
 
-    WEBCORE_EXPORT IntRect videoBox() const;
+    IntRect videoBox() const;
+    WEBCORE_EXPORT IntRect videoBoxInRootView() const;
 
-    static IntSize defaultSize();
+    static IntSize NODELETE defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();
@@ -76,24 +78,20 @@ private:
     void paintReplaced(PaintInfo&, const LayoutPoint&) final;
 
     void layout() final;
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
     void visibleInViewportStateChanged() final;
 
-    LayoutUnit computeReplacedLogicalWidth(ShouldComputePreferred  = ComputeActual) const final;
+    LayoutUnit computeReplacedLogicalWidth(IsComputingIntrinsicSize  = IsComputingIntrinsicSize::No) const final;
     LayoutUnit minimumReplacedHeight() const final;
 
-    void updatePlayer();
+    bool updatePlayer();
 
     bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const final;
+    void invalidateLineLayout();
 
     LayoutSize m_cachedImageSize;
 };
-
-inline RenderVideo* HTMLVideoElement::renderer() const
-{
-    return downcast<RenderVideo>(HTMLMediaElement::renderer());
-}
 
 } // namespace WebCore
 

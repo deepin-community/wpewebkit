@@ -30,14 +30,12 @@
     bool ignoreInvalidMessageForTesting;
 #endif
 #if HAVE(AUDIT_TOKEN)
-    std::optional<WebKit::CoreIPCAuditToken> presentingApplicationAuditToken;
+    HashMap<WebCore::PageIdentifier, WebKit::CoreIPCAuditToken> presentingApplicationAuditTokens;
 #endif
-#if ENABLE(VP9)
-    std::optional<bool> hasVP9HardwareDecoder;
+#if PLATFORM(COCOA)
+    String applicationBundleIdentifier;
 #endif
-#if ENABLE(AV1)
-    std::optional<bool> hasAV1HardwareDecoder;
-#endif
+    std::optional<WebKit::GPUProcessMediaCodecCapabilities> mediaCodecCapabilities;
 };
 
 #endif

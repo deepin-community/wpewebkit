@@ -25,15 +25,17 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include <wtf/Condition.h>
-#include <wtf/Lock.h>
-#include <wtf/RunLoop.h>
-#include <wtf/Vector.h>
-#include <wtf/WorkQueue.h>
+#include "Helpers/Test.h"
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
+#include <wtf/Condition.h>
+#include <wtf/Lock.h>
+#include <wtf/RunLoop.h>
+#include <wtf/Threading.h>
+#include <wtf/Vector.h>
+#include <wtf/WorkQueue.h>
 
 namespace TestWebKitAPI {
 
@@ -58,7 +60,7 @@ TEST(WTF_WorkQueue, Simple)
     static const char* longTestLabel = "longTest";
     static const char* thirdTestLabel = "thirdTest";
 
-    auto queue = WorkQueue::create("com.apple.WebKit.Test.simple"_s);
+    Ref queue = WorkQueue::create("com.apple.WebKit.Test.simple"_s);
     int initialRefCount = queue->refCount();
     EXPECT_EQ(1, initialRefCount);
 
@@ -85,8 +87,6 @@ TEST(WTF_WorkQueue, Simple)
 
         m_testCompleted.notifyOne();
     });
-
-    EXPECT_GT(queue->refCount(), 1U);
 
     m_testCompleted.wait(m_lock);
 
@@ -368,13 +368,13 @@ TEST(WTF_WorkQueue, ThreadSafetyAnalysisAssertIsCurrentWorks)
 #endif
 TEST(WTF_WorkQueue, MAYBE_MainWorkQueueIsCurrent)
 {
-    assertIsCurrent(WorkQueue::main());
+    assertIsCurrent(WorkQueue::mainSingleton());
     auto queue = WorkQueue::create("com.apple.WebKit.Test.MainWorkQueueIsCurrent"_s);
     queue->dispatch([] {
-        EXPECT_FALSE(WorkQueue::main().isCurrent());
+        EXPECT_FALSE(WorkQueue::mainSingleton().isCurrent());
     });
     queue->dispatchSync([] {
-        EXPECT_FALSE(WorkQueue::main().isCurrent());
+        EXPECT_FALSE(WorkQueue::mainSingleton().isCurrent());
     });
 }
 

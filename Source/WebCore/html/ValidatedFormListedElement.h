@@ -29,10 +29,11 @@
 
 #pragma once
 
-#include "FormController.h"
-#include "FormListedElement.h"
-#include "HTMLElement.h"
-#include "ValidationMessage.h"
+#include <WebCore/FormController.h>
+#include <WebCore/FormListedElement.h>
+#include <WebCore/HTMLElement.h>
+#include <WebCore/ValidationMessage.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/TriState.h>
 
 namespace WebCore {
@@ -40,25 +41,25 @@ namespace WebCore {
 class HTMLMaybeFormAssociatedCustomElement;
 
 class ValidatedFormListedElement : public FormListedElement {
+    WTF_MAKE_TZONE_ALLOCATED(ValidatedFormListedElement);
     WTF_MAKE_NONCOPYABLE(ValidatedFormListedElement);
-    WTF_MAKE_FAST_ALLOCATED;
     friend class DelayedUpdateValidityScope;
     friend class HTMLMaybeFormAssociatedCustomElement;
 public:
-    ValidatedFormListedElement(HTMLFormElement*);
+    ValidatedFormListedElement();
     virtual ~ValidatedFormListedElement();
 
     // "willValidate" means "is a candidate for constraint validation".
     WEBCORE_EXPORT bool willValidate() const override;
     void updateVisibleValidationMessage(Ref<HTMLElement> validationAnchor);
     void hideVisibleValidationMessage();
-    WEBCORE_EXPORT bool checkValidity(Vector<RefPtr<ValidatedFormListedElement>>* unhandledInvalidControls = nullptr);
+    WEBCORE_EXPORT bool checkValidity(Vector<Ref<ValidatedFormListedElement>>* unhandledInvalidControls = nullptr);
     bool reportValidity();
     RefPtr<HTMLElement> focusableValidationAnchorElement();
     void reportNonFocusableControlError();
     WEBCORE_EXPORT void focusAndShowValidationMessage(Ref<HTMLElement> validationAnchor);
     bool isShowingValidationMessage() const;
-    WEBCORE_EXPORT bool isFocusingWithValidationMessage() const;
+    WEBCORE_EXPORT bool NODELETE isFocusingWithValidationMessage() const;
     // This must be called when a validation constraint or control value is changed.
     void updateValidity();
     WEBCORE_EXPORT void setCustomValidity(const String&) override;
@@ -74,7 +75,7 @@ public:
     // This must be called any time the result of willValidate() has changed.
     bool isValidFormControlElement() const { return m_isValid; }
 
-    bool isEnumeratable() const override { return false; }
+    bool NODELETE isEnumeratable() const override { return false; }
 
     bool wasInteractedWithSinceLastFormSubmitEvent() const { return m_wasInteractedWithSinceLastFormSubmitEvent; }
     void setInteractedWithSinceLastFormSubmitEvent(bool);
@@ -98,11 +99,11 @@ protected:
     void updateWillValidateAndValidity();
     bool disabledByAncestorFieldset() const { return m_disabledByAncestorFieldset; }
 
-    bool validationMessageShadowTreeContains(const Node&) const;
+    bool NODELETE validationMessageShadowTreeContains(const Node&) const;
 
-    void insertedIntoAncestor(Node::InsertionType, ContainerNode&);
-    void didFinishInsertingNode();
-    void removedFromAncestor(Node::RemovalType, ContainerNode&);
+    void insertionSteps(Node::InsertionType, ContainerNode&);
+    void postConnectionSteps();
+    void removingSteps(Node::RemovalType, ContainerNode&);
     void parseAttribute(const QualifiedName&, const AtomString&);
     void parseDisabledAttribute(const AtomString&);
     void parseReadOnlyAttribute(const AtomString&);
@@ -115,19 +116,20 @@ protected:
     void formWillBeDestroyed() final;
     bool belongsToFormThatIsBeingDestroyed() const { return m_belongsToFormThatIsBeingDestroyed; }
 
-    void setDataListAncestorState(TriState);
+    void NODELETE setDataListAncestorState(TriState);
     void syncWithFieldsetAncestors(ContainerNode* insertionNode);
     void restoreFormControlStateIfNecessary();
 
+    virtual void setDisabledInternal(bool disabled, bool disabledByAncestorFieldset);
+
 private:
     bool computeIsDisabledByFieldsetAncestor() const;
-    void setDisabledInternal(bool disabled, bool disabledByAncestorFieldset);
     virtual HTMLElement* validationAnchorElement() = 0;
 
     void startDelayingUpdateValidity() { ++m_delayedUpdateValidityCount; }
     void endDelayingUpdateValidity();
 
-    std::unique_ptr<ValidationMessage> m_validationMessage;
+    RefPtr<ValidationMessage> m_validationMessage;
 
     // Cache of validity()->valid().
     // But "candidate for constraint validation" doesn't affect isValid.
@@ -145,7 +147,7 @@ private:
     bool m_hasReadOnlyAttribute : 1 { false };
     bool m_wasInteractedWithSinceLastFormSubmitEvent : 1 { false };
     bool m_belongsToFormThatIsBeingDestroyed : 1 { false };
-    bool m_isFocusingWithValidationMessage { false };
+    bool m_isFocusingWithValidationMessage : 1 { false };
 
     mutable TriState m_isInsideDataList : 2 { TriState::Indeterminate };
 
@@ -154,19 +156,19 @@ private:
 
 class DelayedUpdateValidityScope {
 public:
-    DelayedUpdateValidityScope(ValidatedFormListedElement& element)
+    explicit DelayedUpdateValidityScope(ValidatedFormListedElement& element)
         : m_element { element }
     {
-        m_element.startDelayingUpdateValidity();
+        m_element->startDelayingUpdateValidity();
     }
     
     ~DelayedUpdateValidityScope()
     {
-        m_element.endDelayingUpdateValidity();
+        m_element->endDelayingUpdateValidity();
     }
 
 private:
-    ValidatedFormListedElement& m_element;
+    const Ref<ValidatedFormListedElement> m_element;
 };
 
 } // namespace WebCore

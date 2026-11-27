@@ -1,8 +1,17 @@
+if (ENABLE_MALLOC_HEAP_BREAKDOWN AND NOT APPLE)
+    include(MallocHeapBreakdown.cmake)
+endif ()
+
 set(WTF_PUBLIC_HEADERS
+    AbstractCanMakeCheckedPtr.h
+    AbstractRefCounted.h
+    AbstractRefCountedAndCanMakeWeakPtr.h
+    AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h
+    AllocSpanMixin.h
     ASCIICType.h
     AccessibleAddress.h
     AggregateLogger.h
-    Algorithms.h
+    AlignedStorage.h
     AnsiColors.h
     ApproximateTime.h
     ArgumentCoder.h
@@ -10,6 +19,7 @@ set(WTF_PUBLIC_HEADERS
     Atomics.h
     AutodrainedPool.h
     AutomaticThread.h
+    AvailableMemory.h
     BackwardsGraph.h
     Bag.h
     BagToHashMap.h
@@ -19,6 +29,8 @@ set(WTF_PUBLIC_HEADERS
     BlockPtr.h
     BloomFilter.h
     BooleanLattice.h
+    Borrow.h
+    BorrowedBytes.h
     Box.h
     BoxPtr.h
     Brigand.h
@@ -27,13 +39,13 @@ set(WTF_PUBLIC_HEADERS
     ButterflyArray.h
     ByteOrder.h
     CPUTime.h
-    CanMakeWeakPtr.h
     CagedPtr.h
     CagedUniquePtr.h
     CallbackAggregator.h
+    CanBorrow.h
+    CanMakeWeakPtr.h
     CancellableTask.h
     CheckedArithmetic.h
-    CheckedBoolean.h
     CheckedPtr.h
     CheckedRef.h
     ClockType.h
@@ -44,6 +56,8 @@ set(WTF_PUBLIC_HEADERS
     CompactRefPtr.h
     CompactRefPtrTuple.h
     CompactUniquePtrTuple.h
+    CompactVariant.h
+    CompactVariantOperations.h
     CompilationThread.h
     Compiler.h
     CompletionHandler.h
@@ -51,6 +65,9 @@ set(WTF_PUBLIC_HEADERS
     ConcurrentPtrHashSet.h
     ConcurrentVector.h
     Condition.h
+    ContinuousApproximateTime.h
+    ContinuousTime.h
+    CoroutineUtilities.h
     CountingLock.h
     CrossThreadCopier.h
     CrossThreadQueue.h
@@ -58,6 +75,7 @@ set(WTF_PUBLIC_HEADERS
     CrossThreadTaskHandler.h
     CryptographicUtilities.h
     CryptographicallyRandomNumber.h
+    CurrentThread.h
     DataLog.h
     DataMutex.h
     DataRef.h
@@ -66,11 +84,11 @@ set(WTF_PUBLIC_HEADERS
     DebugUtilities.h
     DeferrableRefCounted.h
     Deque.h
-    DisallowCType.h
     Dominators.h
     DoublyLinkedList.h
     EmbeddedFixedVector.h
     EnumClassOperatorOverloads.h
+    EnumSet.h
     EnumTraits.h
     EnumeratedArray.h
     Expected.h
@@ -81,25 +99,30 @@ set(WTF_PUBLIC_HEADERS
     FastFloat.h
     FastMalloc.h
     FastTLS.h
+    FileHandle.h
+    FileLockMode.h
     FilePrintStream.h
     FileSystem.h
     FixedBitVector.h
     FixedVector.h
     FixedWidthDouble.h
+    FlatteningVariantAdaptor.h
     FlipBytes.h
     Float16.h
     ForbidHeapAllocation.h
+    FormattedLogging.h
     Forward.h
     Function.h
     FunctionDispatcher.h
     FunctionPtr.h
     FunctionTraits.h
+    GenerationalSet.h
     GenericHashKey.h
     GenericTimeMixin.h
     GetPtr.h
-    Gigacage.h
     GlobalVersion.h
     GraphNodeWorklist.h
+    GraphOrdering.h
     GregorianDateTime.h
     HashCountedSet.h
     HashFunctions.h
@@ -113,25 +136,29 @@ set(WTF_PUBLIC_HEADERS
     HexNumber.h
     Identified.h
     Indenter.h
+    IndexedRange.h
     IndexKeyType.h
     IndexMap.h
     IndexSet.h
     IndexSparseSet.h
     IndexedContainerIterator.h
     InlineASM.h
+    InlineMap.h
+    InlineWeakPtr.h
+    InlineWeakRef.h
     Insertion.h
     InstanceCounted.h
     Int128.h
     InterferenceGraph.h
-    IsoMalloc.h
-    IsoMallocInlines.h
+    IntervalSet.h
+    IsIncreasing.h
     IterationStatus.h
-    IteratorAdaptors.h
     IteratorRange.h
     JSONValues.h
     JSValueMalloc.h
     KeyValuePair.h
     LEBDecoder.h
+    LLVMProfilingUtils.h
     Language.h
     LazyRef.h
     LazyUniqueRef.h
@@ -156,26 +183,33 @@ set(WTF_PUBLIC_HEADERS
     LoggingHashSet.h
     LoggingHashTraits.h
     MachSendRight.h
+    MachSendRightAnnotated.h
     MainThread.h
-    MainThreadData.h
     MainThreadDispatcher.h
+    MallocCommon.h
     MallocPtr.h
+    MallocSpan.h
+    MappedFileData.h
     Markable.h
     MathExtras.h
     MediaTime.h
+    MemoryDump.h
     MemoryFootprint.h
     MemoryPressureHandler.h
     MessageQueue.h
     MetaAllocator.h
     MetaAllocatorHandle.h
+    MmapSpan.h
     MonotonicTime.h
+    module.modulemap
     NakedPtr.h
-    NakedRef.h
     NativePromise.h
     NaturalLoops.h
     NeverDestroyed.h
     NoLock.h
     NoTailCalls.h
+    NoVirtualDestructorBase.h
+    Nonallocatable.h
     Noncopyable.h
     Nonmovable.h
     NotFound.h
@@ -186,9 +220,16 @@ set(WTF_PUBLIC_HEADERS
     ObjCRuntimeExtras.h
     ObjectIdentifier.h
     Observer.h
+    OptionCountedSet.h
     OptionSet.h
+    OptionalOrReference.h
     OptionSetHash.h
     OrderMaker.h
+    OrderedHashMap.h
+    OrderedHashSet.h
+    OrderedHashTable.h
+    OverflowHandler.h
+    OverflowPolicy.h
     Packed.h
     PackedRef.h
     PackedRefPtr.h
@@ -207,9 +248,6 @@ set(WTF_PUBLIC_HEADERS
     PlatformCPU.h
     PlatformEnable.h
     PlatformEnableCocoa.h
-    PlatformEnableGlib.h
-    PlatformEnablePlayStation.h
-    PlatformEnableWin.h
     PlatformHave.h
     PlatformLegacy.h
     PlatformOS.h
@@ -217,14 +255,17 @@ set(WTF_PUBLIC_HEADERS
     PlatformUse.h
     PointerComparison.h
     PointerPreparations.h
+    PreciseSum.h
     PrintStream.h
     PriorityQueue.h
     ProcessID.h
+    ProcessMemoryStatus.h
     ProcessPrivilege.h
     PtrTag.h
     RAMSize.h
     RandomDevice.h
     Range.h
+    RangeAdaptors.h
     RangeSet.h
     RawHex.h
     RawPointer.h
@@ -234,31 +275,46 @@ set(WTF_PUBLIC_HEADERS
     RecursableLambda.h
     RecursiveLockAdapter.h
     RedBlackTree.h
+    ReducedResolutionSeconds.h
     Ref.h
+    RefCountable.h
+    RefCountDebugger.h
     RefCounted.h
+    RefCountedAndCanMakeWeakPtr.h
     RefCountedFixedVector.h
-    RefCountedLeakCounter.h
+    RefCountedWithInlineWeakPtr.h
     RefCounter.h
     RefPtr.h
+    RefTrackerMixin.h
     RefVector.h
     ReferenceWrapperVector.h
     ResourceUsage.h
     RetainPtr.h
+    RetainRef.h
     RobinHoodHashMap.h
     RobinHoodHashSet.h
     RobinHoodHashTable.h
     RunLoop.h
+    RuntimeApplicationChecks.h
     SHA1.h
     SIMDHelpers.h
     SIMDUTF.h
+    SSACalculator.h
     SafeStrerror.h
-    SaturatedArithmetic.h
+    SaturatingArithmetic.h
     SchedulePair.h
     Scope.h
     ScopedLambda.h
+    ScopedLeakSanitizerDisabler.h
+    ScopedPrintStream.h
     Seconds.h
     SegmentedVector.h
     SentinelLinkedList.h
+    SequenceLocked.h
+    SequesteredAllocator.h
+    SequesteredAutomaticThread.h
+    SequesteredImmortalHeap.h
+    SequesteredMalloc.h
     SetForScope.h
     SharedTask.h
     SignedPtr.h
@@ -267,13 +323,18 @@ set(WTF_PUBLIC_HEADERS
     SingleThreadIntegralWrapper.h
     SinglyLinkedList.h
     SinglyLinkedListWithTail.h
+    UniquelyOwned.h
+    UniquelyOwnedPtr.h
     SixCharacterHash.h
     SmallMap.h
     SmallSet.h
     SoftLinking.h
     SortedArrayMap.h
     SpanningTree.h
+    SparseBitVector.h
     Spectrum.h
+    SpinBackoff.h
+    StackAllocation.h
     StackBounds.h
     StackCheck.h
     StackPointer.h
@@ -292,10 +353,12 @@ set(WTF_PUBLIC_HEADERS
     StdUnorderedSet.h
     Stopwatch.h
     StreamBuffer.h
-    StringExtras.h
     StringHashDumpContext.h
     StringPrintStream.h
+    StructDump.h
     SuspendableWorkQueue.h
+    SwiftBridging.h
+    SwiftCXXThunk.h
     SynchronizedFixedQueue.h
     SystemFree.h
     SystemMalloc.h
@@ -303,18 +366,23 @@ set(WTF_PUBLIC_HEADERS
     TZoneMalloc.h
     TZoneMallocInlines.h
     TaggedArrayStoragePtr.h
+    TaggedPtr.h
     ThreadAssertions.h
     ThreadGroup.h
     ThreadMessage.h
+    ThreadSafeLazyUniquePtr.h
     ThreadSafetyAnalysis.h
     ThreadSafeRefCounted.h
+    ThreadSafeRefCountedWithSuppressingSaferCPPChecking.h
     ThreadSafeWeakHashSet.h
     ThreadSafeWeakPtr.h
     ThreadSanitizerSupport.h
     ThreadSpecific.h
     Threading.h
+    ThreadingEnums.h
     ThreadingPrimitives.h
     TimeWithDynamicClockType.h
+    TimeZone.h
     TimingScope.h
     TinyLRUCache.h
     TinyPtrSet.h
@@ -329,21 +397,27 @@ set(WTF_PUBLIC_HEADERS
     URLParser.h
     UUID.h
     UnalignedAccess.h
-    Unexpected.h
+    UnbarrieredMonotonicTime.h
     UniStdExtras.h
     UnionFind.h
     UniqueArray.h
     UniqueRef.h
     UniqueRefVector.h
     VMTags.h
+    ValidatedReinterpretCast.h
     ValueCheck.h
+    ValueOrReference.h
+    Variant.h
+    VariantExtras.h
+    VariantList.h
+    VariantListOperations.h
     Vector.h
-    VectorHash.h
     VectorTraits.h
     WTFConfig.h
     WTFProcess.h
     WTFSemaphore.h
     WallTime.h
+    WasmSIMD128.h
     WeakHashCountedSet.h
     WeakHashMap.h
     WeakHashSet.h
@@ -359,6 +433,7 @@ set(WTF_PUBLIC_HEADERS
     WordLock.h
     WorkQueue.h
     WorkerPool.h
+    ZippedRange.h
     dtoa.h
 
     dragonbox/dragonbox.h
@@ -386,15 +461,7 @@ set(WTF_PUBLIC_HEADERS
     dtoa/strtod.h
     dtoa/utils.h
 
-    fast_float/ascii_number.h
-    fast_float/bigint.h
-    fast_float/decimal_to_binary.h
-    fast_float/digit_comparison.h
     fast_float/fast_float.h
-    fast_float/fast_table.h
-    fast_float/float_common.h
-    fast_float/parse_number.h
-    fast_float/simple_decimal_conversion.h
 
     persistence/PersistentCoders.h
     persistence/PersistentDecoder.h
@@ -416,6 +483,7 @@ set(WTF_PUBLIC_HEADERS
     text/AtomStringTable.h
     text/Base64.h
     text/CString.h
+    text/CStringView.h
     text/CharacterProperties.h
     text/CodePointIterator.h
     text/ConversionMode.h
@@ -423,14 +491,17 @@ set(WTF_PUBLIC_HEADERS
     text/ExternalStringImpl.h
     text/FastCharacterComparison.h
     text/IntegerToStringConversion.h
-    text/LChar.h
+    text/Latin1Character.h
     text/LineEnding.h
     text/MakeString.h
     text/NullTextBreakIterator.h
     text/OrdinalNumber.h
+    text/ParsingUtilities.h
+    text/RapidHash.h
     text/StringBuffer.h
     text/StringBuilder.h
     text/StringBuilderInternals.h
+    text/StringBuilderJSON.h
     text/StringCommon.h
     text/StringConcatenate.h
     text/StringConcatenateNumbers.h
@@ -438,7 +509,6 @@ set(WTF_PUBLIC_HEADERS
     text/StringHasher.h
     text/StringHasherInlines.h
     text/SuperFastHash.h
-    text/WYHash.h
     text/StringImpl.h
     text/StringParsingBuffer.h
     text/StringSearch.h
@@ -455,6 +525,7 @@ set(WTF_PUBLIC_HEADERS
     text/WTFString.h
 
     text/icu/TextBreakIteratorICU.h
+    text/icu/UnicodeExtras.h
     text/icu/UTextProvider.h
     text/icu/UTextProviderLatin1.h
     text/icu/UTextProviderUTF16.h
@@ -474,19 +545,24 @@ set(WTF_SOURCES
     ApproximateTime.cpp
     Assertions.cpp
     AutomaticThread.cpp
+    AvailableMemory.cpp
     BitVector.cpp
     BloomFilter.cpp
     CPUTime.cpp
     ClockType.cpp
     CodePtr.cpp
+    CompactPtr.cpp
     CompilationThread.cpp
     ConcurrentBuffer.cpp
     ConcurrentPtrHashSet.cpp
+    ContinuousApproximateTime.cpp
+    ContinuousTime.cpp
     CountingLock.cpp
     CrossThreadCopier.cpp
     CrossThreadTaskHandler.cpp
     CryptographicUtilities.cpp
     CryptographicallyRandomNumber.cpp
+    CurrentThread.cpp
     CurrentTime.cpp
     DataLog.cpp
     DateMath.cpp
@@ -495,10 +571,10 @@ set(WTF_SOURCES
     FastBitVector.cpp
     FastFloat.cpp
     FastMalloc.cpp
+    FileHandle.cpp
     FilePrintStream.cpp
     FileSystem.cpp
     FunctionDispatcher.cpp
-    Gigacage.cpp
     GlobalVersion.cpp
     GregorianDateTime.cpp
     HashTable.cpp
@@ -515,6 +591,7 @@ set(WTF_SOURCES
     Logging.cpp
     MainThread.cpp
     MainThreadDispatcher.cpp
+    MallocCommon.cpp
     MediaTime.cpp
     MemoryPressureHandler.cpp
     MetaAllocator.cpp
@@ -527,19 +604,25 @@ set(WTF_SOURCES
     ParallelHelperPool.cpp
     ParallelJobsGeneric.cpp
     ParkingLot.cpp
+    PreciseSum.cpp
     PrintStream.cpp
     ProcessPrivilege.cpp
     RAMSize.cpp
     RandomDevice.cpp
     ReadWriteLock.cpp
-    RefCounted.cpp
-    RefCountedLeakCounter.cpp
+    RefCountDebugger.cpp
+    RefTrackerMixin.cpp
     RunLoop.cpp
+    RuntimeApplicationChecks.cpp
     SHA1.cpp
     SIMDUTF.cpp
     SafeStrerror.cpp
     Seconds.cpp
     SegmentedVector.cpp
+    SequesteredAllocator.cpp
+    SequesteredAutomaticThread.cpp
+    SequesteredImmortalHeap.cpp
+    SequesteredMalloc.cpp
     SixCharacterHash.cpp
     SmallSet.cpp
     StackBounds.cpp
@@ -553,11 +636,13 @@ set(WTF_SOURCES
     ThreadMessage.cpp
     Threading.cpp
     TimeWithDynamicClockType.cpp
+    TimeZone.cpp
     TimingScope.cpp
     URL.cpp
     URLHelpers.cpp
     URLParser.cpp
     UUID.cpp
+    UnbarrieredMonotonicTime.cpp
     UniqueArray.cpp
     Vector.cpp
     WTFAssertions.cpp
@@ -592,6 +677,7 @@ set(WTF_SOURCES
     text/AtomStringTable.cpp
     text/Base64.cpp
     text/CString.cpp
+    text/CStringView.cpp
     text/ExternalStringImpl.cpp
     text/LineEnding.cpp
     text/StringBuffer.cpp
@@ -604,8 +690,10 @@ set(WTF_SOURCES
     text/SymbolRegistry.cpp
     text/TextBreakIterator.cpp
     text/TextStream.cpp
+    text/UniquedStringImpl.cpp
     text/WTFString.cpp
 
+    text/icu/UnicodeExtras.cpp
     text/icu/UTextProvider.cpp
     text/icu/UTextProviderLatin1.cpp
     text/icu/UTextProviderUTF16.cpp
@@ -637,38 +725,57 @@ elseif (APPLE)
 
     list(APPEND WTF_PUBLIC_HEADERS
         cf/CFURLExtras.h
+        cf/NotificationCenterCF.h
         cf/TypeCastsCF.h
         cf/VectorCF.h
 
+        cocoa/AuditToken.h
         cocoa/CrashReporter.h
         cocoa/Entitlements.h
+        cocoa/NSStringExtras.h
         cocoa/NSURLExtras.h
         cocoa/RuntimeApplicationChecksCocoa.h
         cocoa/SoftLinking.h
+        cocoa/SpanCocoa.h
         cocoa/TollFreeBridging.h
         cocoa/TypeCastsCocoa.h
         cocoa/VectorCocoa.h
 
+        darwin/DispatchExtras.h
+        darwin/DispatchOSObject.h
+        darwin/LibraryPathDiagnostics.h
+        darwin/NetworkOSObject.h
         darwin/OSLogPrintStream.h
+        darwin/TypeCastsOSObject.h
         darwin/WeakLinking.h
+        darwin/XPCExtras.h
+        darwin/XPCObjectPtr.h
 
         spi/cf/CFBundleSPI.h
+        spi/cf/CFPrivSPI.h
+        spi/cf/CFRunLoopSPI.h
         spi/cf/CFStringSPI.h
 
+        spi/cocoa/BOMSPI.h
         spi/cocoa/CFXPCBridgeSPI.h
         spi/cocoa/CrashReporterClientSPI.h
+        spi/cocoa/IOReturnSPI.h
         spi/cocoa/IOSurfaceSPI.h
+        spi/cocoa/IOTypesSPI.h
         spi/cocoa/MachVMSPI.h
         spi/cocoa/NSLocaleSPI.h
         spi/cocoa/NSObjCRuntimeSPI.h
+        spi/cocoa/OSLogSPI.h
         spi/cocoa/SecuritySPI.h
+        spi/cocoa/XTSPI.h
         spi/cocoa/objcSPI.h
 
-        spi/darwin/AbortWithReasonSPI.h
         spi/darwin/CodeSignSPI.h
         spi/darwin/DataVaultSPI.h
+        spi/darwin/DispatchSPI.h
         spi/darwin/OSVariantSPI.h
         spi/darwin/ProcessMemoryFootprint.h
+        spi/darwin/ReasonSPI.h
         spi/darwin/SandboxSPI.h
         spi/darwin/XPCSPI.h
         spi/darwin/dyldSPI.h
@@ -677,6 +784,11 @@ elseif (APPLE)
 
         text/cf/StringConcatenateCF.h
         text/cf/TextBreakIteratorCF.h
+        text/cf/TextBreakIteratorCFCharacterCluster.h
+        text/cf/TextBreakIteratorCFStringTokenizer.h
+
+        text/cocoa/ContextualizedCFString.h
+        text/cocoa/ContextualizedNSString.h
     )
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_PUBLIC_HEADERS
@@ -707,8 +819,9 @@ set(WTF_LIBRARIES
     ICU::uc
 )
 
-if (NOT USE_SYSTEM_MALLOC)
-    set(WTF_FRAMEWORKS bmalloc)
+set(WTF_FRAMEWORKS bmalloc)
+if (USE_APPLE_INTERNAL_SDK)
+    list(APPEND WTF_FRAMEWORKS WebKitAdditions)
 endif ()
 
 if (ATOMICS_REQUIRE_LIBATOMIC)
@@ -727,13 +840,35 @@ set(WTF_INTERFACE_DEPENDENCIES WTF_CopyHeaders)
 
 WEBKIT_FRAMEWORK_DECLARE(WTF)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WTF)
 
 WEBKIT_COPY_FILES(WTF_CopyHeaders
-    DESTINATION ${WTF_FRAMEWORK_HEADERS_DIR}/wtf
+    PRUNE_STALE
+    DESTINATION ${WTF_HEADERS_DIR}
     FILES ${WTF_PUBLIC_HEADERS}
 )
 
+if (NOT APPLE AND SWIFT_REQUIRED)
+    # module.modulemap has "umbrella spi" for the wtf.SPI submodule; Clang requires
+    # the umbrella directory to be non-empty or it fails with "cannot create includes file".
+    # Provide a stub header so the directory has at least one entry.
+    file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/spi")
+    file(WRITE "${WTF_HEADERS_DIR}/spi/wtf_spi_stub.h" "")
+
+    # module.modulemap declares an explicit `WebCoreThread` submodule referencing
+    # ios/WebCoreThread.h, which is Cocoa-only. Clang validates header existence
+    # when parsing the modulemap even for unused explicit submodules, so provide
+    # an empty stub.
+    file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/ios")
+    file(WRITE "${WTF_HEADERS_DIR}/ios/WebCoreThread.h" "")
+endif ()
+
 WEBKIT_FRAMEWORK(WTF)
+
+# WTF is statically linked into JavaScriptCore, so it uses JSC's PGO profile.
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKIT_TARGET_USE_PGO(WTF PROFILE JavaScriptCore)
+endif ()
 
 if (MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /SUBSYSTEM:WINDOWS")
@@ -745,15 +880,18 @@ else ()
     set_source_files_properties(
         SIMDUTF.cpp
         text/Base64.cpp
+        text/StringImpl.cpp
+        unicode/UTF8Conversion.cpp
+        text/StringCommon.cpp
         PROPERTIES COMPILE_FLAGS "-Wno-error=undef -Wno-undef")
 endif ()
 
 file(MAKE_DIRECTORY ${WTF_SCRIPTS_DIR})
 
-message(STATUS "Copying generate-unified-source-bundles.rb to: ${WTF_SCRIPTS_DIR}")
+message(STATUS "Copying generate-unified-source-bundles.py to: ${WTF_SCRIPTS_DIR}")
 
 file(COPY
-    ../Scripts/generate-unified-source-bundles.rb
+    ../Scripts/generate-unified-source-bundles.py
     DESTINATION ${WTF_SCRIPTS_DIR}
 )
 

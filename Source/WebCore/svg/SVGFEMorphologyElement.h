@@ -23,6 +23,7 @@
 
 #include "FEMorphology.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -45,7 +46,7 @@ struct SVGPropertyTraits<MorphologyOperatorType> {
         return emptyString();
     }
 
-    static MorphologyOperatorType fromString(const String& value)
+    static MorphologyOperatorType fromString(SVGElement&, const String& value)
     {
         if (value == "erode"_s)
             return MorphologyOperatorType::Erode;
@@ -56,7 +57,7 @@ struct SVGPropertyTraits<MorphologyOperatorType> {
 };
 
 class SVGFEMorphologyElement final : public SVGFilterPrimitiveStandardAttributes {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFEMorphologyElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFEMorphologyElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFEMorphologyElement);
 public:
     static Ref<SVGFEMorphologyElement> create(const QualifiedName&, Document&);
@@ -71,10 +72,10 @@ public:
     SVGAnimatedNumber& radiusXAnimated() { return m_radiusX; }
     SVGAnimatedNumber& radiusYAnimated() { return m_radiusY; }
 
+    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFEMorphologyElement, SVGFilterPrimitiveStandardAttributes>;
+
 private:
     SVGFEMorphologyElement(const QualifiedName&, Document&);
-
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFEMorphologyElement, SVGFilterPrimitiveStandardAttributes>;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -85,10 +86,10 @@ private:
     IntOutsets outsets(const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits) const override;
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedEnumeration> m_svgOperator { SVGAnimatedEnumeration::create(this, MorphologyOperatorType::Erode) };
-    Ref<SVGAnimatedNumber> m_radiusX { SVGAnimatedNumber::create(this) };
-    Ref<SVGAnimatedNumber> m_radiusY { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_svgOperator { SVGAnimatedEnumeration::create(this, MorphologyOperatorType::Erode) };
+    const Ref<SVGAnimatedNumber> m_radiusX { SVGAnimatedNumber::create(this) };
+    const Ref<SVGAnimatedNumber> m_radiusY { SVGAnimatedNumber::create(this) };
 };
 
 } // namespace WebCore

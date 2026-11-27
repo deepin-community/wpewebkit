@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,13 +55,13 @@ public:
 
     virtual ~RemoteCompositorIntegrationProxy();
 
-    RemoteGPUProxy& parent() { return m_parent; }
-    RemoteGPUProxy& root() { return m_parent; }
+    RemoteGPUProxy& parent() const { return m_parent; }
+    RemoteGPUProxy& root() const { return m_parent; }
 
     void setPresentationContext(RemotePresentationContextProxy& presentationContext)
     {
         ASSERT(!m_presentationContext);
-        m_presentationContext = &presentationContext;
+        m_presentationContext = presentationContext;
     }
 
     void paintCompositedResultsToCanvas(WebCore::ImageBuffer&, uint32_t) final;
@@ -77,31 +77,38 @@ private:
     RemoteCompositorIntegrationProxy& operator=(const RemoteCompositorIntegrationProxy&) = delete;
     RemoteCompositorIntegrationProxy& operator=(RemoteCompositorIntegrationProxy&&) = delete;
 
+    bool isRemoteCompositorIntegrationProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
     
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult<T> sendSync(T&& message)
+    [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return root().streamClientConnection().sendSync(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->sendSync(WTF::move(message), backing());
     }
 
 #if PLATFORM(COCOA)
-    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, WebCore::WebGPU::Device&) override;
+    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebCore::WebGPU::Device&) override;
 #endif
 
-    void prepareForDisplay(CompletionHandler<void()>&&) override;
+    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&&) override;
+    void updateContentsHeadroom(float) override;
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteGPUProxy> m_parent;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteGPUProxy> m_parent;
     RefPtr<RemotePresentationContextProxy> m_presentationContext;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteCompositorIntegrationProxy)
+    static bool isType(const WebCore::WebGPU::CompositorIntegration& integration) { return integration.isRemoteCompositorIntegrationProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

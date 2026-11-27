@@ -23,8 +23,8 @@
 
 #pragma once
 
-#include "FrameLoaderTypes.h"
-#include "HTMLFrameOwnerElement.h"
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/HTMLFrameOwnerElement.h>
 
 namespace JSC {
 class CallFrame;
@@ -33,11 +33,9 @@ class CallFrame;
 namespace WebCore {
 
 class HTMLFrameElementBase : public HTMLFrameOwnerElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLFrameElementBase);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLFrameElementBase);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLFrameElementBase);
 public:
-    void setLocation(JSC::JSGlobalObject&, const String&);
-
     ScrollbarMode scrollingMode() const final;
 
 protected:
@@ -46,8 +44,8 @@ protected:
     bool canLoad() const;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void didFinishInsertingNode() final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
     void didAttachRenderers() override;
 
     WEBCORE_EXPORT void setLocation(const String&);
@@ -67,8 +65,8 @@ private:
     bool supportsFocus() const final;
     void setFocus(bool, FocusVisibility = FocusVisibility::Invisible) final;
     
-    bool isURLAttribute(const Attribute&) const final;
-    bool isHTMLContentAttribute(const Attribute&) const final;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
+    bool NODELETE isHTMLContentAttribute(const Attribute&) const final;
 
     AtomString m_frameURL;
     bool m_openingURLAfterInserting { false };
@@ -77,7 +75,7 @@ private:
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::HTMLFrameElementBase)
-    static bool isType(const WebCore::HTMLElement& element) { return is<WebCore::HTMLFrameElement>(element) || is<WebCore::HTMLIFrameElement>(element); }
+    static bool isType(const WebCore::HTMLElement& element) { return isAnyOf<WebCore::HTMLFrameElement, WebCore::HTMLIFrameElement>(element); }
     static bool isType(const WebCore::Node& node)
     {
         auto* htmlElement = dynamicDowncast<WebCore::HTMLElement>(node);

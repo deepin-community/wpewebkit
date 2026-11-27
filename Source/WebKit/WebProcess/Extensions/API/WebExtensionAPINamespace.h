@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,8 +30,12 @@
 #include "JSWebExtensionAPINamespace.h"
 #include "WebExtensionAPIAction.h"
 #include "WebExtensionAPIAlarms.h"
+#if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+#include "WebExtensionAPIBookmarks.h"
+#endif
 #include "WebExtensionAPICommands.h"
 #include "WebExtensionAPICookies.h"
+#include "WebExtensionAPIDOM.h"
 #include "WebExtensionAPIDeclarativeNetRequest.h"
 #include "WebExtensionAPIDevTools.h"
 #include "WebExtensionAPIExtension.h"
@@ -73,6 +77,7 @@ public:
 #if ENABLE(INSPECTOR_EXTENSIONS)
     WebExtensionAPIDevTools& devtools();
 #endif
+    WebExtensionAPIDOM& dom();
     WebExtensionAPIExtension& extension();
     WebExtensionAPILocalization& i18n();
     WebExtensionAPIMenus& menus();
@@ -85,9 +90,14 @@ public:
     WebExtensionAPISidePanel& sidePanel();
     WebExtensionAPISidebarAction& sidebarAction();
 #endif
+#if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+    WebExtensionAPIBookmarks& bookmarks();
+#endif
     WebExtensionAPIStorage& storage();
     WebExtensionAPITabs& tabs();
+#endif
     WebExtensionAPITest& test();
+#if PLATFORM(COCOA)
     WebExtensionAPIWindows& windows();
     WebExtensionAPIWebNavigation& webNavigation();
     WebExtensionAPIWebRequest& webRequest();
@@ -102,6 +112,7 @@ private:
 #if ENABLE(INSPECTOR_EXTENSIONS)
     RefPtr<WebExtensionAPIDevTools> m_devtools;
 #endif
+    RefPtr<WebExtensionAPIDOM> m_dom;
     RefPtr<WebExtensionAPIExtension> m_extension;
     RefPtr<WebExtensionAPILocalization> m_i18n;
     RefPtr<WebExtensionAPIMenus> m_menus;
@@ -113,6 +124,9 @@ private:
     RefPtr<WebExtensionAPISidePanel> m_sidePanel;
     RefPtr<WebExtensionAPISidebarAction> m_sidebarAction;
 #endif
+#if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+    RefPtr<WebExtensionAPIBookmarks> m_bookmarks;
+#endif
     RefPtr<WebExtensionAPIStorage> m_storage;
     RefPtr<WebExtensionAPITabs> m_tabs;
     RefPtr<WebExtensionAPITest> m_test;
@@ -122,5 +136,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPINamespace, namespace);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

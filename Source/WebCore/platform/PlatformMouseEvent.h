@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,34 +25,28 @@
 
 #pragma once
 
-#include "IntPoint.h"
-#include "PlatformEvent.h"
-#include "PointerEventTypeNames.h"
-#include "PointerID.h"
+#include <WebCore/DoublePoint.h>
+#include <WebCore/IntPoint.h>
+#include <WebCore/MouseEventTypes.h>
+#include <WebCore/PlatformEvent.h>
+#include <WebCore/PointerEventTypeNames.h>
+#include <WebCore/PointerID.h>
+#include <wtf/Platform.h>
 #include <wtf/UUID.h>
 #include <wtf/WindowsExtras.h>
 
 namespace WebCore {
 
-const double ForceAtClick = 1;
-const double ForceAtForceClick = 2;
-
-// These button numbers match the ones used in the DOM API, 0 through 2, except for None and Other which aren't specified.
-// We reserve -2 for the former and -1 to represent pointer events that indicate that the pressed mouse button hasn't
-// changed since the last event, as specified in the DOM API for Pointer Events.
-// https://w3c.github.io/uievents/#dom-mouseevent-button
-// https://w3c.github.io/pointerevents/#the-button-property
-enum class MouseButton : int8_t { None = -2, PointerHasNotChanged, Left, Middle, Right, Other };
-enum class SyntheticClickType : uint8_t { NoTap, OneFingerTap, TwoFingerTap };
-
 class PlatformMouseEvent : public PlatformEvent {
 public:
+    using CanInitiateDrag = MouseEventCanInitiateDrag;
+
     PlatformMouseEvent()
         : PlatformEvent(Type::MouseMoved)
     {
     }
 
-    PlatformMouseEvent(const IntPoint& position, const IntPoint& globalPosition, MouseButton button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, WallTime timestamp, double force, SyntheticClickType syntheticClickType, PointerID pointerId = mousePointerID)
+    PlatformMouseEvent(const DoublePoint& position, const DoublePoint& globalPosition, MouseButton button, PlatformEvent::Type type, int clickCount, OptionSet<PlatformEvent::Modifier> modifiers, MonotonicTime timestamp, double force, SyntheticClickType syntheticClickType, MouseEventInputSource inputSource, PointerID pointerId = mousePointerID)
         : PlatformEvent(type, modifiers, timestamp)
         , m_button(button)
         , m_syntheticClickType(syntheticClickType)
@@ -61,25 +55,27 @@ public:
         , m_force(force)
         , m_pointerId(pointerId)
         , m_clickCount(clickCount)
+        , m_inputSource(inputSource)
     {
     }
 
     // This position is relative to the enclosing NSWindow in WebKit1, and is WKWebView-relative in WebKit2.
     // Use ScrollView::windowToContents() to convert it to into the contents of a given view.
-    const IntPoint& position() const { return m_position; }
-    const IntPoint& globalPosition() const { return m_globalPosition; }
-    const IntPoint& movementDelta() const { return m_movementDelta; }
+    const DoublePoint& position() const LIFETIME_BOUND { return m_position; }
+    const DoublePoint& globalPosition() const LIFETIME_BOUND { return m_globalPosition; }
+    const DoublePoint& movementDelta() const LIFETIME_BOUND { return m_movementDelta; }
     // Unaccelerated pointer movement
-    const IntPoint& unadjustedMovementDelta() const { return m_unadjustedMovementDelta; }
+    const DoublePoint& unadjustedMovementDelta() const LIFETIME_BOUND { return m_unadjustedMovementDelta; }
 
     MouseButton button() const { return m_button; }
     unsigned short buttons() const { return m_buttons; }
     int clickCount() const { return m_clickCount; }
-    unsigned modifierFlags() const { return m_modifierFlags; }
     double force() const { return m_force; }
     SyntheticClickType syntheticClickType() const { return m_syntheticClickType; }
     PointerID pointerId() const { return m_pointerId; }
-    const String& pointerType() const { return m_pointerType; }
+    const String& pointerType() const LIFETIME_BOUND { return m_pointerType; }
+    MouseEventInputSource inputSource() const { return m_inputSource; }
+    CanInitiateDrag canInitiateDrag() const { return m_canInitiateDrag; }
 
     Vector<PlatformMouseEvent> coalescedEvents() const { return m_coalescedEvents; }
     Vector<PlatformMouseEvent> predictedEvents() const { return m_predictedEvents; }
@@ -105,18 +101,19 @@ protected:
     MouseButton m_button { MouseButton::None };
     SyntheticClickType m_syntheticClickType { SyntheticClickType::NoTap };
 
-    IntPoint m_position;
-    IntPoint m_globalPosition;
-    IntPoint m_movementDelta;
-    IntPoint m_unadjustedMovementDelta;
+    DoublePoint m_position;
+    DoublePoint m_globalPosition;
+    DoublePoint m_movementDelta;
+    DoublePoint m_unadjustedMovementDelta;
     double m_force { 0 };
     PointerID m_pointerId { mousePointerID };
     String m_pointerType { mousePointerEventType() };
     int m_clickCount { 0 };
-    unsigned m_modifierFlags { 0 };
     unsigned short m_buttons { 0 };
     Vector<PlatformMouseEvent> m_coalescedEvents;
     Vector<PlatformMouseEvent> m_predictedEvents;
+    MouseEventInputSource m_inputSource { MouseEventInputSource::UserDriven };
+    CanInitiateDrag m_canInitiateDrag { CanInitiateDrag::Yes };
 #if PLATFORM(MAC)
     int m_eventNumber { 0 };
     int m_menuTypeForEvent { 0 };

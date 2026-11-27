@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/HashMap.h>
 
@@ -51,13 +51,17 @@ public:
     PropertyCondition()
         : m_header(nullptr, Presence)
     {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         memset(&u, 0, sizeof(u));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
     
     PropertyCondition(WTF::HashTableDeletedValueType)
         : m_header(nullptr, Absence)
     {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         memset(&u, 0, sizeof(u));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 
     static PropertyCondition presenceWithoutBarrier(UniquedStringImpl* uid, PropertyOffset offset, unsigned attributes)
@@ -270,7 +274,9 @@ public:
     {
         return !m_header.pointer() && m_header.type() == Absence;
     }
-    
+
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
+
     // Two conditions are compatible if they are identical or if they speak of different uids. If
     // false is returned, you have to decide how to resolve the conflict - for example if there is
     // a Presence and an Equivalence then in some cases you'll want the more general of the two
@@ -289,7 +295,7 @@ public:
     
     // Returns true if we need an impure property watchpoint to ensure validity even if
     // isStillValidAccordingToStructure() returned true.
-    bool validityRequiresImpurePropertyWatchpoint(Structure*) const;
+    bool NODELETE validityRequiresImpurePropertyWatchpoint(Structure*) const;
     
     // Checks if the condition is still valid right now for the given object and structure.
     // May conservatively return false, if the object and structure alone don't guarantee the
@@ -356,9 +362,9 @@ public:
     
     void validateReferences(const TrackedReferences&) const;
 
-    static bool isValidValueForAttributes(JSValue, unsigned attributes);
+    static bool NODELETE isValidValueForAttributes(JSValue, unsigned attributes);
 
-    bool isValidValueForPresence(JSValue) const;
+    bool NODELETE isValidValueForPresence(JSValue) const;
 
     PropertyCondition attemptToMakeEquivalenceWithoutBarrier(JSObject* base) const;
     PropertyCondition attemptToMakeReplacementWithoutBarrier(JSObject* base) const;
@@ -381,24 +387,11 @@ private:
     } u;
 };
 
-struct PropertyConditionHash {
-    static unsigned hash(const PropertyCondition& key) { return key.hash(); }
-    static bool equal(
-        const PropertyCondition& a, const PropertyCondition& b)
-    {
-        return a == b;
-    }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
-
 } // namespace JSC
 
 namespace WTF {
 
 void printInternal(PrintStream&, JSC::PropertyCondition::Kind);
-
-template<typename T> struct DefaultHash;
-template<> struct DefaultHash<JSC::PropertyCondition> : JSC::PropertyConditionHash { };
 
 template<typename T> struct HashTraits;
 template<> struct HashTraits<JSC::PropertyCondition> : SimpleClassHashTraits<JSC::PropertyCondition> { };

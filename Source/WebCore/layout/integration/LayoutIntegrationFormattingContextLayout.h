@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "LayoutPoint.h"
 #include "LayoutUnit.h"
 #include <optional>
 
@@ -32,13 +33,32 @@ namespace WebCore {
 
 namespace Layout {
 
+class InlineLayoutState;
 class ElementBox;
 class LayoutState;
 }
 
 namespace LayoutIntegration {
 
-void layoutWithFormattingContextForBox(const Layout::ElementBox&, std::optional<LayoutUnit> widthConstraint, Layout::LayoutState&);
+void layoutWithFormattingContextForBox(const Layout::ElementBox&, std::optional<LayoutUnit> widthConstraint, std::optional<LayoutUnit> heightConstraint, Layout::LayoutState&);
+
+enum class LogicalWidthType : uint8_t  {
+    MaxContentContribution,
+    MinContentContribution,
+    MaxContent,
+    MinContent
+};
+LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox&, LogicalWidthType);
+
+enum class LogicalHeightType : uint8_t  {
+    MinContent,
+    MaxContent,
+    MinContentContribution,
+    MaxContentContribution
+};
+LayoutUnit formattingContextRootLogicalHeightForType(const Layout::ElementBox&, LogicalHeightType);
+
+void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, Layout::InlineLayoutState&, Layout::LayoutState&);
 
 }
 }

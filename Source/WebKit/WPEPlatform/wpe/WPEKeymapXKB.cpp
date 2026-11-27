@@ -26,8 +26,10 @@
 #include "config.h"
 #include "WPEKeymapXKB.h"
 
+#include <mutex>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <wtf/RefPtr.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <xkbcommon/xkbcommon.h>
@@ -35,6 +37,12 @@
 /**
  * WPEKeymapXKB:
  *
+ * A [class@Keymap] implementation based on XKB.
+ *
+ * [class@KeymapXKB] is the [class@Keymap] implementation used by the built-in
+ * platforms. It is backed by libxkbcommon; use
+ * [method@KeymapXKB.get_xkb_keymap] and [method@KeymapXKB.get_xkb_state]
+ * to access the underlying `xkb_keymap` and `xkb_state`.
  */
 struct _WPEKeymapXKBPrivate {
     struct xkb_keymap* xkbKeymap;
@@ -165,6 +173,39 @@ static void wpe_keymap_xkb_class_init(WPEKeymapXKBClass* keymapXKBClass)
     keymapClass->get_modifiers = wpeKeymapXKBGetModifiers;
 }
 
+namespace WTF {
+
+template<>
+struct DefaultRefDerefTraits<struct xkb_context> {
+    static struct xkb_context* refIfNotNull(struct xkb_context* ptr)
+    {
+        if (ptr) [[likely]]
+            xkb_context_ref(ptr);
+        return ptr;
+    }
+
+    static void derefIfNotNull(struct xkb_context* ptr)
+    {
+        if (ptr) [[likely]]
+            xkb_context_unref(ptr);
+    }
+};
+
+} // namespace WTF
+
+static RefPtr<struct xkb_context> createXKBContext()
+{
+    auto context = adoptRef(xkb_context_new(XKB_CONTEXT_NO_DEFAULT_INCLUDES));
+    RELEASE_ASSERT(context);
+
+#if !OS(ANDROID)
+    if (!xkb_context_include_path_append_default(context.get()))
+        LOG_ERROR_ONCE("Could not add default XKB include paths, continuing but input may not work as expected.");
+#endif
+
+    return context;
+}
+
 /**
  * wpe_keymap_xkb_new: (skip)
  *
@@ -176,11 +217,10 @@ WPEKeymap* wpe_keymap_xkb_new()
 {
     auto* keymap = WPE_KEYMAP_XKB(g_object_new(WPE_TYPE_KEYMAP_XKB, nullptr));
 
-    struct xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    auto context = createXKBContext();
     struct xkb_rule_names names = { "evdev", "pc105", "us", "", "" };
-    keymap->priv->xkbKeymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    keymap->priv->xkbKeymap = xkb_keymap_new_from_names(context.get(), &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
     keymap->priv->xkbState = xkb_state_new(keymap->priv->xkbKeymap);
-    xkb_context_unref(context);
 
     return WPE_KEYMAP(keymap);
 }
@@ -204,8 +244,8 @@ void wpe_keymap_xkb_update(WPEKeymapXKB* keymap, guint format, int fd, guint siz
         return;
     }
 
-    struct xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    auto* xkbKeymap = xkb_keymap_new_from_string(context, static_cast<char*>(mapping), static_cast<xkb_keymap_format>(format), XKB_KEYMAP_COMPILE_NO_FLAGS);
+    auto context = createXKBContext();
+    auto* xkbKeymap = xkb_keymap_new_from_string(context.get(), static_cast<char*>(mapping), static_cast<xkb_keymap_format>(format), XKB_KEYMAP_COMPILE_NO_FLAGS);
     munmap(mapping, size);
     close(fd);
     if (xkbKeymap) {
@@ -215,7 +255,6 @@ void wpe_keymap_xkb_update(WPEKeymapXKB* keymap, guint format, int fd, guint siz
         priv->xkbKeymap = xkbKeymap;
         keymap->priv->xkbState = xkb_state_new(keymap->priv->xkbKeymap);
     }
-    xkb_context_unref(context);
 }
 
 /**

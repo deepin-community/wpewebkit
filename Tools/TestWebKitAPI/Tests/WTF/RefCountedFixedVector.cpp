@@ -112,7 +112,7 @@ TEST(WTF_RefCountedFixedVector, MoveVector)
 {
     auto vec1 = Vector<MoveOnly>::from(MoveOnly(0), MoveOnly(1), MoveOnly(2), MoveOnly(3));
     EXPECT_EQ(4U, vec1.size());
-    auto vec2 = RefCountedFixedVector<MoveOnly>::createFromVector(WTFMove(vec1));
+    auto vec2 = RefCountedFixedVector<MoveOnly>::createFromVector(WTF::move(vec1));
     EXPECT_EQ(0U, vec1.size());
     EXPECT_EQ(4U, vec2->size());
     for (unsigned index = 0; index < vec2->size(); ++index)
@@ -188,7 +188,7 @@ struct DestructorObserver {
 
 TEST(WTF_RefCountedFixedVector, Destructor)
 {
-    Vector<bool> flags(3, false);
+    Vector<bool> flags(FillWith { }, 3, false);
     {
         auto vector = RefCountedFixedVector<DestructorObserver>::create(flags.size());
         for (unsigned i = 0; i < flags.size(); ++i)
@@ -202,7 +202,7 @@ TEST(WTF_RefCountedFixedVector, Destructor)
 
 TEST(WTF_RefCountedFixedVector, DestructorAfterMove)
 {
-    Vector<bool> flags(3, false);
+    Vector<bool> flags(FillWith { }, 3, false);
     {
         RefPtr<RefCountedFixedVector<DestructorObserver>> outerVector;
         {

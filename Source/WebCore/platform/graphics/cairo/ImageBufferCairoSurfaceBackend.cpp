@@ -3,7 +3,7 @@
  * Copyright (C) 2007 Holger Hans Peter Freyther <zecke@selfish.org>
  * Copyright (C) 2008, 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) 2010 Torch Mobile (Beijing) Co. Ltd. All rights reserved.
- * Copyright (C) 2020 Apple Inc.  All rights reserved.
+ * Copyright (C) 2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,9 +32,9 @@
 
 #include "BitmapImage.h"
 #include "CairoOperations.h"
+#include "CairoUtilities.h"
 #include "Color.h"
 #include "GraphicsContext.h"
-#include "ImageBufferUtilitiesCairo.h"
 #include "PixelBuffer.h"
 #include <cairo.h>
 
@@ -44,10 +44,11 @@ namespace WebCore {
 
 ImageBufferCairoSurfaceBackend::ImageBufferCairoSurfaceBackend(const Parameters& parameters, RefPtr<cairo_surface_t>&& surface)
     : ImageBufferCairoBackend(parameters)
-    , m_surface(WTFMove(surface))
+    , m_surface(WTF::move(surface))
     , m_context(m_surface.get())
 {
     ASSERT(cairo_surface_status(m_surface.get()) == CAIRO_STATUS_SUCCESS);
+    m_context.applyDeviceScaleFactor(parameters.resolutionScale);
 }
 
 GraphicsContext& ImageBufferCairoSurfaceBackend::context()
@@ -71,7 +72,7 @@ RefPtr<NativeImage> ImageBufferCairoSurfaceBackend::copyNativeImage()
     cairo_set_source_surface(cr.get(), m_surface.get(), 0, 0);
     cairo_paint(cr.get());
 
-    return NativeImage::create(WTFMove(copy));
+    return NativeImage::create(WTF::move(copy));
 }
 
 RefPtr<NativeImage> ImageBufferCairoSurfaceBackend::createNativeImageReference()
@@ -98,12 +99,12 @@ RefPtr<NativeImage> ImageBufferCairoSurfaceBackend::cairoSurfaceCoerceToImage()
 
 void ImageBufferCairoSurfaceBackend::getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination)
 {
-    ImageBufferBackend::getPixelBuffer(srcRect, cairo_image_surface_get_data(m_surface.get()), destination);
+    ImageBufferBackend::getPixelBuffer(srcRect, span(m_surface.get()), destination);
 }
 
-void ImageBufferCairoSurfaceBackend::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
+void ImageBufferCairoSurfaceBackend::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
 {
-    ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, cairo_image_surface_get_data(m_surface.get()));
+    ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, mutableSpan(m_surface.get()));
 
     cairo_surface_mark_dirty_rectangle(m_surface.get(), destPoint.x(), destPoint.y(), srcRect.width(), srcRect.height());
 }

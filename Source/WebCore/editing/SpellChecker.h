@@ -26,24 +26,18 @@
 
 #pragma once
 
-#include "Element.h"
-#include "SimpleRange.h"
-#include "TextChecking.h"
-#include "Timer.h"
+#include <WebCore/Element.h>
+#include <WebCore/SimpleRange.h>
+#include <WebCore/TextChecking.h>
+#include <WebCore/Timer.h>
 #include <wtf/Deque.h>
+#include <wtf/Markable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class SpellChecker;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::SpellChecker> : std::true_type { };
-}
-
-namespace WebCore {
-
+class Editor;
 class SpellChecker;
 class TextCheckerClient;
 
@@ -52,15 +46,16 @@ public:
     static RefPtr<SpellCheckRequest> create(OptionSet<TextCheckingType>, TextCheckingProcessType, const SimpleRange& checkingRange, const SimpleRange& automaticReplacementRange, const SimpleRange& paragraphRange);
     virtual ~SpellCheckRequest();
 
-    const SimpleRange& checkingRange() const { return m_checkingRange; }
-    const SimpleRange& paragraphRange() const { return m_paragraphRange; }
-    const SimpleRange& automaticReplacementRange() const { return m_automaticReplacementRange; }
+    const SimpleRange& checkingRange() const LIFETIME_BOUND { return m_checkingRange; }
+    const SimpleRange& paragraphRange() const LIFETIME_BOUND { return m_paragraphRange; }
+    const SimpleRange& automaticReplacementRange() const LIFETIME_BOUND { return m_automaticReplacementRange; }
     Element* rootEditableElement() const { return m_rootEditableElement.get(); }
 
-    void setCheckerAndIdentifier(SpellChecker*, TextCheckingRequestIdentifier);
-    void requesterDestroyed();
+    void NODELETE setCheckerAndIdentifier(SpellChecker*, TextCheckingRequestIdentifier);
+    void setExistingResults(const Vector<TextCheckingResult>&);
+    void NODELETE requesterDestroyed();
 
-    const TextCheckingRequestData& data() const final;
+    const TextCheckingRequestData& data() const LIFETIME_BOUND final;
 
 private:
     void didSucceed(const Vector<TextCheckingResult>&) final;
@@ -73,24 +68,29 @@ private:
     SimpleRange m_automaticReplacementRange;
     SimpleRange m_paragraphRange;
     RefPtr<Element> m_rootEditableElement;
+    Vector<TextCheckingResult> m_existingResults;
     TextCheckingRequestData m_requestData;
 };
 
 class SpellChecker : public CanMakeSingleThreadWeakPtr<SpellChecker> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(SpellChecker);
 public:
     friend class SpellCheckRequest;
 
-    explicit SpellChecker(Document&);
+    explicit SpellChecker(Editor&);
     ~SpellChecker();
 
-    bool isAsynchronousEnabled() const;
+    void NODELETE ref() const;
+    void deref() const;
+
+    bool NODELETE isAsynchronousEnabled() const;
     bool isCheckable(const SimpleRange&) const;
 
     void requestCheckingFor(Ref<SpellCheckRequest>&&);
+    void requestExtendedCheckingFor(Ref<SpellCheckRequest>&&, const Vector<TextCheckingResult>&);
 
-    TextCheckingRequestIdentifier lastRequestIdentifier() const { return m_lastRequestIdentifier; }
-    TextCheckingRequestIdentifier lastProcessedIdentifier() const { return m_lastProcessedIdentifier; }
+    std::optional<TextCheckingRequestIdentifier> lastRequestIdentifier() const { return m_lastRequestIdentifier; }
+    std::optional<TextCheckingRequestIdentifier> lastProcessedIdentifier() const { return m_lastProcessedIdentifier; }
 
 private:
     bool canCheckAsynchronously(const SimpleRange&) const;
@@ -98,20 +98,21 @@ private:
     void timerFiredToProcessQueuedRequest();
     void invokeRequest(Ref<SpellCheckRequest>&&);
     void enqueueRequest(Ref<SpellCheckRequest>&&);
-    void didCheckSucceed(TextCheckingRequestIdentifier, const Vector<TextCheckingResult>&);
+    void didCheckSucceed(TextCheckingRequestIdentifier, const Vector<TextCheckingResult>&, const Vector<TextCheckingResult>&, const std::optional<SimpleRange>&);
     void didCheckCancel(TextCheckingRequestIdentifier);
-    void didCheck(TextCheckingRequestIdentifier, const Vector<TextCheckingResult>&);
+    void didCheck(TextCheckingRequestIdentifier, const Vector<TextCheckingResult>&, const Vector<TextCheckingResult>&, const std::optional<SimpleRange>&);
 
-    Ref<Document> protectedDocument() const { return m_document.get(); }
+    Document& NODELETE document() const;
 
-    WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
-    TextCheckingRequestIdentifier m_lastRequestIdentifier;
-    TextCheckingRequestIdentifier m_lastProcessedIdentifier;
+    WeakRef<Editor> m_editor;
+    Markable<TextCheckingRequestIdentifier> m_lastRequestIdentifier;
+    Markable<TextCheckingRequestIdentifier> m_lastProcessedIdentifier;
 
     Timer m_timerToProcessQueuedRequest;
 
     RefPtr<SpellCheckRequest> m_processingRequest;
     Deque<Ref<SpellCheckRequest>> m_requestQueue;
+    bool m_inRecheck { false };
 };
 
 } // namespace WebCore

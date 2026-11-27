@@ -33,12 +33,17 @@
 #include "FilterImage.h"
 #include "GraphicsContext.h"
 #include "NativeImage.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win ports
 #include <skia/core/SkCanvas.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <skia/effects/SkImageFilters.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-bool FEGaussianBlurSkiaApplier::apply(const Filter& filter, const FilterImageVector& inputs, FilterImage& result) const
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FEGaussianBlurSkiaApplier);
+
+bool FEGaussianBlurSkiaApplier::apply(const Filter& filter, std::span<const Ref<FilterImage>> inputs, FilterImage& result) const
 {
     ASSERT(inputs.size() == 1);
     auto& input = inputs[0].get();
@@ -52,7 +57,7 @@ bool FEGaussianBlurSkiaApplier::apply(const Filter& filter, const FilterImageVec
     if (!nativeImage || !nativeImage->platformImage())
         return false;
 
-    FloatSize sigma = FloatSize(m_effect.stdDeviationX(), m_effect.stdDeviationY()) * filter.filterScale();
+    FloatSize sigma = FloatSize(m_effect->stdDeviationX(), m_effect->stdDeviationY()) * filter.filterScale();
 
     SkPaint paint;
     paint.setImageFilter(SkImageFilters::Blur(sigma.width(), sigma.height(), nullptr));

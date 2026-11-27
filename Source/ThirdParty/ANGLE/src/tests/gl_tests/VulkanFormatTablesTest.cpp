@@ -70,7 +70,7 @@ TEST_P(VulkanFormatTablesTest, TestFormatSupport)
         for (const ParametersToTest params : parametersToTest)
         {
             VkFormat actualImageVkFormat = rx::vk::GetVkFormatFromFormatID(
-                vkFormat.getActualImageFormatID(rx::vk::ImageAccess::SampleOnly));
+                renderer, vkFormat.getActualImageFormatID(rx::vk::ImageFormatSupport::SampleOnly));
 
             // Now let's verify that against vulkan.
             VkFormatProperties formatProperties;
@@ -96,8 +96,8 @@ TEST_P(VulkanFormatTablesTest, TestFormatSupport)
             EXPECT_EQ(isFilterable, textureCaps.filterable) << actualImageVkFormat;
 
             // isRenderable?
-            VkFormat actualRenderableImageVkFormat =
-                rx::vk::GetVkFormatFromFormatID(vkFormat.getActualRenderableImageFormatID());
+            VkFormat actualRenderableImageVkFormat = rx::vk::GetVkFormatFromFormatID(
+                renderer, vkFormat.getActualRenderableImageFormatID());
             const bool isRenderableColor =
                 (vkGetPhysicalDeviceImageFormatProperties(
                     renderer->getPhysicalDevice(), actualRenderableImageVkFormat, params.imageType,
@@ -117,5 +117,6 @@ TEST_P(VulkanFormatTablesTest, TestFormatSupport)
 }
 
 ANGLE_INSTANTIATE_TEST(VulkanFormatTablesTest, ES2_VULKAN());
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(VulkanFormatTablesTest);
 
 }  // anonymous namespace

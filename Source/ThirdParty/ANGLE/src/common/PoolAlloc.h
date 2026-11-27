@@ -10,7 +10,12 @@
 #ifndef COMMON_POOLALLOC_H_
 #define COMMON_POOLALLOC_H_
 
-#if !defined(NDEBUG)
+// This include MUST precede the ANGLE_WITH_TSAN check below to define that macro.
+#include "common/platform.h"
+
+#if defined(ANGLE_WITH_TSAN)
+#    define ANGLE_DISABLE_POOL_ALLOC
+#elif !defined(NDEBUG)
 #    define ANGLE_POOL_ALLOC_GUARD_BLOCKS  // define to enable guard block checking
 #endif
 
@@ -31,156 +36,110 @@
 // new and delete methods.
 //
 
-#include "angleutils.h"
-#include "common/debug.h"
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "common/MemoryTagging.h"
+#include "common/angleutils.h"
+#include "common/log_utils.h"
+#include "common/mathutil.h"
+#include "common/span.h"
 
 namespace angle
 {
-class Allocation;
-class PageHeader;
 
-//
-// There are several stacks.  One is to track the pushing and popping
-// of the user, and not yet implemented.  The others are simply a
-// repositories of free pages or used pages.
-//
-// Page stacks are linked together with a simple header at the beginning
-// of each allocation obtained from the underlying OS.  Multi-page allocations
-// are returned to the OS.  Individual page allocations are kept for future
-// re-use.
-//
-// The "page size" used is not, nor must it match, the underlying OS
-// page size.  But, having it be about that size or equal to a set of
-// pages is likely most optimal.
-//
+// Allocator that allocates memory aligned to kAlignment and releases it when the instance is
+// destroyed.
 class PoolAllocator : angle::NonCopyable
 {
   public:
-    enum class ReleaseStrategy : uint8_t
-    {
-        OnlyMultiPage,
-        All,
-    };
-
-    static const int kDefaultAlignment = sizeof(void *);
-    //
-    // Create PoolAllocator. If alignment is set to 1 byte then fastAllocate()
-    //  function can be used to make allocations with less overhead.
-    //
-    PoolAllocator(int growthIncrement = 8 * 1024, int allocationAlignment = kDefaultAlignment);
-
-    //
-    // Don't call the destructor just to free up the memory, call pop()
-    //
+    PoolAllocator();
     ~PoolAllocator();
 
-    //
-    // Initialize page size and alignment after construction
-    //
-    void initialize(int pageSize, int alignment);
-
-    //
-    // Call push() to establish a new place to pop memory to.  Does not
-    // have to be called to get things started.
-    //
-    void push();
-
-    //
-    // Call pop() to free all memory allocated since the last call to push(),
-    // or if no last call to push, frees all memory since first allocation.
-    //
-    void pop(ReleaseStrategy releaseStrategy = ReleaseStrategy::OnlyMultiPage);
-
-    //
-    // Call popAll() to free all memory allocated.
-    //
-    void popAll();
-
-    //
-    // Call allocate() to actually acquire memory.  Returns 0 if no memory
-    // available, otherwise a properly aligned pointer to 'numBytes' of memory.
-    //
+    // Returns aligned pointer to 'numBytes' of memory or nullptr on allocation failure.
     void *allocate(size_t numBytes);
 
-    //
-    // Call fastAllocate() for a faster allocate function that does minimal bookkeeping
-    // preCondition: Allocator must have been created w/ alignment of 1
-    ANGLE_INLINE uint8_t *fastAllocate(size_t numBytes)
-    {
-#if defined(ANGLE_DISABLE_POOL_ALLOC)
-        return reinterpret_cast<uint8_t *>(allocate(numBytes));
-#else
-        ASSERT(mAlignment == 1);
-        // No multi-page allocations
-        ASSERT(numBytes <= (mPageSize - mPageHeaderSkip));
-        //
-        // Do the allocation, most likely case inline first, for efficiency.
-        //
-        if (numBytes <= mPageSize - mCurrentPageOffset)
-        {
-            //
-            // Safe to allocate from mCurrentPageOffset.
-            //
-            uint8_t *memory = reinterpret_cast<uint8_t *>(mInUseList) + mCurrentPageOffset;
-            mCurrentPageOffset += numBytes;
-            return memory;
-        }
-        return allocateNewPage(numBytes);
-#endif
-    }
-
-    // There is no deallocate.  The point of this class is that deallocation can be skipped by the
-    // user of it, as the model of use is to simultaneously deallocate everything at once by calling
-    // pop(), and to not have to solve memory leak problems.
-
-    // Catch unwanted allocations.
-    // TODO(jmadill): Remove this when we remove the global allocator.
-    void lock();
-    void unlock();
+    // Marks all allocated memory as unused. The memory will be reused.
+    void reset();
 
   private:
-    size_t mAlignment;  // all returned allocations will be aligned at
-                        // this granularity, which will be a power of 2
+#if defined(ANGLE_ENABLE_MEMORY_TAGGING)
+    // The allocations are tagged, so they are aligned to a memory tag granule.
+    static constexpr size_t kAlignment = kMemoryTagGranuleSize;
+#else
+    static constexpr size_t kAlignment = sizeof(void *);
+#endif
+    Span<uint8_t> allocateSingleObject(size_t size);
+    class Segment;
+    std::vector<Segment> mSingleObjectSegments;  // Large objects.
+
+    static constexpr size_t kSegmentSize = 32768;
 #if !defined(ANGLE_DISABLE_POOL_ALLOC)
-    struct AllocState
-    {
-        size_t offset;
-        PageHeader *page;
-    };
-    using AllocStack = std::vector<AllocState>;
+    bool allocateNewPoolSegment();
 
-    // Slow path of allocation when we have to get a new page.
-    uint8_t *allocateNewPage(size_t numBytes);
-    // Track allocations if and only if we're using guard blocks
-    void *initializeAllocation(uint8_t *memory, size_t numBytes);
-
-    // Granularity of allocation from the OS
-    size_t mPageSize;
-    // Amount of memory to skip to make room for the page header (which is the size of the page
-    // header, or PageHeader in PoolAlloc.cpp)
-    size_t mPageHeaderSkip;
-    // Next offset in top of inUseList to allocate from.  This offset is not necessarily aligned to
-    // anything.  When an allocation is made, the data is aligned to mAlignment, and the header (if
-    // any) will align to pointer size by extension (since mAlignment is made aligned to at least
-    // pointer size).
-    size_t mCurrentPageOffset;
-    // List of popped memory
-    PageHeader *mFreeList;
-    // List of all memory currently being used.  The head of this list is where allocations are
-    // currently being made from.
-    PageHeader *mInUseList;
-    // Stack of where to allocate from, to partition pool
-    AllocStack mStack;
-
-    int mNumCalls;       // just an interesting statistic
-    size_t mTotalBytes;  // just an interesting statistic
-
-#else  // !defined(ANGLE_DISABLE_POOL_ALLOC)
-    std::vector<std::vector<void *>> mStack;
+    Span<uint8_t> mCurrentPool;  // The unused part of memory in last entry of mPoolSegments.
+    std::vector<Segment> mPoolSegments;    // List of currently in use memory allocations.
+    std::vector<Segment> mUnusedSegments;  // List of unused allocations after reset().
 #endif
 
-    bool mLocked;
+#if defined(ANGLE_POOL_ALLOC_GUARD_BLOCKS)
+    void addGuard(Span<uint8_t> guardData);
+
+    std::vector<Span<uint8_t>> mGuards;  // Guards, memory which is asserted to stay prestine.
+#endif
 };
+
+inline void *PoolAllocator::allocate(size_t size)
+{
+    Span<uint8_t> data;
+
+    size_t extent = size;
+#if !defined(ANGLE_DISABLE_POOL_ALLOC)
+    // Allocate with kAlignment granularity to keep the next allocation aligned.
+    extent = rx::roundUpPow2(extent, kAlignment);
+#endif
+#if defined(ANGLE_POOL_ALLOC_GUARD_BLOCKS)
+    // Add space for guard block before. Add space for guard block after if there is no alignment
+    // padding, else use the padding as the guard block after.
+    extent += kAlignment + (extent == size ? kAlignment : 0);
+#endif
+#if !defined(ANGLE_DISABLE_POOL_ALLOC)
+    if (extent <= mCurrentPool.size())
+    {
+        data         = mCurrentPool.first(extent);
+        mCurrentPool = mCurrentPool.subspan(extent);
+        data         = TagMemory(data);
+    }
+    else if (extent < kSegmentSize)
+    {
+        if (ANGLE_UNLIKELY(!allocateNewPoolSegment()))
+        {
+            return nullptr;
+        }
+        data         = mCurrentPool.first(extent);
+        mCurrentPool = mCurrentPool.subspan(extent);
+        data         = TagMemory(data);
+    }
+    else
+#endif
+    {
+        data = allocateSingleObject(extent);
+        if (data.empty())
+        {
+            return nullptr;
+        }
+    }
+
+#if defined(ANGLE_POOL_ALLOC_GUARD_BLOCKS)
+    addGuard(data.first(kAlignment));
+    data = data.subspan(kAlignment);
+    addGuard(data.subspan(size));
+#endif
+    return data.first(size).data();
+}
 
 }  // namespace angle
 

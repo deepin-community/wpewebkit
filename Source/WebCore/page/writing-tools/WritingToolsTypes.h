@@ -27,8 +27,8 @@
 
 #if ENABLE(WRITING_TOOLS)
 
-#include "AttributedString.h"
-#include "CharacterRange.h"
+#include <WebCore/AttributedString.h>
+#include <WebCore/CharacterRange.h>
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -60,8 +60,14 @@ enum class SessionType : uint8_t {
 
 enum class SessionCompositionType : uint8_t {
     None,
+    Compose,
     SmartReply,
     Other,
+};
+
+enum class IsForProofreadingReview : bool {
+    No,
+    Yes
 };
 
 using SessionID = WTF::UUID;
@@ -75,6 +81,7 @@ struct Session {
     ID identifier;
     Type type { Type::Composition };
     CompositionType compositionType { CompositionType::None };
+    IsForProofreadingReview isForProofreadingReview { IsForProofreadingReview::No };
 };
 
 #pragma mark - Context
@@ -84,7 +91,7 @@ using ContextID = WTF::UUID;
 struct Context {
     using ID = ContextID;
 
-    ID identifier;
+    Markable<ID> identifier;
     AttributedString attributedText;
     CharacterRange range;
 };
@@ -96,6 +103,7 @@ enum class TextSuggestionState : uint8_t {
     Reviewing,
     Rejected,
     Invalid,
+    Accepted,
 };
 
 using TextSuggestionID = WTF::UUID;

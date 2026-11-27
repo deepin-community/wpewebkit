@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(ASSEMBLER)
 
 #define DUMP_LINK_STATISTICS 0
@@ -33,13 +35,67 @@
 #define GLOBAL_THUNK_ID reinterpret_cast<void*>(static_cast<intptr_t>(-1))
 #define CSS_CODE_ID reinterpret_cast<void*>(static_cast<intptr_t>(-2))
 
-#include "JITCompilationEffort.h"
-#include "MacroAssembler.h"
-#include "MacroAssemblerCodeRef.h"
+#include <JavaScriptCore/JITCompilationEffort.h>
+#include <JavaScriptCore/LineColumn.h>
+#include <JavaScriptCore/MacroAssembler.h>
+#include <JavaScriptCore/MacroAssemblerCodeRef.h>
+#include <JavaScriptCore/SourceProvider.h>
 #include <wtf/DataLog.h>
+#include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/CString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+class SourceProvider;
+
+class IRDumpDebugInfo {
+    WTF_MAKE_TZONE_ALLOCATED(IRDumpDebugInfo);
+    WTF_MAKE_NONCOPYABLE(IRDumpDebugInfo);
+public:
+    // This is per-line either BasicBlock header annotation or actual IR node. Like,
+    //     BB#0
+    //         GetLocal
+    struct IRLine {
+        ASCIILiteral opName;
+        uint32_t blockIndex { 0 };
+    };
+
+    struct CodeEntry {
+        uint32_t codeOffset;
+        uint32_t irLineIndex;
+    };
+
+    IRDumpDebugInfo(CString&& name)
+        : functionName(WTF::move(name))
+    {
+    }
+
+    CString functionName;
+    Vector<IRLine> irLines;
+    Vector<CodeEntry> codeEntries;
+};
+
+class SourceCodeDumpDebugInfo {
+    WTF_MAKE_TZONE_ALLOCATED(SourceCodeDumpDebugInfo);
+    WTF_MAKE_NONCOPYABLE(SourceCodeDumpDebugInfo);
+public:
+    struct CodeEntry {
+        uint32_t codeOffset;
+        LineColumn lineColumn;
+        Ref<SourceProvider> sourceProvider;
+    };
+
+    SourceCodeDumpDebugInfo(CString&& name)
+        : functionName(WTF::move(name))
+    {
+    }
+
+    CString functionName;
+    Vector<CodeEntry> codeEntries;
+};
 
 // LinkBuffer:
 //
@@ -154,7 +210,8 @@ public:
     
     // These methods are used to link or set values at code generation time.
 
-    template<PtrTag tag, typename Func, typename = std::enable_if_t<std::is_function<typename std::remove_pointer<Func>::type>::value>>
+    template<PtrTag tag, typename Func>
+        requires (std::is_function_v<typename std::remove_pointer_t<Func>>)
     void link(Call call, Func funcName)
     {
         CodePtr<tag> function(funcName);
@@ -205,7 +262,7 @@ public:
     // These methods are used to obtain handles to allow the code to be relinked / repatched later.
     
     template<PtrTag tag>
-    CodeLocationLabel<tag> entrypoint()
+    CodeLocationLabel<tag> entrypoint() const
     {
         return CodeLocationLabel<tag>(tagCodePtr<tag>(code()));
     }
@@ -313,15 +370,19 @@ ALLOW_NONLITERAL_FORMAT_END
         return m_code.dataLocation();
     }
 
-    size_t size() const { return m_size; }
+    size_t NODELETE size() const { return m_size; }
     
     bool wasAlreadyDisassembled() const { return m_alreadyDisassembled; }
     void didAlreadyDisassemble() { m_alreadyDisassembled = true; }
 
-    JS_EXPORT_PRIVATE static void clearProfileStatistics();
+    JS_EXPORT_PRIVATE static void NODELETE clearProfileStatistics();
     JS_EXPORT_PRIVATE static void dumpProfileStatistics(std::optional<PrintStream*> = std::nullopt);
 
     void setIsThunk() { m_isThunk = true; }
+
+    void setIRDumpDebugInfo(std::unique_ptr<IRDumpDebugInfo>&& info) { m_irDumpDebugInfo = WTF::move(info); }
+
+    void setSourceCodeDumpDebugInfo(std::unique_ptr<SourceCodeDumpDebugInfo>&& info) { m_sourceCodeDebugInfo = WTF::move(info); }
 
 private:
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithoutDisassemblyImpl(ASCIILiteral);
@@ -336,7 +397,7 @@ private:
         // within this space that required compaction.
         if (location < static_cast<int>(sizeof(int32_t)))
             return 0;
-        return bitwise_cast<int32_t*>(m_assemblerStorage.buffer())[location / sizeof(int32_t) - 1];
+        return std::bit_cast<int32_t*>(m_assemblerStorage.buffer())[location / sizeof(int32_t) - 1];
     }
 #endif
     
@@ -349,7 +410,7 @@ private:
     }
 
     // Keep this private! - the underlying code should only be obtained externally via finalizeCode().
-    void* code()
+    void* code() const
     {
         return m_code.dataLocation();
     }
@@ -383,7 +444,7 @@ private:
     static void dumpCode(void* code, size_t);
 #endif
 
-    void logJITCodeForPerf(CodeRef<LinkBufferPtrTag>&, ASCIILiteral);
+    void logJITCodeForJITDump(CodeRef<LinkBufferPtrTag>&, ASCIILiteral);
 
     RefPtr<ExecutableMemoryHandle> m_executableMemory;
     size_t m_size { 0 };
@@ -407,20 +468,24 @@ private:
     bool m_isRewriting { false };
     Profile m_profile { Profile::Uncategorized };
     CodePtr<LinkBufferPtrTag> m_code;
-    Vector<RefPtr<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
-    Vector<RefPtr<SharedTask<void(LinkBuffer&)>>> m_lateLinkTasks;
+    Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
+    Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_lateLinkTasks;
+    std::unique_ptr<IRDumpDebugInfo> m_irDumpDebugInfo;
+    std::unique_ptr<SourceCodeDumpDebugInfo> m_sourceCodeDebugInfo;
 
     static size_t s_profileCummulativeLinkedSizes[numberOfProfiles];
     static size_t s_profileCummulativeLinkedCounts[numberOfProfiles];
 };
 
 #define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, simpleName, ...) \
-    (UNLIKELY((condition) || JSC::Options::logJIT()) \
-        ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>((condition), simpleName, __VA_ARGS__) \
-        : (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>(simpleName))
+    ([&]() { \
+        if ((condition) || JSC::Options::logJIT()) [[unlikely]] \
+            return (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>((condition), simpleName, __VA_ARGS__); \
+        return (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>(simpleName); \
+    }())
 
 #define FINALIZE_CODE_FOR(codeBlock, linkBufferReference, resultPtrTag, simpleName, ...)  \
-    FINALIZE_CODE_IF((shouldDumpDisassemblyFor(codeBlock) || Options::asyncDisassembly()), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
+    FINALIZE_CODE_IF((shouldDumpDisassemblyFor(codeBlock)), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
 
 // Use this to finalize code, like so:
 //
@@ -439,25 +504,30 @@ private:
 // is true, so you can hide expensive disassembly-only computations inside there.
 
 #define FINALIZE_CODE(linkBufferReference, resultPtrTag, simpleName, ...)  \
-    FINALIZE_CODE_IF((JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly()), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
+    FINALIZE_CODE_IF(JSC::Options::dumpDisassembly(), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
 
 #define FINALIZE_BASELINE_CODE(linkBufferReference, resultPtrTag, ...)  \
-    FINALIZE_CODE_IF((JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpBaselineDisassembly()), linkBufferReference, resultPtrTag, nullptr, __VA_ARGS__)
+    FINALIZE_CODE_IF((JSC::Options::dumpDisassembly() || Options::dumpBaselineDisassembly()), linkBufferReference, resultPtrTag, nullptr, __VA_ARGS__)
 
 #define FINALIZE_DFG_CODE(linkBufferReference, resultPtrTag, ...)  \
-    FINALIZE_CODE_IF((JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpDFGDisassembly()), linkBufferReference, resultPtrTag, nullptr, __VA_ARGS__)
+    FINALIZE_CODE_IF((JSC::Options::dumpDisassembly() || Options::dumpDFGDisassembly()), linkBufferReference, resultPtrTag, nullptr, __VA_ARGS__)
 
 #define FINALIZE_REGEXP_CODE(linkBufferReference, resultPtrTag, simpleName, dataLogFArgumentsForHeading)  \
-    FINALIZE_CODE_IF(JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpRegExpDisassembly(), linkBufferReference, resultPtrTag, simpleName, dataLogFArgumentsForHeading)
+    FINALIZE_CODE_IF(JSC::Options::dumpDisassembly() || Options::dumpRegExpDisassembly(), linkBufferReference, resultPtrTag, simpleName, dataLogFArgumentsForHeading)
 
 #define FINALIZE_WASM_CODE(linkBufferReference, resultPtrTag, simpleName, ...)  \
-    FINALIZE_CODE_IF((JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpWasmDisassembly()), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
+    FINALIZE_CODE_IF((JSC::Options::dumpDisassembly() || Options::dumpWasmDisassembly()), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
 
 #define FINALIZE_WASM_CODE_FOR_MODE(mode, linkBufferReference, resultPtrTag, simpleName, ...)  \
     FINALIZE_CODE_IF(shouldDumpDisassemblyFor(mode), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
 
+#define FINALIZE_CSSJIT_CODE(linkBufferReference, resultPtrTag, simpleName, ...)  \
+    FINALIZE_CODE_IF((JSC::Options::dumpDisassembly() || JSC::Options::dumpCSSJITDisassembly()), linkBufferReference, resultPtrTag, simpleName, __VA_ARGS__)
+
 
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(ASSEMBLER)

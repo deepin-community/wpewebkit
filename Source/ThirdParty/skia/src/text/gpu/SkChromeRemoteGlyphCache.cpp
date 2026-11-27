@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Google Inc.
+ * Copyright 2018 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -15,18 +15,18 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPicture.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTypeface.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTFitsIn.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTFitsIn.h"
+#include "include/private/SkTo.h"
 #include "include/private/chromium/Slug.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkDescriptor.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkFontMetricsPriv.h"
@@ -131,6 +131,7 @@ private:
 
     // The context built using fDescriptor
     std::unique_ptr<SkScalerContext> fContext;
+    SkTypefaceID fStrikeSpecTypefaceId;
 
     // fStrikeSpec is set every time getOrCreateCache is called. This allows the code to maintain
     // the fContext as lazy as possible.
@@ -160,7 +161,8 @@ RemoteStrike::RemoteStrike(
         , fDiscardableHandleId(discardableHandleId)
         , fRoundingSpec{context->isSubpixel(), context->computeAxisAlignmentForHText()}
         // N.B. context must come last because it is used above.
-        , fContext{std::move(context)} {
+        , fContext{std::move(context)}
+        , fStrikeSpecTypefaceId(strikeSpec.typeface().uniqueID()) {
     SkASSERT(fDescriptor.getDesc() != nullptr);
     SkASSERT(fContext != nullptr);
 }
@@ -168,7 +170,9 @@ RemoteStrike::RemoteStrike(
 void RemoteStrike::writePendingGlyphs(SkWriteBuffer& buffer) {
     SkASSERT(this->hasPendingGlyphs());
 
-    buffer.writeUInt(fContext->getTypeface()->uniqueID());
+    // ScalerContext should not hold to the typeface, so we should not use its ID.
+    // We should use StrikeSpec typeface and its ID instead.
+    buffer.writeUInt(fStrikeSpecTypefaceId);
     buffer.writeUInt(fDiscardableHandleId);
     fDescriptor.getDesc()->flatten(buffer);
 
@@ -624,25 +628,16 @@ SkStrikeClientImpl::SkStrikeClientImpl(
       fStrikeCache{strikeCache ? strikeCache : SkStrikeCache::GlobalStrikeCache()},
       fIsLogging{isLogging} {}
 
-// Change the path count to track the line number of the failing read.
-// TODO: change __LINE__ back to glyphPathsCount when bug chromium:1287356 is closed.
-#define READ_FAILURE                                                        \
-    {                                                                       \
-        SkDebugf("Bad font data serialization line: %d", __LINE__);         \
-        SkStrikeClient::DiscardableHandleManager::ReadFailureData data = {  \
-                memorySize,  deserializer.bytesRead(), typefaceSize,        \
-                strikeCount, glyphImagesCount, __LINE__};                   \
-        fDiscardableHandleManager->notifyReadFailure(data);                 \
-        return false;                                                       \
-    }
-
 bool SkStrikeClientImpl::readStrikeData(const volatile void* memory, size_t memorySize) {
     SkASSERT(memorySize != 0);
     SkASSERT(memory != nullptr);
 
+    // Use a local copy to defend against volatile memory TOCTOU issues during deserialization.
+    sk_sp<SkData> safeMemory = SkData::MakeWithCopy(const_cast<const void*>(memory), memorySize);
+
     // We do not need to set any SkDeserialProcs here because SkStrikeServerImpl::writeStrikeData
     // did not encode any SkImages.
-    SkReadBuffer buffer{const_cast<const void*>(memory), memorySize};
+    SkReadBuffer buffer{safeMemory->data(), safeMemory->size()};
     // Limit the kinds of effects that appear in a glyph's drawable (crbug.com/1442140):
     buffer.setAllowSkSL(false);
 

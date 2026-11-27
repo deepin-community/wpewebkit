@@ -44,17 +44,20 @@ class Touch;
 class EventPath : public CanMakeSingleThreadWeakPtr<EventPath> {
 public:
     EventPath(Node& origin, Event&);
-    explicit EventPath(const Vector<EventTarget*>&);
+    explicit EventPath(std::span<EventTarget* const>);
     explicit EventPath(EventTarget&);
 
     bool isEmpty() const { return m_path.isEmpty(); }
     size_t size() const { return m_path.size(); }
     const EventContext& contextAt(size_t i) const { return m_path[i]; }
     EventContext& contextAt(size_t i) { return m_path[i]; }
+    const EventContext& last() const { return m_path.last(); }
+    EventContext& last() { return m_path.last(); }
 
     void adjustForDisabledFormControl();
 
     Vector<Ref<EventTarget>> computePathUnclosedToTarget(const EventTarget&) const;
+    Vector<Ref<EventTarget>> computePathTreatingAllShadowRootsAsOpen() const;
 
     static Node* eventTargetRespectingTargetRules(Node&);
 
@@ -78,8 +81,8 @@ inline Node* EventPath::eventTargetRespectingTargetRules(Node& referenceNode)
 
     // Events sent to elements inside an SVG use element's shadow tree go to the use element.
     if (auto* svgElement = dynamicDowncast<SVGElement>(referenceNode)) {
-        if (auto useElement = svgElement->correspondingUseElement())
-            return useElement.get();
+        if (auto* useElement = svgElement->correspondingUseElement())
+            return useElement;
     }
 
     return &referenceNode;

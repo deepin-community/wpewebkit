@@ -85,10 +85,10 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSRemoteFunction* remoteFunction = jsCast<JSRemoteFunction*>(callFrame->jsCallee());
+    JSRemoteFunction* remoteFunction = uncheckedDowncast<JSRemoteFunction>(callFrame->jsCallee());
     ASSERT(remoteFunction->isRemoteFunction());
-    JSFunction* targetFunction = jsCast<JSFunction*>(remoteFunction->targetFunction());
-    JSGlobalObject* targetGlobalObject = targetFunction->globalObject();
+    JSFunction* targetFunction = uncheckedDowncast<JSFunction>(remoteFunction->targetFunction());
+    JSGlobalObject* targetGlobalObject = targetFunction->realm();
 
     MarkedArgumentBuffer args;
     auto clearArgOverflowCheckAndReturnAbortValue = [&] () -> EncodedJSValue {
@@ -104,14 +104,14 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, clearArgOverflowCheckAndReturnAbortValue());
         args.append(wrappedValue);
     }
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
     ExecutableBase* executable = targetFunction->executable();
     if (executable->hasJITCodeForCall()) {
         // Force the executable to cache its arity entrypoint.
-        executable->entrypointFor(CodeForCall, MustCheckArity);
+        executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
     }
 
     auto callData = JSC::getCallData(targetFunction);
@@ -126,10 +126,10 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSRemoteFunction* remoteFunction = jsCast<JSRemoteFunction*>(callFrame->jsCallee());
+    JSRemoteFunction* remoteFunction = uncheckedDowncast<JSRemoteFunction>(callFrame->jsCallee());
     ASSERT(remoteFunction->isRemoteFunction());
     JSObject* targetFunction = remoteFunction->targetFunction();
-    JSGlobalObject* targetGlobalObject = targetFunction->globalObject();
+    JSGlobalObject* targetGlobalObject = targetFunction->realm();
 
     MarkedArgumentBuffer args;
     auto clearArgOverflowCheckAndReturnAbortValue = [&] () -> EncodedJSValue {
@@ -145,7 +145,7 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, clearArgOverflowCheckAndReturnAbortValue());
         args.append(wrappedValue);
     }
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
@@ -174,13 +174,13 @@ JSC_DEFINE_HOST_FUNCTION(createRemoteFunction, (JSGlobalObject* globalObject, Ca
     JSValue targetFunction = callFrame->uncheckedArgument(0);
     ASSERT(targetFunction.isCallable());
 
-    JSObject* targetCallable = jsCast<JSObject*>(targetFunction.asCell());
+    JSObject* targetCallable = uncheckedDowncast<JSObject>(targetFunction.asCell());
     JSGlobalObject* destinationGlobalObject = globalObject;
     if (!callFrame->uncheckedArgument(1).isUndefinedOrNull()) {
-        if (auto shadowRealm = jsDynamicCast<ShadowRealmObject*>(callFrame->uncheckedArgument(1)))
+        if (auto shadowRealm = dynamicDowncast<ShadowRealmObject>(callFrame->uncheckedArgument(1)))
             destinationGlobalObject = shadowRealm->globalObject();
         else
-            destinationGlobalObject = jsCast<JSGlobalObject*>(callFrame->uncheckedArgument(1));
+            destinationGlobalObject = uncheckedDowncast<JSGlobalObject>(callFrame->uncheckedArgument(1));
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSRemoteFunction::tryCreate(destinationGlobalObject, vm, targetCallable)));
@@ -195,7 +195,7 @@ inline Structure* getRemoteFunctionStructure(JSGlobalObject* globalObject)
 JSRemoteFunction* JSRemoteFunction::tryCreate(JSGlobalObject* globalObject, VM& vm, JSObject* targetCallable)
 {
     ASSERT(targetCallable && targetCallable->isCallable());
-    if (auto remote = jsDynamicCast<JSRemoteFunction*>(targetCallable)) {
+    if (auto remote = dynamicDowncast<JSRemoteFunction>(targetCallable)) {
         targetCallable = remote->targetFunction();
         ASSERT(!JSC::isRemoteFunction(targetCallable));
     }
@@ -221,7 +221,7 @@ void JSRemoteFunction::copyNameAndLength(JSGlobalObject* globalObject)
 
     if (targetHasLength) {
         JSValue targetLength;
-        if (LIKELY(!slot.isTaintedByOpaqueObject()))
+        if (!slot.isTaintedByOpaqueObject()) [[likely]]
             targetLength = slot.getValue(globalObject, vm.propertyNames->length);
         else
             targetLength = m_targetFunction->get(globalObject, vm.propertyNames->length);
@@ -250,9 +250,8 @@ void JSRemoteFunction::finishCreation(JSGlobalObject* globalObject, VM& vm)
     auto scope = DECLARE_THROW_SCOPE(vm);
     copyNameAndLength(globalObject);
 
-    auto* exception = scope.exception();
-    if (UNLIKELY(exception && !vm.isTerminationException(exception))) {
-        scope.clearException();
+    if (scope.exception()) {
+        TRY_CLEAR_EXCEPTION(scope, void());
         throwTypeError(globalObject, scope, "wrapping returned function throws an error"_s);
     }
 }
@@ -260,7 +259,7 @@ void JSRemoteFunction::finishCreation(JSGlobalObject* globalObject, VM& vm)
 template<typename Visitor>
 void JSRemoteFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSRemoteFunction* thisObject = jsCast<JSRemoteFunction*>(cell);
+    JSRemoteFunction* thisObject = uncheckedDowncast<JSRemoteFunction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

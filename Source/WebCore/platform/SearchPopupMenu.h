@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "PopupMenu.h"
+#include <WebCore/PopupMenu.h>
 #include <wtf/Forward.h>
 #include <wtf/Vector.h>
 #include <wtf/WallTime.h>
@@ -41,7 +41,6 @@ class SearchPopupMenu : public RefCounted<SearchPopupMenu> {
 public:
     virtual ~SearchPopupMenu() = default;
     virtual PopupMenu* popupMenu() = 0;
-    RefPtr<PopupMenu> protectedPopupMenu() { return popupMenu(); }
     virtual void saveRecentSearches(const AtomString& name, const Vector<RecentSearch>&) = 0;
     virtual void loadRecentSearches(const AtomString& name, Vector<RecentSearch>&) = 0;
     virtual bool enabled() = 0;

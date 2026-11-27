@@ -8,6 +8,8 @@
 #include "libANGLE/GlobalMutex.h"
 
 #include <atomic>
+#include <memory>
+#include <type_traits>
 
 #include "common/debug.h"
 #include "common/system_utils.h"
@@ -109,8 +111,6 @@ class GlobalMutex final : angle::NonCopyable
     uint32_t mLockLevel = 0;
 };
 #endif  // defined(ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION)
-}  // namespace priv
-
 namespace
 {
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
@@ -119,28 +119,27 @@ namespace
             "'angle_enable_global_mutex_load_time_allocate' " \
                "requires constructor/destructor compiler atributes."
 #    endif
-priv::GlobalMutex *g_MutexPtr = nullptr;
+GlobalMutex *g_MutexPtr = nullptr;
 
 void ANGLE_CONSTRUCTOR AllocateGlobalMutex()
 {
     ASSERT(g_MutexPtr == nullptr);
-    g_MutexPtr = new priv::GlobalMutex();
+    g_MutexPtr = new GlobalMutex();
 }
 
 void ANGLE_DESTRUCTOR DeallocateGlobalMutex()
 {
     SafeDelete(g_MutexPtr);
 }
-
 #else
-ANGLE_REQUIRE_CONSTANT_INIT std::atomic<priv::GlobalMutex *> g_Mutex(nullptr);
+ANGLE_REQUIRE_CONSTANT_INIT std::atomic<GlobalMutex *> g_Mutex(nullptr);
 static_assert(std::is_trivially_destructible<decltype(g_Mutex)>::value,
               "global mutex is not trivially destructible");
 
-priv::GlobalMutex *AllocateGlobalMutexImpl()
+GlobalMutex *AllocateGlobalMutexImpl()
 {
-    priv::GlobalMutex *currentMutex = nullptr;
-    std::unique_ptr<priv::GlobalMutex> newMutex(new priv::GlobalMutex());
+    GlobalMutex *currentMutex = nullptr;
+    std::unique_ptr<GlobalMutex> newMutex(new GlobalMutex());
     do
     {
         if (g_Mutex.compare_exchange_weak(currentMutex, newMutex.get()))
@@ -151,9 +150,9 @@ priv::GlobalMutex *AllocateGlobalMutexImpl()
     return currentMutex;
 }
 
-priv::GlobalMutex *GetGlobalMutex()
+GlobalMutex *GetGlobalMutex()
 {
-    priv::GlobalMutex *mutex = g_Mutex.load();
+    GlobalMutex *mutex = g_Mutex.load();
     return mutex != nullptr ? mutex : AllocateGlobalMutexImpl();
 }
 #endif
@@ -171,16 +170,19 @@ ScopedGlobalMutexLock::~ScopedGlobalMutexLock()
     g_MutexPtr->unlock();
 }
 #else
-ScopedGlobalMutexLock::ScopedGlobalMutexLock() : mMutex(*GetGlobalMutex())
+ScopedGlobalMutexLock::ScopedGlobalMutexLock()
 {
-    mMutex.lock();
+    mMutex = GetGlobalMutex();
+    mMutex->lock();
 }
 
 ScopedGlobalMutexLock::~ScopedGlobalMutexLock()
 {
-    mMutex.unlock();
+    mMutex->unlock();
 }
 #endif
+
+}  // namespace priv
 
 // ScopedOptionalGlobalMutexLock implementation.
 ScopedOptionalGlobalMutexLock::ScopedOptionalGlobalMutexLock(bool enabled)
@@ -188,9 +190,9 @@ ScopedOptionalGlobalMutexLock::ScopedOptionalGlobalMutexLock(bool enabled)
     if (enabled)
     {
 #if defined(ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE)
-        mMutex = g_MutexPtr;
+        mMutex = priv::g_MutexPtr;
 #else
-        mMutex = GetGlobalMutex();
+        mMutex = priv::GetGlobalMutex();
 #endif
         mMutex->lock();
     }
@@ -216,12 +218,12 @@ ScopedOptionalGlobalMutexLock::~ScopedOptionalGlobalMutexLock()
 
 void AllocateGlobalMutex()
 {
-    (void)AllocateGlobalMutexImpl();
+    (void)priv::AllocateGlobalMutexImpl();
 }
 
 void DeallocateGlobalMutex()
 {
-    priv::GlobalMutex *mutex = g_Mutex.exchange(nullptr);
+    priv::GlobalMutex *mutex = priv::g_Mutex.exchange(nullptr);
     if (mutex != nullptr)
     {
         {

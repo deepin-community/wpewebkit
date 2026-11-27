@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2020 Apple Inc. All rights reserved.
+* Copyright (C) 2020-2025 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -34,8 +34,11 @@
 #include "GPUConnectionToWebProcess.h"
 #include "MediaPlayerPrivateRemoteMessages.h"
 #include "RemoteMediaPlayerProxy.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAudioTrackProxy);
 
 using namespace WebCore;
 
@@ -46,7 +49,7 @@ RemoteAudioTrackProxy::RemoteAudioTrackProxy(GPUConnectionToWebProcess& connecti
     , m_mediaPlayerIdentifier(mediaPlayerIdentifier)
 {
     m_clientId = trackPrivate.addClient([](auto&& task) {
-        ensureOnMainThread(WTFMove(task));
+        ensureOnMainThread(WTF::move(task));
     }, *this);
 
     connectionToWebProcess.connection().send(Messages::MediaPlayerPrivateRemote::AddRemoteAudioTrack(configuration()), m_mediaPlayerIdentifier);
@@ -75,7 +78,7 @@ AudioTrackPrivateRemoteConfiguration RemoteAudioTrackProxy::configuration()
 
 void RemoteAudioTrackProxy::configurationChanged()
 {
-    auto connection = m_connectionToWebProcess.get();
+    RefPtr connection = m_connectionToWebProcess.get();
     if (!connection)
         return;
     connection->connection().send(Messages::MediaPlayerPrivateRemote::RemoteAudioTrackConfigurationChanged(std::exchange(m_id, m_trackPrivate->id()), configuration()), m_mediaPlayerIdentifier);
@@ -104,12 +107,12 @@ void RemoteAudioTrackProxy::idChanged(TrackID)
     configurationChanged();
 }
 
-void RemoteAudioTrackProxy::labelChanged(const AtomString&)
+void RemoteAudioTrackProxy::labelChanged(const String&)
 {
     configurationChanged();
 }
 
-void RemoteAudioTrackProxy::languageChanged(const AtomString&)
+void RemoteAudioTrackProxy::languageChanged(const String&)
 {
     configurationChanged();
 }

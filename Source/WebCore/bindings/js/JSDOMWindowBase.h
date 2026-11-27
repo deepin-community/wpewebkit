@@ -19,20 +19,14 @@
 
 #pragma once
 
-#include "JSDOMGlobalObject.h"
-#include "JSDOMWrapperCache.h"
-#include "LocalDOMWindow.h"
-#include <JavaScriptCore/AuxiliaryBarrierInlines.h>
-#include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSCellInlines.h>
-#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorInlines.h>
-#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/JSDOMWrapperCache.h>
+#include <WebCore/LocalDOMWindow.h>
 #include <cstddef>
 #include <wtf/Forward.h>
 #include <wtf/GetPtr.h>
@@ -59,50 +53,44 @@ public:
     ~JSDOMWindowBase();
     void updateDocument();
 
-    DOMWindow& wrapped() const;
-    Document* scriptExecutionContext() const;
+    DOMWindow& wrapped() const { return m_wrapped; }
+    Document* NODELETE scriptExecutionContext() const;
 
     // Called just before removing this window from the JSWindowProxy.
     void willRemoveFromWindowProxy();
 
     DECLARE_INFO;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, 0, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
-    }
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSValue prototype);
 
     static bool supportsRichSourceInfo(const JSC::JSGlobalObject*);
-    static bool shouldInterruptScript(const JSC::JSGlobalObject*);
+    static bool NODELETE shouldInterruptScript(const JSC::JSGlobalObject*);
     static bool shouldInterruptScriptBeforeTimeout(const JSC::JSGlobalObject*);
-    static JSC::RuntimeFlags javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
-    static void queueMicrotaskToEventLoop(JSC::JSGlobalObject&, Ref<JSC::Microtask>&&);
+    static JSC::RuntimeFlags NODELETE javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
     static JSC::JSObject* currentScriptExecutionOwner(JSC::JSGlobalObject*);
-    static JSC::ScriptExecutionStatus scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
-    static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, JSC::JSString*);
-    static String codeForEval(JSC::JSGlobalObject*, JSC::JSValue);
-    static bool canCompileStrings(JSC::JSGlobalObject*, JSC::CompilationType, String, JSC::JSValue);
+    static JSC::ScriptExecutionStatus NODELETE scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
+    static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, const String&);
 
     void printErrorMessage(const String&) const;
 
-    JSWindowProxy& proxy() const;
+    JSWindowProxy& NODELETE proxy() const;
 
     static void fireFrameClearedWatchpointsForWindow(LocalDOMWindow*);
 
     void setCurrentEvent(Event*);
-    Event* currentEvent() const;
+    Event* NODELETE currentEvent() const;
 
 protected:
-    JSDOMWindowBase(JSC::VM&, JSC::Structure*, RefPtr<DOMWindow>&&, JSWindowProxy*);
+    JSDOMWindowBase(JSC::VM&, JSC::Structure*, Ref<DOMWindow>&&, JSWindowProxy*);
     void finishCreation(JSC::VM&, JSWindowProxy*);
     void initStaticGlobals(JSC::VM&);
 
     RefPtr<JSC::WatchpointSet> m_windowCloseWatchpoints;
 
-private:
     static const JSC::GlobalObjectMethodTable* globalObjectMethodTable();
 
-    RefPtr<DOMWindow> m_wrapped;
+private:
+    const Ref<DOMWindow> m_wrapped;
     RefPtr<Event> m_currentEvent;
 };
 
@@ -125,7 +113,7 @@ inline JSDOMWindow* toJSDOMWindow(LocalFrame* frame, DOMWrapperWorld& world) { r
 LocalDOMWindow& incumbentDOMWindow(JSC::JSGlobalObject&, JSC::CallFrame&);
 LocalDOMWindow& incumbentDOMWindow(JSC::JSGlobalObject&);
 
-LocalDOMWindow& activeDOMWindow(JSC::JSGlobalObject&);
+LocalDOMWindow& NODELETE activeDOMWindow(JSC::JSGlobalObject&);
 LocalDOMWindow& firstDOMWindow(JSC::JSGlobalObject&);
 
 LocalDOMWindow& legacyActiveDOMWindowForAccessor(JSC::JSGlobalObject&, JSC::CallFrame&);

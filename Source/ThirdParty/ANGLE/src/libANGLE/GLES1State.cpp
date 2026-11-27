@@ -8,6 +8,7 @@
 // for GLES1 contexts.
 
 #include "libANGLE/GLES1State.h"
+#include "common/unsafe_buffers.h"
 
 #include "libANGLE/Context.h"
 #include "libANGLE/GLES1Renderer.h"
@@ -486,18 +487,18 @@ void GLES1State::setClipPlane(unsigned int plane, const GLfloat *equation)
     setDirty(DIRTY_GLES1_CLIP_PLANES);
     assert(plane < mClipPlanes.size());
     mClipPlanes[plane].equation[0] = equation[0];
-    mClipPlanes[plane].equation[1] = equation[1];
-    mClipPlanes[plane].equation[2] = equation[2];
-    mClipPlanes[plane].equation[3] = equation[3];
+    mClipPlanes[plane].equation[1] = ANGLE_UNSAFE_TODO(equation[1]);
+    mClipPlanes[plane].equation[2] = ANGLE_UNSAFE_TODO(equation[2]);
+    mClipPlanes[plane].equation[3] = ANGLE_UNSAFE_TODO(equation[3]);
 }
 
 void GLES1State::getClipPlane(unsigned int plane, GLfloat *equation) const
 {
     assert(plane < mClipPlanes.size());
     equation[0] = mClipPlanes[plane].equation[0];
-    equation[1] = mClipPlanes[plane].equation[1];
-    equation[2] = mClipPlanes[plane].equation[2];
-    equation[3] = mClipPlanes[plane].equation[3];
+    ANGLE_UNSAFE_TODO(equation[1]) = mClipPlanes[plane].equation[1];
+    ANGLE_UNSAFE_TODO(equation[2]) = mClipPlanes[plane].equation[2];
+    ANGLE_UNSAFE_TODO(equation[3]) = mClipPlanes[plane].equation[3];
 }
 
 FogParameters &GLES1State::fogParameters()

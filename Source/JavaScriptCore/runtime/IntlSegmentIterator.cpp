@@ -26,20 +26,18 @@
 #include "config.h"
 #include "IntlSegmentIterator.h"
 
+#include "IntlSegmentDataObject.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
-#include <unicode/ucurr.h>
-#include <unicode/uloc.h>
-#include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace JSC {
 
 const ClassInfo IntlSegmentIterator::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlSegmentIterator) };
 
-IntlSegmentIterator* IntlSegmentIterator::create(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<UChar>> buffer, JSString* string, IntlSegmenter::Granularity granularity)
+IntlSegmentIterator* IntlSegmentIterator::create(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>> buffer, JSString* string, IntlSegmenter::Granularity granularity)
 {
-    auto* object = new (NotNull, allocateCell<IntlSegmentIterator>(vm)) IntlSegmentIterator(vm, structure, WTFMove(segmenter), WTFMove(buffer), granularity, string);
+    auto* object = new (NotNull, allocateCell<IntlSegmentIterator>(vm)) IntlSegmentIterator(vm, structure, WTF::move(segmenter), WTF::move(buffer), granularity, string);
     object->finishCreation(vm);
     return object;
 }
@@ -49,10 +47,10 @@ Structure* IntlSegmentIterator::createStructure(VM& vm, JSGlobalObject* globalOb
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-IntlSegmentIterator::IntlSegmentIterator(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<UChar>>&& buffer, IntlSegmenter::Granularity granularity, JSString* string)
+IntlSegmentIterator::IntlSegmentIterator(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, IntlSegmenter::Granularity granularity, JSString* string)
     : Base(vm, structure)
-    , m_segmenter(WTFMove(segmenter))
-    , m_buffer(WTFMove(buffer))
+    , m_segmenter(WTF::move(segmenter))
+    , m_buffer(WTF::move(buffer))
     , m_string(string, WriteBarrierEarlyInit)
     , m_granularity(granularity)
 {
@@ -61,7 +59,7 @@ IntlSegmentIterator::IntlSegmentIterator(VM& vm, Structure* structure, std::uniq
 template<typename Visitor>
 void IntlSegmentIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<IntlSegmentIterator*>(cell);
+    auto* thisObject = uncheckedDowncast<IntlSegmentIterator>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_string);
 }
@@ -77,7 +75,7 @@ JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
     int32_t endIndex = ubrk_next(m_segmenter.get());
     if (endIndex == UBRK_DONE)
         return createIteratorResultObject(globalObject, jsUndefined(), true);
-    JSObject* object = IntlSegmenter::createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
+    JSObject* object = createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
     RETURN_IF_EXCEPTION(scope, { });
     return createIteratorResultObject(globalObject, object, false);
 }

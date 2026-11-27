@@ -27,6 +27,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "ModelObjectHeap.h"
 #include "RemoteGPURequestAdapterResponse.h"
 #include "RemoteVideoFrameIdentifier.h"
 #include "SharedPreferencesForWebProcess.h"
@@ -54,13 +55,18 @@ struct PresentationContextDescriptor;
 
 namespace IPC {
 class Connection;
-class StreamServerConnection;
 }
 
 namespace WebCore {
+class IOSurface;
 class MediaPlayer;
 class NativeImage;
+class ProcessIdentity;
 class VideoFrame;
+}
+
+namespace WebModel {
+struct ImageAsset;
 }
 
 namespace WebKit {
@@ -73,17 +79,18 @@ class ObjectHeap;
 struct RequestAdapterOptions;
 }
 
-class RemoteGPU final : public IPC::StreamMessageReceiver, public CanMakeWeakPtr<RemoteGPU> {
+class RemoteGPU final : public CanMakeWeakPtr<RemoteGPU>, public IPC::StreamServerConnection::Client {
     WTF_MAKE_TZONE_ALLOCATED(RemoteGPU);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteGPU);
 public:
     static Ref<RemoteGPU> create(WebGPUIdentifier identifier, GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& serverConnection)
     {
-        auto result = adoptRef(*new RemoteGPU(identifier, gpuConnectionToWebProcess, renderingBackend, WTFMove(serverConnection)));
+        auto result = adoptRef(*new RemoteGPU(identifier, gpuConnectionToWebProcess, renderingBackend, WTF::move(serverConnection)));
         result->initialize();
         return result;
     }
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
 
     virtual ~RemoteGPU();
 
@@ -91,6 +98,9 @@ public:
 
     void paintNativeImageToImageBuffer(WebCore::NativeImage&, WebCore::RenderingResourceIdentifier);
     RefPtr<GPUConnectionToWebProcess> gpuConnectionToWebProcess() const;
+
+    static Vector<UniqueRef<WebCore::IOSurface>> createRenderBuffers(unsigned width, unsigned height, const WebCore::ProcessIdentity&, bool standardDynamicRange = false);
+    IPC::StreamConnectionWorkQueue& workQueue() const { return m_workQueue; }
 
 private:
     friend class WebGPU::ObjectHeap;
@@ -102,22 +112,24 @@ private:
     RemoteGPU& operator=(const RemoteGPU&) = delete;
     RemoteGPU& operator=(RemoteGPU&&) = delete;
 
-    RefPtr<IPC::Connection> connection() const;
-
     void initialize();
-    IPC::StreamConnectionWorkQueue& workQueue() const { return m_workQueue; }
     void workQueueInitialize();
     void workQueueUninitialize();
 
     template<typename T>
     IPC::Error send(T&& message) const
     {
-        return m_streamConnection->send(std::forward<T>(message), m_identifier);
+        return protect(*m_streamConnection)->send(std::forward<T>(message), m_identifier);
     }
 
+    // IPC::StreamMessageReceiver overrides.
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
+    // IPC::StreamServerConnection::Client overrides.
+    void didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName, const Vector<uint32_t>&) final;
+
 
     void requestAdapter(const WebGPU::RequestAdapterOptions&, WebGPUIdentifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&&);
+    void NODELETE createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, WebKit::WebModelIdentifier, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 
     void createPresentationContext(const WebGPU::PresentationContextDescriptor&, WebGPUIdentifier);
 
@@ -131,6 +143,7 @@ private:
     RefPtr<IPC::StreamServerConnection> m_streamConnection;
     RefPtr<WebCore::WebGPU::GPU> m_backing WTF_GUARDED_BY_CAPABILITY(workQueue());
     Ref<WebGPU::ObjectHeap> m_objectHeap WTF_GUARDED_BY_CAPABILITY(workQueue());
+    Ref<ModelObjectHeap> m_modelObjectHeap WTF_GUARDED_BY_CAPABILITY(workQueue());
     const WebGPUIdentifier m_identifier;
     Ref<RemoteRenderingBackend> m_renderingBackend;
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,9 +24,55 @@
  */
 
 const maxNonLiveDuration = 604800; // 604800 seconds == 1 week
+const MaximumNarrowViewerControlsBarWidth = 468;
 
 class MediaController
 {
+    static EmptyRanges = {
+        get length() { return 0; },
+        start: function(index) { return undefined; },
+        end: function(index) { return undefined; },
+    }
+
+    static NullMedia = {
+        get audioTracks() { return []; },
+        get autoplay() { return false; },
+        get buffered() { return MediaController.EmptyRanges; },
+        get controls() { return false; },
+        get currentTime() { return 0; },
+        set currentTime(time) { },
+        get defaultPlaybackRate() { return 1; },
+        set defaultPlaybackRate(rate) { },
+        get duration() { return 0; },
+        get error() { return null; },
+        get muted() { return false; },
+        set muted(muted) { },
+        get networkState() { return HTMLMediaElement.NETWORK_NO_SOURCE; },
+        get paused() { return false; },
+        get playbackRate() { return 1; },
+        set playbackRate(rate) { },
+        get played() { return MediaController.EmptyRanges; },
+        get readyState() { return HTMLMediaElement.HAVE_NOTHING; },
+        get seekable() { return MediaController.EmptyRanges; },
+        get textTracks() { return []; },
+        get videoTracks() { return []; },
+        get volume() { return 1; },
+        set volume(volume) { },
+        get webkitCurrentPlaybackTargetIsWireless() { return false; },
+        get webkitPresentationMode() { return "inline"; },
+        get webkitSupportsFullscreen() { return false; },
+
+        pause: function() { },
+        play: function() { },
+        fastSeek: function(time) { },
+        requestPictureInPicture: function() { },
+        webkitEnterFullscreen: function() { },
+        webkitExitFullscreen: function() { },
+        webkitSetPresentationMode: function(mode) { },
+        webkitShowPlaybackTargetPicker: function() { },
+        webkitSupportsPresentationMode: function(mode) { return false; },
+    };
+
     constructor(shadowRoot, media, host)
     {
         this.shadowRootWeakRef = new WeakRef(shadowRoot);
@@ -53,6 +99,7 @@ class MediaController
         scheduler.flushScheduledLayoutCallbacks();
 
         shadowRoot.addEventListener("resize", this);
+        shadowRoot.addEventListener("fullscreenchange", this);
 
         media.videoTracks.addEventListener("addtrack", this);
         media.videoTracks.addEventListener("removetrack", this);
@@ -61,6 +108,7 @@ class MediaController
         media.addEventListener(this.fullscreenChangeEventType, this);
         media.addEventListener("keydown", this);
         media.addEventListener("keyup", this);
+        media.addEventListener("click", this);
 
         window.addEventListener("keydown", this);
 
@@ -70,7 +118,7 @@ class MediaController
     // Public
     get media()
     {
-        return this.mediaWeakRef ? this.mediaWeakRef.deref() : null;
+        return this.mediaWeakRef.deref() ?? MediaController.NullMedia;
     }
 
     get shadowRoot()
@@ -112,7 +160,13 @@ class MediaController
 
     get layoutTraits()
     {
-        let mode = this.isFullscreen ? LayoutTraits.Mode.Fullscreen : LayoutTraits.Mode.Inline;
+        let mode = LayoutTraits.Mode.Inline;
+        if (this.isFullscreen) {
+            if (this.host && this.host.inWindowFullscreen && this.media.offsetWidth < MaximumNarrowViewerControlsBarWidth)
+                mode = LayoutTraits.Mode.NarrowViewer;
+            else
+                mode = LayoutTraits.Mode.Fullscreen;
+        }
     
         if (this.host) {
             let LayoutTraitsClass = window.layoutTraitsClasses[this.host.layoutTraitsClassName];
@@ -210,6 +264,8 @@ class MediaController
             this._updateControlsIfNeeded();
             // We must immediately perform layouts so that we don't lag behind the media layout size.
             scheduler.flushScheduledLayoutCallbacks();
+        } else if (event.type === "fullscreenchange" && event.currentTarget === this.shadowRoot) {
+            this._updateControlsAvailability();
         } else if (event.type === "keydown" && this.isFullscreen && event.key === " ") {
             this.togglePlayback();
             event.preventDefault();
@@ -221,6 +277,15 @@ class MediaController
             event.preventDefault();
         else if (event.type === this.fullscreenChangeEventType)
             this.host?.presentationModeChanged?.();
+        else if (event.type === "click" && event.target === this.media) {
+            // If the <video> receives a click event, and the <video> is also the target
+            // of this event, this means we have clicked outside the border of the
+            // media controls <div>, which covers the video content.
+            if (this.host && this.host.inWindowFullscreen) {
+                this.media.webkitExitFullscreen();
+                event.stopPropagation();
+            }
+        }
 
         if (event.currentTarget === this.media) {
             if (event.type === "play")
@@ -293,6 +358,9 @@ class MediaController
     deinitialize()
     {
         this.shadowRoot.removeChild(this.container);
+        window.removeEventListener("keydown", this);
+        if (this.controls)
+            this.controls.disable();
         return true;
     }
 
@@ -303,6 +371,9 @@ class MediaController
         this.mediaWeakRef = new WeakRef(media);
         this.host = host;
         shadowRoot.appendChild(this.container);
+        window.addEventListener("keydown", this);
+        if (this.controls)
+            this.controls.reenable();
         return true;
     }
 
@@ -329,7 +400,7 @@ class MediaController
         if (previousControls)
             previousControls.disable();
 
-        this.controls = new ControlsClass;
+        this.controls = new ControlsClass({ mode: layoutTraits.mode });
         this.controls.delegate = this;
 
         if (this.controls.autoHideController && this.shadowRoot.host && this.shadowRoot.host.dataset.autoHideDelay)
@@ -354,16 +425,18 @@ class MediaController
         else
             window.removeEventListener("dragstart", this, true);
 
+        this._stopPropagationOnTouchEvents();
+
         if (this.host && this.host.inWindowFullscreen) {
             this._stopPropagationOnClickEvents();
-            if (!this.host.supportsSeeking)
-                this.controls.timeControl.scrubber.disabled = true;
-
-            if (!this.host.supportsRewind)
+            if (!this.host.supportsRewind && this.controls.rewindButton)
                 this.controls.rewindButton.dropped = true;
         }
 
         this._updateControlsAvailability();
+
+        if (this.host?.needsChromeMediaControlsPseudoElement)
+            this.controls.element.setAttribute('useragentpart', '-webkit-media-controls');
     }
 
     _stopPropagationOnClickEvents()
@@ -376,51 +449,26 @@ class MediaController
         }
     }
 
+    _stopPropagationOnTouchEvents()
+    {
+        let touchEvents = ["touchstart", "touchmove", "touchend"];
+        for (let touchEvent of touchEvents) {
+            this.controls.element.addEventListener(touchEvent, (event) => {
+                if (event.target !== this.controls.element)
+                    event.stopPropagation();
+            });
+        }
+    }
+
     _updateControlsSize()
     {
-        // To compute the bounds of the controls, we need to account for the computed transform applied
-        // to the media element, and apply the inverted transform to the bounds computed on the container
-        // element in the shadow root, which is naturally sized to match the metrics of its host,
-        // excluding borders.
-
-        // First, we traverse the node hierarchy up from the media element to compute the effective
-        // transform matrix applied to the media element.
-        let node = this.media;
-        let transform = new DOMMatrix;
-        while (node && node instanceof HTMLElement) {
-            transform = transform.multiply(new DOMMatrix(getComputedStyle(node).transform));
-            node = node.parentNode;
-        }
-
-        // Then, we take each corner of the container element in the shadow root and transform
-        // each with the inverted matrix we just computed so that we can compute the untransformed
-        // bounds of the media element.
-        const bounds = this.container.getBoundingClientRect();
-        const invertedTransform = transform.inverse();
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        [
-            new DOMPoint(bounds.left, bounds.top),
-            new DOMPoint(bounds.right, bounds.top),
-            new DOMPoint(bounds.right, bounds.bottom),
-            new DOMPoint(bounds.left, bounds.bottom)
-        ].forEach(corner => {
-            const point = corner.matrixTransform(invertedTransform);
-            if (point.x < minX)
-                minX = point.x;
-            if (point.x > maxX)
-                maxX = point.x;
-            if (point.y < minY)
-                minY = point.y;
-            if (point.y > maxY)
-                maxY = point.y;
-        });
-
-        // Finally, we factor in the scale factor of the controls themselves, which reflects the page's scale factor.
-        this.controls.width = Math.round((maxX - minX) * this.controls.scaleFactor);
-        this.controls.height = Math.round((maxY - minY) * this.controls.scaleFactor);
+        // Use offsetWidth/offsetHeight to get the untransformed layout dimensions of the
+        // container element in the shadow root, which is naturally sized to match the
+        // content box of its host (excluding borders). These properties are not affected
+        // by CSS transforms, so they give the correct dimensions regardless of any
+        // transform applied to the media element or its ancestors.
+        this.controls.width = Math.round(this.container.offsetWidth * this.controls.scaleFactor);
+        this.controls.height = Math.round(this.container.offsetHeight * this.controls.scaleFactor);
     }
 
     _updateTextTracksClassList()
@@ -445,6 +493,9 @@ class MediaController
     _shouldControlsBeAvailable()
     {
         if (this.layoutTraits.controlsNeverAvailable())
+            return false;
+        
+        if (this.controls instanceof IOSInlineMediaControls && this.media.webkitPresentationMode === "picture-in-picture")
             return false;
 
         // Otherwise, for controls to be available, the controls attribute must be present on the media element

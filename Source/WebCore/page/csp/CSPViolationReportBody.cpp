@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,46 +37,46 @@ namespace WebCore {
 
 using Init = SecurityPolicyViolationEventInit;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CSPViolationReportBody);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CSPViolationReportBody);
 
 CSPViolationReportBody::CSPViolationReportBody(Init&& init)
-    : m_documentURL(WTFMove(init.documentURI))
-    , m_referrer(init.referrer.isNull() ? emptyString() : WTFMove(init.referrer))
-    , m_blockedURL(WTFMove(init.blockedURI))
-    , m_effectiveDirective(WTFMove(init.effectiveDirective))
-    , m_originalPolicy(WTFMove(init.originalPolicy))
-    , m_sourceFile(WTFMove(init.sourceFile))
-    , m_sample(WTFMove(init.sample))
+    : m_documentURL(WTF::move(init.documentURI))
+    , m_referrer(init.referrer.isNull() ? emptyString() : WTF::move(init.referrer))
+    , m_blockedURL(WTF::move(init.blockedURI))
+    , m_effectiveDirective(WTF::move(init.effectiveDirective))
+    , m_originalPolicy(WTF::move(init.originalPolicy))
+    , m_sourceFile(WTF::move(init.sourceFile))
+    , m_sample(WTF::move(init.sample))
     , m_disposition(init.disposition)
     , m_statusCode(init.statusCode)
-    , m_lineNumber(init.lineNumber)
-    , m_columnNumber(init.columnNumber)
+    , m_lineNumber(m_sourceFile.isNull() ? std::nullopt : std::optional<uint64_t>(init.lineNumber))
+    , m_columnNumber(m_sourceFile.isNull() ? std::nullopt : std::optional<uint64_t>(init.columnNumber))
 {
 }
 
-CSPViolationReportBody::CSPViolationReportBody(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition disposition, unsigned short statusCode, unsigned long lineNumber, unsigned long columnNumber)
-    : m_documentURL(WTFMove(documentURL))
-    , m_referrer(WTFMove(referrer))
-    , m_blockedURL(WTFMove(blockedURL))
-    , m_effectiveDirective(WTFMove(effectiveDirective))
-    , m_originalPolicy(WTFMove(originalPolicy))
-    , m_sourceFile(WTFMove(sourceFile))
-    , m_sample(WTFMove(sample))
+CSPViolationReportBody::CSPViolationReportBody(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition disposition, unsigned short statusCode, std::optional<uint64_t> lineNumber, std::optional<uint64_t> columnNumber)
+    : m_documentURL(WTF::move(documentURL))
+    , m_referrer(WTF::move(referrer))
+    , m_blockedURL(WTF::move(blockedURL))
+    , m_effectiveDirective(WTF::move(effectiveDirective))
+    , m_originalPolicy(WTF::move(originalPolicy))
+    , m_sourceFile(WTF::move(sourceFile))
+    , m_sample(WTF::move(sample))
     , m_disposition(disposition)
     , m_statusCode(statusCode)
-    , m_lineNumber(lineNumber)
-    , m_columnNumber(columnNumber)
+    , m_lineNumber(m_sourceFile.isNull() ? std::nullopt : std::optional<uint64_t>(lineNumber))
+    , m_columnNumber(m_sourceFile.isNull() ? std::nullopt : std::optional<uint64_t>(columnNumber))
 {
 }
 
 Ref<CSPViolationReportBody> CSPViolationReportBody::create(Init&& init)
 {
-    return adoptRef(*new CSPViolationReportBody(WTFMove(init)));
+    return adoptRef(*new CSPViolationReportBody(WTF::move(init)));
 }
 
-Ref<CSPViolationReportBody> CSPViolationReportBody::create(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition disposition, unsigned short statusCode, unsigned long lineNumber, unsigned long columnNumber)
+Ref<CSPViolationReportBody> CSPViolationReportBody::create(String&& documentURL, String&& referrer, String&& blockedURL, String&& effectiveDirective, String&& originalPolicy, String&& sourceFile, String&& sample, SecurityPolicyViolationEventDisposition disposition, unsigned short statusCode, std::optional<uint64_t> lineNumber, std::optional<uint64_t> columnNumber)
 {
-    return adoptRef(*new CSPViolationReportBody(WTFMove(documentURL), WTFMove(referrer), WTFMove(blockedURL), WTFMove(effectiveDirective), WTFMove(originalPolicy), WTFMove(sourceFile), WTFMove(sample), disposition, statusCode, lineNumber, columnNumber));
+    return adoptRef(*new CSPViolationReportBody(WTF::move(documentURL), WTF::move(referrer), WTF::move(blockedURL), WTF::move(effectiveDirective), WTF::move(originalPolicy), WTF::move(sourceFile), WTF::move(sample), disposition, statusCode, lineNumber, columnNumber));
 }
 
 const String& CSPViolationReportBody::type() const
@@ -113,8 +113,8 @@ Ref<FormData> CSPViolationReportBody::createReportFormDataForViolation(bool uses
         cspReport->setString("sample"_s, sample());
         if (!sourceFile().isNull()) {
             cspReport->setString("sourceFile"_s, sourceFile());
-            cspReport->setInteger("lineNumber"_s, lineNumber());
-            cspReport->setInteger("columnNumber"_s, columnNumber());
+            cspReport->setInteger("lineNumber"_s, lineNumber().value_or(0));
+            cspReport->setInteger("columnNumber"_s, columnNumber().value_or(0));
         }
     } else {
         cspReport->setString("document-uri"_s, documentURL());
@@ -126,8 +126,8 @@ Ref<FormData> CSPViolationReportBody::createReportFormDataForViolation(bool uses
         cspReport->setInteger("status-code"_s, statusCode());
         if (!sourceFile().isNull()) {
             cspReport->setString("source-file"_s, sourceFile());
-            cspReport->setInteger("line-number"_s, lineNumber());
-            cspReport->setInteger("column-number"_s, columnNumber());
+            cspReport->setInteger("line-number"_s, lineNumber().value_or(0));
+            cspReport->setInteger("column-number"_s, columnNumber().value_or(0));
         }
     }
 
@@ -135,7 +135,7 @@ Ref<FormData> CSPViolationReportBody::createReportFormDataForViolation(bool uses
     auto reportObject = JSON::Object::create();
     reportObject->setString("type"_s, type());
     reportObject->setString("url"_s, documentURL());
-    reportObject->setObject(usesReportTo ? "body"_s : "csp-report"_s, WTFMove(cspReport));
+    reportObject->setObject(usesReportTo ? "body"_s : "csp-report"_s, WTF::move(cspReport));
 
     return FormData::create(reportObject->toJSONString().utf8());
 }

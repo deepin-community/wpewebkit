@@ -29,31 +29,56 @@
 #include "GPUIntegralTypes.h"
 #include "GPULoadOp.h"
 #include "GPUStoreOp.h"
+#include "GPUTexture.h"
 #include "GPUTextureView.h"
 #include "WebGPURenderPassColorAttachment.h"
-#include <variant>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
 
+using GPURenderPassColorAttachmentView = Variant<Ref<GPUTexture>, Ref<GPUTextureView>>;
+using GPURenderPassResolveAttachmentView = Variant<Ref<GPUTexture>, Ref<GPUTextureView>>;
+
 struct GPURenderPassColorAttachment {
+    std::optional<WebGPU::RenderPassResolveAttachmentView> parseResolveTarget() const
+    {
+        if (resolveTarget) {
+            return WTF::switchOn(*resolveTarget,
+                [](const Ref<GPUTexture>& texture) -> WebGPU::RenderPassResolveAttachmentView {
+                    return &texture->backing();
+                },
+                [](const Ref<GPUTextureView>& view) -> WebGPU::RenderPassResolveAttachmentView {
+                    return &view->backing();
+                }
+            );
+        }
+
+        return std::nullopt;
+    }
+
     WebGPU::RenderPassColorAttachment convertToBacking() const
     {
-        ASSERT(view);
         return {
-            .view = view->backing(),
+            .view = WTF::switchOn(view,
+                [&](const Ref<GPUTexture>& texture) -> WebGPU::RenderPassColorAttachmentView {
+                    return texture->backing();
+                },
+                [&](const Ref<GPUTextureView>& view) -> WebGPU::RenderPassColorAttachmentView {
+                    return view->backing();
+                }
+            ),
             .depthSlice = depthSlice,
-            .resolveTarget = resolveTarget ? &resolveTarget->backing() : nullptr,
+            .resolveTarget = parseResolveTarget(),
             .clearValue = clearValue ? std::optional { WebCore::convertToBacking(*clearValue) } : std::nullopt,
             .loadOp = WebCore::convertToBacking(loadOp),
             .storeOp = WebCore::convertToBacking(storeOp),
         };
     }
 
-    WeakPtr<GPUTextureView> view;
+    GPURenderPassColorAttachmentView view;
     std::optional<GPUIntegerCoordinate> depthSlice;
-    WeakPtr<GPUTextureView> resolveTarget;
+    std::optional<GPURenderPassResolveAttachmentView> resolveTarget;
 
     std::optional<GPUColor> clearValue;
     GPULoadOp loadOp { GPULoadOp::Load };

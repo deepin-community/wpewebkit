@@ -31,7 +31,7 @@ namespace WebKit {
 
 enum class AllowOverwrite : bool { No, Yes };
 
-enum class DownloadIdentifierType { };
-using DownloadID = LegacyNullableObjectIdentifier<DownloadIdentifierType>;
+struct DownloadIDType;
+using DownloadID = ObjectIdentifier<DownloadIDType>;
 
 }

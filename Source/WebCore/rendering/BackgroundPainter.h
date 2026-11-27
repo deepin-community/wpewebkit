@@ -23,16 +23,24 @@
 
 #pragma once
 
+#include "GraphicsTypes.h"
 #include "RenderBoxModelObject.h"
+#include "StyleZoomPrimitives.h"
 
 namespace WebCore {
 
 class GraphicsContext;
 class FloatRoundedRect;
 
-enum class ShadowStyle : uint8_t;
+namespace Style {
+enum class ShadowStyle : bool;
+}
 
-class FloatRoundedRect;
+enum BaseBackgroundColorUsage {
+    BaseBackgroundColorUse,
+    BaseBackgroundColorOnly,
+    BaseBackgroundColorSkip
+};
 
 struct BackgroundImageGeometry {
     BackgroundImageGeometry(const LayoutRect& destinationRect, const LayoutSize& tileSizeWithoutPixelSnapping, const LayoutSize& tileSize, const LayoutSize& phase, const LayoutSize& spaceSize, bool fixedAttachment);
@@ -55,35 +63,51 @@ struct BackgroundImageGeometry {
     bool hasNonLocalGeometry; // Has background-attachment: fixed. Implies that we can't always cheaply compute destRect.
 };
 
+template<typename Layer>
+struct FillLayerToPaint {
+    const Layer& layer;
+    bool isLast;
+    Style::ZoomFactor zoom;
+};
+
 class BackgroundPainter {
 public:
     BackgroundPainter(RenderBoxModelObject&, const PaintInfo&);
 
-    void paintBackground(const LayoutRect&, BackgroundBleedAvoidance) const;
+    void setOverrideClip(FillBox overrideClip) { m_overrideClip = overrideClip; }
+    void setOverrideOrigin(FillBox overrideOrigin) { m_overrideOrigin = overrideOrigin; }
 
-    void paintFillLayers(const Color&, const FillLayer&, const LayoutRect&, BackgroundBleedAvoidance, CompositeOperator, RenderElement* backgroundObject = nullptr) const;
-    void paintFillLayer(const Color&, const FillLayer&, const LayoutRect&, BackgroundBleedAvoidance, const InlineIterator::InlineBoxIterator&, const LayoutRect& backgroundImageStrip = { }, CompositeOperator = CompositeOperator::SourceOver, RenderElement* backgroundObject = nullptr, BaseBackgroundColorUsage = BaseBackgroundColorUse) const;
+    void paintBackground(const LayoutRect&, BleedAvoidance) const;
 
-    void paintBoxShadow(const LayoutRect&, const RenderStyle&, ShadowStyle, bool includeLogicalLeftEdge = true, bool includeLogicalRightEdge = true) const;
+    void paintFillLayers(const Color&, const Style::BackgroundLayers&, Style::ZoomFactor, const LayoutRect&, BleedAvoidance, CompositeOperator, RenderElement* backgroundObject = nullptr) const;
+    void paintFillLayer(const Color&, const FillLayerToPaint<Style::BackgroundLayer>&, const LayoutRect&, BleedAvoidance, const InlineIterator::InlineBoxIterator&, const LayoutRect& backgroundImageStrip = { }, CompositeOperator = CompositeOperator::SourceOver, RenderElement* backgroundObject = nullptr, BaseBackgroundColorUsage = BaseBackgroundColorUse) const;
+
+    void paintFillLayers(const Color&, const Style::MaskLayers&, Style::ZoomFactor, const LayoutRect&, BleedAvoidance, CompositeOperator, RenderElement* backgroundObject = nullptr) const;
+    void paintFillLayer(const Color&, const FillLayerToPaint<Style::MaskLayer>&, const LayoutRect&, BleedAvoidance, const InlineIterator::InlineBoxIterator&, const LayoutRect& backgroundImageStrip = { }, CompositeOperator = CompositeOperator::SourceOver, RenderElement* backgroundObject = nullptr, BaseBackgroundColorUsage = BaseBackgroundColorUse) const;
+
+    void paintBoxShadow(const LayoutRect&, const Style::ComputedStyle&, Style::ShadowStyle, RectEdges<bool> closedEdges = { true, true, true, true }) const;
 
     static bool paintsOwnBackground(const RenderBoxModelObject&);
-    static BackgroundImageGeometry calculateBackgroundImageGeometry(const RenderBoxModelObject&, const RenderLayerModelObject* paintContainer, const FillLayer&, const LayoutPoint& paintOffset, const LayoutRect& borderBoxRect);
+    static BackgroundImageGeometry calculateFillLayerImageGeometry(const RenderBoxModelObject&, const RenderLayerModelObject* paintContainer, const Style::BackgroundLayer&, Style::ZoomFactor, const LayoutPoint& paintOffset, const LayoutRect& borderBoxRect, std::optional<FillBox> overrideOrigin = std::nullopt);
+    static BackgroundImageGeometry calculateFillLayerImageGeometry(const RenderBoxModelObject&, const RenderLayerModelObject* paintContainer, const Style::MaskLayer&, Style::ZoomFactor, const LayoutPoint& paintOffset, const LayoutRect& borderBoxRect, std::optional<FillBox> overrideOrigin = std::nullopt);
     static void clipRoundedInnerRect(GraphicsContext&, const FloatRoundedRect& clipRect);
-    static bool boxShadowShouldBeAppliedToBackground(const RenderBoxModelObject&, const LayoutPoint& paintOffset, BackgroundBleedAvoidance, const InlineIterator::InlineBoxIterator&);
+    static bool boxShadowShouldBeAppliedToBackground(const RenderBoxModelObject&, const LayoutPoint& paintOffset, BleedAvoidance, const InlineIterator::InlineBoxIterator&);
 
 private:
     void paintRootBoxFillLayers() const;
 
-    RoundedRect backgroundRoundedRectAdjustedForBleedAvoidance(const LayoutRect& borderRect, BackgroundBleedAvoidance, const InlineIterator::InlineBoxIterator&, bool includeLogicalLeftEdge, bool includeLogicalRightEdge) const;
-    RoundedRect backgroundRoundedRect(const LayoutRect& borderRect, const InlineIterator::InlineBoxIterator&, bool includeLogicalLeftEdge, bool includeLogicalRightEdge) const;
+    template<typename LayerList> void paintFillLayersImpl(const Color&, const LayerList&, Style::ZoomFactor, const LayoutRect&, BleedAvoidance, CompositeOperator, RenderElement* backgroundObject = nullptr) const;
+    template<typename Layer> void paintFillLayerImpl(const Color&, const FillLayerToPaint<Layer>&, const LayoutRect&, BleedAvoidance, const InlineIterator::InlineBoxIterator&, const LayoutRect& backgroundImageStrip = { }, CompositeOperator = CompositeOperator::SourceOver, RenderElement* backgroundObject = nullptr, BaseBackgroundColorUsage = BaseBackgroundColorUse) const;
+    template<typename Layer> static BackgroundImageGeometry calculateFillLayerImageGeometryImpl(const RenderBoxModelObject&, const RenderLayerModelObject* paintContainer, const Layer&, Style::ZoomFactor, const LayoutPoint& paintOffset, const LayoutRect& borderBoxRect, std::optional<FillBox> overrideOrigin = std::nullopt);
+    template<typename Layer> static LayoutSize calculateFillTileSize(const RenderBoxModelObject&, const Layer&, Style::ZoomFactor, const LayoutSize& positioningAreaSize);
 
-    static LayoutSize calculateFillTileSize(const RenderBoxModelObject&, const FillLayer&, const LayoutSize& positioningAreaSize);
-
-    const Document& document() const;
-    const RenderView& view() const;
+    const Document& NODELETE document() const;
+    const RenderView& NODELETE view() const;
 
     RenderBoxModelObject& m_renderer;
     const PaintInfo& m_paintInfo;
+    std::optional<FillBox> m_overrideClip;
+    std::optional<FillBox> m_overrideOrigin;
 };
 
 }

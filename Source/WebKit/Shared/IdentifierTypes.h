@@ -31,21 +31,26 @@
 namespace WebKit {
 
 struct AuthenticationChallengeIdentifierType;
-using AuthenticationChallengeIdentifier = LegacyNullableObjectIdentifier<AuthenticationChallengeIdentifierType>;
+using AuthenticationChallengeIdentifier = ObjectIdentifier<AuthenticationChallengeIdentifierType>;
 
 struct PageGroupIdentifierType;
-using PageGroupIdentifier = LegacyNullableObjectIdentifier<PageGroupIdentifierType>;
+using PageGroupIdentifier = ObjectIdentifier<PageGroupIdentifierType>;
 
 struct TapIdentifierType;
-using TapIdentifier = LegacyNullableObjectIdentifier<TapIdentifierType>;
+using TapIdentifier = ObjectIdentifier<TapIdentifierType>;
 
 struct TextCheckerRequestType;
-using TextCheckerRequestID = LegacyNullableObjectIdentifier<TextCheckerRequestType>;
+using TextCheckerRequestID = ObjectIdentifier<TextCheckerRequestType>;
 
 struct EditorStateIdentifierType;
 using EditorStateIdentifier = MonotonicObjectIdentifier<EditorStateIdentifierType>;
 
 struct FocusedElementInformationIdentifierType;
 using FocusedElementInformationIdentifier = MonotonicObjectIdentifier<FocusedElementInformationIdentifierType>;
+
+#if ENABLE(WEBDRIVER_BIDI)
+struct RealmIdentifierType;
+using RealmIdentifier = ObjectIdentifier<RealmIdentifierType>;
+#endif
 
 } // namespace WebKit

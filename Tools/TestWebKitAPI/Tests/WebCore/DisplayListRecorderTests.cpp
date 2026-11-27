@@ -25,14 +25,16 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include "WebCoreTestUtilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/WebCoreTestUtilities.h"
 #include <WebCore/DestinationColorSpace.h>
 #include <WebCore/DisplayList.h>
-#include <WebCore/DisplayListDrawingContext.h>
+#include <WebCore/DisplayListRecorderImpl.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageBuffer.h>
+#include <numbers>
 #include <wtf/MathExtras.h>
+
 #if PLATFORM(COCOA)
 #include <WebCore/GraphicsContextCG.h>
 #endif
@@ -53,10 +55,10 @@ constexpr unsigned testContextHeight = 88;
 static RefPtr<WebCore::ImageBuffer> createReferenceTarget()
 {
     auto colorSpace = WebCore::DestinationColorSpace::SRGB();
-    auto pixelFormat = WebCore::ImageBufferPixelFormat::BGRA8;
+    auto pixelFormat = WebCore::PixelFormat::BGRA8;
     WebCore::FloatSize logicalSize { testContextWidth, testContextHeight };
     float scale = 1;
-    return WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
+    return WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
 }
 
 static WebCore::Path createTestPath()
@@ -71,29 +73,12 @@ static WebCore::Path createTestPath()
 static Ref<WebCore::ImageBuffer> createTestImageBuffer()
 {
     auto colorSpace = WebCore::DestinationColorSpace::SRGB();
-    auto pixelFormat = WebCore::ImageBufferPixelFormat::BGRA8;
+    auto pixelFormat = WebCore::PixelFormat::BGRA8;
     WebCore::FloatSize logicalSize { 3, 7 };
     float scale = 1;
-    auto result = WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
+    auto result = WebCore::ImageBuffer::create(logicalSize, WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, scale, colorSpace, pixelFormat);
     RELEASE_ASSERT(result);
     return result.releaseNonNull();
-}
-
-namespace {
-
-class TestDrawingContext : public WebCore::DisplayList::DrawingContext {
-public:
-    TestDrawingContext(WebCore::FloatSize logicalSize)
-        : WebCore::DisplayList::DrawingContext { logicalSize }
-    {
-    }
-};
-
-}
-
-static std::unique_ptr<TestDrawingContext> createDisplayListTarget()
-{
-    return makeUnique<TestDrawingContext>(WebCore::FloatSize { testContextWidth, testContextHeight });
 }
 
 // Function that applies same functor to two contexts. BifurbicatedGraphicsContext seems to have missing features.
@@ -274,15 +259,23 @@ struct DrawSystemImage {
 struct ResetClipRect {
     void operator()(WebCore::GraphicsContext& c)
     {
+        c.translate(10, 10);
+        c.save();
         c.resetClip();
+        c.restore();
     }
 
     static String description()
     {
         return R"DL(
+(translate
+  (x 10.00)
+  (y 10.00))
+(save)
 (reset-clip)
 (clip
-  (rect at (0,0) size 77x88)))DL"_s;
+  (rect at (-10,-10) size 77x88))
+(restore))DL"_s;
     }
 };
 
@@ -427,9 +420,9 @@ struct TrivialRotate {
         c.rotate(1.f);
         c.rotate(0.f);
         c.rotate(2.f);
-        c.rotate(piFloat * 2.f);
-        c.rotate(7.f * piFloat * 2.f);
-        c.rotate(-2.f * piFloat * 2.f);
+        c.rotate(std::numbers::pi_v<float> * 2.f);
+        c.rotate(7.f * std::numbers::pi_v<float> * 2.f);
+        c.rotate(-2.f * std::numbers::pi_v<float> * 2.f);
         c.drawRect({ 0, 0, 1, 1 });
     }
 
@@ -461,24 +454,22 @@ TYPED_TEST_P(DisplayListRecorderResultStateTest, StateThroughDisplayListIsPreser
 {
     auto refTarget = createReferenceTarget();
     auto& ref = refTarget->context();
-    auto testedTarget = createDisplayListTarget();
-    auto& tested = testedTarget->recorder();
+    WebCore::DisplayList::RecorderImpl tested { { testContextWidth, testContextHeight } };
     EXPECT_TRUE(checkEqualState(ref, tested));
 
     forBoth(ref, tested, this->operation());
 
     EXPECT_TRUE(checkEqualState(ref, tested));
 
-    tested.commitRecording();
+    Ref displayList = tested.takeDisplayList();
 
-    auto resultTarget = createReferenceTarget();
-    auto& result = resultTarget->context();
-
-    auto description = testedTarget->displayList().asText({ WebCore::DisplayList::AsTextFlag::IncludePlatformOperations }).trim(deprecatedIsSpaceOrNewline);
+    auto description = displayList->asText({ WebCore::DisplayList::AsTextFlag::IncludePlatformOperations }).trim(deprecatedIsSpaceOrNewline);
     auto expectedDescription = this->operationDescription().trim(deprecatedIsSpaceOrNewline);
     EXPECT_EQ(expectedDescription, description);
 
-    testedTarget->replayDisplayList(result);
+    RefPtr resultTarget = createReferenceTarget();
+    auto& result = resultTarget->context();
+    result.drawDisplayList(displayList);
     EXPECT_TRUE(checkEqualState(ref, result));
 
     // Unwind the stack in case the test-case tested state middle of the save/restore pair.

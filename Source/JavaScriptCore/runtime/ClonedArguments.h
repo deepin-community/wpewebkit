@@ -25,10 +25,13 @@
 
 #pragma once
 
-#include "ArgumentsMode.h"
-#include "JSObject.h"
+#include <JavaScriptCore/ArgumentsMode.h>
+#include <JavaScriptCore/CommonIdentifiers.h>
+#include <JavaScriptCore/JSObject.h>
 
 namespace JSC {
+
+struct InlineCallFrame;
 
 // This is an Arguments-class object that we create when you do function.arguments, or you say
 // "arguments" inside a function in strict mode. It behaves almpst entirely like an ordinary
@@ -48,26 +51,11 @@ public:
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
-        static_assert(!CellType::needsDestruction);
+        static_assert(CellType::needsDestruction == DoesNotNeedDestruction);
         return &vm.clonedArgumentsSpace();
     }
 
-    uint64_t length(JSGlobalObject* globalObject) const
-    {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        JSValue lengthValue;
-        if (LIKELY(!structure()->didTransition())) {
-            lengthValue = getDirect(clonedArgumentsLengthPropertyOffset);
-            if (LIKELY(lengthValue.isInt32()))
-                return std::max(lengthValue.asInt32(), 0);
-        } else {
-            lengthValue = get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, 0);
-        }
-        RELEASE_AND_RETURN(scope, lengthValue.toLength(globalObject));
-    }
+    uint64_t length(JSGlobalObject*) const;
 
     void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 
@@ -104,7 +92,7 @@ private:
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, IndexingType);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);

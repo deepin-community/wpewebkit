@@ -37,7 +37,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RefPtr.h>
-#include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
 
@@ -188,15 +188,14 @@ const char* webkit_user_content_filter_store_get_path(WebKitUserContentFilterSto
 #if ENABLE(CONTENT_EXTENSIONS)
 static void webkitUserContentFilterStoreSaveBytes(GRefPtr<GTask>&& task, String&& identifier, GRefPtr<GBytes>&& source)
 {
-    size_t sourceSize;
-    const char* sourceData = static_cast<const char*>(g_bytes_get_data(source.get(), &sourceSize));
-    if (!sourceSize) {
+    auto sourceData = span(source);
+    if (!sourceData.size()) {
         g_task_return_error(task.get(), g_error_new_literal(WEBKIT_USER_CONTENT_FILTER_ERROR, WEBKIT_USER_CONTENT_FILTER_ERROR_INVALID_SOURCE, "Source JSON rule set cannot be empty"));
         return;
     }
 
     auto* store = WEBKIT_USER_CONTENT_FILTER_STORE(g_task_get_source_object(task.get()));
-    store->priv->store->compileContentRuleList(WTFMove(identifier), String::fromUTF8({ sourceData, sourceSize }), [task = WTFMove(task)](RefPtr<API::ContentRuleList> contentRuleList, std::error_code error) {
+    store->priv->store->compileContentRuleList(WTF::move(identifier), String::fromUTF8(sourceData), [task = WTF::move(task)](RefPtr<API::ContentRuleList> contentRuleList, std::error_code error) {
         if (g_task_return_error_if_cancelled(task.get()))
             return;
 
@@ -204,7 +203,7 @@ static void webkitUserContentFilterStoreSaveBytes(GRefPtr<GTask>&& task, String&
             ASSERT(error.category() == WebCore::ContentExtensions::contentExtensionErrorCategory());
             g_task_return_error(task.get(), toGError(WEBKIT_USER_CONTENT_FILTER_ERROR_INVALID_SOURCE, error));
         } else
-            g_task_return_pointer(task.get(), webkitUserContentFilterCreate(WTFMove(contentRuleList)), reinterpret_cast<GDestroyNotify>(webkit_user_content_filter_unref));
+            g_task_return_pointer(task.get(), webkitUserContentFilterCreate(WTF::move(contentRuleList)), reinterpret_cast<GDestroyNotify>(webkit_user_content_filter_unref));
     });
 }
 #endif
@@ -218,10 +217,10 @@ static void webkitUserContentFilterStoreSaveBytes(GRefPtr<GTask>&& task, String&
  * @callback: (scope async): a #GAsyncReadyCallback to call when saving is completed
  * @user_data: the data to pass to the callback function
  *
- * Asynchronously save a content filter from a set source rule.
+ * Asynchronously save a content filter from a source rule set.
  *
  * Asynchronously save a content filter from a source rule set in the
- * [WebKit content extesions JSON format](https://webkit.org/blog/3476/content-blockers-first-look/).
+ * [WebKit content extensions JSON format](https://webkit.org/blog/3476/content-blockers-first-look/).
  *
  * The @identifier can be used afterwards to refer to the filter when using
  * webkit_user_content_filter_store_remove() and webkit_user_content_filter_store_load().
@@ -242,7 +241,7 @@ void webkit_user_content_filter_store_save(WebKitUserContentFilterStore* store, 
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(store, cancellable, callback, userData));
 #if ENABLE(CONTENT_EXTENSIONS)
-    webkitUserContentFilterStoreSaveBytes(WTFMove(task), String::fromUTF8(identifier), GRefPtr<GBytes>(source));
+    webkitUserContentFilterStoreSaveBytes(WTF::move(task), String::fromUTF8(identifier), GRefPtr<GBytes>(source));
 #else
     g_task_return_new_error(task.get(), WEBKIT_USER_CONTENT_FILTER_ERROR, WEBKIT_USER_CONTENT_FILTER_ERROR_NOT_FOUND, "Content Extensions disabled");
 #endif
@@ -310,7 +309,7 @@ void webkit_user_content_filter_store_save_from_file(WebKitUserContentFilterStor
         GRefPtr<GMappedFile> mappedFile = adoptGRef(g_mapped_file_new(filePath.get(), FALSE, nullptr));
         if (mappedFile) {
             GRefPtr<GBytes> source = adoptGRef(g_mapped_file_get_bytes(mappedFile.get()));
-            webkitUserContentFilterStoreSaveBytes(WTFMove(task), String::fromUTF8(identifier), WTFMove(source));
+            webkitUserContentFilterStoreSaveBytes(WTF::move(task), String::fromUTF8(identifier), WTF::move(source));
             return;
         }
     }
@@ -330,7 +329,7 @@ void webkit_user_content_filter_store_save_from_file(WebKitUserContentFilterStor
         GUniqueOutPtr<GError> error;
         if (g_file_load_contents_finish(G_FILE(sourceObject), result, &sourceData, &sourceSize, nullptr, &error.outPtr())) {
             SaveTaskData* data = static_cast<SaveTaskData*>(g_task_get_task_data(task.get()));
-            webkitUserContentFilterStoreSaveBytes(WTFMove(task), WTFMove(data->identifier), GRefPtr<GBytes>(g_bytes_new_take(sourceData, sourceSize)));
+            webkitUserContentFilterStoreSaveBytes(WTF::move(task), WTF::move(data->identifier), GRefPtr<GBytes>(g_bytes_new_take(sourceData, sourceSize)));
         } else
             g_task_return_error(task.get(), error.release());
     }, task.leakRef());
@@ -345,7 +344,7 @@ void webkit_user_content_filter_store_save_from_file(WebKitUserContentFilterStor
  * @result: a #GAsyncResult
  * @error: return location for error or %NULL to ignore
  *
- * Finishes and asynchronous filter save previously started with
+ * Finishes an asynchronous filter save previously started with
  * webkit_user_content_filter_store_save_from_file().
  *
  * Returns: (transfer full): a #WebKitUserContentFilter, or %NULL if saving failed.
@@ -383,7 +382,7 @@ void webkit_user_content_filter_store_remove(WebKitUserContentFilterStore* store
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(store, cancellable, callback, userData));
 #if ENABLE(CONTENT_EXTENSIONS)
-    store->priv->store->removeContentRuleList(String::fromUTF8(identifier), [task = WTFMove(task)](std::error_code error) {
+    store->priv->store->removeContentRuleList(String::fromUTF8(identifier), [task = WTF::move(task)](std::error_code error) {
         if (g_task_return_error_if_cancelled(task.get()))
             return;
 
@@ -444,7 +443,7 @@ void webkit_user_content_filter_store_load(WebKitUserContentFilterStore* store, 
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(store, cancellable, callback, userData));
 #if ENABLE(CONTENT_EXTENSIONS)
-    store->priv->store->lookupContentRuleList(String::fromUTF8(identifier), [task = WTFMove(task)](RefPtr<API::ContentRuleList> contentRuleList, std::error_code error) {
+    store->priv->store->lookupContentRuleList(String::fromUTF8(identifier), [task = WTF::move(task)](RefPtr<API::ContentRuleList> contentRuleList, std::error_code error) {
         if (g_task_return_error_if_cancelled(task.get()))
             return;
 
@@ -453,7 +452,7 @@ void webkit_user_content_filter_store_load(WebKitUserContentFilterStore* store, 
                 || static_cast<API::ContentRuleListStore::Error>(error.value()) == API::ContentRuleListStore::Error::VersionMismatch);
             g_task_return_error(task.get(), toGError(WEBKIT_USER_CONTENT_FILTER_ERROR_NOT_FOUND, error));
         } else
-            g_task_return_pointer(task.get(), webkitUserContentFilterCreate(WTFMove(contentRuleList)), reinterpret_cast<GDestroyNotify>(webkit_user_content_filter_unref));
+            g_task_return_pointer(task.get(), webkitUserContentFilterCreate(WTF::move(contentRuleList)), reinterpret_cast<GDestroyNotify>(webkit_user_content_filter_unref));
     });
 #else
     g_task_return_new_error(task.get(), WEBKIT_USER_CONTENT_FILTER_ERROR, WEBKIT_USER_CONTENT_FILTER_ERROR_NOT_FOUND, "Content Extensions disabled");
@@ -484,7 +483,7 @@ WebKitUserContentFilter* webkit_user_content_filter_store_load_finish(WebKitUser
  * webkit_user_content_filter_store_fetch_identifiers:
  * @store: a #WebKitUserContentFilterStore
  * @cancellable: (allow-none): a #GCancellable or %NULL to ignore
- * @callback: (scope async): a #GAsyncReadyCallback to call when the removal is completed
+ * @callback: (scope async): a #GAsyncReadyCallback to call when the identifiers have been fetched
  * @user_data: the data to pass to the callback function
  *
  * Asynchronously retrieve a list of the identifiers for all the stored filters.
@@ -502,14 +501,25 @@ void webkit_user_content_filter_store_fetch_identifiers(WebKitUserContentFilterS
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(store, cancellable, callback, userData));
 #if ENABLE(CONTENT_EXTENSIONS)
-    store->priv->store->getAvailableContentRuleListIdentifiers([task = WTFMove(task)](WTF::Vector<WTF::String> identifiers) {
+    store->priv->store->getAvailableContentRuleListIdentifiers([task = WTF::move(task)](WTF::Vector<WTF::String> identifiers) {
         if (g_task_return_error_if_cancelled(task.get()))
             return;
 
-        GStrv result = static_cast<GStrv>(g_new0(gchar*, identifiers.size() + 1));
-        for (size_t i = 0; i < identifiers.size(); ++i)
-            result[i] = g_strdup(identifiers[i].utf8().data());
-        g_task_return_pointer(task.get(), result, reinterpret_cast<GDestroyNotify>(g_strfreev));
+        auto bytesToAllocate = checkedSum<size_t>(identifiers.size(), 1);
+        bytesToAllocate *= sizeof(gchar*);
+        if (bytesToAllocate.hasOverflowed()) [[unlikely]] {
+            g_task_return_new_error(task.get(), G_IO_ERROR, g_io_error_from_errno(EOVERFLOW), "Too many items in result");
+            return;
+        }
+
+        auto result = GMallocSpan<gchar*>::malloc(bytesToAllocate);
+        for (size_t i = 0; i < identifiers.size(); ++i) {
+            const auto identifier = identifiers[i].utf8();
+            result[i] = g_strndup(identifier.data(), identifier.length());
+        }
+        result[identifiers.size()] = nullptr;
+
+        g_task_return_pointer(task.get(), result.leakSpan().data(), reinterpret_cast<GDestroyNotify>(g_strfreev));
     });
 #else
     g_task_return_new_error(task.get(), WEBKIT_USER_CONTENT_FILTER_ERROR, WEBKIT_USER_CONTENT_FILTER_ERROR_NOT_FOUND, "Content Extensions disabled");

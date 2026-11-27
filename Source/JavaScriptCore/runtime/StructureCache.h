@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "PrototypeKey.h"
-#include "WeakGCMap.h"
+#include <JavaScriptCore/PrototypeKey.h>
+#include <JavaScriptCore/WeakGCMap.h>
 #include <wtf/Lock.h>
 
 namespace JSC {
@@ -43,10 +43,8 @@ typedef uint8_t IndexingType;
 // Tracks the canonical structure an object should be allocated with when inheriting from a given prototype.
 class StructureCache {
 public:
-    explicit StructureCache(VM& vm)
-        : m_structures(vm)
-    {
-    }
+    inline explicit StructureCache(VM&); // Defined in StructureInlines.h.
+    inline ~StructureCache(); // Defined in StructureInlines.h.
 
     JS_EXPORT_PRIVATE void clear();
 

@@ -33,12 +33,16 @@
 #include "Timer.h"
 #include <wtf/ApproximateTime.h>
 #include <wtf/MainThread.h>
+#include <wtf/SystemTracing.h>
+#include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(IOS_FAMILY)
 #include "WebCoreThread.h"
 #endif
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadTimers);
 
 // Timers are created, started and fired on the same thread, and each thread has its own ThreadTimers
 // copy to keep the heap and a set of currently firing timers.
@@ -53,16 +57,16 @@ ThreadTimers::ThreadTimers()
 // Also, SharedTimer can be replaced with nullptr before all timers are destroyed.
 void ThreadTimers::setSharedTimer(SharedTimer* sharedTimer)
 {
-    if (m_sharedTimer) {
-        m_sharedTimer->setFiredFunction(nullptr);
-        m_sharedTimer->stop();
+    if (CheckedPtr sharedTimer = m_sharedTimer) {
+        sharedTimer->setFiredFunction(nullptr);
+        sharedTimer->stop();
         m_pendingSharedTimerFireTime = MonotonicTime { };
     }
     
     m_sharedTimer = sharedTimer;
     
     if (sharedTimer) {
-        m_sharedTimer->setFiredFunction([] { threadGlobalData().threadTimers().sharedTimerFiredInternal(); });
+        sharedTimer->setFiredFunction([] { threadGlobalDataSingleton().threadTimers().sharedTimerFiredInternal(); });
         updateSharedTimer();
     }
 }
@@ -80,7 +84,7 @@ void ThreadTimers::updateSharedTimer()
 
     if (m_firingTimers || m_timerHeap.isEmpty()) {
         m_pendingSharedTimerFireTime = MonotonicTime { };
-        m_sharedTimer->stop();
+        protect(m_sharedTimer)->stop();
     } else {
         MonotonicTime nextFireTime = m_timerHeap.first()->time;
         MonotonicTime currentMonotonicTime = MonotonicTime::now();
@@ -88,9 +92,9 @@ void ThreadTimers::updateSharedTimer()
             // No need to restart the timer if both the pending fire time and the new fire time are in the past.
             if (m_pendingSharedTimerFireTime <= currentMonotonicTime && nextFireTime <= currentMonotonicTime)
                 return;
-        } 
+        }
         m_pendingSharedTimerFireTime = nextFireTime;
-        m_sharedTimer->setFireInterval(std::max(nextFireTime - currentMonotonicTime, 0_s));
+        protect(m_sharedTimer)->setFireInterval(std::max(nextFireTime - currentMonotonicTime, 0_s));
     }
 }
 
@@ -100,6 +104,8 @@ void ThreadTimers::sharedTimerFiredInternal()
     // Do a re-entrancy check.
     if (m_firingTimers)
         return;
+
+    TraceScope threadTimersScope { ThreadTimersStart, ThreadTimersEnd };
     m_firingTimers = true;
     m_pendingSharedTimerFireTime = MonotonicTime { };
 
@@ -107,7 +113,7 @@ void ThreadTimers::sharedTimerFiredInternal()
     auto timeToQuit = ApproximateTime::now() + maxDurationOfFiringTimers;
 
     while (!m_timerHeap.isEmpty()) {
-        Ref<ThreadTimerHeapItem> item = *m_timerHeap.first();
+        Ref item = m_timerHeap.first();
         ASSERT(item->hasTimer());
         if (!item->hasTimer()) {
             TimerBase::heapDeleteNullMin(m_timerHeap);
@@ -122,7 +128,10 @@ void ThreadTimers::sharedTimerFiredInternal()
         timer.setNextFireTime(interval ? fireTime + interval : MonotonicTime { });
 
         // Once the timer has been fired, it may be deleted, so do nothing else with it after this point.
-        item->timer().fired();
+        {
+            TraceScope timerFiredScope { TimerFiredStart, TimerFiredEnd };
+            item->timer().fired();
+        }
 
         // Catch the case where the timer asked timers to fire in a nested event loop, or we are over time limit.
         if (!m_firingTimers || timeToQuit < ApproximateTime::now())
@@ -143,8 +152,8 @@ void ThreadTimers::fireTimersInNestedEventLoop()
     // Reset the reentrancy guard so the timers can fire again.
     m_firingTimers = false;
 
-    if (m_sharedTimer) {
-        m_sharedTimer->invalidate();
+    if (CheckedPtr sharedTimer = m_sharedTimer) {
+        sharedTimer->invalidate();
         m_pendingSharedTimerFireTime = MonotonicTime { };
     }
 

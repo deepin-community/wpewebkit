@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Apple Inc.  All rights reserved.
+ * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -82,18 +82,18 @@ public:
 
     SVGPathByteStream& currentPathByteStream()
     {
-        return isAnimating() ? animVal()->pathByteStream() : baseVal()->pathByteStream();
+        return isAnimating() ? animVal().pathByteStream() : baseVal()->pathByteStream();
     }
 
     Path currentPath()
     {
-        return isAnimating() ? animVal()->path() : baseVal()->path();
+        return isAnimating() ? animVal().path() : baseVal()->path();
     }
 
     size_t approximateMemoryCost() const
     {
         if (isAnimating())
-            return baseVal()->approximateMemoryCost() + animVal()->approximateMemoryCost();
+            return baseVal()->approximateMemoryCost() + animVal().approximateMemoryCost();
         return baseVal()->approximateMemoryCost();
     }
 };

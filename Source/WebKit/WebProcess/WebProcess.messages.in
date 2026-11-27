@@ -20,11 +20,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-messages -> WebProcess LegacyReceiver NotRefCounted {
+[
+    DispatchedFrom=UI,
+    DispatchedTo=WebContent
+]
+messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     InitializeWebProcess(struct WebKit::WebProcessCreationParameters processCreationParameters) -> (WebCore::ProcessIdentity processIdentity)
     SetWebsiteDataStoreParameters(struct WebKit::WebProcessDataStoreParameters parameters)
 
     CreateWebPage(WebCore::PageIdentifier newPageID, struct WebKit::WebPageCreationParameters pageCreationParameters)
+    CountWebPagesForTesting() -> (unsigned count)
 
     PrewarmWithDomainInformation(struct WebCore::PrewarmInformation prewarmInformation)
 
@@ -36,7 +41,9 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     RegisterURLSchemeAsBypassingContentSecurityPolicy(String scheme)
     SetDomainRelaxationForbiddenForURLScheme(String scheme)
     RegisterURLSchemeAsLocal(String scheme)
+#if ENABLE(ALL_LEGACY_REGISTERED_SPECIAL_URL_SCHEMES)
     RegisterURLSchemeAsNoAccess(String scheme)
+#endif
     RegisterURLSchemeAsDisplayIsolated(String scheme)
     RegisterURLSchemeAsCORSEnabled(String scheme)
     RegisterURLSchemeAsCachePartitioned(String scheme)
@@ -54,6 +61,9 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     UserPreferredLanguagesChanged(Vector<String> languages)
     FullKeyboardAccessModeChanged(bool fullKeyboardAccessEnabled)
     UpdateStorageAccessUserAgentStringQuirks(HashMap<WebCore::RegistrableDomain, String> userAgentStringQuirks)
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    SetOptInCookiePartitioningEnabled(bool enabled);
+#endif
 
 #if HAVE(MOUSE_DEVICE_OBSERVATION)
     SetHasMouseDevice(bool hasMouseDevice)
@@ -66,12 +76,13 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     void StartMemorySampler(WebKit::SandboxExtensionHandle sampleLogFileHandle, String sampleLogFilePath, double interval);
     void StopMemorySampler();
 
-    SetTextCheckerState(struct WebKit::TextCheckerState textCheckerState)
+    SetTextCheckerState(OptionSet<WebKit::TextCheckerState> textCheckerState)
 
     SetEnhancedAccessibility(bool flag)
     BindAccessibilityFrameWithData(WebCore::FrameIdentifier frameID, std::span<const uint8_t> data);
 
     GarbageCollectJavaScriptObjects()
+    GetStorageAreaMapCountForTesting() -> (uint64_t storageAreaMapCount)
     SetJavaScriptGarbageCollectorTimerEnabled(bool enable)
 
     SetInjectedBundleParameter(String parameter, std::span<const uint8_t> value);
@@ -85,7 +96,7 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     ReloadExecutionContextsForOrigin(struct WebCore::ClientOrigin origin, std::optional<WebCore::FrameIdentifier> triggeringFrame) -> ()
     DeleteAllCookies() -> ()
 
-    SetHiddenPageDOMTimerThrottlingIncreaseLimit(Seconds seconds)
+    [DeferSendingIfSuspended] SetHiddenPageDOMTimerThrottlingIncreaseLimit(Seconds seconds)
 
     SetMemoryCacheDisabled(bool disabled);
 
@@ -107,7 +118,9 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     GamepadDisconnected(unsigned index)
 #endif
 
-    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebKit::PageGroupIdentifier pageGroupID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, struct WebKit::WebPreferencesStore store, WebCore::RegistrableDomain domain, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, struct WebKit::RemoteWorkerInitializationData initializationData) -> ()
+    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebKit::PageGroupIdentifier pageGroupID, WebKit::WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, struct WebKit::WebPreferencesStore store, WebCore::Site site, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, struct WebKit::RemoteWorkerInitializationData initializationData, enum:bool WebCore::CrossOriginEmbedderPolicyValue workerCrossOriginEmbedderPolicy) -> ()
+
+    RegisterServiceWorkerClients() -> (bool isSuccess)
 
     SetHasSuspendedPageProxy(bool hasSuspendedPageProxy);
     SetIsInProcessCache(bool isInProcessCache) -> ()
@@ -115,7 +128,7 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     GetActivePagesOriginsForTesting() -> (Vector<String> activeOrigins)
 
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
-    SetScreenProperties(struct WebCore::ScreenProperties screenProperties)
+    [DeferSendingIfSuspended] SetScreenProperties(struct WebCore::ScreenProperties screenProperties)
 #endif
 #if PLATFORM(MAC)
     ScrollerStylePreferenceChanged(bool useOvelayScrollbars)
@@ -126,7 +139,7 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
 #endif
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    BacklightLevelDidChange(float backlightLevel)
+    [DeferSendingIfSuspended] BacklightLevelDidChange(float backlightLevel)
 #endif
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
@@ -134,6 +147,7 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
 #endif
 
     IsJITEnabled() -> (bool enabled)
+    IsEnhancedSecurityEnabled() -> (bool enabled)
 
 #if PLATFORM(COCOA)
     SetMediaMIMETypes(Vector<String> types)
@@ -158,10 +172,11 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     ClearCurrentModifierStateForTesting()
 
     SetBackForwardCacheCapacity(unsigned capacity);
-    ClearCachedPage(WebCore::BackForwardItemIdentifier backForwardItemID) -> ()
+    ClearCachedPage(WebCore::BackForwardFrameItemIdentifier backForwardFrameItemID) -> ()
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     SendMessageToWebProcessExtension(struct WebKit::UserMessage userMessage)
+    SetAvailableInputDevices(OptionSet<WebKit::AvailableInputDevices> availableInputDevices)
 #endif
 
     SeedResourceLoadStatisticsForTesting(WebCore::RegistrableDomain firstPartyDomain, WebCore::RegistrableDomain thirdPartyDomain, bool shouldScheduleNotification) -> ()
@@ -171,19 +186,18 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     SendResourceLoadStatisticsDataImmediately() -> ()
 
     UpdateDomainsWithStorageAccessQuirks(HashSet<WebCore::RegistrableDomain> domainsWithStorageAccessQuirks);
+    UpdateScriptTrackingPrivacyFilter(struct WebKit::ScriptTrackingPrivacyRules rules)
+    UpdateConsistentPrivacyQuirkFilter(struct WebKit::ScriptTrackingPrivacyRules rules)
 
     GrantAccessToAssetServices(Vector<WebKit::SandboxExtensionHandle> assetServicesHandles)
     RevokeAccessToAssetServices()
+#if !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     SwitchFromStaticFontRegistryToUserFontRegistry(Vector<WebKit::SandboxExtensionHandle> fontMachExtensionHandles)
-
+#endif
 #if PLATFORM(COCOA)
     DisableURLSchemeCheckInDataDetectors()
     UnblockServicesRequiredByAccessibility(Vector<WebKit::SandboxExtensionHandle> handleArray)
     PowerSourceDidChange(bool hasAC)
-#endif
-
-#if PLATFORM(GTK) && !USE(GTK4) && USE(CAIRO)
-    SetUseSystemAppearanceForScrollbars(bool useSystemAppearanceForScrollbars)
 #endif
 
 #if PLATFORM(COCOA)
@@ -210,6 +224,8 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
 
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
     SetMediaAccessibilityPreferences(enum:uint8_t WebCore::CaptionUserPreferencesDisplayMode displayMode, Vector<String> languages)
+    SetMediaAccessibilityPreferredLanguages(Vector<String> languages)
+    SetMediaAccessibilityPreferredCaptionDisplayMode(enum:uint8_t WebCore::CaptionUserPreferencesDisplayMode displayMode)
 #endif
 
 #if PLATFORM(MAC)
@@ -218,8 +234,27 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
 
     ReleaseMemory() -> ()
 
+    JSHandleDestroyed(WebCore::JSHandleIdentifier identifier);
+
 #if ENABLE(NOTIFY_BLOCKING)
-    PostNotification(String message, std::optional<uint64_t> state)
-    PostObserverNotification(String message)
+    [DeferSendingIfSuspendedWithCoalescingKeys=(message)] PostNotification(String message, std::optional<uint64_t> state)
+    [DeferSendingIfSuspended] PostObserverNotification(String message)
+    GetNotifyStateForTesting(String notificationName) -> (std::optional<uint64_t> state)
 #endif
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    [DeferSendingIfSuspended] SetResourceMonitorContentRuleList(WebKit::WebCompiledContentRuleListData ruleListData)
+    SetResourceMonitorContentRuleListAsync(WebKit::WebCompiledContentRuleListData ruleListData) -> ()
+#endif
+
+#if PLATFORM(COCOA)
+    RegisterAdditionalFonts(struct WebKit::AdditionalFonts fonts)
+    RegisterFontMap(HashMap<String, URL> fonts, HashMap<String, Vector<String>> fontFamilyMap, Vector<WebKit::SandboxExtensionHandle> sandboxExtensions)
+#endif
+
+#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
+    InitializeAccessibility(Vector<WebKit::SandboxExtensionHandle> handles);
+#endif
+
+    ContentWorldDestroyed(WebKit::ContentWorldIdentifier identifier)
 }

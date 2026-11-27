@@ -67,7 +67,6 @@ WebContext::WebContext()
     WKContextConfigurationSetNetworkProcessPath(contextConfiguration.get(), networkProcessPath.get());
 
     auto dataStoreConfiguration = adoptWK(WKWebsiteDataStoreConfigurationCreate());
-    WKWebsiteDataStoreConfigurationSetApplicationCacheDirectory(dataStoreConfiguration.get(), applicationCacheDirectory.get());
     WKWebsiteDataStoreConfigurationSetNetworkCacheDirectory(dataStoreConfiguration.get(), networkCacheDirectory.get());
     WKWebsiteDataStoreConfigurationSetIndexedDBDatabaseDirectory(dataStoreConfiguration.get(), indexedDBDirectory.get());
     WKWebsiteDataStoreConfigurationSetLocalStorageDirectory(dataStoreConfiguration.get(), localStorageDirectory.get());
@@ -88,13 +87,10 @@ WebContext::WebContext()
 
     m_preferencesMaster = adoptWK(WKPreferencesCreate());
     WKPreferencesSetFullScreenEnabled(m_preferencesMaster.get(), true);
-    WKPreferencesSetDNSPrefetchingEnabled(m_preferencesMaster.get(), true);
     WKPreferencesSetNeedsSiteSpecificQuirks(m_preferencesMaster.get(), false);
 }
 
-WebContext::~WebContext()
-{
-}
+WebContext::~WebContext() = default;
 
 void WebContext::addWindow(WebViewWindow* window)
 {

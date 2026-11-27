@@ -26,16 +26,19 @@
 #include "config.h"
 #include "LazyLoadFrameObserver.h"
 
-#include "DocumentInlines.h"
 #include "HTMLIFrameElement.h"
 #include "IntersectionObserverCallback.h"
 #include "IntersectionObserverEntry.h"
 #include "LocalFrame.h"
-#include "RenderStyle.h"
+#include "NodeDocument.h"
+#include "StyleComputedStyle.h"
 
 #include <limits>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LazyLoadFrameObserver);
 
 class LazyFrameLoadIntersectionObserverCallback final : public IntersectionObserverCallback {
 public:
@@ -45,9 +48,14 @@ public:
     }
 
 private:
-    bool hasCallback() const final { return true; }
+    LazyFrameLoadIntersectionObserverCallback(Document& document)
+        : IntersectionObserverCallback(&document)
+    {
+    }
 
-    CallbackResult<void> handleEvent(IntersectionObserver&, const Vector<Ref<IntersectionObserverEntry>>& entries, IntersectionObserver&) final
+    bool NODELETE hasCallback() const final { return true; }
+
+    CallbackResult<void> invoke(IntersectionObserver&, const Vector<Ref<IntersectionObserverEntry>>& entries, IntersectionObserver&) final
     {
         ASSERT(!entries.isEmpty());
 
@@ -62,9 +70,9 @@ private:
         return { };
     }
 
-    LazyFrameLoadIntersectionObserverCallback(Document& document)
-        : IntersectionObserverCallback(&document)
+    CallbackResult<void> invokeRethrowingException(IntersectionObserver& thisObserver, const Vector<Ref<IntersectionObserverEntry>>& entries, IntersectionObserver& observer) final
     {
+        return invoke(thisObserver, entries, observer);
     }
 };
 
@@ -75,28 +83,34 @@ LazyLoadFrameObserver::LazyLoadFrameObserver(HTMLIFrameElement& element)
 
 void LazyLoadFrameObserver::observe(const AtomString& frameURL, const ReferrerPolicy& referrerPolicy)
 {
-    auto& frameObserver = m_element->lazyLoadFrameObserver();
-    auto* intersectionObserver = frameObserver.intersectionObserver(m_element->protectedDocument());
+    auto& frameObserver = protect(m_element)->lazyLoadFrameObserver();
+    RefPtr intersectionObserver = frameObserver.intersectionObserver(protect(m_element->document()));
     if (!intersectionObserver)
         return;
     m_frameURL = frameURL;
     m_referrerPolicy = referrerPolicy;
-    intersectionObserver->observe(m_element);
+    intersectionObserver->observe(protect(m_element));
 }
 
 void LazyLoadFrameObserver::unobserve()
 {
-    auto& frameObserver = m_element->lazyLoadFrameObserver();
+    auto& frameObserver = protect(m_element)->lazyLoadFrameObserver();
     ASSERT(frameObserver.isObserved(m_element));
-    frameObserver.m_observer->unobserve(m_element);
+    protect(frameObserver.m_observer)->unobserve(protect(m_element));
+}
+
+void LazyLoadFrameObserver::update(const AtomString& frameURL, const ReferrerPolicy& referrerPolicy)
+{
+    m_frameURL = frameURL;
+    m_referrerPolicy = referrerPolicy;
 }
 
 IntersectionObserver* LazyLoadFrameObserver::intersectionObserver(Document& document)
 {
     if (!m_observer) {
         auto callback = LazyFrameLoadIntersectionObserverCallback::create(document);
-        IntersectionObserver::Init options { std::nullopt, emptyString(), { } };
-        auto observer = IntersectionObserver::create(document, WTFMove(callback), WTFMove(options));
+        IntersectionObserver::Init options { std::nullopt, emptyString(), emptyString(), { } };
+        auto observer = IntersectionObserver::create(document, WTF::move(callback), WTF::move(options));
         if (observer.hasException())
             return nullptr;
         m_observer = observer.releaseReturnValue();

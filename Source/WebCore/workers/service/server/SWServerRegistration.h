@@ -25,15 +25,20 @@
 
 #pragma once
 
-#include "NavigationPreloadState.h"
-#include "SWServer.h"
-#include "ScriptExecutionContextIdentifier.h"
-#include "ServiceWorkerRegistrationData.h"
-#include "ServiceWorkerTypes.h"
-#include "Timer.h"
+#include <WebCore/CookieChangeSubscription.h>
+#include <WebCore/NavigationPreloadState.h>
+#include <WebCore/SWServer.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/ServiceWorkerRegistrationData.h>
+#include <WebCore/ServiceWorkerTypes.h>
+#include <WebCore/Timer.h>
+#include <wtf/Forward.h>
 #include <wtf/HashCountedSet.h>
+#include <wtf/HashSet.h>
 #include <wtf/Identified.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WallTime.h>
 #include <wtf/WeakPtr.h>
 
@@ -48,15 +53,15 @@ struct ServiceWorkerContextData;
 
 enum class IsAppInitiated : bool { No, Yes };
 
-class SWServerRegistration : public RefCounted<SWServerRegistration>, public CanMakeWeakPtr<SWServerRegistration>, public Identified<ServiceWorkerRegistrationIdentifier> {
-    WTF_MAKE_FAST_ALLOCATED;
+class SWServerRegistration : public RefCountedAndCanMakeWeakPtr<SWServerRegistration>, public Identified<ServiceWorkerRegistrationIdentifier> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(SWServerRegistration, WEBCORE_EXPORT);
 public:
     static Ref<SWServerRegistration> create(SWServer&, const ServiceWorkerRegistrationKey&, ServiceWorkerUpdateViaCache, const URL& scopeURL, const URL& scriptURL, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, NavigationPreloadState&&);
     WEBCORE_EXPORT ~SWServerRegistration();
 
-    const ServiceWorkerRegistrationKey& key() const { return m_registrationKey; }
+    const ServiceWorkerRegistrationKey& key() const LIFETIME_BOUND { return m_registrationKey; }
 
-    SWServerWorker* getNewestWorker();
+    SWServerWorker* NODELETE getNewestWorker();
     WEBCORE_EXPORT ServiceWorkerRegistrationData data() const;
 
     void setLastUpdateTime(WallTime);
@@ -96,7 +101,7 @@ public:
     
     bool isUnregistered() const;
 
-    void forEachConnection(const Function<void(SWServer::Connection&)>&);
+    void forEachConnection(NOESCAPE const Function<void(SWServer::Connection&)>&);
 
     WEBCORE_EXPORT bool shouldSoftUpdate(const FetchOptions&) const;
     WEBCORE_EXPORT void scheduleSoftUpdate(IsAppInitiated);
@@ -111,7 +116,11 @@ public:
     WEBCORE_EXPORT std::optional<ExceptionData> enableNavigationPreload();
     WEBCORE_EXPORT std::optional<ExceptionData> disableNavigationPreload();
     WEBCORE_EXPORT std::optional<ExceptionData> setNavigationPreloadHeaderValue(String&&);
-    const NavigationPreloadState& navigationPreloadState() const { return m_preloadState; }
+    const NavigationPreloadState& navigationPreloadState() const LIFETIME_BOUND { return m_preloadState; }
+
+    WEBCORE_EXPORT void addCookieChangeSubscriptions(Vector<CookieChangeSubscription>&&);
+    WEBCORE_EXPORT void removeCookieChangeSubscriptions(Vector<CookieChangeSubscription>&&);
+    WEBCORE_EXPORT Vector<CookieChangeSubscription> cookieChangeSubscriptions() const;
 
 private:
     SWServerRegistration(SWServer&, const ServiceWorkerRegistrationKey&, ServiceWorkerUpdateViaCache, const URL& scopeURL, const URL& scriptURL, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, NavigationPreloadState&&);
@@ -120,7 +129,7 @@ private:
     void handleClientUnload();
     void softUpdate();
 
-    RefPtr<SWServer> protectedServer() const { return m_server.get(); }
+    SWServer* server() const { return m_server.get(); }
 
     ServiceWorkerRegistrationKey m_registrationKey;
     ServiceWorkerUpdateViaCache m_updateViaCache;
@@ -132,6 +141,8 @@ private:
     RefPtr<SWServerWorker> m_installingWorker;
     RefPtr<SWServerWorker> m_waitingWorker;
     RefPtr<SWServerWorker> m_activeWorker;
+
+    HashSet<CookieChangeSubscription> m_cookieChangeSubscriptions;
 
     WallTime m_lastUpdateTime;
     

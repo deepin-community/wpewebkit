@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include <numeric>
 #include <wtf/ListDump.h>
 
 namespace JSC {
@@ -93,7 +94,7 @@ bool BinarySwitch::advance(MacroAssembler& jit)
             case IntPtr:
                 m_fallThrough.append(jit.branchPtr(
                     MacroAssembler::NotEqual, m_value,
-                    MacroAssembler::ImmPtr(bitwise_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
+                    MacroAssembler::ImmPtr(std::bit_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
                 break;
             }
             break;
@@ -107,7 +108,7 @@ bool BinarySwitch::advance(MacroAssembler& jit)
             case IntPtr:
                 m_jumpStack.append(jit.branchPtr(
                     MacroAssembler::NotEqual, m_value,
-                    MacroAssembler::ImmPtr(bitwise_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
+                    MacroAssembler::ImmPtr(std::bit_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
                 break;
             }
             break;
@@ -121,7 +122,7 @@ bool BinarySwitch::advance(MacroAssembler& jit)
             case IntPtr:
                 m_jumpStack.append(jit.branchPtr(
                     MacroAssembler::LessThan, m_value,
-                    MacroAssembler::ImmPtr(bitwise_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
+                    MacroAssembler::ImmPtr(std::bit_cast<const void*>(static_cast<intptr_t>(m_cases[code.index].value)))));
                 break;
             }
             break;
@@ -149,8 +150,8 @@ public:
         return m_weakRandom.getUint32();
     }
 
-    static constexpr uint32_t min() { return std::numeric_limits<uint32_t>::min(); }
-    static constexpr uint32_t max() { return std::numeric_limits<uint32_t>::max(); }
+    static constexpr uint32_t NODELETE min() { return std::numeric_limits<uint32_t>::min(); }
+    static constexpr uint32_t NODELETE max() { return std::numeric_limits<uint32_t>::max(); }
 
 private:
     WeakRandom& m_weakRandom;
@@ -330,7 +331,7 @@ void BinarySwitch::build(unsigned start, bool hardStart, unsigned end)
     // are more likely to take one of the cases than the default, so we use leafThreshold = 3
     // and get a 1/6 speed-up on average for taking an explicit case.
         
-    unsigned medianIndex = (start + end) / 2;
+    unsigned medianIndex = std::midpoint(start, end);
 
     if (BinarySwitchInternal::verbose)
         dataLog("medianIndex = ", medianIndex, "\n");

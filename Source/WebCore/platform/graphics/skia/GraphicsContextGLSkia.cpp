@@ -30,16 +30,18 @@
 #include "BitmapImage.h"
 #include "GLContext.h"
 #include "GraphicsContextGLImageExtractor.h"
+#include "NativeImage.h"
 #include "NotImplemented.h"
 #include "PixelBuffer.h"
 #include "PlatformDisplay.h"
 #include "SharedBuffer.h"
+#include "SkiaSpanExtras.h"
 #include <skia/core/SkData.h>
-#include <skia/core/SkImage.h>
 
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkImage.h>
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
@@ -47,7 +49,7 @@ GraphicsContextGLImageExtractor::~GraphicsContextGLImageExtractor() = default;
 
 bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool ignoreGammaAndColorProfile, bool ignoreNativeImageAlphaPremultiplication)
 {
-    PlatformImagePtr platformImage;
+    RefPtr<NativeImage> nativeImage;
     bool hasAlpha = !m_image->currentFrameKnownToBeOpaque();
     if ((ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) && m_image->data()) {
         auto image = BitmapImage::create(nullptr,  AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
@@ -55,10 +57,14 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         if (!image->frameCount())
             return false;
 
-        platformImage = image->currentNativeImage()->platformImage();
+        nativeImage = image->currentNativeImage();
     } else
-        platformImage = m_image->currentNativeImage()->platformImage();
+        nativeImage = m_image->currentNativeImage();
 
+    if (!nativeImage)
+        return false;
+
+    auto platformImage = nativeImage->platformImage();
     if (!platformImage)
         return false;
 
@@ -100,12 +106,12 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         if (!PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent())
             return false;
 
-        GrDirectContext* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
+        auto* grContext = nativeImage->grContext();
         if (!platformImage->readPixels(grContext, imageInfo, static_cast<uint8_t*>(data->writable_data()), bytesPerRow, 0, 0))
             return false;
 
-        m_pixelData = WTFMove(data);
-        m_imagePixelData = m_pixelData->data();
+        m_pixelData = WTF::move(data);
+        m_imagePixelData = span(m_pixelData.get());
 
         // SkSurfaces backed by textures have RGBA format.
         m_imageSourceFormat = DataFormat::RGBA8;
@@ -114,8 +120,8 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         if (!platformImage->peekPixels(&pixmap))
             return false;
 
-        m_skImage = WTFMove(platformImage);
-        m_imagePixelData = pixmap.addr();
+        m_skImage = WTF::move(platformImage);
+        m_imagePixelData = span(pixmap);
 
         // Raster SkSurfaces have BGRA format.
         m_imageSourceFormat = DataFormat::BGRA8;
@@ -141,7 +147,7 @@ RefPtr<NativeImage> GraphicsContextGL::createNativeImageFromPixelBuffer(const Gr
     auto image = SkImages::RasterFromPixmap(pixmap, [](const void*, void* context) {
         static_cast<PixelBuffer*>(context)->deref();
     }, &protectedPixelBuffer.leakRef());
-    return NativeImage::create(WTFMove(image));
+    return NativeImage::create(WTF::move(image));
 }
 
 } // namespace WebCore

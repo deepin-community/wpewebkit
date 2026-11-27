@@ -52,11 +52,13 @@
 #include <WebCore/FrameDestructionObserver.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/HTMLFormElement.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/HTTPStatusCodes.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <glib/gi18n-lib.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
@@ -98,7 +100,7 @@ enum {
     N_PROPERTIES,
 };
 
-static GParamSpec* sObjProperties[N_PROPERTIES] = { nullptr, };
+static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 
 struct _WebKitWebPagePrivate {
     WebPage* webPage;
@@ -109,24 +111,33 @@ struct _WebKitWebPagePrivate {
     HashMap<WebKitScriptWorld*, GRefPtr<WebKitWebFormManager>> formManagerMap;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitWebPage, webkit_web_page, G_TYPE_OBJECT, GObject)
 
 static void webFrameDestroyed(WebFrame*);
 
-class WebKitFrameWrapper final: public FrameDestructionObserver {
+class WebKitFrameWrapper final: public FrameDestructionObserver, public RefCounted<WebKitFrameWrapper> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(WebKitFrameWrapper);
 public:
+    static Ref<WebKitFrameWrapper> create(WebFrame& webFrame)
+    {
+        return adoptRef(*new WebKitFrameWrapper(webFrame));
+    }
+
+    WebKitFrame* webkitFrame() const { return m_webkitFrame.get(); }
+
+    // FrameDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+private:
     WebKitFrameWrapper(WebFrame& webFrame)
         : FrameDestructionObserver(webFrame.coreLocalFrame())
         , m_webkitFrame(adoptGRef(webkitFrameCreate(&webFrame)))
     {
     }
 
-    WebKitFrame* webkitFrame() const { return m_webkitFrame.get(); }
-
-private:
     void frameDestroyed() override
     {
         FrameDestructionObserver::frameDestroyed();
@@ -136,7 +147,7 @@ private:
     GRefPtr<WebKitFrame> m_webkitFrame;
 };
 
-typedef HashMap<WebFrame*, std::unique_ptr<WebKitFrameWrapper>> WebFrameMap;
+typedef HashMap<WebFrame*, Ref<WebKitFrameWrapper>> WebFrameMap;
 
 static WebFrameMap& webFrameMap()
 {
@@ -158,11 +169,10 @@ static WebKitFrame* webkitFrameGetOrCreate(WebFrame* webFrame)
     if (auto* webKitFrame = webkitFrameGet(webFrame))
         return webKitFrame;
 
-    std::unique_ptr<WebKitFrameWrapper> wrapper = makeUnique<WebKitFrameWrapper>(*webFrame);
-    auto wrapperPtr = wrapper.get();
-    webFrameMap().set(webFrame, WTFMove(wrapper));
+    Ref wrapper = WebKitFrameWrapper::create(*webFrame);
+    webFrameMap().set(webFrame, wrapper.copyRef());
 
-    return wrapperPtr->webkitFrame();
+    return wrapper->webkitFrame();
 }
 
 static void webFrameDestroyed(WebFrame* webFrame)
@@ -318,7 +328,7 @@ private:
     void didReceiveResponseForResource(WebPage& page, WebFrame&, WebCore::ResourceLoaderIdentifier identifier, const ResourceResponse& response) override
     {
         // Post on the console as well to be consistent with the inspector.
-        if (response.httpStatusCode() >= 400) {
+        if (response.httpStatusCode() >= httpStatus400BadRequest) {
             String errorMessage = makeString("Failed to load resource: the server responded with a status of "_s, response.httpStatusCode(), " ("_s, response.httpStatusText(), ')');
             webkitWebPageDidSendConsoleMessage(m_webPage, MessageSource::Network, MessageLevel::Error, errorMessage, 0, response.url().string());
         }
@@ -428,7 +438,7 @@ public:
 #endif
     }
 
-    void didAssociateFormControls(WebPage*, const Vector<RefPtr<Element>>& elements, WebFrame* frame) override
+    void didAssociateFormControls(WebPage*, const Vector<Ref<Element>>& elements, WebFrame* frame) override
     {
         auto* wkFrame = webkitFrameGetOrCreate(frame);
         if (!m_webPage->priv->formManagerMap.isEmpty()) {
@@ -440,7 +450,7 @@ public:
 #if !ENABLE(2022_GLIB_API)
         GRefPtr<GPtrArray> formElements = adoptGRef(g_ptr_array_sized_new(elements.size()));
         for (size_t i = 0; i < elements.size(); ++i)
-            g_ptr_array_add(formElements.get(), WebKit::kit(elements[i].get()));
+            g_ptr_array_add(formElements.get(), WebKit::kit(elements[i].ptr()));
 
         g_signal_emit(m_webPage, signals[FORM_CONTROLS_ASSOCIATED], 0, formElements.get());
         g_signal_emit(m_webPage, signals[FORM_CONTROLS_ASSOCIATED_FOR_FRAME], 0, formElements.get(), wkFrame);
@@ -518,7 +528,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
             0,
             WEBKIT_PARAM_READABLE);
 
-    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties);
+    g_object_class_install_properties(gObjectClass, N_PROPERTIES, sObjProperties.data());
 
     /**
      * WebKitWebPage::document-loaded:
@@ -527,7 +537,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
      * This signal is emitted when the DOM document of a #WebKitWebPage has been
      * loaded.
      *
-     * You can wait for this signal to get the DOM document
+     * You can wait for this signal to get the DOM document.
      */
     signals[DOCUMENT_LOADED] = g_signal_new(
         "document-loaded",
@@ -552,7 +562,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
      * emitted again with the @request argument containing the new
      * request to be sent to the server due to the redirection and the
      * @redirected_response parameter containing the response
-     * received by the server for the initial request.
+     * received from the server for the initial request.
      *
      * Modifications to the #WebKitURIRequest and its associated
      * #SoupMessageHeaders will be taken into account when the request
@@ -614,7 +624,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
      * Emitted when a message is sent to the console. This can be a message
      * produced by the use of JavaScript console API, a JavaScript exception,
      * a security error or other errors, warnings, debug or log messages.
-     * The @console_message contains information of the message.
+     * The @console_message contains information about the message.
      *
      * Since: 2.12
      */
@@ -633,9 +643,9 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
      * WebKitWebPage::form-controls-associated:
      * @web_page: the #WebKitWebPage on which the signal is emitted
      * @elements: (element-type WebKitDOMElement) (transfer none): a #GPtrArray of
-     *     #WebKitDOMElement with the list of forms in the page
+     *     #WebKitDOMElement with the list of form controls associated with @web_page
      *
-     * Emitted after form elements (or form associated elements) are associated to a particular web
+     * Emitted after form elements (or form associated elements) are associated with a particular web
      * page. This is useful to implement form auto filling for web pages where form fields are added
      * dynamically. This signal might be emitted multiple times for the same web page.
      *
@@ -647,7 +657,7 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
      *
      * Since: 2.16
      *
-     * Deprecated: 2.26, use #WebKitWebPage::form-controls-associated-for-frame instead.
+     * Deprecated: 2.26: Use #WebKitWebPage::form-controls-associated-for-frame instead.
      */
     signals[FORM_CONTROLS_ASSOCIATED] = g_signal_new(
         "form-controls-associated",
@@ -662,10 +672,10 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
      * WebKitWebPage::form-controls-associated-for-frame:
      * @web_page: the #WebKitWebPage on which the signal is emitted
      * @elements: (element-type WebKitDOMElement) (transfer none): a #GPtrArray of
-     *     #WebKitDOMElement with the list of forms in the page
+     *     #WebKitDOMElement with the list of form controls associated with @frame
      * @frame: the #WebKitFrame
      *
-     * Emitted after form elements (or form associated elements) are associated to a particular web
+     * Emitted after form elements (or form associated elements) are associated with a particular web
      * page. This is useful to implement form auto filling for web pages where form fields are added
      * dynamically. This signal might be emitted multiple times for the same web page.
      *
@@ -763,7 +773,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
      *
      * You can handle the user message asynchronously by calling g_object_ref() on
      * @message and returning %TRUE. If the last reference of @message is removed
-     * and the message has been replied, the operation in the #WebKitWebView will
+     * and the message has not been replied to, the operation in the #WebKitWebView will
      * finish with error %WEBKIT_USER_MESSAGE_UNHANDLED_MESSAGE.
      *
      * Returns: %TRUE if the message was handled, or %FALSE otherwise.
@@ -805,7 +815,7 @@ WebKitWebPage* webkitWebPageCreate(WebPage* webPage)
 void webkitWebPageDidReceiveUserMessage(WebKitWebPage* webPage, UserMessage&& message, CompletionHandler<void(UserMessage&&)>&& completionHandler)
 {
     // Sink the floating ref.
-    GRefPtr<WebKitUserMessage> userMessage = webkitUserMessageCreate(WTFMove(message), WTFMove(completionHandler));
+    GRefPtr<WebKitUserMessage> userMessage = webkitUserMessageCreate(WTF::move(message), WTF::move(completionHandler));
     gboolean returnValue;
     g_signal_emit(webPage, signals[USER_MESSAGE_RECEIVED], 0, userMessage.get(), &returnValue);
 }
@@ -815,12 +825,12 @@ void webkitWebPageDidReceiveUserMessage(WebKitWebPage* webPage, UserMessage&& me
  * webkit_web_page_get_dom_document:
  * @web_page: a #WebKitWebPage
  *
- * Get the #WebKitDOMDocument currently loaded in @web_page
+ * Get the #WebKitDOMDocument currently loaded in @web_page.
  *
  * Returns: (transfer none): the #WebKitDOMDocument currently loaded, or %NULL
  *    if no document is currently loaded.
  *
- * Deprecated: 2.40. Use JavaScriptCore API instead.
+ * Deprecated: 2.40: Use JavaScriptCore API instead.
  */
 WebKitDOMDocument* webkit_web_page_get_dom_document(WebKitWebPage* webPage)
 {
@@ -837,7 +847,7 @@ WebKitDOMDocument* webkit_web_page_get_dom_document(WebKitWebPage* webPage)
  * webkit_web_page_get_id:
  * @web_page: a #WebKitWebPage
  *
- * Get the identifier of the #WebKitWebPage
+ * Get the identifier of the #WebKitWebPage.
  *
  * Returns: the identifier of @web_page
  */
@@ -857,7 +867,7 @@ guint64 webkit_web_page_get_id(WebKitWebPage* webPage)
  * You can monitor the active URI by connecting to the notify::uri
  * signal of @web_page.
  *
- * Returns: the current active URI of @web_view or %NULL if nothing has been
+ * Returns: the current active URI of @web_page or %NULL if nothing has been
  *    loaded yet.
  */
 const gchar* webkit_web_page_get_uri(WebKitWebPage* webPage)
@@ -876,6 +886,8 @@ const gchar* webkit_web_page_get_uri(WebKitWebPage* webPage)
  * Returns: (transfer none): the #WebKitFrame that is the main frame of @web_page
  *
  * Since: 2.2
+ *
+ * Deprecated: 2.48
  */
 WebKitFrame* webkit_web_page_get_main_frame(WebKitWebPage* webPage)
 {
@@ -933,27 +945,27 @@ void webkit_web_page_send_message_to_view(WebKitWebPage* webPage, WebKitUserMess
     }
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(webPage, cancellable, callback, userData));
-    CompletionHandler<void(UserMessage&&)> completionHandler = [task = WTFMove(task)](UserMessage&& replyMessage) {
+    CompletionHandler<void(UserMessage&&)> completionHandler = [task = WTF::move(task)](UserMessage&& replyMessage) {
         switch (replyMessage.type) {
         case UserMessage::Type::Null:
             g_task_return_new_error(task.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED, _("Operation was cancelled"));
             break;
         case UserMessage::Type::Message:
-            g_task_return_pointer(task.get(), g_object_ref_sink(webkitUserMessageCreate(WTFMove(replyMessage))), static_cast<GDestroyNotify>(g_object_unref));
+            g_task_return_pointer(task.get(), g_object_ref_sink(webkitUserMessageCreate(WTF::move(replyMessage))), static_cast<GDestroyNotify>(g_object_unref));
             break;
         case UserMessage::Type::Error:
             g_task_return_new_error(task.get(), WEBKIT_USER_MESSAGE_ERROR, replyMessage.errorCode, _("Message %s was not handled"), replyMessage.name.data());
             break;
         }
     };
-    webPage->priv->webPage->sendWithAsyncReply(Messages::WebPageProxy::SendMessageToWebViewWithReply(webkitUserMessageGetMessage(message)), WTFMove(completionHandler));
+    webPage->priv->webPage->sendWithAsyncReply(Messages::WebPageProxy::SendMessageToWebViewWithReply(webkitUserMessageGetMessage(message)), WTF::move(completionHandler));
 }
 
 /**
  * webkit_web_page_send_message_to_view_finish:
  * @web_page: a #WebKitWebPage
  * @result: a #GAsyncResult
- * @error: return location for error or %NULL to ignor
+ * @error: return location for error or %NULL to ignore
  *
  * Finish an asynchronous operation started with webkit_web_page_send_message_to_view().
  *

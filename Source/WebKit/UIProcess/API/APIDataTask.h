@@ -28,6 +28,7 @@
 #include "APIObject.h"
 #include "DataTaskIdentifier.h"
 #include <pal/SessionID.h>
+#include <wtf/Markable.h>
 #include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
 
@@ -57,22 +58,24 @@ public:
     void cancel();
 
     WebKit::WebPageProxy* page() { return m_page.get(); }
-    const WTF::URL& originalURL() const { return m_originalURL; }
+    const WTF::URL& originalURL() const LIFETIME_BOUND { return m_originalURL; }
     const DataTaskClient& client() const { return m_client.get(); }
     void setClient(Ref<DataTaskClient>&&);
     void networkProcessCrashed();
     void didCompleteWithError(WebCore::ResourceError&&);
 
 private:
-    DataTask(WebKit::DataTaskIdentifier, WeakPtr<WebKit::WebPageProxy>&&, WTF::URL&&, bool shouldRunAtForegroundPriority);
+    DataTask(std::optional<WebKit::DataTaskIdentifier>, WeakPtr<WebKit::WebPageProxy>&&, WTF::URL&&, bool shouldRunAtForegroundPriority);
 
-    WebKit::DataTaskIdentifier m_identifier;
+    Markable<WebKit::DataTaskIdentifier> m_identifier;
     WeakPtr<WebKit::WebPageProxy> m_page;
     WTF::URL m_originalURL;
     WeakPtr<WebKit::NetworkProcessProxy> m_networkProcess;
     std::optional<PAL::SessionID> m_sessionID;
     Ref<DataTaskClient> m_client;
-    std::unique_ptr<WebKit::ProcessThrottlerActivity> m_activity;
+    RefPtr<WebKit::ProcessThrottlerActivity> m_activity;
 };
 
 } // namespace API
+
+SPECIALIZE_TYPE_TRAITS_API_OBJECT(DataTask);

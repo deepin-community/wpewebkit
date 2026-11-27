@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2011 Google, Inc. All Rights Reserved.
- * Copyright (C) 2012 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2011 Google, Inc. All rights reserved.
+ * Copyright (C) 2012 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,9 @@ LocalDOMWindowProperty::LocalDOMWindowProperty(LocalDOMWindow* window)
 
 LocalFrame* LocalDOMWindowProperty::frame() const
 {
-    return m_window ? m_window->frame() : nullptr;
+    // FIXME: LocalDOMWindow::frame() is marked as NODELETE but it is not taking effect
+    // due to also being WEBCORE_EXPORT.
+    SUPPRESS_UNCOUNTED_ARG return m_window ? window()->frame() : nullptr;
 }
 
 LocalDOMWindow* LocalDOMWindowProperty::window() const

@@ -38,17 +38,17 @@ namespace WebKit {
 #if ENABLE(WEB_RTC)
 
 #if USE(LIBWEBRTC)
-using LibWebRTCProviderBase = WebCore::LibWebRTCProvider;
+using RemoteWorkerLibWebRTCProviderBase = WebCore::LibWebRTCProvider;
 #else
-using LibWebRTCProviderBase = WebCore::GStreamerWebRTCProvider;
+using RemoteWorkerLibWebRTCProviderBase = WebCore::GStreamerWebRTCProvider;
 #endif
 
-class RemoteWorkerLibWebRTCProvider final : public LibWebRTCProviderBase {
+class RemoteWorkerLibWebRTCProvider final : public RemoteWorkerLibWebRTCProviderBase {
 public:
     RemoteWorkerLibWebRTCProvider() = default;
 
 private:
-    RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final { return &RTCDataChannelRemoteManager::sharedManager().remoteHandlerConnection(); }
+    RefPtr<WebCore::RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final { return &RTCDataChannelRemoteManager::singleton().remoteHandlerConnection(); }
 };
 #endif
 

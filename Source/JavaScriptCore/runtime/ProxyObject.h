@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "JSInternalFieldObjectImpl.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
 namespace JSC {
 
@@ -77,7 +77,9 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JSObject* target() const { return jsCast<JSObject*>(internalField(Field::Target).get()); }
+    DECLARE_VISIT_CHILDREN;
+
+    JSObject* target() const { return uncheckedDowncast<JSObject>(internalField(Field::Target).get()); }
     JSValue handler() const { return internalField(Field::Handler).get(); }
 
     static void validateNegativeHasTrapResult(JSGlobalObject*, JSObject*, PropertyName);
@@ -89,13 +91,13 @@ public:
     bool putByIndexCommon(JSGlobalObject*, JSValue thisValue, unsigned propertyName, JSValue putValue, bool shouldThrow);
     JSValue performGetPrototype(JSGlobalObject*);
     void revoke(VM&);
-    bool isRevoked() const;
+    bool NODELETE isRevoked() const;
 
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     JSObject* getHandlerTrap(JSGlobalObject*, JSObject*, CallData&, const Identifier&, HandlerTrap);
-    bool forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
+    bool NODELETE forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
 
 private:
     JS_EXPORT_PRIVATE ProxyObject(VM&, Structure*);
@@ -103,21 +105,20 @@ private:
     JS_EXPORT_PRIVATE static Structure* structureForTarget(JSGlobalObject*, JSValue target);
 
     bool isHandlerTrapsCacheValid(JSObject* handler);
-    void clearHandlerTrapsOffsetsCache();
+    void NODELETE clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
-    static CallData getCallData(JSCell*);
-    static CallData getConstructData(JSCell*);
+    static CallData NODELETE getCallData(JSCell*);
+    static CallData NODELETE getConstructData(JSCell*);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool isExtensible(JSObject*, JSGlobalObject*);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
     static JSValue getPrototype(JSObject*, JSGlobalObject*);
-    DECLARE_VISIT_CHILDREN;
 
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performInternalMethodGetOwnProperty(JSGlobalObject*, PropertyName, PropertySlot&);
@@ -130,8 +131,8 @@ private:
     bool performPreventExtensions(JSGlobalObject*);
     bool performIsExtensible(JSGlobalObject*);
     bool performDefineOwnProperty(JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    void performGetOwnPropertyNames(JSGlobalObject*, PropertyNameArray&);
-    void performGetOwnEnumerablePropertyNames(JSGlobalObject*, PropertyNameArray&);
+    void performGetOwnPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&);
+    void performGetOwnEnumerablePropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&);
     bool performSetPrototype(JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
 
     bool m_isCallable : 1 { false };

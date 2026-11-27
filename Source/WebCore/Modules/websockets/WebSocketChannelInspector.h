@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "EventTarget.h"
-#include "WebSocketFrame.h"
+#include <WebCore/EventTarget.h>
+#include <WebCore/WebSocketFrame.h>
 #include <wtf/Forward.h>
 #include <wtf/ObjectIdentifier.h>
 
@@ -39,7 +39,7 @@ class ResourceResponse;
 class WebSocketChannel;
 class WebSocketChannelInspector;
 
-using WebSocketChannelIdentifier = LegacyNullableAtomicObjectIdentifier<WebSocketChannel>;
+using WebSocketChannelIdentifier = AtomicObjectIdentifier<WebSocketChannel>;
 
 class WEBCORE_EXPORT WebSocketChannelInspector {
 public:
@@ -47,16 +47,17 @@ public:
     ~WebSocketChannelInspector();
 
     void didCreateWebSocket(const URL&) const;
-    void willSendWebSocketHandshakeRequest(const ResourceRequest&) const;
+    void willSendWebSocketHandshakeRequest(ResourceRequest&) const;
+    void didSendWebSocketHandshakeRequest(const ResourceRequest&) const;
     void didReceiveWebSocketHandshakeResponse(const ResourceResponse&) const;
     void didCloseWebSocket() const;
     void didReceiveWebSocketFrame(const WebSocketFrame&) const;
     void didSendWebSocketFrame(const WebSocketFrame&) const;
     void didReceiveWebSocketFrameError(const String& errorMessage) const;
     
-    WebSocketChannelIdentifier progressIdentifier() const;
+    WebSocketChannelIdentifier progressIdentifier() const { return m_progressIdentifier; }
 
-    static WebSocketFrame createFrame(std::span<const uint8_t> data, WebSocketFrame::OpCode);
+    static WebSocketFrame NODELETE createFrame(std::span<const uint8_t> data, WebSocketFrame::OpCode);
 
 private:
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;

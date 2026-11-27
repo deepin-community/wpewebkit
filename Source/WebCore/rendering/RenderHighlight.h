@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "RenderObject.h"
+#include <WebCore/RenderObject.h>
 
 namespace WebCore {
 
@@ -68,13 +68,13 @@ private:
 class RenderRangeIterator {
 public:
     RenderRangeIterator(RenderObject* start);
-    RenderObject* current() const;
+    RenderObject* NODELETE current() const;
     RenderObject* next();
-    
+
 private:
     void checkForSpanner();
-    
-    RenderObject* m_current { nullptr };
+
+    CheckedPtr<RenderObject> m_current;
     Vector<RenderMultiColumnSpannerPlaceholder*> m_spannerStack;
 };
 
@@ -86,9 +86,9 @@ public:
         : m_isSelection(true)
     { }
 
-    void setRenderRange(const RenderRange&);
+    void NODELETE setRenderRange(const RenderRange&);
     bool setRenderRange(const HighlightRange&); // Returns true if successful.
-    const RenderRange& get() const { return m_renderRange; }
+    const RenderRange& get() const LIFETIME_BOUND { return m_renderRange; }
 
     RenderObject* start() const { return m_renderRange.start(); }
     RenderObject* end() const { return m_renderRange.end(); }

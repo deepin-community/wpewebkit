@@ -31,8 +31,9 @@
 #pragma once
 
 #include "ContainerNode.h"
-#include "DocumentInlines.h"
-#include "MutationObserver.h"
+#include "Document.h"
+#include "MutationObserverOptions.h"
+#include "NodeDocument.h"
 #include <memory>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
@@ -57,13 +58,11 @@ private:
     ChildListMutationAccumulator(ContainerNode&, std::unique_ptr<MutationObserverInterestGroup>);
 
     void enqueueMutationRecord();
-    bool isEmpty();
-    bool isAddedNodeInOrder(Node&);
-    bool isRemovedNodeInOrder(Node&);
+    bool NODELETE isEmpty();
+    bool NODELETE isAddedNodeInOrder(Node&);
+    bool NODELETE isRemovedNodeInOrder(Node&);
 
-    Ref<ContainerNode> protectedTarget() const;
-
-    Ref<ContainerNode> m_target;
+    const Ref<ContainerNode> m_target;
 
     Vector<Ref<Node>> m_removedNodes;
     Vector<Ref<Node>> m_addedNodes;

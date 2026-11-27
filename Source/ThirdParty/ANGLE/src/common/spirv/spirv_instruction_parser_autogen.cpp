@@ -3792,7 +3792,7 @@ void ParseGroupNonUniformBroadcast(const uint32_t *_instruction,
                                    IdResult *idResult2,
                                    IdScope *execution,
                                    IdRef *value,
-                                   IdRef *id)
+                                   IdRef *invocationId)
 {
     spv::Op _op;
     uint32_t _length;
@@ -3803,7 +3803,7 @@ void ParseGroupNonUniformBroadcast(const uint32_t *_instruction,
     *idResult2     = IdResult(_instruction[_o++]);
     *execution     = IdScope(_instruction[_o++]);
     *value         = IdRef(_instruction[_o++]);
-    *id            = IdRef(_instruction[_o++]);
+    *invocationId  = IdRef(_instruction[_o++]);
 }
 void ParseGroupNonUniformBroadcastFirst(const uint32_t *_instruction,
                                         IdResultType *idResultType1,
@@ -3926,7 +3926,7 @@ void ParseGroupNonUniformShuffle(const uint32_t *_instruction,
                                  IdResult *idResult2,
                                  IdScope *execution,
                                  IdRef *value,
-                                 IdRef *id)
+                                 IdRef *invocationId)
 {
     spv::Op _op;
     uint32_t _length;
@@ -3937,7 +3937,7 @@ void ParseGroupNonUniformShuffle(const uint32_t *_instruction,
     *idResult2     = IdResult(_instruction[_o++]);
     *execution     = IdScope(_instruction[_o++]);
     *value         = IdRef(_instruction[_o++]);
-    *id            = IdRef(_instruction[_o++]);
+    *invocationId  = IdRef(_instruction[_o++]);
 }
 void ParseGroupNonUniformShuffleXor(const uint32_t *_instruction,
                                     IdResultType *idResultType1,
@@ -4443,137 +4443,17 @@ void ParsePtrNotEqual(const uint32_t *_instruction,
     *operand1      = IdRef(_instruction[_o++]);
     *operand2      = IdRef(_instruction[_o++]);
 }
-void ParseSDot(const uint32_t *_instruction,
-               IdResultType *idResultType1,
-               IdResult *idResult2,
-               IdRef *vector1,
-               IdRef *vector2,
-               spv::PackedVectorFormat *packedVectorFormat)
+void ParseIsHelperInvocationEXT(const uint32_t *_instruction,
+                                IdResultType *idResultType1,
+                                IdResult *idResult2)
 {
     spv::Op _op;
     uint32_t _length;
     GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpSDot);
+    ASSERT(_op == spv::OpIsHelperInvocationEXT);
     uint32_t _o    = 1;
     *idResultType1 = IdResultType(_instruction[_o++]);
     *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
-}
-void ParseUDot(const uint32_t *_instruction,
-               IdResultType *idResultType1,
-               IdResult *idResult2,
-               IdRef *vector1,
-               IdRef *vector2,
-               spv::PackedVectorFormat *packedVectorFormat)
-{
-    spv::Op _op;
-    uint32_t _length;
-    GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpUDot);
-    uint32_t _o    = 1;
-    *idResultType1 = IdResultType(_instruction[_o++]);
-    *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
-}
-void ParseSUDot(const uint32_t *_instruction,
-                IdResultType *idResultType1,
-                IdResult *idResult2,
-                IdRef *vector1,
-                IdRef *vector2,
-                spv::PackedVectorFormat *packedVectorFormat)
-{
-    spv::Op _op;
-    uint32_t _length;
-    GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpSUDot);
-    uint32_t _o    = 1;
-    *idResultType1 = IdResultType(_instruction[_o++]);
-    *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
-}
-void ParseSDotAccSat(const uint32_t *_instruction,
-                     IdResultType *idResultType1,
-                     IdResult *idResult2,
-                     IdRef *vector1,
-                     IdRef *vector2,
-                     IdRef *accumulator,
-                     spv::PackedVectorFormat *packedVectorFormat)
-{
-    spv::Op _op;
-    uint32_t _length;
-    GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpSDotAccSat);
-    uint32_t _o    = 1;
-    *idResultType1 = IdResultType(_instruction[_o++]);
-    *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    *accumulator   = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
-}
-void ParseUDotAccSat(const uint32_t *_instruction,
-                     IdResultType *idResultType1,
-                     IdResult *idResult2,
-                     IdRef *vector1,
-                     IdRef *vector2,
-                     IdRef *accumulator,
-                     spv::PackedVectorFormat *packedVectorFormat)
-{
-    spv::Op _op;
-    uint32_t _length;
-    GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpUDotAccSat);
-    uint32_t _o    = 1;
-    *idResultType1 = IdResultType(_instruction[_o++]);
-    *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    *accumulator   = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
-}
-void ParseSUDotAccSat(const uint32_t *_instruction,
-                      IdResultType *idResultType1,
-                      IdResult *idResult2,
-                      IdRef *vector1,
-                      IdRef *vector2,
-                      IdRef *accumulator,
-                      spv::PackedVectorFormat *packedVectorFormat)
-{
-    spv::Op _op;
-    uint32_t _length;
-    GetInstructionOpAndLength(_instruction, &_op, &_length);
-    ASSERT(_op == spv::OpSUDotAccSat);
-    uint32_t _o    = 1;
-    *idResultType1 = IdResultType(_instruction[_o++]);
-    *idResult2     = IdResult(_instruction[_o++]);
-    *vector1       = IdRef(_instruction[_o++]);
-    *vector2       = IdRef(_instruction[_o++]);
-    *accumulator   = IdRef(_instruction[_o++]);
-    if (packedVectorFormat && _o < _length)
-    {
-        *packedVectorFormat = spv::PackedVectorFormat(_instruction[_o++]);
-    }
 }
 
 }  // namespace spirv

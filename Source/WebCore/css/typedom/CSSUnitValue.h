@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,10 +35,11 @@ namespace WebCore {
 enum class CSSUnitType : uint8_t;
 
 class CSSUnitValue final : public CSSNumericValue {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CSSUnitValue);
+    WTF_MAKE_TZONE_ALLOCATED(CSSUnitValue);
 public:
     static ExceptionOr<Ref<CSSUnitValue>> create(double value, const String& unit);
     static Ref<CSSUnitValue> create(double value, CSSUnitType unit) { return adoptRef(*new CSSUnitValue(value, unit)); }
+    static ExceptionOr<Ref<CSSUnitValue>> reifyValue(Document&, const CSSValue&);
 
     void serialize(StringBuilder&, OptionSet<SerializationArguments>) const final;
 
@@ -52,14 +54,14 @@ public:
 
     RefPtr<CSSValue> toCSSValue() const final;
     RefPtr<CSSValue> toCSSValueWithProperty(CSSPropertyID) const final;
-    RefPtr<CSSCalcExpressionNode> toCalcExpressionNode() const final;
+    std::optional<CSSCalc::Child> toCalcTreeNode() const final;
 
 private:
     CSSUnitValue(double, CSSUnitType);
 
-    CSSStyleValueType getType() const final { return CSSStyleValueType::CSSUnitValue; }
+    CSSStyleValueType styleValueType() const final { return CSSStyleValueType::CSSUnitValue; }
     std::optional<SumValue> toSumValue() const final;
-    bool equals(const CSSNumericValue&) const final;
+    bool NODELETE equals(const CSSNumericValue&) const final;
 
     double m_value;
     const CSSUnitType m_unit;
@@ -68,5 +70,5 @@ private:
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CSSUnitValue)
-static bool isType(const WebCore::CSSStyleValue& styleValue) { return styleValue.getType() == WebCore::CSSStyleValueType::CSSUnitValue; }
+static bool isType(const WebCore::CSSStyleValue& styleValue) { return styleValue.styleValueType() == WebCore::CSSStyleValueType::CSSUnitValue; }
 SPECIALIZE_TYPE_TRAITS_END()

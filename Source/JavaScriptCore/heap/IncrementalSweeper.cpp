@@ -26,20 +26,11 @@
 #include "config.h"
 #include "IncrementalSweeper.h"
 
+#include "BlockDirectoryInlines.h"
 #include "DeferGCInlines.h"
 #include "HeapInlines.h"
 #include "MarkedBlockInlines.h"
 #include <wtf/SystemTracing.h>
-
-#if !USE(SYSTEM_MALLOC)
-#include <bmalloc/BPlatform.h>
-#if BUSE(LIBPAS)
-#include <bmalloc/pas_debug_spectrum.h>
-#include <bmalloc/pas_fd_stream.h>
-#include <bmalloc/pas_heap_lock.h>
-#include <bmalloc/pas_thread_local_cache.h>
-#endif
-#endif
 
 namespace JSC {
 
@@ -58,7 +49,7 @@ IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
 {
 }
 
-void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
+void IncrementalSweeper::doWorkUntil(VM& vm, ApproximateTime deadline)
 {
     if (!m_currentDirectory)
         m_currentDirectory = vm.heap.objectSpace().firstDirectory();
@@ -74,17 +65,19 @@ void IncrementalSweeper::doWork(VM& vm)
         scheduleTimer();
         return;
     }
-    doSweep(vm, MonotonicTime::now() + sweepTimeSlice, SweepTrigger::Timer);
+    doSweep(vm, ApproximateTime::now() + sweepTimeSlice, SweepTrigger::Timer);
 }
 
-void IncrementalSweeper::doSweep(VM& vm, MonotonicTime deadline, SweepTrigger trigger)
+void IncrementalSweeper::doSweep(VM& vm, ApproximateTime deadline, SweepTrigger trigger)
 {
     std::optional<TraceScope> traceScope;
-    if (UNLIKELY(Options::useTracePoints()))
+    if (Options::useTracePoints()) [[unlikely]]
         traceScope.emplace(IncrementalSweepStart, IncrementalSweepEnd, vm.heap.size(), vm.heap.capacity());
 
+    vm.heap.clearConcurrentRetainedDataIfPossible();
+
     while (sweepNextBlock(vm, trigger)) {
-        if (MonotonicTime::now() < deadline)
+        if (ApproximateTime::now() < deadline)
             continue;
 
         if (trigger == SweepTrigger::Timer)
@@ -96,15 +89,6 @@ void IncrementalSweeper::doSweep(VM& vm, MonotonicTime deadline, SweepTrigger tr
     if (trigger == SweepTrigger::OpportunisticTask)
         m_lastOpportunisticTaskDidFinishSweeping = true;
 
-#if !USE(SYSTEM_MALLOC)
-#if BUSE(LIBPAS)
-    pas_thread_local_cache_flush_deallocation_log(pas_thread_local_cache_try_get(), pas_lock_is_not_held);
-#endif
-#endif
-    if (m_shouldFreeFastMallocMemoryAfterSweeping) {
-        WTF::releaseFastMallocFreeMemory();
-        m_shouldFreeFastMallocMemoryAfterSweeping = false;
-    }
     cancelTimer();
 }
 

@@ -32,6 +32,8 @@
 
 #include <dirent.h>
 #include <sys/statvfs.h>
+#include <wtf/Function.h>
+#include <wtf/text/MakeString.h>
 
 namespace WTF {
 
@@ -98,19 +100,15 @@ Vector<String> listDirectorySub(const String& path, bool fullPath)
             if (!strcmp(name, ".") || !strcmp(name, ".."))
                 continue;
             String newEntry;
-            if (fullPath) {
-                char filePath[PATH_MAX];
-                if (fullPath && static_cast<int>(sizeof(filePath) - 1) < snprintf(filePath, sizeof(filePath), "%s/%s", cpath.data(), name))
-                    continue; // buffer overflow
-
-                newEntry = stringFromFileSystemRepresentation(filePath);
-            } else
+            if (fullPath)
+                newEntry = makeString(path, '/', stringFromFileSystemRepresentation(name));
+            else
                 newEntry = stringFromFileSystemRepresentation(name);
 
             // Some file system representations cannot be represented as a UTF-16 string,
             // so this newEntry might be null.
             if (!newEntry.isNull())
-                entries.append(WTFMove(newEntry));
+                entries.append(WTF::move(newEntry));
         }
         closedir(dir);
     }
@@ -120,6 +118,14 @@ Vector<String> listDirectorySub(const String& path, bool fullPath)
 Vector<String> listDirectory(const String& path)
 {
     return listDirectorySub(path, false);
+}
+
+void traverseDirectory(const String& path, NOESCAPE const Function<void(const String&, FileType)>& function)
+{
+    for (auto& fileName : listDirectory(path)) {
+        auto type = fileTypePotentiallyFollowingSymLinks(pathByAppendingComponent(path, fileName), ShouldFollowSymbolicLinks::No).value_or(FileType::Regular);
+        function(fileName, type);
+    }
 }
 
 bool deleteNonEmptyDirectory(const String& path)
@@ -138,9 +144,8 @@ bool deleteNonEmptyDirectory(const String& path)
 String realPath(const String& filePath)
 {
     CString fsRep = fileSystemRepresentation(filePath);
-    char resolvedName[PATH_MAX];
-    const char* result = realpath(fsRep.data(), resolvedName);
-    return result ? String::fromUTF8(result) : filePath;
+    std::unique_ptr<char, decltype(free)*> resolvedPath(realpath(fsRep.data(), nullptr), free);
+    return resolvedPath ? String::fromUTF8(resolvedPath.get()) : filePath;
 }
 
 

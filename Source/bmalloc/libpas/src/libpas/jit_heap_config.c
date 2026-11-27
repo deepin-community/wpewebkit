@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022 Apple Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,13 +36,11 @@
 #include "pas_bitfit_page_config_inlines.h"
 #include "pas_enumerable_page_malloc.h"
 #include "pas_heap_config_inlines.h"
+#include "pas_page_malloc.h"
 #include "pas_root.h"
 #include "pas_segregated_page_config_inlines.h"
 #include "pas_stream.h"
-
-#if defined(PAS_BMALLOC)
-#include "BPlatform.h"
-#endif
+#include "pas_zero_memory.h"
 
 PAS_BEGIN_EXTERN_C;
 
@@ -79,11 +77,15 @@ static void initialize_fresh_memory_config(pas_large_free_heap_config* config)
 static pas_allocation_result allocate_from_fresh(size_t size, pas_alignment alignment)
 {
     pas_large_free_heap_config config;
+    pas_allocation_result result;
 
     pas_heap_lock_assert_held();
 
     initialize_fresh_memory_config(&config);
-    return pas_simple_large_free_heap_try_allocate(&jit_fresh_memory_heap, size, alignment, &config);
+    result = pas_simple_large_free_heap_try_allocate(&jit_fresh_memory_heap, size, alignment, &config);
+    if (result.did_succeed)
+        pas_page_malloc_commit((void*)result.begin, size, jit_heap_config.page_flags);
+    return result;
 }
 
 static pas_allocation_result page_provider(
@@ -100,7 +102,9 @@ static pas_allocation_result page_provider(
 pas_large_heap_physical_page_sharing_cache jit_large_fresh_memory_heap = {
     .free_heap = PAS_SIMPLE_LARGE_FREE_HEAP_INITIALIZER,
     .provider = page_provider,
-    .provider_arg = NULL
+    .provider_arg = NULL,
+    /* page_provider commits each chunk before returning it. */
+    .provider_commit_mode = pas_committed
 };
 
 pas_page_header_table jit_small_page_header_table =
@@ -113,7 +117,6 @@ pas_heap_runtime_config jit_heap_runtime_config = {
     .sharing_mode = pas_share_pages,
     .statically_allocated = true,
     .is_part_of_heap = true,
-    .directory_size_bound_for_partial_views = 0,
     .directory_size_bound_for_baseline_allocators = 0,
     .directory_size_bound_for_no_view_cache = 0,
     .max_segregated_object_size = 2000,
@@ -144,9 +147,8 @@ pas_page_base* jit_page_header_for_boundary_remote(pas_enumerator* enumerator, v
 }
 
 void* jit_small_segregated_allocate_page(
-    pas_segregated_heap* heap, pas_physical_memory_transaction* transaction, pas_segregated_page_role role)
+    pas_segregated_heap* heap, pas_physical_memory_transaction* transaction)
 {
-    PAS_ASSERT(role == pas_segregated_page_exclusive_role);
     PAS_UNUSED_PARAM(heap);
     PAS_UNUSED_PARAM(transaction);
     return (void*)allocate_from_fresh(
@@ -162,8 +164,7 @@ pas_page_base* jit_small_segregated_create_page_header(
     result = pas_page_header_table_add(
         &jit_small_page_header_table,
         JIT_SMALL_PAGE_SIZE,
-        pas_segregated_page_header_size(JIT_HEAP_CONFIG.small_segregated_config,
-                                        pas_segregated_page_exclusive_role),
+        pas_segregated_page_header_size(JIT_HEAP_CONFIG.small_segregated_config),
         boundary);
     pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
     return result;
@@ -176,15 +177,6 @@ void jit_small_destroy_page_header(pas_page_base* page, pas_lock_hold_mode heap_
                                  JIT_SMALL_PAGE_SIZE,
                                  page);
     pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
-}
-
-pas_segregated_shared_page_directory* jit_small_segregated_shared_page_directory_selector(
-    pas_segregated_heap* heap, pas_segregated_size_directory* directory)
-{
-    PAS_UNUSED_PARAM(heap);
-    PAS_UNUSED_PARAM(directory);
-    PAS_ASSERT(!"Not implemented");
-    return NULL;
 }
 
 void* jit_small_bitfit_allocate_page(
@@ -276,80 +268,50 @@ pas_aligned_allocation_result jit_aligned_allocator(
 void* jit_prepare_to_enumerate(pas_enumerator* enumerator)
 {
     pas_basic_heap_config_enumerator_data* result;
-    const pas_heap_config** configs;
-    const pas_heap_config* config;
-    jit_heap_config_root_data* root_data;
 
-    configs = (const pas_heap_config**)pas_enumerator_read(
-        enumerator, enumerator->root->heap_configs,
-        sizeof(const pas_heap_config*) * pas_heap_config_kind_num_kinds);
-    if (!configs)
-        return NULL;
-    
-    config = (const pas_heap_config*)pas_enumerator_read(
-        enumerator, (void*)(uintptr_t)configs[pas_heap_config_kind_jit], sizeof(pas_heap_config));
-    if (!config)
+    pas_heap_config* config_ptr;
+    jit_heap_config_root_data* root_data_ptr;
+    jit_heap_config_root_data root_data;
+    pas_page_header_table small_page_header_table;
+    pas_page_header_table medium_page_header_table;
+
+    if (!pas_enumerator_copy_remote(
+            enumerator, &config_ptr, enumerator->root->heap_configs + pas_heap_config_kind_jit, sizeof(pas_heap_config*)))
         return NULL;
 
-    root_data = (jit_heap_config_root_data*)pas_enumerator_read(
-        enumerator, config->root_data, sizeof(jit_heap_config_root_data));
-    if (!root_data)
+    if (!pas_enumerator_copy_remote(
+            enumerator, &root_data_ptr, &config_ptr->root_data, sizeof(jit_heap_config_root_data*)))
         return NULL;
 
-    result = (pas_basic_heap_config_enumerator_data*)pas_enumerator_allocate(enumerator, sizeof(pas_basic_heap_config_enumerator_data));
+    if (!pas_enumerator_copy_remote(
+            enumerator, &root_data, root_data_ptr, sizeof(jit_heap_config_root_data)))
+        return NULL;
+
+    result = pas_enumerator_allocate(enumerator, sizeof(pas_basic_heap_config_enumerator_data));
     
     pas_ptr_hash_map_construct(&result->page_header_table);
 
+    if (!pas_enumerator_copy_remote(
+            enumerator, &small_page_header_table, root_data.small_page_header_table, sizeof(pas_page_header_table)))
+        return NULL;
+
     if (!pas_basic_heap_config_enumerator_data_add_page_header_table(
             result,
             enumerator,
-            (pas_page_header_table*)pas_enumerator_read(
-                enumerator, root_data->small_page_header_table, sizeof(pas_page_header_table))))
+            &small_page_header_table))
         return NULL;
     
+    if (!pas_enumerator_copy_remote(
+            enumerator, &medium_page_header_table, root_data.medium_page_header_table, sizeof(pas_page_header_table)))
+        return NULL;
+
     if (!pas_basic_heap_config_enumerator_data_add_page_header_table(
             result,
             enumerator,
-            (pas_page_header_table*)pas_enumerator_read(
-                enumerator, root_data->medium_page_header_table, sizeof(pas_page_header_table))))
+            &medium_page_header_table))
         return NULL;
     
     return result;
-}
-
-bool jit_heap_config_for_each_shared_page_directory(
-    pas_segregated_heap* heap,
-    bool (*callback)(pas_segregated_shared_page_directory* directory,
-                     void* arg),
-    void* arg)
-{
-    PAS_UNUSED_PARAM(heap);
-    PAS_UNUSED_PARAM(callback);
-    PAS_UNUSED_PARAM(arg);
-    return true;
-}
-
-bool jit_heap_config_for_each_shared_page_directory_remote(
-    pas_enumerator* enumerator,
-    pas_segregated_heap* heap,
-    bool (*callback)(pas_enumerator* enumerator,
-                     pas_segregated_shared_page_directory* directory,
-                     void* arg),
-    void* arg)
-{
-    PAS_UNUSED_PARAM(enumerator);
-    PAS_UNUSED_PARAM(heap);
-    PAS_UNUSED_PARAM(callback);
-    PAS_UNUSED_PARAM(arg);
-    return true;
-}
-
-void jit_heap_config_dump_shared_page_directory_arg(
-    pas_stream* stream, pas_segregated_shared_page_directory* directory)
-{
-    PAS_UNUSED_PARAM(stream);
-    PAS_UNUSED_PARAM(directory);
-    PAS_ASSERT(!"Should not be reached");
 }
 
 void jit_heap_config_add_fresh_memory(pas_range range)

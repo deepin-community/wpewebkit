@@ -50,16 +50,13 @@ struct WebProcessDataStoreParameters {
     WebCore::ThirdPartyCookieBlockingMode thirdPartyCookieBlockingMode { WebCore::ThirdPartyCookieBlockingMode::All };
     HashSet<WebCore::RegistrableDomain> domainsWithUserInteraction;
     HashMap<TopFrameDomain, Vector<SubResourceDomain>> domainsWithStorageAccessQuirk;
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-    String modelElementCacheDirectory;
-    SandboxExtension::Handle modelElementCacheDirectoryExtensionHandle;
-#endif
-#if PLATFORM(IOS_FAMILY)
-    std::optional<SandboxExtension::Handle> cookieStorageDirectoryExtensionHandle;
-    std::optional<SandboxExtension::Handle> containerCachesDirectoryExtensionHandle;
-    std::optional<SandboxExtension::Handle> containerTemporaryDirectoryExtensionHandle;
+#if PLATFORM(IOS_FAMILY) && !USE(EXTENSIONKIT)
+    SandboxExtension::Handle containerTemporaryDirectoryExtensionHandle;
 #endif
     bool trackingPreventionEnabled { false };
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    bool isOptInCookiePartitioningEnabled { false };
+#endif
 };
 
 } // namespace WebKit

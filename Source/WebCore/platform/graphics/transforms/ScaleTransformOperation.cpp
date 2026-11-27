@@ -49,7 +49,7 @@ bool ScaleTransformOperation::operator==(const TransformOperation& other) const
     return m_x == s.m_x && m_y == s.m_y && m_z == s.m_z;
 }
 
-static double blendScaleComponent(double from, double to, const BlendingContext& context)
+static double NODELETE blendScaleComponent(double from, double to, const BlendingContext& context)
 {
     switch (context.compositeOperation) {
     case CompositeOperation::Replace:
@@ -64,14 +64,14 @@ static double blendScaleComponent(double from, double to, const BlendingContext&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Ref<TransformOperation> ScaleTransformOperation::blend(const TransformOperation* from, const BlendingContext& context, bool blendToIdentity)
+Ref<TransformOperation> ScaleTransformOperation::blend(const TransformOperation* from, const BlendingContext& context, bool blendToIdentity) const
 {
     if (blendToIdentity)
         return ScaleTransformOperation::create(blendScaleComponent(m_x, 1.0, context), blendScaleComponent(m_y, 1.0, context), blendScaleComponent(m_z, 1.0, context), type());
 
     auto outputType = sharedPrimitiveType(from);
     if (!outputType)
-        return *this;
+        return const_cast<ScaleTransformOperation&>(*this);
 
     const ScaleTransformOperation* fromOp = downcast<ScaleTransformOperation>(from);
     double fromX = fromOp ? fromOp->m_x : 1.0;
@@ -82,7 +82,7 @@ Ref<TransformOperation> ScaleTransformOperation::blend(const TransformOperation*
 
 void ScaleTransformOperation::dump(TextStream& ts) const
 {
-    ts << type() << "(" << TextStream::FormatNumberRespectingIntegers(m_x) << ", " << TextStream::FormatNumberRespectingIntegers(m_y) << ", " << TextStream::FormatNumberRespectingIntegers(m_z) << ")";
+    ts << type() << '(' << TextStream::FormatNumberRespectingIntegers(m_x) << ", "_s << TextStream::FormatNumberRespectingIntegers(m_y) << ", "_s << TextStream::FormatNumberRespectingIntegers(m_z) << ')';
 }
 
 } // namespace WebCore

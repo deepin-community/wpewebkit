@@ -35,7 +35,7 @@
 #include "JSCJSValueInlines.h"
 #include "LLIntData.h"
 #include "LLIntThunks.h"
-#include "StructureStubInfo.h"
+#include "PropertyInlineCache.h"
 
 namespace JSC { namespace DFG {
 
@@ -53,18 +53,23 @@ void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
     
     jit.move(AssemblyHelpers::TrustedImmPtr(jit.codeBlock()), GPRInfo::regT3);
     
-    AssemblyHelpers::Jump tooFewFails;
+    CCallHelpers::Jump tooFewFails;
+    CCallHelpers::JumpList doneAdjusting;
     
     jit.load32(AssemblyHelpers::Address(GPRInfo::regT3, CodeBlock::offsetOfOSRExitCounter()), GPRInfo::regT2);
     jit.add32(AssemblyHelpers::TrustedImm32(1), GPRInfo::regT2);
     jit.store32(GPRInfo::regT2, AssemblyHelpers::Address(GPRInfo::regT3, CodeBlock::offsetOfOSRExitCounter()));
     
     jit.move(AssemblyHelpers::TrustedImmPtr(jit.baselineCodeBlock()), GPRInfo::regT0);
+    jit.loadPtr(AssemblyHelpers::Address(GPRInfo::regT0, CodeBlock::offsetOfJITData()), GPRInfo::regT5);
+
+    auto isLLIntCodeBlock = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT5);
     AssemblyHelpers::Jump reoptimizeNow = jit.branch32(
         AssemblyHelpers::GreaterThanOrEqual,
-        AssemblyHelpers::Address(GPRInfo::regT0, CodeBlock::offsetOfJITExecuteCounter()),
+        AssemblyHelpers::Address(GPRInfo::regT5, BaselineJITData::offsetOfJITExecuteCounter()),
         AssemblyHelpers::TrustedImm32(0));
-    
+    isLLIntCodeBlock.link(&jit);
+
     // We want to figure out if there's a possibility that we're in a loop. For the outermost
     // code block in the inline stack, we handle this appropriately by having the loop OSR trigger
     // check the exit count of the replacement of the CodeBlock from which we are OSRing. The
@@ -107,10 +112,11 @@ void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
     jit.prepareCallOperation(vm);
     jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationTriggerReoptimizationNow)), GPRInfo::nonArgGPR0);
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
-    AssemblyHelpers::Jump doneAdjusting = jit.jump();
-    
+    doneAdjusting.append(jit.jump());
+
     tooFewFails.link(&jit);
-    
+    doneAdjusting.append(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT5));
+
     // Adjust the execution counter such that the target is to only optimize after a while.
     int32_t activeThreshold =
         jit.baselineCodeBlock()->adjustedCounterValue(
@@ -132,9 +138,9 @@ void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 #endif
         break;
     }
-    jit.store32(AssemblyHelpers::TrustedImm32(-clippedValue), AssemblyHelpers::Address(GPRInfo::regT0, CodeBlock::offsetOfJITExecuteCounter()));
-    jit.store32(AssemblyHelpers::TrustedImm32(activeThreshold), AssemblyHelpers::Address(GPRInfo::regT0, CodeBlock::offsetOfJITExecutionActiveThreshold()));
-    jit.store32(AssemblyHelpers::TrustedImm32(formattedTotalExecutionCount(clippedValue)), AssemblyHelpers::Address(GPRInfo::regT0, CodeBlock::offsetOfJITExecutionTotalCount()));
+    jit.store32(AssemblyHelpers::TrustedImm32(-clippedValue), AssemblyHelpers::Address(GPRInfo::regT5, BaselineJITData::offsetOfJITExecuteCounter()));
+    jit.store32(AssemblyHelpers::TrustedImm32(activeThreshold), AssemblyHelpers::Address(GPRInfo::regT5, BaselineJITData::offsetOfJITExecutionActiveThreshold()));
+    jit.store32(AssemblyHelpers::TrustedImm32(formattedTotalExecutionCount(clippedValue)), AssemblyHelpers::Address(GPRInfo::regT5, BaselineJITData::offsetOfJITExecutionTotalCount()));
     
     doneAdjusting.link(&jit);
 }
@@ -145,6 +151,13 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
 
     if (callBytecodeIndex.checkpoint())
         return LLInt::checkpointOSRExitFromInlinedCallTrampolineThunk().code();
+
+    // Array.prototype.sort's comparator is inlined by the DFG ArraySortIntrinsic.
+    // Same stack layout as Call, but on OSR exit inside the comparator its return
+    // PC is arraySortComparatorReturnTrampoline, which discards the return value
+    // and re-dispatches the caller's op_call instead of advancing past it.
+    if (trueCallerCallKind == InlineCallFrame::ArraySortComparatorCall)
+        return LLInt::arraySortComparatorReturnTrampolineThunk().code();
 
     CodePtr<JSEntryPtrTag> jumpTarget;
 
@@ -163,16 +176,26 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
                 jumpTarget = LLINT_RETURN_LOCATION(op_iterator_open);
             else if (callInstruction.opcodeID() == op_iterator_next)
                 jumpTarget = LLINT_RETURN_LOCATION(op_iterator_next);
+            else if (callInstruction.opcodeID() == op_async_iterator_open)
+                jumpTarget = LLINT_RETURN_LOCATION(op_async_iterator_open);
+            else if (callInstruction.opcodeID() == op_async_iterator_next)
+                jumpTarget = LLINT_RETURN_LOCATION(op_async_iterator_next);
             break;
         }
         case InlineCallFrame::Construct:
-            jumpTarget = LLINT_RETURN_LOCATION(op_construct);
+            if (callInstruction.opcodeID() == op_construct)
+                jumpTarget = LLINT_RETURN_LOCATION(op_construct);
+            else if (callInstruction.opcodeID() == op_super_construct)
+                jumpTarget = LLINT_RETURN_LOCATION(op_super_construct);
             break;
         case InlineCallFrame::CallVarargs:
             jumpTarget = LLINT_RETURN_LOCATION(op_call_varargs);
             break;
         case InlineCallFrame::ConstructVarargs:
-            jumpTarget = LLINT_RETURN_LOCATION(op_construct_varargs);
+            if (callInstruction.opcodeID() == op_construct_varargs)
+                jumpTarget = LLINT_RETURN_LOCATION(op_construct_varargs);
+            else if (callInstruction.opcodeID() == op_super_construct_varargs)
+                jumpTarget = LLINT_RETURN_LOCATION(op_super_construct_varargs);
             break;
         case InlineCallFrame::GetterCall:
         case InlineCallFrame::ProxyObjectLoadCall: {
@@ -186,6 +209,8 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
                 jumpTarget = LLINT_RETURN_LOCATION(op_get_by_val);
             else if (callInstruction.opcodeID() == op_enumerator_get_by_val)
                 jumpTarget = LLINT_RETURN_LOCATION(op_enumerator_get_by_val);
+            else if (callInstruction.opcodeID() == op_instanceof)
+                jumpTarget = LLINT_RETURN_LOCATION(op_instanceof);
             else
                 RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -237,9 +262,9 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
         case InlineCallFrame::ProxyObjectLoadCall:
         case InlineCallFrame::ProxyObjectStoreCall:
         case InlineCallFrame::ProxyObjectInCall: {
-            StructureStubInfo* stubInfo = baselineCodeBlockForCaller->findStubInfo(CodeOrigin(callBytecodeIndex));
-            RELEASE_ASSERT(stubInfo, callInstruction.opcodeID());
-            jumpTarget = stubInfo->doneLocation.retagged<JSEntryPtrTag>();
+            PropertyInlineCache* propertyCache = baselineCodeBlockForCaller->findPropertyCache(CodeOrigin(callBytecodeIndex));
+            RELEASE_ASSERT(propertyCache, callInstruction.opcodeID());
+            jumpTarget = propertyCache->doneLocation.retagged<JSEntryPtrTag>();
             break;
         }
 
@@ -375,7 +400,7 @@ void reifyInlinedCallFrames(CCallHelpers& jit, const OSRExitBase& exit)
             jit.store32(AssemblyHelpers::TrustedImm32(inlineCallFrame->argumentCountIncludingThis), AssemblyHelpers::payloadFor(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::argumentCountIncludingThis)));
         jit.storePtr(callerFrameGPR, AssemblyHelpers::addressForByteOffset(inlineCallFrame->callerFrameOffset()));
 
-        BytecodeIndex exitIndex = baselineCodeBlock->bytecodeIndexForExit(codeOrigin->bytecodeIndex());
+        BytecodeIndex exitIndex(codeOrigin->bytecodeIndex().offset());
         uint32_t locationBits = CallSiteIndex(exitIndex).bits();
         jit.store32(AssemblyHelpers::TrustedImm32(locationBits), AssemblyHelpers::tagFor(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::argumentCountIncludingThis)));
         if (!inlineCallFrame->isClosureCall)
@@ -475,7 +500,7 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
     }
 
     if (exit.isExceptionHandler()) {
-        ASSERT(!RegisterSetBuilder::vmCalleeSaveRegisters().contains(LLInt::Registers::pcGPR, IgnoreVectors));
+        ASSERT(!RegisterSet::vmCalleeSaveRegisters().contains(LLInt::Registers::pcGPR, IgnoreVectors));
         jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
 
         // Since we're jumping to op_catch, we need to set callFrameForCatch.

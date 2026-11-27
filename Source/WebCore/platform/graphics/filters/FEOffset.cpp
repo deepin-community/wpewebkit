@@ -4,7 +4,7 @@
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
- * Copyright (C) 2021-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -28,6 +28,10 @@
 #include "Filter.h"
 #include "FEOffsetSoftwareApplier.h"
 #include <wtf/text/TextStream.h>
+
+#if USE(CORE_IMAGE)
+#include "FEOffsetCoreImageApplier.h"
+#endif
 
 namespace WebCore {
 
@@ -90,9 +94,27 @@ IntOutsets FEOffset::calculateOutsets(const FloatSize& offset)
     return outsets;
 }
 
-bool FEOffset::resultIsAlphaImage(const FilterImageVector& inputs) const
+bool FEOffset::resultIsAlphaImage(std::span<const Ref<FilterImage>> inputs) const
 {
     return inputs[0]->isAlphaImage();
+}
+
+OptionSet<FilterRenderingMode> FEOffset::supportedFilterRenderingModes(OptionSet<FilterRenderingMode> preferredFilterRenderingModes) const
+{
+    OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
+#if USE(CORE_IMAGE)
+    modes.add(FilterRenderingMode::Accelerated);
+#endif
+    return modes & preferredFilterRenderingModes;
+}
+
+std::unique_ptr<FilterEffectApplier> FEOffset::createAcceleratedApplier() const
+{
+#if USE(CORE_IMAGE)
+    return FilterEffectApplier::create<FEOffsetCoreImageApplier>(*this);
+#else
+    return nullptr;
+#endif
 }
 
 std::unique_ptr<FilterEffectApplier> FEOffset::createSoftwareApplier() const
@@ -102,12 +124,12 @@ std::unique_ptr<FilterEffectApplier> FEOffset::createSoftwareApplier() const
 
 TextStream& FEOffset::externalRepresentation(TextStream& ts, FilterRepresentation representation) const
 {
-    ts << indent << "[feOffset";
+    ts << indent << "[feOffset"_s;
     FilterEffect::externalRepresentation(ts, representation);
 
-    ts << " dx=\"" << dx() << "\" dy=\"" << dy() << "\"";
+    ts << " dx=\""_s << dx() << "\" dy=\""_s << dy() << '"';
 
-    ts << "]\n";
+    ts << "]\n"_s;
     return ts;
 }
 

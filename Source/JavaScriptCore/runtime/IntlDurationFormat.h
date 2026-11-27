@@ -39,7 +39,7 @@ class IntlDurationFormat final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
 
-    static constexpr bool needsDestruction = true;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
     static void destroy(JSCell* cell)
     {
@@ -56,6 +56,8 @@ public:
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
+
+    DECLARE_VISIT_CHILDREN;
 
     void initializeDurationFormat(JSGlobalObject*, JSValue localesValue, JSValue optionsValue);
 
@@ -90,8 +92,10 @@ public:
 
     const UnitData* units() const { return m_units; }
     unsigned fractionalDigits() const { return m_fractionalDigits; }
-    const String& numberingSystem() const { return m_numberingSystem; }
-    const CString& dataLocaleWithExtensions() const { return m_dataLocaleWithExtensions; }
+    const String& numberingSystem() const LIFETIME_BOUND;
+    const CString& dataLocaleWithExtensions() const LIFETIME_BOUND { return m_dataLocaleWithExtensions; }
+
+    UNumberFormatter* createNumberFormatterIfNecessary(JSGlobalObject*, TemporalUnit, const String& skeleton) const;
 
 private:
     IntlDurationFormat(VM&, Structure*);
@@ -101,11 +105,17 @@ private:
     static ASCIILiteral unitStyleString(UnitStyle);
     static ASCIILiteral displayString(Display);
 
-#if HAVE(ICU_U_LIST_FORMATTER)
+    struct FormatterCache {
+        WTF_MAKE_TZONE_ALLOCATED(FormatterCache);
+    public:
+        std::array<std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>, numberOfTemporalUnits> m_formatters { };
+    };
+
     std::unique_ptr<UListFormatter, UListFormatterDeleter> m_listFormat;
-#endif
+    mutable std::unique_ptr<FormatterCache> m_formatterCache;
     String m_locale;
-    String m_numberingSystem;
+    String m_dataLocale;
+    mutable String m_numberingSystem;
     CString m_dataLocaleWithExtensions;
     unsigned m_fractionalDigits { 0 };
     Style m_style { Style::Long };

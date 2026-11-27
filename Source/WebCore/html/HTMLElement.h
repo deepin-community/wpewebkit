@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2004-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,45 +22,37 @@
 
 #pragma once
 
-#include "ColorTypes.h"
-#include "Document.h"
-#include "HTMLNames.h"
-#include "InputMode.h"
-#include "StyledElement.h"
-
-#if ENABLE(AUTOCAPITALIZE)
-#include "Autocapitalize.h"
-#endif
+#include <WebCore/HTMLNames.h>
+#include <WebCore/StyledElement.h>
 
 namespace WebCore {
 
 class ElementInternals;
 class FormListedElement;
 class FormAssociatedElement;
-class HTMLFormControlElement;
+class HTMLButtonElement;
 class HTMLFormElement;
 class VisibleSelection;
+
+struct SRGBADescriptor;
+template<typename, typename> struct BoundedGammaEncoded;
+template<typename T> using SRGBA = BoundedGammaEncoded<T, SRGBADescriptor>;
 
 struct SimpleRange;
 struct TextRecognitionResult;
 
+enum class AutocapitalizeType : uint8_t;
 enum class EnterKeyHint : uint8_t;
+enum class InputMode : uint8_t;
 enum class PageIsEditable : bool;
+enum class SelectionRenderingBehavior : bool;
+enum class ToggleState : bool;
+
 enum class FireEvents : bool { No, Yes };
 enum class FocusPreviousElement : bool { No, Yes };
-enum class PopoverVisibilityState : bool;
-enum class PopoverState : uint8_t {
-    None,
-    Auto,
-    Manual,
-};
-
-#if PLATFORM(IOS_FAMILY)
-enum class SelectionRenderingBehavior : bool;
-#endif
 
 class HTMLElement : public StyledElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLElement);
 public:
     static Ref<HTMLElement> create(const QualifiedName& tagName, Document&);
@@ -70,7 +62,7 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> setInnerText(String&&);
     WEBCORE_EXPORT ExceptionOr<void> setOuterText(String&&);
 
-    virtual bool hasCustomFocusLogic() const;
+    virtual bool NODELETE hasCustomFocusLogic() const;
     bool supportsFocus() const override;
 
     WEBCORE_EXPORT String contentEditable() const;
@@ -85,8 +77,7 @@ public:
     WEBCORE_EXPORT bool spellcheck() const;
     WEBCORE_EXPORT void setSpellcheck(bool);
 
-    WEBCORE_EXPORT bool writingsuggestions() const;
-    WEBCORE_EXPORT void setWritingsuggestions(bool);
+    WEBCORE_EXPORT const AtomString& writingSuggestions() const;
 
     WEBCORE_EXPORT bool translate() const;
     WEBCORE_EXPORT void setTranslate(bool);
@@ -98,10 +89,13 @@ public:
     String accessKeyLabel() const;
 
     WEBCORE_EXPORT const AtomString& dir() const;
-    WEBCORE_EXPORT void setDir(const AtomString&);
 
     virtual bool isTextControlInnerTextElement() const { return false; }
     virtual bool isSearchFieldResultsButtonElement() const { return false; }
+    virtual bool isDataListButtonElement() const { return false; }
+    virtual bool isSelectFallbackButtonElement() const { return false; }
+    virtual bool isSelectPopoverElement() const { return false; }
+    virtual void popoverWasHidden() { }
 
     bool willRespondToMouseMoveEvents() const override;
     bool willRespondToMouseClickEventsWithEditability(Editability) const override;
@@ -110,7 +104,7 @@ public:
     virtual bool isLabelable() const { return false; }
     WEBCORE_EXPORT RefPtr<NodeList> labels();
 
-    virtual FormAssociatedElement* asFormAssociatedElement();
+    virtual FormAssociatedElement* NODELETE asFormAssociatedElement();
 
     virtual bool isInteractiveContent() const { return false; }
 
@@ -119,13 +113,12 @@ public:
     static const AtomString& eventNameForEventHandlerAttribute(const QualifiedName& attributeName);
 
     // Only some element types can be disabled: https://html.spec.whatwg.org/multipage/scripting.html#concept-element-disabled
-    bool canBeActuallyDisabled() const;
+    bool NODELETE canBeActuallyDisabled() const;
     virtual bool isActuallyDisabled() const;
 
 #if ENABLE(AUTOCAPITALIZE)
     WEBCORE_EXPORT virtual AutocapitalizeType autocapitalizeType() const;
     WEBCORE_EXPORT const AtomString& autocapitalize() const;
-    WEBCORE_EXPORT void setAutocapitalize(const AtomString& value);
 #endif
 
 #if ENABLE(AUTOCORRECT)
@@ -136,41 +129,50 @@ public:
 
     WEBCORE_EXPORT InputMode canonicalInputMode() const;
     const AtomString& inputMode() const;
-    void setInputMode(const AtomString& value);
 
     WEBCORE_EXPORT EnterKeyHint canonicalEnterKeyHint() const;
     String enterKeyHint() const;
-    void setEnterKeyHint(const AtomString& value);
+
+    bool isHiddenUntilFound() const;
+    std::optional<Variant<bool, double, String>> hidden() const;
+    void setHidden(const std::optional<Variant<bool, double, String>>&);
 
     WEBCORE_EXPORT static bool shouldExtendSelectionToTargetNode(const Node& targetNode, const VisibleSelection& selectionBeforeUpdate);
 
     WEBCORE_EXPORT ExceptionOr<Ref<ElementInternals>> attachInternals();
 
-    void queuePopoverToggleEventTask(PopoverVisibilityState oldState, PopoverVisibilityState newState);
-    ExceptionOr<void> showPopover(const HTMLFormControlElement* = nullptr);
-    ExceptionOr<void> hidePopover();
-    ExceptionOr<void> hidePopoverInternal(FocusPreviousElement, FireEvents);
-    ExceptionOr<bool> togglePopover(std::optional<bool> force);
+    struct ShowPopoverOptions {
+        RefPtr<HTMLElement> source;
+    };
 
-    PopoverState popoverState() const;
-    const AtomString& popover() const;
-    void setPopover(const AtomString& value) { setAttributeWithoutSynchronization(HTMLNames::popoverAttr, value); };
+    struct TogglePopoverOptions : public ShowPopoverOptions {
+        std::optional<bool> force;
+    };
+
+    void queuePopoverToggleEventTask(ToggleState oldState, ToggleState newState, Element* source);
+    ExceptionOr<void> showPopover(const ShowPopoverOptions&);
+    ExceptionOr<void> showPopoverInternal(HTMLElement* = nullptr);
+    ExceptionOr<void> hidePopover();
+    ExceptionOr<void> hidePopoverInternal(FocusPreviousElement, FireEvents, HTMLElement* = nullptr);
+    ExceptionOr<bool> togglePopover(Variant<WebCore::HTMLElement::TogglePopoverOptions, bool>);
+
+    const AtomString& NODELETE popover() const;
+    void setPopover(const AtomString& value);
     void popoverAttributeChanged(const AtomString& value);
 
     bool isValidCommandType(const CommandType) override;
-    bool handleCommandInternal(const HTMLFormControlElement& invoker, const CommandType&) override;
+    bool handleCommandInternal(HTMLButtonElement& invoker, const CommandType&) override;
 
-#if PLATFORM(IOS_FAMILY)
     static SelectionRenderingBehavior selectionRenderingBehavior(const Node*);
-#endif
 
 protected:
-    HTMLElement(const QualifiedName& tagName, Document&, OptionSet<TypeFlag>);
+    HTMLElement(const QualifiedName& tagName, Document&, OptionSet<TypeFlag> = { });
 
     enum class AllowZeroValue : bool { No, Yes };
     void addHTMLLengthToStyle(MutableStyleProperties&, CSSPropertyID, StringView value, AllowZeroValue = AllowZeroValue::Yes);
     void addHTMLMultiLengthToStyle(MutableStyleProperties&, CSSPropertyID, StringView value);
     void addHTMLPixelsToStyle(MutableStyleProperties&, CSSPropertyID, StringView value);
+    void addHTMLPixelLengthToStyle(MutableStyleProperties&, CSSPropertyID, StringView value);
     void addHTMLNumberToStyle(MutableStyleProperties&, CSSPropertyID, StringView value);
 
     static std::optional<SRGBA<uint8_t>> parseLegacyColorValue(StringView);
@@ -185,8 +187,8 @@ protected:
 
     bool matchesReadWritePseudoClass() const override;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
-    Node::InsertedIntoAncestorResult insertedIntoAncestor(InsertionType , ContainerNode& parentOfInsertedTree) override;
-    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) override;
+    Node::NeedsPostConnectionSteps insertionSteps(InsertionType , ContainerNode& parentOfInsertedTree) override;
+    void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) override;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const override;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) override;
     unsigned parseBorderWidthAttribute(const AtomString&) const;
@@ -194,24 +196,20 @@ protected:
     virtual void effectiveSpellcheckAttributeChanged(bool);
 
     using EventHandlerNameMap = HashMap<AtomString, AtomString>;
-    static const AtomString& eventNameForEventHandlerAttribute(const QualifiedName& attributeName, const EventHandlerNameMap&);
+    static const AtomString& NODELETE eventNameForEventHandlerAttribute(const QualifiedName& attributeName, const EventHandlerNameMap&);
 
 private:
-    String nodeName() const final;
+    HTMLElement(ClangVTableWorkaroundTag, const QualifiedName&, Document&);
 
-    void mapLanguageAttributeToLocale(const AtomString&, MutableStyleProperties&);
+    void setInvoker(HTMLElement*);
+
+    String nodeName() const final;
 
     enum class AllowPercentage : bool { No, Yes };
     enum class UseCSSPXAsUnitType : bool { No, Yes };
     enum class IsMultiLength : bool { No, Yes };
     void addHTMLLengthToStyle(MutableStyleProperties&, CSSPropertyID, StringView value, AllowPercentage, UseCSSPXAsUnitType, IsMultiLength, AllowZeroValue = AllowZeroValue::Yes);
 };
-
-inline HTMLElement::HTMLElement(const QualifiedName& tagName, Document& document, OptionSet<TypeFlag> type = { })
-    : StyledElement(tagName, document, type | TypeFlag::IsHTMLElement)
-{
-    ASSERT(tagName.localName().impl());
-}
 
 inline bool Node::hasTagName(const HTMLQualifiedName& name) const
 {
@@ -230,4 +228,4 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::HTMLElement)
     }
 SPECIALIZE_TYPE_TRAITS_END()
 
-#include "HTMLElementTypeHelpers.h"
+#include <WebCore/HTMLElementTypeHelpers.h>

@@ -25,29 +25,27 @@
 
 #pragma once
 
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
-    
+
 enum class AudioHardwareActivityType {
     Unknown,
     IsActive,
     IsInactive
 };
 
-class AudioHardwareListener {
+class AudioHardwareListener : public AbstractRefCounted {
 public:
-    class Client {
+    class Client : public AbstractRefCountedAndCanMakeWeakPtr<Client> {
     public:
         virtual ~Client() = default;
         virtual void audioHardwareDidBecomeActive() = 0;
         virtual void audioHardwareDidBecomeInactive() = 0;
         virtual void audioOutputDeviceChanged() = 0;
     };
-
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
 
     using CreationFunction = Function<Ref<AudioHardwareListener>(AudioHardwareListener::Client&)>;
     WEBCORE_EXPORT static void setCreationFunction(CreationFunction&&);
@@ -59,20 +57,22 @@ public:
     AudioHardwareActivityType hardwareActivity() const { return m_activity; }
 
     struct BufferSizeRange {
-        size_t minimum { 0 };
-        size_t maximum { 0 };
+        uint64_t minimum { 0 };
+        uint64_t maximum { 0 };
         operator bool() const { return minimum && maximum; }
-        size_t nearest(size_t value) const { return std::min(std::max(value, minimum), maximum); }
+        uint64_t nearest(uint64_t value) const { return std::min(std::max(value, minimum), maximum); }
     };
     BufferSizeRange supportedBufferSizes() const { return m_supportedBufferSizes; }
 
 protected:
     WEBCORE_EXPORT AudioHardwareListener(Client&);
 
+    Client* client() const { return m_client.get(); }
     void setHardwareActivity(AudioHardwareActivityType activity) { m_activity = activity; }
     void setSupportedBufferSizes(BufferSizeRange sizes) { m_supportedBufferSizes = sizes; }
 
-    Client& m_client;
+private:
+    WeakPtr<Client> m_client;
     AudioHardwareActivityType m_activity { AudioHardwareActivityType::Unknown };
     BufferSizeRange m_supportedBufferSizes;
 };

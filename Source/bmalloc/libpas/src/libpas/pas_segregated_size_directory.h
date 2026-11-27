@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,16 +28,15 @@
 
 #include "pas_allocator_index.h"
 #include "pas_bitfit_size_class.h"
-#include "pas_compact_atomic_page_sharing_pool_ptr.h"
 #include "pas_compact_atomic_segregated_size_directory_ptr.h"
-#include "pas_compact_atomic_thread_local_cache_layout_node.h"
 #include "pas_compact_tagged_page_granule_use_count_ptr.h"
 #include "pas_compact_tagged_unsigned_ptr.h"
 #include "pas_config.h"
 #include "pas_heap_config.h"
-#include "pas_page_granule_use_count.h"
 #include "pas_segregated_directory.h"
 #include "pas_segregated_size_directory_creation_mode.h"
+
+#if LIBPAS_ENABLED
 
 PAS_BEGIN_EXTERN_C;
 
@@ -54,7 +53,7 @@ PAS_DEFINE_COMPACT_ATOMIC_PTR(pas_segregated_size_directory_data,
 
 #define PAS_SEGREGATED_SIZE_DIRECTORY_ALIGNMENT_SHIFT_BITS 5
 
-struct pas_segregated_size_directory {
+struct PAS_ALIGNED(sizeof(pas_versioned_field)) pas_segregated_size_directory {
     pas_segregated_directory base;
     
     pas_segregated_heap* heap;
@@ -370,5 +369,5 @@ PAS_API void pas_segregated_size_directory_dump_for_spectrum(
 
 PAS_END_EXTERN_C;
 
+#endif /* LIBPAS_ENABLED */
 #endif /* PAS_SEGREGATED_SIZE_DIRECTORY_H */
-

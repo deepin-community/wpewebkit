@@ -27,8 +27,8 @@
 
 #if ENABLE(APPLICATION_MANIFEST)
 
-#include "Color.h"
-#include "ScreenOrientationLockType.h"
+#include <WebCore/Color.h>
+#include <WebCore/ScreenOrientationLockType.h>
 #include <optional>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
@@ -36,6 +36,12 @@
 namespace WebCore {
 
 struct ApplicationManifest {
+    enum class Direction : uint8_t {
+        Auto,
+        LTR, // NOLINT
+        RTL, // NOLINT
+    };
+
     enum class Display : uint8_t {
         Browser,
         MinimalUI,
@@ -63,6 +69,8 @@ struct ApplicationManifest {
     };
 
     String rawJSON;
+    Direction dir;
+    String lang;
     String name;
     String shortName;
     String description;
@@ -74,7 +82,9 @@ struct ApplicationManifest {
     URL startURL;
     URL id;
     Color backgroundColor;
+    Color backgroundColorDark;
     Color themeColor;
+    Color themeColorDark;
     Vector<String> categories;
     Vector<Icon> icons;
     Vector<Shortcut> shortcuts;

@@ -26,15 +26,16 @@
 
 #pragma once
 
-#include "EditorInsertAction.h"
-#include "FrameIdentifier.h"
-#include "SerializedAttachmentData.h"
-#include "TextAffinity.h"
-#include "TextChecking.h"
-#include "UndoStep.h"
+#include <WebCore/EditorInsertAction.h>
+#include <WebCore/FrameIdentifier.h>
+#include <WebCore/SerializedAttachmentData.h>
+#include <WebCore/TextAffinity.h>
+#include <WebCore/TextChecking.h>
+#include <WebCore/UndoStep.h>
 #include <wtf/CheckedPtr.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
+#include <wtf/Platform.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
@@ -42,6 +43,11 @@ namespace WebCore {
 
 enum class DOMPasteAccessCategory : uint8_t;
 enum class DOMPasteAccessResponse : uint8_t;
+enum class MouseEventInputSource : uint8_t;
+
+#if PLATFORM(COCOA)
+struct AttributedString;
+#endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 enum class AttachmentAssociatedElementType : uint8_t;
@@ -63,11 +69,11 @@ struct GapRects;
 struct GrammarDetail;
 struct SimpleRange;
 
-class EditorClient : public CanMakeWeakPtr<EditorClient>, public CanMakeCheckedPtr<EditorClient> {
-    WTF_MAKE_FAST_ALLOCATED;
+class WEBCORE_EXPORT EditorClient : public CanMakeWeakPtr<EditorClient>, public CanMakeCheckedPtr<EditorClient> {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(EditorClient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EditorClient);
 public:
-    virtual ~EditorClient() = default;
+    virtual ~EditorClient();
 
     virtual bool shouldDeleteRange(const std::optional<SimpleRange>&) = 0;
     virtual bool smartInsertDeleteEnabled() = 0; 
@@ -112,6 +118,9 @@ public:
     virtual void willWriteSelectionToPasteboard(const std::optional<SimpleRange>&) = 0;
     virtual void didWriteSelectionToPasteboard() = 0;
     virtual void getClientPasteboardData(const std::optional<SimpleRange>&, Vector<std::pair<String, RefPtr<WebCore::SharedBuffer>>>& pasteboardTypesAndData) = 0;
+#if PLATFORM(COCOA)
+    virtual HashMap<FrameIdentifier, AttributedString> collectAttributedStringsForRemoteFrames(FrameIdentifier rootFrameIdentifier, const Vector<FrameIdentifier>&) = 0;
+#endif
     virtual void requestCandidatesForSelection(const VisibleSelection&) { }
     virtual void handleAcceptedCandidateWithSoftSpaces(TextCheckingResult) { }
 
@@ -166,6 +175,11 @@ public:
     virtual void uppercaseWord() = 0;
     virtual void lowercaseWord() = 0;
     virtual void capitalizeWord() = 0;
+    virtual bool canApplyCaseTransformations(const String&) = 0;
+    virtual bool canConvertToTraditionalChinese(const String&) = 0;
+    virtual bool canConvertToSimplifiedChinese(const String&) = 0;
+    virtual void convertToTraditionalChinese() = 0;
+    virtual void convertToSimplifiedChinese() = 0;
 #endif
 
 #if USE(AUTOMATIC_TEXT_REPLACEMENT)
@@ -182,6 +196,8 @@ public:
     virtual void toggleAutomaticTextReplacement() = 0;
     virtual bool isAutomaticSpellingCorrectionEnabled() = 0;
     virtual void toggleAutomaticSpellingCorrection() = 0;
+    virtual bool isSmartListsEnabled() = 0;
+    virtual void toggleSmartLists() = 0;
 #endif
     
 #if PLATFORM(GTK)
@@ -194,7 +210,6 @@ public:
     virtual void updateSpellingUIWithMisspelledWord(const String&) = 0;
     virtual void showSpellingUI(bool show) = 0;
     virtual bool spellingUIIsShowing() = 0;
-    virtual void willSetInputMethodState() = 0;
     virtual void setInputMethodState(Element*) = 0;
 
     // Support for global selections, used on platforms like the X Window System that treat
@@ -203,10 +218,14 @@ public:
 
     virtual bool performTwoStepDrop(DocumentFragment&, const SimpleRange& destination, bool isMove) = 0;
 
-    virtual bool shouldAllowSingleClickToChangeSelection(Node&, const VisibleSelection&) const { return true; }
+    virtual bool shouldAllowSingleClickToChangeSelection(Node&, const VisibleSelection&, MouseEventInputSource) const { return true; }
 
     virtual void willChangeSelectionForAccessibility() { }
     virtual void didChangeSelectionForAccessibility() { }
+
+#if PLATFORM(IOS_FAMILY)
+    virtual bool shouldDrawVisuallyContiguousBidiSelection() const { return false; }
+#endif
 };
 
 }

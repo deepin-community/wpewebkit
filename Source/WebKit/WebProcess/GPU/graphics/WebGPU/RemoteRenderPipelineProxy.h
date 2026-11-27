@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,7 +48,7 @@ public:
 
     virtual ~RemoteRenderPipelineProxy();
 
-    RemoteDeviceProxy& parent() { return m_parent; }
+    RemoteDeviceProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
 
 private:
@@ -61,12 +61,14 @@ private:
     RemoteRenderPipelineProxy& operator=(const RemoteRenderPipelineProxy&) = delete;
     RemoteRenderPipelineProxy& operator=(RemoteRenderPipelineProxy&&) = delete;
 
+    bool isRemoteRenderPipelineProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
     
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Error send(T&& message)
+    [[nodiscard]] IPC::Error send(T&& message)
     {
-        return root().streamClientConnection().send(WTFMove(message), backing());
+        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
     }
 
     Ref<WebCore::WebGPU::BindGroupLayout> getBindGroupLayout(uint32_t index) final;
@@ -74,10 +76,14 @@ private:
     void setLabelInternal(const String&) final;
 
     WebGPUIdentifier m_backing;
-    Ref<ConvertToBackingContext> m_convertToBackingContext;
-    Ref<RemoteDeviceProxy> m_parent;
+    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    const Ref<RemoteDeviceProxy> m_parent;
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteRenderPipelineProxy)
+    static bool isType(const WebCore::WebGPU::RenderPipeline& pipeline) { return pipeline.isRemoteRenderPipelineProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

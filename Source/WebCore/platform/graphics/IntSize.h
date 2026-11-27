@@ -25,21 +25,20 @@
 
 #pragma once
 
-#include "PlatformExportMacros.h"
+#include <WebCore/PlatformExportMacros.h>
 #include <algorithm>
+#include <cmath>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Forward.h>
+#include <wtf/MathExtras.h>
 
 #if USE(CG)
 typedef struct CGSize CGSize;
 #endif
 
 #if PLATFORM(MAC)
-#ifdef NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES
 typedef struct CGSize NSSize;
-#else
-typedef struct _NSSize NSSize;
-#endif
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -94,13 +93,26 @@ public:
 
     void scale(float widthScale, float heightScale)
     {
-        m_width = static_cast<int>(static_cast<float>(m_width) * widthScale);
-        m_height = static_cast<int>(static_cast<float>(m_height) * heightScale);
+        m_width = truncateFloatToInt32(static_cast<float>(m_width) * widthScale);
+        m_height = truncateFloatToInt32(static_cast<float>(m_height) * heightScale);
     }
 
     void scale(float scale)
     {
         this->scale(scale, scale);
+    }
+
+    constexpr IntSize scaled(float widthScale, float heightScale) const
+    {
+        return {
+            static_cast<int>(static_cast<float>(m_width) * widthScale),
+            static_cast<int>(static_cast<float>(m_height) * heightScale)
+        };
+    }
+
+    constexpr IntSize scaled(float s) const
+    {
+        return scaled(s, s);
     }
 
     constexpr IntSize expandedTo(const IntSize& other) const
@@ -159,17 +171,12 @@ public:
     WEBCORE_EXPORT operator CGSize() const;
 #endif
 
-#if PLATFORM(MAC) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-    WEBCORE_EXPORT explicit IntSize(const NSSize &); // don't do this implicitly since it's lossy
-    WEBCORE_EXPORT operator NSSize() const;
-#endif
-
 #if PLATFORM(WIN)
     WEBCORE_EXPORT IntSize(const SIZE&);
     WEBCORE_EXPORT operator SIZE() const;
 #endif
 
-    String toJSONString() const;
+    WEBCORE_EXPORT String toJSONString() const;
     Ref<JSON::Object> toJSONObject() const;
 
 private:

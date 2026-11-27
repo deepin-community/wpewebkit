@@ -28,6 +28,7 @@
 #include <WebCore/ClientOrigin.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WTF {
 class WorkQueue;
@@ -44,7 +45,7 @@ struct BackgroundFetchState;
 
 class BackgroundFetchStoreImpl :  public WebCore::BackgroundFetchStore {
 public:
-    static Ref<BackgroundFetchStoreImpl> create(WeakPtr<NetworkStorageManager>&& manager, WeakPtr<WebCore::SWServer>&& server) { return adoptRef(*new BackgroundFetchStoreImpl(WTFMove(manager), WTFMove(server))); }
+    static Ref<BackgroundFetchStoreImpl> create(ThreadSafeWeakPtr<NetworkStorageManager>&& manager, WeakPtr<WebCore::SWServer>&& server) { return adoptRef(*new BackgroundFetchStoreImpl(WTF::move(manager), WTF::move(server))); }
     ~BackgroundFetchStoreImpl();
 
     void getAllBackgroundFetchIdentifiers(CompletionHandler<void(Vector<String>&&)>&&);
@@ -55,7 +56,7 @@ public:
     void clickBackgroundFetch(const String&, CompletionHandler<void()>&&);
 
 private:
-    BackgroundFetchStoreImpl(WeakPtr<NetworkStorageManager>&&, WeakPtr<WebCore::SWServer>&&);
+    BackgroundFetchStoreImpl(ThreadSafeWeakPtr<NetworkStorageManager>&&, WeakPtr<WebCore::SWServer>&&);
 
     void initializeFetches(const WebCore::ServiceWorkerRegistrationKey&, CompletionHandler<void()>&&) final;
     void clearFetch(const WebCore::ServiceWorkerRegistrationKey&, const String&, CompletionHandler<void()>&&) final;
@@ -76,7 +77,7 @@ private:
     void fetchInformationFromFilename(const String&, CompletionHandler<void(const WebCore::ServiceWorkerRegistrationKey&, const String&)>&&);
     void initializeFetches(const WebCore::ClientOrigin&, CompletionHandler<void()>&&);
 
-    WeakPtr<NetworkStorageManager> m_manager;
+    ThreadSafeWeakPtr<NetworkStorageManager> m_manager;
 
     using FetchIdentifier = std::pair<String, String>; // < service worker registration scope, background fetch identifier >
     struct PerClientOriginFetches {

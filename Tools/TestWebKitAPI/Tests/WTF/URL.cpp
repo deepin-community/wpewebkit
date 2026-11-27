@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,8 +25,8 @@
 
 #include "config.h"
 
-#include "Test.h"
-#include "WTFTestUtilities.h"
+#include "Helpers/Test.h"
+#include "Helpers/WTFTestUtilities.h"
 #include <wtf/HashSet.h>
 #include <wtf/MainThread.h>
 #include <wtf/StringPrintStream.h>
@@ -542,7 +542,7 @@ TEST_F(WTF_URL, URLRemoveQueryParameters)
     HashSet<String> keyRemovalSet4 { "key"_s, "key1"_s };
 
     auto checkRemovedParameters = [](int lineNumber, const Vector<String>& removedParameters, std::initializer_list<String>&& expected) {
-        Vector<String> expectedParameters { WTFMove(expected) };
+        Vector<String> expectedParameters { WTF::move(expected) };
         bool areEqual = removedParameters == expectedParameters;
         EXPECT_TRUE(areEqual);
         if (areEqual)
@@ -648,7 +648,7 @@ TEST_F(WTF_URL, IsolatedCopy)
     // Tests optimization for URL::isolatedCopy() on a r-value reference.
     URL url2 { "https://www.webkit.org"_str };
     originalStringImpl = url2.string().impl();
-    URL url2Copy = WTFMove(url2).isolatedCopy();
+    URL url2Copy = WTF::move(url2).isolatedCopy();
     EXPECT_EQ(url2Copy, URL { "https://www.webkit.org"_str });
     EXPECT_EQ(url2Copy.string().impl(), originalStringImpl); // Should have adopted the StringImpl of url2.
 }
@@ -657,17 +657,48 @@ TEST_F(WTF_URL, MoveInvalidatesURL)
 {
     URL url1 { "http://www.apple.com"_str };
     EXPECT_TRUE(url1.isValid());
-    URL url2 { WTFMove(url1) };
+    URL url2 { WTF::move(url1) };
     EXPECT_TRUE(url2.isValid());
     SUPPRESS_USE_AFTER_MOVE EXPECT_FALSE(url1.isValid());
 
     URL url3 { "http://www.webkit.org"_str };
-    url3 = WTFMove(url2);
+    url3 = WTF::move(url2);
     EXPECT_TRUE(url3.isValid());
     SUPPRESS_USE_AFTER_MOVE EXPECT_FALSE(url2.isValid());
 
     url3 = { };
     EXPECT_FALSE(url3.isValid());
+}
+
+TEST_F(WTF_URL, ProtocolIsSecure)
+{
+    const auto httpsURL = createURL("https://example.com/api"_s);
+    EXPECT_TRUE(httpsURL.protocolIsSecure());
+
+    const auto httpURL = createURL("http://example.com/api"_s);
+    EXPECT_FALSE(httpURL.protocolIsSecure());
+
+    // Note: FTPS is not considered secure for WebKit purposes.
+    const auto ftpsURL = createURL("ftps://example.com/api"_s);
+    EXPECT_FALSE(ftpsURL.protocolIsSecure());
+
+    const auto ftpURL = createURL("ftp://example.com/api"_s);
+    EXPECT_FALSE(ftpURL.protocolIsSecure());
+
+    const auto wssURL = createURL("wss://example.com/api"_s);
+    EXPECT_TRUE(wssURL.protocolIsSecure());
+
+    const auto wsURL = createURL("ws://example.com/api"_s);
+    EXPECT_FALSE(wsURL.protocolIsSecure());
+
+    const auto asdfURL = createURL("asdf:///a/b/c"_s);
+    EXPECT_FALSE(asdfURL.protocolIsSecure());
+
+    const auto blobURL = createURL("blob://apple.com"_s);
+    EXPECT_FALSE(blobURL.protocolIsSecure());
+
+    const auto aboutURL = createURL("about://example.com/"_s);
+    EXPECT_FALSE(aboutURL.protocolIsSecure());
 }
 
 } // namespace TestWebKitAPI

@@ -57,12 +57,12 @@ class RemotePresentationContext final : public IPC::StreamMessageReceiver {
 public:
     static Ref<RemotePresentationContext> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, WebCore::WebGPU::PresentationContext& presentationContext, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemotePresentationContext(gpuConnectionToWebProcess, gpu, presentationContext, objectHeap, WTFMove(streamConnection), identifier));
+        return adoptRef(*new RemotePresentationContext(gpuConnectionToWebProcess, gpu, presentationContext, objectHeap, WTF::move(streamConnection), identifier));
     }
 
     virtual ~RemotePresentationContext();
 
-    const SharedPreferencesForWebProcess& sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_gpu->sharedPreferencesForWebProcess(); }
 
     void stopListeningForIPC();
 
@@ -82,13 +82,13 @@ private:
 
     void configure(const WebGPU::CanvasConfiguration&);
     void unconfigure();
-    void present();
+    void present(uint32_t frameIndex);
 
-    void getCurrentTexture(WebGPUIdentifier);
+    void getCurrentTexture(WebGPUIdentifier, uint32_t frameIndex);
 
-    Ref<WebCore::WebGPU::PresentationContext> m_backing;
+    const Ref<WebCore::WebGPU::PresentationContext> m_backing;
     WeakRef<WebGPU::ObjectHeap> m_objectHeap;
-    Ref<IPC::StreamServerConnection> m_streamConnection;
+    const Ref<IPC::StreamServerConnection> m_streamConnection;
     WebGPUIdentifier m_identifier;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;

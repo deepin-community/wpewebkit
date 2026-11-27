@@ -43,7 +43,7 @@ class WebGLTransformFeedback;
 class WebGLVertexArrayObject;
 
 class WebGL2RenderingContext final : public WebGLRenderingContextBase {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebGL2RenderingContext);
+    WTF_MAKE_TZONE_ALLOCATED(WebGL2RenderingContext);
 public:
     static std::unique_ptr<WebGL2RenderingContext> create(CanvasBase&, WebGLContextAttributes&&);
 
@@ -188,16 +188,16 @@ public:
     void clearBufferfi(GCGLenum buffer, GCGLint drawbuffer, GCGLfloat depth, GCGLint stencil);
     
     // Query objects
-    RefPtr<WebGLQuery> createQuery();
+    Ref<WebGLQuery> createQuery();
     void deleteQuery(WebGLQuery*);
     GCGLboolean isQuery(WebGLQuery*);
     void beginQuery(GCGLenum target, WebGLQuery&);
-    void endQuery(GCGLenum target);
+    void endQuery(ScriptExecutionContext&, GCGLenum target);
     WebGLAny getQuery(GCGLenum target, GCGLenum pname);
     WebGLAny getQueryParameter(WebGLQuery&, GCGLenum pname);
     
     // Sampler objects
-    RefPtr<WebGLSampler> createSampler();
+    Ref<WebGLSampler> createSampler();
     void deleteSampler(WebGLSampler*);
     GCGLboolean isSampler(WebGLSampler*);
     void bindSampler(GCGLuint unit, WebGLSampler*);
@@ -207,14 +207,14 @@ public:
     
     // Sync objects
     RefPtr<WebGLSync> fenceSync(GCGLenum condition, GCGLbitfield flags);
-    GCGLboolean isSync(WebGLSync*);
+    GCGLboolean NODELETE isSync(WebGLSync*);
     void deleteSync(WebGLSync*);
     GCGLenum clientWaitSync(WebGLSync&, GCGLbitfield flags, GCGLuint64 timeout);
     void waitSync(WebGLSync&, GCGLbitfield flags, GCGLint64 timeout);
     WebGLAny getSyncParameter(WebGLSync&, GCGLenum pname);
     
     // Transform feedback
-    RefPtr<WebGLTransformFeedback> createTransformFeedback();
+    Ref<WebGLTransformFeedback> createTransformFeedback();
     void deleteTransformFeedback(WebGLTransformFeedback* id);
     GCGLboolean isTransformFeedback(WebGLTransformFeedback* id);
     void bindTransformFeedback(GCGLenum target, WebGLTransformFeedback* id);
@@ -233,11 +233,11 @@ public:
     WebGLAny getActiveUniforms(WebGLProgram&, const Vector<GCGLuint>& uniformIndices, GCGLenum pname);
     GCGLuint getUniformBlockIndex(WebGLProgram&, const String& uniformBlockName);
     WebGLAny getActiveUniformBlockParameter(WebGLProgram&, GCGLuint uniformBlockIndex, GCGLenum pname);
-    WebGLAny getActiveUniformBlockName(WebGLProgram&, GCGLuint uniformBlockIndex);
+    String getActiveUniformBlockName(WebGLProgram&, GCGLuint uniformBlockIndex);
     void uniformBlockBinding(WebGLProgram&, GCGLuint uniformBlockIndex, GCGLuint uniformBlockBinding);
     
     // Vertex array objects
-    RefPtr<WebGLVertexArrayObject> createVertexArray();
+    Ref<WebGLVertexArrayObject> createVertexArray();
     void deleteVertexArray(WebGLVertexArrayObject* vertexArray);
     GCGLboolean isVertexArray(WebGLVertexArrayObject* vertexArray);
     void bindVertexArray(WebGLVertexArrayObject* vertexArray);
@@ -251,20 +251,17 @@ public:
     void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, GCGLintptr offset);
     void readPixels(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, ArrayBufferView& dstData, GCGLuint dstOffset);
 
-    GCGLuint maxTransformFeedbackSeparateAttribs() const;
+    GCGLuint NODELETE maxTransformFeedbackSeparateAttribs() const;
 
     bool checkAndTranslateAttachments(ASCIILiteral functionName, GCGLenum, Vector<GCGLenum>&);
 
     void addMembersToOpaqueRoots(JSC::AbstractSlotVisitor&) override;
 
-    bool isTransformFeedbackActiveAndNotPaused();
+    bool NODELETE isTransformFeedbackActiveAndNotPaused();
 
 private:
     using WebGLRenderingContextBase::WebGLRenderingContextBase;
-
-    bool isWebGL2() const final { return true; }
-
-    void initializeContextState() final;
+    void initializeContextState() WTF_REQUIRES_LOCK(objectGraphLock()) final;
 
     RefPtr<ArrayBufferView> arrayBufferViewSliceFactory(ASCIILiteral functionName, const ArrayBufferView& data, unsigned startByte, unsigned bytelength);
     RefPtr<ArrayBufferView> sliceArrayBufferView(ASCIILiteral functionName, const ArrayBufferView& data, GCGLuint srcOffset, GCGLuint length);
@@ -272,11 +269,12 @@ private:
     long long getInt64Parameter(GCGLenum) final;
     Vector<bool> getIndexedBooleanArrayParameter(GCGLenum pname, GCGLuint index);
 
-    void initializeDefaultObjects() final;
+    void initializeDefaultObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
+    void detachAndRemoveAllObjects() WTF_REQUIRES_LOCK(objectGraphLock()) final;
     bool validateBufferTarget(ASCIILiteral functionName, GCGLenum target) final;
     bool validateBufferTargetCompatibility(ASCIILiteral, GCGLenum, WebGLBuffer*);
-    WebGLBuffer* validateBufferDataParameters(ASCIILiteral functionName, GCGLenum target, GCGLenum usage) final;
-    WebGLBuffer* validateBufferDataTarget(ASCIILiteral functionName, GCGLenum target) final;
+    RefPtr<WebGLBuffer> validateBufferDataParameters(ASCIILiteral functionName, GCGLenum target, GCGLenum usage) final;
+    RefPtr<WebGLBuffer> validateBufferDataTarget(ASCIILiteral functionName, GCGLenum target) final;
     bool validateAndCacheBufferBinding(const AbstractLocker&, ASCIILiteral functionName, GCGLenum target, WebGLBuffer*) final;
     GCGLint maxDrawBuffers() final;
     GCGLint maxColorAttachments() final;
@@ -293,7 +291,7 @@ private:
 
     bool setIndexedBufferBinding(ASCIILiteral functionName, GCGLenum target, GCGLuint index, WebGLBuffer*);
 
-    IntRect getTextureSourceSubRectangle(GCGLsizei width, GCGLsizei height);
+    IntRect NODELETE getTextureSourceSubRectangle(GCGLsizei width, GCGLsizei height);
 
     RefPtr<WebGLTexture> validateTexImageBinding(TexImageFunctionID, GCGLenum) final;
 
@@ -318,7 +316,7 @@ private:
         ClearBufferfv,
         ClearBufferfi
     };
-    void updateBuffersToAutoClear(ClearBufferCaller, GCGLenum buffer, GCGLint drawbuffer);
+    void NODELETE updateBuffersToAutoClear(ClearBufferCaller, GCGLenum buffer, GCGLint drawbuffer);
 
     WebGLBindingPoint<WebGLFramebuffer> m_readFramebufferBinding;
     WebGLBindingPoint<WebGLTransformFeedback> m_boundTransformFeedback;
@@ -332,7 +330,7 @@ private:
     WebGLBindingPoint<WebGLBuffer, GraphicsContextGL::UNIFORM_BUFFER> m_boundUniformBuffer;
     Vector<WebGLBindingPoint<WebGLBuffer, GraphicsContextGL::UNIFORM_BUFFER>> m_boundIndexedUniformBuffers;
 
-    RefPtr<WebGLQuery> m_activeQueries[ActiveQueryKey::NumKeys];
+    std::array<RefPtr<WebGLQuery>, ActiveQueryKey::NumKeys> m_activeQueries;
 
     Vector<RefPtr<WebGLSampler>> m_boundSamplers;
 

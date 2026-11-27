@@ -37,36 +37,35 @@ class MediaPlayerPrivateGStreamer;
 
 class InbandTextTrackPrivateGStreamer : public InbandTextTrackPrivate, public TrackPrivateBaseGStreamer {
 public:
-    static Ref<InbandTextTrackPrivateGStreamer> create(unsigned index, GRefPtr<GstPad>&& pad, bool shouldHandleStreamStartEvent = true)
+    static Ref<InbandTextTrackPrivateGStreamer> create(unsigned index, GRefPtr<GstPad>&& pad, TrackID trackId)
     {
-        return adoptRef(*new InbandTextTrackPrivateGStreamer(index, WTFMove(pad), shouldHandleStreamStartEvent));
+        return adoptRef(*new InbandTextTrackPrivateGStreamer(index, WTF::move(pad), trackId));
     }
 
-    static Ref<InbandTextTrackPrivateGStreamer> create(ThreadSafeWeakPtr<MediaPlayerPrivateGStreamer>&&, unsigned index, GRefPtr<GstPad> pad)
+    static Ref<InbandTextTrackPrivateGStreamer> create(ThreadSafeWeakPtr<MediaPlayerPrivateGStreamer>&&, unsigned index, GRefPtr<GstPad>&& pad, TrackID id)
     {
-        return create(index, WTFMove(pad));
+        return create(index, WTF::move(pad), id);
     }
 
-    static Ref<InbandTextTrackPrivateGStreamer> create(ThreadSafeWeakPtr<MediaPlayerPrivateGStreamer>&&, unsigned index, GstStream* stream)
+    static Ref<InbandTextTrackPrivateGStreamer> create(ThreadSafeWeakPtr<MediaPlayerPrivateGStreamer>&&, unsigned index, GRefPtr<GstStream>&& stream)
     {
-        return adoptRef(*new InbandTextTrackPrivateGStreamer(index, stream));
+        return adoptRef(*new InbandTextTrackPrivateGStreamer(index, WTF::move(stream)));
     }
 
     Kind kind() const final { return m_kind; }
-    TrackID id() const final { return m_trackID.value_or(m_index); }
-    std::optional<AtomString> trackUID() const final { return m_stringId; }
-    AtomString label() const final { return m_label; }
-    AtomString language() const final { return m_language; }
-    int trackIndex() const final { return m_index; }
+    TrackID id() const final;
+    std::optional<String> trackUID() const final { return std::nullopt; }
+    String label() const final;
+    String language() const final;
+    int trackIndex() const final;
 
     void handleSample(GRefPtr<GstSample>&&);
 
-protected:
     void tagsChanged(GRefPtr<GstTagList>&&) final;
 
 private:
-    InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstPad>&&, bool shouldHandleStreamStartEvent);
-    InbandTextTrackPrivateGStreamer(unsigned index, GstStream*);
+    InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstPad>&&, TrackID);
+    InbandTextTrackPrivateGStreamer(unsigned index, GRefPtr<GstStream>&&);
 
     void notifyTrackOfSample();
 

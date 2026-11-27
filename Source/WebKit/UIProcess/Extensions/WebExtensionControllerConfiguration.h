@@ -62,16 +62,18 @@ public:
     bool storageIsPersistent() const { return !m_storageDirectory.isEmpty(); }
     bool storageIsTemporary() const { return m_temporary; }
 
-    const String& storageDirectory() const { return m_storageDirectory; }
+    const String& storageDirectory() const LIFETIME_BOUND { return m_storageDirectory; }
     void setStorageDirectory(const String& directory) { m_storageDirectory = directory; }
 
+#if PLATFORM(COCOA)
     WKWebViewConfiguration *webViewConfiguration();
     void setWebViewConfiguration(WKWebViewConfiguration *configuration) { m_webViewConfiguration = configuration; }
+#endif
 
     WebsiteDataStore& defaultWebsiteDataStore() const;
     void setDefaultWebsiteDataStore(WebsiteDataStore* dataStore) { m_defaultWebsiteDataStore = dataStore; }
 
-    bool operator==(const WebExtensionControllerConfiguration&) const;
+    bool NODELETE operator==(const WebExtensionControllerConfiguration&) const;
 
 #ifdef __OBJC__
     WKWebExtensionControllerConfiguration *wrapper() const { return (WKWebExtensionControllerConfiguration *)API::ObjectImpl<API::Object::Type::WebExtensionControllerConfiguration>::wrapper(); }
@@ -84,7 +86,9 @@ private:
     Markable<WTF::UUID> m_identifier;
     bool m_temporary { false };
     String m_storageDirectory;
+#if PLATFORM(COCOA)
     RetainPtr<WKWebViewConfiguration> m_webViewConfiguration;
+#endif
     RefPtr<WebsiteDataStore> m_defaultWebsiteDataStore;
 };
 

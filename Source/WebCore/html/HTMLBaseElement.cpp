@@ -31,7 +31,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLBaseElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLBaseElement);
 
 using namespace HTMLNames;
 
@@ -50,29 +50,30 @@ void HTMLBaseElement::attributeChanged(const QualifiedName& name, const AtomStri
 {
     if (name == hrefAttr || name == targetAttr) {
         if (isConnected())
-            document().processBaseElement();
+            protect(document())->processBaseElement();
     } else
         HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-Node::InsertedIntoAncestorResult HTMLBaseElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+Node::NeedsPostConnectionSteps HTMLBaseElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
     if (insertionType.connectedToDocument)
-        document().processBaseElement();
-    return InsertedIntoAncestorResult::Done;
+        protect(document())->processBaseElement();
+    return NeedsPostConnectionSteps::No;
 }
 
-void HTMLBaseElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLBaseElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
-        document().processBaseElement();
+        protect(document())->processBaseElement();
 }
 
 bool HTMLBaseElement::isURLAttribute(const Attribute& attribute) const
 {
-    return attribute.name().localName() == hrefAttr || HTMLElement::isURLAttribute(attribute);
+    // FIXME: Should this be attribute.name().matches(hrefAttr) to also enforce the namespace?
+    return hrefAttr->hasLocalName(attribute.name().localName()) || HTMLElement::isURLAttribute(attribute);
 }
 
 AtomString HTMLBaseElement::target() const
@@ -87,16 +88,12 @@ String HTMLBaseElement::href() const
     if (url.isNull())
         url = emptyAtom();
 
-    auto urlRecord = document().completeURL(url, document().fallbackBaseURL());
+    Ref document = this->document();
+    auto urlRecord = document->encodingParseURL(url, document->fallbackBaseURL());
     if (!urlRecord.isValid())
         return url;
 
     return urlRecord.string();
-}
-
-void HTMLBaseElement::setHref(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(hrefAttr, value);
 }
 
 }

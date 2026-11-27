@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,10 +36,12 @@
 
 namespace WebKit {
 
+class RemoteMediaResourceLoaderProxy;
+
 class RemoteMediaResourceProxy final : public WebCore::PlatformMediaResourceClient {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaResourceProxy);
 public:
-    RemoteMediaResourceProxy(Ref<IPC::Connection>&&, WebCore::PlatformMediaResource&, RemoteMediaResourceIdentifier);
+    RemoteMediaResourceProxy(Ref<RemoteMediaResourceLoaderProxy>&&, WebCore::PlatformMediaResource&, RemoteMediaResourceIdentifier);
     ~RemoteMediaResourceProxy();
 
 private:
@@ -53,8 +55,10 @@ private:
     void loadFailed(WebCore::PlatformMediaResource&, const WebCore::ResourceError&) final;
     void loadFinished(WebCore::PlatformMediaResource&, const WebCore::NetworkLoadMetrics&) final;
 
-    Ref<IPC::Connection> m_connection;
-    WebCore::PlatformMediaResource& m_platformMediaResource;
+    Ref<WebCore::PlatformMediaResource> mediaResource() const;
+
+    const Ref<RemoteMediaResourceLoaderProxy> m_loader;
+    ThreadSafeWeakRef<WebCore::PlatformMediaResource> m_platformMediaResource;
     RemoteMediaResourceIdentifier m_id;
 };
 

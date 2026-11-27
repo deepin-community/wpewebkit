@@ -2,7 +2,7 @@
     Copyright (C) 1998 Lars Knoll (knoll@mpi-hd.mpg.de)
     Copyright (C) 2001 Dirk Mueller <mueller@kde.org>
     Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
-    Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011 Apple Inc. All rights reserved.
+    Copyright (C) 2004-2025 Apple Inc. All rights reserved.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Library General Public
@@ -22,22 +22,24 @@
 
 #pragma once
 
-#include "CacheValidation.h"
-#include "CachedResourceClient.h"
-#include "FrameLoaderTypes.h"
-#include "LoaderMalloc.h"
-#include "ResourceCryptographicDigest.h"
-#include "ResourceError.h"
-#include "ResourceLoadPriority.h"
-#include "ResourceLoaderIdentifier.h"
-#include "ResourceLoaderOptions.h"
-#include "ResourceRequest.h"
-#include "ResourceResponse.h"
-#include "Timer.h"
+#include <WebCore/CacheValidation.h>
+#include <WebCore/CachedResourceClient.h>
+#include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/LoaderMalloc.h>
+#include <WebCore/ResourceCryptographicDigest.h>
+#include <WebCore/ResourceError.h>
+#include <WebCore/ResourceLoadPriority.h>
+#include <WebCore/ResourceLoaderIdentifier.h>
+#include <WebCore/ResourceLoaderOptions.h>
+#include <WebCore/ResourceRequest.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/Timer.h>
 #include <pal/SessionID.h>
 #include <time.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakHashCountedSet.h>
@@ -45,16 +47,8 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
-class CachedResource;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CachedResource> : std::true_type { };
-}
-
-namespace WebCore {
-
+class CachedResourceCallback;
 class CachedResourceClient;
 class CachedResourceHandleBase;
 class CachedResourceLoader;
@@ -74,23 +68,23 @@ enum class CachePolicy : uint8_t;
 // A resource that is held in the cache. Classes who want to use this object should derive
 // from CachedResourceClient, to get the function calls in case the requested data has arrived.
 // This class also does the actual communication with the loader to obtain the resource from the network.
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CachedResource);
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CachedResourceResponseData);
-class CachedResource : public CanMakeWeakPtr<CachedResource> {
+class CachedResource : public RefCountedAndCanMakeWeakPtr<CachedResource> {
     WTF_MAKE_NONCOPYABLE(CachedResource);
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CachedResource);
     friend class MemoryCache;
 
 public:
     enum class Type : uint8_t {
         MainResource,
         ImageResource,
+        JSON,
         CSSStyleSheet,
         Script,
         FontResource,
         SVGFontResource,
         MediaResource,
 #if ENABLE(MODEL_ELEMENT)
+        EnvironmentMapResource,
         ModelResource,
 #endif
         RawResource,
@@ -101,7 +95,9 @@ public:
         XSLStyleSheet,
 #endif
         LinkPrefetch,
+#if ENABLE(VIDEO)
         TextTrackResource,
+#endif
 #if ENABLE(APPLICATION_MANIFEST)
         ApplicationManifest,
 #endif
@@ -122,12 +118,14 @@ public:
     static_assert(static_cast<unsigned>(DecodeError) <= ((1ULL << bitWidthOfStatus) - 1));
 
     CachedResource(CachedResourceRequest&&, Type, PAL::SessionID, const CookieJar*);
-    virtual ~CachedResource();
+    WEBCORE_EXPORT virtual ~CachedResource();
+
+    WEBCORE_EXPORT void deref() const;
 
     virtual void load(CachedResourceLoader&);
 
     virtual void setEncoding(const String&) { }
-    virtual String encoding() const { return String(); }
+    virtual ASCIILiteral encoding() const { return ASCIILiteral(); }
     virtual const TextResourceDecoder* textResourceDecoder() const { return nullptr; }
     virtual void updateBuffer(const FragmentedSharedBuffer&);
     virtual void updateData(const SharedBuffer&);
@@ -135,16 +133,15 @@ public:
     virtual void error(CachedResource::Status);
 
     void setResourceError(const ResourceError& error) { mutableResponseData().m_error = error; }
-    const ResourceError& resourceError() const;
+    const ResourceError& NODELETE resourceError() const;
 
     virtual bool shouldIgnoreHTTPStatusCodeErrors() const { return false; }
 
-    const ResourceRequest& resourceRequest() const { return m_resourceRequest; }
-    const URL& url() const { return m_resourceRequest.url();}
-    const String& cachePartition() const { return m_resourceRequest.cachePartition(); }
+    const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }
+    const URL& url() const LIFETIME_BOUND { return m_resourceRequest.url(); }
+    String cachePartition() const { return m_resourceRequest.cachePartition(); }
     PAL::SessionID sessionID() const { return m_sessionID; }
     const CookieJar* cookieJar() const { return m_cookieJar.get(); }
-    RefPtr<const CookieJar> protectedCookieJar() const;
     Type type() const { return m_type; }
     String mimeType() const { return response().mimeType(); }
     long long expectedContentLength() const { return response().expectedContentLength(); }
@@ -152,14 +149,12 @@ public:
     static bool shouldUsePingLoad(Type type) { return type == Type::Beacon || type == Type::Ping; }
 
     ResourceLoadPriority loadPriority() const { return m_loadPriority; }
-    void setLoadPriority(const std::optional<ResourceLoadPriority>&, RequestPriority);
+    void NODELETE setLoadPriority(const std::optional<ResourceLoadPriority>&, RequestPriority);
 
     WEBCORE_EXPORT void addClient(CachedResourceClient&);
     WEBCORE_EXPORT void removeClient(CachedResourceClient&);
     bool hasClients() const { return !m_clients.isEmptyIgnoringNullReferences() || !m_clientsAwaitingCallback.isEmptyIgnoringNullReferences(); }
     bool hasClient(const CachedResourceClient& client) { return m_clients.contains(client) || m_clientsAwaitingCallback.contains(client); }
-    bool deleteIfPossible();
-
     enum class PreloadResult : uint8_t {
         PreloadNotReferenced,
         PreloadReferenced,
@@ -185,17 +180,18 @@ public:
     }
 
     unsigned size() const { return encodedSize() + decodedSize() + overheadSize(); }
-    unsigned encodedSize() const;
-    unsigned decodedSize() const;
+    WEBCORE_EXPORT unsigned NODELETE encodedSize() const;
+    unsigned NODELETE decodedSize() const;
     unsigned overheadSize() const;
 
     bool isLoaded() const { return !m_loading; } // FIXME. Method name is inaccurate. Loading might not have started yet.
 
     bool isLoading() const { return m_loading; }
-    void setLoading(bool b) { m_loading = b; }
+    void setLoading(bool);
     virtual bool stillNeedsLoad() const { return false; }
+    void whenLoaded(CompletionHandler<void()>&&);
 
-    SubresourceLoader* loader() { return m_loader.get(); }
+    SubresourceLoader* loader() const { return m_loader.get(); }
 
     bool isImage() const { return type() == Type::ImageResource; }
     // FIXME: CachedRawResource could be a main resource, an audio/video resource, or a raw XHR/icon resource.
@@ -220,7 +216,7 @@ public:
 
     // Computes the status of an object after loading.
     // Updates the expire date on the cache entry file
-    void finish();
+    void NODELETE finish();
 
     // Called by the cache if the object has been removed from the cache
     // while still being referenced. This means the object should delete itself
@@ -234,48 +230,45 @@ public:
     FragmentedSharedBuffer* resourceBuffer() const { return m_data.get(); }
 
     virtual void redirectReceived(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&);
-    virtual void responseReceived(const ResourceResponse&);
+    virtual void responseReceived(ResourceResponse&&);
     virtual bool shouldCacheResponse(const ResourceResponse&) { return true; }
-    void setResponse(const ResourceResponse&);
+    void setResponse(ResourceResponse&&);
     WEBCORE_EXPORT const ResourceResponse& response() const;
     Box<NetworkLoadMetrics> takeNetworkLoadMetrics() { return mutableResponse().takeNetworkLoadMetrics(); }
 
-    void setCrossOrigin();
-    bool isCrossOrigin() const;
-    bool isCORSCrossOrigin() const;
-    bool isCORSSameOrigin() const;
+    void NODELETE setCrossOrigin();
+    bool NODELETE isCrossOrigin() const;
+    bool NODELETE isCORSCrossOrigin() const;
+    bool NODELETE isCORSSameOrigin() const;
     ResourceResponse::Tainting responseTainting() const { return m_responseTainting; }
 
     void loadFrom(const CachedResource&);
 
     const SecurityOrigin* origin() const { return m_origin.get(); }
     SecurityOrigin* origin() { return m_origin.get(); }
-    RefPtr<SecurityOrigin> protectedOrigin() const;
     AtomString initiatorType() const { return m_initiatorType; }
-
-    bool canDelete() const { return !hasClients() && !m_loader && !m_preloadCount && !m_handleCount && !m_resourceToRevalidate && !m_proxyResource; }
-    bool hasOneHandle() const { return m_handleCount == 1; }
 
     bool isExpired() const;
 
     void cancelLoad(LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
-    bool wasCanceled() const;
+    bool NODELETE wasCanceled() const;
     bool errorOccurred() const { return m_status == LoadError || m_status == DecodeError; }
-    bool loadFailedOrCanceled() const;
+    bool NODELETE loadFailedOrCanceled() const;
 
     bool shouldSendResourceLoadCallbacks() const { return m_options.sendLoadCallbacks == SendCallbackPolicy::SendCallbacks; }
     DataBufferingPolicy dataBufferingPolicy() const { return m_options.dataBufferingPolicy; }
 
-    bool allowsCaching() const { return m_options.cachingPolicy == CachingPolicy::AllowCaching; }
-    const ResourceLoaderOptions& options() const { return m_options; }
+    bool allowsCaching() const { return m_options.cachingPolicy == CachingPolicy::AllowCaching || m_options.cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch; }
+    const ResourceLoaderOptions& options() const LIFETIME_BOUND { return m_options; }
 
     virtual void destroyDecodedData() { }
 
-    bool isPreloaded() const { return m_preloadCount; }
-    void increasePreloadCount() { ++m_preloadCount; }
-    void decreasePreloadCount() { ASSERT(m_preloadCount); --m_preloadCount; }
+    bool isPreloaded() const { return m_isPreloaded; }
+    void setIsPreloaded(bool isPreloaded) { m_isPreloaded = isPreloaded; }
     bool isLinkPreload() const { return m_isLinkPreload; }
     void setLinkPreload() { m_isLinkPreload = true; }
+    bool isLinkModulePreload() const { return m_isLinkModulePreload; }
+    void setLinkModulePreload() { m_isLinkModulePreload = true; }
     bool hasUnknownEncoding() { return m_hasUnknownEncoding; }
     void setHasUnknownEncoding(bool hasUnknownEncoding) { m_hasUnknownEncoding = hasUnknownEncoding; }
 
@@ -293,7 +286,6 @@ public:
 
     bool isCacheValidator() const { return !!m_resourceToRevalidate; }
     CachedResource* resourceToRevalidate() const { return m_resourceToRevalidate.get(); }
-    CachedResourceHandle<CachedResource> protectedResourceToRevalidate() const;
 
     // HTTP revalidation support methods for CachedResourceLoader.
     void setResourceToRevalidate(CachedResource*);
@@ -309,16 +301,19 @@ public:
     WEBCORE_EXPORT void tryReplaceEncodedData(SharedBuffer&);
 #endif
 
-    ResourceLoaderIdentifier identifierForLoadWithoutResourceLoader() const { return m_identifierForLoadWithoutResourceLoader; }
+    std::optional<ResourceLoaderIdentifier> identifierForLoadWithoutResourceLoader() const { return m_identifierForLoadWithoutResourceLoader; }
 
-    void setOriginalRequest(std::unique_ptr<ResourceRequest>&& originalRequest) { m_originalRequest = WTFMove(originalRequest); }
+    void setOriginalRequest(std::unique_ptr<ResourceRequest>&& originalRequest) { m_originalRequest = WTF::move(originalRequest); }
     const std::unique_ptr<ResourceRequest>& originalRequest() const { return m_originalRequest; }
 
 #if USE(QUICK_LOOK)
-    virtual void previewResponseReceived(const ResourceResponse&);
+    virtual void previewResponseReceived(ResourceResponse&&);
 #endif
 
     ResourceCryptographicDigest cryptographicDigest(ResourceCryptographicDigest::Algorithm) const;
+
+    void setIsHashReportingNeeded() { m_isHashReportingNeeded = true; }
+    bool isHashReportingNeeded() const { return m_isHashReportingNeeded; }
 
 protected:
     // CachedResource constructor that may be used when the CachedResource can already be filled with response data.
@@ -335,10 +330,8 @@ protected:
     void clearCachedCryptographicDigests();
 
 private:
-    class Callback;
+    using Callback = CachedResourceCallback;
     template<typename T> friend class CachedResourceClientWalker;
-
-    void deleteThis();
 
     bool addClientToSet(CachedResourceClient&);
 
@@ -371,7 +364,7 @@ private:
 
     struct ResponseData {
         WTF_MAKE_NONCOPYABLE(ResponseData);
-        WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CachedResourceResponseData);
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResponseData, CachedResourceResponseData);
 
     public:
         ResponseData(CachedResource&);
@@ -390,7 +383,7 @@ private:
     PAL::SessionID m_sessionID;
     RefPtr<const CookieJar> m_cookieJar;
     WallTime m_responseTimestamp { WallTime::now() };
-    ResourceLoaderIdentifier m_identifierForLoadWithoutResourceLoader;
+    Markable<ResourceLoaderIdentifier> m_identifierForLoadWithoutResourceLoader;
 
     SingleThreadWeakHashMap<CachedResourceClient, std::unique_ptr<Callback>> m_clientsAwaitingCallback;
 
@@ -404,7 +397,7 @@ private:
     // using HTTP If-Modified-Since/If-None-Match headers. If the response is 304 all clients of this resource are moved
     // to to be clients of m_resourceToRevalidate and the resource is deleted. If not, the field is zeroed and this
     // resources becomes normal resource load.
-    WeakPtr<CachedResource> m_resourceToRevalidate;
+    RefPtr<CachedResource> m_resourceToRevalidate;
 
     // If this field is non-null, the resource has a proxy for checking whether it is still up to date (see m_resourceToRevalidate).
     WeakPtr<CachedResource> m_proxyResource;
@@ -417,8 +410,6 @@ private:
     RedirectChainCacheStatus m_redirectChainCacheStatus;
 
     unsigned m_accessCount { 0 };
-    unsigned m_handleCount { 0 };
-    unsigned m_preloadCount { 0 };
 
     Type m_type : bitWidthOfType;
 
@@ -431,30 +422,28 @@ private:
     bool m_inCache : 1 { false };
     bool m_loading : 1 { false };
     bool m_isLinkPreload : 1;
+    bool m_isLinkModulePreload : 1;
     bool m_hasUnknownEncoding : 1;
     bool m_switchingClientsToRevalidatedResource : 1 { false };
     bool m_ignoreForRequestCount : 1;
+    bool m_isHashReportingNeeded : 1 { false };
+    bool m_isPreloaded : 1 { false };
 
 #if ASSERT_ENABLED
-    bool m_deleted { false };
     unsigned m_lruIndex { 0 };
 #endif
 
+    Vector<CompletionHandler<void()>> m_loadedCallbacks;
     mutable std::array<std::optional<ResourceCryptographicDigest>, ResourceCryptographicDigest::algorithmCount> m_cryptographicDigests;
 };
 
-class CachedResource::Callback {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
+class CachedResourceCallback {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CachedResourceCallback, Loader);
 public:
-    Callback(CachedResource&, CachedResourceClient&);
-
+    CachedResourceCallback(CachedResource&, CachedResourceClient&);
     void cancel();
 
 private:
-    void timerFired();
-
-    WeakRef<CachedResource> m_resource;
-    SingleThreadWeakRef<CachedResourceClient> m_client;
     Timer m_timer;
 };
 
@@ -463,6 +452,7 @@ inline bool CachedResource::isMainOrMediaOrIconOrRawResource() const
     return type() == Type::MainResource
         || type() == Type::MediaResource
 #if ENABLE(MODEL_ELEMENT)
+        || type() == Type::EnvironmentMapResource
         || type() == Type::ModelResource
 #endif
         || type() == Type::Icon

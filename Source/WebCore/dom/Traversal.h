@@ -3,7 +3,7 @@
  * Copyright (C) 2000 Frederik Holljen (frederik.holljen@hig.no)
  * Copyright (C) 2001 Peter Kelly (pmk@post.com)
  * Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2004, 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,9 +24,9 @@
 
 #pragma once
 
-#include "ExceptionOr.h"
-#include "Node.h"
-#include "NodeFilter.h"
+#include <WebCore/ExceptionOr.h>
+#include <WebCore/Node.h>
+#include <WebCore/NodeFilter.h>
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
@@ -35,7 +35,6 @@ class NodeIteratorBase {
 public:
     Node& root() { return m_root.get(); }
     const Node& root() const { return m_root.get(); }
-    Ref<Node> protectedRoot() const { return m_root; }
 
     unsigned whatToShow() const { return m_whatToShow; }
     NodeFilter* filter() const { return m_filter.get(); }
@@ -52,15 +51,15 @@ protected:
 
     bool matchesWhatToShow(const Node& node) const
     {
-        unsigned nodeMask = 1 << (node.nodeType() - 1);
+        unsigned nodeMask = 1 << (std::to_underlying(node.nodeType()) - 1);
         return nodeMask & m_whatToShow;
     }
 
 private:
     ExceptionOr<unsigned short> acceptNodeSlowCase(Node&);
 
-    Ref<Node> m_root;
-    RefPtr<NodeFilter> m_filter;
+    const Ref<Node> m_root;
+    const RefPtr<NodeFilter> m_filter;
     unsigned m_whatToShow;
     bool m_isActive { false };
 };

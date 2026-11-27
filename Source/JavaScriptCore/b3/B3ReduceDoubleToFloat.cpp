@@ -208,7 +208,7 @@ private:
         }
     }
 
-    bool canBeTransformedToFloat(Value* value)
+    bool NODELETE canBeTransformedToFloat(Value* value)
     {
         if (value->opcode() == FloatToDouble)
             return true;
@@ -327,9 +327,11 @@ private:
                     if (attemptTwoOperandsSimplify(value, index, insertionSet))
                         value->setType(Float);
                     break;
+                case PurifyNaN:
                 case Abs:
                 case Ceil:
                 case Floor:
+                case FTrunc:
                 case Neg:
                 case Sqrt: {
                     Value* child = value->child(0);

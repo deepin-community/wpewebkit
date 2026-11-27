@@ -23,12 +23,13 @@
 
 #include "FEColorMatrix.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 template<>
 struct SVGPropertyTraits<ColorMatrixType> {
-    static unsigned highestEnumValue() { return enumToUnderlyingType(ColorMatrixType::FECOLORMATRIX_TYPE_LUMINANCETOALPHA); }
+    static unsigned highestEnumValue() { return std::to_underlying(ColorMatrixType::FECOLORMATRIX_TYPE_LUMINANCETOALPHA); }
 
     static String toString(ColorMatrixType type)
     {
@@ -49,7 +50,7 @@ struct SVGPropertyTraits<ColorMatrixType> {
         return emptyString();
     }
 
-    static ColorMatrixType fromString(const String& value)
+    static ColorMatrixType fromString(SVGElement&, const String& value)
     {
         if (value == "matrix"_s)
             return ColorMatrixType::FECOLORMATRIX_TYPE_MATRIX;
@@ -64,25 +65,23 @@ struct SVGPropertyTraits<ColorMatrixType> {
 };
 
 class SVGFEColorMatrixElement final : public SVGFilterPrimitiveStandardAttributes {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGFEColorMatrixElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGFEColorMatrixElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGFEColorMatrixElement);
 public:
     static Ref<SVGFEColorMatrixElement> create(const QualifiedName&, Document&);
 
     String in1() const { return m_in1->currentValue(); }
     ColorMatrixType type() const { return m_type->currentValue<ColorMatrixType>(); }
-    const SVGNumberList& values() const { return m_values->currentValue(); }
+    const SVGNumberList& values() const LIFETIME_BOUND { return m_values->currentValue(); }
 
     SVGAnimatedString& in1Animated() { return m_in1; }
     SVGAnimatedEnumeration& typeAnimated() { return m_type; }
     SVGAnimatedNumberList& valuesAnimated() { return m_values; }
 
-private:
-    SVGFEColorMatrixElement(const QualifiedName&, Document&);
-
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGFEColorMatrixElement, SVGFilterPrimitiveStandardAttributes>;
 
-    bool isInvalidValuesLength() const;
+private:
+    SVGFEColorMatrixElement(const QualifiedName&, Document&);
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -91,9 +90,9 @@ private:
     Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() } }; }
     RefPtr<FilterEffect> createFilterEffect(const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
-    Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
-    Ref<SVGAnimatedEnumeration> m_type { SVGAnimatedEnumeration::create(this, ColorMatrixType::FECOLORMATRIX_TYPE_MATRIX) };
-    Ref<SVGAnimatedNumberList> m_values { SVGAnimatedNumberList::create(this) };
+    const Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };
+    const Ref<SVGAnimatedEnumeration> m_type { SVGAnimatedEnumeration::create(this, ColorMatrixType::FECOLORMATRIX_TYPE_MATRIX) };
+    const Ref<SVGAnimatedNumberList> m_values { SVGAnimatedNumberList::create(this) };
 };
 
 } // namespace WebCore

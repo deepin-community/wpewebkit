@@ -27,7 +27,7 @@ header: "SessionState.h"
 };
 
 [Nested] struct WebKit::HTTPBody::Element {
-    std::variant<Vector<uint8_t>, WebKit::HTTPBody::Element::FileData, String> data;
+    Variant<Vector<uint8_t>, WebKit::HTTPBody::Element::FileData, String> data;
 };
 
 [Nested] struct WebKit::HTTPBody::Element::FileData {
@@ -37,7 +37,7 @@ header: "SessionState.h"
     std::optional<WallTime> expectedFileModificationTime;
 };
 
-[CustomHeader, LegacyPopulateFromEmptyConstructor] class WebKit::FrameState {
+[RefCounted, CustomHeader] class WebKit::FrameState {
     String urlString;
     String originalURLString;
     String referrer;
@@ -49,11 +49,23 @@ header: "SessionState.h"
     int64_t documentSequenceNumber;
     int64_t itemSequenceNumber;
 
+    std::optional<WTF::UUID> navigationAPIKey;
+
     WebCore::IntPoint scrollPosition;
     bool shouldRestoreScrollPosition;
     float pageScaleFactor;
 
     std::optional<WebKit::HTTPBody> httpBody;
+
+    Markable<WebCore::BackForwardItemIdentifier> itemID;
+    Markable<WebCore::BackForwardFrameItemIdentifier> frameItemID;
+    String title;
+    WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy;
+    RefPtr<WebCore::SerializedScriptValue> sessionStateObject;
+    bool wasCreatedByJSWithoutUserInteraction;
+    bool wasRestoredFromSession;
+    WebCore::IsInitialAboutBlank isInitialAboutBlank;
+    std::optional<WebCore::PolicyContainer> policyContainer;
 
 #if PLATFORM(IOS_FAMILY)
     WebCore::FloatRect exposedContentRect;
@@ -64,26 +76,13 @@ header: "SessionState.h"
     WebCore::FloatBoxExtent obscuredInsets;
 #endif
 
-    Vector<WebKit::FrameState> children;
-    [Validator='WebKit::FrameState::validateDocumentState(*m_documentState)'] Vector<AtomString> m_documentState;
-};
-
-[CustomHeader] struct WebKit::PageState {
-    String title;
-    WebKit::FrameState mainFrameState;
-    WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy;
-    RefPtr<WebCore::SerializedScriptValue> sessionStateObject;
-    bool wasCreatedByJSWithoutUserInteraction;
+    Vector<Ref<WebKit::FrameState>> children;
+    [Validator='WebKit::FrameState::validateDocumentState(*documentState)'] Vector<AtomString> documentState();
 };
 
 [CustomHeader] struct WebKit::BackForwardListItemState {
-    WebCore::BackForwardItemIdentifier identifier;
-
-    WebKit::PageState pageState;
-    bool hasCachedPage;
-#if PLATFORM(COCOA) || PLATFORM(GTK)
-    [NotSerialized] RefPtr<WebKit::ViewSnapshot> snapshot;
-#endif
+    Ref<WebKit::FrameState> frameState;
+    std::optional<WebCore::FrameIdentifier> navigatedFrameID;
 };
 
 [CustomHeader] struct WebKit::BackForwardListState {

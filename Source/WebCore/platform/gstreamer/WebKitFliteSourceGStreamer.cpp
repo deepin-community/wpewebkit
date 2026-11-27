@@ -19,25 +19,93 @@
 #include "config.h"
 #include "WebKitFliteSourceGStreamer.h"
 
-#if ENABLE(SPEECH_SYNTHESIS) && USE(GSTREAMER)
+#if USE(FLITE) && USE(GSTREAMER)
 
 #include "GStreamerCommon.h"
 #include "GUniquePtrFlite.h"
 #include "PlatformSpeechSynthesisVoice.h"
+#include <dlfcn.h>
 #include <wtf/DataMutex.h>
 #include <wtf/glib/WTFGType.h>
 
-extern "C" {
-/* There is no header for Flite functions below */
-extern void usenglish_init(cst_voice*);
-extern cst_lexicon* cmulex_init(void);
-extern cst_voice* register_cmu_us_kal(const char*);
-extern cst_voice* register_cmu_us_awb(const char*);
-extern cst_voice* register_cmu_us_rms(const char*);
-extern cst_voice* register_cmu_us_slt(const char*);
+// Flite is loaded when speech synthesis is first used rather than linked. Its voice
+// libraries carry tens of thousands of symbol relocations, which every WebKit process
+// would otherwise resolve at startup.
+struct FliteLibrary {
+    decltype(&flite_init) init;
+    decltype(&flite_add_lang) addLang;
+    decltype(&flite_text_to_wave) textToWave;
+    decltype(&cst_wave_resample) waveResample;
+    decltype(&delete_voice) deleteVoice;
+    decltype(&delete_wave) deleteWave;
+    void (*usenglishInit)(cst_voice*);
+    cst_lexicon* (*cmulexInit)();
+    Vector<cst_voice* (*)(const char*)> voiceRegisterFunctions;
+};
+
+static void* fliteSymbol(const char* library, const char* symbol)
+{
+    void* handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        g_warning("Speech synthesis is unavailable: %s", dlerror());
+        return nullptr;
+    }
+    void* address = dlsym(handle, symbol);
+    if (!address)
+        g_warning("Speech synthesis is unavailable: %s", dlerror());
+    return address;
 }
 
-using namespace WebCore;
+static const FliteLibrary* fliteLibrary()
+{
+    static std::optional<FliteLibrary> library;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        FliteLibrary loaded {
+            reinterpret_cast<decltype(&flite_init)>(fliteSymbol("libflite.so.1", "flite_init")),
+            reinterpret_cast<decltype(&flite_add_lang)>(fliteSymbol("libflite.so.1", "flite_add_lang")),
+            reinterpret_cast<decltype(&flite_text_to_wave)>(fliteSymbol("libflite.so.1", "flite_text_to_wave")),
+            reinterpret_cast<decltype(&cst_wave_resample)>(fliteSymbol("libflite.so.1", "cst_wave_resample")),
+            reinterpret_cast<decltype(&delete_voice)>(fliteSymbol("libflite.so.1", "delete_voice")),
+            reinterpret_cast<decltype(&delete_wave)>(fliteSymbol("libflite.so.1", "delete_wave")),
+            reinterpret_cast<void (*)(cst_voice*)>(fliteSymbol("libflite_usenglish.so.1", "usenglish_init")),
+            reinterpret_cast<cst_lexicon* (*)()>(fliteSymbol("libflite_cmulex.so.1", "cmulex_init")),
+            { }
+        };
+        if (!loaded.init || !loaded.addLang || !loaded.textToWave || !loaded.waveResample || !loaded.deleteVoice || !loaded.deleteWave || !loaded.usenglishInit || !loaded.cmulexInit)
+            return;
+
+        static constexpr std::array<std::pair<const char*, const char*>, 4> voices { {
+            { "libflite_cmu_us_kal.so.1", "register_cmu_us_kal" },
+            { "libflite_cmu_us_slt.so.1", "register_cmu_us_slt" },
+            { "libflite_cmu_us_rms.so.1", "register_cmu_us_rms" },
+            { "libflite_cmu_us_awb.so.1", "register_cmu_us_awb" },
+        } };
+        for (auto [voiceLibrary, registerFunction] : voices) {
+            if (auto function = reinterpret_cast<cst_voice* (*)(const char*)>(fliteSymbol(voiceLibrary, registerFunction)))
+                loaded.voiceRegisterFunctions.append(function);
+        }
+        if (loaded.voiceRegisterFunctions.isEmpty())
+            return;
+
+        library = WTF::move(loaded);
+    });
+    return library ? &*library : nullptr;
+}
+
+namespace WebCore {
+
+void fliteDeleteVoice(cst_voice* voice)
+{
+    fliteLibrary()->deleteVoice(voice);
+}
+
+void fliteDeleteWave(cst_wave* wave)
+{
+    fliteLibrary()->deleteWave(wave);
+}
+
+} // namespace WebCore
 
 typedef struct _WebKitFliteSrcClass WebKitFliteSrcClass;
 typedef struct _WebKitFliteSrcPrivate WebKitFliteSrcPrivate;
@@ -74,7 +142,7 @@ GST_DEBUG_CATEGORY_STATIC(webkit_flite_src_debug);
 
 #define DEFAULT_SAMPLES_PER_BUFFER 1024
 
-static GstStaticPadTemplate srcTemplate = GST_STATIC_PAD_TEMPLATE("src",
+static GstStaticPadTemplate fliteSrcTemplate = GST_STATIC_PAD_TEMPLATE("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS("audio/x-raw, "
@@ -83,18 +151,8 @@ static GstStaticPadTemplate srcTemplate = GST_STATIC_PAD_TEMPLATE("src",
         "rate = (int) 48000, " "channels = (int) [1, 8]")
 );
 
-#define webkit_flite_src_parent_class parent_class
 WEBKIT_DEFINE_TYPE_WITH_CODE(WebKitFliteSrc, webkit_flite_src, GST_TYPE_BASE_SRC,
     GST_DEBUG_CATEGORY_INIT(webkit_flite_src_debug, "webkitflitesrc", 0, "flitesrc element"));
-
-// To add more voices, add voice register functions here.
-using VoiceRegisterFunction = Function<cst_voice*(const char*)>;
-static VoiceRegisterFunction voiceRegisterFunctions[] = {
-    register_cmu_us_kal,
-    register_cmu_us_slt,
-    register_cmu_us_rms,
-    register_cmu_us_awb,
-};
 
 static void webkitFliteSrcReset(WebKitFliteSrc* src)
 {
@@ -107,15 +165,18 @@ static void webkitFliteSrcReset(WebKitFliteSrc* src)
 
 static void webkitFliteSrcConstructed(GObject* object)
 {
-    GST_CALL_PARENT(G_OBJECT_CLASS, constructed, (object));
+    G_OBJECT_CLASS(webkit_flite_src_parent_class)->constructed(object);
 
     WebKitFliteSrc* src = WEBKIT_FLITE_SRC(object);
     WebKitFliteSrcPrivate* priv = src->priv;
 
     /* We operate in time */
-    gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
-    gst_base_src_set_blocksize(GST_BASE_SRC(src), -1);
-    gst_base_src_set_automatic_eos(GST_BASE_SRC(src), FALSE);
+    auto baseSrc = GST_BASE_SRC_CAST(src);
+    gst_base_src_set_format(baseSrc, GST_FORMAT_TIME);
+    gst_base_src_set_blocksize(baseSrc, -1);
+    gst_base_src_set_automatic_eos(baseSrc, FALSE);
+    gst_base_src_set_do_timestamp(baseSrc, TRUE);
+    gst_base_src_set_live(baseSrc, TRUE);
 
     DataMutexLocker members { priv->dataMutex };
     members->adapter = adoptGRef(gst_adapter_new());
@@ -156,16 +217,18 @@ static GstFlowReturn webkitFliteSrcCreate(GstBaseSrc* baseSource, guint64 offset
     if (!members->didLoadUtterance) {
         members->didLoadUtterance = true;
 
-        GUniquePtr<cst_wave> wave(flite_text_to_wave(priv->text.utf8().data(), priv->currentVoice));
-        cst_wave_resample(wave.get(), priv->info.rate);
+        GUniquePtr<cst_wave> wave(fliteLibrary()->textToWave(priv->text.utf8().data(), priv->currentVoice));
+        fliteLibrary()->waveResample(wave.get(), priv->info.rate);
 
         gsize bufferSize = priv->info.channels * sizeof(gint16) * wave->num_samples;
         GRefPtr<GstBuffer> buf = adoptGRef(gst_buffer_new_allocate(nullptr, bufferSize, nullptr));
-        GstMappedBuffer map(buf, GST_MAP_WRITE);
+        WebCore::GstMappedBuffer map(buf, GST_MAP_WRITE);
         gint16* data = reinterpret_cast<gint16*>(map.data());
-        memset(data, 0, bufferSize);
-        for (int i = 0; i < wave->num_samples; i++)
-            data[i * priv->info.channels] = wave->samples[i];
+        auto dataSpan = unsafeMakeSpan(data, bufferSize / sizeof(gint16));
+        zeroSpan(dataSpan);
+        unsigned i = 0;
+        for (auto& sample : unsafeMakeSpan(wave->samples, wave->num_samples))
+            dataSpan[i++ * priv->info.channels] = sample;
 
         gst_adapter_push(members->adapter.get(), buf.leakRef());
     }
@@ -198,7 +261,7 @@ static void webkit_flite_src_class_init(WebKitFliteSrcClass* klass)
     objectClass->constructed = webkitFliteSrcConstructed;
 
     GstElementClass* elementClass = GST_ELEMENT_CLASS(klass);
-    gst_element_class_add_static_pad_template(elementClass, &srcTemplate);
+    gst_element_class_add_static_pad_template(elementClass, &fliteSrcTemplate);
     gst_element_class_set_static_metadata(elementClass,
         "WebKit WebSpeech GstFlite source element", "Source",
         "Handles WebSpeech data from WebCore",
@@ -216,60 +279,67 @@ static Vector<GUniquePtr<cst_voice>>& fliteVoices()
     static Vector<GUniquePtr<cst_voice>> voices;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        const unsigned voiceRegisterFunctionCount = sizeof(voiceRegisterFunctions) / sizeof(VoiceRegisterFunction);
-        for (unsigned i = 0; i < voiceRegisterFunctionCount; ++i) {
-            GUniquePtr<cst_voice> voice(voiceRegisterFunctions[i](nullptr));
-            voices.append(WTFMove(voice));
+        auto* library = fliteLibrary();
+        if (!library)
+            return;
+        for (auto& function : library->voiceRegisterFunctions) {
+            GUniquePtr<cst_voice> voice(function(nullptr));
+            voices.append(WTF::move(voice));
         }
     });
     return voices;
 }
 
-static cst_voice* fliteVoice(const char* name)
+static cst_voice* fliteVoice(const String& name)
 {
     if (!name)
         return nullptr;
 
     for (auto& voice : fliteVoices()) {
-        if (String::fromUTF8(voice->name) == String::fromUTF8(name))
+        if (equal(name, byteCast<char8_t>(unsafeSpan(voice->name))))
             return voice.get();
     }
 
     return nullptr;
 }
 
-Vector<Ref<PlatformSpeechSynthesisVoice>>& ensureFliteVoicesInitialized()
+Vector<Ref<WebCore::PlatformSpeechSynthesisVoice>>& ensureFliteVoicesInitialized()
 {
-    static Vector<Ref<PlatformSpeechSynthesisVoice>> voiceList;
+    static Vector<Ref<WebCore::PlatformSpeechSynthesisVoice>> voiceList;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        flite_init();
+        auto* library = fliteLibrary();
+        if (!library)
+            return;
 
-        flite_add_lang("eng", usenglish_init, cmulex_init);
-        flite_add_lang("usenglish", usenglish_init, cmulex_init);
+        library->init();
+
+        library->addLang("eng", library->usenglishInit, library->cmulexInit);
+        library->addLang("usenglish", library->usenglishInit, library->cmulexInit);
 
         for (auto& voice : fliteVoices())
-            voiceList.append(PlatformSpeechSynthesisVoice::create(""_s, String::fromUTF8(voice->name), "en-US"_s, false, false));
-        voiceList[0]->setIsDefault(true);
+            voiceList.append(WebCore::PlatformSpeechSynthesisVoice::create(""_s, String::fromUTF8(voice->name), "en-US"_s, false, false));
+        if (!voiceList.isEmpty())
+            voiceList[0]->setIsDefault(true);
     });
     return voiceList;
 }
 
-void webKitFliteSrcSetUtterance(WebKitFliteSrc* src, const PlatformSpeechSynthesisVoice* platformSpeechSynthesisVoice, const String& text)
+void webKitFliteSrcSetUtterance(WebKitFliteSrc* src, const WebCore::PlatformSpeechSynthesisVoice* platformSpeechSynthesisVoice, const String& text)
 {
     WebKitFliteSrcPrivate* priv = src->priv;
 
-    ASSERT(!fliteVoices().isEmpty());
-
     cst_voice* voice = nullptr;
     if (platformSpeechSynthesisVoice && !platformSpeechSynthesisVoice->name().isEmpty())
-        voice = fliteVoice(platformSpeechSynthesisVoice->name().utf8().data());
+        voice = fliteVoice(platformSpeechSynthesisVoice->name());
 
     // We use the first registered voice as default, where no voice is specified.
-    priv->currentVoice = voice ? voice : fliteVoices()[0].get();
+    if (!voice && !fliteVoices().isEmpty())
+        voice = fliteVoices()[0].get();
+    priv->currentVoice = voice;
     priv->text = text;
 }
 
 #undef GST_CAT_DEFAULT
 
-#endif // ENABLE(SPEECH_SYNTHESIS) && USE(GSTREAMER)
+#endif // USE(FLITE) && USE(GSTREAMER)

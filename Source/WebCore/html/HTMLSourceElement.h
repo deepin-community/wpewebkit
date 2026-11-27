@@ -39,7 +39,7 @@ class HTMLSourceElement final
     , public AttachmentAssociatedElement
 #endif
     , public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLSourceElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLSourceElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLSourceElement);
 public:
     static Ref<HTMLSourceElement> create(Document&);
@@ -48,23 +48,24 @@ public:
     // ActiveDOMObject.
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
+    USING_CAN_MAKE_WEAKPTR(HTMLElement);
 
     void scheduleErrorEvent();
-    void cancelPendingErrorEvent();
+    void NODELETE cancelPendingErrorEvent();
 
     const MQ::MediaQueryList& parsedMediaAttribute(Document&) const;
 
 private:
     HTMLSourceElement(const QualifiedName&, Document&);
     
-    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
-    void removedFromAncestor(RemovalType, ContainerNode&) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
-    bool isURLAttribute(const Attribute&) const final;
-    bool attributeContainsURL(const Attribute&) const final;
-    Attribute replaceURLsInAttributeValue(const Attribute&, const HashMap<String, String>&) const override;
-    void addCandidateSubresourceURLs(ListHashSet<URL>&) const override;
+    bool NODELETE isURLAttribute(const Attribute&) const final;
+    bool NODELETE attributeContainsURL(const Attribute&) const final;
+    Attribute replaceURLsInAttributeValue(const Attribute&, const CSS::SerializationContext&) const override;
+    void addCandidateSubresourceURLs(OrderedHashSet<URL>&) const override;
 
     // ActiveDOMObject.
     void stop() final;
@@ -81,7 +82,7 @@ private:
     AttachmentAssociatedElementType attachmentAssociatedElementType() const final { return AttachmentAssociatedElementType::Source; }
 #endif
 
-    Ref<Element> cloneElementWithoutAttributesAndChildren(Document& targetDocument) final;
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document&, CustomElementRegistry*) const final;
     void copyNonAttributePropertiesFromElement(const Element&) final;
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;

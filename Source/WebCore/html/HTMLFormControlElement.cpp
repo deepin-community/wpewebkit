@@ -27,14 +27,14 @@
 
 #include "AXObjectCache.h"
 #include "Autofill.h"
-#include "CommandEvent.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "ContainerNodeInlines.h"
+#include "DocumentQuirks.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventHandler.h"
 #include "EventNames.h"
 #include "FormAssociatedElement.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLButtonElement.h"
 #include "HTMLFormElement.h"
 #include "HTMLInputElement.h"
@@ -42,11 +42,12 @@
 #include "LocalFrameView.h"
 #include "PopoverData.h"
 #include "PseudoClassChangeInvalidation.h"
-#include "Quirks.h"
 #include "RenderBox.h"
 #include "RenderTheme.h"
+#include "ScriptTrackingPrivacyCategory.h"
 #include "SelectionRestorationMode.h"
 #include "Settings.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleTreeResolver.h"
 #include "ValidationMessage.h"
 #include <wtf/Ref.h>
@@ -56,16 +57,16 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLFormControlElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLFormControlElement);
 
 using namespace HTMLNames;
 
-HTMLFormControlElement::HTMLFormControlElement(const QualifiedName& tagName, Document& document, HTMLFormElement* form)
-    : HTMLElement(tagName, document, { TypeFlag::HasCustomStyleResolveCallbacks, TypeFlag::HasDidMoveToNewDocument } )
-    , ValidatedFormListedElement(form)
+HTMLFormControlElement::HTMLFormControlElement(const QualifiedName& tagName, Document& document)
+    : HTMLElement(tagName, document, { TypeFlag::IsShadowRootOrFormControlElement, TypeFlag::HasCustomStyleResolveCallbacks, TypeFlag::HasDidMoveToNewDocument } )
     , m_isRequired(false)
     , m_valueMatchesRenderer(false)
     , m_wasChangedSinceLastFormControlChangeEvent(false)
+    , m_wasCreatedByTaintedScript(document.requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory::FormControls, ScriptExecutionContext::IncludeConsoleLog::No))
 {
 }
 
@@ -82,22 +83,12 @@ String HTMLFormControlElement::formEnctype() const
     return FormSubmission::Attributes::parseEncodingType(formEnctypeAttr);
 }
 
-void HTMLFormControlElement::setFormEnctype(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(formenctypeAttr, value);
-}
-
 String HTMLFormControlElement::formMethod() const
 {
     auto& formMethodAttr = attributeWithoutSynchronization(formmethodAttr);
     if (formMethodAttr.isNull())
         return emptyString();
     return FormSubmission::Attributes::methodString(FormSubmission::Attributes::parseMethodType(formMethodAttr));
-}
-
-void HTMLFormControlElement::setFormMethod(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(formmethodAttr, value);
 }
 
 bool HTMLFormControlElement::formNoValidate() const
@@ -108,30 +99,26 @@ bool HTMLFormControlElement::formNoValidate() const
 String HTMLFormControlElement::formAction() const
 {
     const AtomString& value = attributeWithoutSynchronization(formactionAttr);
+    Ref document = this->document();
     if (value.isEmpty())
-        return document().url().string();
-    return document().completeURL(value).string();
+        return document->url().string();
+    return document->encodingParseURL(value).string();
 }
 
-void HTMLFormControlElement::setFormAction(const AtomString& value)
+Node::NeedsPostConnectionSteps HTMLFormControlElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
-    setAttributeWithoutSynchronization(formactionAttr, value);
-}
-
-Node::InsertedIntoAncestorResult HTMLFormControlElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
-{
-    HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
-    ValidatedFormListedElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+    HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
+    ValidatedFormListedElement::insertionSteps(insertionType, parentOfInsertedTree);
 
     if (!insertionType.connectedToDocument)
-        return InsertedIntoAncestorResult::Done;
-    return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
+        return NeedsPostConnectionSteps::No;
+    return NeedsPostConnectionSteps::Yes;
 }
 
-void HTMLFormControlElement::didFinishInsertingNode()
+void HTMLFormControlElement::postConnectionSteps()
 {
-    HTMLElement::didFinishInsertingNode();
-    ValidatedFormListedElement::didFinishInsertingNode();
+    HTMLElement::postConnectionSteps();
+    ValidatedFormListedElement::postConnectionSteps();
 }
 
 void HTMLFormControlElement::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
@@ -140,10 +127,10 @@ void HTMLFormControlElement::didMoveToNewDocument(Document& oldDocument, Documen
     ValidatedFormListedElement::didMoveToNewDocument();
 }
 
-void HTMLFormControlElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+void HTMLFormControlElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
-    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
-    ValidatedFormListedElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+    ValidatedFormListedElement::removingSteps(removalType, oldParentOfRemovedTree);
 }
 
 void HTMLFormControlElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
@@ -171,17 +158,8 @@ void HTMLFormControlElement::finishParsingChildren()
 void HTMLFormControlElement::disabledStateChanged()
 {
     ValidatedFormListedElement::disabledStateChanged();
-    if (renderer() && renderer()->style().hasUsedAppearance())
-        renderer()->repaint();
-}
-
-void HTMLFormControlElement::readOnlyStateChanged()
-{
-    ValidatedFormListedElement::readOnlyStateChanged();
-
-    // Some input pseudo classes like :in-range/out-of-range change based on the readonly state.
-    // FIXME: Use PseudoClassChangeInvalidation instead for :has() support and more efficiency.
-    invalidateStyleForSubtree();
+    if (CheckedPtr renderer = this->renderer(); renderer && renderer->style().hasUsedAppearance())
+        renderer->repaint();
 }
 
 void HTMLFormControlElement::requiredStateChanged()
@@ -194,8 +172,8 @@ void HTMLFormControlElement::didAttachRenderers()
     // The call to updateFromElement() needs to go after the call through
     // to the base class's attach() because that can sometimes do a close
     // on the renderer.
-    if (renderer())
-        renderer()->updateFromElement();
+    if (CheckedPtr renderer = this->renderer())
+        renderer->updateFromElement();
 }
 
 void HTMLFormControlElement::setChangedSinceLastFormControlChangeEvent(bool changed)
@@ -226,26 +204,26 @@ void HTMLFormControlElement::dispatchFormControlInputEvent()
     dispatchInputEvent();
 }
 
-void HTMLFormControlElement::didRecalcStyle(Style::Change)
+void HTMLFormControlElement::didRecalcStyle(OptionSet<Style::Change>)
 {
     // updateFromElement() can cause the selection to change, and in turn
     // trigger synchronous layout, so it must not be called during style recalc.
     if (renderer()) {
         RefPtr<HTMLFormControlElement> element = this;
         Style::deprecatedQueuePostResolutionCallback([element] {
-            if (auto* renderer = element->renderer())
+            if (CheckedPtr renderer = element->renderer())
                 renderer->updateFromElement();
         });
     }
 }
 
-bool HTMLFormControlElement::isKeyboardFocusable(KeyboardEvent* event) const
+bool HTMLFormControlElement::isKeyboardFocusable(const FocusEventData& focusEventData) const
 {
     if (!!tabIndexSetExplicitly())
-        return Element::isKeyboardFocusable(event);
+        return Element::isKeyboardFocusable(focusEventData);
     return isFocusable()
         && document().frame()
-        && document().frame()->eventHandler().tabsToAllFormControls(event);
+        && document().frame()->eventHandler().tabsToAllFormControls(focusEventData);
 }
 
 bool HTMLFormControlElement::isMouseFocusable() const
@@ -253,8 +231,9 @@ bool HTMLFormControlElement::isMouseFocusable() const
 #if (PLATFORM(GTK) || PLATFORM(WPE))
     return HTMLElement::isMouseFocusable();
 #else
-    // FIXME: We should remove the quirk once <rdar://problem/47334655> is fixed.
-    if (!!tabIndexSetExplicitly() || document().quirks().needsFormControlToBeMouseFocusable())
+    // FIXME: We can remove needsFormControlToBeMouseFocusable if there are no more quirks
+    // or if we decide to change the default behavior and make form control elements focusable
+    if (!!tabIndexSetExplicitly() || protect(document())->quirks().needsFormControlToBeMouseFocusable())
         return HTMLElement::isMouseFocusable();
     return false;
 #endif
@@ -262,12 +241,12 @@ bool HTMLFormControlElement::isMouseFocusable() const
 
 void HTMLFormControlElement::runFocusingStepsForAutofocus()
 {
-    focus({ SelectionRestorationMode::PlaceCaretAtStart });
+    focus({ { }, { }, SelectionRestorationMode::PlaceCaretAtStart });
 }
 
 void HTMLFormControlElement::dispatchBlurEvent(RefPtr<Element>&& newFocusedElement)
 {
-    HTMLElement::dispatchBlurEvent(WTFMove(newFocusedElement));
+    HTMLElement::dispatchBlurEvent(WTF::move(newFocusedElement));
     hideVisibleValidationMessage();
 }
 
@@ -275,8 +254,12 @@ void HTMLFormControlElement::dispatchBlurEvent(RefPtr<Element>&& newFocusedEleme
 
 bool HTMLFormControlElement::shouldAutocorrect() const
 {
+    if (auto* input = dynamicDowncast<HTMLInputElement>(*this); input
+        && (input->isPasswordField() || input->isEmailField() || input->isURLField())) {
+        return false;
+    }
     const AtomString& autocorrectValue = attributeWithoutSynchronization(autocorrectAttr);
-    if (!autocorrectValue.isEmpty())
+    if (!autocorrectValue.isNull())
         return !equalLettersIgnoringASCIICase(autocorrectValue, "off"_s);
     if (RefPtr<HTMLFormElement> form = this->form())
         return form->shouldAutocorrect();
@@ -302,11 +285,6 @@ AutocapitalizeType HTMLFormControlElement::autocapitalizeType() const
 String HTMLFormControlElement::autocomplete() const
 {
     return autofillData().idlExposedValue;
-}
-
-void HTMLFormControlElement::setAutocomplete(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(autocompleteAttr, value);
 }
 
 AutofillMantle HTMLFormControlElement::autofillMantle() const
@@ -367,7 +345,7 @@ RefPtr<HTMLElement> HTMLFormControlElement::popoverTargetElement() const
     if (form() && isSubmitButton())
         return nullptr;
 
-    RefPtr element = dynamicDowncast<HTMLElement>(getElementAttribute(popovertargetAttr));
+    RefPtr element = dynamicDowncast<HTMLElement>(elementForAttributeInternal(popovertargetAttr));
     if (element && element->popoverState() != PopoverState::None)
         return element;
     return nullptr;
@@ -385,108 +363,30 @@ const AtomString& HTMLFormControlElement::popoverTargetAction() const
     return toggleAtom();
 }
 
-void HTMLFormControlElement::setPopoverTargetAction(const AtomString& value)
-{
-    setAttributeWithoutSynchronization(HTMLNames::popovertargetactionAttr, value);
-}
-
 // https://html.spec.whatwg.org/#popover-target-attribute-activation-behavior
-void HTMLFormControlElement::handlePopoverTargetAction() const
+void HTMLFormControlElement::handlePopoverTargetAction(const EventTarget* eventTarget)
 {
-    RefPtr target = popoverTargetElement();
-    if (!target)
+    RefPtr popover = popoverTargetElement();
+    if (!popover)
         return;
 
-    ASSERT(target->popoverData());
+    ASSERT(popover->popoverData());
+
+    if (auto* eventTargetNode = dynamicDowncast<Node>(eventTarget)) {
+        if (popover->isShadowIncludingInclusiveAncestorOf(eventTargetNode) && popover->isShadowIncludingDescendantOf(this))
+            return;
+    }
 
     auto action = popoverTargetAction();
     bool canHide = action == hideAtom() || action == toggleAtom();
-    bool shouldHide = canHide && target->popoverData()->visibilityState() == PopoverVisibilityState::Showing;
+    bool shouldHide = canHide && popover->popoverData()->visibilityState() == PopoverVisibilityState::Showing;
     bool canShow = action == showAtom() || action == toggleAtom();
-    bool shouldShow = canShow && target->popoverData()->visibilityState() == PopoverVisibilityState::Hidden;
+    bool shouldShow = canShow && popover->popoverData()->visibilityState() == PopoverVisibilityState::Hidden;
 
     if (shouldHide)
-        target->hidePopover();
+        popover->hidePopoverInternal(FocusPreviousElement::Yes, FireEvents::Yes, this);
     else if (shouldShow)
-        target->showPopover(this);
-}
-
-RefPtr<Element> HTMLFormControlElement::commandForElement() const
-{
-    auto canInvoke = [](const HTMLFormControlElement& element) -> bool {
-        if (!element.document().settings().invokerAttributesEnabled())
-            return false;
-        if (auto* inputElement = dynamicDowncast<HTMLInputElement>(element))
-            return inputElement->isTextButton() || inputElement->isImageButton();
-        return is<HTMLButtonElement>(element);
-    };
-
-    if (!canInvoke(*this))
-        return nullptr;
-
-    return getElementAttribute(commandforAttr);
-}
-
-constexpr ASCIILiteral togglePopoverLiteral = "togglepopover"_s;
-constexpr ASCIILiteral showPopoverLiteral = "showpopover"_s;
-constexpr ASCIILiteral hidePopoverLiteral = "hidepopover"_s;
-constexpr ASCIILiteral showModalLiteral = "showmodal"_s;
-constexpr ASCIILiteral closeLiteral = "close"_s;
-CommandType HTMLFormControlElement::commandType() const
-{
-    auto action = attributeWithoutSynchronization(HTMLNames::commandAttr);
-    if (action.isNull() || action.isEmpty())
-        return CommandType::Invalid;
-
-    if (equalLettersIgnoringASCIICase(action, togglePopoverLiteral))
-        return CommandType::TogglePopover;
-
-    if (equalLettersIgnoringASCIICase(action, showPopoverLiteral))
-        return CommandType::ShowPopover;
-
-    if (equalLettersIgnoringASCIICase(action, hidePopoverLiteral))
-        return CommandType::HidePopover;
-
-    if (equalLettersIgnoringASCIICase(action, showModalLiteral))
-        return CommandType::ShowModal;
-
-    if (equalLettersIgnoringASCIICase(action, closeLiteral))
-        return CommandType::Close;
-
-    if (action.contains('-'))
-        return CommandType::Custom;
-
-    return CommandType::Invalid;
-}
-
-void HTMLFormControlElement::handleCommand()
-{
-    RefPtr invokee = commandForElement();
-    if (!invokee)
-        return;
-
-    auto commandRaw = attributeWithoutSynchronization(HTMLNames::commandAttr);
-    auto command = commandType();
-
-    if (command == CommandType::Invalid)
-        return;
-
-    if (command != CommandType::Custom && !invokee->isValidCommandType(command))
-        return;
-
-    CommandEvent::Init init;
-    init.bubbles = false;
-    init.cancelable = true;
-    init.composed = true;
-    init.invoker = this;
-    init.command = commandRaw.isNull() ? emptyAtom() : commandRaw;
-
-    Ref<CommandEvent> event = CommandEvent::create(eventNames().commandEvent, init,
-        CommandEvent::IsTrusted::Yes);
-    invokee->dispatchEvent(event);
-
-    if (!event->defaultPrevented() && command != CommandType::Custom)
-        invokee->handleCommandInternal(*this, command);
+        popover->showPopoverInternal(this);
 }
 
 } // namespace Webcore

@@ -43,7 +43,7 @@ class ScoreBoard {
 public:
     ScoreBoard(unsigned nextMachineLocal)
         : m_highWatermark(nextMachineLocal + 1)
-        , m_used(nextMachineLocal, max())
+        , m_used(FillWith { }, nextMachineLocal, max())
     {
         m_free.reserveInitialCapacity(nextMachineLocal);
     }
@@ -55,7 +55,7 @@ public:
     
     void sortFree()
     {
-        std::sort(m_free.begin(), m_free.end());
+        std::ranges::sort(m_free);
     }
     
     void assertClear()

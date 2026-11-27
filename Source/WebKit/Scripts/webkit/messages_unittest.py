@@ -41,20 +41,33 @@ tests_directory = os.path.join(module_directory, 'tests')
 reset_results = False
 
 _test_receiver_names = [
-    'TestWithSuperclass',
+    'TestWithCVPixelBuffer',
+    'TestWithDeferSendingOption',
+    'TestWithDispatchedFromAndTo',
+    'TestWithEnabledBy',
+    'TestWithEnabledByAndConjunction',
+    'TestWithEnabledByOrConjunction',
+    'TestWithIfMessage',
+    'TestWithImageData',
     'TestWithLegacyReceiver',
+    'TestWithMultiLineExtendedAttributes',
     'TestWithoutAttributes',
     'TestWithoutUsingIPCConnection',
-    'TestWithIfMessage',
     'TestWithSemaphore',
-    'TestWithImageData',
+    'TestWithSpanOfConst',
     'TestWithStream',
     'TestWithStreamBatched',
     'TestWithStreamBuffer',
-    'TestWithCVPixelBuffer',
     'TestWithStreamServerConnectionHandle',
-    'TestWithEnabledBy',
-    'TestWithEnabledIf',
+    'TestWithSuperclass',
+    'TestWithSuperclassAndWantsAsyncDispatch',
+    'TestWithSuperclassAndWantsDispatch',
+    'TestWithSwift',
+    'TestWithSwiftConditionally',
+    'TestWithValidator',
+    'TestWithWantsAsyncDispatch',
+    'TestWithWantsDispatch',
+    'TestWithWantsDispatchNoSyncMessages',
 ]
 
 
@@ -103,6 +116,9 @@ class GeneratedFileContentsTest(unittest.TestCase):
             self.assertGeneratedFileContentsEqual(header_contents, os.path.join(tests_directory, '{}Messages.h'.format(receiver_name)))
             implementation_contents = messages.generate_message_handler(receiver)
             self.assertGeneratedFileContentsEqual(implementation_contents, os.path.join(tests_directory, '{}MessageReceiver.cpp'.format(receiver_name)))
+            if receiver.swift_receiver or receiver.swift_receiver_build_enabled_by:
+                swift_implementation_contents = messages.generate_swift_message_handler(receiver)
+                self.assertGeneratedFileContentsEqual(swift_implementation_contents, os.path.join(tests_directory, '{}MessageReceiver.swift'.format(receiver_name)))
 
     def test_message_names(self):
         header_contents = messages.generate_message_names_header(self.receivers)

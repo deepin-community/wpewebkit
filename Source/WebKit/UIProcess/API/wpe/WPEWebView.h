@@ -30,10 +30,11 @@
 #include "KeyAutoRepeatHandler.h"
 #include "PageClientImpl.h"
 #include "WebFullScreenManagerProxy.h"
-#include "WebKitWebViewAccessible.h"
 #include "WebPageProxy.h"
 #include <WebCore/ActivityState.h>
+#include <WebCore/SelectionData.h>
 #include <memory>
+#include <optional>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
 
@@ -74,27 +75,35 @@ public:
     WebKitInputMethodContext* inputMethodContext() const;
     void setInputMethodState(std::optional<WebKit::InputMethodState>&&);
 
+    void themeColorDidChange();
+    void pageScaleFactorDidChange();
+
 #if ENABLE(FULLSCREEN_API)
     bool isFullScreen() const;
-    void willEnterFullScreen();
-    void willExitFullScreen();
+    void willEnterFullScreen(CompletionHandler<void(bool)>&&);
+    void willExitFullScreen(CompletionHandler<void()>&&);
 #endif
 
     void selectionDidChange();
     void close();
 
     WebKit::WebPageProxy& page() { return *m_pageProxy; }
-    API::ViewClient& client() const { return *m_client; }
-    const WebCore::IntSize& size() const { return m_size; }
-    OptionSet<WebCore::ActivityState> viewState() const { return m_viewStateFlags; }
 
-#if USE(ATK)
-    WebKitWebViewAccessible* accessible() const;
+#if ENABLE(DRAG_SUPPORT)
+    void setDragData(WebCore::SelectionData&&, OptionSet<WebCore::DragOperation>);
+    bool updateDrag(const WebKit::NativeWebMouseEvent&);
 #endif
+    API::ViewClient& client() const { return *m_client; }
+    const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
+    OptionSet<WebCore::ActivityState> viewState() const { return m_viewStateFlags; }
 
     virtual struct wpe_view_backend* backend() const { return nullptr; }
 #if ENABLE(WPE_PLATFORM)
     virtual WPEView* wpeView() const { return nullptr; }
+#endif
+#if ENABLE(POINTER_LOCK)
+    virtual void requestPointerLock() { };
+    virtual void didLosePointerLock() { };
 #endif
 
     virtual void setCursor(const WebCore::Cursor&) { };
@@ -108,8 +117,12 @@ protected:
     void setSize(const WebCore::IntSize&);
 
     std::unique_ptr<API::ViewClient> m_client;
-    std::unique_ptr<WebKit::PageClientImpl> m_pageClient;
+    const std::unique_ptr<WebKit::PageClientImpl> m_pageClient;
     RefPtr<WebKit::WebPageProxy> m_pageProxy;
+#if ENABLE(DRAG_SUPPORT)
+    std::optional<WebCore::SelectionData> m_dragData;
+    OptionSet<WebCore::DragOperation> m_dragMask;
+#endif
     WebCore::IntSize m_size;
     OptionSet<WebCore::ActivityState> m_viewStateFlags;
 #if ENABLE(FULLSCREEN_API)
@@ -117,9 +130,10 @@ protected:
 #endif
     WebKit::InputMethodFilter m_inputMethodFilter;
     WebKit::KeyAutoRepeatHandler m_keyAutoRepeatHandler;
-#if USE(ATK)
-    mutable GRefPtr<WebKitWebViewAccessible> m_accessible;
-#endif
 };
 
 } // namespace WKWPE
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WKWPE::View)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::View; }
+SPECIALIZE_TYPE_TRAITS_END()

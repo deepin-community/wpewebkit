@@ -48,16 +48,16 @@ class PDFDataDetectorItem : public RefCounted<PDFDataDetectorItem> {
 public:
     static Ref<PDFDataDetectorItem> create(DDScannerResult *, PDFPage *);
 
-    DDScannerResult *scannerResult() const;
-    bool hasActions() const;
-    bool isPastDate() const;
+    DDScannerResult *NODELETE scannerResult() const;
+    bool NODELETE hasActions() const;
+    bool NODELETE isPastDate() const;
     RetainPtr<PDFSelection> selection() const;
 
 private:
     PDFDataDetectorItem(DDScannerResult *, PDFPage *);
 
-    RetainPtr<DDScannerResult> m_result;
-    RetainPtr<PDFPage> m_page;
+    const RetainPtr<DDScannerResult> m_result;
+    const RetainPtr<PDFPage> m_page;
     bool m_hasActions { false };
     bool m_isPastDate { false };
 };

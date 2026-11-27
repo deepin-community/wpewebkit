@@ -190,12 +190,10 @@ class ContextImpl : public GLImplFactory
                                          const std::string &message) = 0;
     virtual angle::Result popDebugGroup(const gl::Context *context)  = 0;
     virtual angle::Result handleNoopDrawEvent();
+    virtual angle::Result handleNoopMultiDrawEvent();
 
     // KHR_parallel_shader_compile
     virtual void setMaxShaderCompilerThreads(GLuint count) {}
-
-    // GL_ANGLE_texture_storage_external
-    virtual void invalidateTexture(gl::TextureType target);
 
     // EXT_shader_framebuffer_fetch_non_coherent
     virtual void framebufferFetchBarrier() {}
@@ -225,13 +223,15 @@ class ContextImpl : public GLImplFactory
     virtual angle::Result onMakeCurrent(const gl::Context *context) = 0;
     virtual angle::Result onUnMakeCurrent(const gl::Context *context);
 
+    // EXT_fragment_shading_rate
+    virtual const angle::ShadingRateMap &getSupportedFragmentShadingRateEXTSampleCounts() const;
+
     // Native capabilities, unmodified by gl::Context.
     virtual gl::Caps getNativeCaps() const                                              = 0;
     virtual const gl::TextureCapsMap &getNativeTextureCaps() const                      = 0;
     virtual const gl::Extensions &getNativeExtensions() const                           = 0;
     virtual const gl::Limitations &getNativeLimitations() const                         = 0;
     virtual const ShPixelLocalStorageOptions &getNativePixelLocalStorageOptions() const = 0;
-
     virtual angle::Result dispatchCompute(const gl::Context *context,
                                           GLuint numGroupsX,
                                           GLuint numGroupsY,
@@ -244,8 +244,6 @@ class ContextImpl : public GLImplFactory
                                                 GLbitfield barriers)                     = 0;
 
     const gl::State &getState() const { return mState; }
-    int getClientMajorVersion() const { return mState.getClientMajorVersion(); }
-    int getClientMinorVersion() const { return mState.getClientMinorVersion(); }
     const gl::Caps &getCaps() const { return mState.getCaps(); }
     const gl::TextureCapsMap &getTextureCaps() const { return mState.getTextureCaps(); }
     const gl::Extensions &getExtensions() const { return mState.getExtensions(); }
@@ -279,24 +277,11 @@ class ContextImpl : public GLImplFactory
                                           gl::TextureBarrierVector *textureBarriers);
 
     // AMD_performance_monitor
+    virtual const angle::PerfMonitorCounterGroupsInfo &getPerfMonitorCountersInfo() const;
     virtual const angle::PerfMonitorCounterGroups &getPerfMonitorCounters();
 
-    // Enables GL_SHADER_PIXEL_LOCAL_STORAGE_EXT and polyfills load operations for
-    // ANGLE_shader_pixel_local_storage using a fullscreen draw.
-    //
-    // The implementation's ShPixelLocalStorageType must be "PixelLocalStorageEXT".
-    virtual angle::Result drawPixelLocalStorageEXTEnable(gl::Context *,
-                                                         GLsizei n,
-                                                         const gl::PixelLocalStoragePlane[],
-                                                         const GLenum loadops[]);
-
-    // Stores texture-backed PLS planes via fullscreen draw and disables
-    // GL_SHADER_PIXEL_LOCAL_STORAGE_EXT.
-    //
-    // The implementation's ShPixelLocalStorageType must be "PixelLocalStorageEXT".
-    virtual angle::Result drawPixelLocalStorageEXTDisable(gl::Context *,
-                                                          const gl::PixelLocalStoragePlane[],
-                                                          const GLenum storeops[]);
+    // GL_ANGLE_trim_memory
+    virtual void trimMemory(const gl::Context *context, gl::MemoryTrimLevel trimLevel) {}
 
     // GL_ANGLE_variable_rasterization_rate_metal
     virtual angle::Result bindMetalRasterizationRateMap(gl::Context *,

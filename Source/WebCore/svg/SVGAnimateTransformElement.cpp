@@ -24,12 +24,12 @@
 #include "SVGAnimateTransformElement.h"
 
 #include "SVGNames.h"
-#include "SVGTransformable.h"
+#include "SVGTransformList.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGAnimateTransformElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAnimateTransformElement);
 
 inline SVGAnimateTransformElement::SVGAnimateTransformElement(const QualifiedName& tagName, Document& document)
     : SVGAnimateElementBase(tagName, document)
@@ -57,7 +57,7 @@ bool SVGAnimateTransformElement::hasValidAttributeType() const
 void SVGAnimateTransformElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (name == SVGNames::typeAttr) {
-        m_type = SVGTransformable::parseTransformType(newValue).value_or(SVGTransformValue::SVG_TRANSFORM_UNKNOWN);
+        m_type = SVGTransformList::parseTransformType(newValue).value_or(SVGTransformValue::SVG_TRANSFORM_UNKNOWN);
         if (m_type == SVGTransformValue::SVG_TRANSFORM_MATRIX)
             m_type = SVGTransformValue::SVG_TRANSFORM_UNKNOWN;
     }

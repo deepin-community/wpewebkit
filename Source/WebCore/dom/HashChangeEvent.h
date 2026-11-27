@@ -26,7 +26,7 @@
 namespace WebCore {
 
 class HashChangeEvent final : public Event {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HashChangeEvent);
+    WTF_MAKE_TZONE_ALLOCATED(HashChangeEvent);
 public:
     static Ref<HashChangeEvent> create(const String& oldURL, const String& newURL)
     {
@@ -48,8 +48,8 @@ public:
         return adoptRef(*new HashChangeEvent(type, initializer, isTrusted));
     }
 
-    const String& oldURL() const { return m_oldURL; }
-    const String& newURL() const { return m_newURL; }
+    const String& oldURL() const LIFETIME_BOUND { return m_oldURL; }
+    const String& newURL() const LIFETIME_BOUND { return m_newURL; }
 
 private:
     HashChangeEvent()

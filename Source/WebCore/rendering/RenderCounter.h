@@ -22,38 +22,38 @@
 
 #pragma once
 
-#include "CounterContent.h"
 #include "RenderText.h"
+#include "StyleContent.h"
 
 namespace WebCore {
 
-class CSSCounterStyle;
+class CSSRegisteredCounterStyle;
 class CounterNode;
 
 class RenderCounter final : public RenderText {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderCounter);
+    WTF_MAKE_TZONE_ALLOCATED(RenderCounter);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderCounter);
 public:
-    RenderCounter(Document&, const CounterContent&);
+    RenderCounter(Document&, const Style::Content::Counter&);
     virtual ~RenderCounter();
 
     static void destroyCounterNodes(RenderElement&);
     static void destroyCounterNode(RenderElement&, const AtomString& identifier);
-    static void rendererStyleChanged(RenderElement&, const RenderStyle* oldStyle, const RenderStyle& newStyle);
+    static void rendererStyleChanged(RenderElement&, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle);
 
     void updateCounter();
     bool canBeSelectionLeaf() const final { return false; }
 
 private:
     void willBeDestroyed() override;
-    static void rendererStyleChangedSlowCase(RenderElement&, const RenderStyle* oldStyle, const RenderStyle& newStyle);
+    static void rendererStyleChangedSlowCase(RenderElement&, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle);
     
     ASCIILiteral renderName() const override;
     String originalText() const override;
-    
-    RefPtr<CSSCounterStyle> counterStyle() const;
 
-    CounterContent m_counter;
+    Ref<CSSRegisteredCounterStyle> counterStyle() const;
+
+    Style::Content::Counter m_counter;
     SingleThreadWeakPtr<CounterNode> m_counterNode;
     SingleThreadWeakPtr<RenderCounter> m_nextForSameCounter;
     friend class CounterNode;

@@ -38,7 +38,12 @@ class ViewTransitionUpdateCallback : public RefCounted<ViewTransitionUpdateCallb
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual CallbackResult<RefPtr<DOMPromise>> handleEvent() = 0;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    virtual bool isJSViewTransitionUpdateCallback() const { return false; }
+    virtual CallbackResult<Ref<DOMPromise>> invoke() = 0;
 
 private:
     virtual bool hasCallback() const = 0;

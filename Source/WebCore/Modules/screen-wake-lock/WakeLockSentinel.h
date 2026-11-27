@@ -27,6 +27,7 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "WakeLockType.h"
 #include <wtf/RefCounted.h>
 
@@ -36,7 +37,7 @@ class DeferredPromise;
 class WakeLockManager;
 
 class WakeLockSentinel final : public RefCounted<WakeLockSentinel>, public ActiveDOMObject, public EventTarget {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WakeLockSentinel);
+    WTF_MAKE_TZONE_ALLOCATED(WakeLockSentinel);
 public:
     static Ref<WakeLockSentinel> create(Document& document, WakeLockType type)
     {
@@ -44,10 +45,12 @@ public:
         sentinel->suspendIfNeeded();
         return sentinel;
     }
+    ~WakeLockSentinel();
 
-    // ActiveDOMObject.
+    // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     bool released() const { return m_wasReleased; }
     WakeLockType type() const { return m_type; }
@@ -58,11 +61,11 @@ private:
     WakeLockSentinel(Document&, WakeLockType);
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
 
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::WakeLockSentinel; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
     void refEventTarget() final { RefCounted::ref(); }
     void derefEventTarget() final { RefCounted::deref(); }
     void eventListenersDidChange() final;
@@ -73,3 +76,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(WakeLockSentinel)

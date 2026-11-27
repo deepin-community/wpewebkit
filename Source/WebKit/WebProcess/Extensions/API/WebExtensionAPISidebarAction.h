@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,31 +35,27 @@ OBJC_CLASS NSString;
 
 namespace WebKit {
 
-using SidebarError = RetainPtr<NSString>;
-// In this variant, `monostate` indicates that we have neither a window or tab identifier, but no error
-using ParseResult = std::variant<std::monostate, WebExtensionTabIdentifier, WebExtensionWindowIdentifier, SidebarError>;
+using ParseResult = Expected<std::optional<Variant<WebExtensionTabIdentifier, WebExtensionWindowIdentifier>>, WebExtensionError>;
 
 template<typename T, typename VARIANT_T>
 struct isVariantMember;
 template<typename T, typename... ALL_T>
-struct isVariantMember<T, std::variant<ALL_T...>> : public std::disjunction<std::is_same<T, ALL_T>...> { };
+struct isVariantMember<T, Variant<ALL_T...>> : public std::disjunction<std::is_same<T, ALL_T>...> { };
 
 template<typename OptType, typename... Types>
-std::optional<OptType> toOptional(std::variant<Types...>& variant)
+std::optional<OptType> toOptional(Variant<Types...>& variant)
 {
     if (std::holds_alternative<OptType>(variant))
-        return WTFMove(std::get<OptType>(variant));
+        return WTF::move(std::get<OptType>(variant));
     return std::nullopt;
 }
 
-template<typename VariantType>
-SidebarError indicatesError(const VariantType& variant)
+template<typename SuccessType>
+RetainPtr<NSString> indicatesError(const Expected<SuccessType, WebExtensionError>& result)
 {
-    static_assert(isVariantMember<SidebarError, VariantType>::value);
-
-    if (std::holds_alternative<SidebarError>(variant))
-        return WTFMove(std::get<SidebarError>(variant));
-    return nil;
+    if (result.has_value())
+        return nil;
+    return result.error().createNSString();
 }
 
 class WebExtensionAPISidebarAction : public WebExtensionAPIObject, public JSWebExtensionWrappable {
@@ -81,5 +77,7 @@ public:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPISidebarAction, sidebarAction);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)

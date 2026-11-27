@@ -29,7 +29,6 @@
 #include "Logging.h"
 #include "NetworkCacheCoders.h"
 #include "NetworkProcess.h"
-#include "WebCoreArgumentCoders.h"
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -46,7 +45,7 @@ Entry::Entry(const Key& key, const WebCore::ResourceResponse& response, PrivateR
     , m_timeStamp(WallTime::now())
     , m_response(response)
     , m_varyingRequestHeaders(varyingRequestHeaders)
-    , m_buffer(WTFMove(buffer))
+    , m_buffer(WTF::move(buffer))
     , m_privateRelayed(privateRelayed)
 {
     ASSERT(m_key.type() == "Resource"_s);
@@ -107,9 +106,10 @@ Storage::Record Entry::encodeAsStorageRecord() const
 
     Data header(encoder.span());
     Data body;
-    if (m_buffer) {
-        m_buffer = m_buffer->makeContiguous();
-        body = { downcast<WebCore::SharedBuffer>(*m_buffer).span() };
+    if (RefPtr buffer = m_buffer) {
+        Ref contiguousBuffer = buffer->makeContiguous();
+        m_buffer = contiguousBuffer.copyRef();
+        body = { contiguousBuffer->span() };
     }
 
     return { m_key, m_timeStamp, header, body, { } };
@@ -124,7 +124,7 @@ std::unique_ptr<Entry> Entry::decodeStorageRecord(const Storage::Record& storage
     decoder >> response;
     if (!response)
         return nullptr;
-    entry->m_response = WTFMove(*response);
+    entry->m_response = WTF::move(*response);
     entry->m_response.setSource(WebCore::ResourceResponse::Source::DiskCache);
 
     std::optional<bool> hasVaryingRequestHeaders;
@@ -137,7 +137,7 @@ std::unique_ptr<Entry> Entry::decodeStorageRecord(const Storage::Record& storage
         decoder >> varyingRequestHeaders;
         if (!varyingRequestHeaders)
             return nullptr;
-        entry->m_varyingRequestHeaders = WTFMove(*varyingRequestHeaders);
+        entry->m_varyingRequestHeaders = WTF::move(*varyingRequestHeaders);
     }
 
     std::optional<uint8_t> isRedirectAndPrivateRelayed;
@@ -154,14 +154,14 @@ std::unique_ptr<Entry> Entry::decodeStorageRecord(const Storage::Record& storage
         decoder >> resourceRequest;
         if (!resourceRequest)
             return nullptr;
-        entry->m_redirectRequest = WTFMove(*resourceRequest);
+        entry->m_redirectRequest = WTF::move(*resourceRequest);
     }
 
     std::optional<std::optional<Seconds>> maxAgeCap;
     decoder >> maxAgeCap;
     if (!maxAgeCap)
         return nullptr;
-    entry->m_maxAgeCap = WTFMove(*maxAgeCap);
+    entry->m_maxAgeCap = WTF::move(*maxAgeCap);
 
     if (!decoder.verifyChecksum()) {
         LOG(NetworkCache, "(NetworkProcess) checksum verification failure\n");
@@ -185,7 +185,7 @@ void Entry::initializeBufferFromStorageRecord() const
 {
 #if ENABLE(SHAREABLE_RESOURCE)
     if (auto handle = shareableResourceHandle()) {
-        m_buffer = WTFMove(*handle).tryWrapInSharedBuffer();
+        m_buffer = WTF::move(*handle).tryWrapInSharedBuffer();
         if (m_buffer)
             return;
     }
@@ -201,23 +201,20 @@ WebCore::FragmentedSharedBuffer* Entry::buffer() const
     return m_buffer.get();
 }
 
-RefPtr<WebCore::FragmentedSharedBuffer> Entry::protectedBuffer() const
-{
-    return buffer();
-}
-
 #if ENABLE(SHAREABLE_RESOURCE)
 std::optional<WebCore::ShareableResource::Handle> Entry::shareableResourceHandle() const
 {
-    if (m_shareableResource)
-        return m_shareableResource->createHandle();
+    if (RefPtr shareableResource = m_shareableResource)
+        return shareableResource->createHandle();
 
     auto sharedMemory = m_sourceStorageRecord.body.tryCreateSharedMemory();
     if (!sharedMemory)
         return std::nullopt;
 
-    if ((m_shareableResource = WebCore::ShareableResource::create(sharedMemory.releaseNonNull(), 0, m_sourceStorageRecord.body.size())))
-        return m_shareableResource->createHandle();
+    RefPtr shareableResource = WebCore::ShareableResource::create(sharedMemory.releaseNonNull(), 0, m_sourceStorageRecord.body.size());
+    m_shareableResource = shareableResource;
+    if (shareableResource)
+        return shareableResource->createHandle();
     return std::nullopt;
 }
 #endif

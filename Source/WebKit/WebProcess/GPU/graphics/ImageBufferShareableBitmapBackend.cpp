@@ -27,6 +27,7 @@
 #include "ImageBufferShareableBitmapBackend.h"
 
 #include <WebCore/GraphicsContext.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/PixelBuffer.h>
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/StdLibExtras.h>
@@ -39,7 +40,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(ImageBufferShareableBitmapBackend);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferShareableBitmapBackend);
 
 IntSize ImageBufferShareableBitmapBackend::calculateSafeBackendSize(const Parameters& parameters)
 {
@@ -67,7 +68,11 @@ size_t ImageBufferShareableBitmapBackend::calculateMemoryCost(const Parameters& 
 
 std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
 {
-    ASSERT(parameters.pixelFormat == ImageBufferPixelFormat::BGRA8 || parameters.pixelFormat == ImageBufferPixelFormat::BGRX8);
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    ASSERT(parameters.bufferFormat.pixelFormat == PixelFormat::BGRA8 || parameters.bufferFormat.pixelFormat == PixelFormat::BGRX8 || parameters.bufferFormat.pixelFormat == PixelFormat::RGBA16F);
+#else
+    ASSERT(parameters.bufferFormat.pixelFormat == PixelFormat::BGRA8 || parameters.bufferFormat.pixelFormat == PixelFormat::BGRX8);
+#endif
 
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
@@ -82,12 +87,12 @@ std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBac
     if (!context)
         return nullptr;
 
-    return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTFMove(context));
+    return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTF::move(context));
 }
 
 std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const Parameters& parameters, ShareableBitmap::Handle handle)
 {
-    auto bitmap = ShareableBitmap::create(WTFMove(handle));
+    auto bitmap = ShareableBitmap::create(WTF::move(handle), SharedMemory::Protection::ReadWrite, SharedMemory::CopyOnWrite::No);
     if (!bitmap)
         return nullptr;
 
@@ -95,14 +100,21 @@ std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBac
     if (!context)
         return nullptr;
 
-    return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTFMove(context));
+    return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTF::move(context));
 }
 
 ImageBufferShareableBitmapBackend::ImageBufferShareableBitmapBackend(const Parameters& parameters, Ref<ShareableBitmap>&& bitmap, std::unique_ptr<GraphicsContext>&& context)
     : ImageBufferShareableBitmapBackendBase(parameters)
-    , m_bitmap(WTFMove(bitmap))
-    , m_context(WTFMove(context))
+    , m_bitmap(WTF::move(bitmap))
 {
+    adoptGraphicsContext(WTF::move(context));
+}
+
+ImageBufferShareableBitmapBackend::~ImageBufferShareableBitmapBackend() = default;
+
+void ImageBufferShareableBitmapBackend::adoptGraphicsContext(std::unique_ptr<GraphicsContext>&& context)
+{
+    m_context = WTF::move(context);
     // ShareableBitmap ensures that the coordinate space in the context that we're adopting
     // has a top-left origin, so we don't ever need to flip here, so we don't call setupContext().
     // However, ShareableBitmap does not have a notion of scale, so we must apply the device
@@ -110,7 +122,20 @@ ImageBufferShareableBitmapBackend::ImageBufferShareableBitmapBackend(const Param
     m_context->applyDeviceScaleFactor(resolutionScale());
 }
 
-ImageBufferShareableBitmapBackend::~ImageBufferShareableBitmapBackend() = default;
+GraphicsContext& ImageBufferShareableBitmapBackend::context()
+{
+    if (!m_context) {
+        auto context = m_bitmap->createGraphicsContext();
+        RELEASE_ASSERT(context);
+        adoptGraphicsContext(WTF::move(context));
+    }
+    return *m_context;
+}
+
+void ImageBufferShareableBitmapBackend::releaseGraphicsContext()
+{
+    m_context = nullptr;
+}
 
 bool ImageBufferShareableBitmapBackend::canMapBackingStore() const
 {
@@ -120,7 +145,7 @@ bool ImageBufferShareableBitmapBackend::canMapBackingStore() const
 std::optional<ImageBufferBackendHandle> ImageBufferShareableBitmapBackend::createBackendHandle(SharedMemory::Protection protection) const
 {
     if (auto handle = m_bitmap->createHandle(protection))
-        return ImageBufferBackendHandle(WTFMove(*handle));
+        return ImageBufferBackendHandle(WTF::move(*handle));
     return { };
 }
 
@@ -154,12 +179,12 @@ RefPtr<NativeImage> ImageBufferShareableBitmapBackend::createNativeImageReferenc
 
 void ImageBufferShareableBitmapBackend::getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination)
 {
-    ImageBufferBackend::getPixelBuffer(srcRect, m_bitmap->span().data(), destination);
+    ImageBufferBackend::getPixelBuffer(srcRect, m_bitmap->span(), destination);
 }
 
-void ImageBufferShareableBitmapBackend::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
+void ImageBufferShareableBitmapBackend::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
 {
-    ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, m_bitmap->mutableSpan().data());
+    ImageBufferBackend::putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat, m_bitmap->mutableSpan());
 }
 
 String ImageBufferShareableBitmapBackend::debugDescription() const

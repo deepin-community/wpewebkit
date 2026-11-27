@@ -42,37 +42,26 @@
 
 OBJC_CLASS LAContext;
 
-namespace WebKit {
-class AuthenticatorManager;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::AuthenticatorManager> : std::true_type { };
-}
-
 namespace API {
 class WebAuthenticationPanel;
 }
 
 namespace WebKit {
 
-class AuthenticatorManager : public AuthenticatorTransportServiceObserver, public AuthenticatorObserver {
+class AuthenticatorManager : public RefCounted<AuthenticatorManager>, public AuthenticatorTransportServiceObserver, public AuthenticatorObserver {
     WTF_MAKE_TZONE_ALLOCATED(AuthenticatorManager);
     WTF_MAKE_NONCOPYABLE(AuthenticatorManager);
 public:
-    using Respond = std::variant<Ref<WebCore::AuthenticatorResponse>, WebCore::ExceptionData>;
+    using Respond = Variant<Ref<WebCore::AuthenticatorResponse>, WebCore::ExceptionData>;
     using Callback = CompletionHandler<void(Respond&&)>;
     using TransportSet = HashSet<WebCore::AuthenticatorTransport, WTF::IntHash<WebCore::AuthenticatorTransport>, WTF::StrongEnumHashTraits<WebCore::AuthenticatorTransport>>;
 
-    using AuthenticatorTransportServiceObserver::weakPtrFactory;
-    using AuthenticatorTransportServiceObserver::WeakValueType;
-    using AuthenticatorTransportServiceObserver::WeakPtrImplType;
+    USING_CAN_MAKE_WEAKPTR(AuthenticatorTransportServiceObserver);
 
     const static size_t maxTransportNumber;
 
-    AuthenticatorManager();
-    virtual ~AuthenticatorManager() = default;
+    static Ref<AuthenticatorManager> create();
+    virtual ~AuthenticatorManager();
 
     void handleRequest(WebAuthenticationRequestData&&, Callback&&);
     void cancelRequest(const WebCore::PageIdentifier&, const std::optional<WebCore::FrameIdentifier>&); // Called from WebPageProxy/WebProcessProxy.
@@ -82,10 +71,15 @@ public:
     virtual bool isMock() const { return false; }
     virtual bool isVirtual() const { return false; }
 
-    void enableNativeSupport();
+    void NODELETE enableNativeSupport();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
 protected:
-    RunLoop::Timer& requestTimeOutTimer() { return m_requestTimeOutTimer; }
+    AuthenticatorManager();
+
+    RunLoop::Timer& requestTimeOutTimer() LIFETIME_BOUND { return m_requestTimeOutTimer; }
     void clearStateAsync(); // To void cyclic dependence.
     void clearState();
     void invokePendingCompletionHandler(Respond&&);
@@ -96,6 +90,9 @@ protected:
     void selectAssertionResponse(Vector<Ref<WebCore::AuthenticatorAssertionResponse>>&&, WebAuthenticationSource, CompletionHandler<void(WebCore::AuthenticatorAssertionResponse*)>&&);
     void startDiscovery(const TransportSet&);
 
+protected:
+    const Vector<Ref<AuthenticatorTransportService>>& services() const LIFETIME_BOUND { return m_services; }
+
 private:
     enum class Mode {
         Compatible,
@@ -105,19 +102,21 @@ private:
     // AuthenticatorTransportServiceObserver
     void authenticatorAdded(Ref<Authenticator>&&) final;
     void serviceStatusUpdated(WebAuthenticationStatus) final;
+    bool isAuthenticatorManager() const final { return true; }
 
     // AuthenticatorObserver
     void respondReceived(Respond&&) final;
-    void downgrade(Authenticator* id, Ref<Authenticator>&& downgradedAuthenticator) final;
+    void downgrade(Authenticator& id, Ref<Authenticator>&& downgradedAuthenticator) final;
     void authenticatorStatusUpdated(WebAuthenticationStatus) final;
     void requestPin(uint64_t retries, CompletionHandler<void(const WTF::String&)>&&) final;
+    void requestNewPin(uint64_t minLength, CompletionHandler<void(const WTF::String&)>&&) final;
     void requestLAContextForUserVerification(CompletionHandler<void(LAContext *)>&&) final;
     void cancelRequest() final;
 
     // Overriden by MockAuthenticatorManager.
-    virtual UniqueRef<AuthenticatorTransportService> createService(WebCore::AuthenticatorTransport, AuthenticatorTransportServiceObserver&) const;
+    virtual Ref<AuthenticatorTransportService> createService(WebCore::AuthenticatorTransport, AuthenticatorTransportServiceObserver&) const;
     // Overriden to return every exception for tests to confirm.
-    virtual void respondReceivedInternal(Respond&&) { }
+    virtual void respondReceivedInternal(Respond&&, bool shouldComplete);
     virtual void filterTransports(TransportSet&) const;
     virtual void runPresenterInternal(const TransportSet&);
 
@@ -127,18 +126,27 @@ private:
     void restartDiscovery();
     void dispatchPanelClientCall(Function<void(const API::WebAuthenticationPanel&)>&&) const;
 
-    // Request: We only allow one request per time. A new request will cancel any pending ones.
-    WebAuthenticationRequestData m_pendingRequestData;
-    Callback m_pendingCompletionHandler; // Should not be invoked directly, use invokePendingCompletionHandler.
-    RunLoop::Timer m_requestTimeOutTimer;
-    std::unique_ptr<AuthenticatorPresenterCoordinator> m_presenter;
+    TransportSet getTransports(const Variant<WebCore::PublicKeyCredentialCreationOptions, WebCore::PublicKeyCredentialRequestOptions>&) const;
 
-    Vector<UniqueRef<AuthenticatorTransportService>> m_services;
+    // Request: We only allow one request per time. A new request will cancel any pending ones.
+    struct Request {
+        WebAuthenticationRequestData data;
+        Callback completionHandler; // Should not be invoked directly, use invokePendingCompletionHandler.
+    };
+    std::optional<Request> m_pendingRequest;
+    RunLoop::Timer m_requestTimeOutTimer;
+    RefPtr<AuthenticatorPresenterCoordinator> m_presenter;
+
+    Vector<Ref<AuthenticatorTransportService>> m_services;
     HashSet<Ref<Authenticator>> m_authenticators;
 
     Mode m_mode { Mode::Compatible };
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::AuthenticatorManager)
+static bool isType(const WebKit::AuthenticatorTransportServiceObserver& observer) { return observer.isAuthenticatorManager(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(WEB_AUTHN)

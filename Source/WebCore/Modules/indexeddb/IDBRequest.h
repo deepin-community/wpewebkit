@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,19 +25,20 @@
 
 #pragma once
 
-#include "EventTarget.h"
-#include "ExceptionOr.h"
-#include "IDBActiveDOMObject.h"
-#include "IDBError.h"
-#include "IDBGetAllResult.h"
-#include "IDBGetResult.h"
-#include "IDBKeyData.h"
-#include "IDBObjectStoreIdentifier.h"
-#include "IDBResourceIdentifier.h"
-#include "IDBValue.h"
-#include "IndexedDB.h"
-#include "JSValueInWrappedObject.h"
 #include <JavaScriptCore/Strong.h>
+#include <WebCore/EventTarget.h>
+#include <WebCore/EventTargetInterfaces.h>
+#include <WebCore/IDBActiveDOMObject.h>
+#include <WebCore/IDBError.h>
+#include <WebCore/IDBGetAllResult.h>
+#include <WebCore/IDBGetResult.h>
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBKeyData.h>
+#include <WebCore/IDBObjectStoreIdentifier.h>
+#include <WebCore/IDBResourceIdentifier.h>
+#include <WebCore/IDBValue.h>
+#include <WebCore/IndexedDB.h>
+#include <WebCore/JSValueInWrappedObject.h>
 #include <optional>
 #include <wtf/Function.h>
 #include <wtf/Scope.h>
@@ -57,6 +58,7 @@ class IDBResultData;
 class IDBTransaction;
 class ThreadSafeDataBuffer;
 class WebCoreOpaqueRoot;
+template<typename> class ExceptionOr;
 
 namespace IDBClient {
 class IDBConnectionProxy;
@@ -64,7 +66,7 @@ class IDBConnectionToServer;
 }
 
 class IDBRequest : public EventTarget, public IDBActiveDOMObject, public ThreadSafeRefCounted<IDBRequest> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(IDBRequest);
+    WTF_MAKE_TZONE_ALLOCATED(IDBRequest);
 public:
     enum class NullResultType {
         Empty,
@@ -77,20 +79,23 @@ public:
     static Ref<IDBRequest> createObjectStoreGet(ScriptExecutionContext&, IDBObjectStore&, IndexedDB::ObjectStoreRecordType, IDBTransaction&);
     static Ref<IDBRequest> createIndexGet(ScriptExecutionContext&, IDBIndex&, IndexedDB::IndexRecordType, IDBTransaction&);
 
-    const IDBResourceIdentifier& resourceIdentifier() const { return m_resourceIdentifier; }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
+    const IDBResourceIdentifier& resourceIdentifier() const LIFETIME_BOUND { return m_resourceIdentifier; }
 
     virtual ~IDBRequest();
 
-    using Result = std::variant<RefPtr<IDBCursor>, RefPtr<IDBDatabase>, IDBKeyData, Vector<IDBKeyData>, IDBGetResult, IDBGetAllResult, uint64_t, NullResultType>;
+    using Result = Variant<Ref<IDBCursor>, Ref<IDBDatabase>, IDBKeyData, Vector<IDBKeyData>, IDBGetResult, IDBGetAllResult, uint64_t, NullResultType>;
     ExceptionOr<Result> result() const;
-    JSValueInWrappedObject& resultWrapper() { return m_resultWrapper; }
+    JSValueInWrappedObject& resultWrapper() LIFETIME_BOUND { return m_resultWrapper; }
 
-    using Source = std::variant<RefPtr<IDBObjectStore>, RefPtr<IDBIndex>, RefPtr<IDBCursor>>;
-    const std::optional<Source>& source() const { return m_source; }
+    using Source = Variant<Ref<IDBObjectStore>, Ref<IDBIndex>, Ref<IDBCursor>>;
+    const std::optional<Source>& source() const LIFETIME_BOUND { return m_source; }
 
     ExceptionOr<DOMException*> error() const;
 
-    RefPtr<IDBTransaction> transaction() const;
+    IDBTransaction* NODELETE transaction() const;
+    IDBTransaction* NODELETE transactionForBindings() const;
     
     enum class ReadyState { Pending, Done };
     ReadyState readyState() const { return m_readyState; }
@@ -98,11 +103,11 @@ public:
     bool isDone() const { return m_readyState == ReadyState::Done; }
 
     std::optional<IDBObjectStoreIdentifier> sourceObjectStoreIdentifier() const;
-    uint64_t sourceIndexIdentifier() const;
-    IndexedDB::ObjectStoreRecordType requestedObjectStoreRecordType() const;
-    IndexedDB::IndexRecordType requestedIndexRecordType() const;
+    std::optional<IDBIndexIdentifier> sourceIndexIdentifier() const;
+    IndexedDB::ObjectStoreRecordType NODELETE requestedObjectStoreRecordType() const;
+    IndexedDB::IndexRecordType NODELETE requestedIndexRecordType() const;
 
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
 
     // ActiveDOMObject.
     void ref() const final { ThreadSafeRefCounted::ref(); }
@@ -129,7 +134,7 @@ public:
 
     void setTransactionOperationID(uint64_t transactionOperationID) { m_currentTransactionOperationID = transactionOperationID; }
     bool willAbortTransactionAfterDispatchingEvent() const;
-    void transactionTransitionedToFinishing();
+    void NODELETE transactionTransitionedToFinishing();
     bool isEventBeingDispatched() const { return !!m_eventBeingDispatched; }
 
 protected:
@@ -152,10 +157,10 @@ private:
     IDBRequest(ScriptExecutionContext&, IDBObjectStore&, IndexedDB::ObjectStoreRecordType, IDBTransaction&);
     IDBRequest(ScriptExecutionContext&, IDBIndex&, IndexedDB::IndexRecordType, IDBTransaction&);
 
-    enum EventTargetInterfaceType eventTargetInterface() const override;
+    EventTargetInterfaceType eventTargetInterface() const override;
 
     // ActiveDOMObject.
-    bool virtualHasPendingActivity() const final;
+    bool NODELETE virtualHasPendingActivity() const final;
     void stop() final;
 
     virtual void cancelForStop();
@@ -177,7 +182,7 @@ protected:
     // Consider adding protected helper functions and making these private.
     RefPtr<IDBTransaction> m_transaction;
     RefPtr<DOMException> m_domError;
-    Event* m_openDatabaseSuccessEvent { nullptr };
+    WeakPtr<Event> m_openDatabaseSuccessEvent;
 
 private:
     IDBCursor* resultCursor();
@@ -193,7 +198,7 @@ private:
     std::optional<Source> m_source;
 
     RefPtr<IDBCursor> m_pendingCursor;
-    Ref<IDBClient::IDBConnectionProxy> m_connectionProxy;
+    const Ref<IDBClient::IDBConnectionProxy> m_connectionProxy;
 
     ReadyState m_readyState { ReadyState::Pending };
     IndexedDB::RequestType m_requestType { IndexedDB::RequestType::Other };
@@ -207,6 +212,8 @@ private:
     RefPtr<Event> m_eventBeingDispatched;
 };
 
-WebCoreOpaqueRoot root(IDBRequest*);
+WebCoreOpaqueRoot NODELETE root(IDBRequest*);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(IDBRequest)

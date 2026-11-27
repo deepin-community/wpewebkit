@@ -22,6 +22,7 @@
 #pragma once
 
 #include "SVGGraphicsElement.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -51,7 +52,7 @@ template<> struct SVGPropertyTraits<SVGLengthAdjustType> {
         return emptyString();
     }
 
-    static SVGLengthAdjustType fromString(const String& value)
+    static SVGLengthAdjustType fromString(SVGElement&, const String& value)
     {
         if (value == "spacingAndGlyphs"_s)
             return SVGLengthAdjustSpacingAndGlyphs;
@@ -62,7 +63,7 @@ template<> struct SVGPropertyTraits<SVGLengthAdjustType> {
 };
 
 class SVGTextContentElement : public SVGGraphicsElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(SVGTextContentElement);
+    WTF_MAKE_TZONE_ALLOCATED(SVGTextContentElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGTextContentElement);
 public:
     enum {
@@ -81,12 +82,12 @@ public:
     int getCharNumAtPosition(DOMPointInit&&);
     ExceptionOr<void> selectSubString(unsigned charnum, unsigned nchars);
 
-    static SVGTextContentElement* elementFromRenderer(RenderObject*);
+    static const SVGTextContentElement* NODELETE elementFromRenderer(const RenderObject*);
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGTextContentElement, SVGGraphicsElement>;
 
-    const SVGLengthValue& specifiedTextLength() const { return m_specifiedTextLength; }
-    const SVGLengthValue& textLength() const { return m_textLength->currentValue(); }
+    const SVGLengthValue& specifiedTextLength() const LIFETIME_BOUND { return m_specifiedTextLength; }
+    const SVGLengthValue& textLength() const LIFETIME_BOUND { return m_textLength->currentValue(); }
     SVGLengthAdjustType lengthAdjust() const { return m_lengthAdjust->currentValue<SVGLengthAdjustType>(); }
 
     SVGAnimatedLength& textLengthAnimated();
@@ -107,8 +108,8 @@ protected:
 private:
     bool isTextContent() const final { return true; }
 
-    Ref<SVGAnimatedLength> m_textLength { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
-    Ref<SVGAnimatedEnumeration> m_lengthAdjust { SVGAnimatedEnumeration::create(this, SVGLengthAdjustSpacing) };
+    const Ref<SVGAnimatedLength> m_textLength { SVGAnimatedLength::create(this, SVGLengthMode::Other) };
+    const Ref<SVGAnimatedEnumeration> m_lengthAdjust { SVGAnimatedEnumeration::create(this, SVGLengthAdjustSpacing) };
     SVGLengthValue m_specifiedTextLength { SVGLengthMode::Other };
 };
 

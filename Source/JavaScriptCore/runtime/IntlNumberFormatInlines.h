@@ -28,8 +28,15 @@
 #include "BuiltinNames.h"
 #include "IntlNumberFormat.h"
 #include "IntlObjectInlines.h"
+#include "IntlPluralRules.h"
+#include "JSBigIntInlines.h"
 #include "JSGlobalObject.h"
 #include "JSGlobalObjectFunctions.h"
+#include "JSObjectInlines.h"
+#include <wtf/Range.h>
+#include <wtf/StdLibExtras.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC  {
 
@@ -64,13 +71,12 @@ void setNumberFormatDigitOptions(JSGlobalObject* globalObject, IntlType* intlIns
 
     unsigned roundingIncrement = intlNumberOption(globalObject, options, vm.propertyNames->roundingIncrement, 1, 5000, 1);
     RETURN_IF_EXCEPTION(scope, void());
-    static constexpr const unsigned roundingIncrementCandidates[] = {
+    static constexpr auto roundingIncrementCandidates = WTF::toArray<unsigned>({
         1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000
-    };
-    if (std::none_of(roundingIncrementCandidates, roundingIncrementCandidates + std::size(roundingIncrementCandidates),
-        [&](unsigned candidate) {
-            return candidate == roundingIncrement;
-        })) {
+    });
+    if (std::ranges::none_of(roundingIncrementCandidates, [&](auto candidate) {
+        return candidate == roundingIncrement;
+    })) {
         throwRangeError(globalObject, scope, "roundingIncrement must be one of 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000"_s);
         return;
     }
@@ -197,24 +203,12 @@ void appendNumberFormatDigitOptionsToSkeleton(IntlType* intlInstance, StringBuil
     case RoundingMode::Trunc:
         skeletonBuilder.append(" rounding-mode-down"_s);
         break;
-    case RoundingMode::HalfCeil: {
-        // Only ICU69~ supports half-ceiling. Ignore this option if linked ICU does not support it.
-        // https://github.com/unicode-org/icu/commit/e8dfea9bb6bb27596731173b352759e44ad06b21
-        if (WTF::ICU::majorVersion() >= 69)
-            skeletonBuilder.append(" rounding-mode-half-ceiling"_s);
-        else
-            skeletonBuilder.append(" rounding-mode-half-up"_s); // Default option.
+    case RoundingMode::HalfCeil:
+        skeletonBuilder.append(" rounding-mode-half-ceiling"_s);
         break;
-    }
-    case RoundingMode::HalfFloor: {
-        // Only ICU69~ supports half-flooring. Ignore this option if linked ICU does not support it.
-        // https://github.com/unicode-org/icu/commit/e8dfea9bb6bb27596731173b352759e44ad06b21
-        if (WTF::ICU::majorVersion() >= 69)
-            skeletonBuilder.append(" rounding-mode-half-floor"_s);
-        else
-            skeletonBuilder.append(" rounding-mode-half-up"_s); // Default option.
+    case RoundingMode::HalfFloor:
+        skeletonBuilder.append(" rounding-mode-half-floor"_s);
         break;
-    }
     case RoundingMode::HalfExpand:
         skeletonBuilder.append(" rounding-mode-half-up"_s);
         break;
@@ -227,13 +221,13 @@ void appendNumberFormatDigitOptionsToSkeleton(IntlType* intlInstance, StringBuil
     }
 
     // https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#integer-width
-    skeletonBuilder.append(" integer-width/"_s, WTF::ICU::majorVersion() >= 67 ? '*' : '+'); // Prior to ICU 67, use the symbol + instead of *.
+    skeletonBuilder.append(" integer-width/*"_s);
     for (unsigned i = 0; i < intlInstance->m_minimumIntegerDigits; ++i)
         skeletonBuilder.append('0');
 
     if (intlInstance->m_roundingIncrement != 1) {
         skeletonBuilder.append(" precision-increment/"_s);
-        auto string = numberToStringUnsigned<Vector<LChar, 10>>(intlInstance->m_roundingIncrement);
+        auto string = numberToStringUnsigned<Vector<Latin1Character, 10>>(intlInstance->m_roundingIncrement);
         if (intlInstance->m_maximumFractionDigits >= string.size()) {
             skeletonBuilder.append("0."_s);
             for (unsigned i = 0; i < (intlInstance->m_maximumFractionDigits - string.size()); ++i)
@@ -241,7 +235,7 @@ void appendNumberFormatDigitOptionsToSkeleton(IntlType* intlInstance, StringBuil
             skeletonBuilder.append(string);
         } else {
             unsigned nonFraction = string.size() - intlInstance->m_maximumFractionDigits;
-            skeletonBuilder.append(std::span(string.data(), nonFraction), '.', std::span(string.data() + nonFraction, intlInstance->m_maximumFractionDigits));
+            skeletonBuilder.append(std::span(string.span().data(), nonFraction), '.', std::span(string.span().data() + nonFraction, intlInstance->m_maximumFractionDigits));
         }
     } else {
         switch (intlInstance->m_roundingType) {
@@ -265,23 +259,19 @@ void appendNumberFormatDigitOptionsToSkeleton(IntlType* intlInstance, StringBuil
         }
         case IntlRoundingType::MorePrecision:
         case IntlRoundingType::LessPrecision:
-            // Before Intl.NumberFormat v3, it was CompactRounding mode, where we do not configure anything.
-            // So, if linked ICU is ~68, we do nothing.
-            if (WTF::ICU::majorVersion() >= 69) {
-                // https://github.com/unicode-org/icu/commit/d7db6c1f8655bb53153695b09a50029fd04a8364
-                // https://github.com/unicode-org/icu/blob/main/docs/userguide/format_parse/numbers/skeletons.md#precision
-                skeletonBuilder.append(" ."_s);
-                for (unsigned i = 0; i < intlInstance->m_minimumFractionDigits; ++i)
-                    skeletonBuilder.append('0');
-                for (unsigned i = 0; i < intlInstance->m_maximumFractionDigits - intlInstance->m_minimumFractionDigits; ++i)
-                    skeletonBuilder.append('#');
-                skeletonBuilder.append('/');
-                for (unsigned i = 0; i < intlInstance->m_minimumSignificantDigits; ++i)
-                    skeletonBuilder.append('@');
-                for (unsigned i = 0; i < intlInstance->m_maximumSignificantDigits - intlInstance->m_minimumSignificantDigits; ++i)
-                    skeletonBuilder.append('#');
-                skeletonBuilder.append(intlInstance->m_roundingType == IntlRoundingType::MorePrecision ? 'r' : 's');
-            }
+            // https://github.com/unicode-org/icu/commit/d7db6c1f8655bb53153695b09a50029fd04a8364
+            // https://github.com/unicode-org/icu/blob/main/docs/userguide/format_parse/numbers/skeletons.md#precision
+            skeletonBuilder.append(" ."_s);
+            for (unsigned i = 0; i < intlInstance->m_minimumFractionDigits; ++i)
+                skeletonBuilder.append('0');
+            for (unsigned i = 0; i < intlInstance->m_maximumFractionDigits - intlInstance->m_minimumFractionDigits; ++i)
+                skeletonBuilder.append('#');
+            skeletonBuilder.append('/');
+            for (unsigned i = 0; i < intlInstance->m_minimumSignificantDigits; ++i)
+                skeletonBuilder.append('@');
+            for (unsigned i = 0; i < intlInstance->m_maximumSignificantDigits - intlInstance->m_minimumSignificantDigits; ++i)
+                skeletonBuilder.append('#');
+            skeletonBuilder.append(intlInstance->m_roundingType == IntlRoundingType::MorePrecision ? 'r' : 's');
             break;
         }
     }
@@ -292,30 +282,72 @@ void appendNumberFormatDigitOptionsToSkeleton(IntlType* intlInstance, StringBuil
     case IntlTrailingZeroDisplay::Auto:
         break;
     case IntlTrailingZeroDisplay::StripIfInteger:
-        // Only ICU69~ supports trailing zero display. Ignore this option if linked ICU does not support it.
-        // https://github.com/unicode-org/icu/commit/b79c299f90d4023ac237db3d0335d568bf21cd36
-        if (WTF::ICU::majorVersion() >= 69)
-            skeletonBuilder.append("/w"_s);
+        skeletonBuilder.append("/w"_s);
         break;
     }
 }
+
+template<typename IntlType>
+void appendNumberFormatNotationOptionsToSkeleton(IntlType* intlInstance, StringBuilder& skeletonBuilder)
+{
+    // https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#notation
+    switch (intlInstance->m_notation) {
+    case IntlNotation::Standard:
+        break;
+    case IntlNotation::Scientific:
+        skeletonBuilder.append(" scientific"_s);
+        break;
+    case IntlNotation::Engineering:
+        skeletonBuilder.append(" engineering"_s);
+        break;
+    case IntlNotation::Compact:
+        switch (intlInstance->m_compactDisplay) {
+        case CompactDisplay::Short:
+            skeletonBuilder.append(" compact-short"_s);
+            break;
+        case CompactDisplay::Long:
+            skeletonBuilder.append(" compact-long"_s);
+            break;
+        }
+        break;
+    }
+}
+
+struct IntlNumberFormatField {
+    int32_t m_field;
+    WTF::Range<int32_t> m_range;
+};
 
 class IntlFieldIterator {
 public:
     WTF_MAKE_NONCOPYABLE(IntlFieldIterator);
 
     explicit IntlFieldIterator(UFieldPositionIterator& iterator)
-        : m_iterator(iterator)
+        : m_iterator(&iterator)
+    {
+    }
+
+    explicit IntlFieldIterator(Vector<IntlNumberFormatField>&& fields)
+        : m_fields(WTF::move(fields))
     {
     }
 
     int32_t next(int32_t& beginIndex, int32_t& endIndex, UErrorCode&)
     {
-        return ufieldpositer_next(&m_iterator, &beginIndex, &endIndex);
+        if (m_iterator)
+            return ufieldpositer_next(m_iterator, &beginIndex, &endIndex);
+        if (m_cursor >= m_fields.size())
+            return -1;
+        auto& field = m_fields[m_cursor++];
+        beginIndex = field.m_range.begin();
+        endIndex = field.m_range.end();
+        return field.m_field;
     }
 
 private:
-    UFieldPositionIterator& m_iterator;
+    UFieldPositionIterator* m_iterator { nullptr };
+    Vector<IntlNumberFormatField> m_fields;
+    size_t m_cursor { 0 };
 };
 
 // https://tc39.es/ecma402/#sec-unwrapnumberformat
@@ -362,7 +394,9 @@ inline IntlMathematicalValue toIntlMathematicalValue(JSGlobalObject* globalObjec
     auto string = asString(primitive)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, IntlMathematicalValue::parseString(globalObject, WTFMove(string)));
+    RELEASE_AND_RETURN(scope, IntlMathematicalValue::parseString(globalObject, WTF::move(string)));
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -11,6 +11,10 @@
 
 #include "libANGLE/VaryingPacking.h"
 
+#include <array>
+
+#include "common/unsafe_buffers.h"
+
 #include "common/CompiledShaderState.h"
 #include "common/utilities.h"
 #include "libANGLE/Program.h"
@@ -108,7 +112,7 @@ bool InterfaceVariablesMatch(const sh::ShaderVariable &front, const sh::ShaderVa
     // Compare names, or if shader I/O blocks, block names.
     const std::string &backName  = back.isShaderIOBlock ? back.structOrBlockName : back.name;
     const std::string &frontName = front.isShaderIOBlock ? front.structOrBlockName : front.name;
-    return backName == frontName;
+    return backName == frontName && back.location == front.location;
 }
 
 GLint GetMaxShaderInputVectors(const Caps &caps, ShaderType shaderStage)
@@ -147,11 +151,10 @@ GLint GetMaxShaderOutputVectors(const Caps &caps, ShaderType shaderStage)
 
 bool ShouldSkipPackedVarying(const sh::ShaderVariable &varying, PackMode packMode)
 {
-    // Don't pack gl_Position. Also don't count gl_PointSize for D3D9.
+    // Don't pack gl_Position.
     // Additionally, gl_TessLevelInner and gl_TessLevelOuter should not be packed.
-    return varying.name == "gl_Position" ||
-           (varying.name == "gl_PointSize" && packMode == PackMode::ANGLE_NON_CONFORMANT_D3D9) ||
-           varying.name == "gl_TessLevelInner" || varying.name == "gl_TessLevelOuter";
+    return varying.name == "gl_Position" || varying.name == "gl_TessLevelInner" ||
+           varying.name == "gl_TessLevelOuter";
 }
 
 std::vector<unsigned int> StripVaryingArrayDimension(const sh::ShaderVariable *frontVarying,
@@ -362,16 +365,9 @@ bool VaryingPacking::packVaryingIntoRegisterMap(PackMode packMode,
     unsigned int varyingRows    = gl::VariableRowCount(transposedType);
     unsigned int varyingColumns = gl::VariableColumnCount(transposedType);
 
-    // Special pack mode for D3D9. Each varying takes a full register, no sharing.
-    // TODO(jmadill): Implement more sophisticated component packing in D3D9.
-    if (packMode == PackMode::ANGLE_NON_CONFORMANT_D3D9)
-    {
-        varyingColumns = 4;
-    }
-
     // "Variables of type mat2 occupies 2 complete rows."
     // For non-WebGL contexts, we allow mat2 to occupy only two columns per row.
-    else if (packMode == PackMode::WEBGL_STRICT && varying.type == GL_FLOAT_MAT2)
+    if (packMode == PackMode::WEBGL_STRICT && varying.type == GL_FLOAT_MAT2)
     {
         varyingColumns = 4;
     }
@@ -425,9 +421,9 @@ bool VaryingPacking::packVaryingIntoRegisterMap(PackMode packMode,
     // first. Each variable is placed in the column that leaves the least amount of space in the
     // column and aligned to the lowest available rows within that column."
     ASSERT(varyingColumns == 1);
-    unsigned int contiguousSpace[4]     = {0};
-    unsigned int bestContiguousSpace[4] = {0};
-    unsigned int totalSpace[4]          = {0};
+    std::array<unsigned int, 4> contiguousSpace     = {0};
+    std::array<unsigned int, 4> bestContiguousSpace = {0};
+    std::array<unsigned int, 4> totalSpace          = {0};
 
     for (unsigned int row = 0; row < maxVaryingVectors; ++row)
     {
@@ -981,13 +977,6 @@ bool VaryingPacking::packUserVaryings(gl::InfoLog &infoLog,
                                          : packedVarying.backVarying.stage;
             infoLog << "Could not pack varying " << packedVarying.fullName(eitherStage);
 
-            // TODO(jmadill): Implement more sophisticated component packing in D3D9.
-            if (packMode == PackMode::ANGLE_NON_CONFORMANT_D3D9)
-            {
-                infoLog << "Note: Additional non-conformant packing restrictions are enforced on "
-                           "D3D9.";
-            }
-
             return false;
         }
     }
@@ -1106,52 +1095,52 @@ ProgramMergedVaryings GetMergedVaryingsFromLinkingVariables(
     ShaderType frontShaderType = ShaderType::InvalidEnum;
     ProgramMergedVaryings merged;
 
-    for (ShaderType backShaderType : kAllGraphicsShaderTypes)
+    for (ShaderType currentShaderType : kAllGraphicsShaderTypes)
     {
-        if (!linkingVariables.isShaderStageUsedBitset[backShaderType])
+        if (!linkingVariables.isShaderStageUsedBitset[currentShaderType])
         {
             continue;
         }
-        const std::vector<sh::ShaderVariable> &backShaderOutputVaryings =
-            linkingVariables.outputVaryings[backShaderType];
-        const std::vector<sh::ShaderVariable> &backShaderInputVaryings =
-            linkingVariables.inputVaryings[backShaderType];
+        const std::vector<sh::ShaderVariable> &outputVaryings =
+            linkingVariables.outputVaryings[currentShaderType];
+        const std::vector<sh::ShaderVariable> &inputVaryings =
+            linkingVariables.inputVaryings[currentShaderType];
 
         // Add outputs. These are always unmatched since we walk shader stages sequentially.
-        for (const sh::ShaderVariable &frontVarying : backShaderOutputVaryings)
+        for (const sh::ShaderVariable &outputVarying : outputVaryings)
         {
             ProgramVaryingRef ref;
-            ref.frontShader      = &frontVarying;
-            ref.frontShaderStage = backShaderType;
+            ref.frontShader      = &outputVarying;
+            ref.frontShaderStage = currentShaderType;
             merged.push_back(ref);
         }
 
         if (frontShaderType == ShaderType::InvalidEnum)
         {
             // If this is our first shader stage, and not a VS, we might have unmatched inputs.
-            for (const sh::ShaderVariable &backVarying : backShaderInputVaryings)
+            for (const sh::ShaderVariable &inputVarying : inputVaryings)
             {
                 ProgramVaryingRef ref;
-                ref.backShader      = &backVarying;
-                ref.backShaderStage = backShaderType;
+                ref.backShader      = &inputVarying;
+                ref.backShaderStage = currentShaderType;
                 merged.push_back(ref);
             }
         }
         else
         {
             // Match inputs with the prior shader stage outputs.
-            for (const sh::ShaderVariable &backVarying : backShaderInputVaryings)
+            for (const sh::ShaderVariable &inputVarying : inputVaryings)
             {
                 bool found = false;
                 for (ProgramVaryingRef &ref : merged)
                 {
                     if (ref.frontShader && ref.frontShaderStage == frontShaderType &&
-                        InterfaceVariablesMatch(*ref.frontShader, backVarying))
+                        InterfaceVariablesMatch(*ref.frontShader, inputVarying))
                     {
                         ASSERT(ref.backShader == nullptr);
 
-                        ref.backShader      = &backVarying;
-                        ref.backShaderStage = backShaderType;
+                        ref.backShader      = &inputVarying;
+                        ref.backShaderStage = currentShaderType;
                         found               = true;
                         break;
                     }
@@ -1161,15 +1150,15 @@ ProgramMergedVaryings GetMergedVaryingsFromLinkingVariables(
                 if (!found)
                 {
                     ProgramVaryingRef ref;
-                    ref.backShader      = &backVarying;
-                    ref.backShaderStage = backShaderType;
+                    ref.backShader      = &inputVarying;
+                    ref.backShaderStage = currentShaderType;
                     merged.push_back(ref);
                 }
             }
         }
 
         // Save the current back shader to use as the next front shader.
-        frontShaderType = backShaderType;
+        frontShaderType = currentShaderType;
     }
 
     return merged;

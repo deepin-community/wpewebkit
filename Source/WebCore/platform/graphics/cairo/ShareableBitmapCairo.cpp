@@ -43,6 +43,11 @@ std::optional<DestinationColorSpace> ShareableBitmapConfiguration::validateColor
     return colorSpace;
 }
 
+CheckedUint32 ShareableBitmapConfiguration::calculateBitsPerComponent(const DestinationColorSpace& colorSpace)
+{
+    return (calculateBytesPerPixel(colorSpace) / 4) * 8;
+}
+
 CheckedUint32 ShareableBitmapConfiguration::calculateBytesPerPixel(const DestinationColorSpace&)
 {
     return 4;
@@ -81,6 +86,18 @@ void ShareableBitmap::paint(GraphicsContext& context, float scaleFactor, const I
     Cairo::drawSurface(*context.platformContext(), surface.get(), destRect, srcRect, state.imageInterpolationQuality(), state.alpha(), Cairo::ShadowState(state));
 }
 
+PlatformImagePtr ShareableBitmap::createBasePlatformImage(BackingStoreCopy, ShouldInterpolate)
+{
+    // FIXME: Implement and remove createPersistentCairoSurface(), createCairoSurface().
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+PlatformImagePtr ShareableBitmap::createPlatformImage(BackingStoreCopy copyBehavior, ShouldInterpolate shouldInterpolate)
+{
+    return createBasePlatformImage(copyBehavior, shouldInterpolate);
+}
+
 RefPtr<cairo_surface_t> ShareableBitmap::createPersistentCairoSurface()
 {
     return createSurfaceFromData(mutableSpan().data(), size());
@@ -107,7 +124,7 @@ RefPtr<Image> ShareableBitmap::createImage()
     if (!surface)
         return nullptr;
 
-    return BitmapImage::create(WTFMove(surface));
+    return BitmapImage::create(WTF::move(surface));
 }
 
 void ShareableBitmap::setOwnershipOfMemory(const ProcessIdentity&)

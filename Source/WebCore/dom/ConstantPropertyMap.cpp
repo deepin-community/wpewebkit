@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,11 +30,14 @@
 #include "CSSCustomPropertyValue.h"
 #include "CSSParserTokenRange.h"
 #include "CSSVariableData.h"
-#include "Document.h"
-#include "Page.h"
+#include "DocumentPage.h"
+#include "StyleCustomProperty.h"
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ConstantPropertyMap);
 
 ConstantPropertyMap::ConstantPropertyMap(Document& document)
     : m_document(document)
@@ -90,7 +93,7 @@ void ConstantPropertyMap::setValueForProperty(ConstantProperty property, Ref<CSS
         buildValues();
 
     auto& name = nameForProperty(property);
-    m_values->set(name, CSSCustomPropertyValue::createSyntaxAll(name, WTFMove(data)));
+    m_values->set(name, Style::CustomProperty::createForVariableData(name, WTF::move(data)));
 }
 
 void ConstantPropertyMap::buildValues()
@@ -106,7 +109,7 @@ static Ref<CSSVariableData> variableDataForPositivePixelLength(float lengthInPx)
     ASSERT(lengthInPx >= 0);
 
     CSSParserToken token(lengthInPx, NumberValueType, NoSign, { });
-    token.convertToDimensionWithUnit("px"_s);
+    token.convertToDimensionWithUnit(CSSUnitType::CSS_PX);
 
     Vector<CSSParserToken> tokens { token };
     CSSParserTokenRange tokenRange(tokens);
@@ -118,16 +121,11 @@ static Ref<CSSVariableData> variableDataForPositiveDuration(Seconds durationInSe
     ASSERT(durationInSeconds >= 0_s);
 
     CSSParserToken token(durationInSeconds.value(), NumberValueType, NoSign, { });
-    token.convertToDimensionWithUnit("s"_s);
+    token.convertToDimensionWithUnit(CSSUnitType::CSS_S);
 
     Vector<CSSParserToken> tokens { token };
     CSSParserTokenRange tokenRange(tokens);
     return CSSVariableData::create(tokenRange);
-}
-
-Ref<Document> ConstantPropertyMap::protectedDocument() const
-{
-    return m_document.get();
 }
 
 void ConstantPropertyMap::updateConstantsForSafeAreaInsets()
@@ -143,7 +141,7 @@ void ConstantPropertyMap::updateConstantsForSafeAreaInsets()
 void ConstantPropertyMap::didChangeSafeAreaInsets()
 {
     updateConstantsForSafeAreaInsets();
-    protectedDocument()->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
+    protect(m_document)->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
 }
 
 void ConstantPropertyMap::updateConstantsForFullscreen()
@@ -162,13 +160,13 @@ void ConstantPropertyMap::updateConstantsForFullscreen()
 void ConstantPropertyMap::didChangeFullscreenInsets()
 {
     updateConstantsForFullscreen();
-    protectedDocument()->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
+    protect(m_document)->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
 }
 
 void ConstantPropertyMap::setFullscreenAutoHideDuration(Seconds duration)
 {
     setValueForProperty(ConstantProperty::FullscreenAutoHideDuration, variableDataForPositiveDuration(duration));
-    protectedDocument()->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
+    protect(m_document)->invalidateMatchedPropertiesCacheAndForceStyleRecalc();
 }
 
 }

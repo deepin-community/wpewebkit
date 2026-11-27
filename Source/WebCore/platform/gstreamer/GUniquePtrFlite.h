@@ -19,18 +19,25 @@
 
 #pragma once
 
-#include <wtf/Platform.h>
 
-#if ENABLE(SPEECH_SYNTHESIS)
+#if USE(FLITE)
 
 #include <flite/flite.h>
+#include <wtf/Platform.h>
 #include <wtf/glib/GUniquePtr.h>
+
+namespace WebCore {
+
+void fliteDeleteVoice(cst_voice*);
+void fliteDeleteWave(cst_wave*);
+
+} // namespace WebCore
 
 namespace WTF {
 
-WTF_DEFINE_GPTR_DELETER(cst_voice, delete_voice)
-WTF_DEFINE_GPTR_DELETER(cst_wave, delete_wave)
+WTF_DEFINE_GPTR_DELETER(cst_voice, WebCore::fliteDeleteVoice)
+WTF_DEFINE_GPTR_DELETER(cst_wave, WebCore::fliteDeleteWave)
 
 } // namespace WTF
 
-#endif // ENABLE(SPEECH_SYNTHESIS)
+#endif // USE(FLITE)

@@ -26,12 +26,12 @@
 #include "config.h"
 
 #include "MoveOnly.h"
+#include <ranges>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Vector.h>
-#include <wtf/VectorHash.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -41,7 +41,7 @@ TEST(WTF_Vector, Basic)
 {
     Vector<int> intVector;
     EXPECT_TRUE(intVector.isEmpty());
-    EXPECT_EQ(nullptr, intVector.data());
+    EXPECT_EQ(nullptr, intVector.span().data());
     EXPECT_EQ(0U, intVector.size());
     EXPECT_EQ(0U, intVector.capacity());
 
@@ -55,7 +55,7 @@ TEST(WTF_Vector, ZeroSize)
 {
     Vector<int> intVector(0);
     EXPECT_TRUE(intVector.isEmpty());
-    EXPECT_EQ(nullptr, intVector.data());
+    EXPECT_EQ(nullptr, intVector.span().data());
     EXPECT_EQ(0U, intVector.size());
     EXPECT_EQ(0U, intVector.capacity());
 
@@ -67,7 +67,7 @@ TEST(WTF_Vector, ZeroSize)
     intVector.append(0);
     intVector.removeLast();
     EXPECT_TRUE(intVector.isEmpty());
-    EXPECT_NE(nullptr, intVector.data());
+    EXPECT_NE(nullptr, intVector.span().data());
     EXPECT_EQ(0U, intVector.size());
     EXPECT_NE(0U, intVector.capacity());
 
@@ -151,7 +151,7 @@ TEST(WTF_Vector, ConstructWithFromString)
     String s1 = "s1"_s;
     String s2 = "s2"_s;
     String s3 = s1;
-    auto vector = Vector<String>::from(s1, s2, WTFMove(s3));
+    auto vector = Vector<String>::from(s1, s2, WTF::move(s3));
     EXPECT_EQ(3U, vector.size());
     EXPECT_EQ(3U, vector.capacity());
 
@@ -166,7 +166,7 @@ TEST(WTF_Vector, IsolatedCopy)
     String s1 = "s1"_s;
     String s2 = "s2"_s;
 
-    auto vector1 = Vector<String>::from(WTFMove(s1), s2);
+    auto vector1 = Vector<String>::from(WTF::move(s1), s2);
     EXPECT_EQ(2U, vector1.size());
     EXPECT_EQ(2U, vector1.capacity());
 
@@ -181,7 +181,7 @@ TEST(WTF_Vector, IsolatedCopy)
     EXPECT_FALSE(data1 == vector2[0].impl());
     EXPECT_FALSE(data2 == vector2[1].impl());
 
-    auto vector3 = crossThreadCopy(WTFMove(vector1));
+    auto vector3 = crossThreadCopy(WTF::move(vector1));
     SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vector1.size());
 
     EXPECT_TRUE("s1"_s == vector3[0]);
@@ -352,8 +352,8 @@ TEST(WTF_Vector, CopyFromOtherMinCapacity)
 
 TEST(WTF_Vector, ConstructorOtherRawPointerTypeAndLength)
 {
-    const UChar uchars[] = { 'b', 'a', 'r' };
-    Vector<LChar> vector(std::span(uchars, static_cast<size_t>(3)));
+    const char16_t uchars[] = { 'b', 'a', 'r' };
+    Vector<Latin1Character> vector(std::span(uchars, static_cast<size_t>(3)));
     EXPECT_EQ(vector.size(), 3U);
     EXPECT_EQ(vector[0], 'b');
     EXPECT_EQ(vector[1], 'a');
@@ -462,7 +462,7 @@ TEST(WTF_Vector, MoveOnly_UncheckedAppend)
     vector.reserveInitialCapacity(100);
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
-        vector.append(WTFMove(moveOnly));
+        vector.append(WTF::move(moveOnly));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, moveOnly.value());
     }
 
@@ -476,7 +476,7 @@ TEST(WTF_Vector, MoveOnly_Append)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
-        vector.append(WTFMove(moveOnly));
+        vector.append(WTF::move(moveOnly));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, moveOnly.value());
     }
 
@@ -490,7 +490,7 @@ TEST(WTF_Vector, MoveOnly_Append)
 
         for (size_t j = 0; j < i; ++j)
             vector.append(j);
-        vector.append(WTFMove(vector[0]));
+        vector.append(WTF::move(vector[0]));
 
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, vector[0].value());
 
@@ -506,7 +506,7 @@ TEST(WTF_Vector, MoveOnly_Insert)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
-        vector.insert(0, WTFMove(moveOnly));
+        vector.insert(0, WTF::move(moveOnly));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, moveOnly.value());
     }
 
@@ -516,7 +516,7 @@ TEST(WTF_Vector, MoveOnly_Insert)
 
     for (size_t i = 0; i < 200; i += 2) {
         MoveOnly moveOnly(1000 + i);
-        vector.insert(i, WTFMove(moveOnly));
+        vector.insert(i, WTF::move(moveOnly));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, moveOnly.value());
     }
 
@@ -535,7 +535,7 @@ TEST(WTF_Vector, MoveOnly_TakeLast)
 
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
-        vector.append(WTFMove(moveOnly));
+        vector.append(WTF::move(moveOnly));
         SUPPRESS_USE_AFTER_MOVE EXPECT_EQ(0U, moveOnly.value());
     }
 
@@ -764,49 +764,49 @@ TEST(WTF_Vector, RemoveAll)
     Vector<CString> vExpected;
     Vector<CString> v2;
     EXPECT_TRUE(v2.isEmpty());
-    EXPECT_FALSE(v2.removeAll("1"));
+    EXPECT_FALSE(v2.removeAll("1"_s));
     EXPECT_TRUE(v2.isEmpty());
 
     v2.fill("1", 10);
     EXPECT_EQ(10U, v2.size());
-    EXPECT_EQ(10U, v2.removeAll("1"));
+    EXPECT_EQ(10U, v2.removeAll("1"_s));
     EXPECT_TRUE(v2.isEmpty());
 
     v2.fill("2", 10);
     EXPECT_EQ(10U, v2.size());
-    EXPECT_EQ(0U, v2.removeAll("1"));
+    EXPECT_EQ(0U, v2.removeAll("1"_s));
     EXPECT_EQ(10U, v2.size());
 
     v2 = {"1", "2", "1", "2", "1", "2", "2", "1", "1", "1"};
     EXPECT_EQ(10U, v2.size());
-    EXPECT_EQ(6U, v2.removeAll("1"));
+    EXPECT_EQ(6U, v2.removeAll("1"_s));
     EXPECT_EQ(4U, v2.size());
-    EXPECT_TRUE(v2.find("1") == notFound);
-    EXPECT_EQ(4U, v2.removeAll("2"));
+    EXPECT_TRUE(v2.find("1"_s) == notFound);
+    EXPECT_EQ(4U, v2.removeAll("2"_s));
     EXPECT_TRUE(v2.isEmpty());
 
     v2 = {"3", "1", "2", "1", "2", "1", "2", "2", "1", "1", "1", "3"};
     EXPECT_EQ(12U, v2.size());
-    EXPECT_EQ(6U, v2.removeAll("1"));
+    EXPECT_EQ(6U, v2.removeAll("1"_s));
     EXPECT_EQ(6U, v2.size());
-    EXPECT_TRUE(v2.find("1") == notFound);
+    EXPECT_TRUE(v2.find("1"_s) == notFound);
     vExpected = {"3", "2", "2", "2", "2", "3"};
     EXPECT_TRUE(v2 == vExpected);
 
-    EXPECT_EQ(4U, v2.removeAll("2"));
+    EXPECT_EQ(4U, v2.removeAll("2"_s));
     EXPECT_EQ(2U, v2.size());
-    EXPECT_TRUE(v2.find("2") == notFound);
+    EXPECT_TRUE(v2.find("2"_s) == notFound);
     vExpected = {"3", "3"};
     EXPECT_TRUE(v2 == vExpected);
 
-    EXPECT_EQ(2U, v2.removeAll("3"));
+    EXPECT_EQ(2U, v2.removeAll("3"_s));
     EXPECT_TRUE(v2.isEmpty());
 
     v2 = {"1", "1", "1", "3", "2", "4", "2", "2", "2", "4", "4", "3"};
     EXPECT_EQ(12U, v2.size());
-    EXPECT_EQ(3U, v2.removeAll("1"));
+    EXPECT_EQ(3U, v2.removeAll("1"_s));
     EXPECT_EQ(9U, v2.size());
-    EXPECT_TRUE(v2.find("1") == notFound);
+    EXPECT_TRUE(v2.find("1"_s) == notFound);
     vExpected = {"3", "2", "4", "2", "2", "2", "4", "4", "3"};
     EXPECT_TRUE(v2 == vExpected);
 }
@@ -1039,9 +1039,9 @@ TEST(WTF_Vector, MapLambdaMove)
 
 
     unsigned counter = 0;
-    auto mapped = WTF::map(WTFMove(vector), [&] (MoveOnly&& item) {
+    auto mapped = WTF::map(WTF::move(vector), [&] (MoveOnly&& item) {
         item = item.value() + ++counter;
-        return WTFMove(item);
+        return WTF::move(item);
     });
 
     EXPECT_EQ(3U, mapped.size());
@@ -1060,7 +1060,7 @@ TEST(WTF_Vector, MapFromHashMap)
     auto mapped = WTF::map(map, [&] (KeyValuePair<String, String>& pair) -> String {
         return pair.value;
     });
-    std::sort(mapped.begin(), mapped.end(), WTF::codePointCompareLessThan);
+    std::ranges::sort(mapped, WTF::codePointCompareLessThan);
 
     EXPECT_EQ(3U, mapped.size());
     EXPECT_TRUE(mapped[0] == "v1"_s);
@@ -1070,17 +1070,17 @@ TEST(WTF_Vector, MapFromHashMap)
     mapped = WTF::map(map, [&] (const auto& pair) -> String {
         return pair.key;
     });
-    std::sort(mapped.begin(), mapped.end(), WTF::codePointCompareLessThan);
+    std::ranges::sort(mapped, WTF::codePointCompareLessThan);
 
     EXPECT_EQ(3U, mapped.size());
     EXPECT_TRUE(mapped[0] == "k1"_s);
     EXPECT_TRUE(mapped[1] == "k2"_s);
     EXPECT_TRUE(mapped[2] == "k3"_s);
 
-    mapped = WTF::map(WTFMove(map), [&] (KeyValuePair<String, String>&& pair) -> String {
-        return WTFMove(pair.value);
+    mapped = WTF::map(WTF::move(map), [&] (KeyValuePair<String, String>&& pair) -> String {
+        return WTF::move(pair.value);
     });
-    std::sort(mapped.begin(), mapped.end(), WTF::codePointCompareLessThan);
+    std::ranges::sort(mapped, WTF::codePointCompareLessThan);
 
     EXPECT_EQ(3U, mapped.size());
     EXPECT_TRUE(mapped[0] == "v1"_s);
@@ -1284,14 +1284,14 @@ TEST(WTF_Vector, CompactMapLambdaMoveVectorReturnOptionalCountedObject)
 
     auto function = [](CountedObject&& object) -> std::optional<CountedObject> {
         if (object.value() % 2)
-            return WTFMove(object);
+            return WTF::move(object);
         return std::nullopt;
     };
 
     RefCountedObject::s_totalRefCount = 0;
-    static_assert(std::is_same<decltype(WTF::compactMap(WTFMove(vector), function)), typename WTF::Vector<CountedObject>>::value,
+    static_assert(std::is_same<decltype(WTF::compactMap(WTF::move(vector), function)), typename WTF::Vector<CountedObject>>::value,
         "WTF::compactMap returns Vector<CountedObject> when the lambda returns std::optional<CountedObject>");
-    auto mapped = WTF::compactMap(WTFMove(vector), function);
+    auto mapped = WTF::compactMap(WTF::move(vector), function);
 
     EXPECT_EQ(0U, CountedObject::count());
 
@@ -1333,13 +1333,13 @@ TEST(WTF_Vector, CompactMapLambdaReturnRefPtrFromMovedRef)
     auto function = [](Ref<RefCountedObject>&& object) -> RefPtr<RefCountedObject> {
         if (object->value % 3)
             return nullptr;
-        return WTFMove(object);
+        return WTF::move(object);
     };
 
     RefCountedObject::s_totalRefCount = 0;
-    static_assert(std::is_same<decltype(WTF::compactMap(WTFMove(countedObjects), function)), typename WTF::Vector<Ref<RefCountedObject>>>::value,
+    static_assert(std::is_same<decltype(WTF::compactMap(WTF::move(countedObjects), function)), typename WTF::Vector<Ref<RefCountedObject>>>::value,
         "WTF::compactMap returns Vector<Ref<RefCountedObject>> when the lambda returns RefPtr<RefCountedObject>");
-    auto mapped = WTF::compactMap(WTFMove(countedObjects), function);
+    auto mapped = WTF::compactMap(WTF::move(countedObjects), function);
 
     EXPECT_EQ(0U, RefCountedObject::s_totalRefCount);
     EXPECT_EQ(3U, mapped.size());
@@ -1441,8 +1441,8 @@ TEST(WTF_Vector, MapMinimalCopy)
     EXPECT_EQ(5, CopyCountingObject::copyCount);
 
     CopyCountingObject::copyCount = 0;
-    auto allMoved = WTF::map(WTFMove(array), [](CopyCountingObject&& object) -> CopyCountingObject {
-        return WTFMove(object);
+    auto allMoved = WTF::map(WTF::move(array), [](CopyCountingObject&& object) -> CopyCountingObject {
+        return WTF::move(object);
     });
     EXPECT_EQ(5U, allMoved.size());
     EXPECT_EQ(1, allMoved[0]);
@@ -1464,10 +1464,10 @@ TEST(WTF_Vector, MapMinimalCopy)
     EXPECT_EQ(2, CopyCountingObject::copyCount);
 
     CopyCountingObject::copyCount = 0;
-    auto evensMoved = WTF::compactMap(WTFMove(array), [](auto&& object) -> std::optional<CopyCountingObject> {
+    auto evensMoved = WTF::compactMap(WTF::move(array), [](auto&& object) -> std::optional<CopyCountingObject> {
         if (object.identifier % 2)
             return std::nullopt;
-        return WTFMove(object);
+        return WTF::move(object);
     });
     EXPECT_EQ(2U, evensMoved.size());
     EXPECT_EQ(2, evensMoved[0]);
@@ -1482,7 +1482,7 @@ TEST(WTF_Vector, CopyToVector)
     auto vector = copyToVector(intSet);
     EXPECT_EQ(3U, vector.size());
 
-    std::sort(vector.begin(), vector.end());
+    std::ranges::sort(vector);
     EXPECT_EQ(1, vector[0]);
     EXPECT_EQ(2, vector[1]);
     EXPECT_EQ(3, vector[2]);
@@ -1510,7 +1510,7 @@ TEST(WTF_Vector, CopyToVectorOf)
     Vector<float> vector = copyToVectorOf<float>(intSet);
     EXPECT_EQ(3U, vector.size());
 
-    std::sort(vector.begin(), vector.end());
+    std::ranges::sort(vector);
     EXPECT_FLOAT_EQ(1, vector[0]);
     EXPECT_FLOAT_EQ(2, vector[1]);
     EXPECT_FLOAT_EQ(3, vector[2]);
@@ -1527,7 +1527,7 @@ TEST(WTF_Vector, CopyToVectorSizeRangeIterator)
     auto keysVector = copyToVector(map.keys());
     EXPECT_EQ(3U, keysVector.size());
 
-    std::sort(keysVector.begin(), keysVector.end());
+    std::ranges::sort(keysVector);
     EXPECT_EQ(1, keysVector[0]);
     EXPECT_EQ(2, keysVector[1]);
     EXPECT_EQ(3, keysVector[2]);
@@ -1535,7 +1535,7 @@ TEST(WTF_Vector, CopyToVectorSizeRangeIterator)
     auto valuesVector = copyToVector(map.values());
     EXPECT_EQ(3U, valuesVector.size());
 
-    std::sort(valuesVector.begin(), valuesVector.end());
+    std::ranges::sort(valuesVector);
     EXPECT_FLOAT_EQ(7, valuesVector[0]);
     EXPECT_FLOAT_EQ(8, valuesVector[1]);
     EXPECT_FLOAT_EQ(9, valuesVector[2]);
@@ -1775,7 +1775,7 @@ TEST(WTF_Vector, MoveConstructor)
     {
         Vector<String> strings({ "a"_str, "b"_str, "c"_str, "d"_str, "e"_str });
         EXPECT_EQ(strings.size(), 5U);
-        Vector<String> strings2(WTFMove(strings));
+        Vector<String> strings2(WTF::move(strings));
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 0U);
@@ -1797,7 +1797,7 @@ TEST(WTF_Vector, MoveConstructor)
         Vector<String, 10> strings({ "a"_str, "b"_str, "c"_str, "d"_str, "e"_str });
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 10U);
-        Vector<String, 10> strings2(WTFMove(strings));
+        Vector<String, 10> strings2(WTF::move(strings));
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 10U);
@@ -1819,7 +1819,7 @@ TEST(WTF_Vector, MoveConstructor)
         Vector<String, 2> strings({ "a"_str, "b"_str, "c"_str, "d"_str, "e"_str });
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 5U);
-        Vector<String, 2> strings2(WTFMove(strings));
+        Vector<String, 2> strings2(WTF::move(strings));
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 2U);
@@ -1845,7 +1845,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 5U);
         Vector<String> strings2;
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 0U);
@@ -1867,7 +1867,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         Vector<String> strings({ "a"_str, "b"_str, "c"_str, "d"_str, "e"_str });
         EXPECT_EQ(strings.size(), 5U);
         Vector<String> strings2({ "foo"_str, "bar"_str });
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 0U);
@@ -1890,7 +1890,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 10U);
         Vector<String, 10> strings2;
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 10U);
@@ -1913,7 +1913,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 10U);
         Vector<String, 10> strings2({ "foo"_str, "bar"_str });
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 10U);
@@ -1936,7 +1936,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 5U);
         Vector<String, 2> strings2;
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 2U);
@@ -1959,7 +1959,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 5U);
         Vector<String, 2> strings2({ "foo"_str, "bar"_str });
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 2U);
@@ -1982,7 +1982,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 5U);
         EXPECT_EQ(strings.capacity(), 5U);
         Vector<String, 2> strings2({ "foo"_str, "bar"_str, "baz"_str });
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 2U);
@@ -2005,7 +2005,7 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         EXPECT_EQ(strings.size(), 2U);
         EXPECT_EQ(strings.capacity(), 2U);
         Vector<String, 2> strings2({ "foo"_str, "bar"_str, "baz"_str });
-        strings2 = WTFMove(strings);
+        strings2 = WTF::move(strings);
         SUPPRESS_USE_AFTER_MOVE {
             EXPECT_EQ(strings.size(), 0U);
             EXPECT_EQ(strings.capacity(), 2U);
@@ -2055,9 +2055,9 @@ TEST(WTF_Vector, FlatMapMove)
         { 3, 4 },
     };
 
-    static_assert(std::is_same<decltype(WTF::flatMap(WTFMove(vector), mapVector)), typename WTF::Vector<int>>::value,
+    static_assert(std::is_same<decltype(WTF::flatMap(WTF::move(vector), mapVector)), typename WTF::Vector<int>>::value,
         "WTF::flatMap returns Vector<int>");
-    auto mapped = WTF::flatMap(WTFMove(vector), mapVector);
+    auto mapped = WTF::flatMap(WTF::move(vector), mapVector);
 
     EXPECT_EQ(2U, vector.size());
     EXPECT_EQ(0U, vector[0].size());
@@ -2138,6 +2138,527 @@ TEST(WTF_Vector, InsertFill)
 
     for (size_t i = 0; i < 50; ++i)
         EXPECT_EQ(vector[i + 150], i + 50U);
+}
+
+TEST(WTF_Vector, fromRangeConstructorBasicTypes)
+{
+    auto isPrime = [](int n) {
+        if (n <= 1)
+            return false;
+        if (n == 2)
+            return true;
+        if (!(n % 2))
+            return false;
+
+        for (int i = 3; i <= std::sqrt(n); i += 2) {
+            if (!(n % i))
+                return false;
+        }
+
+        return true;
+    };
+    Vector<int> wtfVec = std::views::iota(1)
+        | std::views::filter(isPrime)
+        | std::views::take(5)
+        | rangeTo<Vector<int>>();
+
+    EXPECT_EQ(5U, wtfVec.size());
+    EXPECT_EQ(2, wtfVec[0]);
+    EXPECT_EQ(3, wtfVec[1]);
+    EXPECT_EQ(5, wtfVec[2]);
+    EXPECT_EQ(7, wtfVec[3]);
+    EXPECT_EQ(11, wtfVec[4]);
+}
+
+TEST(WTF_Vector, fromRangeConstructorArray)
+{
+    int arr[] = { 10, 20, 30 };
+    Vector<int> wtfVec(fromRange, arr);
+
+    EXPECT_EQ(3U, wtfVec.size());
+    EXPECT_EQ(10, wtfVec[0]);
+    EXPECT_EQ(20, wtfVec[1]);
+    EXPECT_EQ(30, wtfVec[2]);
+}
+
+TEST(WTF_Vector, fromRangeConstructorInitializerList)
+{
+    std::initializer_list<int> initList = { 7, 8, 9 };
+    Vector<int> wtfVec(fromRange, initList);
+
+    EXPECT_EQ(3U, wtfVec.size());
+    EXPECT_EQ(7, wtfVec[0]);
+    EXPECT_EQ(8, wtfVec[1]);
+    EXPECT_EQ(9, wtfVec[2]);
+}
+
+TEST(WTF_Vector, fromRangeConstructorEmptyRange)
+{
+    auto emptyRange = std::views::empty<int>;
+    Vector<int> wtfVec(fromRange, emptyRange);
+
+    EXPECT_TRUE(wtfVec.isEmpty());
+    EXPECT_EQ(0U, wtfVec.size());
+}
+
+TEST(WTF_Vector, fromRangeStrings)
+{
+    Vector<String> stringVec = { "hello"_s, "world"_s };
+    Vector<String> upperStrings = stringVec | std::views::transform([](const String& str) {
+        return str.convertToUppercaseWithoutLocale();
+    }) | rangeTo<Vector<String>>();
+
+    EXPECT_EQ(2U, stringVec.size());
+    EXPECT_EQ("HELLO"_s, upperStrings[0]);
+    EXPECT_EQ("WORLD"_s, upperStrings[1]);
+}
+
+TEST(WTF_Vector, RangeToBasicUsage)
+{
+    auto wtfVec = std::views::iota(1, 5) | rangeTo<Vector<int>>();
+
+    EXPECT_EQ(4U, wtfVec.size());
+    EXPECT_EQ(1, wtfVec[0]);
+    EXPECT_EQ(2, wtfVec[1]);
+    EXPECT_EQ(3, wtfVec[2]);
+    EXPECT_EQ(4, wtfVec[3]);
+}
+
+TEST(WTF_Vector, RangeToChainedOperations)
+{
+    Vector<int> stdVec { 1, 2, 3, 4, 5 };
+
+    auto result = stdVec
+        | std::views::filter([](int x) { return !(x % 2); })
+        | std::views::transform([](int x) { return x * 2; })
+        | rangeTo<Vector<int>>();
+
+    EXPECT_EQ(2U, result.size());
+    EXPECT_EQ(4, result[0]); // 2 * 2
+    EXPECT_EQ(8, result[1]); // 4 * 2
+}
+
+TEST(WTF_Vector, RangeToMoveOnly)
+{
+    Vector<MoveOnly> source;
+    source.append(5);
+    source.append(6);
+    source.append(7);
+
+    auto dest = WTF::move(source) | rangeTo<Vector<MoveOnly>>();
+
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(5U, dest[0].value());
+    EXPECT_EQ(6U, dest[1].value());
+    EXPECT_EQ(7U, dest[2].value());
+}
+
+TEST(WTF_Vector, FillAliasingGrowth)
+{
+    // Test that fill() works correctly when val references an element in the
+    // vector and the fill triggers reallocation (clear + reserveCapacity).
+    Vector<String> v = { "a"_s, "b"_s, "c"_s };
+    v.fill(v[1], 10);
+    EXPECT_EQ(10U, v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+        EXPECT_EQ("b"_s, v[i]);
+}
+
+TEST(WTF_Vector, FillAliasingShrink)
+{
+    // Test that fill() works correctly when val references an element that
+    // would be destroyed by shrink (index >= newSize).
+    Vector<String> v = { "a"_s, "b"_s, "c"_s, "d"_s, "e"_s };
+    v.fill(v[4], 3);
+    EXPECT_EQ(3U, v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+        EXPECT_EQ("e"_s, v[i]);
+}
+
+TEST(WTF_Vector, FillAliasingNoReallocation)
+{
+    // Test that fill() works when val aliases an element and newSize fits
+    // within existing capacity.
+    Vector<String> v;
+    v.reserveCapacity(10);
+    v.append("a"_s);
+    v.append("b"_s);
+    v.append("c"_s);
+    v.fill(v[2], 5);
+    EXPECT_EQ(5U, v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+        EXPECT_EQ("c"_s, v[i]);
+}
+
+TEST(WTF_Vector, FillAliasingSameSize)
+{
+    Vector<String> v = { "x"_s, "y"_s, "z"_s };
+    v.fill(v[0]);
+    EXPECT_EQ(3U, v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+        EXPECT_EQ("x"_s, v[i]);
+}
+
+TEST(WTF_Vector, InsertFillAliasingWithReallocation)
+{
+    // Test that insertFill() works correctly when data references an element
+    // in the vector and the insertion triggers reallocation.
+    Vector<String> v;
+    v.reserveInitialCapacity(3);
+    v.append("a"_s);
+    v.append("b"_s);
+    v.append("c"_s);
+    EXPECT_EQ(3U, v.capacity());
+
+    // This must trigger reallocation since size + 2 > capacity.
+    v.insertFill(1, v[2], 2);
+    EXPECT_EQ(5U, v.size());
+    EXPECT_EQ("a"_s, v[0]);
+    EXPECT_EQ("c"_s, v[1]);
+    EXPECT_EQ("c"_s, v[2]);
+    EXPECT_EQ("b"_s, v[3]);
+    EXPECT_EQ("c"_s, v[4]);
+}
+
+TEST(WTF_Vector, InsertFillAliasingElementAfterPosition)
+{
+    // Test that insertFill() works correctly when data references an element
+    // at index >= position. Without the fix, moveOverlapping shifts the
+    // element and the reference reads the wrong value.
+    Vector<String> v;
+    v.reserveCapacity(10);
+    v.append("a"_s);
+    v.append("b"_s);
+    v.append("c"_s);
+    v.append("d"_s);
+
+    // Insert 2 copies of v[3]="d" at position 1. moveOverlapping shifts
+    // v[1..3] to v[3..5], which overwrites v[3].
+    v.insertFill(1, v[3], 2);
+    EXPECT_EQ(6U, v.size());
+    EXPECT_EQ("a"_s, v[0]);
+    EXPECT_EQ("d"_s, v[1]);
+    EXPECT_EQ("d"_s, v[2]);
+    EXPECT_EQ("b"_s, v[3]);
+    EXPECT_EQ("c"_s, v[4]);
+    EXPECT_EQ("d"_s, v[5]);
+}
+
+TEST(WTF_Vector, InsertFillAliasingElementAtPosition)
+{
+    // Test that insertFill() works when data references an element in the
+    // gap [position, position+dataSize) that gets moved/destructed.
+    Vector<String> v;
+    v.reserveCapacity(10);
+    v.append("a"_s);
+    v.append("b"_s);
+    v.append("c"_s);
+
+    // Insert 2 copies of v[1]="b" at position 1.
+    v.insertFill(1, v[1], 2);
+    EXPECT_EQ(5U, v.size());
+    EXPECT_EQ("a"_s, v[0]);
+    EXPECT_EQ("b"_s, v[1]);
+    EXPECT_EQ("b"_s, v[2]);
+    EXPECT_EQ("b"_s, v[3]);
+    EXPECT_EQ("c"_s, v[4]);
+}
+
+TEST(WTF_Vector, InsertFillAliasingElementBeforePosition)
+{
+    // Elements before position are not shifted, so aliasing should be safe
+    // even without the fix. Verify it still works.
+    Vector<String> v;
+    v.reserveCapacity(10);
+    v.append("a"_s);
+    v.append("b"_s);
+    v.append("c"_s);
+
+    v.insertFill(2, v[0], 2);
+    EXPECT_EQ(5U, v.size());
+    EXPECT_EQ("a"_s, v[0]);
+    EXPECT_EQ("b"_s, v[1]);
+    EXPECT_EQ("a"_s, v[2]);
+    EXPECT_EQ("a"_s, v[3]);
+    EXPECT_EQ("c"_s, v[4]);
+}
+
+TEST(WTF_Vector, AppendVectorCopyTrivial)
+{
+    Vector<int> dest = { 1, 2, 3 };
+    Vector<int> src = { 4, 5, 6 };
+    dest.appendVector(src);
+    EXPECT_EQ(6U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+    EXPECT_EQ(4, dest[3]);
+    EXPECT_EQ(5, dest[4]);
+    EXPECT_EQ(6, dest[5]);
+    // Source unchanged.
+    EXPECT_EQ(3U, src.size());
+    EXPECT_EQ(4, src[0]);
+}
+
+TEST(WTF_Vector, AppendVectorCopyEmpty)
+{
+    Vector<int> dest = { 1, 2 };
+    Vector<int> empty;
+    dest.appendVector(empty);
+    EXPECT_EQ(2U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+}
+
+TEST(WTF_Vector, AppendVectorCopyToEmpty)
+{
+    Vector<int> dest;
+    Vector<int> src = { 1, 2, 3 };
+    dest.appendVector(src);
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveTrivial)
+{
+    Vector<int> dest = { 1, 2, 3 };
+    Vector<int> src = { 4, 5, 6 };
+    dest.appendVector(WTF::move(src));
+    EXPECT_EQ(6U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+    EXPECT_EQ(4, dest[3]);
+    EXPECT_EQ(5, dest[4]);
+    EXPECT_EQ(6, dest[5]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveEmpty)
+{
+    Vector<int> dest = { 1, 2 };
+    Vector<int> empty;
+    dest.appendVector(WTF::move(empty));
+    EXPECT_EQ(2U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveToEmpty)
+{
+    Vector<int> dest;
+    Vector<int> src = { 1, 2, 3 };
+    dest.appendVector(WTF::move(src));
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveTriggersExpansion)
+{
+    Vector<int> dest;
+    dest.reserveInitialCapacity(2);
+    dest.append(1);
+    dest.append(2);
+    EXPECT_EQ(2U, dest.capacity());
+
+    Vector<int> src = { 3, 4, 5 };
+    dest.appendVector(WTF::move(src));
+    EXPECT_EQ(5U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+    EXPECT_EQ(4, dest[3]);
+    EXPECT_EQ(5, dest[4]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveMoveOnly)
+{
+    Vector<MoveOnly> dest;
+    dest.append(MoveOnly(1));
+    dest.append(MoveOnly(2));
+
+    Vector<MoveOnly> src;
+    src.append(MoveOnly(3));
+    src.append(MoveOnly(4));
+    src.append(MoveOnly(5));
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(5U, dest.size());
+    EXPECT_EQ(1U, dest[0].value());
+    EXPECT_EQ(2U, dest[1].value());
+    EXPECT_EQ(3U, dest[2].value());
+    EXPECT_EQ(4U, dest[3].value());
+    EXPECT_EQ(5U, dest[4].value());
+
+    // Source elements should be moved-from (zeroed by MoveOnly's move constructor).
+    EXPECT_EQ(3U, src.size());
+    EXPECT_EQ(0U, src[0].value());
+    EXPECT_EQ(0U, src[1].value());
+    EXPECT_EQ(0U, src[2].value());
+}
+
+TEST(WTF_Vector, AppendVectorMoveMoveOnlyEmpty)
+{
+    Vector<MoveOnly> dest;
+    dest.append(MoveOnly(1));
+
+    Vector<MoveOnly> empty;
+    dest.appendVector(WTF::move(empty));
+
+    EXPECT_EQ(1U, dest.size());
+    EXPECT_EQ(1U, dest[0].value());
+}
+
+TEST(WTF_Vector, AppendVectorMoveMoveOnlyToEmpty)
+{
+    Vector<MoveOnly> dest;
+
+    Vector<MoveOnly> src;
+    src.append(MoveOnly(10));
+    src.append(MoveOnly(20));
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(2U, dest.size());
+    EXPECT_EQ(10U, dest[0].value());
+    EXPECT_EQ(20U, dest[1].value());
+}
+
+TEST(WTF_Vector, AppendVectorMoveMoveOnlyTriggersExpansion)
+{
+    Vector<MoveOnly> dest;
+    dest.reserveInitialCapacity(1);
+    dest.append(MoveOnly(1));
+    EXPECT_EQ(1U, dest.capacity());
+
+    Vector<MoveOnly> src;
+    src.append(MoveOnly(2));
+    src.append(MoveOnly(3));
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(1U, dest[0].value());
+    EXPECT_EQ(2U, dest[1].value());
+    EXPECT_EQ(3U, dest[2].value());
+}
+
+TEST(WTF_Vector, AppendVectorMoveInlineCapacity)
+{
+    Vector<int, 4> dest = { 1, 2 };
+    Vector<int, 4> src = { 3, 4 };
+    dest.appendVector(WTF::move(src));
+    EXPECT_EQ(4U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+    EXPECT_EQ(4, dest[3]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveInlineToHeap)
+{
+    Vector<int, 2> dest = { 1, 2 };
+    Vector<int, 2> src = { 3, 4, 5 };
+    dest.appendVector(WTF::move(src));
+    EXPECT_EQ(5U, dest.size());
+    EXPECT_EQ(1, dest[0]);
+    EXPECT_EQ(2, dest[1]);
+    EXPECT_EQ(3, dest[2]);
+    EXPECT_EQ(4, dest[3]);
+    EXPECT_EQ(5, dest[4]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveLarge)
+{
+    Vector<int> dest;
+    Vector<int> src;
+    for (int i = 0; i < 1000; ++i)
+        dest.append(i);
+    for (int i = 1000; i < 2000; ++i)
+        src.append(i);
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(2000U, dest.size());
+    for (int i = 0; i < 2000; ++i)
+        EXPECT_EQ(i, dest[i]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveRefPtr)
+{
+    // RefPtr has canMoveWithMemcpy=true but is not trivially destructible.
+    // appendVector(&&) must use element-by-element move (not memcpy) so that
+    // ownership is properly transferred and the source vector's destructor
+    // doesn't over-release.
+    auto obj1 = RefCountedObject::create(10);
+    auto obj2 = RefCountedObject::create(20);
+    auto obj3 = RefCountedObject::create(30);
+
+    Vector<RefPtr<RefCountedObject>> dest;
+    dest.append(obj1.ptr());
+
+    Vector<RefPtr<RefCountedObject>> src;
+    src.append(obj2.ptr());
+    src.append(obj3.ptr());
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(10, dest[0]->value);
+    EXPECT_EQ(20, dest[1]->value);
+    EXPECT_EQ(30, dest[2]->value);
+
+    // Source elements should be null after move.
+    EXPECT_EQ(2U, src.size());
+    EXPECT_EQ(nullptr, src[0]);
+    EXPECT_EQ(nullptr, src[1]);
+}
+
+TEST(WTF_Vector, AppendVectorMoveRef)
+{
+    // Ref also has canMoveWithMemcpy=true but is not trivially destructible.
+    Vector<Ref<RefCountedObject>> dest;
+    dest.append(RefCountedObject::create(1));
+    dest.append(RefCountedObject::create(2));
+
+    Vector<Ref<RefCountedObject>> src;
+    src.append(RefCountedObject::create(3));
+    src.append(RefCountedObject::create(4));
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(4U, dest.size());
+    EXPECT_EQ(1, dest[0]->value);
+    EXPECT_EQ(2, dest[1]->value);
+    EXPECT_EQ(3, dest[2]->value);
+    EXPECT_EQ(4, dest[3]->value);
+}
+
+TEST(WTF_Vector, AppendVectorMoveRefPtrTriggersExpansion)
+{
+    // Same as above but forces capacity expansion during appendVector.
+    Vector<RefPtr<RefCountedObject>> dest;
+    dest.reserveInitialCapacity(1);
+    dest.append(RefCountedObject::create(1).ptr());
+    EXPECT_EQ(1U, dest.capacity());
+
+    Vector<RefPtr<RefCountedObject>> src;
+    src.append(RefCountedObject::create(2).ptr());
+    src.append(RefCountedObject::create(3).ptr());
+
+    dest.appendVector(WTF::move(src));
+
+    EXPECT_EQ(3U, dest.size());
+    EXPECT_EQ(1, dest[0]->value);
+    EXPECT_EQ(2, dest[1]->value);
+    EXPECT_EQ(3, dest[2]->value);
+
+    EXPECT_EQ(nullptr, src[0]);
+    EXPECT_EQ(nullptr, src[1]);
 }
 
 } // namespace TestWebKitAPI

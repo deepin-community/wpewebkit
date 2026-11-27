@@ -44,6 +44,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteImageDecoderAVFManager);
 
 RefPtr<RemoteImageDecoderAVF> RemoteImageDecoderAVFManager::createImageDecoder(FragmentedSharedBuffer& data, const String& mimeType, AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption)
 {
+    assertIsMainRunLoop();
+    ASSERT(RemoteImageDecoderAVF::canDecodeType(mimeType));
+
+    if (!WebProcess::singleton().mediaPlaybackEnabled())
+        return nullptr;
+
     auto sendResult = ensureGPUProcessConnection().connection().sendSync(Messages::RemoteImageDecoderAVFProxy::CreateDecoder(IPC::SharedBufferReference(data), mimeType), 0);
     auto [imageDecoderIdentifier] = sendResult.takeReplyOr(std::nullopt);
     if (!imageDecoderIdentifier)
@@ -57,6 +63,7 @@ RefPtr<RemoteImageDecoderAVF> RemoteImageDecoderAVFManager::createImageDecoder(F
 
 void RemoteImageDecoderAVFManager::deleteRemoteImageDecoder(const ImageDecoderIdentifier& identifier)
 {
+    assertIsMainRunLoop();
     m_remoteImageDecoders.take(identifier);
     if (auto gpuProcessConnection = m_gpuProcessConnection.get())
         gpuProcessConnection->connection().send(Messages::RemoteImageDecoderAVFProxy::DeleteDecoder(identifier), 0);
@@ -86,14 +93,14 @@ void RemoteImageDecoderAVFManager::gpuProcessConnectionDidClose(GPUProcessConnec
 
 GPUProcessConnection& RemoteImageDecoderAVFManager::ensureGPUProcessConnection()
 {
-    auto gpuProcessConnection = m_gpuProcessConnection.get();
-    if (!gpuProcessConnection) {
-        gpuProcessConnection = &WebProcess::singleton().ensureGPUProcessConnection();
-        m_gpuProcessConnection = gpuProcessConnection;
+    if (!m_gpuProcessConnection.get()) {
+        Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
+        m_gpuProcessConnection = gpuProcessConnection.get();
         gpuProcessConnection->addClient(*this);
         gpuProcessConnection->messageReceiverMap().addMessageReceiver(Messages::RemoteImageDecoderAVFManager::messageReceiverName(), *this);
     }
-    return *gpuProcessConnection;
+    ASSERT(m_gpuProcessConnection.get() == &WebProcess::singleton().ensureGPUProcessConnection());
+    return WebProcess::singleton().ensureGPUProcessConnection();
 }
 
 void RemoteImageDecoderAVFManager::setUseGPUProcess(bool useGPUProcess)
@@ -107,18 +114,20 @@ void RemoteImageDecoderAVFManager::setUseGPUProcess(bool useGPUProcess)
     ImageDecoder::installFactory({
         RemoteImageDecoderAVF::supportsMediaType,
         RemoteImageDecoderAVF::canDecodeType,
-        [this](FragmentedSharedBuffer& data, const String& mimeType, AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption) {
-            return createImageDecoder(data, mimeType, alphaOption, gammaAndColorProfileOption);
+        [weakThis = ThreadSafeWeakPtr { *this }](FragmentedSharedBuffer& data, const String& mimeType, AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption) {
+            RefPtr protectedThis = weakThis.get();
+            return protectedThis ? protectedThis->createImageDecoder(data, mimeType, alphaOption, gammaAndColorProfileOption) : nullptr;
         }
     });
 }
 
-void RemoteImageDecoderAVFManager::encodedDataStatusChanged(const ImageDecoderIdentifier& identifier, size_t frameCount, const WebCore::IntSize& size, bool hasTrack)
+void RemoteImageDecoderAVFManager::encodedDataStatusChanged(const ImageDecoderIdentifier& identifier, uint64_t frameCount, const WebCore::IntSize& size, bool hasTrack)
 {
+    assertIsMainRunLoop();
     if (!m_remoteImageDecoders.contains(identifier))
         return;
 
-    auto remoteImageDecoder = m_remoteImageDecoders.get(identifier);
+    RefPtr remoteImageDecoder = m_remoteImageDecoders.get(identifier);
     if (!remoteImageDecoder)
         return;
 

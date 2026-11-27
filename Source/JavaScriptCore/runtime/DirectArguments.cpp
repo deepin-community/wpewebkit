@@ -27,7 +27,9 @@
 #include "DirectArguments.h"
 
 #include "CodeBlock.h"
-#include "GenericArgumentsInlines.h"
+#include "GenericArgumentsImplInlines.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
@@ -35,8 +37,20 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(DirectArguments);
 
 const ClassInfo DirectArguments::s_info = { "Arguments"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DirectArguments) };
 
+uint32_t DirectArguments::length(JSGlobalObject* globalObject) const
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_mappedArguments) [[unlikely]] {
+        JSValue value = get(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, value.toUInt32(globalObject));
+    }
+    return m_length;
+}
+
 DirectArguments::DirectArguments(VM& vm, Structure* structure, unsigned length, unsigned capacity)
-    : GenericArguments(vm, structure)
+    : GenericArgumentsImpl(vm, structure)
     , m_length(length)
     , m_minCapacity(capacity)
 {
@@ -77,14 +91,14 @@ DirectArguments* DirectArguments::createByCopying(JSGlobalObject* globalObject, 
     for (unsigned i = capacity; i--;)
         result->storage()[i].set(vm, result, callFrame->getArgumentUnsafe(i));
     
-    result->setCallee(vm, jsCast<JSFunction*>(callFrame->jsCallee()));
+    result->setCallee(vm, uncheckedDowncast<JSFunction>(callFrame->jsCallee()));
     
     return result;
 }
 
 size_t DirectArguments::estimatedSize(JSCell* cell, VM& vm)
 {
-    DirectArguments* thisObject = jsCast<DirectArguments*>(cell);
+    DirectArguments* thisObject = uncheckedDowncast<DirectArguments>(cell);
     size_t mappedArgumentsSize = thisObject->m_mappedArguments ? thisObject->mappedArgumentsSize() * sizeof(bool) : 0;
     size_t modifiedArgumentsSize = thisObject->m_modifiedArgumentsDescriptor ? thisObject->m_length * sizeof(bool) : 0;
     return Base::estimatedSize(cell, vm) + mappedArgumentsSize + modifiedArgumentsSize;
@@ -95,14 +109,13 @@ void DirectArguments::visitChildrenImpl(JSCell* thisCell, Visitor& visitor)
 {
     DirectArguments* thisObject = static_cast<DirectArguments*>(thisCell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    GenericArgumentsImpl::visitChildren(thisCell, visitor); // Including Base::visitChildren.
 
     visitor.appendValues(thisObject->storage(), std::max(thisObject->m_length, thisObject->m_minCapacity));
     visitor.append(thisObject->m_callee);
 
     if (thisObject->m_mappedArguments)
         visitor.markAuxiliary(thisObject->m_mappedArguments.get());
-    GenericArguments<DirectArguments>::visitChildren(thisCell, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(DirectArguments);
@@ -124,7 +137,7 @@ void DirectArguments::overrideThings(JSGlobalObject* globalObject)
     putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     
     void* backingStore = vm.gigacageAuxiliarySpace(m_mappedArguments.kind).allocate(vm, mappedArgumentsSize(), nullptr, AllocationFailureMode::ReturnNull);
-    if (UNLIKELY(!backingStore)) {
+    if (!backingStore) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return;
     }
@@ -163,7 +176,7 @@ void DirectArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
         return;
     }
 
-    GenericArguments::copyToArguments(globalObject, firstElementDest, offset, length);
+    GenericArgumentsImpl::copyToArguments(globalObject, firstElementDest, offset, length);
 }
 
 unsigned DirectArguments::mappedArgumentsSize()
@@ -177,11 +190,11 @@ unsigned DirectArguments::mappedArgumentsSize()
 bool DirectArguments::isIteratorProtocolFastAndNonObservable()
 {
     Structure* structure = this->structure();
-    JSGlobalObject* globalObject = structure->globalObject();
+    JSGlobalObject* globalObject = structure->realm();
     if (!globalObject->isArgumentsPrototypeIteratorProtocolFastAndNonObservable())
         return false;
 
-    if (UNLIKELY(m_mappedArguments))
+    if (m_mappedArguments) [[unlikely]]
         return false;
 
     if (structure->didTransition())
@@ -195,19 +208,19 @@ JSArray* DirectArguments::fastSlice(JSGlobalObject* globalObject, DirectArgument
     if (count >= MIN_SPARSE_ARRAY_INDEX)
         return nullptr;
 
-    if (UNLIKELY(arguments->m_mappedArguments))
+    if (arguments->m_mappedArguments) [[unlikely]]
         return nullptr;
 
     if (startIndex + count > arguments->m_length)
         return nullptr;
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-    if (UNLIKELY(hasAnyArrayStorage(resultStructure->indexingType())))
+    if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]]
         return nullptr;
 
     ObjectInitializationScope scope(globalObject->vm());
     JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(scope, resultStructure, static_cast<uint32_t>(count));
-    if (UNLIKELY(!resultArray))
+    if (!resultArray) [[unlikely]]
         return nullptr;
 
     auto& resultButterfly = *resultArray->butterfly();
@@ -219,3 +232,4 @@ JSArray* DirectArguments::fastSlice(JSGlobalObject* globalObject, DirectArgument
 
 } // namespace JSC
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

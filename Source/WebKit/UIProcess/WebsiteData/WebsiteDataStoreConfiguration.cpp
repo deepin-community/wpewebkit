@@ -26,11 +26,21 @@
 #include "config.h"
 #include "WebsiteDataStoreConfiguration.h"
 
+#include "TimeBasedEvictionMode.h"
 #include "UnifiedOriginStorageLevel.h"
 #include "WebPushDaemonConnectionConfiguration.h"
 #include "WebsiteDataStore.h"
 
 namespace WebKit {
+
+TimeBasedEvictionMode WebsiteDataStoreConfiguration::defaultTimeBasedEvictionMode()
+{
+#if ENABLE(TIME_BASED_EVICTION_SERVICE_WORKER_ONLY)
+    return TimeBasedEvictionMode::ServiceWorkerRegistrationsOnly;
+#else
+    return TimeBasedEvictionMode::AllTypes;
+#endif
+}
 
 WebsiteDataStoreConfiguration::WebsiteDataStoreConfiguration(IsPersistent isPersistent, ShouldInitializePaths shouldInitializePaths)
     : m_isPersistent(isPersistent)
@@ -94,14 +104,10 @@ WebsiteDataStoreConfiguration::WebsiteDataStoreConfiguration(const String& baseC
 
 void WebsiteDataStoreConfiguration::initializePaths()
 {
-    setApplicationCacheDirectory(WebsiteDataStore::defaultApplicationCacheDirectory(m_baseCacheDirectory));
     setCacheStorageDirectory(WebsiteDataStore::defaultCacheStorageDirectory(m_baseCacheDirectory));
     setNetworkCacheDirectory(WebsiteDataStore::defaultNetworkCacheDirectory(m_baseCacheDirectory));
     setMediaCacheDirectory(WebsiteDataStore::defaultMediaCacheDirectory(m_baseCacheDirectory));
     setHSTSStorageDirectory(WebsiteDataStore::defaultHSTSStorageDirectory(m_baseCacheDirectory));
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-    setModelElementCacheDirectory(WebsiteDataStore::defaultModelElementCacheDirectory());
-#endif
 
     setAlternativeServicesDirectory(WebsiteDataStore::defaultAlternativeServicesDirectory(m_baseDataDirectory));
     setIndexedDBDatabaseDirectory(WebsiteDataStore::defaultIndexedDBDatabaseDirectory(m_baseDataDirectory));
@@ -111,11 +117,19 @@ void WebsiteDataStoreConfiguration::initializePaths()
     setMediaKeysStorageDirectory(WebsiteDataStore::defaultMediaKeysStorageDirectory(m_baseDataDirectory));
     setResourceLoadStatisticsDirectory(WebsiteDataStore::defaultResourceLoadStatisticsDirectory(m_baseDataDirectory));
     setDeviceIdHashSaltsStorageDirectory(WebsiteDataStore::defaultDeviceIdHashSaltsStorageDirectory(m_baseDataDirectory));
+#if ENABLE(ENCRYPTED_MEDIA)
+    setMediaKeysHashSaltsStorageDirectory(WebsiteDataStore::defaultMediaKeysHashSaltsStorageDirectory(m_baseDataDirectory));
+#endif
     setJavaScriptConfigurationDirectory(WebsiteDataStore::defaultJavaScriptConfigurationDirectory(m_baseDataDirectory));
     setGeneralStorageDirectory(WebsiteDataStore::defaultGeneralStorageDirectory(m_baseDataDirectory));
 #if PLATFORM(COCOA)
     setCookieStorageFile(WebsiteDataStore::defaultCookieStorageFile(m_baseDataDirectory));
     setSearchFieldHistoryDirectory(WebsiteDataStore::defaultSearchFieldHistoryDirectory(m_baseDataDirectory));
+    setEnhancedSecurityDirectory(WebsiteDataStore::defaultEnhancedSecurityDirectory(m_baseDataDirectory));
+#endif
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    setResourceMonitorThrottlerDirectory(WebsiteDataStore::defaultResourceMonitorThrottlerDirectory(m_baseDataDirectory));
 #endif
 }
 
@@ -169,6 +183,16 @@ Ref<WebsiteDataStoreConfiguration> WebsiteDataStoreConfiguration::copy() const
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     copy->m_isDeclarativeWebPushEnabled = this->m_isDeclarativeWebPushEnabled;
 #endif
+#if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
+    copy->m_webContentRestrictionsConfigurationFile = this->m_webContentRestrictionsConfigurationFile;
+#endif
+    copy->m_additionalDomainsWithUserInteractionForTesting = this->m_additionalDomainsWithUserInteractionForTesting;
+    copy->m_timeBasedEvictionMode = this->m_timeBasedEvictionMode;
+    copy->m_timeBasedEvictionThreshold = this->m_timeBasedEvictionThreshold;
+    copy->m_lastModificationTimeUpdateIntervalOverride = this->m_lastModificationTimeUpdateIntervalOverride;
+    copy->m_timeBasedEvictionIntervalOverride = this->m_timeBasedEvictionIntervalOverride;
+    copy->m_mockPushSubscriptionOriginsForTesting = this->m_mockPushSubscriptionOriginsForTesting;
+    copy->m_defaultTrackingPreventionEnabledOverride = this->m_defaultTrackingPreventionEnabledOverride;
 
     return copy;
 }
@@ -181,12 +205,13 @@ WebPushD::WebPushDaemonConnectionConfiguration WebsiteDataStoreConfiguration::we
 WebsiteDataStoreConfiguration::Directories WebsiteDataStoreConfiguration::Directories::isolatedCopy() const &
 {
     return {
-        crossThreadCopy(applicationCacheFlatFileSubdirectoryName),
-        crossThreadCopy(applicationCacheDirectory),
         crossThreadCopy(alternativeServicesDirectory),
         crossThreadCopy(cacheStorageDirectory),
         crossThreadCopy(cookieStorageFile),
         crossThreadCopy(deviceIdHashSaltsStorageDirectory),
+#if ENABLE(ENCRYPTED_MEDIA)
+        crossThreadCopy(mediaKeysHashSaltsStorageDirectory),
+#endif
         crossThreadCopy(generalStorageDirectory),
         crossThreadCopy(hstsStorageDirectory),
         crossThreadCopy(indexedDBDatabaseDirectory),
@@ -199,36 +224,39 @@ WebsiteDataStoreConfiguration::Directories WebsiteDataStoreConfiguration::Direct
         crossThreadCopy(searchFieldHistoryDirectory),
         crossThreadCopy(serviceWorkerRegistrationDirectory),
         crossThreadCopy(webSQLDatabaseDirectory),
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-        crossThreadCopy(modelElementCacheDirectory),
+#if ENABLE(CONTENT_EXTENSIONS)
+        crossThreadCopy(resourceMonitorThrottlerDirectory),
 #endif
+        crossThreadCopy(enhancedSecurityDirectory),
     };
 }
 
 WebsiteDataStoreConfiguration::Directories WebsiteDataStoreConfiguration::Directories::isolatedCopy() &&
 {
     return {
-        crossThreadCopy(WTFMove(applicationCacheFlatFileSubdirectoryName)),
-        crossThreadCopy(WTFMove(applicationCacheDirectory)),
-        crossThreadCopy(WTFMove(alternativeServicesDirectory)),
-        crossThreadCopy(WTFMove(cacheStorageDirectory)),
-        crossThreadCopy(WTFMove(cookieStorageFile)),
-        crossThreadCopy(WTFMove(deviceIdHashSaltsStorageDirectory)),
-        crossThreadCopy(WTFMove(generalStorageDirectory)),
-        crossThreadCopy(WTFMove(hstsStorageDirectory)),
-        crossThreadCopy(WTFMove(indexedDBDatabaseDirectory)),
-        crossThreadCopy(WTFMove(javaScriptConfigurationDirectory)),
-        crossThreadCopy(WTFMove(localStorageDirectory)),
-        crossThreadCopy(WTFMove(mediaCacheDirectory)),
-        crossThreadCopy(WTFMove(mediaKeysStorageDirectory)),
-        crossThreadCopy(WTFMove(networkCacheDirectory)),
-        crossThreadCopy(WTFMove(resourceLoadStatisticsDirectory)),
-        crossThreadCopy(WTFMove(searchFieldHistoryDirectory)),
-        crossThreadCopy(WTFMove(serviceWorkerRegistrationDirectory)),
-        crossThreadCopy(WTFMove(webSQLDatabaseDirectory)),
-#if ENABLE(ARKIT_INLINE_PREVIEW)
-        crossThreadCopy(WTFMove(modelElementCacheDirectory)),
+        crossThreadCopy(WTF::move(alternativeServicesDirectory)),
+        crossThreadCopy(WTF::move(cacheStorageDirectory)),
+        crossThreadCopy(WTF::move(cookieStorageFile)),
+        crossThreadCopy(WTF::move(deviceIdHashSaltsStorageDirectory)),
+#if ENABLE(ENCRYPTED_MEDIA)
+        crossThreadCopy(WTF::move(mediaKeysHashSaltsStorageDirectory)),
 #endif
+        crossThreadCopy(WTF::move(generalStorageDirectory)),
+        crossThreadCopy(WTF::move(hstsStorageDirectory)),
+        crossThreadCopy(WTF::move(indexedDBDatabaseDirectory)),
+        crossThreadCopy(WTF::move(javaScriptConfigurationDirectory)),
+        crossThreadCopy(WTF::move(localStorageDirectory)),
+        crossThreadCopy(WTF::move(mediaCacheDirectory)),
+        crossThreadCopy(WTF::move(mediaKeysStorageDirectory)),
+        crossThreadCopy(WTF::move(networkCacheDirectory)),
+        crossThreadCopy(WTF::move(resourceLoadStatisticsDirectory)),
+        crossThreadCopy(WTF::move(searchFieldHistoryDirectory)),
+        crossThreadCopy(WTF::move(serviceWorkerRegistrationDirectory)),
+        crossThreadCopy(WTF::move(webSQLDatabaseDirectory)),
+#if ENABLE(CONTENT_EXTENSIONS)
+        crossThreadCopy(WTF::move(resourceMonitorThrottlerDirectory)),
+#endif
+        crossThreadCopy(WTF::move(enhancedSecurityDirectory)),
     };
 }
 

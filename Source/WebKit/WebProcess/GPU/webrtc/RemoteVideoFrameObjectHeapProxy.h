@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,6 +32,7 @@
 
 #if PLATFORM(COCOA)
 #include "RemoteVideoFrameObjectHeapProxyProcessor.h"
+#include <WebCore/NativeImage.h>
 #endif
 
 namespace WebKit {
@@ -42,15 +43,14 @@ class GPUProcessConnection;
 class RemoteVideoFrameProxy;
 #endif
 
-// Wrapper around RemoteVideoFrameObjectHeapProxyProcessor that will always be destroeyd on main thread.
+// Wrapper around RemoteVideoFrameObjectHeapProxyProcessor that will always be destroyed on main thread.
 class RemoteVideoFrameObjectHeapProxy : public ThreadSafeRefCounted<RemoteVideoFrameObjectHeapProxy, WTF::DestructionThread::MainRunLoop> {
 public:
     static Ref<RemoteVideoFrameObjectHeapProxy> create(GPUProcessConnection& connection) { return adoptRef(*new RemoteVideoFrameObjectHeapProxy(connection)); }
-    ~RemoteVideoFrameObjectHeapProxy() = default;
 
 #if PLATFORM(COCOA)
-    void getVideoFrameBuffer(const RemoteVideoFrameProxy& proxy, bool canUseIOSurface, RemoteVideoFrameObjectHeapProxyProcessor::Callback&& callback) { m_processor->getVideoFrameBuffer(proxy, canUseIOSurface, WTFMove(callback)); }
-    RefPtr<WebCore::NativeImage> getNativeImage(const WebCore::VideoFrame& frame)  { return m_processor->getNativeImage(frame); }
+    void getVideoFrameBuffer(const RemoteVideoFrameProxy& proxy, bool canUseIOSurface, RemoteVideoFrameObjectHeapProxyProcessor::Callback&& callback) { m_processor->getVideoFrameBuffer(proxy, canUseIOSurface, WTF::move(callback)); }
+    RefPtr<WebCore::NativeImage> getNativeImage(const WebCore::VideoFrame& frame) { return m_processor->getNativeImage(frame); }
 #endif
 
 private:
@@ -61,7 +61,7 @@ private:
     {
     }
 #if PLATFORM(COCOA)
-    Ref<RemoteVideoFrameObjectHeapProxyProcessor> m_processor;
+    const Ref<RemoteVideoFrameObjectHeapProxyProcessor> m_processor;
 #endif
 };
 

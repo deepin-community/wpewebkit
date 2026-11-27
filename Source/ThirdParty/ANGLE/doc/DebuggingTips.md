@@ -102,6 +102,25 @@ index 61fac4000..1f43f4f64 100755
 * Start your lldbclient.py from `/your_path_to_chromium_src/out/Debug` folder. This adds the ANGLE source-file paths to what is visible to LLDB, which allows LLDB to show ANGLE's source files. Refer to https://source.android.com/devices/tech/debug/gdb for how to attach the app for debugging.
 * If you are debugging angle_perftests, you can use `--shard-timeout 100000000` to disable the timeout so that the test won't get killed while you are debugging. If the test runs too fast that you don't have time to attach, use `--delay-test-start=60` to give you extra time to attach.
 
+## Forcing GL vendor and renderer strings
+
+Some applications don't recognize ANGLE and lower their settings, refuse to start or even crash.
+In those scenarios, you can force them to be values matching other devices.
+
+On desktop:
+```
+ANGLE_GL_VENDOR="foo"
+ANGLE_GL_RENDERER="bar"
+ANGLE_GL_VERSION="blee"
+```
+
+On Android:
+```
+adb shell setprop debug.angle.gl_vendor "foo"
+adb shell setprop debug.angle.gl_renderer "bar"
+adb shell setprop debug.angle.gl_version "blee"
+```
+
 ## Enabling Debug-Utils Markers
 
 ANGLE can emit debug-utils markers for every GLES API command that are visible to both Android GPU
@@ -161,6 +180,21 @@ To show only Vulkan api calls without verbose parameter details set the environm
 `VK_APIDUMP_DETAILED` to `false`
 
 ### Vulkan Call Logging on Android
+
+On Android, we need to tell platform where to find the libVkLayer_lunarg_api_dump.so:
+
+1. If the libVkLayer_lunarg_api_dump.so is packaged inside the apk itself. For example: the test apk `angle_end2end_tests-debug.apk` itself contains the `lib/arm64-v8a/libVkLayer_lunarg_api_dump.so`, then no extra action is needed.
+
+2. If we are [sideloading ANGLE debuggable apk](DevSetupAndroid.md#selecting-angle-as-the-opengl-es-driver) for another app, for example, `com.example.app`, the app `com.example.app` itself does not contain `libVkLayer_lunarg_api_dump.so` inside its' `lib/` directory, then we need to run the following commands to tell Android platform to find `libVkLayer_lunarg_api_dump.so` in the ANGLE debuggable apk `org.chromium.angle`:
+
+```
+adb shell settings put global enable_gpu_debug_layers 1
+adb shell settings put global gpu_debug_app com.example.app
+adb shell settings put global gpu_debug_layers VK_LAYER_LUNARG_api_dump
+adb shell settings put global gpu_debug_layer_app org.chromium.angle
+```
+
+For more details, please refer to [Vulkan validation layers on Android](https://developer.android.com/ndk/guides/graphics/validation-layer#enable-debugging)
 
 Activate Vulkan call logging on Android by setting this Android debug property  that is
 automatically deleted at the next reboot:

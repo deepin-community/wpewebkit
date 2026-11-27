@@ -29,7 +29,7 @@
 
 #import "InjectedBundleTest.h"
 
-#import "WebCoreTestSupport.h"
+#import <WebCoreTestSupport/WebCoreTestSupport.h>
 #import <WebKit/WKBundle.h>
 #import <WebKit/WKBundleFrame.h>
 #import <WebKit/WKBundlePage.h>
@@ -52,7 +52,7 @@ private:
     virtual void didCreatePage(WKBundleRef, WKBundlePageRef page)
     {
         WKBundlePageLoaderClientV0 loaderClient;
-        memset(&loaderClient, 0, sizeof(loaderClient));
+        zeroBytes(loaderClient);
 
         loaderClient.base.version = 0;
         loaderClient.base.clientInfo = this;

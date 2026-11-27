@@ -43,7 +43,7 @@ TEST(WTF, StringImplCreationFromLiteral)
 
     // Constructor taking the size explicitly.
     const char* programmaticStringData = "Explicit Size Literal";
-    auto programmaticString = StringImpl::createWithoutCopying(span(programmaticStringData));
+    auto programmaticString = StringImpl::createWithoutCopying(unsafeSpan(programmaticStringData));
     ASSERT_EQ(strlen(programmaticStringData), programmaticString->length());
     ASSERT_TRUE(equal(programmaticString.get(), StringView::fromLatin1(programmaticStringData)));
     ASSERT_EQ(programmaticStringData, reinterpret_cast<const char*>(programmaticString->span8().data()));
@@ -88,17 +88,17 @@ TEST(WTF, StringImplReplaceWithLiteral)
     testStringImpl = testString.impl()->replace('2', "NotFound"_span);
     ASSERT_TRUE(equal(testStringImpl.get(), String::fromUTF8("résumé").impl()));
 
-    testStringImpl = testString.impl()->replace(UChar(0x00E9 /*U+00E9 is 'é'*/), "e"_span);
+    testStringImpl = testString.impl()->replace(char16_t(0x00E9 /*U+00E9 is 'é'*/), "e"_span);
     ASSERT_TRUE(equal(testStringImpl.get(), "resume"_s));
 
     testString = String::fromUTF8("résumé");
     ASSERT_FALSE(testString.impl()->is8Bit());
-    testStringImpl = testString.impl()->replace(UChar(0x00E9 /*U+00E9 is 'é'*/), ""_span);
+    testStringImpl = testString.impl()->replace(char16_t(0x00E9 /*U+00E9 is 'é'*/), ""_span);
     ASSERT_TRUE(equal(testStringImpl.get(), "rsum"_s));
 
     testString = String::fromUTF8("résumé");
     ASSERT_FALSE(testString.impl()->is8Bit());
-    testStringImpl = testString.impl()->replace(UChar(0x00E9 /*U+00E9 is 'é'*/), "555"_span);
+    testStringImpl = testString.impl()->replace(char16_t(0x00E9 /*U+00E9 is 'é'*/), "555"_span);
     ASSERT_TRUE(equal(testStringImpl.get(), "r555sum555"_s));
 }
 
@@ -709,7 +709,7 @@ static void doStaticStringImplTests(StaticStringImplTestSet testSet, String& hel
     // We're relying on an ASSERT in setHash() to detect that the hash hasn't
     // already been set. If the hash has already been set, the hash() method
     // will not call setHash().
-    ASSERT_EQ(hello.hash(), 0xd17551u);
+    ASSERT_EQ(hello.hash(), 14060208U);
 }
 
 TEST(WTF, StaticStringImpl)
@@ -753,12 +753,12 @@ TEST(WTF, StaticPrivateSymbolImpl)
 
 TEST(WTF, ExternalStringImplCreate8bit)
 {
-    constexpr LChar buffer[] = "hello";
+    constexpr char buffer[] = "hello";
     constexpr size_t bufferStringLength = sizeof(buffer) - 1;
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create({ buffer, bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create({ byteCast<Latin1Character>(&buffer[0]), bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
             freeFunctionCalled = true;
         });
 
@@ -767,7 +767,7 @@ TEST(WTF, ExternalStringImplCreate8bit)
         ASSERT_FALSE(external->isSymbol());
         ASSERT_FALSE(external->isAtom());
         ASSERT_EQ(external->length(), bufferStringLength);
-        ASSERT_EQ(external->span8().data(), buffer);
+        ASSERT_EQ(byteCast<char>(external->span8().data()), buffer);
     }
 
     ASSERT_TRUE(freeFunctionCalled);
@@ -775,8 +775,8 @@ TEST(WTF, ExternalStringImplCreate8bit)
 
 TEST(WTF, ExternalStringImplCreate16bit)
 {
-    constexpr UChar buffer[] = { L'h', L'e', L'l', L'l', L'o', L'\0' };
-    constexpr size_t bufferStringLength = (sizeof(buffer) - 1) / sizeof(UChar);
+    constexpr char16_t buffer[] = { L'h', L'e', L'l', L'l', L'o', L'\0' };
+    constexpr size_t bufferStringLength = (sizeof(buffer) - 1) / sizeof(char16_t);
     bool freeFunctionCalled = false;
 
     {
@@ -804,12 +804,12 @@ TEST(WTF, StringImplNotExternal)
 
 TEST(WTF, ExternalStringAtom)
 {
-    constexpr LChar buffer[] = "hello";
+    constexpr char buffer[] = "hello";
     constexpr size_t bufferStringLength = sizeof(buffer) - 1;
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create({ buffer, bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create(byteCast<Latin1Character>(std::span { buffer, bufferStringLength }), [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
             freeFunctionCalled = true;
         });    
 
@@ -818,7 +818,7 @@ TEST(WTF, ExternalStringAtom)
         ASSERT_FALSE(external->isSymbol());
         ASSERT_TRUE(external->is8Bit());
         ASSERT_EQ(external->length(), bufferStringLength);
-        ASSERT_EQ(external->span8().data(), buffer);
+        ASSERT_EQ(byteCast<char>(external->span8().data()), buffer);
 
         auto result = AtomStringImpl::lookUp(external.ptr());
         ASSERT_FALSE(result);
@@ -841,12 +841,11 @@ TEST(WTF, ExternalStringAtom)
 
 TEST(WTF, ExternalStringToSymbol)
 {
-    constexpr LChar buffer[] = "hello";
-    constexpr size_t bufferStringLength = sizeof(buffer) - 1;
+    static constexpr ASCIILiteral buffer = "hello"_s;
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create({ buffer, bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create(buffer.span8(), [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
             freeFunctionCalled = true;
         });
 
@@ -861,10 +860,81 @@ TEST(WTF, ExternalStringToSymbol)
         ASSERT_FALSE(symbol->isPrivate());
         ASSERT_FALSE(symbol->isNullSymbol());
         ASSERT_EQ(external->length(), symbol->length());
-        ASSERT_TRUE(equal(symbol.ptr(), buffer));
+        ASSERT_TRUE(equal(symbol.ptr(), buffer.span8()));
     }
 
     ASSERT_TRUE(freeFunctionCalled);
+}
+
+TEST(WTF, CreateSubstringSharingImpl)
+{
+    auto base = String::fromUTF8("日本語 Hello World This is a bit longer text than tested");
+    ASSERT_FALSE(base.impl()->is8Bit());
+    auto small8Bit = StringImpl::createSubstringSharingImpl(*base.impl(), 10, 2);
+    ASSERT_TRUE(equal(small8Bit.ptr(), "Wo"));
+    ASSERT_TRUE(small8Bit->is8Bit());
+    auto small16Bit = StringImpl::createSubstringSharingImpl(*base.impl(), 0, 3);
+    ASSERT_TRUE(!small16Bit->is8Bit());
+    ASSERT_TRUE(equal(small16Bit.ptr(), String::fromUTF8("日本語").impl()));
+}
+
+TEST(WTF, StringImplCodePointAtASCII)
+{
+    auto string = StringImpl::create("Hello"_s);
+    ASSERT_EQ(string->codePointAt(0), static_cast<char32_t>('H'));
+    ASSERT_EQ(string->codePointAt(4), static_cast<char32_t>('o'));
+}
+
+TEST(WTF, StringImplCodePointAtBMP)
+{
+    // U+00E9 (LATIN SMALL LETTER E WITH ACUTE) - single 16-bit code unit.
+    auto string = String::fromUTF8("caf\xC3\xA9");
+    ASSERT_FALSE(string.impl()->is8Bit());
+    ASSERT_EQ(string.impl()->codePointAt(0), static_cast<char32_t>('c'));
+    ASSERT_EQ(string.impl()->codePointAt(3), 0x00E9u);
+}
+
+TEST(WTF, StringImplCodePointAtSupplementary)
+{
+    // U+1F600 (GRINNING FACE) is encoded as a surrogate pair: D83D DE00.
+    auto string = String::fromUTF8("A\xF0\x9F\x98\x80Z");
+    ASSERT_FALSE(string.impl()->is8Bit());
+    ASSERT_EQ(string.impl()->length(), 4u); // 'A' + surrogate pair + 'Z'
+    ASSERT_EQ(string.impl()->codePointAt(0), static_cast<char32_t>('A'));
+    ASSERT_EQ(string.impl()->codePointAt(1), 0x1F600u);
+    ASSERT_EQ(string.impl()->codePointAt(3), static_cast<char32_t>('Z'));
+}
+
+TEST(WTF, StringImplCodePointAtLoneSurrogate)
+{
+    // Construct a string with lone surrogates directly via 16-bit code units.
+    std::array<char16_t, 5> data { 0xD800, u'A', 0xDC00, u'B', 0xD83D };
+    auto string = StringImpl::create(std::span<const char16_t> { data });
+    ASSERT_EQ(string->length(), 5u);
+
+    // Lone lead surrogate at index 0 (not followed by a trail).
+    ASSERT_EQ(string->codePointAt(0), 0xD800u);
+
+    // Regular character.
+    ASSERT_EQ(string->codePointAt(1), static_cast<char32_t>('A'));
+
+    // Lone trail surrogate at index 2 (not preceded by a lead in terms of this API).
+    ASSERT_EQ(string->codePointAt(2), 0xDC00u);
+
+    // Regular character.
+    ASSERT_EQ(string->codePointAt(3), static_cast<char32_t>('B'));
+
+    // Lone lead surrogate at end of string.
+    ASSERT_EQ(string->codePointAt(4), 0xD83Du);
+}
+
+TEST(WTF, StringImplCodePointAtNUL)
+{
+    // Ensure actual NUL character is distinguishable from lone surrogates.
+    std::array<char16_t, 2> data { 0x0000, 0xD800 };
+    auto string = StringImpl::create(std::span<const char16_t> { data });
+    ASSERT_EQ(string->codePointAt(0), 0u);
+    ASSERT_EQ(string->codePointAt(1), 0xD800u);
 }
 
 } // namespace TestWebKitAPI

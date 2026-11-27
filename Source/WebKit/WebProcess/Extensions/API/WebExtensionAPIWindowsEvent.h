@@ -45,12 +45,14 @@ public:
     using FilterAndCallbackPair = std::pair<RefPtr<WebExtensionCallbackHandler>, OptionSet<WindowTypeFilter>>;
     using ListenerVector = Vector<FilterAndCallbackPair>;
 
+#if PLATFORM(COCOA)
     void invokeListenersWithArgument(id argument, OptionSet<WindowTypeFilter>);
+#endif
 
-    const ListenerVector& listeners() const { return m_listeners; }
+    const ListenerVector& listeners() const LIFETIME_BOUND { return m_listeners; }
 
-    void addListener(WebPage&, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, NSString **outExceptionString);
-    void removeListener(WebPage&, RefPtr<WebExtensionCallbackHandler>);
+    void addListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>, NSDictionary *filter, NSString **outExceptionString);
+    void removeListener(WebCore::FrameIdentifier, RefPtr<WebExtensionCallbackHandler>);
     bool hasListener(RefPtr<WebExtensionCallbackHandler>);
 
     void removeAllListeners();
@@ -68,11 +70,13 @@ private:
         setPropertyPath(toAPIString(type), &parentObject);
     }
 
-    WebPageProxyIdentifier m_pageProxyIdentifier;
+    Markable<WebCore::FrameIdentifier> m_frameIdentifier;
     WebExtensionEventListenerType m_type;
     ListenerVector m_listeners;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_WEB_EXTENSION(WebExtensionAPIWindowsEvent, windowsEvent);
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

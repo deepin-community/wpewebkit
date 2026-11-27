@@ -31,6 +31,10 @@
 #include "SandboxExtension.h"
 #include <wtf/ProcessID.h>
 
+#if USE(GBM)
+#include <WebCore/DRMDevice.h>
+#endif
+
 namespace IPC {
 class Decoder;
 class Encoder;
@@ -47,19 +51,11 @@ struct GPUProcessCreationParameters {
     SandboxExtension::Handle launchServicesExtensionHandle;
 #endif
 #endif
-#if HAVE(AVCONTENTKEYSPECIFIER)
-    bool sampleBufferContentKeySessionSupportEnabled { false };
-#endif
-    ProcessID parentPID;
 
 #if USE(SANDBOX_EXTENSIONS_FOR_CACHE_AND_TEMP_DIRECTORY_ACCESS)
     SandboxExtension::Handle containerCachesDirectoryExtensionHandle;
     SandboxExtension::Handle containerTemporaryDirectoryExtensionHandle;
     String containerCachesDirectory;
-#endif
-#if PLATFORM(IOS_FAMILY)
-    Vector<SandboxExtension::Handle> compilerServiceExtensionHandles;
-    Vector<SandboxExtension::Handle> dynamicIOKitExtensionHandles;
 #endif
     std::optional<SandboxExtension::Handle> mobileGestaltExtensionHandle;
 #if PLATFORM(COCOA) && ENABLE(REMOTE_INSPECTOR)
@@ -69,9 +65,20 @@ struct GPUProcessCreationParameters {
     String applicationVisibleName;
 
 #if USE(GBM)
-    String renderDeviceFile;
+    WebCore::DRMDevice drmDevice;
 #endif
+
     Vector<String> overrideLanguages;
+#if PLATFORM(COCOA)
+    bool enableMetalDebugDeviceForTesting { false };
+    bool enableMetalShaderValidationForTesting { false };
+#if ENABLE(VP9)
+    std::optional<bool> hasVP9HardwareDecoder;
+#endif
+#if ENABLE(AV1)
+    std::optional<bool> hasAV1HardwareDecoder;
+#endif
+#endif
 };
 
 } // namespace WebKit

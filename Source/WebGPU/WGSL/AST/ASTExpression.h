@@ -34,9 +34,16 @@ namespace WGSL {
 class BoundsCheckVisitor;
 class ConstantRewriter;
 class EntryPointRewriter;
+class PointerRewriter;
 class RewriteGlobalVariables;
 class TypeChecker;
 struct Type;
+
+enum class Evaluation : uint8_t {
+    Constant = 1,
+    Override = 2,
+    Runtime = 3,
+};
 
 namespace AST {
 
@@ -45,6 +52,7 @@ class Expression : public Node {
     friend BoundsCheckVisitor;
     friend ConstantRewriter;
     friend EntryPointRewriter;
+    friend PointerRewriter;
     friend RewriteGlobalVariables;
     friend TypeChecker;
 
@@ -57,8 +65,11 @@ public:
 
     const Type* inferredType() const { return m_inferredType; }
 
-    const std::optional<ConstantValue>& constantValue() const { return m_constantValue; }
+    const std::optional<ConstantValue>& constantValue() const LIFETIME_BOUND { return m_constantValue; }
     void setConstantValue(ConstantValue value) { m_constantValue = value; }
+
+    const std::optional<Evaluation>& maybeEvaluation() const LIFETIME_BOUND { return m_evaluation; }
+    Evaluation evaluation() const { return *m_evaluation; }
 
 protected:
     Expression(SourceSpan span)
@@ -68,6 +79,7 @@ protected:
     const Type* m_inferredType { nullptr };
 
 private:
+    std::optional<Evaluation> m_evaluation { std::nullopt };
     std::optional<ConstantValue> m_constantValue { std::nullopt };
 };
 
@@ -80,7 +92,6 @@ static bool isType(const WGSL::AST::Node& node)
     switch (node.kind()) {
         // Expressions
     case WGSL::AST::NodeKind::BinaryExpression:
-    case WGSL::AST::NodeKind::BitcastExpression:
     case WGSL::AST::NodeKind::IndexAccessExpression:
     case WGSL::AST::NodeKind::CallExpression:
     case WGSL::AST::NodeKind::IdentifierExpression:

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, Google Inc. All rights reserved.
+ * Copyright (c) 2009 Google Inc. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -44,7 +44,7 @@ namespace WebCore {
 class SVGElement;
 
 class LegacyRenderSVGModelObject : public RenderElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyRenderSVGModelObject);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGModelObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGModelObject);
 public:
     virtual ~LegacyRenderSVGModelObject();
@@ -53,30 +53,38 @@ public:
     RepaintRects rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds) const override;
 
     std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, VisibleRectContext) const final;
+    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, VisibleRectContext) const override;
     LayoutRect outlineBoundsForRepaint(const RenderLayerModelObject* repaintContainer, const RenderGeometryMap* = nullptr) const final;
 
     void boundingRects(Vector<LayoutRect>&, const LayoutPoint& accumulatedOffset) const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
 
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const final;
-    const RenderObject* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const final;
-    void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
+    const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const final;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     static bool checkIntersection(RenderElement*, const FloatRect&);
     static bool checkEnclosure(RenderElement*, const FloatRect&);
 
-    SVGElement& element() const { return downcast<SVGElement>(nodeForNonAnonymous()); }
-    Ref<SVGElement> protectedElement() const;
+    inline SVGElement& element() const; // Defined in LegacyRenderSVGModelObjectInlines.h
+
+    virtual void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = nullptr) const;
+
+    bool hasScalingAncestor() const { return m_hasScalingAncestor; }
+    void setHasScalingAncestor(bool value) { m_hasScalingAncestor = value; }
 
 protected:
-    LegacyRenderSVGModelObject(Type, SVGElement&, RenderStyle&&, OptionSet<SVGModelObjectFlag> = { });
+    LegacyRenderSVGModelObject(Type, SVGElement&, Style::ComputedStyle&&, OptionSet<SVGModelObjectFlag> = { });
 
     void willBeDestroyed() override;
+    void insertedIntoTree() override;
 
 private:
     // This method should never be called, SVG uses a different nodeAtPoint method
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
     void absoluteFocusRingQuads(Vector<FloatQuad>&) final;
+
+    bool m_hasScalingAncestor : 1 { false };
 };
 
 } // namespace WebCore

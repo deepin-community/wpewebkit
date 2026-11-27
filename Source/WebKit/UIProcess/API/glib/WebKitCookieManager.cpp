@@ -48,7 +48,7 @@ using namespace WebKit;
  * You can get it from a #WebKitWebsiteDataManager with
  * webkit_website_data_manager_get_cookie_manager(), and use it to set where to
  * store cookies with webkit_cookie_manager_set_persistent_storage(),
- * or to set the acceptance policy, with webkit_cookie_manager_get_accept_policy().
+ * or to set the acceptance policy, with webkit_cookie_manager_set_accept_policy().
  */
 
 enum {
@@ -60,9 +60,15 @@ enum {
 class CookieStoreObserver : public API::HTTPCookieStoreObserver {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(CookieStoreObserver);
 public:
-    CookieStoreObserver(Function<void()>&& callback)
-        : m_callback(WTFMove(callback)) { }
+    static RefPtr<CookieStoreObserver> create(Function<void()>&& callback)
+    {
+        return adoptRef(new CookieStoreObserver(WTF::move(callback)));
+    }
+
 private:
+    CookieStoreObserver(Function<void()>&& callback)
+        : m_callback(WTF::move(callback)) { }
+
     void cookiesDidChange(API::HTTPCookieStore&) final
     {
         m_callback();
@@ -91,10 +97,10 @@ struct _WebKitCookieManagerPrivate {
 
     WebKitWebsiteDataManager* dataManager;
 
-    std::unique_ptr<CookieStoreObserver> m_observer;
+    RefPtr<CookieStoreObserver> m_observer;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitCookieManager, webkit_cookie_manager, G_TYPE_OBJECT, GObject)
 
@@ -162,7 +168,7 @@ WebKitCookieManager* webkitCookieManagerCreate(WebKitWebsiteDataManager* dataMan
 {
     WebKitCookieManager* manager = WEBKIT_COOKIE_MANAGER(g_object_new(WEBKIT_TYPE_COOKIE_MANAGER, nullptr));
     manager->priv->dataManager = dataManager;
-    manager->priv->m_observer = makeUnique<CookieStoreObserver>([manager] {
+    manager->priv->m_observer = CookieStoreObserver::create([manager] {
         g_signal_emit(manager, signals[CHANGED], 0);
     });
     manager->priv->cookieStore().registerObserver(*manager->priv->m_observer);
@@ -172,7 +178,7 @@ WebKitCookieManager* webkitCookieManagerCreate(WebKitWebsiteDataManager* dataMan
 /**
  * webkit_cookie_manager_set_persistent_storage:
  * @cookie_manager: a #WebKitCookieManager
- * @filename: the filename to read to/write from
+ * @filename: the filename to read from/write to
  * @storage: a #WebKitCookiePersistentStorage
  *
  * Set non-session cookies.
@@ -185,7 +191,7 @@ WebKitCookieManager* webkitCookieManagerCreate(WebKitWebsiteDataManager* dataMan
  * By default, @cookie_manager doesn't store the cookies persistently, so you need to call this
  * method to keep cookies saved across sessions.
  *
- * This method should never be called on a #WebKitCookieManager associated to an ephemeral #WebKitWebsiteDataManager.
+ * This method should never be called on a #WebKitCookieManager associated with an ephemeral #WebKitWebsiteDataManager.
  */
 void webkit_cookie_manager_set_persistent_storage(WebKitCookieManager* manager, const char* filename, WebKitCookiePersistentStorage storage)
 {
@@ -243,7 +249,7 @@ void webkit_cookie_manager_get_accept_policy(WebKitCookieManager* manager, GCanc
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
 
-    manager->priv->cookieStore().getHTTPCookieAcceptPolicy([task = WTFMove(task)](WebCore::HTTPCookieAcceptPolicy policy) {
+    manager->priv->cookieStore().getHTTPCookieAcceptPolicy([task = WTF::move(task)](WebCore::HTTPCookieAcceptPolicy policy) {
         g_task_return_int(task.get(), toWebKitCookieAcceptPolicy(policy));
     });
 }
@@ -288,7 +294,7 @@ void webkit_cookie_manager_add_cookie(WebKitCookieManager* manager, SoupCookie* 
     g_return_if_fail(cookie);
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
-    manager->priv->cookieStore().setCookies({ WebCore::Cookie(cookie) }, [task = WTFMove(task)]() {
+    manager->priv->cookieStore().setCookies({ WebCore::Cookie(cookie) }, [task = WTF::move(task)]() {
         g_task_return_boolean(task.get(), TRUE);
     });
 }
@@ -316,7 +322,7 @@ gboolean webkit_cookie_manager_add_cookie_finish(WebKitCookieManager* manager, G
 /**
  * webkit_cookie_manager_get_cookies:
  * @cookie_manager: a #WebKitCookieManager
- * @uri: the URI associated to the cookies to be retrieved
+ * @uri: the URI associated with the cookies to be retrieved
  * @cancellable: (allow-none): a #GCancellable or %NULL to ignore
  * @callback: (scope async): a #GAsyncReadyCallback to call when the request is satisfied
  * @user_data: the data to pass to callback function
@@ -337,7 +343,7 @@ void webkit_cookie_manager_get_cookies(WebKitCookieManager* manager, const gchar
     g_return_if_fail(uri);
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
-    manager->priv->cookieStore().cookiesForURL(URL { String::fromUTF8(uri) }, [task = WTFMove(task)](const Vector<WebCore::Cookie>& cookies) {
+    manager->priv->cookieStore().cookiesForURL(URL { String::fromUTF8(uri) }, [task = WTF::move(task)](const Vector<WebCore::Cookie>& cookies) {
         GList* cookiesList = nullptr;
         for (auto& cookie : cookies)
             cookiesList = g_list_prepend(cookiesList, cookie.toSoupCookie());
@@ -392,7 +398,7 @@ void webkit_cookie_manager_delete_cookie(WebKitCookieManager* manager, SoupCooki
     g_return_if_fail(cookie);
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
-    manager->priv->cookieStore().deleteCookie(WebCore::Cookie(cookie), [task = WTFMove(task)]() {
+    manager->priv->cookieStore().deleteCookie(WebCore::Cookie(cookie), [task = WTF::move(task)]() {
         g_task_return_boolean(task.get(), TRUE);
     });
 }
@@ -497,7 +503,7 @@ void webkit_cookie_manager_delete_cookies_for_domain(WebKitCookieManager* manage
 
     WebsiteDataRecord record;
     record.addCookieHostName(String::fromUTF8(domain));
-    auto* data = webkitWebsiteDataCreate(WTFMove(record));
+    auto* data = webkitWebsiteDataCreate(WTF::move(record));
     GList dataList = { data, nullptr, nullptr };
     webkit_website_data_manager_remove(manager->priv->dataManager, WEBKIT_WEBSITE_DATA_COOKIES, &dataList, nullptr, nullptr, nullptr);
     webkit_website_data_unref(data);
@@ -544,7 +550,7 @@ void webkit_cookie_manager_replace_cookies(WebKitCookieManager* manager, GList* 
         webCookies.append(WebCore::Cookie(reinterpret_cast<SoupCookie*>(it->data)));
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
-    manager->priv->cookieStore().replaceCookies(WTFMove(webCookies), [task = WTFMove(task)]() {
+    manager->priv->cookieStore().replaceCookies(WTF::move(webCookies), [task = WTF::move(task)]() {
         g_task_return_boolean(task.get(), TRUE);
     });
 }
@@ -588,7 +594,7 @@ void webkit_cookie_manager_get_all_cookies(WebKitCookieManager* manager, GCancel
     g_return_if_fail(WEBKIT_IS_COOKIE_MANAGER(manager));
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(manager, cancellable, callback, userData));
-    manager->priv->cookieStore().getAllCookies([task = WTFMove(task)](const Vector<WebCore::Cookie>& cookies) {
+    manager->priv->cookieStore().getAllCookies([task = WTF::move(task)](const Vector<WebCore::Cookie>& cookies) {
         GList* cookiesList = nullptr;
         for (auto& cookie : cookies)
             cookiesList = g_list_prepend(cookiesList, cookie.toSoupCookie());

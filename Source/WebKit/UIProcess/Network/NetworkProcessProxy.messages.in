@@ -20,7 +20,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-messages -> NetworkProcessProxy LegacyReceiver {
+[
+    DispatchedFrom=Networking,
+    DispatchedTo=UI,
+    ExceptionForEnabledBy
+]
+messages -> NetworkProcessProxy WantsDispatchMessage {
     DidReceiveAuthenticationChallenge(PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier pageID, std::optional<WebCore::SecurityOriginData> topOrigin, WebCore::AuthenticationChallenge challenge, bool negotiatedLegacyTLS, WebKit::AuthenticationChallengeIdentifier challengeID)
     NegotiatedLegacyTLS(WebKit::WebPageProxyIdentifier pageID)
     DidNegotiateModernTLS(WebKit::WebPageProxyIdentifier pageID, URL url)
@@ -28,7 +33,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
     DidBlockLoadToKnownTracker(WebKit::WebPageProxyIdentifier pageID, URL url)
 
     TestProcessIncomingSyncMessagesWhenWaitingForSyncReply(WebKit::WebPageProxyIdentifier pageID) -> (bool handled) Synchronous
-    TerminateUnresponsiveServiceWorkerProcesses(WebCore::ProcessIdentifier processIdentifier)
+    ProcessHasUnresponseServiceWorker(WebCore::ProcessIdentifier processIdentifier)
 
     # Diagnostic messages logging
     LogDiagnosticMessage(WebKit::WebPageProxyIdentifier pageID, String message, String description, enum:bool WebCore::ShouldSample shouldSample)
@@ -36,10 +41,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
     LogDiagnosticMessageWithValue(WebKit::WebPageProxyIdentifier pageID, String message, String description, double value, unsigned significantFigures, enum:bool WebCore::ShouldSample shouldSample)
 
     LogTestingEvent(PAL::SessionID sessionID, String event)
-    NotifyResourceLoadStatisticsProcessed()
-    NotifyWebsiteDataDeletionForRegistrableDomainsFinished()
-    NotifyWebsiteDataScanForRegistrableDomainsFinished()
-    RequestStorageAccessConfirm(WebKit::WebPageProxyIdentifier pageID, WebCore::FrameIdentifier frameID, WebCore::RegistrableDomain subFrameDomain, WebCore::RegistrableDomain topFrameDomain, std::optional<WebCore::OrganizationStorageAccessPromptQuirk> organizationStorageAccessPromptQuirk) -> (bool userDidGrantAccess)
+    RequestStorageAccessConfirm(WebKit::WebPageProxyIdentifier pageID, WebCore::FrameIdentifier frameID, WebCore::RegistrableDomain subFrameDomain, WebCore::RegistrableDomain topFrameDomain, struct std::optional<WebCore::OrganizationStorageAccessPromptQuirk> organizationStorageAccessPromptQuirk) -> (bool userDidGrantAccess)
     DeleteWebsiteDataInUIProcessForRegistrableDomains(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> dataTypes, OptionSet<WebKit::WebsiteDataFetchOption> fetchOptions, Vector<WebCore::RegistrableDomain> domains) -> (HashSet<WebCore::RegistrableDomain> domainsWithMatchingDataRecords)
     DidCommitCrossSiteLoadWithDataTransferFromPrevalentResource(WebKit::WebPageProxyIdentifier pageID)
     SetDomainsWithUserInteraction(HashSet<WebCore::RegistrableDomain> domains)
@@ -54,7 +56,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
     EndServiceWorkerBackgroundProcessing(WebCore::ProcessIdentifier serviceWorkerProcessIdentifier)
     RequestBackgroundFetchPermission(PAL::SessionID sessionID, struct WebCore::ClientOrigin origin) -> (bool result)
     NotifyBackgroundFetchChange(PAL::SessionID sessionID, String backgroundFetchIdentifier, enum:uint8_t WebKit::BackgroundFetchChange change)
-    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::RegistrableDomain registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID) -> (WebCore::ProcessIdentifier remoteProcessIdentifier)
+    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::Site site, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID, enum:bool WebCore::CrossOriginEmbedderPolicyValue workerCrossOriginEmbedderPolicy) -> (std::optional<WebCore::ProcessIdentifier> remoteProcessIdentifier)
     RemoteWorkerContextConnectionNoLongerNeeded(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier identifier)
     RegisterRemoteWorkerClientProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
     UnregisterRemoteWorkerClientProcess(enum:uint8_t WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
@@ -74,8 +76,8 @@ messages -> NetworkProcessProxy LegacyReceiver {
     ResourceLoadDidCompleteWithError(WebKit::WebPageProxyIdentifier pageIdentifier, struct WebKit::ResourceLoadInfo resourceLoadInfo, WebCore::ResourceResponse response, WebCore::ResourceError error)
 
     DidAllowPrivateTokenUsageByThirdPartyForTesting(PAL::SessionID sessionID, bool wasAllowed, URL resourceURL)
-    
-    TriggerBrowsingContextGroupSwitchForNavigation(WebKit::WebPageProxyIdentifier pageIdentifier, WebCore::NavigationIdentifier navigationID, enum:uint8_t WebCore::BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, WebCore::RegistrableDomain responseDomain, WebKit::NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume) -> (bool success)
+
+    ConsiderProcessSwapForNavigationResponse(WebKit::WebPageProxyIdentifier pageIdentifier, WebCore::NavigationIdentifier navigationID, enum:uint8_t WebCore::BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, enum:uint8_t WebCore::NavigationResponseProcessSwapReason reason, WebCore::Site responseSite, WebKit::NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume) -> (std::optional<WebCore::ProcessIdentifier> destinationWebProcess)
 
 #if USE(SOUP)
     DidExceedMemoryLimit()
@@ -83,6 +85,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
 
 #if ENABLE(APPLE_PAY_REMOTE_UI_USES_SCENE)
     GetWindowSceneAndBundleIdentifierForPaymentPresentation(WebKit::WebPageProxyIdentifier webPageProxyIdentifier) -> (String sceneIdentifier, String bundleIdentifier)
+    NotifyWillPresentPaymentUI(WebKit::WebPageProxyIdentifier webPageProxyIdentifier)
 #endif
 
 #if ENABLE(APPLE_PAY_REMOTE_UI)
@@ -98,12 +101,14 @@ messages -> NetworkProcessProxy LegacyReceiver {
     OpenWindowFromServiceWorker(PAL::SessionID sessionID, String urlString, WebCore::SecurityOriginData serviceWorkerOrigin) -> (std::optional<WebCore::PageIdentifier> newPage)
     NavigateServiceWorkerClient(WebCore::FrameIdentifier frameIdentifier, WebCore::ScriptExecutionContextIdentifier documentIdentifier, URL url) -> (std::optional<WebCore::PageIdentifier> page, std::optional<WebCore::FrameIdentifier> frame)
 
-    ReportConsoleMessage(PAL::SessionID sessionID, URL scriptURL, WebCore::SecurityOriginData serviceWorkerOrigin, enum:uint8_t JSC::MessageSource messageSource, enum:uint8_t JSC::MessageLevel messageLevel, String message, unsigned long requestIdentifier)
+    ReportConsoleMessage(PAL::SessionID sessionID, URL scriptURL, WebCore::SecurityOriginData serviceWorkerOrigin, enum:uint8_t JSC::MessageSource messageSource, enum:uint8_t JSC::MessageLevel messageLevel, String message, uint64_t requestIdentifier)
 
     CookiesDidChange(PAL::SessionID sessionID)
 
     DeleteWebsiteDataInWebProcessesForOrigin(OptionSet<WebKit::WebsiteDataType> websiteDataTypes, struct WebCore::ClientOrigin origin, PAL::SessionID sessionID, WebKit::WebPageProxyIdentifier webPageProxyID) -> ()
     ReloadExecutionContextsForOrigin(struct WebCore::ClientOrigin origin, PAL::SessionID sessionID, std::optional<WebCore::FrameIdentifier> triggeringFrame) -> ()
+
+    DidPerformEvictionForDomains(PAL::SessionID sessionID, Vector<WebCore::RegistrableDomain> domains)
 
 #if USE(RUNNINGBOARD)
     WakeUpWebProcessForIPC(WebCore::ProcessIdentifier processIdentifier)

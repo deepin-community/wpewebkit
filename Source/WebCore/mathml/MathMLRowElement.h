@@ -32,7 +32,7 @@
 namespace WebCore {
 
 class MathMLRowElement : public MathMLPresentationElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(MathMLRowElement);
+    WTF_MAKE_TZONE_ALLOCATED(MathMLRowElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MathMLRowElement);
 public:
     static Ref<MathMLRowElement> create(const QualifiedName& tagName, Document&);
@@ -41,10 +41,10 @@ protected:
     MathMLRowElement(const QualifiedName& tagName, Document&, OptionSet<TypeFlag> = { });
     void childrenChanged(const ChildChange&) override;
 
-    bool acceptsMathVariantAttribute() override;
+    bool acceptsLegacyMathVariantAttribute() override;
 
 private:
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
 };
 
 }

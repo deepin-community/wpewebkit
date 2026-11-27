@@ -23,13 +23,20 @@
 
 #if ENABLE(GPU_PROCESS)
 
-[EnabledBy=WebGPUEnabled]
-messages -> RemoteGPU NotRefCounted Stream {
-    void RequestAdapter(WebKit::WebGPU::RequestAdapterOptions options, WebKit::WebGPUIdentifier identifier) -> (std::optional<WebKit::RemoteGPURequestAdapterResponse> response) Synchronous
+[
+    DispatchedFrom=WebContent,
+    DispatchedTo=GPU,
+    EnabledBy=WebGPUEnabled
+]
+messages -> RemoteGPU Stream {
+    void RequestAdapter(WebKit::WebGPU::RequestAdapterOptions options, WebKit::WebGPUIdentifier identifier) -> (struct std::optional<WebKit::RemoteGPURequestAdapterResponse> response) Synchronous
     void CreatePresentationContext(WebKit::WebGPU::PresentationContextDescriptor descriptor, WebKit::WebGPUIdentifier identifier)
     void CreateCompositorIntegration(WebKit::WebGPUIdentifier identifier)
 
     void IsValid(WebKit::WebGPUIdentifier identifier) -> (bool isValid, bool exists) Synchronous
+#if ENABLE(GPU_PROCESS_MODEL)
+    void CreateModelBacking(unsigned width, unsigned height, struct WebModel::ImageAsset diffuseAsset, struct WebModel::ImageAsset specularAsset, WebKit::WebModelIdentifier identifier, bool standardDynamicRange) -> (Vector<MachSendRight> renderBuffers) Synchronous NotStreamEncodable NotStreamEncodableReply
+#endif
 }
 
 #endif

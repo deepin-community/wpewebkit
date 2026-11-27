@@ -31,38 +31,43 @@
 
 namespace WebKit {
 
-struct CacheStorageRecordInformation {
-    void updateVaryHeaders(const WebCore::ResourceRequest& request, const WebCore::ResourceResponse::CrossThreadData& response)
-    {
-        auto varyValue = response.httpHeaderFields.get(WebCore::HTTPHeaderName::Vary);
-        if (varyValue.isNull() || response.tainting == WebCore::ResourceResponse::Tainting::Opaque || response.tainting == WebCore::ResourceResponse::Tainting::Opaqueredirect) {
-            hasVaryStar = false;
-            varyHeaders = { };
-            return;
-        }
+class CacheStorageRecordInformation {
+public:
+    CacheStorageRecordInformation() = default;
+    CacheStorageRecordInformation(NetworkCache::Key&&, double insertionTime, uint64_t identifier, uint64_t updateResponseCounter, uint64_t size, URL&&, bool hasVaryStar, HashMap<String, String>&& varyHeaders);
+    void updateVaryHeaders(const WebCore::ResourceRequest&, const WebCore::ResourceResponse::CrossThreadData&);
+    CacheStorageRecordInformation isolatedCopy() &&;
+    CacheStorageRecordInformation isolatedCopy() const &;
 
-        varyValue.split(',', [&](StringView view) {
-            if (!hasVaryStar && view.trim(isASCIIWhitespaceWithoutFF<UChar>) == "*"_s)
-                hasVaryStar = true;
-            varyHeaders.add(view.toString(), request.httpHeaderField(view));
-        });
+    const NetworkCache::Key& key() const LIFETIME_BOUND { return m_key; }
+    double insertionTime() const { return m_insertionTime; }
+    uint64_t identifier() const { return m_identifier; }
+    uint64_t updateResponseCounter() const { return m_updateResponseCounter; }
+    uint64_t size() const { return m_size; }
+    const URL& url() const LIFETIME_BOUND { return m_url; }
+    bool hasVaryStar() const { return m_hasVaryStar; }
+    const HashMap<String, String>& varyHeaders() const LIFETIME_BOUND { return m_varyHeaders; }
 
-        if (hasVaryStar)
-            varyHeaders = { };
-    }
+    void setKey(const NetworkCache::Key& key) { m_key = key; }
+    void setSize(uint64_t size) { m_size = size; }
+    void setIdentifier(uint64_t identifier) { m_identifier = identifier; }
+    void setUpdateResponseCounter(double updateResponseCounter) { m_updateResponseCounter = updateResponseCounter; }
+    void setInsertionTime(double insertionTime) { m_insertionTime = insertionTime; }
+    void setURL(const URL& url) { m_url = url; }
 
-    NetworkCache::Key key;
-    double insertionTime { 0 };
-    uint64_t identifier { 0 };
-    uint64_t updateResponseCounter { 0 };
-    uint64_t size { 0 };
-    URL url;
-    bool hasVaryStar { false };
-    HashMap<String, String> varyHeaders;
+private:
+    NetworkCache::Key m_key;
+    double m_insertionTime { 0 };
+    uint64_t m_identifier { 0 };
+    uint64_t m_updateResponseCounter { 0 };
+    uint64_t m_size { 0 };
+    URL m_url;
+    bool m_hasVaryStar { false };
+    HashMap<String, String> m_varyHeaders;
 };
 
 struct CacheStorageRecord {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CacheStorageRecord);
     CacheStorageRecord(const CacheStorageRecord&) = delete;
     CacheStorageRecord& operator=(const CacheStorageRecord&) = delete;
     CacheStorageRecord() = default;
@@ -75,10 +80,24 @@ struct CacheStorageRecord {
         , options(options)
         , referrer(referrer)
         , responseHeadersGuard(responseHeadersGuard)
-        , responseData(WTFMove(responseData))
+        , responseData(WTF::move(responseData))
         , responseBodySize(responseBodySize)
-        , responseBody(WTFMove(responseBody))
+        , responseBody(WTF::move(responseBody))
     {
+    }
+
+    CacheStorageRecord isolatedCopy() && {
+        return {
+            crossThreadCopy(WTF::move(info)),
+            requestHeadersGuard,
+            crossThreadCopy(WTF::move(request)),
+            crossThreadCopy(WTF::move(options)),
+            crossThreadCopy(WTF::move(referrer)),
+            responseHeadersGuard,
+            crossThreadCopy(WTF::move(responseData)),
+            responseBodySize,
+            WebCore::DOMCacheEngine::isolatedResponseBody(WTF::move(responseBody))
+        };
     }
 
     CacheStorageRecordInformation info;

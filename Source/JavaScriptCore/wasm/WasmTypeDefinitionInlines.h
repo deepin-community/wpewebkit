@@ -26,9 +26,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(WEBASSEMBLY)
 
-#include "WasmTypeDefinition.h"
+#include <JavaScriptCore/WasmFormat.h>
+#include <JavaScriptCore/WasmTypeDefinition.h>
 
 namespace JSC { namespace Wasm {
 
@@ -43,27 +46,82 @@ inline TypeInformation& TypeInformation::singleton()
     return *theOne;
 }
 
-inline const TypeDefinition& TypeInformation::get(TypeIndex index)
+inline RefPtr<const RTT> TypeInformation::tryGetRTT(TypeIndex typeIndex)
 {
-    ASSERT(index != TypeDefinition::invalidIndex);
-    return *bitwise_cast<const TypeDefinition*>(index);
+    if (typeIndexIsType(typeIndex) || typeIndex == invalidTypeIndex)
+        return nullptr;
+    return std::bit_cast<const RTT*>(typeIndex);
 }
 
-inline const FunctionSignature& TypeInformation::getFunctionSignature(TypeIndex index)
+// Provider-based typeDefinitionForStruct. Builds the RTTStructPayload's
+// FixedVectors directly from the provider, skipping the intermediate
+// Vector<FieldType> the Vector-based overload would require. Accumulates
+// flags (hasRefFieldTypes, hasRecursiveReference) and field offsets in
+// place. External RTT refs are anchored inline in each entry's rttAnchor.
+template<typename FieldProvider>
+Ref<const RTT> TypeInformation::typeDefinitionForStructFromProvider(StructFieldCount fieldCount, FieldProvider&& provider)
 {
-    const TypeDefinition& signature = get(index).expand();
-    ASSERT(signature.is<FunctionSignature>());
-    return *signature.as<FunctionSignature>();
+    bool hasRefFieldTypes = false;
+    bool hasRecursiveReference = false;
+    unsigned currentOffset = 0;
+
+    auto entries = FixedVector<StructFieldEntry>::createWithSizeFromGenerator(fieldCount, [&](size_t i) -> StructFieldEntry {
+        FieldType f = provider(i);
+        hasRefFieldTypes |= isRefType(f.type);
+        hasRecursiveReference |= isRefWithRecursiveReference(f.type);
+        currentOffset = WTF::roundUpToMultipleOf(typeAlignmentInBytes(f.type), currentOffset);
+        unsigned offset = currentOffset;
+        currentOffset += typeSizeInBytes(f.type);
+        RefPtr<const RTT> anchor;
+        if (f.type.is<Type>())
+            anchor = extractExternalRTT(f.type.as<Type>());
+        return StructFieldEntry { f, offset, WTF::move(anchor) };
+    });
+    size_t instancePayloadSize = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(currentOffset);
+
+    RTTStructPayload payload {
+        WTF::move(entries),
+        instancePayloadSize,
+        hasRefFieldTypes,
+        hasRecursiveReference,
+    };
+    auto rtt = RTT::tryCreateStruct(/* isFinalType */ true, WTF::move(payload));
+    RELEASE_ASSERT(rtt);
+    return rtt.releaseNonNull();
 }
 
-inline TypeIndex TypeInformation::get(const TypeDefinition& type)
+// Provider-based typeDefinitionForFunction. Signature layout: returns first,
+// then arguments. Builds the FixedVector<TypeSlot> in place from two
+// providers. External RTT refs are anchored inline in each slot.
+template<typename ReturnProvider, typename ArgProvider>
+Ref<const RTT> TypeInformation::typeDefinitionForFunctionFromProviders(FunctionArgCount retCount, ReturnProvider&& returnsProvider, FunctionArgCount argCount, ArgProvider&& argsProvider)
 {
-    if (ASSERT_ENABLED) {
-        TypeInformation& info = singleton();
-        Locker locker { info.m_lock };
-        ASSERT_UNUSED(info, info.m_typeSet.contains(TypeHash { const_cast<TypeDefinition&>(type) }));
-    }
-    return bitwise_cast<TypeIndex>(&type);
+    bool hasRecursiveReference = false;
+    bool argumentsOrResultsIncludeI64 = false;
+    bool argumentsOrResultsIncludeV128 = false;
+    bool argumentsOrResultsIncludeExnref = false;
+
+    auto signature = FixedVector<TypeSlot>::createWithSizeFromGenerator(static_cast<size_t>(retCount) + static_cast<size_t>(argCount), [&](size_t i) -> TypeSlot {
+        Type t = (i < retCount) ? returnsProvider(i) : argsProvider(i - retCount);
+        hasRecursiveReference |= isRefWithRecursiveReference(t);
+        argumentsOrResultsIncludeI64 |= t.isI64();
+        argumentsOrResultsIncludeV128 |= t.isV128();
+        argumentsOrResultsIncludeExnref |= isExnref(t);
+        return TypeSlot { t, extractExternalRTT(t) };
+    });
+
+    RTTFunctionPayload payload {
+        argCount,
+        retCount,
+        WTF::move(signature),
+        argumentsOrResultsIncludeI64,
+        argumentsOrResultsIncludeV128,
+        argumentsOrResultsIncludeExnref,
+        hasRecursiveReference,
+    };
+    auto rtt = RTT::tryCreateFunction(/* isFinalType */ true, WTF::move(payload));
+    RELEASE_ASSERT(rtt);
+    return rtt.releaseNonNull();
 }
 
 } } // namespace JSC::Wasm

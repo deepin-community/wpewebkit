@@ -28,15 +28,16 @@
 
 #include "Document.h"
 #include "DocumentFragment.h"
+#include "LocalFrameInlines.h"
 
 namespace WebCore {
 
 void WebContentReader::addFragment(Ref<DocumentFragment>&& newFragment)
 {
     if (!m_fragment)
-        m_fragment = WTFMove(newFragment);
+        m_fragment = WTF::move(newFragment);
     else
-        protectedFragment()->appendChild(newFragment);
+        protect(fragment())->appendChild(newFragment);
 }
 
 bool FrameWebContentReader::shouldSanitize() const
@@ -51,7 +52,7 @@ MSOListQuirks FrameWebContentReader::msoListQuirksForMarkup() const
     return contentOrigin().isNull() ? MSOListQuirks::CheckIfNeeded : MSOListQuirks::Disabled;
 }
 
-#if PLATFORM(COCOA) || PLATFORM(GTK)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
 bool WebContentReader::readFilePaths(const Vector<String>& paths)
 {
     if (paths.isEmpty() || !frame().document())

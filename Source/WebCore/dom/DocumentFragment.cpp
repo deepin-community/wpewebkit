@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -24,11 +24,13 @@
 #include "DocumentFragment.h"
 
 #include "CSSTokenizerInputStream.h"
+#include "ContainerNodeInlines.h"
 #include "Document.h"
 #include "ElementIterator.h"
 #include "HTMLDocumentParser.h"
 #include "HTMLDocumentParserFastPath.h"
 #include "Page.h"
+#include "SerializedNode.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include "XMLDocumentParser.h"
 #include "markup.h"
@@ -36,11 +38,13 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(DocumentFragment);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentFragment);
 
 DocumentFragment::DocumentFragment(Document& document, OptionSet<TypeFlag> typeFlags)
-    : ContainerNode(document, DOCUMENT_FRAGMENT_NODE, typeFlags)
+    : ContainerNode(document, NodeType::DocumentFragment, typeFlags)
 {
+    if (document.usesNullCustomElementRegistry())
+        setUsesNullCustomElementRegistry();
 }
 
 Ref<DocumentFragment> DocumentFragment::create(Document& document)
@@ -50,7 +54,7 @@ Ref<DocumentFragment> DocumentFragment::create(Document& document)
 
 Ref<DocumentFragment> DocumentFragment::createForInnerOuterHTML(Document& document)
 {
-    auto node = adoptRef(*new DocumentFragment(document, TypeFlag::IsSpecialInternalNode));
+    auto node = adoptRef(*new DocumentFragment(document, { TypeFlag::IsPseudoElementOrSpecialInternalNode }));
     ASSERT(node->isDocumentFragmentForInnerOuterHTML());
     return node;
 }
@@ -63,35 +67,36 @@ String DocumentFragment::nodeName() const
 bool DocumentFragment::childTypeAllowed(NodeType type) const
 {
     switch (type) {
-        case ELEMENT_NODE:
-        case PROCESSING_INSTRUCTION_NODE:
-        case COMMENT_NODE:
-        case TEXT_NODE:
-        case CDATA_SECTION_NODE:
-            return true;
-        default:
-            return false;
+    case NodeType::Element:
+    case NodeType::ProcessingInstruction:
+    case NodeType::Comment:
+    case NodeType::Text:
+    case NodeType::CDATASection:
+        return true;
+    default:
+        return false;
     }
 }
 
-Ref<Node> DocumentFragment::cloneNodeInternal(Document& targetDocument, CloningOperation type)
+Ref<Node> DocumentFragment::cloneNodeInternal(Document& document, CloningOperation type, CustomElementRegistry* registry) const
 {
-    Ref clone = create(targetDocument);
+    Ref clone = create(document);
     switch (type) {
-    case CloningOperation::OnlySelf:
+    case CloningOperation::SelfOnly:
     case CloningOperation::SelfWithTemplateContent:
         break;
     case CloningOperation::Everything:
-        cloneChildNodes(clone);
+        cloneChildNodes(document, registry, clone);
         break;
     }
     return clone;
 }
 
-void DocumentFragment::parseHTML(const String& source, Element& contextElement, OptionSet<ParserContentPolicy> parserContentPolicy)
+void DocumentFragment::parseHTML(const String& source, Element& contextElement, OptionSet<ParserContentPolicy> parserContentPolicy, CustomElementRegistry* registry)
 {
     Ref document = this->document();
-    if (tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
+    if (!registry && !usesNullCustomElementRegistry() && tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
+        setWasParsedWithFastPath();
 #if ASSERT_ENABLED
         // As a sanity check for the fast-path, create another fragment using the full parser and compare the results.
         auto referenceFragment = DocumentFragment::create(document);
@@ -100,10 +105,11 @@ void DocumentFragment::parseHTML(const String& source, Element& contextElement, 
 #endif
         return;
     }
+    clearWasParsedWithFastPath();
     if (hasChildNodes())
         removeChildren();
 
-    HTMLDocumentParser::parseDocumentFragment(source, *this, contextElement, parserContentPolicy);
+    HTMLDocumentParser::parseDocumentFragment(source, *this, contextElement, parserContentPolicy, registry);
 }
 
 bool DocumentFragment::parseXML(const String& source, Element* contextElement, OptionSet<ParserContentPolicy> parserContentPolicy)
@@ -111,22 +117,37 @@ bool DocumentFragment::parseXML(const String& source, Element* contextElement, O
     return XMLDocumentParser::parseDocumentFragment(source, *this, contextElement, parserContentPolicy);
 }
 
-Element* DocumentFragment::getElementById(const AtomString& id) const
+RefPtr<Element> DocumentFragment::getElementById(const AtomString& id) const
 {
     if (id.isEmpty())
         return nullptr;
 
     // Fast path for ShadowRoot, where we are both a DocumentFragment and a TreeScope.
     if (isTreeScope())
-        return treeScope().getElementById(id).get();
+        return protect(treeScope())->getElementById(id);
 
     // Otherwise, fall back to iterating all of the element descendants.
-    for (auto& element : descendantsOfType<Element>(*this)) {
+    for (auto& element : descendantsOfType<Element>(*const_cast<DocumentFragment*>(this))) {
         if (element.getIdAttribute() == id)
-            return const_cast<Element*>(&element);
+            return &element;
     }
 
     return nullptr;
+}
+
+SerializedNode DocumentFragment::serializeNode(CloningOperation type) const
+{
+    Vector<SerializedNode> children;
+    switch (type) {
+    case CloningOperation::SelfOnly:
+    case CloningOperation::SelfWithTemplateContent:
+        break;
+    case CloningOperation::Everything:
+        children = serializeChildNodes();
+        break;
+    }
+
+    return { SerializedNode::DocumentFragment { WTF::move(children) } };
 }
 
 }

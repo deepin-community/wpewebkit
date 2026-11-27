@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2020 Igalia S.L. All rights reserved.
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Igalia S.L. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,56 +30,69 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "JSDOMPromiseDeferredForward.h"
+#include "VisibilityChangeClient.h"
 #include "WebXRFrame.h"
 #include "WebXRInputSourceArray.h"
 #include "WebXRRenderState.h"
+#include "WebXRSessionListener.h"
+#include "WebXRView.h"
 #include "XREnvironmentBlendMode.h"
 #include "XRInteractionMode.h"
 #include "XRReferenceSpaceType.h"
 #include "XRSessionMode.h"
 #include "XRVisibilityState.h"
+#include <numbers>
+#include <wtf/HashMap.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 class XRFrameRequestCallback;
 class WebCoreOpaqueRoot;
-class WebXRSystem;
 class WebXRView;
-class WebXRViewerSpace;
+class WebXRReferenceSpace;
+class XRCompositionLayer;
+struct XRCanvasConfiguration;
 struct XRRenderStateInit;
 
-class WebXRSession final : public RefCounted<WebXRSession>, public EventTarget, public ActiveDOMObject, public PlatformXR::TrackingAndRenderingClient {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebXRSession);
+#if ENABLE(WEBXR_HIT_TEST)
+struct XRHitTestOptionsInit;
+struct XRTransientInputHitTestOptionsInit;
+#endif
+
+class WebXRSession final : public RefCounted<WebXRSession>, public EventTarget, public ActiveDOMObject, public PlatformXR::TrackingAndRenderingClient, VisibilityChangeClient {
+    WTF_MAKE_TZONE_ALLOCATED(WebXRSession);
 public:
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    USING_CAN_MAKE_WEAKPTR(PlatformXR::TrackingAndRenderingClient);
+
     using RequestReferenceSpacePromise = DOMPromiseDeferred<IDLInterface<WebXRReferenceSpace>>;
     using EndPromise = DOMPromiseDeferred<void>;
     using FeatureList = PlatformXR::Device::FeatureList;
 
-    static Ref<WebXRSession> create(Document&, WebXRSystem&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
+    static Ref<WebXRSession> create(Document&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
     virtual ~WebXRSession();
-
-    // ActiveDOMObject.
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
-    using PlatformXR::TrackingAndRenderingClient::weakPtrFactory;
-    using PlatformXR::TrackingAndRenderingClient::WeakValueType;
-    using PlatformXR::TrackingAndRenderingClient::WeakPtrImplType;
 
     XREnvironmentBlendMode environmentBlendMode() const;
     XRInteractionMode interactionMode() const;
     XRVisibilityState visibilityState() const;
-    const WebXRRenderState& renderState() const;
-    const WebXRInputSourceArray& inputSources() const;
-    RefPtr<PlatformXR::Device> device() const { return m_device.get(); }
+    const WebXRRenderState& NODELETE renderState() const;
+    const WebXRInputSourceArray& inputSources() const LIFETIME_BOUND { return m_inputSources; }
+    const PlatformXR::FrameData& frameData() const LIFETIME_BOUND { return m_frameData; }
+    const WebXRReferenceSpace& viewerReferenceSpace() const { return m_viewerReferenceSpace; }
+    RefPtr<PlatformXR::Device> device() const { return m_device; }
 
     const Vector<String> enabledFeatures() const;
+    bool supportsFeature(PlatformXR::SessionFeature) const;
 
     ExceptionOr<void> updateRenderState(const XRRenderStateInit&);
     void requestReferenceSpace(XRReferenceSpaceType, RequestReferenceSpacePromise&&);
@@ -89,7 +102,7 @@ public:
 
     IntSize nativeWebGLFramebufferResolution() const;
     IntSize recommendedWebGLFramebufferResolution() const;
-    bool supportsViewportScaling() const; 
+    bool supportsViewportScaling() const;
     bool isPositionEmulated() const;
 
     // If the immersive session obscures the HTML document (for example, in standalone devices),
@@ -99,24 +112,53 @@ public:
     void applicationWillEnterForeground() { m_shouldServiceRequestVideoFrameCallbacks = false; }
 
     // EventTarget.
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const final;
+
+    void addSessionListener(const WebXRSessionListener&);
 
     ExceptionOr<void> end(EndPromise&&);
     bool ended() const { return m_ended; }
 
     XRSessionMode mode() const { return m_mode; }
 
-    const Vector<PlatformXR::Device::ViewData>& views() const { return m_views; }
-    const PlatformXR::FrameData& frameData() const { return m_frameData; }
-    const WebXRViewerSpace& viewerReferenceSpace() const { return m_viewerReferenceSpace; }
+    struct View : PlatformXR::Device::ViewData {
+        Ref<UnderlyingView> underlyingView;
+    };
+
+    const Vector<View>& views() const LIFETIME_BOUND { return m_views; }
+
+    struct InitialRenderingDimensions {
+        uint32_t width { 0 };
+        uint32_t height { 0 };
+        uint32_t arrayLength { 0 };
+    };
+
+    enum class InitiatedBySystem : bool { No, Yes };
     bool posesCanBeReported(const Document&) const;
-    
+
 #if ENABLE(WEBXR_HANDS)
     bool isHandTrackingEnabled() const;
 #endif
 
+#if ENABLE(WEBXR_HIT_TEST)
+    using RequestHitTestSourcePromise = DOMPromiseDeferred<IDLInterface<WebXRHitTestSource>>;
+    void requestHitTestSource(const XRHitTestOptionsInit&, RequestHitTestSourcePromise&&);
+    using RequestHitTestSourceForTransientInputPromise = DOMPromiseDeferred<IDLInterface<WebXRTransientInputHitTestSource>>;
+    void requestHitTestSourceForTransientInput(const XRTransientInputHitTestOptionsInit&, RequestHitTestSourceForTransientInputPromise&&);
+    ExceptionOr<void> cancelHitTestSource(PlatformXR::HitTestSource);
+    ExceptionOr<void> cancelTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource);
+#endif
+
+#if ENABLE(WEBXR_LAYERS)
+    unsigned maxRenderLayers() const;
+    void layerDestroyed(const XRCompositionLayer&);
+#endif
+
+    void initializeTrackingAndRendering(std::optional<XRCanvasConfiguration>&&);
+    std::optional<InitialRenderingDimensions> initialRenderingDimensions() const { return m_initialRenderingDimensions; }
+
 private:
-    WebXRSession(Document&, WebXRSystem&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
+    WebXRSession(Document&, XRSessionMode, PlatformXR::Device&, FeatureList&&);
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const override { return EventTargetInterfaceType::WebXRSession; }
@@ -130,8 +172,10 @@ private:
     void sessionDidInitializeInputSources(Vector<PlatformXR::FrameData::InputSource>&&) final;
     void sessionDidEnd() final;
     void updateSessionVisibilityState(PlatformXR::VisibilityState) final;
+    void sessionDidInitializeRendering(uint32_t width, uint32_t height, uint32_t arrayLength) final;
 
-    enum class InitiatedBySystem : bool { No, Yes };
+    // VisibilityChangeClient
+    void visibilityStateChanged() final;
     void shutdown(InitiatedBySystem);
     void didCompleteShutdown();
 
@@ -143,32 +187,37 @@ private:
     void applyPendingRenderState();
     void minimalUpdateRendering();
 
-    XREnvironmentBlendMode m_environmentBlendMode { XREnvironmentBlendMode::Opaque };
+#if ENABLE(WEBXR_HIT_TEST)
+    void cleanupInactiveHitTestSources();
+#endif
+
     XRInteractionMode m_interactionMode { XRInteractionMode::WorldSpace };
     XRVisibilityState m_visibilityState { XRVisibilityState::Visible };
-    UniqueRef<WebXRInputSourceArray> m_inputSources;
+    const UniqueRef<WebXRInputSourceArray> m_inputSources;
     bool m_ended { false };
     bool m_shouldServiceRequestVideoFrameCallbacks { false };
     std::unique_ptr<EndPromise> m_endPromise;
+    Vector<WeakPtr<WebXRSessionListener>> m_sessionListeners;
 
-    WebXRSystem& m_xrSystem;
     XRSessionMode m_mode;
     ThreadSafeWeakPtr<PlatformXR::Device> m_device;
     FeatureList m_requestedFeatures;
     RefPtr<WebXRRenderState> m_activeRenderState;
     RefPtr<WebXRRenderState> m_pendingRenderState;
-    Ref<WebXRViewerSpace> m_viewerReferenceSpace;
+    const Ref<WebXRReferenceSpace> m_viewerReferenceSpace;
     MonotonicTime m_timeOrigin;
 
     unsigned m_nextCallbackId { 1 };
     Vector<Ref<XRFrameRequestCallback>> m_callbacks;
     bool m_isDeviceFrameRequestPending { false };
 
-    Vector<PlatformXR::Device::ViewData> m_views;
+    Vector<View> m_views;
     PlatformXR::FrameData m_frameData;
+    std::optional<PlatformXR::RequestData> m_requestData;
+    std::optional<InitialRenderingDimensions> m_initialRenderingDimensions;
 
     double m_minimumInlineFOV { 0.0 };
-    double m_maximumInlineFOV { piFloat };
+    double m_maximumInlineFOV { std::numbers::pi };
 
     // In meters.
     double m_minimumNearClipPlane { 0.1 };
@@ -176,10 +225,17 @@ private:
 
     // https://immersive-web.github.io/webxr/#xrsession-promise-resolved
     bool m_inputInitialized { false };
+
+#if ENABLE(WEBXR_HIT_TEST)
+    HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRHitTestSource>> m_activeHitTestSources;
+    HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRTransientInputHitTestSource>> m_activeTransientInputHitTestSources;
+#endif
 };
 
 WebCoreOpaqueRoot root(WebXRSession*);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_EVENTTARGET(WebXRSession)
 
 #endif // ENABLE(WEBXR)

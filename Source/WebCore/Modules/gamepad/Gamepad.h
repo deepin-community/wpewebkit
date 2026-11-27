@@ -29,7 +29,7 @@
 
 #include "GamepadHapticEffectType.h"
 #include <wtf/MonotonicTime.h>
-#include <wtf/RefCounted.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -41,7 +41,7 @@ class GamepadButton;
 class GamepadHapticActuator;
 class PlatformGamepad;
 
-class Gamepad: public RefCounted<Gamepad>, public CanMakeWeakPtr<Gamepad> {
+class Gamepad: public RefCountedAndCanMakeWeakPtr<Gamepad> {
 public:
     static Ref<Gamepad> create(Document* document, const PlatformGamepad& platformGamepad)
     {
@@ -49,15 +49,15 @@ public:
     }
     ~Gamepad();
 
-    const String& id() const { return m_id; }
+    const String& id() const LIFETIME_BOUND { return m_id; }
     unsigned index() const { return m_index; }
-    const String& mapping() const { return m_mapping; }
+    const String& mapping() const LIFETIME_BOUND { return m_mapping; }
 
     bool connected() const { return m_connected; }
     double timestamp() const { return m_timestamp.secondsSinceEpoch().seconds(); }
-    const Vector<double>& axes() const;
-    const Vector<Ref<GamepadButton>>& buttons() const;
-    const GamepadHapticEffectTypeSet& supportedEffectTypes() const { return m_supportedEffectTypes; }
+    const Vector<double>& NODELETE axes() const;
+    const Vector<Ref<GamepadButton>>& NODELETE buttons() const;
+    const GamepadHapticEffectTypeSet& supportedEffectTypes() const LIFETIME_BOUND { return m_supportedEffectTypes; }
 
     void updateFromPlatformGamepad(const PlatformGamepad&);
     void setConnected(bool connected) { m_connected = connected; }
@@ -76,7 +76,7 @@ private:
     Vector<double> m_axes;
     Vector<Ref<GamepadButton>> m_buttons;
 
-    RefPtr<GamepadHapticActuator> m_vibrationActuator;
+    const RefPtr<GamepadHapticActuator> m_vibrationActuator;
 };
 
 } // namespace WebCore

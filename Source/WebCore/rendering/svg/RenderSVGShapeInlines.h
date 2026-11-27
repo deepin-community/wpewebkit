@@ -28,23 +28,18 @@
 #include "RenderSVGModelObjectInlines.h"
 #include "RenderSVGShape.h"
 #include "SVGGraphicsElement.h"
-#include "SVGRenderStyle.h"
+#include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 
 inline bool RenderSVGShape::hasNonScalingStroke() const
 {
-    return style().svgStyle().vectorEffect() == VectorEffect::NonScalingStroke;
+    return style().vectorEffect() == VectorEffect::NonScalingStroke;
 }
 
 inline SVGGraphicsElement& RenderSVGShape::graphicsElement() const
 {
     return downcast<SVGGraphicsElement>(RenderSVGModelObject::element());
-}
-
-inline Ref<SVGGraphicsElement> RenderSVGShape::protectedGraphicsElement() const
-{
-    return graphicsElement();
 }
 
 } // namespace WebCore

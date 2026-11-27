@@ -26,9 +26,23 @@
 
 #include "GenericMediaQueryTypes.h"
 
-namespace WebCore::CQ {
+namespace WebCore {
 
+class CSSToLengthConversionData;
+class RenderBox;
+class RenderView;
+
+namespace CSS {
+enum class Category : uint8_t;
+}
+
+namespace Style {
+class ComputedStyle;
+}
+
+namespace CQ {
 namespace Features {
+
 const MQ::FeatureSchema& width();
 const MQ::FeatureSchema& height();
 const MQ::FeatureSchema& inlineSize();
@@ -37,6 +51,14 @@ const MQ::FeatureSchema& aspectRatio();
 const MQ::FeatureSchema& orientation();
 const MQ::FeatureSchema& style();
 
-};
+// Returns the scroll-state query feature schema for `name`
+// (scrollable/scrolled/stuck/snapped), or nullptr. Used inside scroll-state().
+const MQ::FeatureSchema* scrollState(const AtomString&);
 
-}
+bool isScrollStateFeature(const MQ::FeatureSchema*);
+
+Vector<const MQ::FeatureSchema*> allSchemas();
+
+} // namespace Features
+} // namespace CQ
+} // namespace WebCore

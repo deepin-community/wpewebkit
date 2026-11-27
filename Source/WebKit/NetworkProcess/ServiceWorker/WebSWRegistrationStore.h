@@ -29,14 +29,10 @@
 #include <WebCore/ServiceWorkerContextData.h>
 #include <WebCore/Timer.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
 class WebSWRegistrationStore;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::WebSWRegistrationStore> : std::true_type { };
 }
 
 namespace WebCore {
@@ -47,28 +43,30 @@ namespace WebKit {
 
 class NetworkStorageManager;
 
-class WebSWRegistrationStore final : public WebCore::SWRegistrationStore, public CanMakeWeakPtr<WebSWRegistrationStore> {
+class WebSWRegistrationStore final : public WebCore::SWRegistrationStore {
+    WTF_MAKE_TZONE_ALLOCATED(WebSWRegistrationStore);
 public:
-    WebSWRegistrationStore(WebCore::SWServer&, NetworkStorageManager&);
+    static Ref<WebSWRegistrationStore> create(WebCore::SWServer&, NetworkStorageManager&);
 
 private:
+    WebSWRegistrationStore(WebCore::SWServer&, NetworkStorageManager&);
+
     // WebCore::SWRegistrationStore
     void clearAll(CompletionHandler<void()>&&);
     void flushChanges(CompletionHandler<void()>&&);
     void closeFiles(CompletionHandler<void()>&&);
-    void importRegistrations(CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>)>&&);
+    void importRegistrationsForOrigin(const WebCore::SecurityOriginData&, CompletionHandler<void(std::optional<Vector<WebCore::ServiceWorkerContextData>>&&)>&&);
+    void importOriginList(CompletionHandler<void(std::optional<HashSet<WebCore::ClientOrigin>>&&)>&&);
     void updateRegistration(const WebCore::ServiceWorkerContextData&);
     void removeRegistration(const WebCore::ServiceWorkerRegistrationKey&);
+    void retrieveWorkerScripts(WebCore::ServiceWorkerIdentifier, const WebCore::ServiceWorkerRegistrationKey&, const URL& scriptURL, const Vector<URL>& importedScriptURLs, CompletionHandler<void(std::optional<WebCore::ServiceWorkerScripts>&&)>&&);
 
     void scheduleUpdateIfNecessary();
     void updateToStorage(CompletionHandler<void()>&&);
     void updateTimerFired() { updateToStorage([] { }); }
 
-    CheckedPtr<NetworkStorageManager> checkedManager() const;
-    RefPtr<WebCore::SWServer> protectedServer() const;
-
     WeakPtr<WebCore::SWServer> m_server;
-    WeakPtr<NetworkStorageManager> m_manager;
+    ThreadSafeWeakPtr<NetworkStorageManager> m_manager;
     WebCore::Timer m_updateTimer;
     HashMap<WebCore::ServiceWorkerRegistrationKey, std::optional<WebCore::ServiceWorkerContextData>> m_updates;
 };

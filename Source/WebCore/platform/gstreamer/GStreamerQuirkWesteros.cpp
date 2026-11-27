@@ -35,8 +35,8 @@ GStreamerQuirkWesteros::GStreamerQuirkWesteros()
 {
     GST_DEBUG_CATEGORY_INIT(webkit_westeros_quirks_debug, "webkitquirkswesteros", 0, "WebKit Westeros Quirks");
 
-    auto westerosFactory = adoptGRef(gst_element_factory_find("westerossink"));
-    if (UNLIKELY(!westerosFactory))
+    GRefPtr westerosFactory = adoptGRef(gst_element_factory_find("westerossink"));
+    if (!westerosFactory) [[unlikely]]
         return;
 
     gst_object_unref(gst_plugin_feature_load(GST_PLUGIN_FEATURE(westerosFactory.get())));
@@ -51,9 +51,15 @@ GStreamerQuirkWesteros::GStreamerQuirkWesteros()
     }
 }
 
+bool GStreamerQuirkWesteros::isPlatformSupported() const
+{
+    GRefPtr westerosFactory = adoptGRef(gst_element_factory_find("westerossink"));
+    return westerosFactory;
+}
+
 void GStreamerQuirkWesteros::configureElement(GstElement* element, const OptionSet<ElementRuntimeCharacteristics>& characteristics)
 {
-    if (g_str_has_prefix(GST_ELEMENT_NAME(element), "uridecodebin3")) {
+    if (equalIgnoringASCIICase(G_OBJECT_TYPE_NAME(G_OBJECT(element)), "GstURIDecodeBin3")) {
         GRefPtr<GstCaps> defaultCaps;
         g_object_get(element, "caps", &defaultCaps.outPtr(), nullptr);
         defaultCaps = adoptGRef(gst_caps_merge(gst_caps_ref(m_sinkCaps.get()), defaultCaps.leakRef()));
@@ -65,7 +71,8 @@ void GStreamerQuirkWesteros::configureElement(GstElement* element, const OptionS
     if (!characteristics.contains(ElementRuntimeCharacteristics::IsMediaStream))
         return;
 
-    if (!g_strcmp0(G_OBJECT_TYPE_NAME(G_OBJECT(element)), "GstWesterosSink") && gstObjectHasProperty(element, "immediate-output")) {
+    if (equal(unsafeSpan(G_OBJECT_TYPE_NAME(G_OBJECT(element))), "GstWesterosSink"_s)
+        && gstObjectHasProperty(element, "immediate-output"_s)) {
         GST_INFO("Enable 'immediate-output' in WesterosSink");
         g_object_set(element, "immediate-output", TRUE, nullptr);
     }
@@ -73,7 +80,8 @@ void GStreamerQuirkWesteros::configureElement(GstElement* element, const OptionS
 
 std::optional<bool> GStreamerQuirkWesteros::isHardwareAccelerated(GstElementFactory* factory)
 {
-    if (g_str_has_prefix(GST_OBJECT_NAME(factory), "westeros"))
+    auto view = StringView::fromLatin1(GST_OBJECT_NAME(factory));
+    if (view.startsWith("westeros"_s))
         return true;
 
     return std::nullopt;

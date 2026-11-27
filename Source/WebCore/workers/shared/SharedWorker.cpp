@@ -28,31 +28,39 @@
 
 #include "ClientOrigin.h"
 #include "ContentSecurityPolicy.h"
+#include "ContextDestructionObserverInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "EventNames.h"
+#include "EventTargetInterfaces.h"
+#include "ExceptionOr.h"
 #include "Logging.h"
 #include "MessageChannel.h"
 #include "MessagePort.h"
 #include "OriginAccessPatterns.h"
 #include "ResourceError.h"
 #include "SecurityOrigin.h"
+#include "Settings.h"
 #include "SharedWorkerObjectConnection.h"
 #include "SharedWorkerProvider.h"
 #include "TrustedType.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/IdentifiersFactory.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(CONTENT_EXTENSIONS)
+#include "ResourceMonitor.h"
+#endif
+
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SharedWorker);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SharedWorker);
 
 #define SHARED_WORKER_RELEASE_LOG(fmt, ...) RELEASE_LOG(SharedWorker, "%p - [identifier=%" PUBLIC_LOG_STRING "] SharedWorker::" fmt, this, identifier().toString().utf8().data(), ##__VA_ARGS__)
 #define SHARED_WORKER_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(SharedWorker, "%p - [identifier=%" PUBLIC_LOG_STRING "] SharedWorker::" fmt, this, identifier().toString().utf8().data(), ##__VA_ARGS__)
 
-static HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>& allSharedWorkers()
+static HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>& NODELETE allSharedWorkers()
 {
     ASSERT(isMainThread());
     static NeverDestroyed<HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>> allSharedWorkers;
@@ -64,37 +72,30 @@ SharedWorker* SharedWorker::fromIdentifier(SharedWorkerObjectIdentifier identifi
     return allSharedWorkers().get(identifier);
 }
 
-static inline SharedWorkerObjectConnection* mainThreadConnection()
+static inline SharedWorkerObjectConnection* sharedWorkerMainThreadConnection()
 {
     return SharedWorkerProvider::singleton().sharedWorkerConnection();
 }
 
-ExceptionOr<Ref<SharedWorker>> SharedWorker::create(Document& document, std::variant<RefPtr<TrustedScriptURL>, String>&& scriptURLString, std::optional<std::variant<String, WorkerOptions>>&& maybeOptions)
+ExceptionOr<Ref<SharedWorker>> SharedWorker::create(Document& document, Variant<Ref<TrustedScriptURL>, String>&& scriptURLString, std::optional<Variant<String, WorkerOptions>>&& maybeOptions)
 {
-    auto compliantScriptURLString = trustedTypeCompliantString(document, WTFMove(scriptURLString), "SharedWorker constructor"_s);
+    auto compliantScriptURLString = trustedTypeCompliantString(protect(document.contextDocument()), WTF::move(scriptURLString), "SharedWorker constructor"_s);
     if (compliantScriptURLString.hasException())
         return compliantScriptURLString.releaseException();
 
-    if (!mainThreadConnection())
+    if (!sharedWorkerMainThreadConnection())
         return Exception { ExceptionCode::NotSupportedError, "Shared workers are not supported"_s };
 
     if (!document.hasBrowsingContext())
         return Exception { ExceptionCode::InvalidStateError, "No browsing context"_s };
 
-    auto url = document.completeURL(compliantScriptURLString.releaseReturnValue());
+    auto url = document.encodingParseURL(compliantScriptURLString.releaseReturnValue());
     if (!url.isValid())
         return Exception { ExceptionCode::SyntaxError, "Invalid script URL"_s };
 
     CheckedPtr contentSecurityPolicy = document.contentSecurityPolicy();
     if (contentSecurityPolicy)
         contentSecurityPolicy->upgradeInsecureRequestIfNeeded(url, ContentSecurityPolicy::InsecureRequestType::Load);
-
-    // Per the specification, any same-origin URL (including blob: URLs) can be used. data: URLs can also be used, but they create a worker with an opaque origin.
-    if (!document.protectedSecurityOrigin()->canRequest(url, OriginAccessPatternsForWebProcess::singleton()) && !url.protocolIsData())
-        return Exception { ExceptionCode::SecurityError, "URL of the shared worker is cross-origin"_s };
-
-    if (contentSecurityPolicy && !contentSecurityPolicy->allowWorkerFromSource(url))
-        return Exception { ExceptionCode::SecurityError };
 
     WorkerOptions options;
     if (maybeOptions) {
@@ -106,7 +107,7 @@ ExceptionOr<Ref<SharedWorker>> SharedWorker::create(Document& document, std::var
     }
 
     auto channel = MessageChannel::create(document);
-    auto transferredPort = channel->port2().disentangle();
+    auto transferredPort = protect(channel->port2())->lenientDisentangle();
 
     ClientOrigin clientOrigin { document.topOrigin().data(), document.securityOrigin().data() };
     SharedWorkerKey key { clientOrigin, url, options.name };
@@ -114,16 +115,25 @@ ExceptionOr<Ref<SharedWorker>> SharedWorker::create(Document& document, std::var
     auto sharedWorker = adoptRef(*new SharedWorker(document, key, channel->port1()));
     sharedWorker->suspendIfNeeded();
 
-    mainThreadConnection()->requestSharedWorker(key, sharedWorker->identifier(), WTFMove(transferredPort), options);
+    if (!validateURL(document, url)) {
+        sharedWorker->m_isActive = false;
+        sharedWorker->queueTaskToDispatchEvent(sharedWorker.get(), TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::Yes));
+        return sharedWorker;
+    }
+
+    protect(sharedWorkerMainThreadConnection())->requestSharedWorker(key, sharedWorker->identifier(), WTF::move(transferredPort), options);
     return sharedWorker;
 }
 
 SharedWorker::SharedWorker(Document& document, const SharedWorkerKey& key, Ref<MessagePort>&& port)
     : ActiveDOMObject(&document)
     , m_key(key)
-    , m_port(WTFMove(port))
+    , m_port(WTF::move(port))
     , m_identifierForInspector(makeString("SharedWorker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
     , m_blobURLExtension({ m_key.url.protocolIsBlob() ? m_key.url : URL(), document.topOrigin().data() }) // Keep blob URL alive until the worker has finished loading.
+#if ENABLE(CONTENT_EXTENSIONS)
+    , m_resourceMonitor(document.resourceMonitorIfExists())
+#endif
 {
     SHARED_WORKER_RELEASE_LOG("SharedWorker:");
     allSharedWorkers().add(identifier(), *this);
@@ -166,13 +176,13 @@ void SharedWorker::stop()
 {
     SHARED_WORKER_RELEASE_LOG("stop:");
     m_isActive = false;
-    mainThreadConnection()->sharedWorkerObjectIsGoingAway(m_key, identifier());
+    protect(sharedWorkerMainThreadConnection())->sharedWorkerObjectIsGoingAway(m_key, identifier());
 }
 
 void SharedWorker::suspend(ReasonForSuspension reason)
 {
     if (reason == ReasonForSuspension::BackForwardCache) {
-        mainThreadConnection()->suspendForBackForwardCache(m_key, identifier());
+        protect(sharedWorkerMainThreadConnection())->suspendForBackForwardCache(m_key, identifier());
         m_isSuspendedForBackForwardCache = true;
     }
 }
@@ -180,9 +190,26 @@ void SharedWorker::suspend(ReasonForSuspension reason)
 void SharedWorker::resume()
 {
     if (m_isSuspendedForBackForwardCache) {
-        mainThreadConnection()->resumeForBackForwardCache(m_key, identifier());
+        protect(sharedWorkerMainThreadConnection())->resumeForBackForwardCache(m_key, identifier());
         m_isSuspendedForBackForwardCache = false;
     }
+}
+
+void SharedWorker::reportNetworkUsage(size_t bytesTransferredOverNetwork)
+{
+#if ENABLE(CONTENT_EXTENSIONS)
+    CheckedSize delta = bytesTransferredOverNetwork - m_bytesTransferredOverNetwork;
+    ASSERT(!delta.hasOverflowed());
+
+    if (delta) {
+        if (m_resourceMonitor) {
+            RELEASE_LOG(ResourceMonitoring, "[identifier=%" PUBLIC_LOG_STRING "] SharedWorker::reportNetworkUsage to ResourceMonitor: %zu bytes", identifier().toString().utf8().data(), delta.value());
+            m_resourceMonitor->addNetworkUsage(delta);
+        }
+    }
+#endif
+
+    m_bytesTransferredOverNetwork = bytesTransferredOverNetwork;
 }
 
 #undef SHARED_WORKER_RELEASE_LOG

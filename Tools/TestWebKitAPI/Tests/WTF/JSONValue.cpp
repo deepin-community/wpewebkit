@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include "Test.h"
+#include "Helpers/Test.h"
 #include <wtf/JSONValues.h>
 #include <wtf/text/MakeString.h>
 
@@ -357,7 +357,7 @@ TEST(JSONObject, Basic)
         auto position = keys.find(it->key);
         EXPECT_NE(position, notFound);
         EXPECT_TRUE(it == object->find(keys[position]));
-        keys.remove(position);
+        keys.removeAt(position);
     }
     EXPECT_TRUE(keys.isEmpty());
 
@@ -437,7 +437,7 @@ TEST(JSONValue, ToJSONString)
         subArray->pushString("string"_s);
         subArray->pushObject(JSON::Object::create());
         EXPECT_EQ(subArray->toJSONString(), "[\"string\",{}]"_s);
-        array->pushArray(WTFMove(subArray));
+        array->pushArray(WTF::move(subArray));
         EXPECT_EQ(array->toJSONString(), "[null,true,false,1,1.5,\"webkit\",[\"string\",{}]]"_s);
     }
 
@@ -457,7 +457,7 @@ TEST(JSONValue, ToJSONString)
         Ref<JSON::Object> subObject = JSON::Object::create();
         subObject->setString("foo"_s, "bar"_s);
         subObject->setInteger("baz"_s, 25);
-        object->setObject("object"_s, WTFMove(subObject));
+        object->setObject("object"_s, WTF::move(subObject));
         EXPECT_EQ(object->toJSONString(), "{\"null\":null,\"boolean\":true,\"double\":1.5,\"string\":\"webkit\",\"array\":[],\"object\":{\"foo\":\"bar\",\"baz\":25}}"_s);
     }
 }
@@ -667,6 +667,54 @@ TEST(JSONValue, ParseJSON)
     }
 }
 
+TEST(JSONValue, ParseJSONAllowTrailingCommas)
+{
+    {
+        auto value = JSON::Value::parseJSON("[1,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 1U);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("[1, 2, 3,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 3U);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("{\"foo\": \"bar\",}"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto object = value->asObject();
+        EXPECT_TRUE(object);
+        EXPECT_EQ(object->size(), 1U);
+        EXPECT_EQ(object->getString("foo"_s), "bar"_s);
+    }
+
+    {
+        auto value = JSON::Value::parseJSON("[{\"foo\":\"bar\"},{\"baz\":false},]"_s, JSON::Value::ParsingMode::AllowTrailingCommas);
+        EXPECT_TRUE(value);
+        auto array = value->asArray();
+        EXPECT_TRUE(array);
+        EXPECT_EQ(array->length(), 2U);
+    }
+
+    {
+        EXPECT_FALSE(JSON::Value::parseJSON("[1,]"_s, JSON::Value::ParsingMode::Strict));
+        EXPECT_FALSE(JSON::Value::parseJSON("{\"foo\": \"bar\",}"_s, JSON::Value::ParsingMode::Strict));
+    }
+
+    {
+        EXPECT_FALSE(JSON::Value::parseJSON("[,]"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("{,}"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("[1,,2]"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+        EXPECT_FALSE(JSON::Value::parseJSON("{\"foo\":bar}"_s, JSON::Value::ParsingMode::AllowTrailingCommas));
+    }
+}
+
 TEST(JSONValue, MemoryCost)
 {
     {
@@ -738,7 +786,7 @@ TEST(JSONValue, MemoryCost)
 
     {
         Ref<JSON::Value> valueA = JSON::Value::create(makeString("t"_s));
-        Ref<JSON::Value> valueB = JSON::Value::create(makeString(span("😀")));
+        Ref<JSON::Value> valueB = JSON::Value::create(makeString(unsafeSpan("😀")));
         EXPECT_LT(valueA->memoryCost(), valueB->memoryCost());
     }
 

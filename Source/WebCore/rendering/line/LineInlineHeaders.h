@@ -24,42 +24,44 @@
 #pragma once
 
 #include "LineInfo.h"
+#include "FontCascadeInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderLayer.h"
 #include "RenderObjectInlines.h"
+#include "RenderLayer.h"
 
 namespace WebCore {
 
 enum WhitespacePosition : bool { LeadingWhitespace, TrailingWhitespace };
 
-inline const RenderStyle& lineStyle(const RenderObject& renderer, const LineInfo& lineInfo)
+inline CheckedRef<const Style::ComputedStyle> lineStyle(const RenderObject& renderer, const LineInfo& lineInfo)
 {
-    return lineInfo.isFirstLine() ? renderer.firstLineStyle() : renderer.style();
+    return lineInfo.isFirstLine() ? renderer.firstLineStyle() : CheckedRef { renderer.style() };
 }
 
 inline bool requiresLineBoxForContent(const RenderInline& flow, const LineInfo& lineInfo)
 {
     RenderElement* parent = flow.parent();
     if (flow.document().inNoQuirksMode()) {
-        const RenderStyle& flowStyle = lineStyle(flow, lineInfo);
-        const RenderStyle& parentStyle = lineStyle(*parent, lineInfo);
-        if (flowStyle.lineHeight() != parentStyle.lineHeight()
-            || flowStyle.verticalAlign() != parentStyle.verticalAlign()
-            || !parentStyle.fontCascade().metricsOfPrimaryFont().hasIdenticalAscentDescentAndLineGap(flowStyle.fontCascade().metricsOfPrimaryFont()))
+        CheckedRef flowStyle = lineStyle(flow, lineInfo);
+        CheckedRef parentStyle = lineStyle(*parent, lineInfo);
+        if (flowStyle->lineHeight() != parentStyle->lineHeight()
+            || flowStyle->verticalAlign() != parentStyle->verticalAlign()
+            || !parentStyle->fontCascade().metricsOfPrimaryFont().hasIdenticalAscentDescentAndLineGap(flowStyle->fontCascade().metricsOfPrimaryFont()))
         return true;
     }
     return false;
 }
 
-inline bool shouldCollapseWhiteSpace(const RenderStyle* style, const LineInfo& lineInfo, WhitespacePosition whitespacePosition)
+inline bool shouldCollapseWhiteSpace(const Style::ComputedStyle* style, const LineInfo& lineInfo, WhitespacePosition whitespacePosition)
 {
     // CSS2 16.6.1
     // If a space (U+0020) at the beginning of a line has 'white-space' set to 'normal', 'nowrap', or 'pre-line', it is removed.
     // If a space (U+0020) at the end of a line has 'white-space' set to 'normal', 'nowrap', or 'pre-line', it is also removed.
     // If spaces (U+0020) or tabs (U+0009) at the end of a line have 'white-space' set to 'pre-wrap', UAs may visually collapse them.
     return style->collapseWhiteSpace()
-        || (whitespacePosition == TrailingWhitespace && style->whiteSpace() == WhiteSpace::PreWrap && !lineInfo.isEmpty());
+        || (whitespacePosition == TrailingWhitespace && style->whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve
+            && style->textWrapMode() == TextWrapMode::Wrap && !lineInfo.isEmpty());
 }
 
 inline bool skipNonBreakingSpace(const LegacyInlineIterator& it, const LineInfo& lineInfo)
@@ -90,8 +92,9 @@ inline bool requiresLineBox(const LegacyInlineIterator& it, const LineInfo& line
     if (!shouldCollapseWhiteSpace(&it.renderer()->style(), lineInfo, whitespacePosition))
         return true;
 
-    UChar current = it.current();
-    bool notJustWhitespace = current != ' ' && current != '\t' && current != softHyphen && (current != '\n' || it.renderer()->preservesNewline()) && !skipNonBreakingSpace(it, lineInfo);
+    char16_t current = it.current();
+    auto preservesNewline = !it.renderer()->isRenderSVGInlineText() && it.renderer()->style().preserveNewline();
+    bool notJustWhitespace = current != ' ' && current != '\t' && current != softHyphen && (current != '\n' || preservesNewline) && !skipNonBreakingSpace(it, lineInfo);
     return notJustWhitespace || rendererIsEmptyInline;
 }
 

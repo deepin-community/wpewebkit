@@ -26,9 +26,11 @@
 #include "config.h"
 #include "HTTPServer.h"
 
+#include "Logging.h"
 #include <libsoup/soup.h>
 #include <wtf/Function.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebDriver {
 
@@ -55,36 +57,38 @@ bool HTTPServer::listen(const std::optional<String>& host, unsigned port)
     m_soupServer = adoptGRef(soup_server_new("server-header", "WebKitWebDriver", nullptr));
     GUniqueOutPtr<GError> error;
     if (!soupServerListen(m_soupServer.get(), host, port, &error.outPtr())) {
-        WTFLogAlways("Failed to start HTTP server at port %u: %s", port, error->message);
+        RELEASE_LOG(WebDriverClassic, "Failed to start HTTP server at port %u: %s", port, error->message);
         return false;
     }
 
-#if USE(SOUP2)
-    soup_server_add_handler(m_soupServer.get(), nullptr, [](SoupServer* server, SoupMessage* message, const char* path, GHashTable*, SoupClientContext*, gpointer userData) {
-        auto* httpServer = static_cast<HTTPServer*>(userData);
-        GRefPtr<SoupMessage> protectedMessage = message;
-        soup_server_pause_message(server, message);
-        httpServer->m_requestHandler.handleRequest({ String::fromUTF8(message->method), String::fromUTF8(path), message->request_body->data, static_cast<size_t>(message->request_body->length) },
-            [server, message = WTFMove(protectedMessage)](HTTPRequestHandler::Response&& response) {
-                soup_message_set_status(message.get(), response.statusCode);
-                if (!response.data.isNull()) {
-                    // §6.3 Processing Model.
-                    // https://w3c.github.io/webdriver/webdriver-spec.html#dfn-send-a-response
-                    soup_message_headers_append(message->response_headers, "Content-Type", response.contentType.utf8().data());
-                    soup_message_headers_append(message->response_headers, "Cache-Control", "no-cache");
-                    soup_message_body_append(message->response_body, SOUP_MEMORY_COPY, response.data.data(), response.data.length());
-                }
-                soup_server_unpause_message(server, message.get());
-        });
-    }, this, nullptr);
-#else
     soup_server_add_handler(m_soupServer.get(), nullptr, [](SoupServer* server, SoupServerMessage* message, const char* path, GHashTable*, gpointer userData) {
         auto& httpServer = *static_cast<HTTPServer*>(userData);
+        auto* requestHeaders = soup_server_message_get_request_headers(message);
+        auto hostHeader = String::fromLatin1(soup_message_headers_get_one(requestHeaders, "Host"));
+        auto originHeader = String::fromLatin1(soup_message_headers_get_one(requestHeaders, "Origin"));
+        auto contentTypeHeader = String::fromLatin1(soup_message_headers_get_one(requestHeaders, "Content-Type"));
+        auto method = String::fromUTF8(soup_server_message_get_method(message));
+        auto result = httpServer.m_requestHandler.validateRequestHeaders(hostHeader, originHeader, method, contentTypeHeader);
+        if (!result) {
+            RELEASE_LOG_ERROR(WebDriverClassic, "Rejected HTTP request: %s", result.error().utf8().data());
+            auto response = HTTPRequestHandler::rejectedRequestResponse(result.error());
+            auto responseCharacters = byteCast<char>(response.data.span());
+            soup_server_message_set_status(message, response.statusCode, nullptr);
+            soup_server_message_set_response(message, response.contentType.utf8().data(), SOUP_MEMORY_COPY, responseCharacters.data(), responseCharacters.size());
+            return;
+        }
+
         GRefPtr<SoupServerMessage> protectedMessage = message;
         soup_server_pause_message(server, message);
         auto* requestBody = soup_server_message_get_request_body(message);
-        httpServer.m_requestHandler.handleRequest({ String::fromUTF8(soup_server_message_get_method(message)), String::fromUTF8(path), requestBody->data, static_cast<size_t>(requestBody->length) },
-            [server, message = WTFMove(protectedMessage)](HTTPRequestHandler::Response&& response) {
+
+        if (httpServer.m_visibleHost.isEmpty()) {
+            URL visibleURL { makeString("http://"_s, hostHeader) };
+            httpServer.m_visibleHost = visibleURL.isValid() ? visibleURL.host().toString() : "localhost"_s;
+        }
+
+        httpServer.m_requestHandler.handleRequest({ WTF::move(method), String::fromUTF8(path), requestBody->data, static_cast<size_t>(requestBody->length) },
+            [server, message = WTF::move(protectedMessage)](HTTPRequestHandler::Response&& response) {
                 soup_server_message_set_status(message.get(), response.statusCode, nullptr);
                 if (!response.data.isNull()) {
                     // §6.3 Processing Model.
@@ -98,7 +102,6 @@ bool HTTPServer::listen(const std::optional<String>& host, unsigned port)
                 soup_server_unpause_message(server, message.get());
         });
     }, this, nullptr);
-#endif
 
     return true;
 }

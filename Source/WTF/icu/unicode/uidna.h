@@ -19,6 +19,10 @@
 #ifndef __UIDNA_H__
 #define __UIDNA_H__
 
+#if defined(__clang__)
+_Pragma("clang system_header")
+#endif
+
 #include "unicode/utypes.h"
 
 #if !UCONFIG_NO_IDNA

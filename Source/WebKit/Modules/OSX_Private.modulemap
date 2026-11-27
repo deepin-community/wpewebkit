@@ -104,11 +104,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKApplicationCacheManager {
-    header "WKApplicationCacheManager.h"
-    export *
-  }
-
   explicit module WKArray {
     header "WKArray.h"
     export *
@@ -294,11 +289,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKBundlePageFullScreenClient {
-    header "WKBundlePageFullScreenClient.h"
-    export *
-  }
-
   explicit module WKBundlePageLoaderClient {
     header "WKBundlePageLoaderClient.h"
     export *
@@ -351,6 +341,11 @@ framework module WebKit_Private [system] {
 
   explicit module WKBundleScriptWorld {
     header "WKBundleScriptWorld.h"
+    export *
+  }
+
+  explicit module WKCast {
+    header "WKCast.h"
     export *
   }
 
@@ -654,6 +649,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module WKJSHandleRef {
+    header "WKJSHandleRef.h"
+    export *
+  }
+
   explicit module WKKeyValueStorageManager {
     header "WKKeyValueStorageManager.h"
     export *
@@ -666,11 +666,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKMain {
     header "WKMain.h"
-    export *
-  }
-
-  explicit module WKMediaFormatReader {
-    header "WKMediaFormatReader.h"
     export *
   }
 
@@ -736,6 +731,11 @@ framework module WebKit_Private [system] {
 
   explicit module WKNavigationRef {
     header "WKNavigationRef.h"
+    export *
+  }
+
+  explicit module WKNavigationPrivateForTesting {
+    header "WKNavigationPrivateForTesting.h"
     export *
   }
 
@@ -834,6 +834,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module WKPageFullScreenClient {
+    header "WKPageFullScreenClient.h"
+    export *
+  }
+
   explicit module WKPageGroup {
     header "WKPageGroup.h"
     export *
@@ -884,6 +889,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module WKPageResourceLoadClient {
+    header "WKPageResourceLoadClient.h"
+    export *
+  }
+
   explicit module WKPageUIClient {
     header "WKPageUIClient.h"
     export *
@@ -916,16 +926,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKPreferencesRefPrivate {
     header "WKPreferencesRefPrivate.h"
-    export *
-  }
-
-  explicit module WKProcessGroup {
-    header "WKProcessGroup.h"
-    export *
-  }
-
-  explicit module WKProcessGroupPrivate {
-    header "WKProcessGroupPrivate.h"
     export *
   }
 
@@ -989,6 +989,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module WKScriptMessageRef {
+    header "WKScriptMessageRef.h"
+    export *
+  }
+
   explicit module WKSessionStateRef {
     header "WKSessionStateRef.h"
     export *
@@ -996,11 +1001,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKSnapshotConfigurationPrivate {
     header "WKSnapshotConfigurationPrivate.h"
-    export *
-  }
-
-  explicit module WKSpeechRecognitionPermissionCallback {
-    header "WKSpeechRecognitionPermissionCallback.h"
     export *
   }
 
@@ -1094,11 +1094,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKUserMediaPermissionCheck {
-    header "WKUserMediaPermissionCheck.h"
-    export *
-  }
-
   explicit module WKUserMediaPermissionRequest {
     header "WKUserMediaPermissionRequest.h"
     export *
@@ -1141,86 +1136,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKWebArchiveResource {
     header "WKWebArchiveResource.h"
-    export *
-  }
-
-  explicit module WKWebExtension {
-    header "WKWebExtension.h"
-    export *
-  }
-
-  explicit module WKWebExtensionAction {
-    header "WKWebExtensionAction.h"
-    export *
-  }
-
-  explicit module WKWebExtensionCommand {
-    header "WKWebExtensionCommand.h"
-    export *
-  }
-
-  explicit module WKWebExtensionContext {
-    header "WKWebExtensionContext.h"
-    export *
-  }
-
-  explicit module WKWebExtensionController {
-    header "WKWebExtensionController.h"
-    export *
-  }
-
-  explicit module WKWebExtensionControllerConfiguration {
-    header "WKWebExtensionControllerConfiguration.h"
-    export *
-  }
-
-  explicit module WKWebExtensionControllerDelegate {
-    header "WKWebExtensionControllerDelegate.h"
-    export *
-  }
-
-  explicit module WKWebExtensionDataRecord {
-    header "WKWebExtensionDataRecord.h"
-    export *
-  }
-
-  explicit module WKWebExtensionDataType {
-    header "WKWebExtensionDataType.h"
-    export *
-  }
-
-  explicit module WKWebExtensionMatchPattern {
-    header "WKWebExtensionMatchPattern.h"
-    export *
-  }
-
-  explicit module WKWebExtensionMessagePort {
-    header "WKWebExtensionMessagePort.h"
-    export *
-  }
-
-  explicit module WKWebExtensionPermission {
-    header "WKWebExtensionPermission.h"
-    export *
-  }
-
-  explicit module WKWebExtensionTab {
-    header "WKWebExtensionTab.h"
-    export *
-  }
-
-  explicit module WKWebExtensionTabConfiguration {
-    header "WKWebExtensionTabConfiguration.h"
-    export *
-  }
-
-  explicit module WKWebExtensionWindow {
-    header "WKWebExtensionWindow.h"
-    export *
-  }
-
-  explicit module WKWebExtensionWindowConfiguration {
-    header "WKWebExtensionWindowConfiguration.h"
     export *
   }
 
@@ -1749,6 +1664,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module _WKAuthenticationPRFInputValues {
+    header "_WKAuthenticationExtensionsClientInputs.h"
+    export *
+  }
+
   explicit module _WKAuthenticationExtensionsClientOutputs {
     header "_WKAuthenticationExtensionsClientOutputs.h"
     export *
@@ -1796,6 +1716,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKAutomationSessionDelegate {
     header "_WKAutomationSessionDelegate.h"
+    export *
+  }
+
+  explicit module _WKAutomationSessionPrivateForTesting {
+    header "_WKAutomationSessionPrivateForTesting.h"
     export *
   }
 
@@ -1949,6 +1874,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module _WKJSHandle {
+    header "_WKJSHandle.h"
+    export *
+  }
+
   explicit module _WKLinkIconParameters {
     header "_WKLinkIconParameters.h"
     export *
@@ -1961,6 +1891,16 @@ framework module WebKit_Private [system] {
 
   explicit module _WKNSFileManagerExtras {
     header "_WKNSFileManagerExtras.h"
+    export *
+  }
+
+  explicit module _WKNSStringExtras {
+    header "_WKNSStringExtras.h"
+    export *
+  }
+
+  explicit module _WKNSURLExtras {
+    header "_WKNSURLExtras.h"
     export *
   }
 
@@ -2159,6 +2099,11 @@ framework module WebKit_Private [system] {
     export *
   }
 
+  explicit module _WKWebExtensionBookmark {
+    header "_WKWebExtensionBookmarks.h"
+    export *
+  }
+
   explicit module WKWebExtensionCommandPrivate {
     header "WKWebExtensionCommandPrivate.h"
     export *
@@ -2226,6 +2171,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKWebExtensionAction {
     header "_WKWebExtensionAction.h"
+    export *
+  }
+
+  explicit module _WKWebExtensionSidebar {
+    header "_WKWebExtensionSidebar.h"
     export *
   }
 

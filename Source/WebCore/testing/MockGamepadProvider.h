@@ -27,10 +27,11 @@
 
 #if ENABLE(GAMEPAD)
 
-#include "GamepadProvider.h"
-#include "MockGamepad.h"
+#include <WebCore/GamepadProvider.h>
+#include <WebCore/MockGamepad.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -39,17 +40,17 @@ class MockGamepadProvider : public GamepadProvider {
     WTF_MAKE_NONCOPYABLE(MockGamepadProvider);
     friend class NeverDestroyed<MockGamepadProvider>;
 public:
-    WEBCORE_TESTSUPPORT_EXPORT static MockGamepadProvider& singleton();
+    WEBCORE_TESTSUPPORT_EXPORT static MockGamepadProvider& NODELETE singleton();
 
     WEBCORE_TESTSUPPORT_EXPORT void startMonitoringGamepads(GamepadProviderClient&) final;
     WEBCORE_TESTSUPPORT_EXPORT void stopMonitoringGamepads(GamepadProviderClient&) final;
-    const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() final { return m_connectedGamepadVector; }
+    const Vector<WeakPtr<PlatformGamepad>>& platformGamepads() LIFETIME_BOUND final { return m_connectedGamepadVector; }
     bool isMockGamepadProvider() const final { return true; }
     void playEffect(unsigned, const String&, GamepadHapticEffectType, const GamepadEffectParameters&, CompletionHandler<void(bool)>&&) final;
     void stopEffects(unsigned, const String&, CompletionHandler<void()>&&) final;
     void clearGamepadsForTesting() final;
 
-    void setMockGamepadDetails(unsigned index, const String& gamepadID, const String& mapping, unsigned axisCount, unsigned buttonCount, bool supportsDualRumble);
+    void setMockGamepadDetails(unsigned index, const String& gamepadID, const String& mapping, unsigned axisCount, unsigned buttonCount, bool supportsDualRumble, bool wasConnected);
     bool setMockGamepadAxisValue(unsigned index, unsigned axisIndex, double value);
     bool setMockGamepadButtonValue(unsigned index, unsigned buttonIndex, double value);
     bool connectMockGamepad(unsigned index);

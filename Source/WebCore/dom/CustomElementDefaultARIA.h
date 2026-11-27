@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "QualifiedName.h"
+#include <WebCore/QualifiedName.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -39,7 +39,7 @@ class Element;
 class WeakPtrImplWithEventTargetData;
 
 class CustomElementDefaultARIA final : public CanMakeCheckedPtr<CustomElementDefaultARIA> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(CustomElementDefaultARIA);
+    WTF_MAKE_TZONE_ALLOCATED(CustomElementDefaultARIA);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CustomElementDefaultARIA);
 public:
     CustomElementDefaultARIA();
@@ -50,12 +50,12 @@ public:
     void setValueForAttribute(const QualifiedName&, const AtomString&);
     RefPtr<Element> elementForAttribute(const Element& thisElement, const QualifiedName&) const;
     void setElementForAttribute(const QualifiedName&, Element*);
-    Vector<Ref<Element>> elementsForAttribute(const Element& thisElement, const QualifiedName&) const;
+    std::optional<Vector<Ref<Element>>> elementsForAttribute(const Element& thisElement, const QualifiedName&) const;
     void setElementsForAttribute(const QualifiedName&, std::optional<Vector<Ref<Element>>>&&);
 
 private:
     using WeakElementPtr = WeakPtr<Element, WeakPtrImplWithEventTargetData>;
-    HashMap<QualifiedName, std::variant<AtomString, WeakElementPtr, Vector<WeakElementPtr>>> m_map;
+    HashMap<QualifiedName, Variant<AtomString, WeakElementPtr, Vector<WeakElementPtr>>> m_map;
 };
 
 }; // namespace WebCore

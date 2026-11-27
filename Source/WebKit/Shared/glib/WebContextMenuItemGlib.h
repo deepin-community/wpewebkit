@@ -29,7 +29,6 @@
 #include "WebContextMenuItemData.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/glib/GRefPtr.h>
-#include <wtf/glib/GUniquePtr.h>
 
 #if PLATFORM(GTK) && !USE(GTK4)
 typedef struct _GtkAction GtkAction;
@@ -54,14 +53,13 @@ public:
     WebCore::ContextMenuItemType type() const { return m_submenuItems.isEmpty() ? WebContextMenuItemData::type() : WebCore::ContextMenuItemType::Submenu; }
     GAction* gAction() const { return m_gAction.get(); }
     GVariant* gActionTarget() const { return m_gActionTarget.get(); }
-    const Vector<WebContextMenuItemGlib>& submenuItems() const { return m_submenuItems; }
+    const Vector<WebContextMenuItemGlib>& submenuItems() const LIFETIME_BOUND { return m_submenuItems; }
 
 #if PLATFORM(GTK) && !USE(GTK4)
     GtkAction* gtkAction() const { return m_gtkAction; }
 #endif
 
 private:
-    GUniquePtr<char> buildActionName() const;
     void createActionIfNeeded();
 
     GRefPtr<GAction> m_gAction;

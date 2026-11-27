@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "FloatSize.h"
-#include "ScrollTypes.h"
+#include <WebCore/FloatSize.h>
+#include <WebCore/ScrollTypes.h>
 #include <wtf/Deque.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -42,14 +43,14 @@ public:
 
     WEBCORE_EXPORT virtual void updateFromEvent(const PlatformWheelEvent&) = 0;
 
-    WEBCORE_EXPORT PlatformWheelEvent eventCopyWithFilteredDeltas(const PlatformWheelEvent&) const;
-    WEBCORE_EXPORT PlatformWheelEvent eventCopyWithVelocity(const PlatformWheelEvent&) const;
+    WEBCORE_EXPORT PlatformWheelEvent NODELETE eventCopyWithFilteredDeltas(const PlatformWheelEvent&) const;
+    WEBCORE_EXPORT PlatformWheelEvent NODELETE eventCopyWithVelocity(const PlatformWheelEvent&) const;
 
-    WEBCORE_EXPORT FloatSize filteredVelocity() const;
-    WEBCORE_EXPORT FloatSize filteredDelta() const;
+    WEBCORE_EXPORT FloatSize NODELETE filteredVelocity() const;
+    WEBCORE_EXPORT FloatSize NODELETE filteredDelta() const;
 
-    WEBCORE_EXPORT static bool shouldApplyFilteringForEvent(const PlatformWheelEvent&);
-    WEBCORE_EXPORT static bool shouldIncludeVelocityForEvent(const PlatformWheelEvent&);
+    WEBCORE_EXPORT static bool NODELETE shouldApplyFilteringForEvent(const PlatformWheelEvent&);
+    WEBCORE_EXPORT static bool NODELETE shouldIncludeVelocityForEvent(const PlatformWheelEvent&);
 
 protected:
     FloatSize m_currentFilteredDelta;
@@ -57,13 +58,13 @@ protected:
 };
 
 class BasicWheelEventDeltaFilter final : public WheelEventDeltaFilter {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(BasicWheelEventDeltaFilter);
 public:
     BasicWheelEventDeltaFilter();
     void updateFromEvent(const PlatformWheelEvent&) final;
 
 private:
-    std::optional<ScrollEventAxis> dominantAxis() const;
+    std::optional<ScrollEventAxis> NODELETE dominantAxis() const;
 
     void reset();
     void updateWithDelta(FloatSize);

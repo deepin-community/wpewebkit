@@ -25,15 +25,14 @@
 
 #pragma once
 
-#include "DisplayVBlankMonitor.h"
+#include "DisplayVBlankMonitorThreaded.h"
 
 namespace WebKit {
 
-class DisplayVBlankMonitorTimer final : public DisplayVBlankMonitor {
+class DisplayVBlankMonitorTimer final : public DisplayVBlankMonitorThreaded {
 public:
     static std::unique_ptr<DisplayVBlankMonitor> create();
     explicit DisplayVBlankMonitorTimer();
-    ~DisplayVBlankMonitorTimer() = default;
 
 private:
     Type type() const override { return Type::Timer; }

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2007-2023 Apple Inc.  All rights reserved.
- * Copyright (C) 2015 Google Inc.  All rights reserved.
+ * Copyright (C) 2007-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,7 @@ namespace WebCore {
 class ScreenOrientation;
 
 class Screen final : public ScriptWrappable, public RefCounted<Screen>, public LocalDOMWindowProperty {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(Screen);
+    WTF_MAKE_TZONE_ALLOCATED(Screen);
 public:
     static Ref<Screen> create(LocalDOMWindow& window) { return adoptRef(*new Screen(window)); }
     ~Screen();

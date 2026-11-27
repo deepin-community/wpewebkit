@@ -42,13 +42,19 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ServiceWorkerNavigationPreloader);
 
-ServiceWorkerNavigationPreloader::ServiceWorkerNavigationPreloader(NetworkSession& session, NetworkLoadParameters&& parameters, const WebCore::NavigationPreloadState& state, bool shouldCaptureExtraNetworkLoadMetric)
+Ref<ServiceWorkerNavigationPreloader> ServiceWorkerNavigationPreloader::create(NetworkSession& session, NetworkLoadParameters&& parameters, const WebCore::NavigationPreloadState& state, bool shouldCaptureExtraNetworkLoadMetrics)
+{
+    return adoptRef(*new ServiceWorkerNavigationPreloader(session, WTF::move(parameters), state, shouldCaptureExtraNetworkLoadMetrics));
+}
+
+ServiceWorkerNavigationPreloader::ServiceWorkerNavigationPreloader(NetworkSession& session, NetworkLoadParameters&& parameters, const WebCore::NavigationPreloadState& state, bool shouldCaptureExtraNetworkLoadMetrics)
     : m_session(session)
-    , m_parameters(WTFMove(parameters))
+    , m_parameters(WTF::move(parameters))
     , m_state(state)
-    , m_shouldCaptureExtraNetworkLoadMetrics(shouldCaptureExtraNetworkLoadMetrics())
+    , m_shouldCaptureExtraNetworkLoadMetrics(shouldCaptureExtraNetworkLoadMetrics)
     , m_startTime(MonotonicTime::now())
 {
+    relaxAdoptionRequirement();
     RELEASE_LOG(ServiceWorker, "ServiceWorkerNavigationPreloader::ServiceWorkerNavigationPreloader %p", this);
     start();
 }
@@ -59,58 +65,57 @@ void ServiceWorkerNavigationPreloader::start()
         return;
     m_isStarted = true;
 
-    if (!m_session) {
+    CheckedPtr session = m_session.get();
+    if (!session) {
         didFailLoading(ResourceError { errorDomainWebKitInternal, 0, { }, "No session for preload"_s });
         return;
     }
 
-    if (m_session->cache()) {
-        NetworkCache::GlobalFrameID globalID { m_parameters.webPageProxyID, m_parameters.webPageID, m_parameters.webFrameID };
-        m_session->cache()->retrieve(m_parameters.request, globalID, m_parameters.isNavigatingToAppBoundDomain, m_parameters.allowPrivacyProxy, m_parameters.advancedPrivacyProtections, [this, weakThis = WeakPtr { *this }](auto&& entry, auto&&) mutable {
-            CheckedPtr checkedThis = weakThis.get();
-            if (!checkedThis || m_isCancelled)
+    if (RefPtr cache = session->cache()) {
+        NetworkCache::GlobalFrameID globalID { *m_parameters.webPageProxyID, *m_parameters.webPageID, *m_parameters.webFrameID };
+        cache->retrieve(m_parameters.request, globalID, m_parameters.isNavigatingToAppBoundDomain, m_parameters.allowPrivacyProxy, m_parameters.advancedPrivacyProtections, [weakThis = WeakPtr { *this }](auto&& entry, auto&&) mutable {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis || protectedThis->m_isCancelled)
                 return;
 
             if (entry && !entry->needsValidation()) {
-                loadWithCacheEntry(*entry);
+                protectedThis->loadWithCacheEntry(*entry);
                 return;
             }
 
-            m_parameters.request.setCachePolicy(ResourceRequestCachePolicy::RefreshAnyCacheData);
+            protectedThis->m_parameters.request.setCachePolicy(ResourceRequestCachePolicy::RefreshAnyCacheData);
             if (entry) {
-                m_cacheEntry = WTFMove(entry);
+                protectedThis->m_cacheEntry = WTF::move(entry);
 
-                auto eTag = m_cacheEntry->response().httpHeaderField(HTTPHeaderName::ETag);
+                auto eTag = protectedThis->m_cacheEntry->response().httpHeaderField(HTTPHeaderName::ETag);
                 if (!eTag.isEmpty())
-                    m_parameters.request.setHTTPHeaderField(HTTPHeaderName::IfNoneMatch, eTag);
+                    protectedThis->m_parameters.request.setHTTPHeaderField(HTTPHeaderName::IfNoneMatch, eTag);
 
-                auto lastModified = m_cacheEntry->response().httpHeaderField(HTTPHeaderName::LastModified);
+                auto lastModified = protectedThis->m_cacheEntry->response().httpHeaderField(HTTPHeaderName::LastModified);
                 if (!lastModified.isEmpty())
-                    m_parameters.request.setHTTPHeaderField(HTTPHeaderName::IfModifiedSince, lastModified);
+                    protectedThis->m_parameters.request.setHTTPHeaderField(HTTPHeaderName::IfModifiedSince, lastModified);
             }
 
-            if (!m_session) {
-                didFailLoading(ResourceError { ResourceError::Type::Cancellation });
+            if (!protectedThis->m_session) {
+                protectedThis->didFailLoading(ResourceError { ResourceError::Type::Cancellation });
                 return;
             }
-            loadFromNetwork();
+            protectedThis->loadFromNetwork();
         });
         return;
     }
     loadFromNetwork();
 }
 
-ServiceWorkerNavigationPreloader::~ServiceWorkerNavigationPreloader()
-{
-}
+ServiceWorkerNavigationPreloader::~ServiceWorkerNavigationPreloader() = default;
 
 void ServiceWorkerNavigationPreloader::cancel()
 {
     m_isCancelled = true;
     if (m_responseCompletionHandler)
         m_responseCompletionHandler(PolicyAction::Ignore);
-    if (m_networkLoad)
-        m_networkLoad->cancel();
+    if (RefPtr networkLoad = m_networkLoad)
+        networkLoad->cancel();
 }
 
 void ServiceWorkerNavigationPreloader::loadWithCacheEntry(NetworkCache::Entry& entry)
@@ -119,10 +124,8 @@ void ServiceWorkerNavigationPreloader::loadWithCacheEntry(NetworkCache::Entry& e
         if (!weakThis || weakThis->m_isCancelled)
             return;
 
-        size_t size  = 0;
         if (body) {
-            size = body->size();
-            weakThis->didReceiveBuffer(body.releaseNonNull(), size);
+            weakThis->didReceiveBuffer(body.releaseNonNull());
             if (!weakThis)
                 return;
         }
@@ -130,13 +133,13 @@ void ServiceWorkerNavigationPreloader::loadWithCacheEntry(NetworkCache::Entry& e
         NetworkLoadMetrics networkLoadMetrics;
         networkLoadMetrics.markComplete();
         networkLoadMetrics.responseBodyBytesReceived = 0;
-        networkLoadMetrics.responseBodyDecodedSize = size;
+        networkLoadMetrics.responseBodyDecodedSize = 0;
         if (weakThis->shouldCaptureExtraNetworkLoadMetrics()) {
             auto additionalMetrics = WebCore::AdditionalNetworkLoadMetricsForWebInspector::create();
             additionalMetrics->requestHeaderBytesSent = 0;
             additionalMetrics->requestBodyBytesSent = 0;
             additionalMetrics->responseHeaderBytesReceived = 0;
-            networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector = WTFMove(additionalMetrics);
+            networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector = WTF::move(additionalMetrics);
         }
         weakThis->didFinishLoading(networkLoadMetrics);
     });
@@ -151,13 +154,14 @@ void ServiceWorkerNavigationPreloader::loadFromNetwork()
     if (m_state.enabled)
         m_parameters.request.addHTTPHeaderField(HTTPHeaderName::ServiceWorkerNavigationPreload, m_state.headerValue);
 
-    m_networkLoad = makeUnique<NetworkLoad>(*this, WTFMove(m_parameters), *m_session);
-    m_networkLoad->start();
+    Ref networkLoad = NetworkLoad::create(*this, WTF::move(m_parameters), CheckedRef { *m_session });
+    m_networkLoad = networkLoad.copyRef();
+    networkLoad->start();
 }
 
 void ServiceWorkerNavigationPreloader::willSendRedirectedRequest(ResourceRequest&&, ResourceRequest&&, ResourceResponse&& response, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
 {
-    didReceiveResponse(WTFMove(response), PrivateRelayed::No, [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)](auto) mutable {
+    didReceiveResponse(WTF::move(response), PrivateRelayed::No, [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](auto) mutable {
         completionHandler({ });
         if (weakThis)
             weakThis->didComplete();
@@ -168,27 +172,30 @@ void ServiceWorkerNavigationPreloader::didReceiveResponse(ResourceResponse&& res
 {
     RELEASE_LOG(ServiceWorker, "ServiceWorkerNavigationPreloader::didReceiveResponse %p", this);
 
+    m_didReceiveResponseOrError = true;
+
     if (response.isRedirection())
         response.setTainting(ResourceResponse::Tainting::Opaqueredirect);
 
     if (response.httpStatusCode() == httpStatus304NotModified && m_cacheEntry) {
-        auto cacheEntry = WTFMove(m_cacheEntry);
+        auto cacheEntry = WTF::move(m_cacheEntry);
         loadWithCacheEntry(*cacheEntry);
         completionHandler(PolicyAction::Ignore);
         return;
     }
 
-    m_response = WTFMove(response);
-    m_responseCompletionHandler = WTFMove(completionHandler);
+    m_response = WTF::move(response);
+    m_response.setRedirected(false);
+    m_responseCompletionHandler = WTF::move(completionHandler);
 
     if (auto callback = std::exchange(m_responseCallback, { }))
         callback();
 }
 
-void ServiceWorkerNavigationPreloader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, uint64_t reportedEncodedDataLength)
+void ServiceWorkerNavigationPreloader::didReceiveBuffer(const FragmentedSharedBuffer& buffer)
 {
     if (m_bodyCallback)
-        m_bodyCallback(RefPtr { &buffer }, reportedEncodedDataLength);
+        m_bodyCallback(RefPtr { &buffer });
 }
 
 void ServiceWorkerNavigationPreloader::didFinishLoading(const NetworkLoadMetrics& networkLoadMetrics)
@@ -203,6 +210,7 @@ void ServiceWorkerNavigationPreloader::didFailLoading(const ResourceError& error
 {
     RELEASE_LOG(ServiceWorker, "ServiceWorkerNavigationPreloader::didFailLoading %p", this);
 
+    m_didReceiveResponseOrError = true;
     m_error = error;
     didComplete();
 }
@@ -219,7 +227,7 @@ void ServiceWorkerNavigationPreloader::didComplete()
         responseCallback();
 
     if (bodyCallback)
-        bodyCallback({ }, 0);
+        bodyCallback({ });
 }
 
 void ServiceWorkerNavigationPreloader::waitForResponse(ResponseCallback&& callback)
@@ -234,18 +242,18 @@ void ServiceWorkerNavigationPreloader::waitForResponse(ResponseCallback&& callba
         return;
     }
 
-    m_responseCallback = WTFMove(callback);
+    m_responseCallback = WTF::move(callback);
 }
 
 void ServiceWorkerNavigationPreloader::waitForBody(BodyCallback&& callback)
 {
     if (!m_error.isNull() || !m_responseCompletionHandler) {
-        callback({ }, 0);
+        callback({ });
         return;
     }
 
     ASSERT(!m_response.isNull());
-    m_bodyCallback = WTFMove(callback);
+    m_bodyCallback = WTF::move(callback);
     m_responseCompletionHandler(PolicyAction::Use);
 }
 
@@ -254,7 +262,11 @@ bool ServiceWorkerNavigationPreloader::convertToDownload(DownloadManager& manage
     if (!m_networkLoad)
         return false;
 
-    manager.convertNetworkLoadToDownload(downloadID, std::exchange(m_networkLoad, nullptr), WTFMove(m_responseCompletionHandler), { }, request, response);
+    if (!m_responseCompletionHandler)
+        return false;
+
+    auto networkLoad = std::exchange(m_networkLoad, nullptr);
+    manager.convertNetworkLoadToDownload(downloadID, networkLoad.releaseNonNull(), WTF::move(m_responseCompletionHandler), { }, request, response);
     return true;
 }
 

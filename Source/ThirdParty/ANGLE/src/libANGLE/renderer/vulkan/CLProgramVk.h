@@ -8,13 +8,12 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLPROGRAMVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLPROGRAMVK_H_
 
-#include "common/SimpleMutex.h"
+#include "libANGLE/renderer/vulkan/clspv_utils.h"
 
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLKernelVk.h"
 #include "libANGLE/renderer/vulkan/cl_types.h"
-#include "libANGLE/renderer/vulkan/vk_cache_utils.h"
-#include "libANGLE/renderer/vulkan/vk_helpers.h"
+#include "libANGLE/renderer/vulkan/clspv_utils.h"
 
 #include "libANGLE/renderer/CLProgramImpl.h"
 
@@ -22,11 +21,9 @@
 
 #include "clspv/Compiler.h"
 
-#include "vulkan/vulkan_core.h"
-
-#include "spirv-tools/libspirv.h"
-
 #include "spirv/unified1/NonSemanticClspvReflection.h"
+
+#include "vulkan/vulkan_core.h"
 
 namespace rx
 {
@@ -35,18 +32,6 @@ class CLProgramVk : public CLProgramImpl
 {
   public:
     using Ptr = std::unique_ptr<CLProgramVk>;
-    struct SpvReflectionData
-    {
-        angle::HashMap<uint32_t, uint32_t> spvIntLookup;
-        angle::HashMap<uint32_t, std::string> spvStrLookup;
-        angle::HashMap<uint32_t, CLKernelVk::ArgInfo> kernelArgInfos;
-        angle::HashMap<std::string, uint32_t> kernelFlags;
-        angle::HashMap<std::string, std::string> kernelAttributes;
-        angle::HashMap<std::string, std::array<uint32_t, 3>> kernelCompileWorkgroupSize;
-        angle::HashMap<uint32_t, VkPushConstantRange> pushConstants;
-        std::array<uint32_t, 3> specConstantWorkgroupSizeIDs{0, 0, 0};
-        CLKernelArgsMap kernelArgsMap;
-    };
 
     // Output binary structure (for CL_PROGRAM_BINARIES query)
     static constexpr uint32_t kBinaryVersion = 2;
@@ -95,10 +80,11 @@ class CLProgramVk : public CLProgramImpl
         std::vector<char> IR;
         std::string buildLog;
         angle::spirv::Blob binary;
-        SpvReflectionData reflectionData;
+        ClspvReflectionData reflectionData;
         VkPushConstantRange pushConstRange{};
         cl_build_status buildStatus{CL_BUILD_NONE};
         cl_program_binary_type binaryType{CL_PROGRAM_BINARY_TYPE_NONE};
+        spv_target_env spirvVersion;
 
         size_t numKernels() const { return reflectionData.kernelArgsMap.size(); }
 
@@ -107,7 +93,7 @@ class CLProgramVk : public CLProgramImpl
             return containsKernel(kernelName) ? getKernelArgsMap().at(kernelName).size() : 0;
         }
 
-        const CLKernelArgsMap &getKernelArgsMap() const { return reflectionData.kernelArgsMap; }
+        const ClspvKernelArgsMap &getKernelArgsMap() const { return reflectionData.kernelArgsMap; }
 
         bool containsKernel(const std::string &name) const
         {
@@ -124,13 +110,22 @@ class CLProgramVk : public CLProgramImpl
             return names;
         }
 
-        CLKernelArguments getKernelArguments(const std::string &kernelName) const
+        uint32_t getKernelFlags(const std::string &kernelName) const
         {
-            CLKernelArguments kargsCopy;
             if (containsKernel(kernelName))
             {
-                const CLKernelArguments &kargs = getKernelArgsMap().at(kernelName);
-                for (const CLKernelArgument &karg : kargs)
+                return reflectionData.kernelFlags.at(kernelName);
+            }
+            return 0;
+        }
+
+        ClspvKernelArguments getKernelArguments(const std::string &kernelName) const
+        {
+            ClspvKernelArguments kargsCopy;
+            if (containsKernel(kernelName))
+            {
+                const ClspvKernelArguments &kargs = getKernelArgsMap().at(kernelName);
+                for (const ClspvKernelArgument &karg : kargs)
                 {
                     kargsCopy.push_back(karg);
                 }
@@ -183,6 +178,84 @@ class CLProgramVk : public CLProgramImpl
             return getPushConstantRangeFromClspvReflectionType(
                 NonSemanticClspvReflectionPushConstantGlobalSize);
         }
+
+        inline const VkPushConstantRange *getEnqueuedLocalSizeRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantEnqueuedLocalSize);
+        }
+
+        inline const VkPushConstantRange *getNumWorkgroupsRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantNumWorkgroups);
+        }
+
+        inline const VkPushConstantRange *getRegionOffsetRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantRegionOffset);
+        }
+
+        inline const VkPushConstantRange *getRegionGroupOffsetRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantRegionGroupOffset);
+        }
+
+        const VkPushConstantRange *getImageDataChannelOrderRange(size_t ordinal) const
+        {
+            const VkPushConstantRange *pushConstantRangePtr = nullptr;
+            if (reflectionData.imagePushConstants.contains(
+                    NonSemanticClspvReflectionImageArgumentInfoChannelOrderPushConstant))
+            {
+                for (const auto &imageConstant : reflectionData.imagePushConstants.at(
+                         NonSemanticClspvReflectionImageArgumentInfoChannelOrderPushConstant))
+                {
+                    if (static_cast<size_t>(imageConstant.ordinal) == ordinal)
+                    {
+                        pushConstantRangePtr = &imageConstant.pcRange;
+                    }
+                }
+            }
+            return pushConstantRangePtr;
+        }
+
+        const VkPushConstantRange *getImageDataChannelDataTypeRange(size_t ordinal) const
+        {
+            const VkPushConstantRange *pushConstantRangePtr = nullptr;
+            if (reflectionData.imagePushConstants.contains(
+                    NonSemanticClspvReflectionImageArgumentInfoChannelDataTypePushConstant))
+            {
+                for (const auto &imageConstant : reflectionData.imagePushConstants.at(
+                         NonSemanticClspvReflectionImageArgumentInfoChannelDataTypePushConstant))
+                {
+                    if (static_cast<size_t>(imageConstant.ordinal) == ordinal)
+                    {
+                        pushConstantRangePtr = &imageConstant.pcRange;
+                    }
+                }
+            }
+            return pushConstantRangePtr;
+        }
+
+        const VkPushConstantRange *getNormalizedSamplerMaskRange(size_t ordinal) const
+        {
+            const VkPushConstantRange *pushConstantRangePtr = nullptr;
+            if (reflectionData.imagePushConstants.contains(
+                    NonSemanticClspvReflectionNormalizedSamplerMaskPushConstant))
+            {
+                for (const auto &imageConstant : reflectionData.imagePushConstants.at(
+                         NonSemanticClspvReflectionNormalizedSamplerMaskPushConstant))
+                {
+                    if (static_cast<size_t>(imageConstant.ordinal) == ordinal)
+                    {
+                        pushConstantRangePtr = &imageConstant.pcRange;
+                    }
+                }
+            }
+            return pushConstantRangePtr;
+        }
     };
     using DevicePrograms   = angle::HashMap<const _cl_device_id *, DeviceProgramData>;
     using LinkPrograms     = std::vector<const DeviceProgramData *>;
@@ -227,32 +300,29 @@ class CLProgramVk : public CLProgramImpl
     const DeviceProgramData *getDeviceProgramData(const char *kernelName) const;
     const DeviceProgramData *getDeviceProgramData(const _cl_device_id *device) const;
     CLPlatformVk *getPlatform() { return mContext->getPlatform(); }
-    vk::RefCounted<vk::ShaderModule> *getShaderModule() { return &mShader; }
+    const vk::ShaderModulePtr &getShaderModule() const { return mShader; }
+    cl::BufferPtr getOrCreateModuleConstantDataBuffer(const std::string &kernelName);
 
     bool buildInternal(const cl::DevicePtrs &devices,
                        std::string options,
                        std::string internalOptions,
                        BuildType buildType,
                        const LinkProgramsList &LinkProgramsList);
-    angle::spirv::Blob stripReflection(const DeviceProgramData *deviceProgramData);
-
-    angle::Result allocateDescriptorSet(const vk::DescriptorSetLayout &descriptorSetLayout,
-                                        VkDescriptorSet *descriptorSetOut);
 
     // Sets the status for given associated device programs
     void setBuildStatus(const cl::DevicePtrs &devices, cl_build_status status);
 
+    const angle::HashMap<uint32_t, ClspvPrintfInfo> *getPrintfDescriptors(
+        const std::string &kernelName) const;
+
   private:
     CLContextVk *mContext;
     std::string mProgramOpts;
-    vk::RefCounted<vk::ShaderModule> mShader;
+    vk::ShaderModulePtr mShader;
     DevicePrograms mAssociatedDevicePrograms;
-    PipelineLayoutCache mPipelineLayoutCache;
-    vk::MetaDescriptorPool mMetaDescriptorPool;
-    DescriptorSetLayoutCache mDescSetLayoutCache;
-    vk::DescriptorSetArray<vk::DescriptorPoolPointer> mDescriptorPools;
-    vk::RefCountedDescriptorPoolBinding mPoolBinding;
     angle::SimpleMutex mProgramMutex;
+    std::shared_ptr<angle::WaitableEvent> mAsyncBuildEvent;
+    cl::BufferPtr mModuleConstantDataBuffer;
 };
 
 class CLAsyncBuildTask : public angle::Closure

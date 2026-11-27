@@ -26,12 +26,13 @@
 
 #if ENABLE(POINTER_LOCK)
 
-#include "ExceptionCode.h"
-#include "PointerLockOptions.h"
+#include <WebCore/ExceptionCode.h>
+#include <WebCore/PointerLockOptions.h>
 
 #include <optional>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
@@ -47,29 +48,36 @@ class PlatformWheelEvent;
 class VoidCallback;
 class WeakPtrImplWithEventTargetData;
 
+enum class PointerLockRequestResult : uint8_t {
+    Success,
+    Failure,
+    Unsupported
+};
+
 class PointerLockController {
     WTF_MAKE_NONCOPYABLE(PointerLockController);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(PointerLockController);
 public:
     explicit PointerLockController(Page&);
     ~PointerLockController();
-    void requestPointerLock(Element* target, std::optional<PointerLockOptions>&& = std::nullopt, RefPtr<DeferredPromise> = nullptr);
+    void requestPointerLock(Element* target, PointerLockOptions&&, Ref<DeferredPromise>&&);
+
+    void NODELETE ref() const;
+    void deref() const;
 
     void requestPointerUnlock();
     void requestPointerUnlockAndForceCursorVisible();
     void elementWasRemoved(Element&);
     void documentDetached(Document&);
-    bool isLocked() const;
-    WEBCORE_EXPORT bool lockPending() const;
-    WEBCORE_EXPORT Element* element() const;
+    bool NODELETE isLocked() const;
+    WEBCORE_EXPORT bool NODELETE lockPending() const;
+    WEBCORE_EXPORT Element* NODELETE element() const;
 
     WEBCORE_EXPORT void didAcquirePointerLock();
     WEBCORE_EXPORT void didNotAcquirePointerLock();
     WEBCORE_EXPORT void didLosePointerLock();
     void dispatchLockedMouseEvent(const PlatformMouseEvent&, const AtomString& eventType);
     void dispatchLockedWheelEvent(const PlatformWheelEvent&);
-
-    static bool supportsUnadjustedMovement();
 
 private:
     void clearElement();
@@ -79,11 +87,13 @@ private:
     void rejectPromises(ExceptionCode, const String&);
     void elementWasRemovedInternal();
 
-    Page& m_page;
+    bool supportsUnadjustedMovement() const;
+
+    WeakRef<Page> m_page;
     bool m_lockPending { false };
     bool m_unlockPending { false };
     bool m_forceCursorVisibleUponUnlock { false };
-    std::optional<PointerLockOptions> m_options;
+    PointerLockOptions m_options;
     RefPtr<Element> m_element;
     Vector<Ref<DeferredPromise>> m_promises;
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_documentOfRemovedElementWhileWaitingForUnlock;

@@ -8,6 +8,7 @@
 // and related functionality. [OpenGL ES 2.0.24] section 2.10.3 page 28.
 
 #include "libANGLE/Program.h"
+#include "common/unsafe_buffers.h"
 
 #include <algorithm>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "common/debug.h"
 #include "common/platform.h"
 #include "common/platform_helpers.h"
+#include "common/span_util.h"
 #include "common/string_utils.h"
 #include "common/utilities.h"
 #include "compiler/translator/blocklayout.h"
@@ -38,6 +40,8 @@
 #include "libANGLE/trace.h"
 #include "platform/PlatformMethods.h"
 #include "platform/autogen/FrontendFeatures_autogen.h"
+
+#include "compression_utils_portable.h"
 
 namespace gl
 {
@@ -242,10 +246,10 @@ void InfoLog::getLog(GLsizei bufSize, GLsizei *length, char *infoLog) const
         if (!logString.empty())
         {
             index = std::min(static_cast<size_t>(bufSize) - 1, logString.length());
-            memcpy(infoLog, logString.c_str(), index);
+            ANGLE_UNSAFE_TODO(memcpy(infoLog, logString.c_str(), index));
         }
 
-        infoLog[index] = '\0';
+        ANGLE_UNSAFE_TODO(infoLog[index]) = '\0';
     }
 
     if (length)
@@ -257,23 +261,21 @@ void InfoLog::getLog(GLsizei bufSize, GLsizei *length, char *infoLog) const
 // append a sanitized message to the program info log.
 // The D3D compiler includes a fake file path in some of the warning or error
 // messages, so lets remove all occurrences of this fake file path from the log.
-void InfoLog::appendSanitized(const char *message)
+void InfoLog::appendSanitized(std::string message)
 {
     ensureInitialized();
 
-    std::string msg(message);
-
-    size_t found;
-    do
+    while (1)
     {
-        found = msg.find(g_fakepath);
-        if (found != std::string::npos)
+        size_t found = message.find(g_fakepath);
+        if (found == std::string::npos)
         {
-            msg.erase(found, strlen(g_fakepath));
+            break;
         }
-    } while (found != std::string::npos);
+        message.erase(found, strlen(g_fakepath));
+    }
 
-    if (!msg.empty())
+    if (!message.empty())
     {
         *mLazyStream << message << std::endl;
     }
@@ -343,7 +345,21 @@ ProgramBindings::~ProgramBindings() {}
 
 void ProgramBindings::bindLocation(GLuint index, const std::string &name)
 {
-    mBindings[name] = index;
+    if (name.find('[') != std::string::npos)
+    {
+        if (angle::EndsWith(name, "[0]") && (name.find(']') == name.length() - 1))
+        {
+            mBindings[name.substr(0, name.length() - 3)] = index;
+        }
+        else
+        {
+            return;
+        }
+    }
+    else
+    {
+        mBindings[name] = index;
+    }
 }
 
 int ProgramBindings::getBindingByName(const std::string &name) const
@@ -378,8 +394,16 @@ ProgramAliasedBindings::ProgramAliasedBindings() {}
 
 ProgramAliasedBindings::~ProgramAliasedBindings() {}
 
-void ProgramAliasedBindings::bindLocation(GLuint index, const std::string &name)
+void ProgramAliasedBindings::bindLocation(GLuint index,
+                                          const std::string &name,
+                                          BindLocationPolicy policy)
 {
+    if (policy == BindLocationPolicy::IgnoreIndexing && name.find('[') != std::string::npos &&
+        (!angle::EndsWith(name, "[0]") || name.find(']') != name.length() - 1))
+    {
+        return;
+    }
+
     mBindings[name] = ProgramBinding(index);
 
     // EXT_blend_func_extended spec: "If it specifies the base name of an array,
@@ -630,9 +654,10 @@ class Program::MainLinkTask final : public Program::MainLinkLoadTask
   private:
     angle::Result linkImpl();
 
-    // State needed for link
-    const Caps &mCaps;
-    const Limitations &mLimitations;
+    // State needed for link.  Note that Caps and Limitations are copied because the context that
+    // started the link task may get destroyed before the link job is finished.
+    const Caps mCaps;
+    const Limitations mLimitations;
     const Version mClientVersion;
     const bool mIsWebGL;
     Program *mProgram;
@@ -852,24 +877,32 @@ void Program::bindUniformLocation(const Context *context,
                                   const char *name)
 {
     ASSERT(!mLinkingState);
-    mState.mUniformLocationBindings.bindLocation(location.value, name);
+    mState.mUniformLocationBindings.bindLocation(location.value, name,
+                                                 BindLocationPolicy::AcceptIndexing);
 }
 
 void Program::bindFragmentOutputLocation(const Context *context, GLuint index, const char *name)
 {
     ASSERT(!mLinkingState);
-    mState.mFragmentOutputLocations.bindLocation(index, name);
+    mState.mFragmentOutputLocations.bindLocation(index, name, BindLocationPolicy::IgnoreIndexing);
 }
 
 void Program::bindFragmentOutputIndex(const Context *context, GLuint index, const char *name)
 {
     ASSERT(!mLinkingState);
-    mState.mFragmentOutputIndexes.bindLocation(index, name);
+    mState.mFragmentOutputIndexes.bindLocation(index, name, BindLocationPolicy::IgnoreIndexing);
 }
 
 void Program::makeNewExecutable(const Context *context)
 {
-    ASSERT(!mLinkingState);
+    // A previous asynchronous link may still be in flight when this is reached
+    // from a no-error / skip-validation context (Context::linkProgram uses
+    // getProgramNoResolveLink). Join it before tearing down mLinkingState and
+    // mState.mExecutable, which the worker thread is concurrently using.
+    if (mLinkingState)
+    {
+        resolveLinkImpl(context);
+    }
     waitForPostLinkTasks(context);
 
     // Unlink the program, but do not clear the validation-related caching yet, since we can still
@@ -925,7 +958,6 @@ void Program::setupExecutableForLink(const Context *context)
         mState.mShaderCompileJobs[shaderType] = std::move(compileJob);
         mState.mAttachedShaders[shaderType]   = std::move(shaderCompiledState);
     }
-    mProgram->prepareForLink(shaderImpls);
 
     const angle::FrontendFeatures &frontendFeatures = context->getFrontendFeatures();
     if (frontendFeatures.dumpShaderSource.enabled)
@@ -949,6 +981,19 @@ void Program::setupExecutableForLink(const Context *context)
     mState.mExecutable->mPod.isSeparable                 = mState.mSeparable;
 
     mState.mInfoLog.reset();
+
+    mProgram->prepareForLink(shaderImpls);
+
+    if (context->getState().usesPassthroughShaders())
+    {
+        mProgram->prepareForPassthroughLink(&mState.mAttachedShaders);
+    }
+}
+
+void Program::syncExecutableOnSuccessfulLink()
+{
+    // Sync GL_PROGRAM_BINARY_RETRIEVABLE_HINT to the effective value when linking successfully.
+    mState.mExecutable->mBinaryRetrieveableHint = mState.mBinaryRetrieveableHint;
 }
 
 angle::Result Program::link(const Context *context, angle::JobResultExpectancy resultExpectancy)
@@ -966,7 +1011,6 @@ angle::Result Program::link(const Context *context, angle::JobResultExpectancy r
     // TODO: http://anglebug.com/42263141: Enable program caching for separable programs
     if (cache && !isSeparable())
     {
-        std::lock_guard<angle::SimpleMutex> cacheLock(context->getProgramCacheMutex());
         egl::CacheGetResult result = egl::CacheGetResult::NotFound;
         ANGLE_TRY(cache->getProgram(context, this, &mProgramHash, &result));
 
@@ -1050,11 +1094,11 @@ angle::Result Program::linkJobImpl(const Caps &caps,
     linkShaders();
 
     linkingVariables->initForProgram(mState);
-    resources->init(&mState.mExecutable->mUniformBlocks, &mState.mExecutable->mUniforms,
-                    &mState.mExecutable->mUniformNames, &mState.mExecutable->mUniformMappedNames,
-                    &mState.mExecutable->mShaderStorageBlocks,
-                    &mState.mExecutable->mBufferVariables,
-                    &mState.mExecutable->mAtomicCounterBuffers);
+    resources->init(
+        &mState.mExecutable->mUniformBlocks, &mState.mExecutable->mUniforms,
+        &mState.mExecutable->mUniformNames, &mState.mExecutable->mUniformMappedNames,
+        &mState.mExecutable->mShaderStorageBlocks, &mState.mExecutable->mBufferVariables,
+        &mState.mExecutable->mAtomicCounterBuffers, &mState.mExecutable->mPixelLocalStorageLayouts);
 
     updateLinkedShaderStages();
 
@@ -1130,7 +1174,6 @@ angle::Result Program::linkJobImpl(const Caps &caps,
             mState.mExecutable->mPod.numViews = vertexShader->numViews;
             mState.mExecutable->mPod.hasClipDistance =
                 vertexShader->metadataFlags.test(sh::MetadataFlags::HasClipDistance);
-            mState.mExecutable->mPod.specConstUsageBits |= vertexShader->specConstUsageBits;
         }
 
         const SharedCompiledShaderState &fragmentShader =
@@ -1156,9 +1199,14 @@ angle::Result Program::linkJobImpl(const Caps &caps,
                 fragmentShader->metadataFlags.test(sh::MetadataFlags::HasDiscard);
             mState.mExecutable->mPod.enablesPerSampleShading =
                 fragmentShader->metadataFlags.test(sh::MetadataFlags::EnablesPerSampleShading);
+            mState.mExecutable->mPod.hasDepthInputAttachment =
+                fragmentShader->metadataFlags.test(sh::MetadataFlags::HasDepthInputAttachment);
+            mState.mExecutable->mPod.hasStencilInputAttachment =
+                fragmentShader->metadataFlags.test(sh::MetadataFlags::HasStencilInputAttachment);
             mState.mExecutable->mPod.advancedBlendEquations =
                 fragmentShader->advancedBlendEquations;
-            mState.mExecutable->mPod.specConstUsageBits |= fragmentShader->specConstUsageBits;
+            mState.mExecutable->mPod.hasFragCoord =
+                fragmentShader->metadataFlags.test(sh::MetadataFlags::HasFragCoord);
 
             for (uint32_t index = 0; index < IMPLEMENTATION_MAX_DRAW_BUFFERS; ++index)
             {
@@ -1235,6 +1283,7 @@ void Program::resolveLinkImpl(const Context *context)
         // The above means that it's ok for ANGLE to reset the executable here, but it *may* be
         // helpful to applications if it doesn't.  We do reset it however, the info log should
         // already have enough debug information for the application.
+        waitForPostLinkTasks(context);
         mState.mExecutable->reset();
         return;
     }
@@ -1242,6 +1291,8 @@ void Program::resolveLinkImpl(const Context *context)
     // According to GLES 3.0/3.1 spec for LinkProgram and UseProgram,
     // Only successfully linked program can replace the executables.
     ASSERT(mLinked);
+
+    syncExecutableOnSuccessfulLink();
 
     // In case of a successful link, it is no longer required for the attached shaders to hold on to
     // the memory they have used. Therefore, the shader compilations are resolved to save memory.
@@ -1403,7 +1454,76 @@ angle::Result Program::loadBinary(const Context *context,
     ASSERT(mLinkingState);
     unlink();
 
-    BinaryInputStream stream(binary, length);
+    angle::MemoryBuffer decompressedBuffer;
+    const void *streamData = binary;
+    GLsizei streamLength   = length;
+
+    if (context->getFrontendFeatures().compressProgramBinaryBlob.enabled)
+    {
+        if (length <= static_cast<GLsizei>(kProgramBinaryHeaderSize))
+        {
+            WARN() << "Program binary is too small to load (" << length << " bytes).";
+            return angle::Result::Continue;
+        }
+
+        const ProgramBinaryHeader *header = reinterpret_cast<const ProgramBinaryHeader *>(binary);
+
+        uint32_t magic;
+        uint32_t expectedCRC;
+        uint64_t uncompressedSize;
+        header->getData(&magic, &expectedCRC, &uncompressedSize);
+
+        if (magic != ProgramBinaryHeader::kProgramBinaryMagic)
+        {
+            WARN() << "Failed to load program binary. Invalid magic value (" << magic << ").";
+            return angle::Result::Continue;
+        }
+
+        // Validate uncompressed size fits in GLsizei before decompression.
+        if (uncompressedSize > static_cast<size_t>(std::numeric_limits<GLsizei>::max()))
+        {
+            WARN() << "Uncompressed program binary too large (" << uncompressedSize << " bytes).";
+            return angle::Result::Continue;
+        }
+
+        // Compressed payload starts after the header.
+        const uint8_t *compressedData = ANGLE_UNSAFE_BUFFERS(
+            reinterpret_cast<const uint8_t *>(binary) + kProgramBinaryHeaderSize);
+        const size_t compressedSize = static_cast<size_t>(length) - kProgramBinaryHeaderSize;
+
+        // Decompress the payload.
+        if (!angle::DecompressBlob(compressedData, compressedSize,
+                                   static_cast<size_t>(uncompressedSize), &decompressedBuffer))
+        {
+            WARN() << "Failed to decompress program binary.";
+            return angle::Result::Continue;
+        }
+
+        // Validate CRC for decompressed data matches the expected CRC.
+        const uint32_t computedCRC =
+            angle::GenerateCRC32(decompressedBuffer.data(), decompressedBuffer.size());
+        if (computedCRC != expectedCRC)
+        {
+            WARN() << "CRC mismatch after decompression (expected CRC = " << expectedCRC
+                   << ", computed CRC = " << computedCRC << ")";
+            return angle::Result::Continue;
+        }
+
+        // Validate decompressed size.
+        if (decompressedBuffer.size() != static_cast<size_t>(uncompressedSize))
+        {
+            WARN() << "Decompressed size mismatch (expected size = " << uncompressedSize
+                   << ", actual size = " << decompressedBuffer.size() << ")";
+            return angle::Result::Continue;
+        }
+
+        streamData   = decompressedBuffer.data();
+        streamLength = static_cast<GLsizei>(decompressedBuffer.size());
+    }
+
+    BinaryInputStream stream(
+        ANGLE_UNSAFE_TODO(angle::Span(static_cast<const uint8_t *>(streamData), streamLength)));
+
     if (!deserialize(context, stream))
     {
         return angle::Result::Continue;
@@ -1458,7 +1578,7 @@ angle::Result Program::getBinary(Context *context,
                                  GLsizei bufSize,
                                  GLsizei *length)
 {
-    if (!mState.mBinaryRetrieveableHint)
+    if (!mState.mExecutable->mBinaryRetrieveableHint)
     {
         ANGLE_PERF_WARNING(
             context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
@@ -1490,23 +1610,26 @@ angle::Result Program::getBinary(Context *context,
         // TODO: This should be moved to the validation layer but computing the size of the binary
         // before saving it causes the save to happen twice.  It may be possible to write the binary
         // to a separate buffer, validate sizes and then copy it.
-        ANGLE_CHECK(context, false, "Insufficient buffer size", GL_INVALID_OPERATION);
+        context->getMutableErrorSetForValidation()->validationError(
+            angle::EntryPoint::GLGetProgramBinary, GL_INVALID_OPERATION,
+            err::kInsufficientBufferSize);
+        return angle::Result::Stop;
     }
 
     if (binary)
     {
         char *ptr = reinterpret_cast<char *>(binary);
 
-        memcpy(ptr, streamState, streamLength);
-        ptr += streamLength;
+        ANGLE_UNSAFE_TODO(memcpy(ptr, streamState, streamLength));
+        ANGLE_UNSAFE_TODO(ptr += streamLength);
 
-        ASSERT(ptr - streamLength == binary);
+        ANGLE_UNSAFE_TODO(ASSERT(ptr - streamLength == binary));
 
         // Once the binary is retrieved, assume the application will never need the binary and
         // release the memory.  Note that implicit caching to blob cache is disabled when the
         // GL_PROGRAM_BINARY_RETRIEVABLE_HINT is set.  If that hint is not set, serialization is
         // done twice, which is what the perf warning above is about!
-        mBinary.clear();
+        mBinary.destroy();
     }
 
     if (length)
@@ -1547,7 +1670,7 @@ void Program::setBinaryRetrievableHint(bool retrievable)
 bool Program::getBinaryRetrievableHint() const
 {
     ASSERT(!mLinkingState);
-    return mState.mBinaryRetrieveableHint;
+    return mState.mExecutable->mBinaryRetrieveableHint;
 }
 
 int Program::getInfoLogLength() const
@@ -1584,13 +1707,15 @@ unsigned int Program::getRefCount() const
 
 void Program::getAttachedShaders(GLsizei maxCount, GLsizei *count, ShaderProgramID *shaders) const
 {
+    ASSERT(shaders != nullptr);
+
     int total = 0;
 
     for (const Shader *shader : mAttachedShaders)
     {
         if (shader != nullptr && total < maxCount)
         {
-            shaders[total] = shader->getHandle();
+            ANGLE_UNSAFE_TODO(shaders[total]) = shader->getHandle();
             ++total;
         }
     }
@@ -1620,6 +1745,18 @@ void Program::validate(const Caps &caps)
 
     if (mLinked)
     {
+        // According GLES 3.2 11.1.3.11 Validation:
+        // ValidateProgram will check for all the conditions described in this section:
+        // Now only check this condition:
+        // Any two active samplers in the set of active program objects are of different
+        // types, but refer to the same texture image unit.
+        // TODO should check other conditions in future.
+        if (getExecutable().validateSamplers(caps) == false)
+        {
+            mValidated = false;
+            mState.mInfoLog << err::kTextureTypeConflict;
+            return;
+        }
         mValidated = ConvertToBool(mProgram->validate(caps));
     }
     else
@@ -1656,7 +1793,7 @@ void Program::setTransformFeedbackVaryings(const Context *context,
     mState.mTransformFeedbackVaryingNames.resize(count);
     for (GLsizei i = 0; i < count; i++)
     {
-        mState.mTransformFeedbackVaryingNames[i] = varyings[i];
+        mState.mTransformFeedbackVaryingNames[i] = ANGLE_UNSAFE_TODO(varyings[i]);
     }
 
     mState.mTransformFeedbackBufferMode = bufferMode;
@@ -1963,7 +2100,9 @@ bool Program::linkUniforms(const Caps &caps,
 
         if (locationSize > caps.maxUniformLocations)
         {
-            mState.mInfoLog << "Exceeded maximum uniform location size";
+            mState.mInfoLog
+                << "Exceeded maximum uniform location size: number of uniform locations = "
+                << locationSize << ", max uniform locations = " << caps.maxUniformLocations;
             return false;
         }
     }
@@ -2065,8 +2204,9 @@ bool Program::linkAttributes(const Caps &caps,
     // Assign locations to attributes that don't have a binding location.
     for (ProgramInput &attribute : mState.mExecutable->mProgramInputs)
     {
-        // Not set by glBindAttribLocation or by location layout qualifier
-        if (attribute.getLocation() == -1)
+        // Not set by glBindAttribLocation or by location layout qualifier and not built-in
+        // attribute
+        if (!attribute.isBuiltIn() && attribute.getLocation() == -1)
         {
             int regs           = VariableRegisterCount(attribute.getType());
             int availableIndex = AllocateFirstFreeBits(&usedLocations, regs, maxAttribs);
@@ -2104,16 +2244,18 @@ bool Program::linkAttributes(const Caps &caps,
 
     for (const ProgramInput &attribute : mState.mExecutable->getProgramInputs())
     {
-        ASSERT(attribute.isActive());
-        ASSERT(attribute.getLocation() != -1);
-        unsigned int regs = static_cast<unsigned int>(VariableRegisterCount(attribute.getType()));
-
-        unsigned int location = static_cast<unsigned int>(attribute.getLocation());
-        for (unsigned int r = 0; r < regs; r++)
+        // Built-in active program inputs don't have a bound attribute.
+        if (!attribute.isBuiltIn())
         {
-            // Built-in active program inputs don't have a bound attribute.
-            if (!attribute.isBuiltIn())
+            ASSERT(attribute.isActive());
+            ASSERT(attribute.getLocation() != -1);
+            unsigned int regs =
+                static_cast<unsigned int>(VariableRegisterCount(attribute.getType()));
+
+            unsigned int location = static_cast<unsigned int>(attribute.getLocation());
+            for (unsigned int r = 0; r < regs; r++)
             {
+
                 mState.mExecutable->mPod.activeAttribLocationsMask.set(location);
                 mState.mExecutable->mPod.maxActiveAttribLocation =
                     std::max(mState.mExecutable->mPod.maxActiveAttribLocation, location + 1);
@@ -2147,9 +2289,9 @@ angle::Result Program::serialize(const Context *context)
 
     BinaryOutputStream stream;
 
-    stream.writeBytes(
-        reinterpret_cast<const unsigned char *>(angle::GetANGLEShaderProgramVersion()),
-        angle::GetANGLEShaderProgramVersionHashSize());
+    stream.writeBytes(ANGLE_UNSAFE_TODO(
+        angle::Span(reinterpret_cast<const uint8_t *>(angle::GetANGLEShaderProgramVersion()),
+                    angle::GetANGLEShaderProgramVersionHashSize())));
 
     stream.writeBool(angle::Is64Bit());
 
@@ -2160,8 +2302,8 @@ angle::Result Program::serialize(const Context *context)
     // nullptr context is supported when computing binary length.
     if (context)
     {
-        stream.writeInt(context->getClientVersion().major);
-        stream.writeInt(context->getClientVersion().minor);
+        stream.writeInt(context->getClientVersion().getMajor());
+        stream.writeInt(context->getClientVersion().getMinor());
     }
     else
     {
@@ -2170,11 +2312,11 @@ angle::Result Program::serialize(const Context *context)
     }
 
     // mSeparable must be before mExecutable->save(), since it uses the value.
-    stream.writeBool(mState.mSeparable);
-    stream.writeInt(mState.mTransformFeedbackBufferMode);
+    stream.writeBool(mState.mExecutable->mPod.isSeparable);
+    stream.writeInt(mState.mExecutable->mPod.transformFeedbackBufferMode);
 
-    stream.writeInt(mState.mTransformFeedbackVaryingNames.size());
-    for (const std::string &name : mState.mTransformFeedbackVaryingNames)
+    stream.writeInt(mState.mExecutable->mTransformFeedbackVaryingNames.size());
+    for (const std::string &name : mState.mExecutable->mTransformFeedbackVaryingNames)
     {
         stream.writeString(name);
     }
@@ -2216,25 +2358,81 @@ angle::Result Program::serialize(const Context *context)
     mProgram->save(context, &stream);
     ASSERT(mState.mExecutable->mPostLinkSubTasks.empty());
 
-    if (!mBinary.resize(stream.length()))
+    if (context->getFrontendFeatures().compressProgramBinaryBlob.enabled)
     {
-        ANGLE_PERF_WARNING(context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
-                           "Failed to allocate enough memory to serialize a program. (%zu bytes)",
-                           stream.length());
-        return angle::Result::Stop;
+        const size_t uncompressedSize   = stream.size();
+        const uint8_t *uncompressedData = reinterpret_cast<const uint8_t *>(stream.data());
+        if (uncompressedSize > static_cast<size_t>(std::numeric_limits<GLsizei>::max()))
+        {
+            WARN() << "Program binary is too large to serialize (" << uncompressedSize
+                   << " bytes).";
+            return angle::Result::Stop;
+        }
+
+        // Compress the serialized payload directly into |mBinary|.
+        const uLong expectedCompressedSize =
+            zlib_internal::GzipExpectedCompressedSize(static_cast<uLong>(uncompressedSize));
+        if (!mBinary.resize(kProgramBinaryHeaderSize + expectedCompressedSize))
+        {
+            WARN() << "Failed to allocate enough memory to compress the expected blob size. ("
+                   << kProgramBinaryHeaderSize + expectedCompressedSize << " bytes).";
+            return angle::Result::Stop;
+        }
+
+        uLongf actualCompressedSize = expectedCompressedSize;
+        int zResult                 = zlib_internal::CompressHelper(
+            zlib_internal::GZIP, ANGLE_UNSAFE_BUFFERS(mBinary.data() + kProgramBinaryHeaderSize),
+            &actualCompressedSize, uncompressedData, static_cast<uLong>(uncompressedSize),
+            Z_BEST_SPEED, nullptr, nullptr);
+
+        if (zResult != Z_OK)
+        {
+            WARN() << "Failed to compress program binary (" << uncompressedSize
+                   << " bytes). Program binary will not be saved";
+            mBinary.destroy();
+            return angle::Result::Stop;
+        }
+
+        // Trim |mBinary| down to the header and the actual compressed data size.
+        ASSERT(actualCompressedSize <= expectedCompressedSize);
+        if (!mBinary.resize(kProgramBinaryHeaderSize + actualCompressedSize))
+        {
+            WARN() << "Failed to trim program binary to actual size. ("
+                   << kProgramBinaryHeaderSize + actualCompressedSize << " bytes).";
+            mBinary.destroy();
+            return angle::Result::Stop;
+        }
+
+        // Prepend the ProgramBinaryHeader.
+        ProgramBinaryHeader *header = reinterpret_cast<ProgramBinaryHeader *>(mBinary.data());
+        const uint32_t dataCRC      = angle::GenerateCRC32(uncompressedData, uncompressedSize);
+        header->setData(ProgramBinaryHeader::kProgramBinaryMagic, dataCRC,
+                        static_cast<uint64_t>(uncompressedSize));
     }
-    memcpy(mBinary.data(), stream.data(), stream.length());
+    else
+    {
+        if (!mBinary.resize(stream.size()))
+        {
+            ANGLE_PERF_WARNING(
+                context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
+                "Failed to allocate enough memory to serialize a program. (%zu bytes)",
+                stream.size());
+            return angle::Result::Stop;
+        }
+        angle::SpanMemcpy(mBinary.span(), angle::Span(stream));
+    }
+
     return angle::Result::Continue;
 }
 
 bool Program::deserialize(const Context *context, BinaryInputStream &stream)
 {
     std::vector<uint8_t> angleShaderProgramVersionString(
-        angle::GetANGLEShaderProgramVersionHashSize(), 0);
-    stream.readBytes(angleShaderProgramVersionString.data(),
-                     angleShaderProgramVersionString.size());
-    if (memcmp(angleShaderProgramVersionString.data(), angle::GetANGLEShaderProgramVersion(),
-               angleShaderProgramVersionString.size()) != 0)
+        angle::GetANGLEShaderProgramVersionHashSize());
+    stream.readBytes(angleShaderProgramVersionString);
+    if (ANGLE_UNSAFE_TODO(memcmp(angleShaderProgramVersionString.data(),
+                                 angle::GetANGLEShaderProgramVersion(),
+                                 angleShaderProgramVersionString.size())) != 0)
     {
         mState.mInfoLog << "Invalid program binary version.";
         return false;
@@ -2261,10 +2459,10 @@ bool Program::deserialize(const Context *context, BinaryInputStream &stream)
         return false;
     }
 
-    int majorVersion = stream.readInt<int>();
-    int minorVersion = stream.readInt<int>();
-    if (majorVersion != context->getClientMajorVersion() ||
-        minorVersion != context->getClientMinorVersion())
+    const uint32_t majorVersion = stream.readInt<int>();
+    const uint32_t minorVersion = stream.readInt<int>();
+    if (majorVersion != context->getClientVersion().getMajor() ||
+        minorVersion != context->getClientVersion().getMinor())
     {
         mState.mInfoLog << "Cannot load program binaries across different ES context versions.";
         return false;
@@ -2312,7 +2510,6 @@ bool Program::deserialize(const Context *context, BinaryInputStream &stream)
             ASSERT(shaderSource.length() > 0);
             sources[shaderType] = std::move(shaderSource);
         }
-
         // Store it for use during mid-execution capture
         context->getShareGroup()->getFrameCaptureShared()->setProgramSources(id(),
                                                                              std::move(sources));
@@ -2329,6 +2526,10 @@ void Program::postResolveLink(const Context *context)
 
     mState.mExecutable->initInterfaceBlockBindings();
     mState.mExecutable->setUniformValuesFromBindingQualifiers();
+
+    // Update active uniform and storage buffer block indices mask
+    mState.mExecutable->updateActiveUniformBufferBlocks();
+    mState.mExecutable->updateActiveStorageBufferBlocks();
 
     if (context->getExtensions().multiDrawANGLE)
     {
@@ -2349,7 +2550,7 @@ void Program::cacheProgramBinaryIfNotAlready(const Context *context)
 {
     // If program caching is disabled, we already consider the binary cached.
     ASSERT(!context->getFrontendFeatures().disableProgramCaching.enabled || mIsBinaryCached);
-    if (!mLinked || mIsBinaryCached || mState.mBinaryRetrieveableHint)
+    if (!mLinked || mIsBinaryCached || mState.mExecutable->mBinaryRetrieveableHint)
     {
         // Program caching is disabled, the program is yet to be linked, it's already cached, or the
         // application has specified that it prefers to cache the program binary itself.
@@ -2360,7 +2561,6 @@ void Program::cacheProgramBinaryIfNotAlready(const Context *context)
     ASSERT(mState.mExecutable->mPostLinkSubTasks.empty());
 
     // Save to the program cache.
-    std::lock_guard<angle::SimpleMutex> cacheLock(context->getProgramCacheMutex());
     MemoryProgramCache *cache = context->getMemoryProgramCache();
     // TODO: http://anglebug.com/42263141: Enable program caching for separable programs
     if (cache && !isSeparable() &&
@@ -2377,7 +2577,7 @@ void Program::cacheProgramBinaryIfNotAlready(const Context *context)
 
         // Drop the binary; the application didn't specify that it wants to retrieve the binary.  If
         // it did, we wouldn't be implicitly caching it.
-        mBinary.clear();
+        mBinary.destroy();
     }
 
     mIsBinaryCached = true;
@@ -2408,7 +2608,7 @@ void Program::dumpProgramInfo(const Context *context) const
     pathStream << dumpHash << ".program";
     std::string path = pathStream.str();
 
-    writeFile(path.c_str(), dump.c_str(), dump.length());
+    writeFile(path.c_str(), dump);
     INFO() << "Dumped program: " << path;
 }
 }  // namespace gl

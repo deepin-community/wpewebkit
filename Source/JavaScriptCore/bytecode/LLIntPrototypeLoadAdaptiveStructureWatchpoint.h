@@ -38,13 +38,15 @@ public:
     LLIntPrototypeLoadAdaptiveStructureWatchpoint(CodeBlock*, const ObjectPropertyCondition&, BytecodeIndex);
     LLIntPrototypeLoadAdaptiveStructureWatchpoint();
 
+    ~LLIntPrototypeLoadAdaptiveStructureWatchpoint();
+
     void initialize(CodeBlock*, const ObjectPropertyCondition&, BytecodeIndex);
 
     void install(VM&);
 
-    static void clearLLIntGetByIdCache(GetByIdModeMetadata&);
+    static void NODELETE clearLLIntGetByIdCache(GetByIdModeMetadata&);
 
-    const ObjectPropertyCondition& key() const { return m_key; }
+    const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
     void fireInternal(VM&, const FireDetail&);
 

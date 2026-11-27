@@ -25,6 +25,7 @@
 #undef JSC_COMPILATION
 
 #include <JavaScriptCore/JSContextRef.h>
+#include <array>
 #include <jsc/jsc.h>
 #include <wtf/HashSet.h>
 #include <wtf/Threading.h>
@@ -35,8 +36,6 @@
 
 class LeakChecker {
 public:
-    LeakChecker() = default;
-
     ~LeakChecker()
     {
         if (m_watchedObjects.isEmpty())
@@ -3685,6 +3684,38 @@ static void testJSCExceptions()
         checker.watch(context.get());
         g_assert_false(jsc_context_get_exception(context.get()));
 
+        GRefPtr<JSCValue> result = adoptGRef(jsc_context_evaluate_with_source_uri(context.get(),
+            "function fünf() {\n"
+            "    throw new Error('Größe ✓');\n"
+            "}\n"
+            "fünf();\n",
+            -1, "file:///skript/größe.js", 1));
+        checker.watch(result.get());
+
+        g_assert_true(jsc_value_is_undefined(result.get()));
+        auto* exception = jsc_context_get_exception(context.get());
+        g_assert_true(JSC_IS_EXCEPTION(exception));
+        checker.watch(exception);
+        g_assert_cmpstr(jsc_exception_get_message(exception), ==, "Größe ✓");
+        // The source URI is a URL, so it comes back percent-encoded; the function name and message stay UTF-8.
+        g_assert_cmpstr(jsc_exception_get_source_uri(exception), ==, "file:///skript/gr%C3%B6%C3%9Fe.js");
+        g_assert_cmpuint(jsc_exception_get_line_number(exception), ==, 2);
+        g_assert_true(g_str_has_prefix(jsc_exception_get_backtrace_string(exception), "fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        GUniquePtr<char> reportString(jsc_exception_report(exception));
+        g_assert_true(g_str_has_prefix(reportString.get(), "file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, " Error: Größe ✓\n  fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, "\n  global code@file:///skript/gr%C3%B6%C3%9Fe.js:4:"));
+
+        jsc_context_clear_exception(context.get());
+        g_assert_null(jsc_context_get_exception(context.get()));
+    }
+
+    {
+        LeakChecker checker;
+        GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+        checker.watch(context.get());
+        g_assert_false(jsc_context_get_exception(context.get()));
+
         GRefPtr<JSCValue> function = adoptGRef(jsc_value_new_function(context.get(), "createError", G_CALLBACK(createError), nullptr, nullptr, G_TYPE_NONE, 0, G_TYPE_NONE));
         checker.watch(function.get());
         jsc_context_set_value(context.get(), "createError", function.get());
@@ -3903,6 +3934,108 @@ static void testJSCExceptions()
         jsc_context_clear_exception(context.get());
         g_assert_null(jsc_context_get_exception(context.get()));
     }
+
+    {
+        LeakChecker checker;
+        GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+        checker.watch(context.get());
+
+        GRefPtr<JSCValue> result = adoptGRef(jsc_context_evaluate(context.get(), "foo", -1));
+        checker.watch(result.get());
+        g_assert_true(jsc_value_is_undefined(result.get()));
+
+        GRefPtr<JSCException> exception = jsc_context_get_exception(context.get());
+        g_assert_true(JSC_IS_EXCEPTION(exception.get()));
+        checker.watch(exception.get());
+
+        // Release the context before properties are cached.
+        result = nullptr;
+        g_assert_cmpuint(G_OBJECT(context.get())->ref_count, ==, 1);
+        context = nullptr;
+
+        g_assert_null(jsc_exception_get_name(exception.get()));
+        g_assert_null(jsc_exception_get_message(exception.get()));
+        g_assert_cmpuint(jsc_exception_get_line_number(exception.get()), ==, 0);
+        g_assert_cmpuint(jsc_exception_get_column_number(exception.get()), ==, 0);
+        g_assert_null(jsc_exception_get_source_uri(exception.get()));
+        g_assert_null(jsc_exception_get_backtrace_string(exception.get()));
+        GUniquePtr<char> errorString(jsc_exception_to_string(exception.get()));
+        g_assert_cmpstr(errorString.get(), ==, "");
+        GUniquePtr<char> reportString(jsc_exception_report(exception.get()));
+        g_assert_cmpstr(reportString.get(), ==, "");
+    }
+}
+
+struct AsyncPromiseTestData {
+    GRefPtr<GMainLoop> mainLoop;
+    GRefPtr<JSCValue> value;
+};
+
+static gboolean fooSuccessSource(gpointer userData)
+{
+    AsyncPromiseTestData* foo = static_cast<AsyncPromiseTestData*>(userData);
+    g_object_unref(jsc_value_function_call(foo->value.get(), G_TYPE_NONE));
+    foo->value = nullptr;
+    g_main_loop_quit(foo->mainLoop.get());
+    return FALSE;
+}
+
+static void fooSuccessExecutor(JSCValue* resolve, JSCValue*, gpointer userData)
+{
+    AsyncPromiseTestData* foo = static_cast<AsyncPromiseTestData*>(userData);
+    foo->value = resolve;
+}
+
+static JSCValue* getAsyncResolvedPromise(AsyncPromiseTestData* foo)
+{
+    JSCValue* promise = jsc_value_new_promise(jsc_context_get_current(), fooSuccessExecutor, foo);
+    g_assert_nonnull(promise);
+    g_idle_add(fooSuccessSource, foo);
+    return promise;
+}
+
+static gboolean fooFailureSource(gpointer userData)
+{
+    AsyncPromiseTestData* foo = static_cast<AsyncPromiseTestData*>(userData);
+    g_object_unref(jsc_value_function_call(foo->value.get(), G_TYPE_NONE));
+    foo->value = nullptr;
+    g_main_loop_quit(foo->mainLoop.get());
+    return FALSE;
+}
+
+static void fooFailureExecutor(JSCValue*, JSCValue* reject, gpointer userData)
+{
+    AsyncPromiseTestData* foo = static_cast<AsyncPromiseTestData*>(userData);
+    foo->value = reject;
+}
+
+static JSCValue* getAsyncRejectedPromise(AsyncPromiseTestData* foo)
+{
+    JSCValue* promise = jsc_value_new_promise(jsc_context_get_current(), fooFailureExecutor, foo);
+    g_assert_nonnull(promise);
+    g_idle_add(fooFailureSource, foo);
+    return promise;
+}
+
+static JSCValue* getRejectedPromise(AsyncPromiseTestData* foo)
+{
+    return jsc_value_new_promise(jsc_context_get_current(), +[](JSCValue*, JSCValue* reject, gpointer) {
+        g_object_unref(jsc_value_function_call(reject, G_TYPE_BOOLEAN, TRUE, G_TYPE_NONE));
+    }, nullptr);
+}
+
+static JSCValue* getExceptionPromise(AsyncPromiseTestData* foo)
+{
+    return jsc_value_new_promise(jsc_context_get_current(), +[](JSCValue*, JSCValue*, gpointer) {
+        jsc_context_throw(jsc_context_get_current(), "exception in executor");
+    }, nullptr);
+}
+
+static JSCValue* getResolvedPromise(AsyncPromiseTestData* foo)
+{
+    return jsc_value_new_promise(jsc_context_get_current(), +[](JSCValue* resolve, JSCValue*, gpointer) {
+        g_object_unref(jsc_value_function_call(resolve, G_TYPE_BOOLEAN, TRUE, G_TYPE_NONE));
+    }, nullptr);
 }
 
 static void testJSCPromises()
@@ -3962,6 +4095,66 @@ static void testJSCPromises()
         checker.watch(value.get());
         g_assert_true(jsc_value_is_number(value.get()));
         g_assert_cmpint(jsc_value_to_int32(value.get()), ==, -1);
+    }
+
+    {
+        AsyncPromiseTestData foo = { .mainLoop = adoptGRef(g_main_loop_new(nullptr, FALSE)), .value = nullptr };
+
+        GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+
+        GRefPtr<JSCValue> function = adoptGRef(jsc_value_new_function(context.get(), "getAsyncResolvedPromise", G_CALLBACK(getAsyncResolvedPromise), &foo, nullptr, JSC_TYPE_VALUE, 0, G_TYPE_NONE));
+        jsc_context_set_value(context.get(), "getAsyncResolvedPromise", function.get());
+        GRefPtr<JSCValue> result = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getAsyncResolvedPromise().then(function (value) { result = 1; }, function (error) { result = 2; });", -1));
+        g_main_loop_run(foo.mainLoop.get());
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 1);
+
+        function = adoptGRef(jsc_value_new_function(context.get(), "getAsyncRejectedPromise", G_CALLBACK(getAsyncRejectedPromise), &foo, nullptr, JSC_TYPE_VALUE, 0, G_TYPE_NONE));
+        jsc_context_set_value(context.get(), "getAsyncRejectedPromise", function.get());
+        result = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getAsyncRejectedPromise().then(function (value) { result = 1; }, function (error) { result = 2; });", -1));
+        g_main_loop_run(foo.mainLoop.get());
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 2);
+
+        function = adoptGRef(jsc_value_new_function(context.get(), "getResolvedPromise", G_CALLBACK(getResolvedPromise), &foo, nullptr, JSC_TYPE_VALUE, 0, G_TYPE_NONE));
+        jsc_context_set_value(context.get(), "getResolvedPromise", function.get());
+        adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getResolvedPromise().then(function (value) { result = 1; }, function (error) { result = 2; });", -1));
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 1);
+
+        function = adoptGRef(jsc_value_new_function(context.get(), "getRejectedPromise", G_CALLBACK(getRejectedPromise), &foo, nullptr, JSC_TYPE_VALUE, 0, G_TYPE_NONE));
+        jsc_context_set_value(context.get(), "getRejectedPromise", function.get());
+        adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getRejectedPromise().then(function (value) { result = 1; }, function (error) { result = 2; });", -1));
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 2);
+
+        function = adoptGRef(jsc_value_new_function(context.get(), "getExceptionPromise", G_CALLBACK(getExceptionPromise), &foo, nullptr, JSC_TYPE_VALUE, 0, G_TYPE_NONE));
+        jsc_context_set_value(context.get(), "getExceptionPromise", function.get());
+        result = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getExceptionPromise().catch( (e) => { result = 3; }) instanceof Promise;", -1));
+        g_assert_true(jsc_value_to_boolean(result.get()));
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 3);
+
+        result = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getExceptionPromise().then((value) => { result = 1; }, (e) => { result = 3; });", -1));
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 3);
+
+        result = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; getResolvedPromise().then((value) => { throw new Error(\"reject from js\"); }, (e) => { result = 3; }).then((value) => { result = 1; }, (e) => { result = 2; });", -1));
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 2);
+
+        GRefPtr<JSCValue> promise = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; p = getResolvedPromise();", -1));
+        GRefPtr<JSCValue> resolveFunc = adoptGRef(jsc_context_evaluate(context.get(), "res = function (a) { result = 1; }", -1));
+        GRefPtr<JSCValue> rejectFunc  = adoptGRef(jsc_context_evaluate(context.get(), "rej = function (a) { result = 2; }", -1));
+        result = jsc_value_object_invoke_method(promise.get(), "then", JSC_TYPE_VALUE, resolveFunc.get(), JSC_TYPE_VALUE, rejectFunc.get(), G_TYPE_NONE);
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 1);
+
+        promise = adoptGRef(jsc_context_evaluate(context.get(), "result = -1; p = getExceptionPromise();", -1));
+        GRefPtr<JSCValue> catch_func = adoptGRef(jsc_context_evaluate(context.get(), "cat = function (a) { result = 3; }", -1));
+        result = jsc_value_object_invoke_method(promise.get(), "catch", JSC_TYPE_VALUE, catch_func.get(), G_TYPE_NONE);
+        result = adoptGRef(jsc_context_get_value(context.get(), "result"));
+        g_assert_cmpint(jsc_value_to_int32(result.get()), ==, 3);
     }
 }
 
@@ -4338,13 +4531,21 @@ static void testsJSCOptions()
     g_assert_cmpuint(maxPerThreadStackUsage, ==, 4096);
     g_assert_true(jsc_options_set_uint("maxPerThreadStackUsage", 5242880));
 
-    gsize wasmPartialCompileLimit;
-    g_assert_true(jsc_options_get_size("wasmPartialCompileLimit", &wasmPartialCompileLimit));
-    g_assert_cmpuint(wasmPartialCompileLimit, ==, 5000);
-    g_assert_true(jsc_options_set_size("wasmPartialCompileLimit", 6000));
-    g_assert_true(jsc_options_get_size("wasmPartialCompileLimit", &wasmPartialCompileLimit));
-    g_assert_cmpuint(wasmPartialCompileLimit, ==, 6000);
-    g_assert_true(jsc_options_set_size("wasmPartialCompileLimit", 5000));
+    gsize wasmSmallPartialCompileLimit;
+    g_assert_true(jsc_options_get_size("wasmSmallPartialCompileLimit", &wasmSmallPartialCompileLimit));
+    g_assert_cmpuint(wasmSmallPartialCompileLimit, ==, 5000);
+    g_assert_true(jsc_options_set_size("wasmSmallPartialCompileLimit", 6000));
+    g_assert_true(jsc_options_get_size("wasmSmallPartialCompileLimit", &wasmSmallPartialCompileLimit));
+    g_assert_cmpuint(wasmSmallPartialCompileLimit, ==, 6000);
+    g_assert_true(jsc_options_set_size("wasmSmallPartialCompileLimit", 5000));
+
+    gsize wasmLargePartialCompileLimit;
+    g_assert_true(jsc_options_get_size("wasmLargePartialCompileLimit", &wasmLargePartialCompileLimit));
+    g_assert_cmpuint(wasmLargePartialCompileLimit, ==, 20000);
+    g_assert_true(jsc_options_set_size("wasmLargePartialCompileLimit", 25000));
+    g_assert_true(jsc_options_get_size("wasmLargePartialCompileLimit", &wasmLargePartialCompileLimit));
+    g_assert_cmpuint(wasmLargePartialCompileLimit, ==, 25000);
+    g_assert_true(jsc_options_set_size("wasmLargePartialCompileLimit", 20000));
 
     gdouble criticalGCMemoryThreshold;
     g_assert_true(jsc_options_get_double("criticalGCMemoryThreshold", &criticalGCMemoryThreshold));
@@ -4423,7 +4624,6 @@ static void testsJSCOptions()
         return FALSE;
     }, &optionsCount);
     g_assert_cmpuint(optionsCount, >, 100);
-    g_assert_cmpuint(optionsCount, <, 500);
 
     optionsCount = 0;
     jsc_options_foreach([](const char* option, JSCOptionType type, const char* description, gpointer userData) -> gboolean {
@@ -4433,7 +4633,9 @@ static void testsJSCOptions()
             g_assert_true(type == JSC_OPTION_INT);
         else if (!g_strcmp0(option, "maxPerThreadStackUsage"))
             g_assert_true(type == JSC_OPTION_UINT);
-        else if (!g_strcmp0(option, "wasmPartialCompileLimit"))
+        else if (!g_strcmp0(option, "wasmSmallPartialCompileLimit"))
+            g_assert_true(type == JSC_OPTION_SIZE);
+        else if (!g_strcmp0(option, "wasmLargePartialCompileLimit"))
             g_assert_true(type == JSC_OPTION_SIZE);
         else if (!g_strcmp0(option, "smallHeapRAMFraction"))
             g_assert_true(type == JSC_OPTION_DOUBLE);
@@ -4447,7 +4649,7 @@ static void testsJSCOptions()
         (*static_cast<unsigned*>(userData))++;
         return FALSE;
     }, &optionsCount);
-    g_assert_cmpuint(optionsCount, ==, 7);
+    g_assert_cmpuint(optionsCount, ==, 8);
 
     GOptionContext* context = g_option_context_new(nullptr);
     g_option_context_add_group(context, jsc_options_get_option_group());
@@ -4456,7 +4658,7 @@ static void testsJSCOptions()
         "--jsc-useJIT=false",
         "--jsc-thresholdForJITAfterWarmUp=2000",
         "--jsc-maxPerThreadStackUsage=1024",
-        "--jsc-wasmPartialCompileLimit=4000",
+        "--jsc-wasmSmallPartialCompileLimit=4000",
         "--jsc-criticalGCMemoryThreshold=0.95",
         "--jsc-configFile=/tmp/bar",
         "--jsc-bytecodeRangeToJITCompile=100:300",
@@ -4475,8 +4677,8 @@ static void testsJSCOptions()
     g_assert_cmpint(thresholdForJITAfterWarmUp, ==, 2000);
     g_assert_true(jsc_options_get_uint("maxPerThreadStackUsage", &maxPerThreadStackUsage));
     g_assert_cmpuint(maxPerThreadStackUsage, ==, 1024);
-    g_assert_true(jsc_options_get_size("wasmPartialCompileLimit", &wasmPartialCompileLimit));
-    g_assert_cmpuint(wasmPartialCompileLimit, ==, 4000);
+    g_assert_true(jsc_options_get_size("wasmSmallPartialCompileLimit", &wasmSmallPartialCompileLimit));
+    g_assert_cmpuint(wasmSmallPartialCompileLimit, ==, 4000);
     g_assert_true(jsc_options_get_double("criticalGCMemoryThreshold", &criticalGCMemoryThreshold));
     g_assert_cmpfloat(criticalGCMemoryThreshold, ==, 0.95);
     g_assert_true(jsc_options_get_string("configFile", &configFile.outPtr()));
@@ -4490,7 +4692,7 @@ static void testsJSCOptions()
     g_assert_true(jsc_options_set_boolean(JSC_OPTIONS_USE_JIT, TRUE));
     g_assert_true(jsc_options_set_int("thresholdForJITAfterWarmUp", 500));
     g_assert_true(jsc_options_set_uint("maxPerThreadStackUsage", 5242880));
-    g_assert_true(jsc_options_set_size("wasmPartialCompileLimit", 5000));
+    g_assert_true(jsc_options_set_size("wasmSmallPartialCompileLimit", 5000));
     g_assert_true(jsc_options_set_double("smallHeapRAMFraction", 0.25));
     g_assert_true(jsc_options_set_string("configFile", nullptr));
     g_assert_true(jsc_options_set_range_string("bytecodeRangeToJITCompile", nullptr));
@@ -4680,6 +4882,47 @@ static void testJSCJSON()
     }
 }
 
+static constexpr unsigned varargsParameterCount = 16;
+static constexpr unsigned varargsParameterLength = 512 * 1024;
+
+// Each parameter is large enough that converting the next one triggers a collection, when the earlier ones are only referenced from the argument list.
+static void testJSCFunctionCallParameterLifetime()
+{
+    LeakChecker checker;
+    GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+    checker.watch(context.get());
+    ExceptionHandler exceptionHandler(context.get());
+
+    GUniquePtr<char> script(g_strdup_printf(
+        "(function() {\n"
+        "    for (var i = 0; i < arguments.length; i++) {\n"
+        "        if (arguments[i] !== String.fromCharCode(65 + i).repeat(%u))\n"
+        "            return 'parameter ' + i + ' did not survive';\n"
+        "    }\n"
+        "    return 'ok';\n"
+        "})", varargsParameterLength));
+    GRefPtr<JSCValue> function = adoptGRef(jsc_context_evaluate(context.get(), script.get(), -1));
+    checker.watch(function.get());
+    g_assert_true(jsc_value_is_function(function.get()));
+
+    std::array<GUniquePtr<char>, varargsParameterCount> parameters;
+    for (unsigned i = 0; i < varargsParameterCount; ++i)
+        parameters[i].reset(g_strnfill(varargsParameterLength, static_cast<char>('A' + i)));
+
+#define STRING_PARAMETER(index) G_TYPE_STRING, parameters[index].get()
+    GRefPtr<JSCValue> result = adoptGRef(jsc_value_function_call(function.get(),
+        STRING_PARAMETER(0), STRING_PARAMETER(1), STRING_PARAMETER(2), STRING_PARAMETER(3),
+        STRING_PARAMETER(4), STRING_PARAMETER(5), STRING_PARAMETER(6), STRING_PARAMETER(7),
+        STRING_PARAMETER(8), STRING_PARAMETER(9), STRING_PARAMETER(10), STRING_PARAMETER(11),
+        STRING_PARAMETER(12), STRING_PARAMETER(13), STRING_PARAMETER(14), STRING_PARAMETER(15),
+        G_TYPE_NONE));
+#undef STRING_PARAMETER
+
+    checker.watch(result.get());
+    GUniquePtr<char> resultString(jsc_value_to_string(result.get()));
+    g_assert_cmpstr(resultString.get(), ==, "ok");
+}
+
 int main(int argc, char** argv)
 {
     g_test_init(&argc, &argv, nullptr);
@@ -4707,6 +4950,7 @@ int main(int argc, char** argv)
     g_test_add_func("/jsc/autocleanups", testsJSCAutocleanups);
 #endif
     g_test_add_func("/jsc/json", testJSCJSON);
+    g_test_add_func("/jsc/function-call-parameter-lifetime", testJSCFunctionCallParameterLifetime);
 
     return g_test_run();
 }

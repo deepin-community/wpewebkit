@@ -33,6 +33,8 @@ namespace WebKit {
 WebExtensionControllerConfiguration::WebExtensionControllerConfiguration(IsPersistent persistent)
     : m_storageDirectory(persistent == IsPersistent::Yes ? createStorageDirectoryPath() : nullString())
 {
+    if (persistent == IsPersistent::No)
+        m_defaultWebsiteDataStore = WebsiteDataStore::createNonPersistent();
 }
 
 WebExtensionControllerConfiguration::WebExtensionControllerConfiguration(TemporaryTag, const String& storageDirectory)
@@ -47,10 +49,12 @@ WebExtensionControllerConfiguration::WebExtensionControllerConfiguration(const W
 {
 }
 
+#if PLATFORM(COCOA)
 bool WebExtensionControllerConfiguration::operator==(const WebExtensionControllerConfiguration& other) const
 {
     return this == &other || (m_identifier == other.m_identifier && m_storageDirectory == other.m_storageDirectory && m_webViewConfiguration == other.m_webViewConfiguration && m_defaultWebsiteDataStore == other.m_defaultWebsiteDataStore);
 }
+#endif
 
 WebsiteDataStore& WebExtensionControllerConfiguration::defaultWebsiteDataStore() const
 {

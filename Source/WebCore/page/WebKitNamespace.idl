@@ -30,5 +30,13 @@
     Conditional=USER_MESSAGE_HANDLERS,
     Exposed=Window
 ] interface WebKitNamespace {
-    readonly attribute UserMessageHandlersNamespace messageHandlers;
+    readonly attribute UserMessageHandlersNamespace? messageHandlers;
+    readonly attribute WebKitBufferNamespace buffers;
+    [EnabledForWorld=isNonNormal, CallWith=CurrentGlobalObject] any evaluateScript(DOMString source, optional USVString? url = null);
+    [EnabledForGlobalObject=allowsJSHandleCreation] WebKitJSHandle createJSHandle(object object);
+    [EnabledForWorld=allowNodeSnapshotCreation] WebKitNodeSnapshot createNodeSnapshot(Node node, optional WebKitNodeSnapshotInit init = {});
+};
+
+dictionary WebKitNodeSnapshotInit {
+    boolean deep = false;
 };

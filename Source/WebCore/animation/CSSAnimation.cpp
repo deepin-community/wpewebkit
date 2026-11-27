@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,18 +28,27 @@
 
 #include "AnimationEffect.h"
 #include "CSSAnimationEvent.h"
+#include "DocumentTimeline.h"
 #include "InspectorInstrumentation.h"
 #include "KeyframeEffect.h"
-#include "RenderStyle.h"
+#include "StyleComputedStyle.h"
+#include "StyleOriginatedTimelinesController.h"
+#include "ViewTimeline.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(CSSAnimation);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CSSAnimation);
 
-Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, const Animation& backingAnimation, const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext& resolutionContext)
+CSSAnimation::~CSSAnimation() = default;
+
+Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, Style::Animation&& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext& resolutionContext)
 {
-    auto result = adoptRef(*new CSSAnimation(owningElement, backingAnimation));
+    // CSSAnimation should only ever be created with non-"none" animation names.
+    auto name = backingStyleAnimation.name().tryKeyframesName();
+    RELEASE_ASSERT(name);
+
+    auto result = adoptRef(*new CSSAnimation(owningElement, WTF::move(*name), WTF::move(backingStyleAnimation), backingStyleZoomForLength));
     result->initialize(oldStyle, newStyle, resolutionContext);
 
     InspectorInstrumentation::didCreateWebAnimation(result.get());
@@ -47,23 +56,43 @@ Ref<CSSAnimation> CSSAnimation::create(const Styleable& owningElement, const Ani
     return result;
 }
 
-CSSAnimation::CSSAnimation(const Styleable& element, const Animation& backingAnimation)
-    : StyleOriginatedAnimation(element, backingAnimation)
-    , m_animationName(backingAnimation.name().name)
+CSSAnimation::CSSAnimation(const Styleable& element, Style::ScopedName&& animationName, Style::Animation&& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength)
+    : StyleOriginatedAnimation(element)
+    , m_animationName(WTF::move(animationName))
+    , m_backingStyleAnimation(WTF::move(backingStyleAnimation))
+    , m_backingStyleZoomForLength(backingStyleZoomForLength)
 {
+}
+
+void CSSAnimation::setBackingStyleAnimation(const Style::Animation& backingStyleAnimation, Style::ZoomFactor backingStyleZoomForLength)
+{
+    m_backingStyleAnimation = backingStyleAnimation;
+    m_backingStyleZoomForLength = backingStyleZoomForLength;
+    syncPropertiesWithBackingAnimation();
 }
 
 void CSSAnimation::syncPropertiesWithBackingAnimation()
 {
     StyleOriginatedAnimation::syncPropertiesWithBackingAnimation();
 
+    // If we have been disassociated from our original owning element,
+    // we should no longer sync any of the `animation-*` CSS properties.
+    if (!owningElement())
+        return;
+
     if (!effect())
         return;
 
     suspendEffectInvalidation();
 
-    auto& animation = backingAnimation();
-    auto* animationEffect = effect();
+    // https://drafts.csswg.org/css-animations-2/#animation-timeline
+    // When multiple animation-* properties are set simultaneously, animation-timeline
+    // is updated first, so e.g. a change to animation-play-state applies to the
+    // simultaneously-applied timeline specified in animation-timeline.
+    syncStyleOriginatedTimeline();
+
+    auto animation = m_backingStyleAnimation;
+    RefPtr animationEffect = effect();
 
     if (!m_overriddenProperties.contains(Property::FillMode)) {
         switch (animation.fillMode()) {
@@ -84,49 +113,168 @@ void CSSAnimation::syncPropertiesWithBackingAnimation()
 
     if (!m_overriddenProperties.contains(Property::Direction)) {
         switch (animation.direction()) {
-        case Animation::Direction::Normal:
+        case AnimationDirection::Normal:
             animationEffect->setDirection(PlaybackDirection::Normal);
             break;
-        case Animation::Direction::Alternate:
+        case AnimationDirection::Alternate:
             animationEffect->setDirection(PlaybackDirection::Alternate);
             break;
-        case Animation::Direction::Reverse:
+        case AnimationDirection::Reverse:
             animationEffect->setDirection(PlaybackDirection::Reverse);
             break;
-        case Animation::Direction::AlternateReverse:
+        case AnimationDirection::AlternateReverse:
             animationEffect->setDirection(PlaybackDirection::AlternateReverse);
             break;
         }
     }
 
     if (!m_overriddenProperties.contains(Property::IterationCount)) {
-        auto iterationCount = animation.iterationCount();
-        animationEffect->setIterations(iterationCount == Animation::IterationCountInfinite ? std::numeric_limits<double>::infinity() : iterationCount);
+        WTF::switchOn(animation.iterationCount(),
+            [&](const CSS::Keyword::Infinite&) {
+                animationEffect->setIterations(std::numeric_limits<double>::infinity());
+            },
+            [&](const Style::SingleAnimationIterationCount::Number& number) {
+                animationEffect->setIterations(number.value);
+            }
+        );
     }
 
     if (!m_overriddenProperties.contains(Property::Delay))
-        animationEffect->setDelay(Seconds(animation.delay()));
+        animationEffect->setDelay(Seconds(animation.delay().value));
 
-    if (!m_overriddenProperties.contains(Property::Duration))
-        animationEffect->setIterationDuration(Seconds(animation.duration()));
+    if (!m_overriddenProperties.contains(Property::Duration)) {
+        WTF::switchOn(animation.duration(),
+            [&](const CSS::Keyword::Auto&) {
+                animationEffect->setIterationDuration(std::nullopt);
+            },
+            [&](const Style::SingleAnimationDuration::Time& time) {
+                animationEffect->setIterationDuration(Seconds(time.value));
+            }
+        );
+    }
 
     if (!m_overriddenProperties.contains(Property::CompositeOperation)) {
-        if (auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(animationEffect))
+        if (auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(animationEffect.get()))
             keyframeEffect->setComposite(animation.compositeOperation());
     }
 
-    animationEffect->updateStaticTimingProperties();
+    if (!m_overriddenProperties.contains(Property::RangeStart))
+        setRangeStart(Style::SingleAnimationRangeStart { animation.range().start }, m_backingStyleZoomForLength);
+    if (!m_overriddenProperties.contains(Property::RangeEnd))
+        setRangeEnd(Style::SingleAnimationRangeEnd { animation.range().end }, m_backingStyleZoomForLength);
+
     effectTimingDidChange();
 
     // Synchronize the play state
+    // https://drafts.csswg.org/css-animations-2/#animation-play-state
     if (!m_overriddenProperties.contains(Property::PlayState)) {
-        if (animation.playState() == AnimationPlayState::Playing && playState() == WebAnimation::PlayState::Paused)
-            play();
-        else if (animation.playState() == AnimationPlayState::Paused && playState() == WebAnimation::PlayState::Running)
-            pause();
+        auto styleOriginatedPlayState = animation.playState();
+        if (m_lastStyleOriginatedPlayState != styleOriginatedPlayState) {
+            if (styleOriginatedPlayState == AnimationPlayState::Running) {
+                // If at any time, including when the animation is first generated, the resolved value of
+                // animation-play-state corresponding to an animation is newly running, the implementation
+                // must run the procedure to play an animation for the given animation with the auto-rewind
+                // flag set to false.
+                play(WebAnimation::AutoRewind::No);
+            } else if (playState() != WebAnimation::PlayState::Idle) {
+                // If at any time, including when the animation is first generated, the resolved value of
+                // animation-play-state corresponding to an animation is newly paused, the implementation
+                // must run the procedure to pause an animation for the given animation.
+                // FIXME: we should not have to check for playState() != WebAnimation::PlayState::Idle
+                // but this is needed so that we don't rewind canceled animations.
+                // https://github.com/w3c/csswg-drafts/issues/13503
+                pause();
+            }
+        }
+        m_lastStyleOriginatedPlayState = styleOriginatedPlayState;
     }
 
     unsuspendEffectInvalidation();
+}
+
+AnimationPlayState CSSAnimation::backingAnimationPlayState() const
+{
+    return m_backingStyleAnimation.playState();
+}
+
+TimingFunction* CSSAnimation::backingAnimationTimingFunction() const
+{
+    return m_backingStyleAnimation.timingFunction().value.ptr();
+}
+
+void CSSAnimation::syncStyleOriginatedTimeline()
+{
+    if (m_overriddenProperties.contains(Property::Timeline) || !effect())
+        return;
+
+    suspendEffectInvalidation();
+
+    ASSERT(owningElement());
+    Ref document = owningElement()->element.document();
+
+    WTF::switchOn(m_backingStyleAnimation.timeline(),
+        [&](const CSS::Keyword::Auto&) {
+            setTimeline(RefPtr { document->existingTimeline() });
+        },
+        [&](const CSS::Keyword::None&) {
+            setTimeline(nullptr);
+        },
+        [&](const Style::CustomIdent&) {
+            CheckedRef styleOriginatedTimelinesController = document->ensureStyleOriginatedTimelinesController();
+            styleOriginatedTimelinesController->attachAnimation(*this);
+        },
+        [&](const Style::ScrollFunction& scrollFunction) {
+            if (auto* existingScrollTimeline = dynamicDowncast<ScrollTimeline>(timeline())) {
+                if (existingScrollTimeline->matchesAnonymousScrollFunctionForSource(scrollFunction, *owningElement()))
+                    return;
+            }
+            auto scrollTimeline = ScrollTimeline::create(scrollFunction->scroller, scrollFunction->axis);
+            scrollTimeline->setSource(*owningElement());
+            setTimeline(WTF::move(scrollTimeline));
+        },
+        [&](const Style::ViewFunction& viewFunction) {
+            if (RefPtr existingViewTimeline = dynamicDowncast<ViewTimeline>(timeline())) {
+                if (existingViewTimeline->matchesAnonymousViewFunctionForSubject(viewFunction, *owningElement()))
+                    return;
+            }
+            auto viewTimeline = ViewTimeline::create(nullAtom(), viewFunction->axis, viewFunction->insets);
+            viewTimeline->setSubject(*owningElement());
+            setTimeline(WTF::move(viewTimeline));
+        }
+    );
+
+    // If we're not dealing with a named timeline, we should make sure we have no
+    // pending attachment operation for this timeline name.
+    if (!m_backingStyleAnimation.timeline().isCustomIdent()) {
+        CheckedRef styleOriginatedTimelinesController = document->ensureStyleOriginatedTimelinesController();
+        styleOriginatedTimelinesController->removePendingOperationsForCSSAnimation(*this);
+    }
+
+    unsuspendEffectInvalidation();
+}
+
+AnimationTimeline* CSSAnimation::bindingsTimeline() const
+{
+    flushPendingStyleChanges();
+    return StyleOriginatedAnimation::bindingsTimeline();
+}
+
+void CSSAnimation::setBindingsTimeline(RefPtr<AnimationTimeline>&& timeline)
+{
+    m_overriddenProperties.add(Property::Timeline);
+    StyleOriginatedAnimation::setBindingsTimeline(WTF::move(timeline));
+}
+
+void CSSAnimation::setBindingsRangeStart(TimelineRangeValue&& range)
+{
+    m_overriddenProperties.add(Property::RangeStart);
+    StyleOriginatedAnimation::setBindingsRangeStart(WTF::move(range));
+}
+
+void CSSAnimation::setBindingsRangeEnd(TimelineRangeValue&& range)
+{
+    m_overriddenProperties.add(Property::RangeEnd);
+    StyleOriginatedAnimation::setBindingsRangeEnd(WTF::move(range));
 }
 
 ExceptionOr<void> CSSAnimation::bindingsPlay()
@@ -164,9 +312,9 @@ void CSSAnimation::setBindingsEffect(RefPtr<AnimationEffect>&& newEffect)
     // animation. Similarly, any change to matching @keyframes rules will not be reflected in that animation. However, if the last
     // matching @keyframes rule is removed the animation must still be canceled.
 
-    auto* previousEffect = effect();
-    StyleOriginatedAnimation::setBindingsEffect(WTFMove(newEffect));
-    if (effect() != previousEffect) {
+    RefPtr previousEffect = effect();
+    StyleOriginatedAnimation::setBindingsEffect(WTF::move(newEffect));
+    if (effect() != previousEffect.get()) {
         m_overriddenProperties.add(Property::Duration);
         m_overriddenProperties.add(Property::TimingFunction);
         m_overriddenProperties.add(Property::IterationCount);
@@ -178,7 +326,7 @@ void CSSAnimation::setBindingsEffect(RefPtr<AnimationEffect>&& newEffect)
     }
 }
 
-ExceptionOr<void> CSSAnimation::setBindingsStartTime(const std::optional<CSSNumberish>& startTime)
+ExceptionOr<void> CSSAnimation::setBindingsStartTime(const std::optional<WebAnimationTime>& startTime)
 {
     // https://drafts.csswg.org/css-animations-2/#animations
 
@@ -215,7 +363,7 @@ ExceptionOr<void> CSSAnimation::bindingsReverse()
     return retVal;
 }
 
-void CSSAnimation::effectTimingWasUpdatedUsingBindings(OptionalEffectTiming timing)
+void CSSAnimation::effectTimingWasUpdatedUsingBindings(const OptionalEffectTiming& timing)
 {
     // https://drafts.csswg.org/css-animations-2/#animations
 
@@ -263,7 +411,7 @@ void CSSAnimation::keyframesRuleDidChange()
     if (m_overriddenProperties.contains(Property::Keyframes))
         return;
 
-    auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(effect());
+    RefPtr keyframeEffect = this->keyframeEffect();
     if (!keyframeEffect)
         return;
 
@@ -271,16 +419,16 @@ void CSSAnimation::keyframesRuleDidChange()
     if (!owningElement)
         return;
 
-    keyframeEffect->keyframesRuleDidChange();
+    keyframeEffect->recomputeKeyframesAtNextOpportunity();
     owningElement->keyframesRuleDidChange();
 }
 
-void CSSAnimation::updateKeyframesIfNeeded(const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext& resolutionContext)
+void CSSAnimation::updateKeyframesIfNeeded(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext& resolutionContext)
 {
     if (m_overriddenProperties.contains(Property::Keyframes))
         return;
 
-    auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(effect());
+    RefPtr keyframeEffect = this->keyframeEffect();
     if (!keyframeEffect)
         return;
 
@@ -290,7 +438,7 @@ void CSSAnimation::updateKeyframesIfNeeded(const RenderStyle* oldStyle, const Re
 
 Ref<StyleOriginatedAnimationEvent> CSSAnimation::createEvent(const AtomString& eventType, std::optional<Seconds> scheduledTime, double elapsedTime, const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier)
 {
-    return CSSAnimationEvent::create(eventType, this, scheduledTime, elapsedTime, pseudoElementIdentifier, m_animationName);
+    return CSSAnimationEvent::create(eventType, this, scheduledTime, elapsedTime, pseudoElementIdentifier, m_animationName.name);
 }
 
 } // namespace WebCore

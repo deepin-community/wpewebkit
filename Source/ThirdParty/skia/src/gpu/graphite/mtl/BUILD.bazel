@@ -1,4 +1,5 @@
-load("//bazel:skia_rules.bzl", "skia_objc_library", "split_srcs_and_hdrs")
+load("@skia_user_config//:copts.bzl", "DEFAULT_OBJC_COPTS")
+load("//bazel:skia_rules.bzl", "skia_objc_library_with_testutil", "split_srcs_and_hdrs")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -21,9 +22,8 @@ METAL_FILES = [
     "MtlComputePipeline.mm",
     "MtlGraphicsPipeline.h",
     "MtlGraphicsPipeline.mm",
-    "MtlGraphiteTypes.mm",
     "MtlGraphiteUtils.mm",
-    "MtlGraphiteUtilsPriv.h",
+    "MtlGraphiteUtils.h",
     "MtlQueueManager.h",
     "MtlQueueManager.mm",
     "MtlRenderCommandEncoder.h",
@@ -43,7 +43,7 @@ split_srcs_and_hdrs(
     files = METAL_FILES,
 )
 
-skia_objc_library(
+skia_objc_library_with_testutil(
     name = "graphite_native_metal",
     srcs = [
         ":mtl_hdrs",
@@ -56,7 +56,11 @@ skia_objc_library(
         "//include/gpu/mtl:public_hdrs",
         "//include/ports:core_foundation_hdrs",
     ],
+    copts = DEFAULT_OBJC_COPTS + ["-fno-objc-arc"],
     defines = ["SK_METAL"],
+    priv_visibility = [
+        "//tools:__subpackages__",
+    ],
     sdk_frameworks = [
         "Foundation",
         "Metal",
@@ -64,7 +68,6 @@ skia_objc_library(
     visibility = ["//:__pkg__"],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "//src/gpu",
         "//src/gpu/graphite",

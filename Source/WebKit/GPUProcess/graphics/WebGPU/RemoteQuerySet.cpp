@@ -41,33 +41,33 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteQuerySet);
 RemoteQuerySet::RemoteQuerySet(WebCore::WebGPU::QuerySet& querySet, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(querySet)
     , m_objectHeap(objectHeap)
-    , m_streamConnection(WTFMove(streamConnection))
+    , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
 {
-    m_streamConnection->startReceivingMessages(*this, Messages::RemoteQuerySet::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteQuerySet::messageReceiverName(), m_identifier.toUInt64());
 }
 
 RemoteQuerySet::~RemoteQuerySet() = default;
 
 void RemoteQuerySet::stopListeningForIPC()
 {
-    m_streamConnection->stopReceivingMessages(Messages::RemoteQuerySet::messageReceiverName(), m_identifier.toUInt64());
+    protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteQuerySet::messageReceiverName(), m_identifier.toUInt64());
 }
 
 void RemoteQuerySet::destroy()
 {
-    m_backing->destroy();
+    protect(m_backing)->destroy();
 }
 
 void RemoteQuerySet::destruct()
 {
-    m_objectHeap->removeObject(m_identifier);
+    protect(m_objectHeap)->removeObject(m_identifier);
 }
 
 void RemoteQuerySet::setLabel(String&& label)
 {
-    m_backing->setLabel(WTFMove(label));
+    protect(m_backing)->setLabel(WTF::move(label));
 }
 
 } // namespace WebKit

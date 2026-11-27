@@ -25,14 +25,16 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
-#include "ExceptionOr.h"
+#include <WebCore/ActiveDOMObject.h>
 #include "IDBCursorDirection.h"
-#include "IDBKeyPath.h"
-#include "IDBObjectStoreInfo.h"
+#include <WebCore/IDBIndexIdentifier.h>
+#include <WebCore/IDBKeyPath.h>
+#include <WebCore/IDBObjectStoreInfo.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
+#include <wtf/WeakRef.h>
 
 namespace JSC {
 class CallFrame;
@@ -50,26 +52,32 @@ class IDBKeyRange;
 class IDBRequest;
 class IDBTransaction;
 class SerializedScriptValue;
+class WeakPtrImplWithEventTargetData;
 class WebCoreOpaqueRoot;
 
+struct IDBGetAllOptions;
 struct IDBKeyRangeData;
+struct ParsedGetAllQueryOrOptions;
+
+template<typename> class ExceptionOr;
 
 namespace IndexedDB {
 enum class ObjectStoreOverwriteMode : uint8_t;
 }
 
-class IDBObjectStore final : public ActiveDOMObject {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(IDBObjectStore);
+class IDBObjectStore final : public ActiveDOMObject, public CanMakeCheckedPtr<IDBObjectStore> {
+    WTF_MAKE_TZONE_ALLOCATED(IDBObjectStore);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBObjectStore);
 public:
     static UniqueRef<IDBObjectStore> create(ScriptExecutionContext&, const IDBObjectStoreInfo&, IDBTransaction&);
     ~IDBObjectStore();
 
-    const String& name() const;
+    const String& NODELETE name() const;
     ExceptionOr<void> setName(const String&);
-    const std::optional<IDBKeyPath>& keyPath() const;
+    const std::optional<IDBKeyPath>& NODELETE keyPath() const;
     Ref<DOMStringList> indexNames() const;
-    IDBTransaction& transaction();
-    bool autoIncrement() const;
+    IDBTransaction& NODELETE transaction();
+    bool NODELETE autoIncrement() const;
 
     struct IndexParameters {
         bool unique;
@@ -94,25 +102,24 @@ public:
     ExceptionOr<void> deleteIndex(const String& name);
     ExceptionOr<Ref<IDBRequest>> count(IDBKeyRange*);
     ExceptionOr<Ref<IDBRequest>> count(JSC::JSGlobalObject&, JSC::JSValue key);
-    ExceptionOr<Ref<IDBRequest>> getAll(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(RefPtr<IDBKeyRange>&&, std::optional<uint32_t> count);
-    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue key, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAll(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllKeys(JSC::JSGlobalObject&, JSC::JSValue queryOrOptions, std::optional<uint32_t> count);
+    ExceptionOr<Ref<IDBRequest>> getAllRecords(JSC::JSGlobalObject&, IDBGetAllOptions&&);
 
     ExceptionOr<Ref<IDBRequest>> putForCursorUpdate(JSC::JSGlobalObject&, JSC::JSValue, RefPtr<IDBKey>&&, RefPtr<SerializedScriptValue>&&);
 
-    void markAsDeleted();
+    void NODELETE markAsDeleted();
     bool isDeleted() const { return m_deleted; }
 
-    const IDBObjectStoreInfo& info() const { return m_info; }
+    const IDBObjectStoreInfo& info() const LIFETIME_BOUND { return m_info; }
 
     void rollbackForVersionChangeAbort();
 
     // ActiveDOMObject.
-    void ref() const final;
+    void NODELETE ref() const final;
     void deref() const final;
 
-    template<typename Visitor> void visitReferencedIndexes(Visitor&) const;
+    template<typename Visitor> void visitReferencedIndexesInGCThread(Visitor&) const;
     void renameReferencedIndex(IDBIndex&, const String& newName);
 
 private:
@@ -121,11 +128,10 @@ private:
     enum class InlineKeyCheck { Perform, DoNotPerform };
     ExceptionOr<Ref<IDBRequest>> putOrAdd(JSC::JSGlobalObject&, JSC::JSValue, RefPtr<IDBKey>, IndexedDB::ObjectStoreOverwriteMode, InlineKeyCheck, RefPtr<SerializedScriptValue>&& = nullptr);
     ExceptionOr<Ref<IDBRequest>> doCount(const IDBKeyRangeData&);
-    ExceptionOr<Ref<IDBRequest>> doDelete(Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&&);
-    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&&);
-    ExceptionOr<Ref<IDBRequest>> doGetAll(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
-    ExceptionOr<Ref<IDBRequest>> doGetAllKeys(std::optional<uint32_t> count, Function<ExceptionOr<RefPtr<IDBKeyRange>>()> &&);
+    ExceptionOr<Ref<IDBRequest>> doDelete(NOESCAPE const Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&);
+    ExceptionOr<Ref<IDBRequest>> doOpenCursor(IDBCursorDirection, NOESCAPE const Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&);
+    ExceptionOr<Ref<IDBRequest>> doOpenKeyCursor(IDBCursorDirection, NOESCAPE const Function<ExceptionOr<RefPtr<IDBKeyRange>>()>&);
+    ExceptionOr<Ref<IDBRequest>> doGetAllShared(IndexedDB::GetAllType, NOESCAPE const Function<ExceptionOr<ParsedGetAllQueryOrOptions>()>&);
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
@@ -134,16 +140,16 @@ private:
     IDBObjectStoreInfo m_originalInfo;
 
     // IDBObjectStore objects are always owned by their referencing IDBTransaction.
-    // ObjectStores will never outlive transactions so its okay to keep a raw C++ reference here.
-    IDBTransaction& m_transaction;
+    // ObjectStores will never outlive transactions so its okay to keep a WeakRef here.
+    WeakRef<IDBTransaction, WeakPtrImplWithEventTargetData> m_transaction;
 
     bool m_deleted { false };
 
     mutable Lock m_referencedIndexLock;
     HashMap<String, std::unique_ptr<IDBIndex>> m_referencedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
-    HashMap<uint64_t, std::unique_ptr<IDBIndex>> m_deletedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
+    HashMap<IDBIndexIdentifier, std::unique_ptr<IDBIndex>> m_deletedIndexes WTF_GUARDED_BY_LOCK(m_referencedIndexLock);
 };
 
-WebCoreOpaqueRoot root(IDBObjectStore*);
+WebCoreOpaqueRoot NODELETE root(IDBObjectStore*);
 
 } // namespace WebCore

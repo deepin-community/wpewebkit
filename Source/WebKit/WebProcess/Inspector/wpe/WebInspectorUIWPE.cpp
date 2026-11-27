@@ -28,35 +28,28 @@
 
 #if ENABLE(WPE_PLATFORM)
 
+#include <gio/gio.h>
+#include <wtf/glib/GResources.h>
 #include <wtf/glib/GUniquePtr.h>
 
 namespace WebKit {
 
 void WebInspectorUI::didEstablishConnection()
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        const char* libDir = PKGLIBDIR;
-#if ENABLE(DEVELOPER_MODE)
-        // Probably no need for a specific env var here. Assume the inspector resources.so file is
-        // in the same directory as the injected bundle lib, for developer builds.
-        const char* path = g_getenv("WEBKIT_INJECTED_BUNDLE_PATH");
-        if (path && g_file_test(path, G_FILE_TEST_IS_DIR))
-            libDir = path;
-#endif
-        GUniquePtr<char> bundleFilename(g_build_filename(libDir, "libWPEWebInspectorResources.so", nullptr));
-        GModule* resourcesModule = g_module_open(bundleFilename.get(), G_MODULE_BIND_LAZY);
-        if (!resourcesModule) {
-            WTFLogAlways("Error loading libWPEWebInspectorResources.so: %s", g_module_error());
-            return;
-        }
-
-        g_module_make_resident(resourcesModule);
-    });
+    WTF::registerInspectorResourceIfNeeded();
 }
 
-bool WebInspectorUI::canSave(InspectorFrontendClient::SaveMode)
+bool WebInspectorUI::canSave(InspectorFrontendClient::SaveMode saveMode)
 {
+    switch (saveMode) {
+    case InspectorFrontendClient::SaveMode::SingleFile:
+        return true;
+
+    case InspectorFrontendClient::SaveMode::FileVariants:
+        return false;
+    }
+
+    ASSERT_NOT_REACHED();
     return false;
 }
 

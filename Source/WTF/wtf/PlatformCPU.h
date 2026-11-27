@@ -119,7 +119,7 @@
 #endif
 
 /* CPU(ARM64) */
-#if defined(__arm64__) || defined(__aarch64__)
+#if defined(__arm64__) || defined(__aarch64__) || defined(_M_ARM64)
 #define WTF_CPU_ARM64 1
 #define WTF_CPU_KNOWN 1
 
@@ -162,6 +162,7 @@
     || defined(__ARM_ARCH_6J__) \
     || defined(__ARM_ARCH_6K__) \
     || defined(__ARM_ARCH_6Z__) \
+    || defined(__ARM_ARCH_6KZ__) \
     || defined(__ARM_ARCH_6ZK__) \
     || defined(__ARM_ARCH_6T2__) \
     || defined(__ARMV6__)

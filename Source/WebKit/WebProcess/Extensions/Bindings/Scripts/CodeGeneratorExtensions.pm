@@ -69,7 +69,7 @@ sub _classRefGetter
     my $implementationClassName = _implementationClassName($idlType);
     $implementationClassName =~ s/^WebExtensionAPI//;
 
-    return $$self{codeGenerator}->WK_lcfirst($implementationClassName) . $suffix;
+    return $$self{codeGenerator}->WK_lcfirst($implementationClassName) . $suffix . "Singleton";
 }
 
 sub _parseLicenseBlock
@@ -287,17 +287,20 @@ sub _generateImplementationFile
     my $idlType = $interface->type;
     my $className = _className($idlType);
     my $implementationClassName = _implementationClassName($idlType);
-    my $filename = $className . ".mm";
+    my $filename = $interface->extendedAttributes->{"UseCPPAPI"} ? $className . ".cpp" : $className . ".mm";
 
     push(@contentsPrefix, $self->_licenseBlock());
     push(@contentsPrefix, "\n\n");
 
-    push(@contentsPrefix, <<EOF);
+    if (!$interface->extendedAttributes->{"UseCPPAPI"})
+    {
+        push(@contentsPrefix, <<EOF);
 #if !__has_feature(objc_arc)
 #error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
 #endif
 
 EOF
+    }
 
     push(@contentsPrefix, "#include \"config.h\"\n\n");
 
@@ -313,11 +316,12 @@ EOF
 
     $contentsIncludes{"\"${className}.h\""} = 1;
     $contentsIncludes{"\"${implementationClassName}.h\""} = 1;
+    $contentsIncludes{"\"Logging.h\""} = 1;
+    $contentsIncludes{"\"WebExtensionUtilities.h\""} = 1;
+    $contentsIncludes{"\"WebPage.h\""} = 1;
+    $contentsIncludes{"<wtf/GetPtr.h>"} = 1;
 
     push(@contents, <<EOF);
-#include "Logging.h"
-#include "WebExtensionUtilities.h"
-#include <wtf/GetPtr.h>
 
 namespace WebKit {
 
@@ -325,12 +329,12 @@ ${implementationClassName}* to${implementationClassName}(JSContextRef context, J
 {
     if (!context || !value || !${className}::${classRefGetter}() || !JSValueIsObjectOfClass(context, value, ${className}::${classRefGetter}()))
         return nullptr;
-    return static_cast<${implementationClassName}*>(JSWebExtensionWrapper::unwrap(context, value));
+    return downcast<${implementationClassName}>(JSWebExtensionWrapper::unwrap(context, value));
 }
 
 JSClassRef ${className}::${classRefGetter}()
 {
-    static JSClassRef jsClass;
+    SUPPRESS_UNCOUNTED_LOCAL static JSClassRef jsClass;
     if (!jsClass) {
         JSClassDefinition definition = kJSClassDefinitionEmpty;
         definition.className = "@{[_publicClassName($idlType)]}";
@@ -382,7 +386,7 @@ EOF
     push (@contents, <<EOF);
 JSClassRef ${className}::${globalClassRefGetter}()
 {
-    static JSClassRef jsClass;
+    SUPPRESS_UNCOUNTED_LOCAL static JSClassRef jsClass;
     if (!jsClass) {
         JSClassDefinition definition = kJSClassDefinitionEmpty;
         definition.className = "@{[_publicClassName($idlType)]}";
@@ -414,7 +418,7 @@ EOF
 void ${className}::getPropertyNames(JSContextRef context, JSObjectRef thisObject, JSPropertyNameAccumulatorRef propertyNames)
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         return;
 
     NSArray *propertyNameStrings = impl->${customGetPropertyNamesFunction}();
@@ -431,10 +435,10 @@ EOF
 bool ${className}::hasProperty(JSContextRef context, JSObjectRef thisObject, JSStringRef propertyName)
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         return false;
 
-    return impl->${customHasPropertyFunction}(toNSString(propertyName));
+    return impl->${customHasPropertyFunction}(toString(propertyName));
 }
 EOF
         }
@@ -446,7 +450,7 @@ EOF
 
             push(@contents, "\n");
 
-            my $functionSignature = "JSValueRef ${className}::@{[$function->name]}(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)";
+            my $functionSignature = "JSValueRef ${className}::@{[$function->name]}(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef unsafeArguments[], JSValueRef* exception)";
             my $call = _callString($idlType, $function, 1);
 
             my $defaultEarlyReturnValue = "JSValueMakeUndefined(context)";
@@ -480,23 +484,26 @@ EOF
 
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(${functionEarlyReturnCondition}))
+    if (${functionEarlyReturnCondition}) [[unlikely]]
         return ${defaultEarlyReturnValue};
 
-    RELEASE_LOG_DEBUG(Extensions, "Called function ${call} (%{public}lu %{public}s) in %{public}s world", argumentCount, argumentCount == 1 ? "argument" : "arguments", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called function ${call} (%" PUBLIC_LOG "lu %" PUBLIC_LOG_STRING ") in %" PUBLIC_LOG_STRING " world", argumentCount, argumentCount == 1 ? "argument" : "arguments", toDebugString(impl->contentWorldType()).utf8().data());
 EOF
 
             my @parameters = ();
             my @specifiedParameters = @{$function->arguments};
-            my $needsExceptionString = $function->extendedAttributes->{"RaisesException"};
+            my $needsNSExceptionString = $function->extendedAttributes->{"RaisesException"};
+            my $needsExceptionString = $function->extendedAttributes->{"RaisesStringException"};
 
             my $lastParameter = $specifiedParameters[$#specifiedParameters];
 
-            push(@contents, "\n") if scalar @specifiedParameters;
+            push(@contents, "\n    auto arguments = unsafeMakeSpan(unsafeArguments, argumentCount);\n\n") if scalar @specifiedParameters;
             my $needsScriptContext = $function->extendedAttributes->{"NeedsScriptContext"};
 
             my $needsFrame = $function->extendedAttributes->{"NeedsFrame"};
+            my $needsFrameIdentifier = $function->extendedAttributes->{"NeedsFrameIdentifier"};
             my $needsPage = $function->extendedAttributes->{"NeedsPage"};
+            my $needsPageIdentifier = $function->extendedAttributes->{"NeedsPageIdentifier"};
             my $returnsPromiseIfNoCallback = $function->extendedAttributes->{"ReturnsPromiseWhenCallbackIsOmitted"} || $interface->extendedAttributes->{"ReturnsPromiseWhenCallbackIsOmitted"};
             my $callbackHandlerArgument;
 
@@ -509,7 +516,9 @@ EOF
                 $self->_includeHeaders(\%contentsIncludes, $parameter->type, $parameter);
                 $optionalArgumentCount++ if $parameter->extendedAttributes->{"Optional"};
                 $needsPage = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsPageWithCallbackHandler"};
+                $needsPageIdentifier = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsPageIdentifierWithCallbackHandler"};
                 $needsFrame = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsFrameWithCallbackHandler"};
+                $needsFrameIdentifier = 1 if $parameter->extendedAttributes->{"CallbackHandler"} && $interface->extendedAttributes->{"NeedsFrameIdentifierWithCallbackHandler"};
                 $callbackHandlerArgument = $parameter->name if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
             }
 
@@ -527,8 +536,8 @@ EOF
             if ($requiredArgumentCount) {
                 push(@contents, <<EOF);
     constexpr size_t requiredArgumentCount = ${requiredArgumentCount};
-    if (UNLIKELY(argumentCount < requiredArgumentCount)) {
-        *exception = toJSError(context, @"${call}", nil, @"a required argument is missing");
+    if (argumentCount < requiredArgumentCount) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, nullString(), "a required argument is missing"_s);
         return ${defaultEarlyReturnValue};
     }
 
@@ -539,9 +548,10 @@ EOF
                 die "Property functions can't take optional arguments" if $isPropertyFunction;
 
                 foreach my $parameter (@specifiedParameters) {
-                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name) . "\n");
+                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name) . "\n");
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
-                    push(@parameters, $parameter->name) unless $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
+                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"};
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
                 }
 
                 push(@contents, "\n");
@@ -557,7 +567,7 @@ EOF
 
                 foreach my $i (0..$#specifiedParameters) {
                     my $parameter = $specifiedParameters[$i];
-                    push(@contents, "        " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
+                    push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
                 }
 
                 if ($hasSimpleOptionalArgumentHandling && $argumentCount > 1) {
@@ -571,13 +581,13 @@ EOF
 
                     foreach my $i (0..$#specifiedParameters - 1) {
                         my $parameter = $specifiedParameters[$i];
-                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
+                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "arguments[${i}]", undef, 1) . "\n");
                     }
 
                     if ($hasOptionalAsLastArgument && $requiredArgumentCount ne ($argumentCount - 1)) {
                         push(@contents, "    } else if (argumentCount == 1) {\n");
                         $self->_installArgumentTypeExceptions(\@contents, $lastParameter, $idlType, "arguments[0]", $lastParameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1, 2);
-                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($lastParameter, $lastParameter->name, "arguments[0]", undef, 1) . "\n");
+                        push(@contents, "        " . $self->_platformTypeVariableDeclaration($interface, $lastParameter, $lastParameter->name, "arguments[0]", undef, 1) . "\n");
                     }
                 } elsif ($argumentCount > 1) {
                     push(@contents, "    } else {\n");
@@ -594,7 +604,7 @@ EOF
                         my $optionalCondition = $requiredArgumentCount ? "allowedOptionalArgumentCount && " : "";
                         push(@contents, "\n");
                         push(@contents, "        if ($optionalCondition(currentArgument = arguments[argumentCount - 1]) && (" . $self->_javaScriptTypeCondition($parameter, "currentArgument") . ")) {\n");
-                        push(@contents, "            " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                        push(@contents, "            " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                         push(@contents, "            --allowedOptionalArgumentCount;\n") if $requiredArgumentCount;
                         push(@contents, "            if (argumentCount)\n");
                         push(@contents, "                --argumentCount;\n");
@@ -617,13 +627,13 @@ EOF
 
                         if ($parameter->extendedAttributes->{"Optional"}) {
                             push(@contents, "            if (" . $self->_javaScriptTypeCondition($parameter, "currentArgument") . ") {\n");
-                            push(@contents, "                " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                            push(@contents, "                " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                             push(@contents, "                ++processedOptionalArgumentCount;\n") if $requiredArgumentCount;
                             push(@contents, "                $nextArgumentIndex;\n");
                             push(@contents, "            }\n");
                         } else {
                             $self->_installArgumentTypeExceptions(\@contents, $parameter, $idlType, "currentArgument", $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1, 3);
-                            push(@contents, "            " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
+                            push(@contents, "            " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, "currentArgument", undef, 1) . "\n");
                             push(@contents, "            $nextArgumentIndex;\n");
                         }
 
@@ -642,17 +652,18 @@ EOF
                     my $parameter = $specifiedParameters[$i];
 
                     if ($isPropertyFunction && $i == 0) {
-                        push(@contents, "    NSString *" . $parameter->name . " = toNSString(propertyName);\n");
+                        push(@contents, "    NSString *" . $parameter->name . " = toString(propertyName).createNSString().get();\n");
                     } else {
                         my $argument = $isSetPropertyFunction ? "newValue" : "arguments[$i]";
 
                         die "GetProperty and DeleteProperty functions only take one argument" if $isGetPropertyFunction || $isDeletePropertyFunction;
 
-                        push(@contents, "    " . $self->_platformTypeVariableDeclaration($parameter, $parameter->name, $argument) . "\n");
+                        push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name, $argument) . "\n");
                     }
 
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
-                    push(@parameters, $parameter->name) unless $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
+                    push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"};
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"});
                 }
             }
 
@@ -664,13 +675,13 @@ EOF
             my @methodSignatureNames = map(&$mapFunction, @specifiedParameters);
 
             foreach my $parameter (@specifiedParameters) {
-                $self->_installAutomaticExceptions(\@contents, $parameter, $idlType, $parameter->name, $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1);
+                $self->_installAutomaticExceptions(\@contents, $interface, $parameter, $idlType, $parameter->name, $parameter->name, $defaultEarlyReturnValue, \%contentsIncludes, $function, 1);
             }
 
             if (!$hasSimpleOptionalArgumentHandling) {
                 push(@contents, "\n");
-                push(@contents, "    if (UNLIKELY($argumentIndexConditon)) {\n");
-                push(@contents, "        *exception = toJSError(context, @\"${call}\", nil, @\"an unknown argument was provided\");\n");
+                push(@contents, "    if ($argumentIndexConditon) [[unlikely]] {\n");
+                push(@contents, "        *exception = toJSError(context, \"${call}\"_s, nullString(), \"an unknown argument was provided\"_s);\n");
                 push(@contents, "        return ${defaultEarlyReturnValue};\n");
                 push(@contents, "    }\n");
             }
@@ -678,14 +689,23 @@ EOF
             unshift(@methodSignatureNames, "context") if $needsScriptContext;
             unshift(@parameters, "context") if $needsScriptContext;
 
-            unshift(@methodSignatureNames, "page") if $needsPage;
-            unshift(@parameters, "*page") if $needsPage;
-
             unshift(@methodSignatureNames, "frame") if $needsFrame;
             unshift(@parameters, "*frame") if $needsFrame;
 
+            unshift(@methodSignatureNames, "frameIdentifier") if $needsFrameIdentifier;
+            unshift(@parameters, "frame->frameID()") if $needsFrameIdentifier;
+
+            unshift(@methodSignatureNames, "page") if $needsPage;
+            unshift(@parameters, "*page") if $needsPage;
+
+            unshift(@methodSignatureNames, "webPageProxyIdentifier") if $needsPageIdentifier;
+            unshift(@parameters, "page->webPageProxyIdentifier()") if $needsPageIdentifier;
+
+            push(@methodSignatureNames, "outExceptionString") if $needsNSExceptionString;
+            push(@parameters, "&exceptionString") if $needsNSExceptionString;
+
             push(@methodSignatureNames, "outExceptionString") if $needsExceptionString;
-            push(@parameters, "&exceptionString") if $needsExceptionString;
+            push(@parameters, "exceptionString") if $needsExceptionString;
 
             my $isVoidReturn = $function->type->name eq "void";
             my $functionCall = $self->_functionCall($function, \@methodSignatureNames, \@parameters, $interface);
@@ -713,14 +733,14 @@ EOF
             if ($callbackHandlerArgument && !$returnsPromiseIfNoCallback) {
                 push(@contents, <<EOF);
     if (!${callbackHandlerArgument})
-        ${callbackHandlerArgument} = toJSErrorCallbackHandler(context, impl->runtime());
+        ${callbackHandlerArgument} = toJSErrorCallbackHandler(context, protect(impl->runtime()));
 
 EOF
             }
 
-            if ($needsPage) {
+            if ($needsPage || $needsPageIdentifier) {
                 push(@contents, "    RefPtr page = toWebPage(context);\n");
-                push(@contents, "    if (UNLIKELY(!page)) {\n");
+                push(@contents, "    if (!page) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Page could not be found for JSContextRef\");\n");
                 push(@contents, "        if (promiseResult)\n") if $returnsPromise;
                 push(@contents, "            promiseResult = toJSRejectedPromise(context, @\"${call}\", nil, @\"an unknown error occurred\");\n") if $returnsPromise;
@@ -728,9 +748,9 @@ EOF
                 push(@contents, "    }\n\n");
             }
 
-            if ($needsFrame) {
+            if ($needsFrame || $needsFrameIdentifier) {
                 push(@contents, "    RefPtr frame = toWebFrame(context);\n");
-                push(@contents, "    if (UNLIKELY(!frame)) {\n");
+                push(@contents, "    if (!frame) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Frame could not be found for JSContextRef\");\n");
                 push(@contents, "        if (promiseResult)\n") if $returnsPromise;
                 push(@contents, "            promiseResult = toJSRejectedPromise(context, @\"${call}\", nil, @\"an unknown error occurred\");\n") if $returnsPromise;
@@ -738,26 +758,39 @@ EOF
                 push(@contents, "    }\n\n");
             }
 
-            if ($needsExceptionString && !$isVoidReturn) {
+            if ($needsNSExceptionString && !$isVoidReturn) {
                 push(@contents, <<EOF);
     NSString *exceptionString;
     JSValueRef result = ${returnExpression};
 
-    if (UNLIKELY(exceptionString)) {
-        *exception = toJSError(context, @"${call}", nil, exceptionString);
+    if (exceptionString) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, nullString(), String(exceptionString));
         return ${defaultEarlyReturnValue};
     }
 
     return result;
 }
 EOF
-            } elsif ($needsExceptionString && $isVoidReturn) {
+            } elsif ($needsNSExceptionString && $isVoidReturn) {
                 push(@contents, <<EOF);
     NSString *exceptionString;
     ${functionCall};
 
-    if (UNLIKELY(exceptionString)) {
-        *exception = toJSError(context, @"${call}", nil, exceptionString);
+    if (exceptionString) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, nullString(), String(exceptionString));
+        return ${defaultEarlyReturnValue};
+    }
+
+    return ${defaultReturnValue};
+}
+EOF
+            } elsif ($needsExceptionString && $isVoidReturn) {
+                push(@contents, <<EOF);
+    String exceptionString;
+    ${functionCall};
+
+    if (!exceptionString.isEmpty()) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, nullString(), exceptionString);
         return ${defaultEarlyReturnValue};
     }
 
@@ -768,7 +801,9 @@ EOF
                 push(@contents, "    ${functionCall};\n\n");
                 push(@contents, "    return ${defaultReturnValue};\n}\n");
             } else {
-                push(@contents, "    return " . $returnExpression . ";\n}\n");
+                # The safer cpp static analysis wants us to protect the value passed to toJS() but it is not
+                # necessary for safety.
+                push(@contents, "    SUPPRESS_UNCOUNTED_ARG return " . $returnExpression . ";\n}\n");
             }
 
             if ($isPropertyFunction) {
@@ -777,13 +812,13 @@ EOF
 ${functionSignature}
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(${functionEarlyReturnCondition}))
+    if (${functionEarlyReturnCondition}) [[unlikely]]
         return JSValueMakeUndefined(context);
 
 EOF
 
                 my $keyArgumentName = $specifiedParameters[0]->name;
-                push(@contents, "    auto ${keyArgumentName} = toJSString(argumentCount > 0 ? " . $self->_platformTypeConstructor($specifiedParameters[0], "arguments[0]") . " : nil);\n");
+                push(@contents, "    auto ${keyArgumentName} = toJSString(argumentCount > 0 ? " . $self->_platformTypeConstructor($interface, $specifiedParameters[0], "arguments[0]") . "_s : emptyString());\n");
 
                 if ($isGetPropertyFunction) {
                     push(@contents, "\n");
@@ -836,7 +871,9 @@ EOF
             my $call = _callString($idlType, $attribute, 0);
 
             my $needsFrame = $attribute->extendedAttributes->{"NeedsFrame"};
+            my $needsFrameIdentifier = $attribute->extendedAttributes->{"NeedsFrameIdentifier"};
             my $needsPage = $attribute->extendedAttributes->{"NeedsPage"};
+            my $needsPageIdentifier = $attribute->extendedAttributes->{"NeedsPageIdentifier"};
 
             my @methodSignatureNames = ();
             my @parameters = ();
@@ -847,8 +884,14 @@ EOF
             push(@methodSignatureNames, "page") if $needsPage;
             push(@parameters, "*page") if $needsPage;
 
+            push(@methodSignatureNames, "webPageProxyIdentifier") if $needsPageIdentifier;
+            push(@parameters, "page->webPageProxyIdentifier()") if $needsPageIdentifier;
+
             push(@methodSignatureNames, "frame") if $needsFrame;
             push(@parameters, "*frame") if $needsFrame;
+
+            push(@methodSignatureNames, "frameIdentifier") if $needsFrameIdentifier;
+            push(@parameters, "frame->frameID()") if $needsFrameIdentifier;
 
             my $getterExpression = $self->_functionCall($attribute, \@methodSignatureNames, \@parameters, $interface, $getterName);
 
@@ -872,25 +915,25 @@ EOF
 
             push(@contents, <<EOF);
     RefPtr impl = to${implementationClassName}(context, object);
-    if (UNLIKELY(${getterEarlyReturnCondition}))
+    if (${getterEarlyReturnCondition}) [[unlikely]]
         return JSValueMakeUndefined(context);
 
-    RELEASE_LOG_DEBUG(Extensions, "Called getter ${call} in %{public}s world", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called getter ${call} in %" PUBLIC_LOG_STRING " world", toDebugString(impl->contentWorldType()).utf8().data());
 EOF
 
-            if ($needsPage) {
+            if ($needsPage || $needsPageIdentifier) {
                 push(@contents, "\n");
                 push(@contents, "    RefPtr page = toWebPage(context);\n");
-                push(@contents, "    if (UNLIKELY(!page)) {\n");
+                push(@contents, "    if (!page) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Page could not be found for JSContextRef\");\n");
                 push(@contents, "        return JSValueMakeUndefined(context);\n");
                 push(@contents, "    }\n");
             }
 
-            if ($needsFrame) {
+            if ($needsFrame || $needsFrameIdentifier) {
                 push(@contents, "\n");
                 push(@contents, "    RefPtr frame = toWebFrame(context);\n");
-                push(@contents, "    if (UNLIKELY(!frame)) {\n");
+                push(@contents, "    if (!frame) [[unlikely]] {\n");
                 push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Frame could not be found for JSContextRef\");\n");
                 push(@contents, "        return JSValueMakeUndefined(context);\n");
                 push(@contents, "    }\n");
@@ -898,7 +941,7 @@ EOF
 
             push(@contents, <<EOF);
 
-    return @{[$self->_returnExpression($attribute, $getterExpression, $interface)]};
+    SUPPRESS_UNCOUNTED_ARG return @{[$self->_returnExpression($attribute, $getterExpression, $interface)]};
 }
 EOF
 
@@ -915,34 +958,34 @@ EOF
 
                 push(@contents, <<EOF);
     RefPtr impl = to${implementationClassName}(context, object);
-    if (UNLIKELY(${setterEarlyReturnCondition}))
+    if (${setterEarlyReturnCondition}) [[unlikely]]
         return false;
 
-    RELEASE_LOG_DEBUG(Extensions, "Called setter ${call} in %{public}s world", toDebugString(impl->contentWorldType()).utf8().data());
+    RELEASE_LOG_DEBUG(Extensions, "Called setter ${call} in %" PUBLIC_LOG_STRING " world", toDebugString(impl->contentWorldType()).utf8().data());
 EOF
 
                 my $platformValue;
                 if ($self->_hasAutomaticExceptions($attribute)) {
                     $platformValue = "platformValue";
-                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($attribute, "platformValue", "value") . "\n");
-                    $self->_installAutomaticExceptions(\@contents, $attribute, $idlType, "platformValue", $attribute->name, "false", \%contentsIncludes, $attribute);
+                    push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $attribute, "platformValue", "value") . "\n");
+                    $self->_installAutomaticExceptions(\@contents, $interface, $attribute, $idlType, "platformValue", $attribute->name, "false", \%contentsIncludes, $attribute);
                 } else {
-                    $platformValue = $self->_platformTypeConstructor($attribute, "value");
+                    $platformValue = $self->_platformTypeConstructor($interface, $attribute, "value");
                 }
 
-                if ($needsPage) {
+                if ($needsPage || $needsPageIdentifier) {
                     push(@contents, "\n");
                     push(@contents, "    RefPtr page = toWebPage(context);\n");
-                    push(@contents, "    if (UNLIKELY(!page)) {\n");
+                    push(@contents, "    if (!page) [[unlikely]] {\n");
                     push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Page could not be found for JSContextRef\");\n");
                     push(@contents, "        return false;\n");
                     push(@contents, "    }\n");
                 }
 
-                if ($needsFrame) {
+                if ($needsFrame || $needsFrameIdentifier) {
                     push(@contents, "\n");
                     push(@contents, "    RefPtr frame = toWebFrame(context);\n");
-                    push(@contents, "    if (UNLIKELY(!frame)) {\n");
+                    push(@contents, "    if (!frame) [[unlikely]] {\n");
                     push(@contents, "        RELEASE_LOG_ERROR(Extensions, \"Frame could not be found for JSContextRef\");\n");
                     push(@contents, "        return false;\n");
                     push(@contents, "    }\n");
@@ -1007,6 +1050,8 @@ sub _hasAutomaticExceptions
 sub _includeHeaders
 {
     my ($self, $headers, $idlType, $signature) = @_;
+
+    $$headers{'"WebFrame.h"'} = 1 if $signature->extendedAttributes->{"NeedsFrame"} || $signature->extendedAttributes->{"NeedsFrameIdentifier"};
 
     return unless defined $idlType;
 
@@ -1080,8 +1125,8 @@ sub _installArgumentTypeExceptions
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a string is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a string is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1092,8 +1137,8 @@ EOF
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a number is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a number is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1104,8 +1149,8 @@ EOF
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a boolean is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a boolean is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1116,8 +1161,8 @@ EOF
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an object is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1128,20 +1173,20 @@ EOF
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an object is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
 EOF
     }
 
-    if ($signature->type->name eq "any" && $signature->extendedAttributes->{"NSArray"}) {
+    if ($signature->type->name eq "array") {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an array is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an array is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1152,8 +1197,8 @@ EOF
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
-${indentString}if (UNLIKELY(!($condition))) {
-${indentString}    *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a function is expected");
+${indentString}if (!($condition)) [[unlikely]] {
+${indentString}    *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a function is expected"_s);
 ${indentString}    return ${result};
 ${indentString}}
 
@@ -1165,7 +1210,7 @@ EOF
 
 sub _installAutomaticExceptions
 {
-    my ($self, $contents, $signature, $classIDLType, $variable, $variableLabel, $result, $contentsIncludes, $functionOrAttribute, $isFunction) = @_;
+    my ($self, $contents, $interface, $signature, $classIDLType, $variable, $variableLabel, $result, $contentsIncludes, $functionOrAttribute, $isFunction) = @_;
 
     my $call = _callString($classIDLType, $functionOrAttribute, $isFunction);
 
@@ -1176,11 +1221,11 @@ sub _installAutomaticExceptions
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(*exception))
+    if (*exception) [[unlikely]]
         return ${result};
 
-    if (UNLIKELY(!$variable)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a JSON serializable value is expected");
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a JSON serializable value is expected"_s);
         return ${result};
     }
 EOF
@@ -1191,8 +1236,8 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(!$variable)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a string is expected");
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a string is expected"_s);
         return ${result};
     }
 EOF
@@ -1203,8 +1248,8 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(!std::isfinite($variable))) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a number is expected");
+    if (!std::isfinite($variable)) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a number is expected"_s);
         return ${result};
     }
 EOF
@@ -1215,32 +1260,44 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(!$variable)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an object is expected");
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
         return ${result};
     }
 EOF
     }
 
-    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if (!$interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY($variable && !$variable.isObject)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an object is expected");
+    if ($variable && !$variable.isObject) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
         return ${result};
     }
 EOF
     }
 
-    if ($signature->type->name eq "any" && $signature->extendedAttributes->{"NSArray"} && !$signature->extendedAttributes->{"Optional"}) {
+    if ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(!$variable)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"an array is expected");
+    if ($variable && !JSValueIsObject(context, $variable)) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an object is expected"_s);
+        return ${result};
+    }
+EOF
+    }
+
+    if (!$signature->extendedAttributes->{"Vector"} && $signature->type->name eq "array" && !$signature->extendedAttributes->{"Optional"}) {
+        $hasExceptions = 1;
+
+        push(@$contents, <<EOF);
+
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "an array is expected"_s);
         return ${result};
     }
 EOF
@@ -1252,14 +1309,16 @@ EOF
         my $isEmptyCheck;
         if ($signature->extendedAttributes->{"URL"}) {
             $isEmptyCheck = "!${variable}.relativeString.length";
+        } elsif ($signature->type->name eq "DOMString") {
+            $isEmptyCheck = "${variable}.isEmpty()";
         } else {
             $isEmptyCheck = "!${variable}.length";
         }
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(${isEmptyCheck})) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"it cannot be empty");
+    if (${isEmptyCheck}) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "it cannot be empty"_s);
         return ${result};
     }
 EOF
@@ -1273,8 +1332,8 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(${variable}.isFileURL)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"it cannot be a local file URL");
+    if (${variable}.isFileURL) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "it cannot be a local file URL"_s);
         return ${result};
     }
 EOF
@@ -1285,8 +1344,8 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY($variable && !JSObjectIsFunction(context, $variable))) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a function is expected");
+    if ($variable && !JSObjectIsFunction(context, $variable)) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a function is expected"_s);
         return ${result};
     }
 EOF
@@ -1297,8 +1356,8 @@ EOF
 
         push(@$contents, <<EOF);
 
-    if (UNLIKELY(!$variable)) {
-        *exception = toJSError(context, @"${call}", @"${variableLabel}", @"a function is expected");
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, "a function is expected"_s);
         return ${result};
     }
 EOF
@@ -1370,7 +1429,6 @@ sub _javaScriptTypeCondition
     return "isDictionary(context, ${argument}) || JSValueIsString(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"DOMString"};
     return "(!JSValueIsNull(context, ${argument}) && !JSValueIsUndefined(context, ${argument}) && !JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
     return "isDictionary(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSDictionary"};
-    return "JSValueIsArray(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSArray"};
     return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"};
     return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && !$signature->extendedAttributes->{"ValuesAllowed"};
     return "(JSValueIsObject(context, ${argument}) && JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "function";
@@ -1383,25 +1441,30 @@ sub _javaScriptTypeCondition
 
 sub _platformType
 {
-    my ($self, $idlType, $signature) = @_;
+    my ($self, $idlType, $interface, $signature) = @_;
 
     return undef unless defined $idlType;
 
     my $idlTypeName = $idlType;
     $idlTypeName = $idlType->name if ref($idlType) eq "IDLType";
 
+    my $arrayType = $signature->extendedAttributes->{"Vector"};
+
     return "RefPtr<WebExtensionCallbackHandler>" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
-    return "NSArray" if $idlTypeName eq "array" && $signature && $signature->extendedAttributes->{"NSArray"};
-    return "NSString" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
+    return "NSArray" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array";
+    return "Vector<$arrayType>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType ne "JSValueRef";
+    return "Vector<Protected<$arrayType>>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType eq "JSValueRef";
+    return "String" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
     return "NSDictionary" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSDictionary"};
     return "NSObject" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSObject"};
-    return "JSValue" if $idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any";
+    return "JSValue" if !$interface->extendedAttributes->{"UseCPPAPI"} && ($idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any");
+    return "JSValueRef" if $interface->extendedAttributes->{"UseCPPAPI"} && ($idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any");
     return "bool" if $idlTypeName eq "boolean";
 
     return unless ref($idlType) eq "IDLType";
 
     return "NSURL" if $$self{codeGenerator}->IsStringType($idlType) && $signature && $signature->extendedAttributes->{"URL"};
-    return "NSString" if $$self{codeGenerator}->IsStringType($idlType);
+    return "String" if $$self{codeGenerator}->IsStringType($idlType);
     return "double" if $$self{codeGenerator}->IsPrimitiveType($idlType);
 
     return _implementationClassName($idlType);
@@ -1409,7 +1472,7 @@ sub _platformType
 
 sub _platformTypeConstructor
 {
-    my ($self, $signature, $argumentName) = @_;
+    my ($self, $interface, $signature, $argumentName) = @_;
 
     my $idlType = $signature->type;
 
@@ -1417,48 +1480,51 @@ sub _platformTypeConstructor
     $idlTypeName = $idlType->name if ref($idlType) eq "IDLType";
 
     my $nullStringPolicy = _nullStringPolicy($signature);
-    my $arrayType = $signature->extendedAttributes->{"NSArray"};
+    my $arrayType = $interface->extendedAttributes->{"UseCPPAPI"} ? $signature->extendedAttributes->{"Vector"} : $signature->extendedAttributes->{"NSArray"};
 
     if ($idlTypeName eq "any") {
         return "serializeJSObject(context, $argumentName, exception)" if $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "JSON";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "StopAtTopLevel";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "NullAllowed";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"NSDictionary"};
-        return "toNSArray(context, $argumentName, $arrayType.class)" if $signature->extendedAttributes->{"NSArray"} && $arrayType;
-        return "toNSArray(context, $argumentName)" if $signature->extendedAttributes->{"NSArray"};
+        return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "StopAtTopLevel";
+        return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "NullAllowed";
         return "toNSObject(context, $argumentName)" if $signature->extendedAttributes->{"NSObject"};
+        return "$argumentName" if $interface->extendedAttributes->{"UseCPPAPI"};
         return "toJSValue(context, $argumentName)";
     }
 
-    return "toJSCallbackHandler(context, $argumentName, impl->runtime())" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
-    return "toNSArray(context, $argumentName, $arrayType.class)" if $idlTypeName eq "array" && $arrayType;
-    return "toNSArray(context, $argumentName)" if $idlTypeName eq "array";
+    return "toJSCallbackHandler(context, $argumentName, protect(impl->runtime()))" if $idlTypeName eq "function" && $signature->extendedAttributes->{"CallbackHandler"};
+    return "toNSArray(context, $argumentName, $arrayType.class)" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType;
+    return "toNSArray(context, $argumentName)" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array";
+    return "toVector<$arrayType>(context, $argumentName)" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType ne "JSValueRef";
+    return "toVector<Protected<$arrayType>>(context, $argumentName)" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType eq "JSValueRef";
     return "JSValueToBoolean(context, $argumentName)" if $idlTypeName eq "boolean";
+    return "$argumentName" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "function";
     return "toJSValue(context, $argumentName)" if $idlTypeName eq "function";
 
     return unless ref($idlType) eq "IDLType";
 
-    return "[NSURL URLWithString:toNSString(context, $argumentName, $nullStringPolicy)]" if $$self{codeGenerator}->IsStringType($idlType) && $signature->extendedAttributes->{"URL"};
-    return "toNSString(context, $argumentName, $nullStringPolicy)" if $$self{codeGenerator}->IsStringType($idlType);
+    return "[NSURL URLWithString:toString(context, $argumentName, $nullStringPolicy).createNSString().get()]" if $$self{codeGenerator}->IsStringType($idlType) && $signature->extendedAttributes->{"URL"};
+    return "toString(context, $argumentName, $nullStringPolicy)" if $$self{codeGenerator}->IsStringType($idlType);
     return "JSValueToNumber(context, $argumentName, nullptr)" if $$self{codeGenerator}->IsPrimitiveType($idlType);
     return "to" . _implementationClassName($idlType) . "(context, $argumentName)";
 }
 
 sub _platformTypeVariableDeclaration
 {
-    my ($self, $signature, $variableName, $argumentName, $condition, $hideType) = @_;
+    my ($self, $interface, $signature, $variableName, $argumentName, $condition, $hideType) = @_;
 
     my $idlType = $signature->type;
     my $idlTypeName = $idlType->name;
-    my $platformType = $self->_platformType($idlType, $signature);
-    my $constructor = $self->_platformTypeConstructor($signature, $argumentName) if $argumentName;
+    my $platformType = $self->_platformType($idlType, $interface, $signature);
+    my $constructor = $self->_platformTypeConstructor($interface, $signature, $argumentName) if $argumentName;
 
     my %objCTypes = (
         "JSValue"       => 1,
         "NSArray"       => 1,
         "NSDictionary"  => 1,
         "NSURL"         => 1,
-        "NSString"      => 1,
         "NSObject"      => 1,
     );
 
@@ -1468,6 +1534,7 @@ sub _platformTypeVariableDeclaration
     $nullValue = "false" if $platformType eq "bool";
     $nullValue = "std::numeric_limits<double>::quiet_NaN()" if $platformType eq "double";
     $nullValue = "nil" if $isObjCType;
+    $nullValue = "nullString()" if $platformType eq "String";
     $nullValue = "JSValueMakeUndefined(context)" if $platformType eq "JSValueRef";
 
     my $defaultValue = $signature->extendedAttributes->{"DefaultValue"};
@@ -1477,7 +1544,7 @@ sub _platformTypeVariableDeclaration
         die "DefaultValue extended attribute is currently only supported for numeric types";
     }
 
-    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "double" or $platformType eq "bool") {
+    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "double" or $platformType eq "bool" or $platformType eq "String" or $signature->extendedAttributes->{"Vector"}) {
         $platformType .= " ";
     } else {
         $platformType .= $isObjCType ? " *" : "* ";
@@ -1662,7 +1729,7 @@ sub _dynamicAttributesImplementation
 void ${className}::getPropertyNames(JSContextRef context, JSObjectRef thisObject, JSPropertyNameAccumulatorRef propertyNames)
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         return;
 
     RefPtr page = toWebPage(context);
@@ -1689,7 +1756,7 @@ EOF
         return unless $_->extendedAttributes->{"Dynamic"} or $_->extendedAttributes->{"MainWorldOnly"};
 
         my $name = $_->name;
-        return "    JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\").get());\n" unless $hasDynamicProperties;
+        return "    SUPPRESS_UNCOUNTED_ARG JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n" unless $hasDynamicProperties;
 
         my $condition = &$generateCondition($_);
         my $conditionalString = conditionalString($_);
@@ -1697,7 +1764,7 @@ EOF
         my $content = "";
         $content .= "#if ${conditionalString}\n" if $conditionalString;
         $content .= "    if (${condition})\n";
-        $content .= "        JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\").get());\n";
+        $content .= "        SUPPRESS_UNCOUNTED_ARG JSPropertyNameAccumulatorAddName(propertyNames, toJSString(\"${name}\"_s).get());\n";
         $content .= "#endif // ${conditionalString}\n" if $conditionalString;
         $content .= "\n";
         return $content;
@@ -1712,7 +1779,7 @@ EOF
 bool ${className}::hasProperty(JSContextRef context, JSObjectRef thisObject, JSStringRef propertyName)
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         return false;
 
     RefPtr page = toWebPage(context);
@@ -1747,7 +1814,7 @@ EOF
 JSValueRef ${className}::getProperty(JSContextRef context, JSObjectRef thisObject, JSStringRef propertyName, JSValueRef* exception)
 {
     RefPtr impl = to${implementationClassName}(context, thisObject);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         return JSValueMakeUndefined(context);
 
     RefPtr page = toWebPage(context);

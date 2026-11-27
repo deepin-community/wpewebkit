@@ -34,8 +34,11 @@
 #include "MediaPlayerPrivateRemoteMessages.h"
 #include "RemoteMediaPlayerProxy.h"
 #include "VideoTrackPrivateRemoteConfiguration.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteVideoTrackProxy);
 
 using namespace WebCore;
 
@@ -46,7 +49,7 @@ RemoteVideoTrackProxy::RemoteVideoTrackProxy(GPUConnectionToWebProcess& connecti
     , m_mediaPlayerIdentifier(mediaPlayerIdentifier)
 {
     m_clientRegistrationId = trackPrivate.addClient([](auto&& task) {
-        ensureOnMainThread(WTFMove(task));
+        ensureOnMainThread(WTF::move(task));
     }, *this);
     connectionToWebProcess.connection().send(Messages::MediaPlayerPrivateRemote::AddRemoteVideoTrack(configuration()), m_mediaPlayerIdentifier);
 }
@@ -74,10 +77,8 @@ VideoTrackPrivateRemoteConfiguration RemoteVideoTrackProxy::configuration()
 
 void RemoteVideoTrackProxy::updateConfiguration()
 {
-    auto connection = m_connectionToWebProcess.get();
-    if (!connection)
-        return;
-    connection->connection().send(Messages::MediaPlayerPrivateRemote::RemoteVideoTrackConfigurationChanged(std::exchange(m_id, m_trackPrivate->id()), configuration()), m_mediaPlayerIdentifier);
+    if (RefPtr connection = m_connectionToWebProcess.get())
+        connection->connection().send(Messages::MediaPlayerPrivateRemote::RemoteVideoTrackConfigurationChanged(std::exchange(m_id, m_trackPrivate->id()), configuration()), m_mediaPlayerIdentifier);
 }
 
 void RemoteVideoTrackProxy::willRemove()
@@ -98,12 +99,12 @@ void RemoteVideoTrackProxy::idChanged(TrackID)
     updateConfiguration();
 }
 
-void RemoteVideoTrackProxy::labelChanged(const AtomString&)
+void RemoteVideoTrackProxy::labelChanged(const String&)
 {
     updateConfiguration();
 }
 
-void RemoteVideoTrackProxy::languageChanged(const AtomString&)
+void RemoteVideoTrackProxy::languageChanged(const String&)
 {
     updateConfiguration();
 }

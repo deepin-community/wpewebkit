@@ -2,7 +2,7 @@
  * Copyright (C) 2007, 2008 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2009 Google, Inc.  All rights reserved.
+ * Copyright (C) 2009 Google, Inc. All rights reserved.
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2009-2010. All rights reserved.
  * Copyright (C) 2018 Adobe Systems Incorporated. All rights reserved.
@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include "RenderAncestorIterator.h"
 #include "RenderChildIterator.h"
+#include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
 #include "RenderSVGModelObject.h"
 #include "RenderSVGResourceGradient.h"
@@ -63,7 +64,7 @@ void SVGContainerLayout::layoutChildren(bool containerNeedsLayout)
 
         if (transformChanged) {
             // If the transform changed we need to update the text metrics (note: this also happens for layoutSizeChanged=true).
-            if (CheckedPtr text = dynamicDowncast<RenderSVGText>(child))
+            if (auto* text = dynamicDowncast<RenderSVGText>(child))
                 text->setNeedsTextMetricsUpdate();
             needsLayout = true;
         }
@@ -92,7 +93,7 @@ void SVGContainerLayout::layoutChildren(bool containerNeedsLayout)
         }
 
         if (needsLayout)
-            child.setNeedsLayout(MarkOnlyThis);
+            child.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
 
         if (CheckedPtr element = dynamicDowncast<RenderElement>(child)) {
             if (element->needsLayout())
@@ -111,13 +112,13 @@ void SVGContainerLayout::positionChildrenRelativeToContainer()
     if (m_positionedChildren.isEmpty())
         return;
 
-    auto verifyPositionedChildRendererExpectation = [](RenderObject& renderer) {
+    auto verifyPositionedChildRendererExpectation = [](auto& renderer) {
 #if !defined(NDEBUG)
         ASSERT(renderer.isSVGLayerAwareRenderer()); // Pre-condition to enter m_positionedChildren
         ASSERT(!renderer.isRenderSVGRoot()); // There is only one outermost RenderSVGRoot object
         ASSERT(!renderer.isRenderSVGInline()); // Inlines are only allowed within a RenderSVGText tree
 
-        if (is<RenderSVGModelObject>(renderer) || is<RenderSVGBlock>(renderer))
+        if (isAnyOf<RenderSVGModelObject, RenderSVGBlock>(renderer))
             return;
 
         ASSERT_NOT_REACHED();
@@ -221,13 +222,13 @@ bool SVGContainerLayout::layoutSizeOfNearestViewportChanged() const
 bool SVGContainerLayout::transformToRootChanged(const RenderObject* ancestor)
 {
     while (ancestor) {
-        if (CheckedPtr container = dynamicDowncast<RenderSVGTransformableContainer>(*ancestor))
+        if (auto* container = dynamicDowncast<RenderSVGTransformableContainer>(*ancestor))
             return container->didTransformToRootUpdate();
 
-        if (CheckedPtr container = dynamicDowncast<RenderSVGViewportContainer>(*ancestor))
+        if (auto* container = dynamicDowncast<RenderSVGViewportContainer>(*ancestor))
             return container->didTransformToRootUpdate();
 
-        if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(*ancestor))
+        if (auto* svgRoot = dynamicDowncast<RenderSVGRoot>(*ancestor))
             return svgRoot->didTransformToRootUpdate();
         ancestor = ancestor->parent();
     }

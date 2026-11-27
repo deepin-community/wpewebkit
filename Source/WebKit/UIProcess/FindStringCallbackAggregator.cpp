@@ -30,6 +30,7 @@
 #include "WebFrameProxy.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 
 namespace WebKit {
 
@@ -37,7 +38,7 @@ using namespace WebCore;
 
 Ref<FindStringCallbackAggregator> FindStringCallbackAggregator::create(WebPageProxy& page, const String& string, OptionSet<FindOptions> options, unsigned maxMatchCount, CompletionHandler<void(bool)>&& completionHandler)
 {
-    return adoptRef(*new FindStringCallbackAggregator(page, string, options, maxMatchCount, WTFMove(completionHandler)));
+    return adoptRef(*new FindStringCallbackAggregator(page, string, options, maxMatchCount, WTF::move(completionHandler)));
 }
 
 void FindStringCallbackAggregator::foundString(std::optional<FrameIdentifier> frameID, uint32_t matchCount, bool didWrap)
@@ -98,8 +99,8 @@ FindStringCallbackAggregator::~FindStringCallbackAggregator()
         frameContainingMatch = incrementFrame(*frameContainingMatch);
     } while (frameContainingMatch && frameContainingMatch != focusedFrame);
 
-    auto message = Messages::WebPage::FindString(m_string, m_options, m_maxMatchCount);
-    auto completionHandler = [protectedPage = Ref { *protectedPage }, string = m_string, matchCount = m_matchCount, completionHandler = WTFMove(m_completionHandler)](std::optional<FrameIdentifier> frameID, Vector<IntRect>&& matchRects, uint32_t, int32_t matchIndex, bool didWrap) mutable {
+    auto message = Messages::WebPage::SelectLastFoundRange(m_string, m_options, m_maxMatchCount);
+    auto completionHandler = [protectedPage = Ref { *protectedPage }, string = m_string, matchCount = m_matchCount, completionHandler = WTF::move(m_completionHandler)](std::optional<FrameIdentifier> frameID, Vector<IntRect>&& matchRects, int32_t matchIndex, bool didWrap) mutable {
         if (!frameID)
             protectedPage->findClient().didFailToFindString(protectedPage.ptr(), string);
         else
@@ -108,7 +109,7 @@ FindStringCallbackAggregator::~FindStringCallbackAggregator()
     };
 
     Ref targetFrame = frameContainingMatch ? *frameContainingMatch : *focusedFrame;
-    targetFrame->protectedProcess()->sendWithAsyncReply(WTFMove(message), WTFMove(completionHandler), protectedPage->webPageIDInProcess(targetFrame->process()));
+    protect(targetFrame->process())->sendWithAsyncReply(WTF::move(message), WTF::move(completionHandler), protectedPage->webPageIDInProcess(protect(targetFrame->process())));
     if (frameContainingMatch && focusedFrame && focusedFrame->process() != frameContainingMatch->process())
         protectedPage->clearSelection(focusedFrame->frameID());
 }
@@ -118,7 +119,7 @@ FindStringCallbackAggregator::FindStringCallbackAggregator(WebPageProxy& page, c
     , m_string(string)
     , m_options(options)
     , m_maxMatchCount(maxMatchCount)
-    , m_completionHandler(WTFMove(completionHandler))
+    , m_completionHandler(WTF::move(completionHandler))
 {
 }
 

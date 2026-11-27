@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google, Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@
 #include "CSSPrimitiveValue.h"
 #include "Document.h"
 #include "Settings.h"
-#include "StyleScope.h"
+#include "StyleDocumentScope.h"
 
 namespace WebCore {
 
@@ -58,8 +58,6 @@ void ScriptableDocumentParser::executeScriptsWaitingForStylesheetsSoon()
 void ScriptableDocumentParser::scriptsWaitingForStylesheetsExecutionTimerFired()
 {
     ASSERT(!isDetached());
-
-    Ref protectedThis { *this };
 
     RefPtr document = this->document();
     if (!document->styleScope().hasPendingSheets())

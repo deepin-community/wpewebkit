@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,6 @@
 #include "DaemonDecoder.h"
 #include "DaemonEncoder.h"
 #include "PrivateClickMeasurementConnection.h"
-#include "WebCoreArgumentCoders.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit::PCM {
@@ -41,7 +40,7 @@ void ManagerProxy::sendMessage(Args&&... args) const
 {
     Daemon::Encoder encoder;
     encoder.encode(std::forward<Args>(args)...);
-    m_connection.send(messageType, encoder.takeBuffer());
+    m_connection->send(messageType, encoder.takeBuffer());
 }
 
 template<typename... Args> struct ReplyCaller;
@@ -58,7 +57,17 @@ template<> struct ReplyCaller<String> {
         decoder >> string;
         if (!string)
             return completionHandler({ });
-        completionHandler(WTFMove(*string));
+        completionHandler(WTF::move(*string));
+    }
+};
+template<> struct ReplyCaller<Vector<WebCore::RegistrableDomain>&&> {
+    static void callReply(Daemon::Decoder&& decoder, CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&& completionHandler)
+    {
+        std::optional<Vector<WebCore::RegistrableDomain>> domains;
+        decoder >> domains;
+        if (!domains)
+            return completionHandler({ });
+        completionHandler(WTF::move(*domains));
     }
 };
 
@@ -67,18 +76,24 @@ void ManagerProxy::sendMessageWithReply(CompletionHandler<void(ReplyArgs...)>&& 
 {
     Daemon::Encoder encoder;
     encoder.encode(std::forward<Args>(args)...);
-    m_connection.sendWithReply(messageType, encoder.takeBuffer(), [completionHandler = WTFMove(completionHandler)] (auto replyBuffer) mutable {
-        Daemon::Decoder decoder(WTFMove(replyBuffer));
-        ReplyCaller<ReplyArgs...>::callReply(WTFMove(decoder), WTFMove(completionHandler));
+    m_connection->sendWithReply(messageType, encoder.takeBuffer(), [completionHandler = WTF::move(completionHandler)] (auto replyBuffer) mutable {
+        Daemon::Decoder decoder(WTF::move(replyBuffer));
+        ReplyCaller<ReplyArgs...>::callReply(WTF::move(decoder), WTF::move(completionHandler));
     });
 }
 
+Ref<ManagerProxy> ManagerProxy::create(const String& machServiceName, NetworkSession& networkSession)
+{
+    return adoptRef(*new ManagerProxy(machServiceName, networkSession));
+}
+
 ManagerProxy::ManagerProxy(const String& machServiceName, NetworkSession& networkSession)
-    : m_connection(machServiceName.utf8(), networkSession) { }
+    : m_connection(Connection::create(machServiceName.utf8(), networkSession))
+{ }
 
 void ManagerProxy::storeUnattributed(WebCore::PrivateClickMeasurement&& pcm, CompletionHandler<void()>&& completionHandler)
 {
-    sendMessageWithReply<MessageType::StoreUnattributed>(WTFMove(completionHandler), pcm);
+    sendMessageWithReply<MessageType::StoreUnattributed>(WTF::move(completionHandler), pcm);
 }
 
 void ManagerProxy::handleAttribution(WebCore::PCM::AttributionTriggerData&& triggerData, const URL& requestURL, WebCore::RegistrableDomain&& redirectDomain, const URL& firstPartyURL, const ApplicationBundleIdentifier& applicationBundleIdentifier)
@@ -88,12 +103,12 @@ void ManagerProxy::handleAttribution(WebCore::PCM::AttributionTriggerData&& trig
 
 void ManagerProxy::clear(CompletionHandler<void()>&& completionHandler)
 {
-    sendMessageWithReply<MessageType::Clear>(WTFMove(completionHandler));
+    sendMessageWithReply<MessageType::Clear>(WTF::move(completionHandler));
 }
 
 void ManagerProxy::clearForRegistrableDomain(WebCore::RegistrableDomain&& domain, CompletionHandler<void()>&& completionHandler)
 {
-    sendMessageWithReply<MessageType::ClearForRegistrableDomain>(WTFMove(completionHandler), domain);
+    sendMessageWithReply<MessageType::ClearForRegistrableDomain>(WTF::move(completionHandler), domain);
 }
 
 void ManagerProxy::setDebugModeIsEnabled(bool enabled)
@@ -108,7 +123,7 @@ void ManagerProxy::migratePrivateClickMeasurementFromLegacyStorage(WebCore::Priv
 
 void ManagerProxy::toStringForTesting(CompletionHandler<void(String)>&& completionHandler) const
 {
-    sendMessageWithReply<MessageType::ToStringForTesting>(WTFMove(completionHandler));
+    sendMessageWithReply<MessageType::ToStringForTesting>(WTF::move(completionHandler));
 }
 
 void ManagerProxy::setOverrideTimerForTesting(bool value)
@@ -138,7 +153,7 @@ void ManagerProxy::markAllUnattributedAsExpiredForTesting()
 
 void ManagerProxy::markAttributedPrivateClickMeasurementsAsExpiredForTesting(CompletionHandler<void()>&& completionHandler)
 {
-    sendMessageWithReply<MessageType::MarkAttributedPrivateClickMeasurementsAsExpiredForTesting>(WTFMove(completionHandler));
+    sendMessageWithReply<MessageType::MarkAttributedPrivateClickMeasurementsAsExpiredForTesting>(WTF::move(completionHandler));
 }
 
 void ManagerProxy::setPCMFraudPreventionValuesForTesting(String&& unlinkableToken, String&& secretToken, String&& signature, String&& keyID)
@@ -158,12 +173,17 @@ void ManagerProxy::setPrivateClickMeasurementAppBundleIDForTesting(ApplicationBu
 
 void ManagerProxy::destroyStoreForTesting(CompletionHandler<void()>&& completionHandler)
 {
-    sendMessageWithReply<MessageType::DestroyStoreForTesting>(WTFMove(completionHandler));
+    sendMessageWithReply<MessageType::DestroyStoreForTesting>(WTF::move(completionHandler));
 }
 
 void ManagerProxy::allowTLSCertificateChainForLocalPCMTesting(const WebCore::CertificateInfo& certificateInfo)
 {
     sendMessage<MessageType::AllowTLSCertificateChainForLocalPCMTesting>(certificateInfo);
+}
+
+void ManagerProxy::fetchRegistrableDomains(CompletionHandler<void(Vector<WebCore::RegistrableDomain>&&)>&& completionHandler)
+{
+    sendMessageWithReply<MessageType::FetchRegistrableDomains>(WTF::move(completionHandler));
 }
 
 } // namespace WebKit::PCM

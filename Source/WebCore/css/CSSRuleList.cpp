@@ -1,7 +1,7 @@
 /**
  * (C) 1999-2003 Lars Knoll (knoll@kde.org)
  * (C) 2002-2003 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2002, 2005, 2006, 2012 Apple Inc.
+ * Copyright (C) 2002, 2005, 2006, 2012 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -33,5 +33,15 @@ CSSRuleList::~CSSRuleList() = default;
 StaticCSSRuleList::StaticCSSRuleList() = default;
 
 StaticCSSRuleList::~StaticCSSRuleList() = default;
+
+WebCoreOpaqueRoot StaticCSSRuleList::opaqueRootForGCThread() const
+{
+    // Unlike the live lists, a static list owns already-created wrappers, so there is nothing to
+    // create lazily here. The list is filled on the main thread before it is ever handed to script,
+    // and the wrappers it holds are parentless clones, so this only reads.
+    if (m_rules.isEmpty())
+        return WebCoreOpaqueRoot { nullptr };
+    return m_rules[0]->opaqueRootForGCThread();
+}
 
 } // namespace WebCore

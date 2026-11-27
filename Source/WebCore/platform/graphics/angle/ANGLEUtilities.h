@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(WEBGL)
 
-#include "GraphicsContextGL.h"
-#include "GraphicsTypesGL.h"
+#include <WebCore/GraphicsContextGL.h>
+#include <WebCore/GraphicsTypesGL.h>
 #include <optional>
 #include <wtf/Noncopyable.h>
 
@@ -94,6 +96,18 @@ private:
     bool m_bindingChanged { false };
 };
 
+class ScopedReadBuffer {
+    WTF_MAKE_NONCOPYABLE(ScopedReadBuffer);
+
+public:
+    ScopedReadBuffer(GCGLenum mode, bool condition = true);
+    ~ScopedReadBuffer();
+
+private:
+    GCGLenum m_mode { 0 };
+    bool m_changed { false };
+};
+
 class ScopedPixelStorageMode {
     WTF_MAKE_NONCOPYABLE(ScopedPixelStorageMode);
 
@@ -141,35 +155,6 @@ public:
     }
 private:
     GCGLuint m_object { 0 };
-};
-
-class ScopedGLFence {
-    WTF_MAKE_NONCOPYABLE(ScopedGLFence);
-
-public:
-    ScopedGLFence() = default;
-    ScopedGLFence(ScopedGLFence&& other)
-        : m_object(std::exchange(other.m_object, { }))
-    {
-    }
-    ~ScopedGLFence() { reset(); }
-    ScopedGLFence& operator=(ScopedGLFence&& other)
-    {
-        if (this != &other) {
-            reset();
-            m_object = std::exchange(other.m_object, { });
-        }
-        return *this;
-    }
-    void reset();
-    void abandon() { m_object = { }; }
-    void fenceSync();
-    GCGLsync get() const { return m_object; }
-    operator GCGLsync() const { return m_object; }
-    operator bool() const { return m_object; }
-
-private:
-    GCGLsync m_object { };
 };
 
 class ScopedGLCapability {

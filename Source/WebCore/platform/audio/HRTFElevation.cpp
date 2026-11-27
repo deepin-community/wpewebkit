@@ -41,13 +41,24 @@
 #include <algorithm>
 #include <math.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HRTFElevation);
+
 #if USE(CONCATENATED_IMPULSE_RESPONSES)
 // Total number of components of an HRTF database.
 constexpr size_t TotalNumberOfResponses = 240;
+
+// This table maps an index into the concatenated elevation table to its
+// corresponding elevation angle. The elevations are stored in this (non-contiguous)
+// order, with negative elevations expressed as angle + 360. See
+// https://bugs.webkit.org/show_bug.cgi?id=98294#c9 for details.
+constexpr std::array<int, HRTFDatabase::NumberOfRawElevations> elevationIndexTable {
+    0, 15, 30, 45, 60, 75, 90, 315, 330, 345
+};
 
 // Number of frames in an individual impulse response.
 constexpr size_t ResponseFrameSize = 256;
@@ -57,9 +68,9 @@ constexpr size_t ResponseFrameSize = 256;
 constexpr float ResponseSampleRate = 44100;
 
 static Lock audioBusMapLock;
-static HashMap<String, RefPtr<AudioBus>>& concatenatedImpulseResponsesMap() WTF_REQUIRES_LOCK(audioBusMapLock)
+static HashMap<String, Ref<AudioBus>>& NODELETE concatenatedImpulseResponsesMap() WTF_REQUIRES_LOCK(audioBusMapLock)
 {
-    static NeverDestroyed<HashMap<String, RefPtr<AudioBus>>> audioBusMap;
+    static NeverDestroyed<HashMap<String, Ref<AudioBus>>> audioBusMap;
     return audioBusMap;
 }
 
@@ -77,7 +88,7 @@ static RefPtr<AudioBus> getConcatenatedImpulseResponsesForSubject(const String& 
             ASSERT(bus);
             if (!bus)
                 return nullptr;
-            cache.add(subjectName.isolatedCopy(), bus.copyRef());
+            cache.add(subjectName.isolatedCopy(), *bus);
         }
     }
 
@@ -129,9 +140,22 @@ bool HRTFElevation::calculateKernelsForAzimuthElevation(int azimuth, int elevati
     if (!bus)
         return false;
 
-    int elevationIndex = positiveElevation / AzimuthSpacing;
-    if (positiveElevation > 90)
-        elevationIndex -= AzimuthSpacing;
+    int elevationIndex = -1;
+    for (size_t k = 0; k < elevationIndexTable.size(); ++k) {
+        if (elevationIndexTable[k] == positiveElevation) {
+            elevationIndex = static_cast<int>(k);
+            break;
+        }
+    }
+
+    // The isElevationGood check above restricts elevation to the multiples of
+    // AzimuthSpacing in [-45, 90], so positiveElevation is always one of the ten
+    // values in elevationIndexTable and the lookup above always finds a match.
+    // This is defense-in-depth in case that invariant is ever broken.
+    bool isElevationIndexGood = elevationIndex >= 0;
+    ASSERT(isElevationIndexGood);
+    if (!isElevationIndexGood)
+        return false;
 
     // The concatenated impulse response is a bus containing all
     // the elevations per azimuth, for all azimuths by increasing
@@ -148,8 +172,13 @@ bool HRTFElevation::calculateKernelsForAzimuthElevation(int azimuth, int elevati
     // (hardware) sample-rate.
     unsigned startFrame = index * ResponseFrameSize;
     unsigned stopFrame = startFrame + ResponseFrameSize;
-    auto preSampleRateConvertedResponse = AudioBus::createBufferFromRange(bus.get(), startFrame, stopFrame);
-    auto response = AudioBus::createBySampleRateConverting(preSampleRateConvertedResponse.get(), false, sampleRate);
+    auto preSampleRateConvertedResponse = AudioBus::createBufferFromRange(*bus, startFrame, stopFrame);
+    ASSERT(preSampleRateConvertedResponse);
+    if (!preSampleRateConvertedResponse)
+        return false;
+    auto response = AudioBus::createBySampleRateConverting(*preSampleRateConvertedResponse, false, sampleRate);
+    if (!response)
+        return false;
     AudioChannel* leftEarImpulseResponse = response->channel(AudioBus::ChannelLeft);
     AudioChannel* rightEarImpulseResponse = response->channel(AudioBus::ChannelRight);
 #else
@@ -185,7 +214,7 @@ bool HRTFElevation::calculateKernelsForAzimuthElevation(int azimuth, int elevati
 // The range of elevations for the IRCAM impulse responses varies depending on azimuth, but the minimum elevation appears to always be -45.
 //
 // Here's how it goes:
-static const int maxElevations[] = {
+static const std::array<int, 24> maxElevations {
         //  Azimuth
         //
     90, // 0  
@@ -251,7 +280,7 @@ std::unique_ptr<HRTFElevation> HRTFElevation::createForSubject(const String& sub
         }
     }
     
-    return makeUnique<HRTFElevation>(WTFMove(kernelListL), WTFMove(kernelListR), elevation, sampleRate);
+    return makeUnique<HRTFElevation>(WTF::move(kernelListL), WTF::move(kernelListR), elevation, sampleRate);
 }
 
 std::unique_ptr<HRTFElevation> HRTFElevation::createByInterpolatingSlices(HRTFElevation* hrtfElevation1, HRTFElevation* hrtfElevation2, float x, float sampleRate)
@@ -279,7 +308,7 @@ std::unique_ptr<HRTFElevation> HRTFElevation::createByInterpolatingSlices(HRTFEl
     // Interpolate elevation angle.
     double angle = (1.0 - x) * hrtfElevation1->elevationAngle() + x * hrtfElevation2->elevationAngle();
     
-    return makeUnique<HRTFElevation>(WTFMove(kernelListL), WTFMove(kernelListR), static_cast<int>(angle), sampleRate);
+    return makeUnique<HRTFElevation>(WTF::move(kernelListL), WTF::move(kernelListR), static_cast<int>(angle), sampleRate);
 }
 
 void HRTFElevation::getKernelsFromAzimuth(double azimuthBlend, unsigned azimuthIndex, HRTFKernel* &kernelL, HRTFKernel* &kernelR, double& frameDelayL, double& frameDelayR)

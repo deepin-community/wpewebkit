@@ -22,15 +22,12 @@
 
 #pragma once
 
-#include "ErrorInstance.h"
-#include "ErrorType.h"
-#include "Exception.h"
-#include "InternalFunction.h"
-#include "JSObject.h"
-#include "LineColumn.h"
-#include "ThrowScope.h"
-#include <stdint.h>
-
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ErrorType.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/LineColumn.h>
+#include <JavaScriptCore/ThrowScope.h>
 
 namespace JSC {
 
@@ -66,7 +63,7 @@ JS_EXPORT_PRIVATE JSObject* createOutOfMemoryError(JSGlobalObject*, const String
 JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, ErrorType, const String&);
 JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, ErrorTypeWithExtension, const String&);
 
-std::unique_ptr<Vector<StackFrame>> getStackTrace(VM&, JSObject*, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+std::unique_ptr<Vector<StackFrame>> getStackTrace(VM&, JSObject*, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, JSCell* subclassCaller = nullptr);
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM&, CallFrame*);
 bool getLineColumnAndSource(VM&, Vector<StackFrame>* stackTrace, LineColumn&, String& sourceURL);
 bool addErrorInfo(VM&, Vector<StackFrame>*, JSObject*);
@@ -91,6 +88,7 @@ JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const 
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
 inline Exception* throwRangeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& errorMessage) { return throwException(globalObject, scope, createRangeError(globalObject, errorMessage)); }
+inline Exception* throwError(JSGlobalObject* globalObject, ThrowScope& scope, ErrorType errorType, const String& errorMessage) { return throwException(globalObject, scope, createError(globalObject, errorType, errorMessage)); }
 
 JS_EXPORT_PRIVATE String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName);
 JS_EXPORT_PRIVATE String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName);

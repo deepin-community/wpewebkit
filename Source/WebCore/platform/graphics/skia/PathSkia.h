@@ -30,7 +30,9 @@
 #include "PathImpl.h"
 #include "PlatformPath.h"
 #include "WindRule.h"
-#include <skia/core/SkPath.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkPathBuilder.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/Function.h>
 
 namespace WebCore {
@@ -39,16 +41,18 @@ class GraphicsContext;
 class PathStream;
 
 class PathSkia final : public PathImpl {
+    WTF_MAKE_TZONE_ALLOCATED(PathSkia);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(PathSkia);
 public:
-    static Ref<PathSkia> create();
-    static Ref<PathSkia> create(const PathSegment&);
-    static Ref<PathSkia> create(const PathStream&);
-    static Ref<PathSkia> create(SkPath&&, RefPtr<PathStream>&&);
+    WEBCORE_EXPORT static Ref<PathSkia> create(std::span<const PathSegment> = { });
+    static Ref<PathSkia> create(SkPath&&);
+    static PlatformPathPtr emptyPlatformPath();
 
-    PlatformPathPtr platformPath() const;
+    PlatformPathPtr platformPath() const LIFETIME_BOUND;
 
     void addPath(const PathSkia&, const AffineTransform&);
 
+    bool definitelyEqual(const PathImpl&) const final;
     Ref<PathImpl> copy() const final;
     void add(PathMoveTo) final;
     void add(PathLineTo) final;
@@ -61,6 +65,7 @@ public:
     void add(PathEllipseInRect) final;
     void add(PathRect) final;
     void add(PathRoundedRect) final;
+    void add(PathContinuousRoundedRect) final;
     void add(PathCloseSubpath) final;
 
     bool applyElements(const PathElementApplier&) const final;
@@ -68,15 +73,24 @@ public:
     bool transform(const AffineTransform&) final;
 
     bool contains(const FloatPoint&, WindRule) const;
-    bool strokeContains(const FloatPoint&, const Function<void(GraphicsContext&)>& strokeStyleApplier) const;
+    bool strokeContains(const FloatPoint&, NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const;
 
-    FloatRect strokeBoundingRect(const Function<void(GraphicsContext&)>& strokeStyleApplier) const;
+    FloatRect strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const;
 
 private:
     PathSkia() = default;
-    explicit PathSkia(const SkPath&);
+    explicit PathSkia(const SkPathBuilder&);
+    explicit PathSkia(SkPath&&);
 
-    bool isEmpty() const final;
+    void ensurePlatformPath() const
+    {
+        if (!m_platformPath)
+            m_platformPath = m_builder.snapshot();
+    }
+    void resetPlatformPath()
+    {
+        m_platformPath = std::nullopt;
+    }
 
     FloatPoint currentPoint() const final;
 
@@ -85,7 +99,8 @@ private:
 
     void addEllipse(const FloatPoint&, float radiusX, float radiusY, float startAngle, float endAngle, RotationDirection);
 
-    SkPath m_platformPath;
+    SkPathBuilder m_builder;
+    mutable std::optional<SkPath> m_platformPath;
 };
 
 } // namespace WebCore

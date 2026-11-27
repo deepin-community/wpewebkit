@@ -26,11 +26,10 @@
 #include "config.h"
 #include "PlatformDisplay.h"
 
+#include "BitmapTexturePool.h"
 #include "GLContext.h"
-#include <cstdlib>
-#include <mutex>
-#include <wtf/HashSet.h>
-#include <wtf/NeverDestroyed.h>
+#include <wtf/MainThread.h>
+#include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(WIN)
 #include "PlatformDisplayWin.h"
@@ -45,6 +44,8 @@
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PlatformDisplay);
+
 #if PLATFORM(WIN)
 PlatformDisplay& PlatformDisplay::sharedDisplay()
 {
@@ -53,14 +54,14 @@ PlatformDisplay& PlatformDisplay::sharedDisplay()
     return *display;
 }
 #else
-IGNORE_CLANG_WARNINGS_BEGIN("exit-time-destructors")
-static std::unique_ptr<PlatformDisplay> s_sharedDisplay;
-IGNORE_CLANG_WARNINGS_END
+// The shared display is destroyed by destroySharedDisplay() and never at exit: EGL frees its
+// displays in its own atexit handler, and threads that are still running can use them.
+static PlatformDisplay* s_sharedDisplay;
 
 void PlatformDisplay::setSharedDisplay(std::unique_ptr<PlatformDisplay>&& display)
 {
     RELEASE_ASSERT(!s_sharedDisplay);
-    s_sharedDisplay = WTFMove(display);
+    s_sharedDisplay = display.release();
 }
 
 PlatformDisplay& PlatformDisplay::sharedDisplay()
@@ -71,49 +72,39 @@ PlatformDisplay& PlatformDisplay::sharedDisplay()
 
 PlatformDisplay* PlatformDisplay::sharedDisplayIfExists()
 {
-    return s_sharedDisplay.get();
-}
-#endif
-
-static HashSet<PlatformDisplay*>& eglDisplays()
-{
-    static NeverDestroyed<HashSet<PlatformDisplay*>> displays;
-    return displays;
+    return s_sharedDisplay;
 }
 
-PlatformDisplay::PlatformDisplay(std::unique_ptr<GLDisplay>&& glDisplay)
-    : m_eglDisplay(WTFMove(glDisplay))
+void PlatformDisplay::destroySharedDisplay()
 {
-    RELEASE_ASSERT(m_eglDisplay);
+    RELEASE_ASSERT(isMainThread());
+    if (!s_sharedDisplay)
+        return;
 
-    eglDisplays().add(this);
-
-#if !PLATFORM(WIN)
-    static bool eglAtexitHandlerInitialized = false;
-    if (!eglAtexitHandlerInitialized) {
-        // EGL registers atexit handlers to cleanup its global display list.
-        // Since the global PlatformDisplay instance is created before,
-        // when the PlatformDisplay destructor is called, EGL has already removed the
-        // display from the list, causing eglTerminate() to crash. So, here we register
-        // our own atexit handler, after EGL has been initialized and after the global
-        // instance has been created to ensure we call eglTerminate() before the other
-        // EGL atexit handlers and the PlatformDisplay destructor.
-        // See https://bugs.webkit.org/show_bug.cgi?id=157973.
-        eglAtexitHandlerInitialized = true;
-        std::atexit([] {
-            while (!eglDisplays().isEmpty()) {
-                auto* display = eglDisplays().takeAny();
-                display->terminateEGLDisplay();
-            }
-        });
+    if (auto* context = s_sharedDisplay->m_sharingGLContext.get()) {
+        GLContext::ScopedGLContextCurrent scopedCurrent(*context);
+        BitmapTexturePool::singleton().releaseAllTextures();
     }
+
+    s_sharedDisplay->clearGLContexts();
+    s_sharedDisplay->terminateEGLDisplay();
+    delete std::exchange(s_sharedDisplay, nullptr);
+}
 #endif
+
+PlatformDisplay::PlatformDisplay(Ref<GLDisplay>&& glDisplay)
+    : m_eglDisplay(WTF::move(glDisplay))
+{
 }
 
-PlatformDisplay::~PlatformDisplay()
+PlatformDisplay::~PlatformDisplay() = default;
+
+void PlatformDisplay::terminateEGLDisplay()
 {
-    if (eglDisplays().remove(this))
-        m_eglDisplay->terminate();
+#if ENABLE(VIDEO) && USE(GSTREAMER_GL)
+    m_gstGLDisplay = nullptr;
+#endif
+    m_eglDisplay->terminate();
 }
 
 GLContext* PlatformDisplay::sharingGLContext()
@@ -123,16 +114,13 @@ GLContext* PlatformDisplay::sharingGLContext()
     return m_sharingGLContext.get();
 }
 
-void PlatformDisplay::clearSharingGLContext()
+void PlatformDisplay::clearGLContexts()
 {
 #if USE(SKIA)
-    invalidateSkiaGLContexts();
+    clearSkiaGLContext();
 #endif
 #if ENABLE(VIDEO) && USE(GSTREAMER_GL)
     m_gstGLContext = nullptr;
-#endif
-#if ENABLE(WEBGL) && !PLATFORM(WIN)
-    clearANGLESharingGLContext();
 #endif
     m_sharingGLContext = nullptr;
 }
@@ -152,16 +140,6 @@ const GLDisplay::Extensions& PlatformDisplay::eglExtensions() const
     return m_eglDisplay->extensions();
 }
 
-void PlatformDisplay::terminateEGLDisplay()
-{
-#if ENABLE(VIDEO) && USE(GSTREAMER_GL)
-    m_gstGLDisplay = nullptr;
-#endif
-    clearSharingGLContext();
-
-    m_eglDisplay->terminate();
-}
-
 EGLImage PlatformDisplay::createEGLImage(EGLContext context, EGLenum target, EGLClientBuffer clientBuffer, const Vector<EGLAttrib>& attributes) const
 {
     return m_eglDisplay->createImage(context, target, clientBuffer, attributes);
@@ -172,11 +150,18 @@ bool PlatformDisplay::destroyEGLImage(EGLImage image) const
     return m_eglDisplay->destroyImage(image);
 }
 
-#if USE(GBM)
-const Vector<GLDisplay::DMABufFormat>& PlatformDisplay::dmabufFormats()
+#if USE(GBM) || OS(ANDROID)
+const Vector<GLDisplay::BufferFormat>& PlatformDisplay::bufferFormats()
 {
-    return m_eglDisplay->dmabufFormats();
+    return m_eglDisplay->bufferFormats();
 }
-#endif // USE(GBM)
+#endif // USE(GBM) || OS(ANDROID)
+
+#if USE(GBM) && USE(GSTREAMER)
+const Vector<GLDisplay::BufferFormat>& PlatformDisplay::bufferFormatsForVideo()
+{
+    return m_eglDisplay->bufferFormatsForVideo();
+}
+#endif // USE(GBM) && USE(GSTREAMER)
 
 } // namespace WebCore

@@ -58,12 +58,12 @@ void JSAPIWrapperObjectHandleOwner::finalize(JSC::Handle<JSC::Unknown> handle, v
 
 bool JSAPIWrapperObjectHandleOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral*)
 {
-    JSC::JSAPIWrapperObject* wrapperObject = JSC::jsCast<JSC::JSAPIWrapperObject*>(handle.get().asCell());
+    JSC::JSAPIWrapperObject* wrapperObject = uncheckedDowncast<JSC::JSAPIWrapperObject>(handle.get().asCell());
     // We use the JSGlobalObject when processing weak handles to prevent the situation where using
     // the same wrapped object in multiple global objects keeps all of the global objects alive.
     if (!wrapperObject->wrappedObject())
         return false;
-    return visitor.vm().heap.isMarked(wrapperObject->structure()->globalObject()) && visitor.containsOpaqueRoot(wrapperObject->wrappedObject());
+    return visitor.vm().heap.isMarked(wrapperObject->realm()) && visitor.containsOpaqueRoot(wrapperObject->wrappedObject());
 }
 
 namespace JSC {
@@ -76,7 +76,7 @@ static JSC_DECLARE_CUSTOM_GETTER(staticFunctionGetterJSAPIWrapperObjectCallbackO
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCallbackObject<JSAPIWrapperObject>);
 
 template <> const ClassInfo JSCallbackObject<JSAPIWrapperObject>::s_info = { "JSAPIWrapperObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCallbackObject) };
-template<> const bool JSCallbackObject<JSAPIWrapperObject>::needsDestruction = true;
+template<> const DestructionMode JSCallbackObject<JSAPIWrapperObject>::needsDestruction = NeedsDestruction;
 
 template <>
 NativeFunction::Ptr JSCallbackObject<JSAPIWrapperObject>::getCallFunction()

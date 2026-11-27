@@ -31,11 +31,14 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "CommonVM.h"
+#include "FontSelector.h"
 #include "GraphicsContext.h"
 #include "Page.h"
 #include "ResourceUsageThread.h"
 #include "SystemFontDatabase.h"
+#include "TextRun.h"
 #include <JavaScriptCore/VM.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -70,7 +73,7 @@ static String gcTimerString(MonotonicTime timerFireDate, MonotonicTime now)
 static const float gFontSize = 14;
 
 class ResourceUsageOverlayPainter final : public GraphicsLayerClient {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(ResourceUsageOverlayPainter);
 public:
     ResourceUsageOverlayPainter(ResourceUsageOverlay& overlay)
         : m_overlay(overlay)
@@ -81,14 +84,12 @@ public:
         fontDescription.setOneFamily(systemFontDatabase.systemFontShorthandFamily(messageBox));
         fontDescription.setWeight(systemFontDatabase.systemFontShorthandWeight(messageBox));
         fontDescription.setComputedSize(gFontSize);
-        m_textFont = FontCascade(WTFMove(fontDescription));
+        m_textFont = FontCascade(WTF::move(fontDescription));
         m_textFont.update(nullptr);
     }
 
-    ~ResourceUsageOverlayPainter() = default;
-
 private:
-    void paintContents(const GraphicsLayer*, GraphicsContext& context, const FloatRect& clip, OptionSet<GraphicsLayerPaintBehavior>) override
+    void paintContents(const GraphicsLayer&, GraphicsContext& context, const FloatRect& clip, OptionSet<GraphicsLayerPaintBehavior>) override
     {
         GraphicsContextStateSaver stateSaver(context);
         context.fillRect(clip, Color::black.colorWithAlphaByte(204));

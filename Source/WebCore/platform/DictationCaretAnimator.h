@@ -26,21 +26,27 @@
 #pragma once
 
 #include "CaretAnimator.h"
+#include "FloatRect.h"
+#include <wtf/TZoneMalloc.h>
 
 #if HAVE(REDESIGNED_TEXT_CURSOR)
 
 namespace WebCore {
 
+class FloatRoundedRect;
+class Gradient;
 class Path;
 
 class DictationCaretAnimator final : public CaretAnimator {
+    WTF_MAKE_TZONE_ALLOCATED(DictationCaretAnimator);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DictationCaretAnimator);
 public:
     explicit DictationCaretAnimator(CaretAnimationClient&);
 
 private:
     void updateAnimationProperties() final;
     void start() final;
-    FloatRect tailRect() const;
+    FloatRect NODELETE tailRect() const;
 
     String debugDescription() const final;
 
@@ -59,8 +65,8 @@ private:
 
     void stop(CaretAnimatorStopReason) final;
 
-    Seconds keyframeTimeDelta() const;
-    size_t keyframeCount() const;
+    Seconds NODELETE keyframeTimeDelta() const;
+    size_t NODELETE keyframeCount() const;
     void updateGlowTail(float caretPosition, Seconds elapsedTime);
     void resetGlowTail(FloatRect);
     void updateGlowTail(Seconds elapsedTime);
@@ -70,7 +76,7 @@ private:
     void fillCaretTail(const FloatRect&, GraphicsContext&, const Color&) const;
 
     FloatRect computeTailRect() const;
-    bool isLeftToRightLayout() const;
+    bool NODELETE isLeftToRightLayout() const;
     FloatRoundedRect expandedCaretRect(const FloatRect&, bool fillTail) const;
     int computeScrollLeft() const;
 

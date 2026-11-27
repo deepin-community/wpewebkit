@@ -27,18 +27,22 @@
 #pragma once
 
 #include "BuiltinNames.h"
+#include "ExceptionHelpers.h"
 #include "IntlObject.h"
+#include "JSArray.h"
 #include "JSBoundFunction.h"
 #include "JSObject.h"
 #include "ObjectConstructor.h"
 #include <unicode/ucol.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
 template<typename StringType>
 static constexpr uint32_t computeTwoCharacters16Code(const StringType& string)
 {
-    return static_cast<uint16_t>(string.characterAt(0)) | (static_cast<uint32_t>(static_cast<uint16_t>(string.characterAt(1))) << 16);
+    return static_cast<uint16_t>(string.codeUnitAt(0)) | (static_cast<uint32_t>(static_cast<uint16_t>(string.codeUnitAt(1))) << 16);
 }
 
 template<typename Predicate> String bestAvailableLocale(const String& locale, Predicate predicate)
@@ -85,7 +89,7 @@ JSValue constructIntlInstanceWithWorkaroundForLegacyIntlConstructor(JSGlobalObje
         if (hasInstance) {
             PropertyDescriptor descriptor(instance, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
             scope.release();
-            thisObject->methodTable()->defineOwnProperty(thisObject, globalObject, vm.propertyNames->builtinNames().intlLegacyConstructedSymbol(), descriptor, true);
+            thisObject->methodTable()->defineOwnProperty(thisObject, globalObject, globalObject->intlLegacyConstructedSymbol(), descriptor, true);
             return thisObject;
         }
     }
@@ -98,12 +102,12 @@ InstanceType* unwrapForLegacyIntlConstructor(JSGlobalObject* globalObject, JSVal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* thisObject = jsDynamicCast<JSObject*>(thisValue);
-    if (UNLIKELY(!thisObject))
+    JSObject* thisObject = dynamicDowncast<JSObject>(thisValue);
+    if (!thisObject) [[unlikely]]
         return nullptr;
 
-    auto* instance = jsDynamicCast<InstanceType*>(thisObject);
-    if (LIKELY(instance))
+    auto* instance = dynamicDowncast<InstanceType>(thisObject);
+    if (instance) [[likely]]
         return instance;
 
     ASSERT(!constructor->template inherits<JSBoundFunction>());
@@ -114,9 +118,9 @@ InstanceType* unwrapForLegacyIntlConstructor(JSGlobalObject* globalObject, JSVal
     if (!hasInstance)
         return nullptr;
 
-    JSValue value = thisObject->get(globalObject, vm.propertyNames->builtinNames().intlLegacyConstructedSymbol());
+    JSValue value = thisObject->get(globalObject, globalObject->intlLegacyConstructedSymbol());
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return jsDynamicCast<InstanceType*>(value);
+    return dynamicDowncast<InstanceType>(value);
 }
 
 template<typename ResultType>
@@ -196,17 +200,17 @@ ResultType intlStringOrBooleanOption(JSGlobalObject* globalObject, JSObject* opt
     return { };
 }
 
-ALWAYS_INLINE bool canUseASCIIUCADUCETComparison(UChar character)
+ALWAYS_INLINE bool canUseASCIIUCADUCETComparison(char16_t character)
 {
     return isASCII(character) && ducetLevel1Weights[character];
 }
 
-ALWAYS_INLINE bool canUseASCIIUCADUCETComparison(LChar character)
+ALWAYS_INLINE bool canUseASCIIUCADUCETComparison(Latin1Character character)
 {
     return ducetLevel1Weights[character];
 }
 
-ALWAYS_INLINE bool followedByNonLatinCharacter(std::span<const UChar> characters, size_t index)
+ALWAYS_INLINE bool followedByNonLatinCharacter(std::span<const char16_t> characters, size_t index)
 {
     size_t nextIndex = index + 1;
     if (characters.size() > nextIndex)
@@ -214,7 +218,7 @@ ALWAYS_INLINE bool followedByNonLatinCharacter(std::span<const UChar> characters
     return false;
 }
 
-ALWAYS_INLINE bool followedByNonLatinCharacter(std::span<const LChar>, size_t)
+ALWAYS_INLINE bool followedByNonLatinCharacter(std::span<const Latin1Character>, size_t)
 {
     return false;
 }
@@ -291,7 +295,7 @@ inline JSObject* intlGetOptionsObject(JSGlobalObject* globalObject, JSValue opti
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (options.isUndefined())
         return nullptr;
-    if (LIKELY(options.isObject()))
+    if (options.isObject()) [[likely]]
         return asObject(options);
     throwTypeError(globalObject, scope, "options argument is not an object or undefined"_s);
     return nullptr;
@@ -349,7 +353,7 @@ class ListFormatInput {
     WTF_MAKE_NONCOPYABLE(ListFormatInput);
 public:
     ListFormatInput(Vector<String, 4>&& strings)
-        : m_strings(WTFMove(strings))
+        : m_strings(WTF::move(strings))
     {
         m_stringPointers.reserveInitialCapacity(m_strings.size());
         m_stringLengths.reserveInitialCapacity(m_strings.size());
@@ -361,13 +365,15 @@ public:
     }
 
     int32_t size() const { return m_stringPointers.size(); }
-    const UChar* const* stringPointers() const { return m_stringPointers.data(); }
-    const int32_t* stringLengths() const { return m_stringLengths.data(); }
+    const char16_t* const* stringPointers() const { return m_stringPointers.span().data(); }
+    const int32_t* stringLengths() const LIFETIME_BOUND { return m_stringLengths.span().data(); }
 
 private:
     Vector<String, 4> m_strings;
-    Vector<const UChar*, 4> m_stringPointers;
+    Vector<const char16_t*, 4> m_stringPointers;
     Vector<int32_t, 4> m_stringLengths;
 };
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

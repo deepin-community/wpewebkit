@@ -28,6 +28,7 @@
 #include "Connection.h"
 #include "MessageNames.h"
 #include <wtf/Forward.h>
+#include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 
@@ -48,14 +49,18 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
-    auto&& arguments()
+    MessageWithoutArgument()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
 };
 
 class MessageWithoutArgumentAndEmptyReply {
@@ -66,19 +71,23 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithoutArgumentAndEmptyReplyReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<>;
     using Reply = CompletionHandler<void()>;
     using Promise = WTF::NativePromise<void, IPC::Error>;
-    auto&& arguments()
+    MessageWithoutArgumentAndEmptyReply()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
 };
 
 class MessageWithoutArgumentAndReplyWithArgument {
@@ -89,19 +98,23 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithoutArgumentAndReplyWithArgumentReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<String>;
     using Reply = CompletionHandler<void(String&&)>;
     using Promise = WTF::NativePromise<String, IPC::Error>;
-    auto&& arguments()
+    MessageWithoutArgumentAndReplyWithArgument()
     {
-        return WTFMove(m_arguments);
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
     }
 
 private:
-    std::tuple<> m_arguments;
 };
 
 class MessageWithArgument {
@@ -112,19 +125,21 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     explicit MessageWithArgument(const String& argument)
-        : m_arguments(argument)
+        : m_argument(argument)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        encoder << m_argument;
     }
 
 private:
-    std::tuple<const String&> m_arguments;
+    const String& m_argument;
 };
 
 class MessageWithArgumentAndEmptyReply {
@@ -135,6 +150,7 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithArgumentAndEmptyReplyReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
@@ -142,17 +158,18 @@ public:
     using Reply = CompletionHandler<void()>;
     using Promise = WTF::NativePromise<void, IPC::Error>;
     explicit MessageWithArgumentAndEmptyReply(const String& argument)
-        : m_arguments(argument)
+        : m_argument(argument)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        encoder << m_argument;
     }
 
 private:
-    std::tuple<const String&> m_arguments;
+    const String& m_argument;
 };
 
 class MessageWithArgumentAndReplyWithArgument {
@@ -163,6 +180,7 @@ public:
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
 
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithArgumentAndReplyWithArgumentReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
@@ -170,17 +188,112 @@ public:
     using Reply = CompletionHandler<void(String&&)>;
     using Promise = WTF::NativePromise<String, IPC::Error>;
     explicit MessageWithArgumentAndReplyWithArgument(const String& argument)
-        : m_arguments(argument)
+        : m_argument(argument)
     {
     }
 
-    auto&& arguments()
+    template<typename Encoder>
+    void encode(Encoder& encoder)
     {
-        return WTFMove(m_arguments);
+        encoder << m_argument;
     }
 
 private:
-    std::tuple<const String&> m_arguments;
+    const String& m_argument;
+};
+
+class MessageWithoutArgumentAndEmptyReplyReply {
+public:
+    using Arguments = std::tuple<>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithoutArgumentAndEmptyReplyReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    MessageWithoutArgumentAndEmptyReplyReply()
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+    }
+
+private:
+};
+
+class MessageWithoutArgumentAndReplyWithArgumentReply {
+public:
+    using Arguments = std::tuple<String>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithoutArgumentAndReplyWithArgumentReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    explicit MessageWithoutArgumentAndReplyWithArgumentReply(const String& reply)
+        : m_reply(reply)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        encoder << m_reply;
+    }
+
+private:
+    const String& m_reply;
+};
+
+class MessageWithArgumentAndEmptyReplyReply {
+public:
+    using Arguments = std::tuple<>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithArgumentAndEmptyReplyReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    MessageWithArgumentAndEmptyReplyReply()
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+    }
+
+private:
+};
+
+class MessageWithArgumentAndReplyWithArgumentReply {
+public:
+    using Arguments = std::tuple<String>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithoutUsingIPCConnection_MessageWithArgumentAndReplyWithArgumentReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    explicit MessageWithArgumentAndReplyWithArgumentReply(const String& reply)
+        : m_reply(reply)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        encoder << m_reply;
+    }
+
+private:
+    const String& m_reply;
 };
 
 } // namespace TestWithoutUsingIPCConnection

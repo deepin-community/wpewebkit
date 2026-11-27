@@ -27,13 +27,19 @@
 #include "IDBStorageManager.h"
 
 #include "IDBStorageRegistry.h"
+#include "Logging.h"
 #include <WebCore/IDBRequestData.h>
 #include <WebCore/IDBServer.h>
 #include <WebCore/MemoryIDBBackingStore.h>
 #include <WebCore/SQLiteFileSystem.h>
 #include <WebCore/SQLiteIDBBackingStore.h>
+#include <WebCore/SQLiteMemoryIDBBackingStore.h>
+#include <algorithm>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(IDBStorageManager);
 
 static bool migrateOriginDataImpl(const String& oldOriginDirectory, const String& newOriginDirectory, Function<String(const String&)>&& createFileNameFunction)
 {
@@ -121,8 +127,14 @@ String IDBStorageManager::idbStorageOriginDirectory(const String& rootDirectory,
     if (rootDirectory.isEmpty())
         return emptyString();
 
-    auto originDirectory = WebCore::IDBDatabaseIdentifier::databaseDirectoryRelativeToRoot(origin, rootDirectory, "v1"_s);
-    auto oldOriginDirectory = WebCore::IDBDatabaseIdentifier::databaseDirectoryRelativeToRoot(origin, rootDirectory, "v0"_s);
+    auto originDirectory = WebCore::IDBDatabaseIdentifier::optionalDatabaseDirectoryRelativeToRoot(origin, rootDirectory, "v1"_s);
+    if (originDirectory.isEmpty())
+        return emptyString();
+
+    auto oldOriginDirectory = WebCore::IDBDatabaseIdentifier::optionalDatabaseDirectoryRelativeToRoot(origin, rootDirectory, "v0"_s);
+    if (oldOriginDirectory.isEmpty())
+        return emptyString();
+
     migrateOriginDataImpl(oldOriginDirectory, originDirectory, [](const String& name) {
         return WebCore::SQLiteFileSystem::computeHashForFileName(WebCore::IDBServer::SQLiteIDBBackingStore::decodeDatabaseName(name));
     });
@@ -185,15 +197,17 @@ bool IDBStorageManager::migrateOriginData(const String& oldOriginDirectory, cons
     });
 }
 
-IDBStorageManager::IDBStorageManager(const String& path, IDBStorageRegistry& registry, QuotaCheckFunction&& quotaCheckFunction)
+IDBStorageManager::IDBStorageManager(const String& path, IDBStorageRegistry& registry, QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
     : m_path(path)
     , m_registry(registry)
-    , m_quotaCheckFunction(WTFMove(quotaCheckFunction))
+    , m_quotaCheckFunction(WTF::move(quotaCheckFunction))
+    , m_useSQLiteMemoryBackingStore(useSQLiteMemoryBackingStore)
 {
 }
 
 IDBStorageManager::~IDBStorageManager()
 {
+    m_isClosing = true;
     for (auto& database : m_databases.values())
         database->immediateClose();
 }
@@ -205,7 +219,7 @@ bool IDBStorageManager::isActive() const
 
 bool IDBStorageManager::hasDataInMemory() const
 {
-    return WTF::anyOf(m_databases.values(), [&] (auto& database) {
+    return std::ranges::any_of(m_databases.values(), [&](auto& database) {
         return database->hasDataInMemory();
     });
 }
@@ -241,18 +255,23 @@ WebCore::IDBServer::UniqueIDBDatabase& IDBStorageManager::getOrCreateUniqueIDBDa
 
 void IDBStorageManager::openDatabase(WebCore::IDBServer::IDBConnectionToClient& connectionToClient, const WebCore::IDBOpenRequestData& requestData)
 {
-    auto& database = getOrCreateUniqueIDBDatabase(requestData.databaseIdentifier());
-    database.openDatabaseConnection(connectionToClient, requestData);
+    CheckedRef database = getOrCreateUniqueIDBDatabase(requestData.databaseIdentifier());
+    database->openDatabaseConnection(connectionToClient, requestData);
 }
 
 void IDBStorageManager::deleteDatabase(WebCore::IDBServer::IDBConnectionToClient& connectionToClient, const WebCore::IDBOpenRequestData& requestData)
 {
-    auto& database = getOrCreateUniqueIDBDatabase(requestData.databaseIdentifier());
-    database.handleDelete(connectionToClient, requestData);
+    WebCore::IDBDatabaseIdentifier databaseIdentifier;
+    {
+        CheckedRef database = getOrCreateUniqueIDBDatabase(requestData.databaseIdentifier());
+        database->handleDelete(connectionToClient, requestData);
 
-    // This database is created for deletion.
-    if (database.tryClose())
-        m_databases.remove(database.identifier());
+        // This database is created for deletion.
+        if (!database->tryClose())
+            return;
+        databaseIdentifier = database->identifier();
+    }
+    m_databases.remove(databaseIdentifier);
 }
 
 Vector<WebCore::IDBDatabaseNameAndVersion> IDBStorageManager::getAllDatabaseNamesAndVersions()
@@ -265,7 +284,7 @@ Vector<WebCore::IDBDatabaseNameAndVersion> IDBStorageManager::getAllDatabaseName
             visitedDatabasePaths.add(path);
 
         if (auto nameAndVersion = database->nameAndVersion())
-            result.append(WTFMove(*nameAndVersion));
+            result.append(WTF::move(*nameAndVersion));
     }
 
     auto databaseIdentifiers = FileSystem::listDirectory(m_path);
@@ -276,7 +295,7 @@ Vector<WebCore::IDBDatabaseNameAndVersion> IDBStorageManager::getAllDatabaseName
             continue;
 
         if (auto nameAndVersion = WebCore::IDBServer::SQLiteIDBBackingStore::databaseNameAndVersionFromFile(databasePath))
-            result.append(WTFMove(*nameAndVersion));
+            result.append(WTF::move(*nameAndVersion));
     }
 
     return result;
@@ -284,41 +303,49 @@ Vector<WebCore::IDBDatabaseNameAndVersion> IDBStorageManager::getAllDatabaseName
 
 void IDBStorageManager::openDBRequestCancelled(const WebCore::IDBOpenRequestData& requestData)
 {
-    auto* database = m_databases.get(requestData.databaseIdentifier());
-    if (!database)
-        return;
+    WebCore::IDBDatabaseIdentifier databaseIdentifier;
+    {
+        CheckedPtr database = m_databases.get(requestData.databaseIdentifier());
+        if (!database)
+            return;
 
-    database->openDBRequestCancelled(requestData.requestIdentifier());
+        database->openDBRequestCancelled(requestData.requestIdentifier());
 
-    // Database becomes idle after request is cancelled.
-    if (database->tryClose())
-        m_databases.remove(database->identifier());
+        // Database becomes idle after request is cancelled.
+        if (!database->tryClose())
+            return;
+        databaseIdentifier = database->identifier();
+    }
+    m_databases.remove(databaseIdentifier);
 }
 
 void IDBStorageManager::registerConnection(WebCore::IDBServer::UniqueIDBDatabaseConnection& connection)
 {
-    m_registry.registerConnection(connection);
+    m_registry->registerConnection(connection);
 }
 
 void IDBStorageManager::unregisterConnection(WebCore::IDBServer::UniqueIDBDatabaseConnection& connection)
 {
-    m_registry.unregisterConnection(connection);
+    m_registry->unregisterConnection(connection);
 }
 
 void IDBStorageManager::registerTransaction(WebCore::IDBServer::UniqueIDBDatabaseTransaction& transaction)
 {
-    m_registry.registerTransaction(transaction);
+    m_registry->registerTransaction(transaction);
 }
 
 void IDBStorageManager::unregisterTransaction(WebCore::IDBServer::UniqueIDBDatabaseTransaction& transaction)
 {
-    m_registry.unregisterTransaction(transaction);
+    m_registry->unregisterTransaction(transaction);
 }
 
 std::unique_ptr<WebCore::IDBServer::IDBBackingStore> IDBStorageManager::createBackingStore(const WebCore::IDBDatabaseIdentifier& identifier)
 {
-    if (m_path.isEmpty() || identifier.isTransient())
+    if (m_path.isEmpty() || identifier.isTransient()) {
+        if (m_useSQLiteMemoryBackingStore)
+            return makeUnique<WebCore::IDBServer::SQLiteMemoryIDBBackingStore>(identifier);
         return makeUnique<WebCore::IDBServer::MemoryIDBBackingStore>(identifier);
+    }
 
     auto name = WebCore::SQLiteFileSystem::computeHashForFileName(identifier.databaseName());
     return makeUnique<WebCore::IDBServer::SQLiteIDBBackingStore>(identifier, FileSystem::pathByAppendingComponent(m_path, name));
@@ -326,13 +353,27 @@ std::unique_ptr<WebCore::IDBServer::IDBBackingStore> IDBStorageManager::createBa
 
 void IDBStorageManager::requestSpace(const WebCore::ClientOrigin&, uint64_t size, CompletionHandler<void(bool)>&& completionHandler)
 {
-    m_quotaCheckFunction(size, WTFMove(completionHandler));
+    if (m_isClosing)
+        return completionHandler(size ? false : true);
+    m_quotaCheckFunction(size, WTF::move(completionHandler));
 }
 
 void IDBStorageManager::handleLowMemoryWarning()
 {
     for (auto& database : m_databases.values())
         database->handleLowMemoryWarning();
+}
+
+void IDBStorageManager::tryCloseDatabase(const WebCore::IDBDatabaseIdentifier& identifier)
+{
+    bool closed = false;
+    if (CheckedPtr database = m_databases.get(identifier))
+        closed = database->tryClose();
+
+    if (closed) {
+        RELEASE_LOG(IndexedDB, "%p - IDBStorageManager::tryCloseDatabase: Closed database", this);
+        m_databases.remove(identifier);
+    }
 }
 
 } // namespace WebKit

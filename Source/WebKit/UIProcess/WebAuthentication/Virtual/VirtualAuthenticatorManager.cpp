@@ -29,23 +29,28 @@
 #if ENABLE(WEB_AUTHN)
 
 #include <VirtualService.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
 
 namespace WebKit {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VirtualAuthenticatorManager);
+
 struct VirtualCredential;
 
-VirtualAuthenticatorManager::VirtualAuthenticatorManager()
-    : AuthenticatorManager()
+Ref<VirtualAuthenticatorManager> VirtualAuthenticatorManager::create()
 {
+    return adoptRef(*new VirtualAuthenticatorManager);
 }
+
+VirtualAuthenticatorManager::VirtualAuthenticatorManager() = default;
 
 String VirtualAuthenticatorManager::createAuthenticator(const VirtualAuthenticatorConfiguration& config)
 {
     auto id = createVersion4UUIDString();
     m_virtualAuthenticators.set(id, makeUniqueRef<VirtualAuthenticatorConfiguration>(config));
     Vector<VirtualCredential> credentials;
-    m_credentialsByAuthenticator.set(id, WTFMove(credentials));
+    m_credentialsByAuthenticator.set(id, WTF::move(credentials));
 
     return id;
 }
@@ -57,7 +62,7 @@ bool VirtualAuthenticatorManager::removeAuthenticator(const String& id)
 
 void VirtualAuthenticatorManager::addCredential(const String& authenticatorId, VirtualCredential& credential)
 {
-    m_credentialsByAuthenticator.find(authenticatorId)->value.append(WTFMove(credential));
+    m_credentialsByAuthenticator.find(authenticatorId)->value.append(WTF::move(credential));
 }
 
 Vector<VirtualCredential> VirtualAuthenticatorManager::credentialsMatchingList(const String& authenticatorId, const String& rpId, const Vector<Vector<uint8_t>>& credentialIds)
@@ -71,7 +76,7 @@ Vector<VirtualCredential> VirtualAuthenticatorManager::credentialsMatchingList(c
     return matching;
 }
 
-UniqueRef<AuthenticatorTransportService> VirtualAuthenticatorManager::createService(WebCore::AuthenticatorTransport transport, AuthenticatorTransportServiceObserver& observer) const
+Ref<AuthenticatorTransportService> VirtualAuthenticatorManager::createService(WebCore::AuthenticatorTransport transport, AuthenticatorTransportServiceObserver& observer) const
 {
     Vector<std::pair<String, VirtualAuthenticatorConfiguration>> configs;
     for (auto& id : m_virtualAuthenticators.keys()) {

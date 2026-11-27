@@ -21,17 +21,21 @@
 
 #pragma once
 
+#include "CSSParserEnum.h"
 #include "MediaQuery.h"
 #include "RuleSet.h"
 
 namespace WebCore {
+
+class StyleRuleFunction;
+class StyleRuleFunctionDeclarations;
+
 namespace Style {
 
 class RuleSetBuilder {
 public:
     enum class ShrinkToFit : bool { Enable, Disable };
-    enum class ShouldResolveNesting : bool { No, Yes };
-    RuleSetBuilder(RuleSet&, const MQ::MediaQueryEvaluator&, Resolver* = nullptr, ShrinkToFit = ShrinkToFit::Enable, ShouldResolveNesting = ShouldResolveNesting::No);
+    RuleSetBuilder(RuleSet&, const MQ::MediaQueryEvaluator&, Resolver* = nullptr, ShrinkToFit = ShrinkToFit::Enable);
     ~RuleSetBuilder();
 
     void addRulesFromSheet(const StyleSheetContents&, const MQ::MediaQueryList& sheetQuery = { });
@@ -41,10 +45,11 @@ private:
     RuleSetBuilder(const MQ::MediaQueryEvaluator&);
 
     void addStyleRule(StyleRuleWithNesting&);
+    void addStyleRule(StyleRuleNestedDeclarations&);
     void addRulesFromSheetContents(const StyleSheetContents&);
     void addChildRules(const Vector<Ref<StyleRuleBase>>&);
     void addChildRule(Ref<StyleRuleBase>);
-    void disallowDynamicMediaQueryEvaluationIfNeeded();
+    void NODELETE disallowDynamicMediaQueryEvaluationIfNeeded();
     void addStyleRuleWithSelectorList(const CSSSelectorList&, const StyleRule&);
 
     void registerLayers(const Vector<CascadeLayerName>&);
@@ -86,15 +91,25 @@ private:
     HashMap<CascadeLayerName, RuleSet::CascadeLayerIdentifier> m_cascadeLayerIdentifierMap;
     RuleSet::CascadeLayerIdentifier m_currentCascadeLayerIdentifier { 0 };
     Vector<const CSSSelectorList*> m_selectorListStack;
-    const ShouldResolveNesting m_shouldResolveNesting { ShouldResolveNesting::No };
+    Vector<CSSParserEnum::NestedContextType> m_ancestorStack;
 
     RuleSet::ContainerQueryIdentifier m_currentContainerQueryIdentifier { 0 };
     RuleSet::ScopeRuleIdentifier m_currentScopeIdentifier { 0 };
 
     IsStartingStyle m_isStartingStyle { IsStartingStyle::No };
 
+    struct FunctionDeclarationsBlock {
+        Ref<const StyleRuleFunctionDeclarations> declarations;
+        RuleSet::ContainerQueryIdentifier containerQueryIdentifier { 0 };
+    };
+    using FunctionDeclarationsList = Vector<FunctionDeclarationsBlock>;
+    FunctionDeclarationsList m_currentFunctionDeclarationsList;
+    HashMap<Ref<StyleRuleFunction>, FunctionDeclarationsList> m_functionDeclarationsMap;
+
     Vector<RuleSet::ResolverMutatingRule> m_collectedResolverMutatingRules;
     bool requiresStaticMediaQueryEvaluation { false };
+
+    RuleFeatureSet::CollectionContext m_featureCollectionContext;
 };
 
 }

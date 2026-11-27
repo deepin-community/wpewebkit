@@ -29,6 +29,10 @@
 
 #include <WebKit/WKType.h>
 #include <algorithm>
+#include <type_traits>
+#include <wtf/ExportMacros.h>
+#include <wtf/GetPtr.h>
+#include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
 
 namespace WebKit {
@@ -219,11 +223,6 @@ template<typename T, typename U> inline bool operator==(const WKRetainPtr<T>& a,
     return a.get() == b; 
 }
 
-template<typename T, typename U> inline bool operator==(T* a, const WKRetainPtr<U>& b) 
-{
-    return a == b.get(); 
-}
-
 #if (defined(WIN32) || defined(_WIN32)) && !((_MSC_VER > 1900) && __clang__)
 template<typename T> inline WKRetainPtr<T> adoptWK(T) _Check_return_;
 #else
@@ -259,6 +258,7 @@ template<typename P> struct DefaultHash<WKRetainPtr<P>> : PtrHash<WKRetainPtr<P>
 
 template<typename P> struct HashTraits<WKRetainPtr<P>> : SimpleClassHashTraits<WKRetainPtr<P>> {
     static P emptyValue() { return nullptr; }
+    static bool isEmptyValue(const WKRetainPtr<P>& value) { return !value; }
 
     typedef P PeekType;
     static PeekType peek(const WKRetainPtr<P>& value) { return value.get(); }

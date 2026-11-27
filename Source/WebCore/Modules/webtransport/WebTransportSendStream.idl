@@ -29,6 +29,7 @@
     SecureContext,
     Transferable
 ] interface WebTransportSendStream : WritableStream {
-    attribute long long? sendOrder;
-    Promise<WebTransportSendStreamStats> getStats();
+    attribute WebTransportSendGroup? sendGroup;
+    attribute long long sendOrder;
+    [CallWith=CurrentScriptExecutionContext] Promise<WebTransportSendStreamStats> getStats();
 };

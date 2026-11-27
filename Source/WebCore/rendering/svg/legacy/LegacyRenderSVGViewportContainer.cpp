@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include "LegacyRenderSVGViewportContainer.h"
+#include "LegacyRenderSVGModelObjectInlines.h"
 
 #include "GraphicsContext.h"
 #include "RenderView.h"
@@ -31,13 +32,10 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(LegacyRenderSVGViewportContainer);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGViewportContainer);
 
-LegacyRenderSVGViewportContainer::LegacyRenderSVGViewportContainer(SVGSVGElement& element, RenderStyle&& style)
-    : LegacyRenderSVGContainer(Type::LegacySVGViewportContainer, element, WTFMove(style))
-    , m_didTransformToRootUpdate(false)
-    , m_isLayoutSizeChanged(false)
-    , m_needsTransformUpdate(true)
+LegacyRenderSVGViewportContainer::LegacyRenderSVGViewportContainer(SVGSVGElement& element, Style::ComputedStyle&& style)
+    : LegacyRenderSVGContainer(Type::LegacySVGViewportContainer, element, WTF::move(style))
 {
     ASSERT(isLegacyRenderSVGViewportContainer());
 }
@@ -88,7 +86,7 @@ bool LegacyRenderSVGViewportContainer::calculateLocalTransform()
 
 AffineTransform LegacyRenderSVGViewportContainer::viewportTransform() const
 {
-    return svgSVGElement().viewBoxToViewTransform(m_viewport.width(), m_viewport.height());
+    return protect(svgSVGElement())->viewBoxToViewTransform(m_viewport.width(), m_viewport.height());
 }
 
 bool LegacyRenderSVGViewportContainer::pointIsInsideViewportClip(const FloatPoint& pointInParent)

@@ -24,6 +24,7 @@
 
 #include "GStreamerAudioData.h"
 #include "GStreamerAudioStreamDescription.h"
+#include <wtf/MediaTime.h>
 #include <wtf/text/MakeString.h>
 
 GST_DEBUG_CATEGORY(webkit_webrtc_incoming_audio_debug);
@@ -32,7 +33,7 @@ GST_DEBUG_CATEGORY(webkit_webrtc_incoming_audio_debug);
 namespace WebCore {
 
 RealtimeIncomingAudioSourceGStreamer::RealtimeIncomingAudioSourceGStreamer(AtomString&& audioTrackId)
-    : RealtimeIncomingSourceGStreamer(CaptureDevice { WTFMove(audioTrackId), CaptureDevice::DeviceType::Microphone, emptyString() })
+    : RealtimeIncomingSourceGStreamer(CaptureDevice { WTF::move(audioTrackId), CaptureDevice::DeviceType::Microphone, "remote audio"_s })
 {
     static std::once_flag debugRegisteredFlag;
     std::call_once(debugRegisteredFlag, [] {
@@ -55,7 +56,7 @@ void RealtimeIncomingAudioSourceGStreamer::dispatchSample(GRefPtr<GstSample>&& s
     ASSERT(isMainThread());
     auto presentationTime = MediaTime(GST_TIME_AS_USECONDS(GST_BUFFER_PTS(gst_sample_get_buffer(sample.get()))), G_USEC_PER_SEC);
     GStreamerAudioStreamDescription description;
-    GStreamerAudioData frames(WTFMove(sample), description.getInfo());
+    GStreamerAudioData frames(WTF::move(sample), description.getInfo());
     audioSamplesAvailable(presentationTime, frames, description, 0);
 }
 

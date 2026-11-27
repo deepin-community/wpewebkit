@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBXR_LAYERS)
+#if ENABLE(WEBXR_LAYERS) && ENABLE(WEBGPU)
 
 #include "GPUTextureFormat.h"
 #include "WebXRSpace.h"
@@ -38,7 +38,7 @@ struct XRGPULayerInit {
     GPUTextureFormat colorFormat;
     std::optional<GPUTextureFormat> depthStencilFormat;
     GPUTextureUsageFlags textureUsage { GPUTextureUsage::RENDER_ATTACHMENT };
-    RefPtr<WebXRSpace> space;
+    Ref<WebXRSpace> space;
     unsigned long mipLevels { 1 };
     unsigned long viewPixelWidth;
     unsigned long viewPixelHeight;
@@ -48,4 +48,4 @@ struct XRGPULayerInit {
 
 } // namespace WebCore
 
-#endif // ENABLE(WEBXR_LAYERS)
+#endif // ENABLE(WEBXR_LAYERS) && ENABLE(WEBGPU)

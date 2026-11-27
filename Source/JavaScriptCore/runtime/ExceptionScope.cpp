@@ -55,7 +55,7 @@ CString ExceptionScope::unexpectedExceptionMessage()
 {
     StringPrintStream out;
 
-    out.println("Unexpected exception observed on thread ", Thread::current(), " at:");
+    out.println("Unexpected exception observed on thread ", Thread::currentSingleton(), " at:");
     auto currentStack = StackTrace::captureStackTrace(Options::unexpectedExceptionStackTraceLimit(), 1);
     out.print(StackTracePrinter { *currentStack, "    " });
 
@@ -65,7 +65,7 @@ CString ExceptionScope::unexpectedExceptionMessage()
     out.println("The exception was thrown from thread ", *m_vm.throwingThread(), " at:");
     out.print(StackTracePrinter { *m_vm.nativeStackTraceOfLastThrow(), "    " });
 
-    if (auto* error = jsDynamicCast<ErrorInstance*>(exception()->value()))
+    if (auto* error = dynamicDowncast<ErrorInstance>(exception()->value()))
         out.println("Error Exception: ", error->tryGetMessageForDebugging());
     else
         out.println("non-Error Exception: ", exception()->value());

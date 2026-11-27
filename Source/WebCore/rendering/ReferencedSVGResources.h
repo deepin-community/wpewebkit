@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,34 +26,43 @@
 #pragma once
 
 #include "SVGNames.h"
-#include <wtf/FastMalloc.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringHash.h>
 
 namespace WebCore {
 
 class CSSSVGResourceElementClient;
+class WeakPtrImplWithEventTargetData;
 class Document;
 class LegacyRenderSVGResourceClipper;
 class LegacyRenderSVGResourceContainer;
 class QualifiedName;
-class ReferenceFilterOperation;
-class ReferencePathOperation;
 class RenderElement;
 class RenderSVGResourceFilter;
-class RenderStyle;
+class RenderSVGResourcePaintServer;
 class SVGClipPathElement;
 class SVGElement;
 class SVGFilterElement;
 class SVGMarkerElement;
 class SVGMaskElement;
-class StyleImage;
 class TreeScope;
+enum class SVGPaintType : bool;
 
-class ReferencedSVGResources {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(ReferencedSVGResources);
+namespace Style {
+class ComputedStyle;
+class Image;
+struct FilterReference;
+struct ReferencePath;
+struct URL;
+}
+
+class ReferencedSVGResources : public CanMakeCheckedPtr<ReferencedSVGResources> {
+    WTF_MAKE_TZONE_ALLOCATED(ReferencedSVGResources);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ReferencedSVGResources);
 public:
     ReferencedSVGResources(RenderElement&);
     ~ReferencedSVGResources();
@@ -61,31 +70,51 @@ public:
     using SVGQualifiedNames = Vector<SVGQualifiedName>;
     using SVGElementIdentifierAndTagPairs = Vector<std::pair<AtomString, SVGQualifiedNames>>;
 
-    static SVGElementIdentifierAndTagPairs referencedSVGResourceIDs(const RenderStyle&, const Document&);
+    static SVGElementIdentifierAndTagPairs referencedSVGResourceIDs(const Style::ComputedStyle&, const Document&);
     void updateReferencedResources(TreeScope&, const SVGElementIdentifierAndTagPairs&);
+    bool addReferencedSVGResourceIfNeeded(SVGElement&, const AtomString&);
 
     // Legacy: Clipping needs a renderer, filters use an element.
-    static LegacyRenderSVGResourceClipper* referencedClipperRenderer(TreeScope&, const ReferencePathOperation&);
-    static RefPtr<SVGFilterElement> referencedFilterElement(TreeScope&, const ReferenceFilterOperation&);
+    static LegacyRenderSVGResourceClipper* referencedClipperRenderer(TreeScope&, const Style::ReferencePath&);
+    static RefPtr<SVGFilterElement> referencedFilterElement(TreeScope&, const Style::FilterReference&);
 
     static LegacyRenderSVGResourceContainer* referencedRenderResource(TreeScope&, const AtomString& fragment);
 
     // LBSE: All element based.
-    static RefPtr<SVGClipPathElement> referencedClipPathElement(TreeScope&, const ReferencePathOperation&);
-    static RefPtr<SVGMarkerElement> referencedMarkerElement(TreeScope&, const String&);
-    static RefPtr<SVGMaskElement> referencedMaskElement(TreeScope&, const StyleImage&);
+    static RefPtr<SVGClipPathElement> referencedClipPathElement(TreeScope&, const Style::ReferencePath&);
+    static RefPtr<SVGMarkerElement> referencedMarkerElement(TreeScope&, const Style::URL&);
+    static RefPtr<SVGMaskElement> referencedMaskElement(TreeScope&, const Style::Image&);
     static RefPtr<SVGMaskElement> referencedMaskElement(TreeScope&, const AtomString&);
-    static RefPtr<SVGElement> referencedPaintServerElement(TreeScope&, const String&);
+    static RefPtr<SVGElement> referencedPaintServerElement(TreeScope&, const Style::URL&);
+
+    // Cached fill and stroke paint server, filled in by RenderLayerModelObject. The weak pointer
+    // clears itself if the paint server dies, so a live pointer is a hit and a null one re-resolves.
+    // Defined out of line, they need the complete RenderSVGResourcePaintServer type for the weak pointer.
+    RenderSVGResourcePaintServer* cachedFillPaintServer() const;
+    RenderSVGResourcePaintServer* cachedStrokePaintServer() const;
+    void setCachedPaintServer(SVGPaintType, RenderSVGResourcePaintServer&);
+    void invalidatePaintServerCache()
+    {
+        m_cachedFillPaintServer = nullptr;
+        m_cachedStrokePaintServer = nullptr;
+    }
 
 private:
     static RefPtr<SVGElement> elementForResourceID(TreeScope&, const AtomString& resourceID, const SVGQualifiedName& tagName);
     static RefPtr<SVGElement> elementForResourceIDs(TreeScope&, const AtomString& resourceID, const SVGQualifiedNames& tagNames);
 
     void addClientForTarget(SVGElement& targetElement, const AtomString&);
-    void removeClientForTarget(TreeScope&, const AtomString&);
+    void removeClientForTarget(const AtomString&);
 
-    RenderElement& m_renderer;
-    MemoryCompactRobinHoodHashMap<AtomString, std::unique_ptr<CSSSVGResourceElementClient>> m_elementClients;
+    const CheckedRef<RenderElement> m_renderer;
+    struct ClientEntry {
+        std::unique_ptr<CSSSVGResourceElementClient> client;
+        WeakPtr<SVGElement, WeakPtrImplWithEventTargetData> targetElement;
+    };
+    MemoryCompactRobinHoodHashMap<AtomString, ClientEntry> m_elementClients;
+
+    SingleThreadWeakPtr<RenderSVGResourcePaintServer> m_cachedFillPaintServer;
+    SingleThreadWeakPtr<RenderSVGResourcePaintServer> m_cachedStrokePaintServer;
 };
 
 } // namespace WebCore

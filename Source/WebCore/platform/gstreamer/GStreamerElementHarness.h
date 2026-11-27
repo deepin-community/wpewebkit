@@ -24,24 +24,24 @@
 #include "GRefPtrGStreamer.h"
 
 #include <wtf/Deque.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
 
 class GStreamerElementHarness : public ThreadSafeRefCounted<GStreamerElementHarness> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(GStreamerElementHarness);
 
 public:
     class Stream : public ThreadSafeRefCounted<Stream> {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED(Stream);
 
     public:
-        static Ref<Stream> create(GRefPtr<GstPad>&& pad, RefPtr<GStreamerElementHarness>&& downstreamHarness)
+        static Ref<Stream> create(GRefPtr<GstPad>&& pad, RefPtr<GStreamerElementHarness>&& downstreamHarness, GRefPtr<GstCaps>&& allowedOutputCaps = nullptr)
         {
-            return adoptRef(*new Stream(WTFMove(pad), WTFMove(downstreamHarness)));
+            return adoptRef(*new Stream(WTF::move(pad), WTF::move(downstreamHarness), WTF::move(allowedOutputCaps)));
         }
 
         ~Stream();
@@ -53,18 +53,19 @@ public:
 
         const GRefPtr<GstPad>& pad() const { return m_pad; }
         const GRefPtr<GstPad>& targetPad() const { return m_targetPad; }
-        const GRefPtr<GstCaps>& outputCaps();
+        GRefPtr<GstCaps> outputCaps();
 
         const RefPtr<GStreamerElementHarness> downstreamHarness() const { return m_downstreamHarness; }
 
     private:
-        Stream(GRefPtr<GstPad>&&, RefPtr<GStreamerElementHarness>&&);
+        Stream(GRefPtr<GstPad>&&, RefPtr<GStreamerElementHarness>&&, GRefPtr<GstCaps>&&);
 
         GstFlowReturn chainSample(GRefPtr<GstSample>&&);
         bool sinkEvent(GRefPtr<GstEvent>&&);
 
         GRefPtr<GstPad> m_pad;
         RefPtr<GStreamerElementHarness> m_downstreamHarness;
+        GRefPtr<GstCaps> m_allowedOutputCaps;
 
         GRefPtr<GstPad> m_targetPad;
 
@@ -79,9 +80,9 @@ public:
 
     using PadLinkCallback = Function<RefPtr<GStreamerElementHarness>(const GRefPtr<GstPad>&)>;
     using ProcessSampleCallback = Function<void(Stream&, GRefPtr<GstSample>&&)>;
-    static Ref<GStreamerElementHarness> create(GRefPtr<GstElement>&& element, ProcessSampleCallback&& processOutputSampleCallback, std::optional<PadLinkCallback> padLinkCallback = std::nullopt)
+    static Ref<GStreamerElementHarness> create(GRefPtr<GstElement>&& element, ProcessSampleCallback&& processOutputSampleCallback, std::optional<PadLinkCallback>&& padLinkCallback = std::nullopt, GRefPtr<GstCaps>&& allowedOutputCaps = nullptr)
     {
-        return adoptRef(*new GStreamerElementHarness(WTFMove(element), WTFMove(processOutputSampleCallback), WTFMove(padLinkCallback)));
+        return adoptRef(*new GStreamerElementHarness(WTF::move(element), WTF::move(processOutputSampleCallback), WTF::move(padLinkCallback), WTF::move(allowedOutputCaps)));
     }
     ~GStreamerElementHarness();
 
@@ -93,9 +94,15 @@ public:
     bool pushBuffer(GRefPtr<GstBuffer>&&);
     bool pushEvent(GRefPtr<GstEvent>&&);
 
+    void storeStickyEvent(const GRefPtr<GstEvent>&);
+
+    // Whether the element is told its input is live, as a LATENCY query on the input pad answers. Set it before
+    // the first push.
+    void setIsLive(bool isLive) { m_isLive.storeRelaxed(isLive); }
+
     GstPad* inputPad() const { return m_srcPad.get(); }
     const GRefPtr<GstCaps>& inputCaps() const { return m_inputCaps; }
-    const Vector<RefPtr<Stream>>& outputStreams() const { return m_outputStreams; }
+    const Vector<RefPtr<Stream>>& outputStreams() const LIFETIME_BOUND { return m_outputStreams; }
 
     GstElement* element() const { return m_element.get(); }
 
@@ -106,7 +113,7 @@ public:
     void dumpGraph(ASCIILiteral filenamePrefix);
 
 private:
-    GStreamerElementHarness(GRefPtr<GstElement>&&, ProcessSampleCallback&&, std::optional<PadLinkCallback>&&);
+    GStreamerElementHarness(GRefPtr<GstElement>&&, ProcessSampleCallback&&, std::optional<PadLinkCallback>&&, GRefPtr<GstCaps>&&);
 
     GstFlowReturn pushBufferFull(GRefPtr<GstBuffer>&&);
 
@@ -119,6 +126,7 @@ private:
     GRefPtr<GstElement> m_element;
     ProcessSampleCallback m_processOutputSampleCallback;
     std::optional<PadLinkCallback> m_padLinkCallback;
+    GRefPtr<GstCaps> m_streamAllowedOutputCaps;
 
     GRefPtr<GstCaps> m_inputCaps;
 
@@ -131,6 +139,7 @@ private:
     Atomic<bool> m_playing { false };
     Atomic<bool> m_capsEventSent { false };
     Atomic<bool> m_segmentEventSent { false };
+    Atomic<bool> m_isLive { false };
 };
 
 } // namespace WebCore

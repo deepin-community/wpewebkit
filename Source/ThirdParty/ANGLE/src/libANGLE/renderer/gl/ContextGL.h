@@ -13,6 +13,8 @@
 #include "libANGLE/renderer/ContextImpl.h"
 #include "libANGLE/renderer/gl/RendererGL.h"
 
+#include "common/base/anglebase/containers/mru_cache.h"
+
 namespace angle
 {
 struct FeaturesGL;
@@ -46,6 +48,8 @@ class ContextGL : public ContextImpl
               RobustnessVideoMemoryPurgeStatus robustnessVideoMemoryPurgeStatus);
     ~ContextGL() override;
 
+    void onDestroy(const gl::Context *context) override;
+
     angle::Result initialize(const angle::ImageLoadContext &imageLoadContext) override;
 
     // Shader creation
@@ -68,7 +72,8 @@ class ContextGL : public ContextImpl
     BufferImpl *createBuffer(const gl::BufferState &state) override;
 
     // Vertex Array creation
-    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data) override;
+    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data,
+                                       const gl::VertexArrayBuffers &vertexArrayBuffers) override;
 
     // Query and Fence creation
     QueryImpl *createQuery(gl::QueryType type) override;
@@ -90,9 +95,6 @@ class ContextGL : public ContextImpl
 
     // Semaphore creation.
     SemaphoreImpl *createSemaphore() override;
-
-    // Overlay creation.
-    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
 
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
@@ -286,29 +288,31 @@ class ContextGL : public ContextImpl
 
     void setMaxShaderCompilerThreads(GLuint count) override;
 
-    void invalidateTexture(gl::TextureType target) override;
-
-    void validateState() const;
-
     void setNeedsFlushBeforeDeleteTextures();
     void flushIfNecessaryBeforeDeleteTextures();
 
     void markWorkSubmitted();
 
-    MultiviewImplementationTypeGL getMultiviewImplementationType() const;
     bool hasNativeParallelCompile();
 
     const gl::Debug &getDebug() const { return mState.getDebug(); }
 
-    angle::Result drawPixelLocalStorageEXTEnable(gl::Context *,
-                                                 GLsizei n,
-                                                 const gl::PixelLocalStoragePlane[],
-                                                 const GLenum loadops[]) override;
-    angle::Result drawPixelLocalStorageEXTDisable(gl::Context *,
-                                                  const gl::PixelLocalStoragePlane[],
-                                                  const GLenum storeops[]) override;
+    angle::Result getDepthInitPBO(const gl::Context *context,
+                                  size_t requestedSize,
+                                  GLenum type,
+                                  GLuint *pboIdOut);
+    void tickGC();
 
   private:
+    enum StateType
+    {
+        GlobalState,
+        VAOState,
+        Count,
+    };
+    using StateTypes = angle::BitSet<StateType::Count>;
+    void validateState(StateTypes statesToValidate);
+
     angle::Result setDrawArraysState(const gl::Context *context,
                                      GLint first,
                                      GLsizei count,
@@ -321,17 +325,37 @@ class ContextGL : public ContextImpl
                                        GLsizei instanceCount,
                                        const void **outIndices);
 
-    gl::AttributesMask updateAttributesForBaseInstance(GLuint baseInstance);
-    void resetUpdatedAttributes(gl::AttributesMask attribMask);
-
-    // Resets draw state prior to drawing load/store operations for EXT_shader_pixel_local_storage,
-    // in order to guarantee every pixel gets updated.
-    void resetDrawStateForPixelLocalStorageEXT(const gl::Context *context);
+    gl::AttributesMask updateAttributesForBaseInstance(const gl::Context *context,
+                                                       GLuint baseInstance);
+    void resetUpdatedAttributes(const gl::Context *context, gl::AttributesMask attribMask);
 
   protected:
     std::shared_ptr<RendererGL> mRenderer;
 
     RobustnessVideoMemoryPurgeStatus mRobustnessVideoMemoryPurgeStatus;
+
+  private:
+    struct PixelBufferGL
+    {
+        const FunctionsGL *functions = nullptr;
+        GLuint bufferID              = 0;
+        size_t size                  = 0;
+        uint32_t lifetimeCounter     = 0;
+
+        PixelBufferGL(const FunctionsGL *functions);
+        ~PixelBufferGL();
+
+        PixelBufferGL(PixelBufferGL &&other);
+        PixelBufferGL &operator=(PixelBufferGL &&other);
+
+        PixelBufferGL(const PixelBufferGL &)            = delete;
+        PixelBufferGL &operator=(const PixelBufferGL &) = delete;
+    };
+
+    using DepthInitPBOCache = angle::base::HashingMRUCache<GLenum, PixelBufferGL>;
+    // Keyed by the GLenum type passed to getDepthInitPBO (e.g. GL_UNSIGNED_INT_24_8,
+    // GL_FLOAT_32_UNSIGNED_INT_24_8_REV).
+    DepthInitPBOCache mDepthInitPBOs;
 };
 
 }  // namespace rx

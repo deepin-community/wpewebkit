@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,10 +21,8 @@
 
 #pragma once
 
-#include "HitTestRequest.h"
-#include "RenderBoxModelObject.h"
-#include "RenderText.h"
-#include "TextFlags.h"
+#include <WebCore/RenderBoxModelObject.h>
+#include <WebCore/RenderText.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/WeakPtr.h>
@@ -37,15 +36,13 @@ class LegacyRootInlineBox;
 // LegacyInlineBox represents a rectangle that occurs on a line. It corresponds to
 // some RenderObject (i.e., it represents a portion of that RenderObject).
 class LegacyInlineBox {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(LegacyInlineBox);
+    WTF_MAKE_TZONE_ALLOCATED(LegacyInlineBox);
 public:
     virtual ~LegacyInlineBox();
 
     void assertNotDeleted() const;
 
     virtual void deleteLine() = 0;
-    virtual void extractLine() = 0;
-    virtual void attachLine() = 0;
 
     virtual bool isLineBreak() const { return renderer().isRenderLineBreak(); }
 
@@ -71,9 +68,6 @@ public:
         else
             adjustPosition(delta, 0);
     }
-
-    virtual void paint(PaintInfo&, const LayoutPoint&, LayoutUnit lineTop, LayoutUnit lineBottom) = 0;
-    virtual bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, LayoutUnit lineTop, LayoutUnit lineBottom, HitTestAction) = 0;
 
 #if ENABLE(TREE_DEBUGGING)
     void showNodeTreeForThis() const;
@@ -112,8 +106,8 @@ public:
 
     void removeFromParent();
 
-    LegacyInlineBox* nextOnLine() const { return m_nextOnLine; }
-    LegacyInlineBox* previousOnLine() const { return m_previousOnLine; }
+    LegacyInlineBox* nextOnLine() const LIFETIME_BOUND { return m_nextOnLine; }
+    LegacyInlineBox* previousOnLine() const LIFETIME_BOUND { return m_previousOnLine; }
     void setNextOnLine(LegacyInlineBox* next)
     {
         ASSERT(m_parent || !next);
@@ -124,18 +118,18 @@ public:
         ASSERT(m_parent || !previous);
         m_previousOnLine = previous;
     }
-    bool nextOnLineExists() const;
-    bool previousOnLineExists() const;
+    bool NODELETE nextOnLineExists() const;
+    bool NODELETE previousOnLineExists() const;
 
     virtual bool isLeaf() const { return true; }
     
-    LegacyInlineBox* nextLeafOnLine() const;
-    LegacyInlineBox* previousLeafOnLine() const;
+    LegacyInlineBox* nextLeafOnLine() const LIFETIME_BOUND;
+    LegacyInlineBox* previousLeafOnLine() const LIFETIME_BOUND;
 
     // FIXME: Hide this once all callers are using tighter types.
     RenderObject& renderer() const { return *m_renderer; }
 
-    LegacyInlineFlowBox* parent() const
+    LegacyInlineFlowBox* parent() const LIFETIME_BOUND
     {
         assertNotDeleted();
         ASSERT_WITH_SECURITY_IMPLICATION(!m_hasBadParent);
@@ -143,8 +137,8 @@ public:
     }
     void setParent(LegacyInlineFlowBox* par) { m_parent = par; }
 
-    const LegacyRootInlineBox& root() const;
-    LegacyRootInlineBox& root();
+    const LegacyRootInlineBox& NODELETE root() const;
+    LegacyRootInlineBox& NODELETE root();
 
     // x() is the left side of the box in the containing block's coordinate system.
     void setX(float x) { m_topLeft.setX(x); }
@@ -156,7 +150,7 @@ public:
     float y() const { return m_topLeft.y(); }
     float top() const { return m_topLeft.y(); }
 
-    const FloatPoint& topLeft() const { return m_topLeft; }
+    const FloatPoint& topLeft() const LIFETIME_BOUND { return m_topLeft; }
 
     float width() const { return isHorizontal() ? logicalWidth() : logicalHeight(); }
     float height() const { return isHorizontal() ? logicalHeight() : logicalWidth(); }
@@ -196,9 +190,6 @@ public:
     FloatRect logicalFrameRect() const { return isHorizontal() ? FloatRect(m_topLeft.x(), m_topLeft.y(), m_logicalWidth, logicalHeight()) : FloatRect(m_topLeft.y(), m_topLeft.x(), m_logicalWidth, logicalHeight()); }
     FloatRect frameRect() const { return FloatRect(topLeft(), size()); }
 
-    WEBCORE_EXPORT virtual LayoutUnit baselinePosition(FontBaseline baselineType) const;
-    WEBCORE_EXPORT virtual LayoutUnit lineHeight() const;
-
     WEBCORE_EXPORT virtual int caretMinOffset() const;
     WEBCORE_EXPORT virtual int caretMaxOffset() const;
 
@@ -221,9 +212,9 @@ public:
     void invalidateParentChildList();
 #endif
 
-    const RenderStyle& lineStyle() const { return m_bitfields.firstLine() ? renderer().firstLineStyle() : renderer().style(); }
-    
-    VerticalAlign verticalAlign() const { return lineStyle().verticalAlign(); }
+    CheckedRef<const Style::ComputedStyle> lineStyle() const;
+
+    inline const Style::VerticalAlign& verticalAlign() const LIFETIME_BOUND; // Defined in LegacyInlineBoxInlines.h
 
     // Use with caution! The type is not checked!
     RenderBoxModelObject* boxModelObject() const
@@ -237,10 +228,10 @@ public:
     void flipForWritingMode(FloatRect&) const;
     FloatPoint flipForWritingMode(const FloatPoint&) const;
     void flipForWritingMode(LayoutRect&) const;
-    LayoutPoint flipForWritingMode(const LayoutPoint&) const;
+    LayoutPoint NODELETE flipForWritingMode(const LayoutPoint&) const;
 
     bool knownToHaveNoOverflow() const { return m_bitfields.knownToHaveNoOverflow(); }
-    void clearKnownToHaveNoOverflow();
+    void NODELETE clearKnownToHaveNoOverflow();
 
     // For LegacyInlineTextBox
     bool isInGlyphDisplayListCache() const { return m_bitfields.isInGlyphDisplayListCache(); }
@@ -361,9 +352,7 @@ protected:
 
 #if ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 
-inline LegacyInlineBox::~LegacyInlineBox()
-{
-}
+inline LegacyInlineBox::~LegacyInlineBox() = default;
 
 inline void LegacyInlineBox::assertNotDeleted() const
 {

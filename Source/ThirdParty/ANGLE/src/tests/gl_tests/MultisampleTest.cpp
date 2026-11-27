@@ -416,6 +416,72 @@ TEST_P(MultisampleTestES3, RenderPassResolveToFBOThenSwap)
     }
 }
 
+// Test that CopyTexImage2D from an MSAA default fbo works
+TEST_P(MultisampleTestES3, CopyTexImage2DFromMsaaDefaultFbo)
+{
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_sample_variables : require
+precision highp float;
+out vec4 my_FragColor;
+
+void main()
+{
+    switch (uint(gl_SampleID))
+    {
+        case 0u:
+            my_FragColor = vec4(1.0, 0.9, 0.8, 0.7);
+            break;
+        case 1u:
+            my_FragColor = vec4(0.0, 0.1, 0.2, 0.3);
+            break;
+        case 2u:
+            my_FragColor = vec4(0.5, 0.25, 0.75, 1.0);
+            break;
+        case 3u:
+            my_FragColor = vec4(0.4, 0.6, 0.2, 0.8);
+            break;
+        default:
+            my_FragColor = vec4(0.0);
+            break;
+    }
+}
+)";
+
+    ANGLE_GL_PROGRAM(programMs, essl3_shaders::vs::Simple(), kFS);
+    glUseProgram(programMs);
+
+    // Clear the default framebuffer and draw
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.25, 0.5, 0.75, 0.25);
+    glClear(GL_COLOR_BUFFER_BIT);
+    drawQuad(programMs, essl3_shaders::PositionAttrib(), 0.0);
+
+    // Create a texture for copy
+    GLTexture copyTexture;
+    glBindTexture(GL_TEXTURE_2D, copyTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kWindowWidth, kWindowHeight, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    constexpr int kCopyWidth  = 10;
+    constexpr int kCopyHeight = 5;
+    // Copy MSAA default framebuffer into the texture
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, kCopyWidth, kCopyHeight, 0);
+    ASSERT_GL_NO_ERROR();
+
+    GLFramebuffer readFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, copyTexture, 0);
+
+    const GLColor kResult = GLColor(121, 118, 124, 178);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, kResult, 1);
+    EXPECT_PIXEL_COLOR_NEAR(kCopyWidth - 1, 0, kResult, 1);
+    EXPECT_PIXEL_COLOR_NEAR(0, kCopyHeight - 1, kResult, 1);
+    EXPECT_PIXEL_COLOR_NEAR(kCopyWidth - 1, kCopyHeight - 1, kResult, 1);
+    EXPECT_PIXEL_COLOR_NEAR(kCopyWidth / 2, kCopyHeight / 2, kResult, 1);
+}
+
 class MultisampleResolveTest : public ANGLETest<>
 {
   protected:
@@ -1077,6 +1143,135 @@ TEST_P(MultisampleResolveTest, DrawAndResolveMultipleTimes)
     EXPECT_PIXEL_RECT_EQ(width / 2, height / 4, width / 4, height / 4, GLColor(128, 255, 128, 255));
     EXPECT_PIXEL_RECT_EQ(width / 4, height / 2, width / 4, height / 4, GLColor(128, 128, 255, 255));
     EXPECT_PIXEL_RECT_EQ(width / 2, height / 2, width / 4, height / 4, GLColor(255, 255, 128, 255));
+}
+
+// Tests that a single blit which resolves color, depth and stencil at once does not drop the
+// depth/stencil aspects.
+//
+// The blit is deliberately shaped so that backends take their fastest resolve path: source and
+// destination are the same size, the blit covers the whole surface and there is no scaling,
+// flipping, scissoring or color masking.  On D3D11 this is the shape that maps onto
+// ID3D11DeviceContext::ResolveSubresource.  A fast path that only handles the color aspect would
+// silently lose the depth and stencil resolve, so all three are verified afterwards.
+TEST_P(MultisampleResolveTest, ResolveColorDepthStencilInOneBlit)
+{
+    constexpr GLint kSize       = 16;
+    constexpr GLint kSamples    = 4;
+    constexpr GLint kStencilRef = 0x55;
+    // drawQuad() takes a clip space Z, which maps to a depth value of (z + 1) / 2.
+    constexpr GLfloat kQuadZ    = 0.3f;   // depth 0.65
+    constexpr GLfloat kNearerZ  = -0.1f;  // depth 0.45
+    constexpr GLfloat kFartherZ = 0.7f;   // depth 0.85
+
+    // Multisampled framebuffer with color, depth and stencil.
+    GLRenderbuffer msaaColor;
+    glBindRenderbuffer(GL_RENDERBUFFER, msaaColor);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, kSamples, GL_RGBA8, kSize, kSize);
+
+    GLRenderbuffer msaaDepthStencil;
+    glBindRenderbuffer(GL_RENDERBUFFER, msaaDepthStencil);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, kSamples, GL_DEPTH24_STENCIL8, kSize, kSize);
+
+    GLFramebuffer msaaFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, msaaFBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msaaColor);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                              msaaDepthStencil);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Single sampled framebuffer with matching formats and dimensions.
+    GLRenderbuffer resolveColor;
+    glBindRenderbuffer(GL_RENDERBUFFER, resolveColor);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, kSize, kSize);
+
+    GLRenderbuffer resolveDepthStencil;
+    glBindRenderbuffer(GL_RENDERBUFFER, resolveDepthStencil);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kSize, kSize);
+
+    GLFramebuffer resolveFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, resolveFBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolveColor);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                              resolveDepthStencil);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, kSize, kSize);
+
+    // Give the resolve target known contents that differ from what the resolve should produce, so
+    // that a dropped aspect is caught deterministically rather than reading undefined data.
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClearDepthf(1.0f);
+    glClearStencil(0);
+    glStencilMask(0xFF);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+    // Render red at depth kQuadZ with stencil kStencilRef into the multisampled framebuffer.
+    glBindFramebuffer(GL_FRAMEBUFFER, msaaFBO);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_ALWAYS);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_ALWAYS, kStencilRef, 0xFF);
+    glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
+
+    ANGLE_GL_PROGRAM(red, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    drawQuad(red, essl1_shaders::PositionAttrib(), kQuadZ);
+    ASSERT_GL_NO_ERROR();
+
+    // Resolve all three aspects in one full surface, unscaled, unflipped blit.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, msaaFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolveFBO);
+    glBlitFramebuffer(0, 0, kSize, kSize, 0, 0, kSize, kSize,
+                      GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
+                      GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Verify color.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, resolveFBO);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+
+    ANGLE_GL_PROGRAM(green, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    ANGLE_GL_PROGRAM(blue, essl1_shaders::vs::Simple(), essl1_shaders::fs::Blue());
+
+    // Verify depth: with GL_LESS, a quad in front of the resolved depth must pass and a quad
+    // behind it must fail.  If the depth resolve was dropped the buffer would still be at the
+    // cleared value of 1.0 and the second draw would incorrectly pass.
+    glBindFramebuffer(GL_FRAMEBUFFER, resolveFBO);
+    glDisable(GL_STENCIL_TEST);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_FALSE);
+
+    drawQuad(green, essl1_shaders::PositionAttrib(), kNearerZ);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::green);
+
+    drawQuad(blue, essl1_shaders::PositionAttrib(), kFartherZ);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::green);
+
+    // Verify stencil: only draws referencing kStencilRef may pass.  If the stencil resolve was
+    // dropped the buffer would still be at the cleared value of 0 and the results would invert.
+    // The color buffer is reset first so that these checks cannot be masked by the pixels the
+    // depth checks above left behind.
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glEnable(GL_STENCIL_TEST);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+
+    // Depth testing is off for these draws, so the Z here only needs to be inside the frustum.
+    glStencilFunc(GL_EQUAL, kStencilRef, 0xFF);
+    drawQuad(red, essl1_shaders::PositionAttrib(), kQuadZ);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+
+    glStencilFunc(GL_NOTEQUAL, kStencilRef, 0xFF);
+    drawQuad(blue, essl1_shaders::PositionAttrib(), kQuadZ);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+
+    ASSERT_GL_NO_ERROR();
 }
 
 // Tests resolve after the read framebuffer's attachment has been swapped out.

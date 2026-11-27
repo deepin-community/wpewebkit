@@ -29,25 +29,35 @@
 
 #pragma once
 
-#include "CSSParserContext.h"
-#include "CSSParserTokenRange.h"
+#include <WebCore/CSSParserContext.h>
+#include <WebCore/CSSParserTokenRange.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
+namespace Style {
+enum class IsAttrTainted : bool;
+}
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSVariableData);
 class CSSVariableData : public RefCounted<CSSVariableData> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSVariableData);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSVariableData, CSSVariableData);
 public:
     static Ref<CSSVariableData> create(const CSSParserTokenRange& range, const CSSParserContext& context = strictCSSParserContext())
     {
         return adoptRef(*new CSSVariableData(range, context));
     }
+    static Ref<CSSVariableData> create(const CSSParserTokenRange& range, Style::IsAttrTainted isAttrTainted, const CSSParserContext& context = strictCSSParserContext())
+    {
+        return adoptRef(*new CSSVariableData(range, isAttrTainted, context));
+    }
 
-    CSSParserTokenRange tokenRange() const { return m_tokens; }
-    const CSSParserContext& context() const { return m_context; }
+    CSSParserTokenRange tokenRange() const LIFETIME_BOUND { return m_tokens; }
+    const CSSParserContext& context() const LIFETIME_BOUND { return m_context; }
 
-    const Vector<CSSParserToken>& tokens() const { return m_tokens; }
+    const Vector<CSSParserToken>& tokens() const LIFETIME_BOUND { return m_tokens; }
+
+    Style::IsAttrTainted isAttrTainted() const { return m_isAttrTainted; }
 
     bool operator==(const CSSVariableData& other) const;
 
@@ -55,11 +65,13 @@ public:
 
 private:
     CSSVariableData(const CSSParserTokenRange&, const CSSParserContext&);
-    template<typename CharacterType> void updateBackingStringsInTokens();
+    CSSVariableData(const CSSParserTokenRange&, Style::IsAttrTainted, const CSSParserContext&);
+    template<typename CharacterType> void NODELETE updateBackingStringsInTokens();
 
     String m_backingString;
     Vector<CSSParserToken> m_tokens;
     const CSSParserContext m_context;
+    Style::IsAttrTainted m_isAttrTainted { };
 };
 
 } // namespace WebCore

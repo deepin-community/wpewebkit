@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012, 2013 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2012, 2013 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,61 +29,61 @@
 
 #include "Element.h"
 #include "ElementData.h"
-#include <wtf/UnalignedAccess.h>
+#include "SecurityOrigin.h"
+#include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-// Do comparisons 8 bytes-at-a-time on architectures where it's safe.
-#if (CPU(X86_64) || CPU(ARM64)) && !ASAN_ENABLED
-ALWAYS_INLINE bool equalAttributes(const uint8_t* a, const uint8_t* b, unsigned bytes)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentSharedObjectPool);
+
+static HashMap<SecurityOriginData, size_t>& NODELETE peakSizeInPast()
 {
-    unsigned length = bytes >> 3;
-    for (unsigned i = 0; i != length; ++i) {
-        if (WTF::unalignedLoad<uint64_t>(a) != WTF::unalignedLoad<uint64_t>(b))
-            return false;
-
-        a += sizeof(uint64_t);
-        b += sizeof(uint64_t);
-    }
-
-    ASSERT(!(bytes & 4));
-    ASSERT(!(bytes & 2));
-    ASSERT(!(bytes & 1));
-
-    return true;
+    static MainThreadNeverDestroyed<HashMap<SecurityOriginData, size_t>> map;
+    return map;
 }
-#else
-ALWAYS_INLINE bool equalAttributes(const uint8_t* a, const uint8_t* b, unsigned bytes)
+
+DocumentSharedObjectPool::DocumentSharedObjectPool(const SecurityOrigin& origin)
+    : m_domain(origin.data())
 {
-    return !memcmp(a, b, bytes);
+    m_shareableElementDataCache.reserveInitialCapacity(peakSizeInPast().get(m_domain));
 }
-#endif
+
+DocumentSharedObjectPool::~DocumentSharedObjectPool()
+{
+    size_t currentSizeRoundedUp = roundUpToPowerOfTwo(m_shareableElementDataCache.size());
+    auto result = peakSizeInPast().add(m_domain, currentSizeRoundedUp);
+    if (!result.isNewEntry && currentSizeRoundedUp > result.iterator->value)
+        result.iterator->value = currentSizeRoundedUp;
+}
 
 struct DocumentSharedObjectPool::ShareableElementDataHash {
-    static unsigned hash(const Ref<ShareableElementData>& data)
+    static unsigned NODELETE hash(const Ref<ShareableElementData>& data)
     {
-        return computeHash(std::span<const Attribute> { data->m_attributeArray, data->length() });
+        return computeHash(data->attributes());
     }
     static bool equal(const Ref<ShareableElementData>& a, const Ref<ShareableElementData>& b)
     {
-        if (a->length() != b->length())
-            return false;
-        return equalAttributes(reinterpret_cast<const uint8_t*>(a->m_attributeArray), reinterpret_cast<const uint8_t*>(b->m_attributeArray), a->length() * sizeof(Attribute));
+        // We need to disable type checking because std::has_unique_object_representations_v<Attribute>
+        // return false. Attribute contains pointers but memcmp() is safe because those pointers were
+        // atomized.
+        return equalSpans<WTF::IgnoreTypeChecks::Yes>(a->attributes(), b->attributes());
     }
     static constexpr bool safeToCompareToEmptyOrDeleted = false;
 };
 
 struct AttributeSpanTranslator {
-    static unsigned hash(std::span<const Attribute> attributes)
+    static unsigned NODELETE hash(std::span<const Attribute> attributes)
     {
         return computeHash(attributes);
     }
 
     static bool equal(const Ref<ShareableElementData>& a, std::span<const Attribute> b)
     {
-        if (a->length() != b.size())
-            return false;
-        return equalAttributes(reinterpret_cast<const uint8_t*>(a->m_attributeArray), reinterpret_cast<const uint8_t*>(b.data()), b.size() * sizeof(Attribute));
+        // We need to disable type checking because std::has_unique_object_representations_v<Attribute>
+        // return false. Attribute contains pointers but memcmp() is safe because those pointers were
+        // atomized.
+        return equalSpans<WTF::IgnoreTypeChecks::Yes>(a->attributes(), b);
     }
 
     static void translate(Ref<ShareableElementData>& location, std::span<const Attribute> attributes, unsigned /*hash*/)

@@ -26,12 +26,14 @@
 #pragma once
 
 #include "DatabaseUtilities.h"
+#include "ITPThirdPartyDataForSpecificFirstParty.h"
 #include "ResourceLoadStatisticsClassifier.h"
 #include "WebResourceLoadStatisticsStore.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/FrameIdentifier.h>
 #include <pal/SessionID.h>
 #include <wtf/Forward.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/StdSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -39,15 +41,6 @@
 #if HAVE(CORE_PREDICTION)
 #include "ResourceLoadStatisticsClassifierCocoa.h"
 #endif
-
-namespace WebKit {
-class ResourceLoadStatisticsStore;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::ResourceLoadStatisticsStore> : std::true_type { };
-}
 
 namespace WebCore {
 class KeyedDecoder;
@@ -74,8 +67,7 @@ public:
     int monthDay() const { return m_monthDay; }
 
     friend bool operator==(const OperatingDate&, const OperatingDate&) = default;
-    bool operator<(const OperatingDate& other) const;
-    bool operator<=(const OperatingDate& other) const;
+    friend auto operator<=>(const OperatingDate& a, const OperatingDate& b) { return a.secondsSinceEpoch() <=> b.secondsSinceEpoch(); }
     
     OperatingDate(int year, int month, int monthDay)
         : m_year(year)
@@ -95,7 +87,7 @@ enum class CanRequestStorageAccessWithoutUserInteraction : bool { No, Yes };
 enum class DataRemovalFrequency : uint8_t { Never, Short, Long };
 
 // This is always constructed / used / destroyed on the WebResourceLoadStatisticsStore's statistics queue.
-class ResourceLoadStatisticsStore final : public DatabaseUtilities, public CanMakeWeakPtr<ResourceLoadStatisticsStore> {
+class ResourceLoadStatisticsStore final : public RefCountedAndCanMakeWeakPtr<ResourceLoadStatisticsStore>,  public DatabaseUtilities {
     WTF_MAKE_TZONE_ALLOCATED(ResourceLoadStatisticsStore);
 public:
     using ResourceLoadStatistics = WebCore::ResourceLoadStatistics;
@@ -111,28 +103,34 @@ public:
     using DomainInNeedOfStorageAccess = WebCore::RegistrableDomain;
     using OpenerDomain = WebCore::RegistrableDomain;
     
-    ResourceLoadStatisticsStore(WebResourceLoadStatisticsStore&, SuspendableWorkQueue&, ShouldIncludeLocalhost, const String& storageDirectoryPath, PAL::SessionID);
-    virtual ~ResourceLoadStatisticsStore();
+    static Ref<ResourceLoadStatisticsStore> create(WebResourceLoadStatisticsStore& webResourceLoadStatisticsStore, SuspendableWorkQueue& suspendableWorkQueue, ShouldIncludeLocalhost shouldIncludeLocalhost, const String& storageDirectoryPath, PAL::SessionID sessionID)
+    {
+        return adoptRef(*new ResourceLoadStatisticsStore(webResourceLoadStatisticsStore, suspendableWorkQueue, shouldIncludeLocalhost, storageDirectoryPath, sessionID));
+    }
+
+    ~ResourceLoadStatisticsStore();
 
     void clear(CompletionHandler<void()>&&);
     bool isEmpty() const;
     Vector<ITPThirdPartyData> aggregatedThirdPartyData() const;
     void updateCookieBlocking(CompletionHandler<void()>&&);
-    void processStatisticsAndDataRecords();
-    void cancelPendingStatisticsProcessingRequest();
+    void processStatisticsAndDataRecords(CompletionHandler<void()>&&);
+    void NODELETE cancelPendingStatisticsProcessingRequest();
     void mergeStatistics(Vector<ResourceLoadStatistics>&&);
     void runIncrementalVacuumCommand();
-    void dumpResourceLoadStatistics(CompletionHandler<void(String&&)>&&);
+    void dumpResourceLoadStatistics(CompletionHandler<void(const String&)>&&);
     bool isNewResourceLoadStatisticsDatabaseFile() const { return m_isNewResourceLoadStatisticsDatabaseFile; }
     void setIsNewResourceLoadStatisticsDatabaseFile(bool isNewResourceLoadStatisticsDatabaseFile) { m_isNewResourceLoadStatisticsDatabaseFile = isNewResourceLoadStatisticsDatabaseFile; }
 
     void requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&&, WebCore::PageIdentifier openerID, OpenerDomain&&, CanRequestStorageAccessWithoutUserInteraction);
     void removeAllStorageAccess(CompletionHandler<void()>&&);
 
+    HashSet<RegistrableDomain> loadWebsitesWithUserInteraction();
+
     void grandfatherExistingWebsiteData(CompletionHandler<void()>&&);
     void setGrandfathered(const RegistrableDomain&, bool value);
     bool isGrandfathered(const RegistrableDomain&) const;
-    void setGrandfatheringTime(Seconds);
+    void NODELETE setGrandfatheringTime(Seconds);
 
     bool isRegisteredAsSubresourceUnder(const SubResourceDomain&, const TopFrameDomain&) const;
     bool isRegisteredAsSubFrameUnder(const SubFrameDomain&, const TopFrameDomain&) const;
@@ -152,19 +150,18 @@ public:
     void setTopFrameUniqueRedirectTo(const TopFrameDomain&, const RedirectDomain&);
     void setTopFrameUniqueRedirectFrom(const TopFrameDomain&, const RedirectDomain&);
 
-    void setIsRunningTest(bool);
+    void NODELETE setIsRunningTest(bool);
     void logTestingEvent(String&&);
     void setTimeAdvanceForTesting(Seconds);
 
-    void setMaxStatisticsEntries(size_t maximumEntryCount);
-    void setPruneEntriesDownTo(size_t pruneTargetCount);
+    void NODELETE setMaxStatisticsEntries(size_t maximumEntryCount);
+    void NODELETE setPruneEntriesDownTo(size_t pruneTargetCount);
     void resetParametersToDefaultValues();
 
-    void setNotifyPagesWhenDataRecordsWereScanned(bool);
     bool shouldSkip(const RegistrableDomain&) const;
-    void setShouldClassifyResourcesBeforeDataRecordsRemoval(bool);
-    void setTimeToLiveUserInteraction(Seconds);
-    void setMinimumTimeBetweenDataRecordsRemoval(Seconds);
+    void NODELETE setShouldClassifyResourcesBeforeDataRecordsRemoval(bool);
+    void NODELETE setTimeToLiveUserInteraction(Seconds);
+    void NODELETE setMinimumTimeBetweenDataRecordsRemoval(Seconds);
     void setResourceLoadStatisticsDebugMode(bool);
     bool isDebugModeEnabled() const { return m_debugModeEnabled; };
     void setPrevalentResourceForDebugMode(const RegistrableDomain&);
@@ -174,8 +171,8 @@ public:
     bool isSameSiteStrictEnforcementEnabled() const { return m_sameSiteStrictEnforcementEnabled == WebCore::SameSiteStrictEnforcementEnabled::Yes; };
     void setFirstPartyWebsiteDataRemovalMode(WebCore::FirstPartyWebsiteDataRemovalMode mode) { m_firstPartyWebsiteDataRemovalMode = mode; }
     WebCore::FirstPartyWebsiteDataRemovalMode firstPartyWebsiteDataRemovalMode() const { return m_firstPartyWebsiteDataRemovalMode; }
-    void setPersistedDomains(HashSet<RegistrableDomain>&& domains) { m_persistedDomains = WTFMove(domains); }
-    void setStandaloneApplicationDomain(RegistrableDomain&& domain) { m_standaloneApplicationDomain = WTFMove(domain); }
+    void setPersistedDomains(HashSet<RegistrableDomain>&& domains) { m_persistedDomains = WTF::move(domains); }
+    void setStandaloneApplicationDomain(RegistrableDomain&& domain) { m_standaloneApplicationDomain = WTF::move(domain); }
 #if ENABLE(APP_BOUND_DOMAINS)
     void setAppBoundDomains(HashSet<RegistrableDomain>&&);
 #endif
@@ -185,6 +182,10 @@ public:
 
     void hasStorageAccess(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebCore::PageIdentifier, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&&);
     void requestStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&&);
+    void queryStorageAccessPermission(const SubFrameDomain&, const TopFrameDomain&, CompletionHandler<void(WebCore::PermissionState)>&&);
+    enum class AddedRecord : bool { No, Yes };
+    std::pair<AddedRecord, std::optional<unsigned>> grantStorageAccessPermission(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subFrameDomain);
+    void revokeStorageAccessPermission(const RegistrableDomain&);
     void grantStorageAccess(SubFrameDomain&&, TopFrameDomain&&, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
 
     void logFrameNavigation(const NavigatedToDomain&, const TopFrameDomain&, const NavigatedFromDomain&, bool isRedirect, bool isMainFrame, Seconds delayAfterMainFrameDocumentLoad, bool wasPotentiallyInitiatedByUser);
@@ -205,7 +206,7 @@ public:
 
     void didCreateNetworkProcess();
 
-    const WebResourceLoadStatisticsStore& store() const { return m_store; }
+    const WebResourceLoadStatisticsStore& store() const { return m_store.get(); }
 
     bool domainIDExistsInDatabase(int);
     bool observedDomainNavigationWithLinkDecoration(int);
@@ -216,7 +217,9 @@ public:
     static void interruptAllDatabases();
 
 private:
-    WebResourceLoadStatisticsStore& store() { return m_store; }
+    ResourceLoadStatisticsStore(WebResourceLoadStatisticsStore&, SuspendableWorkQueue&, ShouldIncludeLocalhost, const String& storageDirectoryPath, PAL::SessionID);
+
+    WebResourceLoadStatisticsStore& store() { return m_store.get(); }
 
     struct Parameters {
         size_t pruneEntriesDownTo { 800 };
@@ -229,16 +232,15 @@ private:
         Seconds clientSideCookiesForLinkDecorationTargetPageAgeCapTime { 24_h };
         Seconds minDelayAfterMainFrameDocumentLoadToNotBeARedirect { 5_s };
         size_t minimumTopFrameRedirectsForSameSiteStrictEnforcement { 10 };
-        bool shouldNotifyPagesWhenDataRecordsWereScanned { false };
         bool shouldClassifyResourcesBeforeDataRecordsRemoval { true };
         bool isRunningTest { false };
     };
-    const Parameters& parameters() const { return m_parameters; }
-    WallTime& endOfGrandfatheringTimestamp() { return m_endOfGrandfatheringTimestamp; }
-    const WallTime& endOfGrandfatheringTimestamp() const { return m_endOfGrandfatheringTimestamp; }
+    const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
+    WallTime& endOfGrandfatheringTimestamp() LIFETIME_BOUND { return m_endOfGrandfatheringTimestamp; }
+    const WallTime& endOfGrandfatheringTimestamp() const LIFETIME_BOUND { return m_endOfGrandfatheringTimestamp; }
     void clearEndOfGrandfatheringTimeStamp() { m_endOfGrandfatheringTimestamp = { }; }
-    const RegistrableDomain& debugManualPrevalentResource() const { return m_debugManualPrevalentResource; }
-    const RegistrableDomain& debugStaticPrevalentResource() const { return m_debugStaticPrevalentResource; }
+    const RegistrableDomain& debugManualPrevalentResource() const LIFETIME_BOUND { return m_debugManualPrevalentResource; }
+    const RegistrableDomain& debugStaticPrevalentResource() const LIFETIME_BOUND { return m_debugStaticPrevalentResource; }
     void debugBroadcastConsoleMessage(MessageSource, MessageLevel, const String& message);
     void debugLogDomainsInBatches(ASCIILiteral action, const RegistrableDomainsToBlockCookiesFor&);
     bool debugLoggingEnabled() const { return m_debugLoggingEnabled; }
@@ -254,7 +256,7 @@ private:
     void mergeStatistic(const ResourceLoadStatistics&);
     void merge(WebCore::SQLiteStatement*, const ResourceLoadStatistics&);
     void incrementRecordsDeletedCountForDomains(HashSet<RegistrableDomain>&&);
-    bool insertObservedDomain(const ResourceLoadStatistics&) WARN_UNUSED_RETURN;
+    [[nodiscard]] bool insertObservedDomain(const ResourceLoadStatistics&);
     void insertDomainRelationships(const ResourceLoadStatistics&);
     void insertDomainRelationshipList(const String&, const HashSet<RegistrableDomain>&, unsigned);
     bool relationshipExists(WebCore::SQLiteStatementAutoResetScope&, std::optional<unsigned> firstDomainID, const RegistrableDomain& secondDomain) const;
@@ -267,6 +269,7 @@ private:
     Vector<RegistrableDomain> domainsToBlockButKeepCookiesFor() const;
     Vector<RegistrableDomain> domainsWithUserInteractionAsFirstParty() const;
     HashMap<TopFrameDomain, Vector<SubResourceDomain>> domainsWithStorageAccess() const;
+    void updateObservedDomainsList(ASCIILiteral updateClause, const HashSet<RegistrableDomain>&, ASCIILiteral logContext);
 
     struct DomainData {
         unsigned domainID;
@@ -308,16 +311,15 @@ private:
     void grantStorageAccessInternal(SubFrameDomain&&, TopFrameDomain&&, std::optional<WebCore::FrameIdentifier>, WebCore::PageIdentifier, WebCore::StorageAccessPromptWasShown, WebCore::StorageAccessScope, CanRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(WebCore::StorageAccessWasGranted)>&&);
     void markAsPrevalentIfHasRedirectedToPrevalent();
     
-    enum class AddedRecord : bool { No, Yes };
     // reason is used for logging purpose.
-    std::pair<AddedRecord, std::optional<unsigned>> ensureResourceStatisticsForRegistrableDomain(const RegistrableDomain&, ASCIILiteral reason) WARN_UNUSED_RETURN;
+    [[nodiscard]] std::pair<AddedRecord, std::optional<unsigned>> ensureResourceStatisticsForRegistrableDomain(const RegistrableDomain&, ASCIILiteral reason);
     bool shouldRemoveAllWebsiteDataFor(const DomainData&, bool shouldCheckForGrandfathering);
     bool shouldRemoveAllButCookiesFor(const DomainData&, bool shouldCheckForGrandfathering);
     bool shouldEnforceSameSiteStrictFor(DomainData&, bool shouldCheckForGrandfathering);
     void setIsScheduledForAllScriptWrittenStorageRemoval(const RegistrableDomain&, DataRemovalFrequency);
     DataRemovalFrequency dataRemovalFrequency(const RegistrableDomain&) const;
     void clearTopFrameUniqueRedirectsToSinceSameSiteStrictEnforcement(const NavigatedToDomain&, CompletionHandler<void()>&&);
-    bool shouldEnforceSameSiteStrictForSpecificDomain(const RegistrableDomain&) const;
+    bool NODELETE shouldEnforceSameSiteStrictForSpecificDomain(const RegistrableDomain&) const;
     RegistrableDomainsToDeleteOrRestrictWebsiteDataFor registrableDomainsToDeleteOrRestrictWebsiteDataFor();
 
     bool shouldRemoveDataRecords() const;
@@ -332,10 +334,10 @@ private:
     Seconds getMostRecentlyUpdatedTimestamp(const RegistrableDomain&, const TopFrameDomain&) const;
     const MemoryCompactLookupOnlyRobinHoodHashMap<String, TableAndIndexPair>& expectedTableAndIndexQueries() final;
     std::span<const ASCIILiteral> sortedTables() final;
-    String ensureAndMakeDomainList(const HashSet<RegistrableDomain>&);
-    std::optional<WallTime> mostRecentUserInteractionTime(const DomainData&);
+    Vector<RegistrableDomain> ensureAndMakeDomainList(const HashSet<RegistrableDomain>&);
+    std::optional<WallTime> NODELETE mostRecentUserInteractionTime(const DomainData&);
     void grandfatherDataForDomains(const HashSet<RegistrableDomain>&);
-    bool areAllThirdPartyCookiesBlockedUnder(const TopFrameDomain&);
+    bool areAllUnpartitionedThirdPartyCookiesBlockedUnder(const TopFrameDomain&);
     bool hasStatisticsExpired(WallTime mostRecentUserInteractionTime, OperatingDatesWindow) const;
     void scheduleStatisticsProcessingRequestIfNecessary();
     void pruneStatisticsIfNeeded();
@@ -354,8 +356,8 @@ private:
     void deleteTable(StringView);
     void destroyStatements() final;
 
-    WebResourceLoadStatisticsStore& m_store;
-    Ref<SuspendableWorkQueue> m_workQueue;
+    CheckedRef<WebResourceLoadStatisticsStore> m_store;
+    const Ref<SuspendableWorkQueue> m_workQueue;
 #if HAVE(CORE_PREDICTION)
     ResourceLoadStatisticsClassifierCocoa m_resourceLoadStatisticsClassifier;
 #else

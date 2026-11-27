@@ -58,7 +58,7 @@ public:
 
     void invalidate();
 
-    WebProcessProxy* process() const;
+    WebProcessProxy* NODELETE process() const;
 
 private:
     WebOpenPanelResultListenerProxy(WebPageProxy*, WebProcessProxy&);
@@ -68,3 +68,7 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebOpenPanelResultListenerProxy)
+static bool isType(const API::Object& object) { return object.type() == API::Object::Type::FramePolicyListener; }
+SPECIALIZE_TYPE_TRAITS_END()

@@ -5,7 +5,9 @@
 //
 // SimpleOperationTest:
 //   Basic GL commands such as linking a program, initializing a buffer, etc.
+//
 
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
 #include <vector>
@@ -67,7 +69,7 @@ void SimpleOperationTest::verifyBuffer(const std::vector<uint8_t> &data, GLenum 
     ASSERT_GL_NO_ERROR();
 
     std::vector<uint8_t> readbackData(data.size());
-    memcpy(readbackData.data(), mapPointer, data.size());
+    ANGLE_UNSAFE_TODO(memcpy(readbackData.data(), mapPointer, data.size()));
     glUnmapBufferOES(GL_ARRAY_BUFFER);
 
     EXPECT_EQ(data, readbackData);
@@ -212,6 +214,20 @@ TEST_P(SimpleOperationTest, ClearAndSwap)
     // behaviour of the test on the Vulkan back-end, so don't bother checking correctness.
     ASSERT_GL_NO_ERROR();
     ASSERT_FALSE(getGLWindow()->hasError());
+}
+
+// Deleting shader zero is no-op.
+TEST_P(SimpleOperationTest, DeleteShaderZero)
+{
+    glDeleteShader(0);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Deleting program zero is no-op.
+TEST_P(SimpleOperationTest, DeleteProgramZero)
+{
+    glDeleteProgram(0);
+    EXPECT_GL_NO_ERROR();
 }
 
 // Simple case of setting a scissor, enabled or disabled.
@@ -1049,8 +1065,10 @@ TEST_P(SimpleOperationTest, DrawWithCubeTexture)
     // tiles horizontally and three tiles vertically (hence the w4 and h3 variable naming).
     for (Vector2 &pos : positions)
     {
-        pos.data()[0] = pos.data()[0] * w4 * 2.0f - 1.0f;
-        pos.data()[1] = pos.data()[1] * h3 * 2.0f - 1.0f;
+        ANGLE_UNSAFE_TODO({
+            pos.data()[0] = pos.data()[0] * w4 * 2.0f - 1.0f;
+            pos.data()[1] = pos.data()[1] * h3 * 2.0f - 1.0f;
+        })
     }
 
     const Vector3 posX(1, 0, 0);
@@ -1177,7 +1195,7 @@ TEST_P(SimpleOperationTest, RenderToTexture)
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     glViewport(0, 0, kSize, kSize);
 
@@ -1209,7 +1227,7 @@ TEST_P(SimpleOperationTest, RenderbufferAttachment)
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     glViewport(0, 0, kSize, kSize);
 
@@ -1569,6 +1587,102 @@ TEST_P(SimpleOperationTest, DrawSingleMultiSampleWithAlphaToCoverage)
     glBlitFramebuffer(0, 0, 1, 1, 0, 0, 1, 1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+}
+
+// Test glGetRenderbufferParameteriv returned value for different render buffer
+TEST_P(SimpleOperationTest, GetRenderbufferParameter)
+{
+    GLint value = 0;
+    // call glGetRenderbufferParameteriv with renderbuffer bound to 0
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &value);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // generate an empty renderbuffer, then get all parameters, they should equal to default values
+    GLRenderbuffer renderBuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderBuffer);
+
+    // Retrieve all values
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &value);
+    ASSERT_EQ(value, GL_RGBA4);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_RED_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_GREEN_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_BLUE_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_ALPHA_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_DEPTH_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_STENCIL_SIZE, &value);
+    ASSERT_EQ(value, 0);
+
+    // set buffer storage, then get all renderbuffer parameters
+
+    // Allocate memory for renderbuffer
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, 32, 32);
+
+    /* Retrieve all values */
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &value);
+    ASSERT_EQ(value, 32);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &value);
+    ASSERT_EQ(value, 32);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &value);
+    ASSERT_EQ(value, GL_DEPTH_COMPONENT16);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_RED_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_GREEN_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_BLUE_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_ALPHA_SIZE, &value);
+    ASSERT_EQ(value, 0);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_DEPTH_SIZE, &value);
+    ASSERT_GE(value, 16);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_STENCIL_SIZE, &value);
+    ASSERT_EQ(value, 0);
+
+    // call glGetRenderbufferParameteriv with an invalid pname
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_INVALID_ENUM, &value);
+    EXPECT_GL_ERROR(GL_INVALID_ENUM);
+
+    // Call with invalid target with invalid target
+    glGetRenderbufferParameteriv(GL_INVALID_VALUE, GL_RENDERBUFFER_WIDTH, &value);
+    EXPECT_GL_ERROR(GL_INVALID_ENUM);
+}
+
+// Test that passing NULL to the shader parameter in the glGetAttachedShaders function
+// should return GL_INVALID_VALUE.
+TEST_P(SimpleOperationTest, NullParameterInGetAttachedShaders)
+{
+    GLsizei length;
+    GLuint attachedShaders[2] = {0u};
+    GLuint program            = glCreateProgram();
+    ASSERT_GL_NO_ERROR();
+
+    glGetAttachedShaders(program, 0, &length, NULL);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+
+    glGetAttachedShaders(program, 0, NULL, attachedShaders);
+    EXPECT_GL_ERROR(GL_NO_ERROR);
+}
+
+// Test that passing NULL separately to the range and precision parameters
+// in the glGetShaderPrecisionFormat function should return GL_INVALID_VALUE.
+TEST_P(SimpleOperationTest, NullParameterInGetShaderPrecisionFormat)
+{
+    GLint range[2], precision;
+
+    glGetShaderPrecisionFormat(GL_VERTEX_SHADER, GL_LOW_FLOAT, range, NULL);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+
+    glGetShaderPrecisionFormat(GL_VERTEX_SHADER, GL_LOW_FLOAT, NULL, &precision);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
 }
 
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these

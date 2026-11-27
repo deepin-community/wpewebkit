@@ -38,10 +38,10 @@ namespace WebCore {
 class DOMTokenList;
 
 class HTMLOutputElement final : public HTMLFormControlElement {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(HTMLOutputElement);
+    WTF_MAKE_TZONE_ALLOCATED(HTMLOutputElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLOutputElement);
 public:
-    static Ref<HTMLOutputElement> create(const QualifiedName&, Document&, HTMLFormElement*);
+    static Ref<HTMLOutputElement> create(const QualifiedName&, Document&);
     static Ref<HTMLOutputElement> create(Document&);
     ~HTMLOutputElement();
 
@@ -52,20 +52,20 @@ public:
     DOMTokenList& htmlFor();
     
 private:
-    HTMLOutputElement(const QualifiedName&, Document&, HTMLFormElement*);
+    HTMLOutputElement(const QualifiedName&, Document&);
 
     bool canContainRangeEndPoint() const final { return false; }
     bool computeWillValidate() const final { return false; }
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
     const AtomString& formControlType() const final;
-    bool isEnumeratable() const final { return true; }
+    bool NODELETE isEnumeratable() const final { return true; }
     bool isLabelable() const final { return true; }
     bool supportsFocus() const final;
     void reset() final;
 
     String m_defaultValueOverride;
-    std::unique_ptr<DOMTokenList> m_forTokens;
+    const std::unique_ptr<DOMTokenList> m_forTokens;
 };
 
 } // namespace WebCore

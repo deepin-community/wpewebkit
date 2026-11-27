@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,8 +27,8 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-#include "DFABytecodeInterpreter.h"
-#include "StyleSheetContents.h"
+#include <WebCore/DFABytecodeInterpreter.h>
+#include <WebCore/StyleSheetContents.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -44,20 +44,21 @@ public:
     enum class ShouldCompileCSS : bool { No, Yes };
     static Ref<ContentExtension> create(const String& identifier, Ref<CompiledContentExtension>&&, URL&&, ShouldCompileCSS);
 
-    const String& identifier() const { return m_identifier; }
-    const URL& extensionBaseURL() const { return m_extensionBaseURL; }
+    const String& identifier() const LIFETIME_BOUND { return m_identifier; }
+    const URL& extensionBaseURL() const LIFETIME_BOUND { return m_extensionBaseURL; }
     const CompiledContentExtension& compiledExtension() const { return m_compiledExtension.get(); }
-    StyleSheetContents* globalDisplayNoneStyleSheet();
+    StyleSheetContents* NODELETE globalDisplayNoneStyleSheet();
     const DFABytecodeInterpreter::Actions& topURLActions(const URL& topURL) const;
     const DFABytecodeInterpreter::Actions& frameURLActions(const URL& frameURL) const;
-    const Vector<uint64_t>& universalActions() const { return m_universalActions; }
+    const Vector<uint64_t>& universalActions() const LIFETIME_BOUND { return m_universalActions; }
+    DFABytecodeInterpreter::Actions interpretURLFilters(const String& url, ResourceFlags) const;
 
 private:
     ContentExtension(const String& identifier, Ref<CompiledContentExtension>&&, URL&&, ShouldCompileCSS);
-    uint32_t findFirstIgnorePreviousRules() const;
+    uint32_t findFirstIgnoreRule() const;
     
     String m_identifier;
-    Ref<CompiledContentExtension> m_compiledExtension;
+    const Ref<CompiledContentExtension> m_compiledExtension;
     URL m_extensionBaseURL;
 
     RefPtr<StyleSheetContents> m_globalDisplayNoneStyleSheet;
@@ -72,6 +73,7 @@ private:
     mutable DFABytecodeInterpreter::Actions m_cachedFrameURLActions;
 
     Vector<uint64_t> m_universalActions;
+    mutable DFABytecodeInterpreter m_urlFiltersInterpreter;
 };
 
 } // namespace ContentExtensions

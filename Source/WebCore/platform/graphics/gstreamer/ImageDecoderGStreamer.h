@@ -29,6 +29,7 @@
 #include "SharedBuffer.h"
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
@@ -38,7 +39,7 @@ class ImageDecoderGStreamerSample;
 void teardownGStreamerImageDecoders();
 
 class ImageDecoderGStreamer final : public ImageDecoder {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ImageDecoderGStreamer);
     WTF_MAKE_NONCOPYABLE(ImageDecoderGStreamer);
 public:
     static RefPtr<ImageDecoderGStreamer> create(FragmentedSharedBuffer&, const String& mimeType, AlphaOption, GammaAndColorProfileOption);
@@ -51,7 +52,7 @@ public:
     size_t bytesDecodedToDetermineProperties() const override { return 0; }
     static bool canDecodeType(const String& mimeType);
 
-    void setEncodedDataStatusChangeCallback(Function<void(EncodedDataStatus)>&& callback) final { m_encodedDataStatusChangedCallback = WTFMove(callback); }
+    void setEncodedDataStatusChangeCallback(Function<void(EncodedDataStatus)>&& callback) final { m_encodedDataStatusChangedCallback = WTF::move(callback); }
     EncodedDataStatus encodedDataStatus() const final;
     IntSize size() const final;
     size_t frameCount() const final { return m_sampleData.size(); }
@@ -64,7 +65,6 @@ public:
 
     Seconds frameDurationAtIndex(size_t) const final;
     bool frameHasAlphaAtIndex(size_t) const final;
-    unsigned frameBytesAtIndex(size_t, SubsamplingLevel = SubsamplingLevel::Default) const final;
 
     PlatformImagePtr createFrameImageAtIndex(size_t, SubsamplingLevel = SubsamplingLevel::Default, const DecodingOptions& = DecodingOptions(DecodingMode::Synchronous)) final;
 

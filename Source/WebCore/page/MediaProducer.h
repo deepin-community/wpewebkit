@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,10 @@
 
 #pragma once
 
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Platform.h>
 #include <wtf/WeakPtr.h>
-
-namespace WebCore {
-class MediaProducer;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MediaProducer> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -68,15 +61,17 @@ enum class MediaProducerMediaState : uint32_t {
     HasMutedSystemAudioCaptureDevice = 1 << 25,
     HasInterruptedSystemAudioCaptureDevice = 1 << 26,
     HasStreamingActivity = 1 << 27,
+    IsPromptingForWindowCapture = 1 << 28,
+    IsPromptingForScreenCapture = 1 << 29,
 };
 using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 
 enum class MediaProducerMediaCaptureKind : uint8_t {
-    Microphone,
-    Camera,
-    Display,
-    SystemAudio,
-    EveryKind,
+    Microphone = 1 << 0,
+    Camera = 1 << 1,
+    Display = 1 << 2,
+    SystemAudio = 1 << 3,
+    EveryKind = 1 << 4,
 };
 
 enum class MediaProducerMutedState : uint8_t {
@@ -85,11 +80,11 @@ enum class MediaProducerMutedState : uint8_t {
     VideoCaptureIsMuted = 1 << 2,
     ScreenCaptureIsMuted = 1 << 3,
     WindowCaptureIsMuted = 1 << 4,
-    SystemAudioCaptureIsMuted = 1 << 4,
+    SystemAudioCaptureIsMuted = 1 << 5,
 };
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
 
-class MediaProducer : public CanMakeWeakPtr<MediaProducer> {
+class MediaProducer : public AbstractRefCountedAndCanMakeWeakPtr<MediaProducer> {
 public:
     using MediaState = MediaProducerMediaState;
     using MutedState = MediaProducerMutedState;
@@ -104,6 +99,7 @@ public:
     static constexpr MediaStateFlags WindowCaptureMask = { MediaState::HasActiveWindowCaptureDevice, MediaState::HasMutedWindowCaptureDevice, MediaState::HasInterruptedWindowCaptureDevice };
     static constexpr MediaStateFlags ActiveDisplayCaptureMask = { MediaState::HasActiveScreenCaptureDevice, MediaState::HasActiveWindowCaptureDevice };
     static constexpr MediaStateFlags MutedDisplayCaptureMask = { MediaState::HasMutedScreenCaptureDevice, MediaState::HasMutedWindowCaptureDevice };
+    static constexpr MediaStateFlags IsPromptingForDisplayCaptureMask = { MediaState::IsPromptingForWindowCapture, MediaState::IsPromptingForScreenCapture };
     static constexpr MediaStateFlags DisplayCaptureMask = { ActiveDisplayCaptureMask | MutedDisplayCaptureMask };
 
     static constexpr MediaStateFlags SystemAudioCaptureMask = { MediaState::HasActiveSystemAudioCaptureDevice, MediaState::HasMutedSystemAudioCaptureDevice, MediaState::HasInterruptedSystemAudioCaptureDevice };
@@ -126,12 +122,27 @@ public:
         MediaState::HasInterruptedWindowCaptureDevice,
         MediaState::HasActiveSystemAudioCaptureDevice,
         MediaState::HasMutedSystemAudioCaptureDevice,
-        MediaState::HasInterruptedSystemAudioCaptureDevice
+        MediaState::HasInterruptedSystemAudioCaptureDevice,
+        MediaState::IsPromptingForWindowCapture,
+        MediaState::IsPromptingForScreenCapture,
     };
     static constexpr MediaStateFlags IsCapturingAudioMask = { MicrophoneCaptureMask | SystemAudioCaptureMask };
     static constexpr MediaStateFlags IsCapturingVideoMask = { VideoCaptureMask | DisplayCaptureMask };
 
     static bool isCapturing(MediaStateFlags state) { return state.containsAny(ActiveCaptureMask) || state.containsAny(MutedCaptureMask); }
+
+#if ENABLE(EXTENSION_CAPABILITIES)
+    static bool needsMediaCapability(MediaStateFlags state)
+    {
+        if (state.contains(MediaProducerMediaState::IsPlayingAudio))
+            return true;
+
+        if (state.contains(MediaProducerMediaState::IsPlayingVideo))
+            return true;
+
+        return MediaProducer::isCapturing(state);
+    }
+#endif
 
     virtual MediaStateFlags mediaState() const = 0;
 
@@ -140,6 +151,10 @@ public:
 
     virtual void visibilityAdjustmentStateDidChange() { }
     virtual void pageMutedStateDidChange() = 0;
+
+#if PLATFORM(IOS_FAMILY)
+    virtual void sceneIdentifierDidChange() { }
+#endif
 
 protected:
     virtual ~MediaProducer() = default;

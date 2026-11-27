@@ -25,9 +25,11 @@
 
 #pragma once
 
-#include "IntSize.h"
-#include "PixelBufferFormat.h"
-#include <wtf/RefCounted.h>
+#include <WebCore/IntSize.h>
+#include <WebCore/PixelBufferFormat.h>
+#include <optional>
+#include <span>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace WTF {
 class TextStream;
@@ -35,37 +37,109 @@ class TextStream;
 
 namespace WebCore {
 
-class PixelBuffer : public RefCounted<PixelBuffer> {
+// Type for holding pixel buffers data.
+// For functions that source pixel buffers, see PixelBufferSourceView.
+class PixelBuffer : public ThreadSafeRefCounted<PixelBuffer> {
     WTF_MAKE_NONCOPYABLE(PixelBuffer);
 public:
-    WEBCORE_EXPORT static CheckedUint32 computeBufferSize(PixelFormat, const IntSize&);
+    static constexpr uint32_t bytesPerPixelComponent(PixelFormat);
+    static constexpr uint32_t componentsPerPixel(PixelFormat);
+    static constexpr uint32_t bytesPerPixel(PixelFormat);
 
-    WEBCORE_EXPORT static bool supportedPixelFormat(PixelFormat);
+    static CheckedUint32 NODELETE computePixelCount(const IntSize&);
+    static CheckedUint32 NODELETE computePixelComponentCount(PixelFormat, const IntSize&);
+    WEBCORE_EXPORT static CheckedUint32 NODELETE computeBufferSize(PixelFormat, const IntSize&);
 
-    WEBCORE_EXPORT virtual ~PixelBuffer();
+    WEBCORE_EXPORT static bool NODELETE supportedPixelFormat(PixelFormat);
 
-    const PixelBufferFormat& format() const { return m_format; }
-    const IntSize& size() const { return m_size; }
+    virtual ~PixelBuffer() = default;
+
+    const PixelBufferFormat& format() const LIFETIME_BOUND { return m_format; }
+    const IntSize& size() const LIFETIME_BOUND { return m_size; }
 
     std::span<uint8_t> bytes() const { return m_bytes; }
 
-    virtual bool isByteArrayPixelBuffer() const { return false; }
+    enum class Type {
+        ByteArray,
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        Float16Array,
+#endif
+        Other
+    };
+    virtual Type type() const = 0;
     virtual RefPtr<PixelBuffer> createScratchPixelBuffer(const IntSize&) const = 0;
 
     bool setRange(std::span<const uint8_t> data, size_t byteOffset);
     WEBCORE_EXPORT bool zeroRange(size_t byteOffset, size_t rangeByteLength);
     void zeroFill() { zeroRange(0, bytes().size()); }
 
-    WEBCORE_EXPORT uint8_t item(size_t index) const;
+    WEBCORE_EXPORT uint8_t NODELETE item(size_t index) const;
     void set(size_t index, double value);
 
 protected:
     WEBCORE_EXPORT PixelBuffer(const PixelBufferFormat&, const IntSize&, std::span<uint8_t> bytes);
-    
-    PixelBufferFormat m_format;
-    IntSize m_size;
 
-    std::span<uint8_t> m_bytes;
+private:
+    const PixelBufferFormat m_format;
+    const IntSize m_size;
+
+    const std::span<uint8_t> m_bytes;
 };
+
+// Type to use for functions that use the PixelBuffer data as source during the call, but do not store a reference to the object or modify the data.
+class PixelBufferSourceView {
+public:
+    PixelBufferSourceView() = delete;
+    PixelBufferSourceView(const PixelBuffer& pixelBuffer)
+        : PixelBufferSourceView(pixelBuffer.format(), pixelBuffer.size(), pixelBuffer.bytes())
+    {
+    }
+
+    static std::optional<PixelBufferSourceView> create(const PixelBufferFormat& format, const IntSize& size, std::span<const uint8_t> bytes)
+    {
+        if (!PixelBuffer::supportedPixelFormat(format.pixelFormat))
+            return std::nullopt;
+        auto bufferSize = PixelBuffer::computeBufferSize(format.pixelFormat, size);
+        if (bufferSize.hasOverflowed() || bytes.size() != bufferSize)
+            return std::nullopt;
+        return PixelBufferSourceView(format, size, bytes);
+    }
+
+    const PixelBufferFormat& format() const LIFETIME_BOUND { return m_format; }
+    IntSize size() const { return m_size; }
+    std::span<const uint8_t> bytes() const LIFETIME_BOUND { return m_bytes; }
+
+private:
+    PixelBufferSourceView(const PixelBufferFormat& format, const IntSize& size, std::span<const uint8_t> bytes)
+        : m_format(format)
+        , m_size(size)
+        , m_bytes(bytes)
+    {
+    }
+
+    const PixelBufferFormat m_format;
+    const IntSize m_size;
+    const std::span<const uint8_t> m_bytes;
+};
+
+constexpr uint32_t PixelBuffer::bytesPerPixelComponent(PixelFormat pixelFormat)
+{
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    return (pixelFormat == PixelFormat::RGBA16F) ? 2 : 1;
+#else
+    UNUSED_PARAM(pixelFormat);
+    return 1;
+#endif
+}
+
+constexpr uint32_t PixelBuffer::componentsPerPixel(PixelFormat)
+{
+    return 4;
+}
+
+constexpr uint32_t PixelBuffer::bytesPerPixel(PixelFormat pixelFormat)
+{
+    return bytesPerPixelComponent(pixelFormat) * componentsPerPixel(pixelFormat);
+}
 
 } // namespace WebCore

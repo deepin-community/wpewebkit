@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, Google Inc. All rights reserved.
+ * Copyright (c) 2008-2009 Google Inc. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -60,10 +60,11 @@ void ICOImageDecoder::setData(const FragmentedSharedBuffer& data, bool allDataRe
 
     ScalableImageDecoder::setData(data, allDataReceived);
 
-    for (BMPReaders::iterator i(m_bmpReaders.begin()); i != m_bmpReaders.end(); ++i) {
-        if (*i)
-            (*i)->setData(*m_data);
+    for (auto& reader : m_bmpReaders) {
+        if (reader)
+            reader->setData(*m_data);
     }
+
     for (size_t i = 0; i < m_pngDecoders.size(); ++i)
         setDataForPNGDecoderAtIndex(i);
 }
@@ -85,16 +86,18 @@ bool ICOImageDecoder::setSize(const IntSize& size)
     return m_frameSize.isEmpty() ? ScalableImageDecoder::setSize(size) : ((size == m_frameSize) || setFailed());
 }
 
-size_t ICOImageDecoder::frameCount() const
+size_t ICOImageDecoder::decodeIfNeededAndGetFrameCount() const
 {
+    assertIsHeld(m_lock);
     const_cast<ICOImageDecoder*>(this)->decode(0, true, isAllDataReceived());
     return m_frameBufferCache.size();
 }
 
 ScalableImageDecoderFrame* ICOImageDecoder::frameBufferAtIndex(size_t index)
 {
+    assertIsHeld(m_lock);
     // Ensure |index| is valid.
-    if (index >= frameCount())
+    if (index >= decodeIfNeededAndGetFrameCount())
         return 0;
 
     auto* buffer = &m_frameBufferCache[index];
@@ -151,6 +154,7 @@ void ICOImageDecoder::setDataForPNGDecoderAtIndex(size_t index)
 
 void ICOImageDecoder::decode(size_t index, bool onlySize, bool allDataReceived)
 {
+    assertIsHeld(m_lock);
     if (failed())
         return;
 
@@ -185,6 +189,7 @@ bool ICOImageDecoder::decodeDirectory()
 
 bool ICOImageDecoder::decodeAtIndex(size_t index)
 {
+    assertIsHeld(m_lock);
     ASSERT_WITH_SECURITY_IMPLICATION(index < m_dirEntries.size());
     const IconDirectoryEntry& dirEntry = m_dirEntries[index];
     const ImageType imageType = imageTypeAtIndex(index);
@@ -194,7 +199,7 @@ bool ICOImageDecoder::decodeAtIndex(size_t index)
     if (imageType == BMP) {
         if (!m_bmpReaders[index]) {
             // We need to have already sized m_frameBufferCache before this, and
-            // we must not resize it again later (see caution in frameCount()).
+            // we must not resize it again later (see caution in decodeIfNeededAndGetFrameCount()).
             ASSERT(m_frameBufferCache.size() == m_dirEntries.size());
             m_bmpReaders[index] = makeUnique<BMPImageReader>(this, dirEntry.m_imageOffset, 0, true);
             m_bmpReaders[index]->setData(*m_data);
@@ -214,7 +219,14 @@ bool ICOImageDecoder::decodeAtIndex(size_t index)
     // in the directory.
     if (m_pngDecoders[index]->encodedDataStatus() >= EncodedDataStatus::SizeAvailable && (m_pngDecoders[index]->size() != dirEntry.m_size))
         return setFailed();
-    m_frameBufferCache[index] = *m_pngDecoders[index]->frameBufferAtIndex(0);
+
+    // firstFrameBuffer() is null until the sub-decoder has parsed its own header, which has not
+    // happened yet when only part of the embedded PNG has arrived.
+    auto* frameBuffer = static_cast<PNGImageDecoder*>(m_pngDecoders[index].get())->firstFrameBuffer();
+    if (!frameBuffer)
+        return false;
+
+    m_frameBufferCache[index] = *frameBuffer;
     return !m_pngDecoders[index]->failed() || setFailed();
 }
 
@@ -248,13 +260,13 @@ bool ICOImageDecoder::processDirectoryEntries()
     ASSERT(m_decodedOffset == sizeOfDirectory);
     if ((m_decodedOffset > m_data->size()) || ((m_data->size() - m_decodedOffset) < (m_dirEntries.size() * sizeOfDirEntry)))
         return false;
-    for (IconDirectoryEntries::iterator i(m_dirEntries.begin()); i != m_dirEntries.end(); ++i)
-        *i = readDirectoryEntry();  // Updates m_decodedOffset.
+    for (auto& entry : m_dirEntries)
+        entry = readDirectoryEntry(); // Updates m_decodedOffset.
 
     // Make sure the specified image offsets are past the end of the directory
     // entries.
-    for (IconDirectoryEntries::iterator i(m_dirEntries.begin()); i != m_dirEntries.end(); ++i) {
-        if (i->m_imageOffset < m_decodedOffset)
+    for (auto& entry : m_dirEntries) {
+        if (entry.m_imageOffset < m_decodedOffset)
             return setFailed();
     }
 
@@ -317,7 +329,7 @@ ICOImageDecoder::ImageType ICOImageDecoder::imageTypeAtIndex(size_t index)
     const uint32_t imageOffset = m_dirEntries[index].m_imageOffset;
     if ((imageOffset > m_data->size()) || ((m_data->size() - imageOffset) < 4))
         return Unknown;
-    return equalSpans(m_data->span().subspan(imageOffset, 4), std::span { "\x89PNG", 4 }) ? PNG : BMP;
+    return spanHasPrefix(m_data->span().subspan(imageOffset), unsafeMakeSpan("\x89PNG", 4)) ? PNG : BMP;
 }
 
 }

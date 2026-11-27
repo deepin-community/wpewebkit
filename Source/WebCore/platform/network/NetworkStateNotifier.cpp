@@ -36,7 +36,7 @@ namespace WebCore {
 
 static const Seconds updateStateSoonInterval { 2_s };
 
-static bool shouldSuppressThreadSafetyCheck()
+SUPPRESS_NODELETE static bool NODELETE shouldSuppressThreadSafetyCheck()
 {
 #if USE(WEB_THREAD)
     return WebThreadIsEnabled();
@@ -71,7 +71,7 @@ void NetworkStateNotifier::addListener(Function<void(bool)>&& listener)
     ASSERT(listener);
     if (m_listeners.isEmpty())
         startObserving();
-    m_listeners.append(WTFMove(listener));
+    m_listeners.append(WTF::move(listener));
 }
 
 void NetworkStateNotifier::updateState()

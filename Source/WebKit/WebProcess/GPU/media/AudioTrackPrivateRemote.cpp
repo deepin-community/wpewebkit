@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2020 Apple Inc. All rights reserved.
+* Copyright (C) 2020-2025 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -34,15 +34,18 @@
 #include "MediaPlayerPrivateRemote.h"
 #include "RemoteMediaPlayerProxyMessages.h"
 #include <wtf/CrossThreadCopier.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioTrackPrivateRemote);
 
 AudioTrackPrivateRemote::AudioTrackPrivateRemote(GPUProcessConnection& gpuProcessConnection, WebCore::MediaPlayerIdentifier playerIdentifier, AudioTrackPrivateRemoteConfiguration&& configuration)
     : m_gpuProcessConnection(gpuProcessConnection)
     , m_id(configuration.trackId)
     , m_playerIdentifier(playerIdentifier)
 {
-    updateConfiguration(WTFMove(configuration));
+    updateConfiguration(WTF::move(configuration));
 }
 
 void AudioTrackPrivateRemote::setEnabled(bool enabled)
@@ -71,7 +74,7 @@ void AudioTrackPrivateRemote::updateConfiguration(AudioTrackPrivateRemoteConfigu
         m_label = configuration.label;
         if (changed) {
             notifyClients([label = crossThreadCopy(m_label)](auto& client) {
-                client.labelChanged(AtomString { label });
+                client.labelChanged(label);
             });
         };
     }
@@ -81,7 +84,7 @@ void AudioTrackPrivateRemote::updateConfiguration(AudioTrackPrivateRemoteConfigu
         m_language = configuration.language;
         if (changed) {
             notifyClients([language = crossThreadCopy(m_language)](auto& client) {
-                client.languageChanged(AtomString { language });
+                client.languageChanged(language);
             });
         };
     }
@@ -89,7 +92,7 @@ void AudioTrackPrivateRemote::updateConfiguration(AudioTrackPrivateRemoteConfigu
     m_trackIndex = configuration.trackIndex;
     m_startTimeVariance = configuration.startTimeVariance;
     m_kind = configuration.kind;
-    setConfiguration(WTFMove(configuration.trackConfiguration));
+    setConfiguration(WTF::move(configuration.trackConfiguration));
     
     AudioTrackPrivate::setEnabled(configuration.enabled);
 }

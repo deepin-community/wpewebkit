@@ -21,9 +21,13 @@
 #if USE(GSTREAMER) && USE(LIBWEBRTC)
 #include "GStreamerVideoFrameLibWebRTC.h"
 
-#include <gst/video/video-format.h>
-#include <gst/video/video-info.h>
-#include <thread>
+#include "GStreamerCommon.h"
+#include "GStreamerVideoFrameConverter.h"
+#include "GUniquePtrGStreamer.h"
+#include "LibWebRTCVideoFrameUtilities.h"
+
+#include <wtf/MediaTime.h>
+#include <wtf/glib/GUniquePtr.h>
 
 namespace WebCore {
 
@@ -40,8 +44,14 @@ static void ensureDebugCategoryIsRegistered()
 
 GRefPtr<GstSample> convertLibWebRTCVideoFrameToGStreamerSample(const webrtc::VideoFrame& frame)
 {
-    RELEASE_ASSERT(frame.video_frame_buffer()->type() != webrtc::VideoFrameBuffer::Type::kNative);
-    auto* i420Buffer = frame.video_frame_buffer()->ToI420().release();
+    if (frame.video_frame_buffer()->type() == webrtc::VideoFrameBuffer::Type::kNative)
+        return static_cast<GStreamerVideoFrameLibWebRTC&>(*frame.video_frame_buffer().get()).sample();
+
+    auto convertedFrameBuffer = frame.video_frame_buffer()->ToI420();
+    if (!convertedFrameBuffer)
+        return nullptr;
+
+    auto i420Buffer = static_cast<webrtc::I420Buffer*>(convertedFrameBuffer.release());
     int height = i420Buffer->height();
     int strides[3] = {
         i420Buffer->StrideY(),
@@ -51,44 +61,60 @@ GRefPtr<GstSample> convertLibWebRTCVideoFrameToGStreamerSample(const webrtc::Vid
     size_t offsets[3] = {
         0,
         static_cast<gsize>(i420Buffer->StrideY() * height),
-        static_cast<gsize>(i420Buffer->StrideY() * height + i420Buffer->StrideU() * ((height + 1) / 2))
+        static_cast<gsize>(i420Buffer->StrideY() * height + i420Buffer->StrideU() * i420Buffer->ChromaHeight())
     };
     GstVideoInfo info;
     gst_video_info_set_format(&info, GST_VIDEO_FORMAT_I420, frame.width(), frame.height());
-    auto buffer = adoptGRef(gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(GST_MEMORY_FLAG_NO_SHARE | GST_MEMORY_FLAG_READONLY),
-        const_cast<gpointer>(reinterpret_cast<const void*>(i420Buffer->DataY())), info.size, 0, info.size, i420Buffer, [](gpointer buffer) {
+
+    if (auto colorSpace = colorSpaceFromLibWebRTCVideoFrame(frame))
+        fillVideoInfoColorimetryFromColorSpace(&info, *colorSpace);
+
+    auto dataSize = i420Buffer->StrideY() * height + (i420Buffer->StrideU() + i420Buffer->StrideV()) * i420Buffer->ChromaHeight();
+    GRefPtr buffer = adoptGRef(gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(GST_MEMORY_FLAG_NO_SHARE | GST_MEMORY_FLAG_READONLY),
+        i420Buffer->MutableDataY(), dataSize, 0, dataSize, i420Buffer, [](gpointer buffer) {
             reinterpret_cast<webrtc::I420Buffer*>(buffer)->Release();
     }));
 
-    gst_buffer_add_video_meta_full(buffer.get(), GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_I420, frame.width(), frame.height(), 3, offsets, strides);
+    GstClockTime pts;
+    if (frame.render_parameters().use_low_latency_rendering) {
+        GRefPtr clock = adoptGRef(gst_system_clock_obtain());
+        pts = gst_clock_get_time(clock.get());
+    } else
+        pts = toGstClockTime(WTF::MediaTime(frame.render_time_ms(), G_USEC_PER_SEC * 1000));
 
-    auto caps = adoptGRef(gst_video_info_to_caps(&info));
-    auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
+    gst_buffer_add_video_meta_full(buffer.get(), GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_I420, frame.width(), frame.height(), 3, offsets, strides);
+    GST_BUFFER_PTS(buffer.get()) = pts;
+    GRefPtr caps = adoptGRef(gst_video_info_to_caps(&info));
+    GRefPtr sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
     return sample;
 }
 
-webrtc::VideoFrame convertGStreamerSampleToLibWebRTCVideoFrame(GRefPtr<GstSample>&& sample, uint32_t rtpTimestamp)
+webrtc::VideoFrame convertGStreamerSampleToLibWebRTCVideoFrame(GRefPtr<GstSample>&& sample, const webrtc::EncodedImage& inputImage)
 {
     webrtc::VideoFrame::Builder builder;
     auto buffer = gst_sample_get_buffer(sample.get());
     auto pts = GST_BUFFER_PTS(buffer);
-    return builder.set_video_frame_buffer(GStreamerVideoFrameLibWebRTC::create(WTFMove(sample)))
-        .set_timestamp_rtp(rtpTimestamp)
-        .set_timestamp_us(pts)
-        .build();
+    builder.set_video_frame_buffer(GStreamerVideoFrameLibWebRTC::create(WTF::move(sample)))
+        .set_timestamp_rtp(inputImage.RtpTimestamp())
+        .set_timestamp_us(GST_TIME_AS_USECONDS(pts));
+
+    if (const auto colorSpace = inputImage.ColorSpace())
+        builder.set_color_space(*colorSpace);
+
+    return builder.build();
 }
 
-rtc::scoped_refptr<webrtc::VideoFrameBuffer> GStreamerVideoFrameLibWebRTC::create(GRefPtr<GstSample>&& sample)
+webrtc::scoped_refptr<webrtc::VideoFrameBuffer> GStreamerVideoFrameLibWebRTC::create(GRefPtr<GstSample>&& sample)
 {
     GstVideoInfo info;
-
-    if (!gst_video_info_from_caps(&info, gst_sample_get_caps(sample.get())))
+    if (!gst_video_info_from_caps(&info, gst_sample_get_caps(sample.get()))) {
         ASSERT_NOT_REACHED();
-
-    return rtc::scoped_refptr<webrtc::VideoFrameBuffer>(new GStreamerVideoFrameLibWebRTC(WTFMove(sample), info));
+        return nullptr;
+    }
+    return webrtc::scoped_refptr<webrtc::VideoFrameBuffer>(new GStreamerVideoFrameLibWebRTC(WTF::move(sample), WTF::move(info)));
 }
 
-rtc::scoped_refptr<webrtc::I420BufferInterface> GStreamerVideoFrameLibWebRTC::ToI420()
+webrtc::scoped_refptr<webrtc::I420BufferInterface> GStreamerVideoFrameLibWebRTC::ToI420()
 {
     ensureDebugCategoryIsRegistered();
     GstMappedFrame inFrame(m_sample, GST_MAP_READ);
@@ -99,34 +125,26 @@ rtc::scoped_refptr<webrtc::I420BufferInterface> GStreamerVideoFrameLibWebRTC::To
     }
 
     if (inFrame.format() != GST_VIDEO_FORMAT_I420) {
-        GstVideoInfo outInfo;
-        gst_video_info_set_format(&outInfo, GST_VIDEO_FORMAT_I420, inFrame.width(), inFrame.height());
+        GUniquePtr<GstVideoInfo> outInfo(gst_video_info_copy(inFrame.info()));
+        outInfo->finfo = gst_video_format_get_info(GST_VIDEO_FORMAT_I420);
+        GRefPtr caps = adoptGRef(gst_video_info_to_caps(outInfo.get()));
 
-        auto info = inFrame.info();
-        outInfo.fps_n = info->fps_n;
-        outInfo.fps_d = info->fps_d;
-
-        auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, GST_VIDEO_INFO_SIZE(&outInfo), nullptr));
-        GstMappedFrame outFrame(buffer.get(), &outInfo, GST_MAP_WRITE);
-        if (!outFrame) {
-            GST_WARNING("Could not map output frame");
-            ASSERT_NOT_REACHED_WITH_MESSAGE("Could not map output frame");
+        GST_TRACE("Converting frame to I420");
+        auto& converter = GStreamerVideoFrameConverter::singleton();
+        auto sample = converter.convert(m_sample, caps);
+        if (!sample) [[unlikely]]
             return nullptr;
-        }
-        GUniquePtr<GstVideoConverter> videoConverter(gst_video_converter_new(inFrame.info(), &outInfo, gst_structure_new("GstVideoConvertConfig",
-            GST_VIDEO_CONVERTER_OPT_THREADS, G_TYPE_UINT, std::max(std::thread::hardware_concurrency(), 1u), nullptr)));
 
-        ASSERT(videoConverter);
-        gst_video_converter_frame(videoConverter.get(), inFrame.get(), outFrame.get());
-        return webrtc::I420Buffer::Copy(outFrame.width(), outFrame.height(), outFrame.componentData(0), outFrame.componentStride(0),
-            outFrame.componentData(1), outFrame.componentStride(1), outFrame.componentData(2), outFrame.componentStride(2));
+        GstMappedFrame frame(sample, GST_MAP_READ);
+        return webrtc::I420Buffer::Copy(frame.width(), frame.height(), frame.componentData(0).data(), frame.componentStride(0),
+            frame.componentData(1).data(), frame.componentStride(1), frame.componentData(2).data(), frame.componentStride(2));
     }
 
-    return webrtc::I420Buffer::Copy(inFrame.width(), inFrame.height(), inFrame.componentData(0), inFrame.componentStride(0),
-        inFrame.componentData(1), inFrame.componentStride(1), inFrame.componentData(2), inFrame.componentStride(2));
+    return webrtc::I420Buffer::Copy(inFrame.width(), inFrame.height(), inFrame.componentData(0).data(), inFrame.componentStride(0),
+        inFrame.componentData(1).data(), inFrame.componentStride(1), inFrame.componentData(2).data(), inFrame.componentStride(2));
 }
 
-}
+} // namespace WebCore
 
 #undef GST_CAT_DEFAULT
 

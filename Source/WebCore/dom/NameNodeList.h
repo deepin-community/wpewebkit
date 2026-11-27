@@ -24,11 +24,12 @@
 #pragma once
 
 #include "LiveNodeList.h"
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
 class NameNodeList final : public CachedLiveNodeList<NameNodeList> {
-    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(NameNodeList);
+    WTF_MAKE_TZONE_ALLOCATED(NameNodeList);
 public:
     static Ref<NameNodeList> create(ContainerNode& rootNode, const AtomString& name);
     virtual ~NameNodeList();
@@ -40,7 +41,8 @@ private:
     NameNodeList(ContainerNode& rootNode, const AtomString& name);
 
     AtomString m_name;
-    bool m_needsGetElementsByNameQuirk;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_LIVENODELIST(NameNodeList)

@@ -40,7 +40,10 @@ public:
     virtual ~RemoteCDMInstance();
     static Ref<RemoteCDMInstance> create(WeakPtr<RemoteCDMFactory>&&, RemoteCDMInstanceIdentifier&&, RemoteCDMInstanceConfiguration&&);
 
-    const RemoteCDMInstanceIdentifier& identifier() const { return m_identifier; }
+    void ref() const final { WebCore::CDMInstance::ref(); }
+    void deref() const final { WebCore::CDMInstance::deref(); }
+
+    const RemoteCDMInstanceIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
 
 private:
     RemoteCDMInstance(WeakPtr<RemoteCDMFactory>&&, RemoteCDMInstanceIdentifier&&, RemoteCDMInstanceConfiguration&&);
@@ -55,9 +58,9 @@ private:
     void initializeWithConfiguration(const WebCore::CDMKeySystemConfiguration&, AllowDistinctiveIdentifiers, AllowPersistentState, SuccessCallback&&) final;
     void setServerCertificate(Ref<WebCore::SharedBuffer>&&, SuccessCallback&&) final;
     void setStorageDirectory(const String&) final;
-    const String& keySystem() const final { return m_configuration.keySystem; }
+    const String& keySystem() const LIFETIME_BOUND final { return m_configuration.keySystem; }
     RefPtr<WebCore::CDMInstanceSession> createSession() final;
-    void setClient(WeakPtr<WebCore::CDMInstanceClient>&& client) final { m_client = WTFMove(client); }
+    void setClient(WeakPtr<WebCore::CDMInstanceClient>&& client) final { m_client = WTF::move(client); }
     void clearClient() final { m_client.clear(); }
 
     WeakPtr<RemoteCDMFactory> m_factory;

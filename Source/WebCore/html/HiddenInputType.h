@@ -31,10 +31,12 @@
 #pragma once
 
 #include "InputType.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class HiddenInputType final : public InputType {
+    WTF_MAKE_TZONE_ALLOCATED(HiddenInputType);
 public:
     static Ref<HiddenInputType> create(HTMLInputElement& element)
     {
@@ -50,7 +52,7 @@ private:
     const AtomString& formControlType() const final;
     FormControlState saveFormControlState() const final;
     void restoreFormControlState(const FormControlState&) final;
-    RenderPtr<RenderElement> createInputRenderer(RenderStyle&&) final;
+    RenderPtr<RenderElement> createInputRenderer(Style::ComputedStyle&&) final;
     bool accessKeyAction(bool sendMouseEvents) final;
     bool rendererIsNeeded() final;
     bool storesValueSeparateFromAttribute() final;

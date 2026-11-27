@@ -27,10 +27,15 @@
 
 #if ENABLE(ASYNC_SCROLLING)
 
-#include "GraphicsLayer.h"
-#include "ScrollingCoordinator.h"
+#include <WebCore/GraphicsLayer.h>
+#include <WebCore/ScrollingCoordinator.h>
+#include <WebCore/ScrollingPlatformLayer.h>
+#if USE(COORDINATED_GRAPHICS)
+#include <WebCore/CoordinatedPlatformLayer.h>
+#endif
 #include <stdint.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/Vector.h>
@@ -53,173 +58,120 @@ class ScrollingStateTree;
 class LayerRepresentation {
 public:
     enum Type {
-        EmptyRepresentation,
         GraphicsLayerRepresentation,
         PlatformLayerRepresentation,
         PlatformLayerIDRepresentation
     };
 
+#if PLATFORM(COCOA)
+    using PlatformLayerHolder = PlatformLayerContainer;
+#elif USE(COORDINATED_GRAPHICS)
+    using PlatformLayerHolder = RefPtr<CoordinatedPlatformLayer>;
+#endif
+
     LayerRepresentation() = default;
 
     LayerRepresentation(GraphicsLayer* graphicsLayer)
-        : m_graphicsLayer(graphicsLayer)
-        , m_layerID(graphicsLayer ? graphicsLayer->primaryLayerID() : PlatformLayerIdentifier { })
-        , m_representation(GraphicsLayerRepresentation)
+        : m_data(GraphicsLayerData { graphicsLayer, graphicsLayer ? std::optional { graphicsLayer->primaryLayerID() } : std::nullopt })
     { }
 
-    LayerRepresentation(PlatformLayer* platformLayer)
-        : m_typelessPlatformLayer(makePlatformLayerTypeless(platformLayer))
-        , m_representation(PlatformLayerRepresentation)
-    {
-        retainPlatformLayer(m_typelessPlatformLayer);
-    }
+    LayerRepresentation(ScrollingPlatformLayer* platformLayer)
+        : m_data(PlatformLayerHolder { platformLayer })
+    { }
 
-    LayerRepresentation(PlatformLayerIdentifier layerID)
-        : m_layerID(layerID)
-        , m_representation(PlatformLayerIDRepresentation)
-    {
-    }
-
-    LayerRepresentation(const LayerRepresentation& other)
-        : m_typelessPlatformLayer(other.m_typelessPlatformLayer)
-        , m_layerID(other.m_layerID)
-        , m_representation(other.m_representation)
-    {
-        if (m_representation == PlatformLayerRepresentation)
-            retainPlatformLayer(m_typelessPlatformLayer);
-    }
-
-    ~LayerRepresentation()
-    {
-        if (m_representation == PlatformLayerRepresentation)
-            releasePlatformLayer(m_typelessPlatformLayer);
-    }
+    LayerRepresentation(std::optional<PlatformLayerIdentifier> layerID)
+        : m_data(Markable<PlatformLayerIdentifier> { layerID })
+    { }
 
     explicit operator GraphicsLayer*() const
     {
-        ASSERT(m_representation == GraphicsLayerRepresentation);
-        return m_graphicsLayer.get();
+        ASSERT(std::holds_alternative<GraphicsLayerData>(m_data));
+        return std::get<GraphicsLayerData>(m_data).graphicsLayer.get();
     }
 
-    explicit operator PlatformLayer*() const
+    explicit operator ScrollingPlatformLayer*() const
     {
-        ASSERT(m_representation == PlatformLayerRepresentation);
-        return makePlatformLayerTyped(m_typelessPlatformLayer);
-    }
-    
-    PlatformLayerIdentifier layerID() const
-    {
-        return m_layerID;
+        ASSERT(std::holds_alternative<PlatformLayerHolder>(m_data)); // Somehow we can get here without a platform layer: rdar://178173007.
+        if (auto* holder = std::get_if<PlatformLayerHolder>(&m_data))
+            return holder->get();
+        return nullptr;
     }
 
-    std::optional<PlatformLayerIdentifier> layerIDForEncoding() const
+    std::optional<PlatformLayerIdentifier> layerID() const
     {
-        ASSERT(m_representation != PlatformLayerRepresentation);
-        return m_layerID ? std::optional<PlatformLayerIdentifier>(m_layerID) : std::nullopt;
-    }
-
-    explicit operator PlatformLayerIdentifier() const
-    {
-        ASSERT(m_representation != PlatformLayerRepresentation);
-        return m_layerID;
-    }
-
-    LayerRepresentation& operator=(const LayerRepresentation& other)
-    {
-        m_graphicsLayer = other.m_graphicsLayer;
-        m_typelessPlatformLayer = other.m_typelessPlatformLayer;
-        m_layerID = other.m_layerID;
-        m_representation = other.m_representation;
-
-        if (m_representation == PlatformLayerRepresentation)
-            retainPlatformLayer(m_typelessPlatformLayer);
-
-        return *this;
+        return WTF::switchOn(m_data,
+            [](const GraphicsLayerData& data) -> std::optional<PlatformLayerIdentifier> { return data.layerID.asOptional(); },
+            [](const Markable<PlatformLayerIdentifier>& layerID) -> std::optional<PlatformLayerIdentifier> { return layerID.asOptional(); },
+            [](const auto&) -> std::optional<PlatformLayerIdentifier> { return std::nullopt; }
+        );
     }
 
     explicit operator bool() const
     {
-        switch (m_representation) {
-        case EmptyRepresentation:
-            return false;
-        case GraphicsLayerRepresentation:
-            return !!m_graphicsLayer;
-        case PlatformLayerRepresentation:
-            return !!m_typelessPlatformLayer;
-        case PlatformLayerIDRepresentation:
-            return !!m_layerID;
-        }
-        ASSERT_NOT_REACHED();
-        return false;
+        return WTF::switchOn(m_data,
+            [](std::monostate) { return false; },
+            [](const GraphicsLayerData& data) { return !!data.graphicsLayer; },
+            [](const PlatformLayerHolder& holder) { return !!holder; },
+            [](const Markable<PlatformLayerIdentifier>& layerID) { return !!layerID; }
+        );
     }
 
-    bool operator==(const LayerRepresentation& other) const
-    {
-        if (m_representation != other.m_representation)
-            return false;
-        switch (m_representation) {
-        case EmptyRepresentation:
-            return true;
-        case GraphicsLayerRepresentation:
-            return m_graphicsLayer == other.m_graphicsLayer
-                && m_layerID == other.m_layerID;
-        case PlatformLayerRepresentation:
-            return m_typelessPlatformLayer == other.m_typelessPlatformLayer;
-        case PlatformLayerIDRepresentation:
-            return m_layerID == other.m_layerID;
-        }
-        ASSERT_NOT_REACHED();
-        return true;
-    }
-    
+    bool operator==(const LayerRepresentation& other) const = default;
+
     LayerRepresentation toRepresentation(Type representation) const
     {
         switch (representation) {
-        case EmptyRepresentation:
-            return LayerRepresentation();
-        case GraphicsLayerRepresentation:
-            ASSERT(m_representation == GraphicsLayerRepresentation);
-            return LayerRepresentation(m_graphicsLayer.get());
-        case PlatformLayerRepresentation:
-            return m_graphicsLayer ? m_graphicsLayer->platformLayer() : nullptr;
+        case GraphicsLayerRepresentation: {
+            ASSERT(std::holds_alternative<GraphicsLayerData>(m_data));
+            auto& data = std::get<GraphicsLayerData>(m_data);
+            return LayerRepresentation(data.graphicsLayer.get());
+        }
+        case PlatformLayerRepresentation: {
+            if (std::holds_alternative<GraphicsLayerData>(m_data)) {
+                auto& data = std::get<GraphicsLayerData>(m_data);
+                if (data.graphicsLayer)
+                    return platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer });
+            }
+            return static_cast<ScrollingPlatformLayer*>(nullptr);
+        }
         case PlatformLayerIDRepresentation:
-            return LayerRepresentation(m_layerID);
+            return LayerRepresentation(layerID());
         }
         ASSERT_NOT_REACHED();
         return LayerRepresentation();
     }
 
-    bool representsGraphicsLayer() const { return m_representation == GraphicsLayerRepresentation; }
-    bool representsPlatformLayerID() const { return m_representation == PlatformLayerIDRepresentation; }
-    
-private:
-    WEBCORE_EXPORT static void retainPlatformLayer(void* typelessPlatformLayer);
-    WEBCORE_EXPORT static void releasePlatformLayer(void* typelessPlatformLayer);
-    WEBCORE_EXPORT static PlatformLayer* makePlatformLayerTyped(void* typelessPlatformLayer);
-    WEBCORE_EXPORT static void* makePlatformLayerTypeless(PlatformLayer*);
+    bool representsGraphicsLayer() const { return std::holds_alternative<GraphicsLayerData>(m_data); }
+    bool representsPlatformLayerID() const { return std::holds_alternative<Markable<PlatformLayerIdentifier>>(m_data); }
 
-    RefPtr<GraphicsLayer> m_graphicsLayer;
-    void* m_typelessPlatformLayer { nullptr };
-    PlatformLayerIdentifier m_layerID;
-    Type m_representation { EmptyRepresentation };
+private:
+    struct GraphicsLayerData {
+        RefPtr<GraphicsLayer> graphicsLayer;
+        Markable<PlatformLayerIdentifier> layerID;
+
+        friend bool operator==(const GraphicsLayerData&, const GraphicsLayerData&) = default;
+    };
+
+    WEBCORE_EXPORT static ScrollingPlatformLayer* platformLayerFromGraphicsLayer(GraphicsLayer&);
+
+    Variant<std::monostate, GraphicsLayerData, PlatformLayerHolder, Markable<PlatformLayerIdentifier>> m_data;
 };
 
 enum class ScrollingStateNodeProperty : uint64_t {
     // ScrollingStateNode
     Layer                                       = 1LLU << 0,
-    ChildNodes                                  = 1LLU << 44,
     // ScrollingStateScrollingNode
-    ScrollableAreaSize                          = 1LLU << 1, // Same value as RelatedOverflowScrollingNodes, ViewportConstraints and OverflowScrollingNode
-    TotalContentsSize                           = 1LLU << 2, // Same value as LayoutConstraintData
-    ReachableContentsSize                       = 1LLU << 3,
-    ScrollPosition                              = 1LLU << 4,
-    ScrollOrigin                                = 1LLU << 5,
-    ScrollableAreaParams                        = 1LLU << 6,
+    ScrollableAreaSize                          = Layer << 1, // Same value as RelatedOverflowScrollingNodes, ViewportConstraints and OverflowScrollingNode
+    TotalContentsSize                           = ScrollableAreaSize << 1, // Same value as LayoutConstraintData
+    ReachableContentsSize                       = TotalContentsSize << 1,
+    ScrollPosition                              = ReachableContentsSize << 1,
+    ScrollOrigin                                = ScrollPosition << 1,
+    ScrollableAreaParams                        = ScrollOrigin << 1,
 #if ENABLE(SCROLLING_THREAD)
-    ReasonsForSynchronousScrolling              = 1LLU << 7,
-    RequestedScrollPosition                     = 1LLU << 8,
+    ReasonsForSynchronousScrolling              = ScrollableAreaParams << 1,
+    RequestedScrollPosition                     = ReasonsForSynchronousScrolling << 1,
 #else
-    RequestedScrollPosition                     = 1LLU << 7,
+    RequestedScrollPosition                     = ScrollableAreaParams << 1,
 #endif
     SnapOffsetsInfo                             = RequestedScrollPosition << 1,
     CurrentHorizontalSnapOffsetIndex            = SnapOffsetsInfo << 1,
@@ -229,15 +181,16 @@ enum class ScrollingStateNodeProperty : uint64_t {
     ScrolledContentsLayer                       = ScrollContainerLayer << 1,
     HorizontalScrollbarLayer                    = ScrolledContentsLayer << 1,
     VerticalScrollbarLayer                      = HorizontalScrollbarLayer << 1,
-    PainterForScrollbar                         = 1LLU << 43, // Not serialized
     ContentAreaHoverState                       = VerticalScrollbarLayer << 1,
     MouseActivityState                          = ContentAreaHoverState << 1,
     ScrollbarHoverState                         = MouseActivityState << 1,
     ScrollbarEnabledState                       = ScrollbarHoverState << 1,
-    ScrollbarLayoutDirection                    = ScrollbarEnabledState << 1,
+    ScrollbarColor                              = ScrollbarEnabledState << 1,
+    ScrollbarLayoutDirection                    = ScrollbarColor << 1,
     ScrollbarWidth                              = ScrollbarLayoutDirection << 1,
+    UseDarkAppearanceForScrollbars              = ScrollbarWidth << 1,
     // ScrollingStateFrameScrollingNode
-    KeyboardScrollData                          = ScrollbarWidth << 1,
+    KeyboardScrollData                          = UseDarkAppearanceForScrollbars << 1,
     FrameScaleFactor                            = KeyboardScrollData << 1,
     EventTrackingRegion                         = FrameScaleFactor << 1,
     RootContentsLayer                           = EventTrackingRegion << 1,
@@ -246,34 +199,48 @@ enum class ScrollingStateNodeProperty : uint64_t {
     ContentShadowLayer                          = InsetClipLayer << 1,
     HeaderHeight                                = ContentShadowLayer << 1,
     FooterHeight                                = HeaderHeight << 1,
-    HeaderLayer                                 = 1LLU << 49, // Not serialized
-    FooterLayer                                 = 1LLU << 42, // Not serialized
     BehaviorForFixedElements                    = FooterHeight << 1,
-    TopContentInset                             = BehaviorForFixedElements << 1,
-    FixedElementsLayoutRelativeToFrame          = TopContentInset << 1,
-    VisualViewportIsSmallerThanLayoutViewport   = FixedElementsLayoutRelativeToFrame << 1,
+    ObscuredContentInsets                       = BehaviorForFixedElements << 1,
+#if HAVE(NSREFRESHCONTROLLER)
+    TopScrollStretchForRefreshController        = ObscuredContentInsets << 1,
+    VisualViewportIsSmallerThanLayoutViewport   = TopScrollStretchForRefreshController << 1,
+#else
+    VisualViewportIsSmallerThanLayoutViewport   = ObscuredContentInsets << 1,
+#endif
     AsyncFrameOrOverflowScrollingEnabled        = VisualViewportIsSmallerThanLayoutViewport << 1,
     WheelEventGesturesBecomeNonBlocking         = AsyncFrameOrOverflowScrollingEnabled << 1,
     ScrollingPerformanceTestingEnabled          = WheelEventGesturesBecomeNonBlocking << 1,
     LayoutViewport                              = ScrollingPerformanceTestingEnabled << 1,
-    MinLayoutViewportOrigin                     = LayoutViewport << 1,
+    SizeForVisibleContent                       = LayoutViewport << 1,
+    MinLayoutViewportOrigin                     = SizeForVisibleContent << 1,
     MaxLayoutViewportOrigin                     = MinLayoutViewportOrigin << 1,
     OverrideVisualViewportSize                  = MaxLayoutViewportOrigin << 1,
     OverlayScrollbarsEnabled                    = OverrideVisualViewportSize << 1,
+    ChildNodes                                  = OverlayScrollbarsEnabled << 1,
     // ScrollingStatePositionedNode
-    RelatedOverflowScrollingNodes               = 1LLU << 1, // Same value as ScrollableAreaSize, ViewportConstraints and OverflowScrollingNode
-    LayoutConstraintData                        = 1LLU << 2, // Same value as TotalContentsSize
+    RelatedOverflowScrollingNodes               = ScrollableAreaSize,
+    LayoutConstraintData                        = TotalContentsSize,
     // ScrollingStateFixedNode, ScrollingStateStickyNode
-    ViewportConstraints                         = 1LLU << 1, // Same value as ScrollableAreaSize, RelatedOverflowScrollingNodes and OverflowScrollingNode
+    ViewportConstraints                         = ScrollableAreaSize,
+    ViewportAnchorLayer                         = TotalContentsSize,
     // ScrollingStateOverflowScrollProxyNode
-    OverflowScrollingNode                       = 1LLU << 1, // Same value as ScrollableAreaSize, ViewportConstraints and RelatedOverflowScrollingNodes
+    OverflowScrollingNode                       = ScrollableAreaSize,
     // ScrollingStateFrameHostingNode
-    LayerHostingContextIdentifier               = 1LLU << 1,
+    LayerHostingContextIdentifier               = ScrollableAreaSize,
 
+    // The following flags are not serialized.
+    PainterForScrollbar                         = ChildNodes << 1,
+#if USE(COORDINATED_GRAPHICS_ASYNC_SCROLLBAR)
+    ScrollbarOpacity                            = PainterForScrollbar << 1,
+    HeaderLayer                                 = ScrollbarOpacity << 1,
+#else
+    HeaderLayer                                 = PainterForScrollbar << 1,
+#endif
+    FooterLayer                                 = HeaderLayer << 1,
 };
 
 class ScrollingStateNode : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ScrollingStateNode> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingStateNode, WEBCORE_EXPORT);
 public:
     virtual ~ScrollingStateNode();
 
@@ -308,7 +275,7 @@ public:
     
     virtual void reconcileLayerPositionForViewportRect(const LayoutRect& /*viewportRect*/, ScrollingLayerPositionAction) { }
 
-    const LayerRepresentation& layer() const { return m_layer; }
+    const LayerRepresentation& layer() const LIFETIME_BOUND { return m_layer; }
     WEBCORE_EXPORT void setLayer(const LayerRepresentation&);
 
     bool isAttachedToScrollingStateTree() const { return !!m_scrollingStateTree; }
@@ -317,19 +284,19 @@ public:
         ASSERT(m_scrollingStateTree);
         return *m_scrollingStateTree;
     }
-    void attachAfterDeserialization(ScrollingStateTree&);
+    void NODELETE attachAfterDeserialization(ScrollingStateTree&);
 
     ScrollingNodeID scrollingNodeID() const { return m_nodeID; }
 
-    RefPtr<ScrollingStateNode> parent() const { return m_parent.get(); }
+    RefPtr<ScrollingStateNode> parent() const { return m_parent; }
     void setParent(RefPtr<ScrollingStateNode>&& parent) { m_parent = parent; }
-    ScrollingNodeID parentNodeID() const;
+    std::optional<ScrollingNodeID> parentNodeID() const;
 
-    Vector<Ref<ScrollingStateNode>>& children() { return m_children; }
-    const Vector<Ref<ScrollingStateNode>>& children() const { return m_children; }
+    Vector<Ref<ScrollingStateNode>>& children() LIFETIME_BOUND { return m_children; }
+    const Vector<Ref<ScrollingStateNode>>& children() const LIFETIME_BOUND { return m_children; }
     Vector<Ref<ScrollingStateNode>> takeChildren() { return std::exchange(m_children, { }); }
     WEBCORE_EXPORT void setChildren(Vector<Ref<ScrollingStateNode>>&&);
-    void traverse(const Function<void(ScrollingStateNode&)>&);
+    void traverse(NOESCAPE const Function<void(ScrollingStateNode&)>&);
 
     void appendChild(Ref<ScrollingStateNode>&&);
     void insertChild(Ref<ScrollingStateNode>&&, size_t index);
@@ -371,11 +338,11 @@ private:
     LayerRepresentation m_layer;
 };
 
-inline ScrollingNodeID ScrollingStateNode::parentNodeID() const
+inline std::optional<ScrollingNodeID> ScrollingStateNode::parentNodeID() const
 {
     auto parent = m_parent.get();
     if (!parent)
-        return { };
+        return std::nullopt;
     return parent->scrollingNodeID();
 }
 

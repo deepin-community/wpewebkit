@@ -28,7 +28,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(HTMLParamElement);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLParamElement);
 
 using namespace HTMLNames;
 
@@ -42,5 +42,7 @@ Ref<HTMLParamElement> HTMLParamElement::create(const QualifiedName& tagName, Doc
 {
     return adoptRef(*new HTMLParamElement(tagName, document));
 }
+
+HTMLParamElement::~HTMLParamElement() = default;
 
 }

@@ -48,11 +48,11 @@ protected:
     JITPlan(JITCompilationMode, CodeBlock*);
 
 public:
-    virtual ~JITPlan() { }
+    virtual ~JITPlan();
 
     VM* vm() const { return m_vm; }
     CodeBlock* codeBlock() const { return m_codeBlock; }
-    JITWorklistThread* thread() const { return m_thread; }
+    JITWorklistThread* thread() const { return m_thread.get(); }
 
     JITCompilationMode mode() const { return m_mode; }
 
@@ -62,7 +62,7 @@ public:
     bool isUnlinked() const { return ::JSC::isUnlinked(m_mode); }
 
     enum class Tier { Baseline = 0, DFG = 1, FTL = 2, Count = 3 };
-    Tier tier() const;
+    Tier NODELETE tier() const;
     JITType jitType() const
     {
         switch (tier()) {
@@ -93,10 +93,11 @@ public:
 
     virtual bool isKnownToBeLiveAfterGC();
     virtual bool isKnownToBeLiveDuringGC(AbstractSlotVisitor&);
-    virtual bool iterateCodeBlocksForGC(AbstractSlotVisitor&, const Function<void(CodeBlock*)>&);
+    virtual bool iterateCodeBlocksForGC(AbstractSlotVisitor&, NOESCAPE const Function<void(CodeBlock*)>&);
     virtual bool checkLivenessAndVisitChildren(AbstractSlotVisitor&);
 
-    bool safepointKeepsDependenciesLive() const;
+    bool NODELETE isInSafepoint() const;
+    bool NODELETE safepointKeepsDependenciesLive() const;
 
     template<typename Functor>
     void addMainThreadFinalizationTask(const Functor& functor)
@@ -106,20 +107,40 @@ public:
 
     void runMainThreadFinalizationTasks();
 
+    enum class SignpostDetail { None, Canceled };
+
+    CString signpostMessage();
+
+    void beginSignpost()
+    {
+        if (Options::useCompilerSignpost()) [[unlikely]]
+            beginSignpostImpl();
+    }
+
+    void endSignpost(SignpostDetail detail = SignpostDetail::None)
+    {
+        if (Options::useCompilerSignpost()) [[unlikely]]
+            endSignpostImpl(detail);
+    }
+
 protected:
-    bool computeCompileTimes() const;
-    bool reportCompileTimes() const;
+    bool NODELETE computeCompileTimes() const;
+    bool NODELETE reportCompileTimes() const;
 
     enum CompilationPath { FailPath, BaselinePath, DFGPath, FTLPath, CancelPath };
     virtual CompilationPath compileInThreadImpl() = 0;
+
+    void beginSignpostImpl();
+    void endSignpostImpl(SignpostDetail);
 
     JITPlanStage m_stage { JITPlanStage::Preparing };
     JITCompilationMode m_mode;
     MonotonicTime m_timeBeforeFTL;
     VM* m_vm;
     CodeBlock* m_codeBlock;
-    JITWorklistThread* m_thread { nullptr };
-    Vector<RefPtr<SharedTask<void()>>> m_mainThreadFinalizationTasks;
+    CheckedPtr<JITWorklistThread> m_thread;
+    Vector<Ref<SharedTask<void()>>> m_mainThreadFinalizationTasks;
+    CString m_signpostMessage; // Non-null iff Options::useCompilerSignpost()
 };
 
 } // namespace JSC

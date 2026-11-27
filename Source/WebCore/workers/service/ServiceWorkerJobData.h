@@ -25,13 +25,13 @@
 
 #pragma once
 
-#include "ScriptExecutionContextIdentifier.h"
-#include "SecurityOriginData.h"
-#include "ServiceWorkerJobDataIdentifier.h"
-#include "ServiceWorkerJobType.h"
-#include "ServiceWorkerRegistrationKey.h"
-#include "ServiceWorkerRegistrationOptions.h"
-#include "ServiceWorkerTypes.h"
+#include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <WebCore/SecurityOriginData.h>
+#include <WebCore/ServiceWorkerJobDataIdentifier.h>
+#include <WebCore/ServiceWorkerJobType.h>
+#include <WebCore/ServiceWorkerRegistrationKey.h>
+#include <WebCore/ServiceWorkerRegistrationOptions.h>
+#include <WebCore/ServiceWorkerTypes.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -40,11 +40,11 @@ struct ServiceWorkerJobData {
     using Identifier = ServiceWorkerJobDataIdentifier;
     ServiceWorkerJobData(SWServerConnectionIdentifier, const ServiceWorkerOrClientIdentifier& sourceContext);
     ServiceWorkerJobData(Identifier, const ServiceWorkerOrClientIdentifier& sourceContext);
-    WEBCORE_EXPORT ServiceWorkerJobData(WebCore::ServiceWorkerJobDataIdentifier&&, URL&& scriptURL, URL&& clientCreationURL, WebCore::SecurityOriginData&& topOrigin, URL&& scopeURL, WebCore::ServiceWorkerOrClientIdentifier&& sourceContext, WebCore::WorkerType, WebCore::ServiceWorkerJobType, String&& domainForCachePartition, bool isFromServiceWorkerPage, std::optional<WebCore::ServiceWorkerRegistrationOptions>&&);
+    WEBCORE_EXPORT ServiceWorkerJobData(WebCore::ServiceWorkerJobDataIdentifier&&, URL&& scriptURL, URL&& clientCreationURL, WebCore::SecurityOriginData&& topOrigin, URL&& scopeURL, WebCore::ServiceWorkerOrClientIdentifier&& sourceContext, WebCore::WorkerType, WebCore::ServiceWorkerJobType, bool shouldBlockThirdPartyStorage, bool isFromServiceWorkerPage, std::optional<WebCore::ServiceWorkerRegistrationOptions>&&);
 
     SWServerConnectionIdentifier connectionIdentifier() const { return m_identifier.connectionIdentifier; }
 
-    bool isEquivalent(const ServiceWorkerJobData&) const;
+    bool NODELETE isEquivalent(const ServiceWorkerJobData&) const;
     std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier() const;
 
     URL scriptURL;
@@ -54,7 +54,7 @@ struct ServiceWorkerJobData {
     ServiceWorkerOrClientIdentifier sourceContext;
     WorkerType workerType;
     ServiceWorkerJobType type;
-    String domainForCachePartition;
+    bool shouldBlockThirdPartyStorage { true };
     bool isFromServiceWorkerPage { false };
 
     std::optional<ServiceWorkerRegistrationOptions> registrationOptions;
@@ -64,8 +64,6 @@ struct ServiceWorkerJobData {
     ServiceWorkerJobData isolatedCopy() const;
 
 private:
-    ServiceWorkerJobData() = default;
-
     Identifier m_identifier;
 };
 

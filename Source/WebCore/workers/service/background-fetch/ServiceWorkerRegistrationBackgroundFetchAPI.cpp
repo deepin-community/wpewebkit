@@ -29,17 +29,18 @@
 #include "BackgroundFetchManager.h"
 #include "ServiceWorkerRegistration.h"
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ServiceWorkerRegistrationBackgroundFetchAPI);
 
 ServiceWorkerRegistrationBackgroundFetchAPI::ServiceWorkerRegistrationBackgroundFetchAPI(ServiceWorkerRegistration& serviceWorkerRegistration)
     : m_serviceWorkerRegistration(serviceWorkerRegistration)
 {
 }
 
-ServiceWorkerRegistrationBackgroundFetchAPI::~ServiceWorkerRegistrationBackgroundFetchAPI()
-{
-}
+ServiceWorkerRegistrationBackgroundFetchAPI::~ServiceWorkerRegistrationBackgroundFetchAPI() = default;
 
 BackgroundFetchManager& ServiceWorkerRegistrationBackgroundFetchAPI::backgroundFetch(ServiceWorkerRegistration& serviceWorkerRegistration)
 {
@@ -54,18 +55,18 @@ RefPtr<BackgroundFetchManager> ServiceWorkerRegistrationBackgroundFetchAPI::back
 BackgroundFetchManager& ServiceWorkerRegistrationBackgroundFetchAPI::backgroundFetchManager()
 {
     if (!m_backgroundFetchManager)
-        m_backgroundFetchManager = BackgroundFetchManager::create(m_serviceWorkerRegistration);
+        lazyInitialize(m_backgroundFetchManager, BackgroundFetchManager::create(Ref { m_serviceWorkerRegistration.get() }));
 
     return *m_backgroundFetchManager;
 }
 
 ServiceWorkerRegistrationBackgroundFetchAPI& ServiceWorkerRegistrationBackgroundFetchAPI::from(ServiceWorkerRegistration& serviceWorkerRegistration)
 {
-    auto* supplement = static_cast<ServiceWorkerRegistrationBackgroundFetchAPI*>(Supplement<ServiceWorkerRegistration>::from(&serviceWorkerRegistration, supplementName()));
+    auto* supplement = downcast<ServiceWorkerRegistrationBackgroundFetchAPI>(Supplement<ServiceWorkerRegistration>::from(&serviceWorkerRegistration, supplementName()));
     if (!supplement) {
         auto newSupplement = makeUnique<ServiceWorkerRegistrationBackgroundFetchAPI>(serviceWorkerRegistration);
         supplement = newSupplement.get();
-        provideTo(&serviceWorkerRegistration, supplementName(), WTFMove(newSupplement));
+        provideTo(&serviceWorkerRegistration, supplementName(), WTF::move(newSupplement));
     }
     return *supplement;
 }

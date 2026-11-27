@@ -40,17 +40,13 @@ class ImageVk : public ImageImpl
 
     egl::Error exportVkImage(void *vkImage, void *vkImageCreateInfo) override;
 
-    vk::ImageHelper *getImage() const { return mImage; }
-    gl::TextureType getImageTextureType() const;
-    gl::LevelIndex getImageLevel() const;
-    uint32_t getImageLayer() const;
+    bool isFixedRatedCompression(const gl::Context *context) override;
 
-    UniqueSerial generateSiblingSerial() { return mImageSiblingSerialFactory.generate(); }
+    vk::ImageHelper *getImage() const { return mImage; }
 
   private:
     bool mOwnsImage;
     vk::ImageHelper *mImage;
-    UniqueSerialFactory mImageSiblingSerialFactory;
 
     const gl::Context *mContext;
 };

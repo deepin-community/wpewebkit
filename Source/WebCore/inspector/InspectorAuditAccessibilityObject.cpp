@@ -28,8 +28,9 @@
 #include "InspectorAuditAccessibilityObject.h"
 
 #include "AXCoreObject.h"
-#include "AXObjectCache.h"
+#include "AXObjectCacheInlines.h"
 #include "AccessibilityNodeObject.h"
+#include "AccessibilityObjectInlines.h"
 #include "ContainerNode.h"
 #include "Document.h"
 #include "HTMLNames.h"
@@ -53,10 +54,9 @@ InspectorAuditAccessibilityObject::InspectorAuditAccessibilityObject(InspectorAu
 
 static AccessibilityObject* accessibilityObjectForNode(Node& node)
 {
-    if (!AXObjectCache::accessibilityEnabled())
-        AXObjectCache::enableAccessibility();
+    AXObjectCache::enableAccessibility();
 
-    if (AXObjectCache* axObjectCache = node.document().axObjectCache())
+    if (CheckedPtr axObjectCache = protect(node)->document().axObjectCache())
         return axObjectCache->getOrCreate(node);
 
     return nullptr;
@@ -69,8 +69,8 @@ ExceptionOr<Vector<Ref<Node>>> InspectorAuditAccessibilityObject::getElementsByC
     Vector<Ref<Node>> nodes;
 
     auto* containerNode = dynamicDowncast<ContainerNode>(container);
-    for (Element& element : descendantsOfType<Element>(containerNode ? *containerNode : document)) {
-        if (auto* axObject = accessibilityObjectForNode(element)) {
+    for (Ref element : descendantsOfType<Element>(containerNode ? *containerNode : document)) {
+        if (RefPtr axObject = accessibilityObjectForNode(element)) {
             if (axObject->computedRoleString() == role)
                 nodes.append(element);
         }
@@ -83,8 +83,8 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getActiveDescendant
 {
     ERROR_IF_NO_ACTIVE_AUDIT();
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
-        if (AXCoreObject* activeDescendant = axObject->activeDescendant())
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
+        if (RefPtr activeDescendant = axObject->activeDescendant())
             return activeDescendant->node();
     }
 
@@ -93,11 +93,11 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getActiveDescendant
 
 static void addChildren(AXCoreObject& parentObject, Vector<Ref<Node>>& childNodes)
 {
-    for (const auto& childObject : parentObject.children()) {
+    for (const auto& childObject : parentObject.unignoredChildren()) {
         if (RefPtr childNode = childObject->node())
             childNodes.append(childNode.releaseNonNull());
         else
-            addChildren(*childObject, childNodes);
+            addChildren(childObject.get(), childNodes);
     }
 }
 
@@ -107,10 +107,10 @@ ExceptionOr<std::optional<Vector<Ref<Node>>>> InspectorAuditAccessibilityObject:
 
     std::optional<Vector<Ref<Node>>> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         Vector<Ref<Node>> childNodes;
         addChildren(*axObject, childNodes);
-        result = WTFMove(childNodes);
+        result = WTF::move(childNodes);
     }
 
     return result;
@@ -122,10 +122,10 @@ ExceptionOr<std::optional<InspectorAuditAccessibilityObject::ComputedProperties>
 
     std::optional<InspectorAuditAccessibilityObject::ComputedProperties> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         ComputedProperties computedProperties;
 
-        AXCoreObject* current = axObject;
+        RefPtr current = static_cast<AXCoreObject*>(axObject.get());
         while (current && (!computedProperties.busy || !computedProperties.busy.value())) {
             computedProperties.busy = current->isBusy();
             current = current->parentObject();
@@ -178,8 +178,8 @@ ExceptionOr<std::optional<InspectorAuditAccessibilityObject::ComputedProperties>
         computedProperties.headingLevel = axObject->headingLevel();
         computedProperties.hidden = axObject->isHidden();
         computedProperties.hierarchicalLevel = axObject->hierarchicalLevel();
-        computedProperties.ignored = axObject->accessibilityIsIgnored();
-        computedProperties.ignoredByDefault = axObject->accessibilityIsIgnoredByDefault();
+        computedProperties.ignored = axObject->isIgnored();
+        computedProperties.ignoredByDefault = axObject->isIgnoredByDefault();
 
         String invalidValue = axObject->invalidStatus();
         if (invalidValue == "false"_s)
@@ -191,7 +191,7 @@ ExceptionOr<std::optional<InspectorAuditAccessibilityObject::ComputedProperties>
         else
             computedProperties.invalidStatus = "true"_s;
 
-        computedProperties.isPopUpButton = axObject->isPopUpButton() || axObject->hasPopup();
+        computedProperties.isPopUpButton = axObject->isPopUpButton() || axObject->selfOrAncestorLinkHasPopup();
         computedProperties.label = axObject->computedLabel();
 
         if (axObject->supportsLiveRegion()) {
@@ -246,10 +246,10 @@ ExceptionOr<std::optional<Vector<Ref<Node>>>> InspectorAuditAccessibilityObject:
 
     std::optional<Vector<Ref<Node>>> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         auto controlledElements = axObject->elementsFromAttribute(HTMLNames::aria_controlsAttr);
-        result = WTF::map(WTFMove(controlledElements), [](auto&& element) -> Ref<Node> {
-            return WTFMove(element);
+        result = WTF::map(WTF::move(controlledElements), [](auto&& element) -> Ref<Node> {
+            return WTF::move(element);
         });
     }
 
@@ -262,10 +262,10 @@ ExceptionOr<std::optional<Vector<Ref<Node>>>> InspectorAuditAccessibilityObject:
 
     std::optional<Vector<Ref<Node>>> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         auto flowedElements = axObject->elementsFromAttribute(HTMLNames::aria_flowtoAttr);
-        result = WTF::map(WTFMove(flowedElements), [](auto&& element) -> Ref<Node> {
-            return WTFMove(element);
+        result = WTF::map(WTF::move(flowedElements), [](auto&& element) -> Ref<Node> {
+            return WTF::move(element);
         });
     }
 
@@ -276,8 +276,10 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getMouseEventNode(N
 {
     ERROR_IF_NO_ACTIVE_AUDIT();
 
-    if (auto* accessibilityNodeObject = dynamicDowncast<AccessibilityNodeObject>(accessibilityObjectForNode(node)))
-        return accessibilityNodeObject->mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
+        if (RefPtr clickableObject = axObject->clickableSelfOrAncestor(ClickHandlerFilter::IncludeBody))
+            return clickableObject->node();
+    }
 
     return nullptr;
 }
@@ -288,11 +290,11 @@ ExceptionOr<std::optional<Vector<Ref<Node>>>> InspectorAuditAccessibilityObject:
 
     std::optional<Vector<Ref<Node>>> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         if (axObject->supportsARIAOwns()) {
             auto ownedElements = axObject->elementsFromAttribute(HTMLNames::aria_ownsAttr);
-            result = WTF::map(WTFMove(ownedElements), [](auto&& element) -> Ref<Node> {
-                return WTFMove(element);
+            result = WTF::map(WTF::move(ownedElements), [](auto&& element) -> Ref<Node> {
+                return WTF::move(element);
             });
         }
     }
@@ -304,8 +306,8 @@ ExceptionOr<RefPtr<Node>> InspectorAuditAccessibilityObject::getParentNode(Node&
 {
     ERROR_IF_NO_ACTIVE_AUDIT();
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
-        if (AXCoreObject* parentObject = axObject->parentObjectUnignored())
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
+        if (RefPtr parentObject = axObject->parentObjectUnignored())
             return parentObject->node();
     }
 
@@ -318,17 +320,16 @@ ExceptionOr<std::optional<Vector<Ref<Node>>>> InspectorAuditAccessibilityObject:
 
     std::optional<Vector<Ref<Node>>> result;
 
-    if (auto* axObject = accessibilityObjectForNode(node)) {
+    if (RefPtr axObject = accessibilityObjectForNode(node)) {
         Vector<Ref<Node>> selectedChildNodes;
 
-        if (auto selectedChildren = axObject->selectedChildren()) {
-            for (auto& selectedChildObject : *selectedChildren) {
-                if (RefPtr selectedChildNode = selectedChildObject->node())
-                    selectedChildNodes.append(selectedChildNode.releaseNonNull());
-            }
+        auto selectedChildren = axObject->selectedChildren();
+        for (auto& selectedChildObject : selectedChildren) {
+            if (RefPtr selectedChildNode = selectedChildObject->node())
+                selectedChildNodes.append(selectedChildNode.releaseNonNull());
         }
 
-        result = WTFMove(selectedChildNodes);
+        result = WTF::move(selectedChildNodes);
     }
 
     return result;

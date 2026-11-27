@@ -35,6 +35,7 @@
 #include "CSSSelectorList.h"
 #include "CSSSelectorParserContext.h"
 #include "MutableCSSSelector.h"
+#include "PseudoElementIdentifier.h"
 #include "StyleSheetContents.h"
 
 namespace WebCore {
@@ -44,24 +45,23 @@ class CSSSelectorList;
 class StyleSheetContents;
 class StyleRule;
 
-namespace Style {
-
-struct PseudoElementIdentifier;
-
-}
-
 class CSSSelectorParser {
 public:
-    CSSSelectorParser(const CSSSelectorParserContext&, StyleSheetContents*, CSSParserEnum::IsNestedContext = CSSParserEnum::IsNestedContext::No);
+    enum class DisallowPseudoElement : bool { No, Yes };
+    CSSSelectorParser(const CSSSelectorParserContext&, StyleSheetContents*, CSSParserEnum::NestedContext = { }, DisallowPseudoElement= DisallowPseudoElement::No);
 
     MutableCSSSelectorList consumeComplexSelectorList(CSSParserTokenRange&);
     MutableCSSSelectorList consumeNestedSelectorList(CSSParserTokenRange&);
     MutableCSSSelectorList consumeComplexForgivingSelectorList(CSSParserTokenRange&);
     MutableCSSSelectorList consumeNestedComplexForgivingSelectorList(CSSParserTokenRange&);
 
-    static bool supportsComplexSelector(CSSParserTokenRange, const CSSSelectorParserContext&, CSSParserEnum::IsNestedContext);
-    static CSSSelectorList resolveNestingParent(const CSSSelectorList& nestedSelectorList, const CSSSelectorList* parentResolvedSelectorList);
-    static std::pair<bool, std::optional<Style::PseudoElementIdentifier>> parsePseudoElement(const String&, const CSSSelectorParserContext&);
+    WEBCORE_EXPORT static std::optional<CSSSelectorList> parseSelectorList(const String&, const CSSParserContext&, StyleSheetContents* = nullptr, CSSParserEnum::NestedContext = { });
+
+    static bool supportsComplexSelector(CSSParserTokenRange, const CSSSelectorParserContext&);
+    static CSSSelectorList resolveNestingParent(const CSSSelectorList& nestedSelectorList, const CSSSelectorList* parentResolvedSelectorList, bool parentRuleIsScope = false);
+    static CSSSelectorList makeHasScopeSelector(const Vector<const CSSSelector*>& compoundSelectors);
+    static CSSSelectorList makeHasArgumentWithScope(const CSSSelector& hasArgument, const CSSSelector& scopeSelector);
+    static std::optional<Style::PseudoElementIdentifier> parsePseudoElement(const String&, const CSSSelectorParserContext&);
 
 private:
     template<typename ConsumeSelector> MutableCSSSelectorList consumeSelectorList(CSSParserTokenRange&, ConsumeSelector&&);
@@ -79,8 +79,6 @@ private:
     // This doesn't include element names, since they're handled specially.
     std::unique_ptr<MutableCSSSelector> consumeSimpleSelector(CSSParserTokenRange&);
 
-    bool consumeName(CSSParserTokenRange&, AtomString& name, AtomString& namespacePrefix);
-
     // These will return nullptr when the selector is invalid.
     std::unique_ptr<MutableCSSSelector> consumeId(CSSParserTokenRange&);
     std::unique_ptr<MutableCSSSelector> consumeClass(CSSParserTokenRange&);
@@ -88,21 +86,21 @@ private:
     std::unique_ptr<MutableCSSSelector> consumeAttribute(CSSParserTokenRange&);
     std::unique_ptr<MutableCSSSelector> consumeNesting(CSSParserTokenRange&);
 
-    CSSSelector::Relation consumeCombinator(CSSParserTokenRange&);
+    CSSSelector::Relation NODELETE consumeCombinator(CSSParserTokenRange&);
     CSSSelector::Match consumeAttributeMatch(CSSParserTokenRange&);
     CSSSelector::AttributeMatchType consumeAttributeFlags(CSSParserTokenRange&);
 
-    const AtomString& defaultNamespace() const;
-    const AtomString& determineNamespace(const AtomString& prefix);
+    const AtomString& NODELETE defaultNamespace() const;
+    const AtomString& NODELETE determineNamespace(const AtomString& prefix);
     void prependTypeSelectorIfNeeded(const AtomString& namespacePrefix, const AtomString& elementName, MutableCSSSelector&);
     static std::unique_ptr<MutableCSSSelector> splitCompoundAtImplicitShadowCrossingCombinator(std::unique_ptr<MutableCSSSelector> compoundSelector, const CSSSelectorParserContext&);
-    static bool containsUnknownWebKitPseudoElements(const CSSSelector& complexSelector);
+    static bool NODELETE containsUnknownWebKitPseudoElements(const CSSSelector& complexSelector);
 
     class DisallowPseudoElementsScope;
 
     const CSSSelectorParserContext m_context;
     const RefPtr<StyleSheetContents> m_styleSheet;
-    CSSParserEnum::IsNestedContext m_isNestedContext { CSSParserEnum::IsNestedContext::No };
+    CSSParserEnum::NestedContext m_nestedContext;
 
     // FIXME: This m_failedParsing is ugly and confusing, we should look into removing it (the return value of each function already convey this information).
     bool m_failedParsing { false };
@@ -112,10 +110,17 @@ private:
     bool m_resistDefaultNamespace { false };
     bool m_ignoreDefaultNamespace { false };
     bool m_disableForgivingParsing { false };
-    std::optional<CSSSelector::PseudoElement> m_precedingPseudoElement;
+    const MutableCSSSelector* m_precedingPseudoElement { nullptr };
 };
 
-std::optional<CSSSelectorList> parseCSSSelectorList(CSSParserTokenRange, const CSSSelectorParserContext&, StyleSheetContents* = nullptr, CSSParserEnum::IsNestedContext = CSSParserEnum::IsNestedContext::No);
-MutableCSSSelectorList parseMutableCSSSelectorList(CSSParserTokenRange&, const CSSSelectorParserContext&, StyleSheetContents*, CSSParserEnum::IsNestedContext, CSSParserEnum::IsForgiving);
+struct ParsedQualifiedName {
+    AtomString name;
+    AtomString namespacePrefix;
+};
+std::optional<ParsedQualifiedName> consumeQualifiedName(CSSParserTokenRange&);
+
+std::optional<CSSSelectorList> parseCSSSelectorList(CSSParserTokenRange, const CSSSelectorParserContext&, StyleSheetContents* = nullptr, CSSParserEnum::NestedContext = { });
+
+MutableCSSSelectorList parseMutableCSSSelectorList(CSSParserTokenRange&, const CSSSelectorParserContext&, StyleSheetContents*, CSSParserEnum::NestedContext, CSSParserEnum::IsForgiving, CSSSelectorParser::DisallowPseudoElement);
 
 } // namespace WebCore

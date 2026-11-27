@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CallLinkInfo.h"
 
+#include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallFrameShuffleData.h"
 #include "DFGJITCode.h"
@@ -47,23 +48,26 @@ CallLinkInfo::CallType CallLinkInfo::callTypeFor(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_tail_call_varargs:
-    case op_tail_call_forward_arguments:
-        return TailCallVarargs;        
+        return TailCallVarargs;
 
     case op_call:
     case op_call_ignore_result:
     case op_call_direct_eval:
     case op_iterator_open:
     case op_iterator_next:
+    case op_async_iterator_open:
+    case op_async_iterator_next:
         return Call;
 
     case op_call_varargs:
         return CallVarargs;
 
     case op_construct:
+    case op_super_construct:
         return Construct;
 
     case op_construct_varargs:
+    case op_super_construct_varargs:
         return ConstructVarargs;
 
     case op_tail_call:
@@ -86,7 +90,7 @@ void CallLinkInfo::clearStub()
     if (!stub())
         return;
 
-    m_stub->clearCallNodesFor(this);
+    m_stub->unlinkForcefully();
     m_stub = nullptr;
 }
 
@@ -104,7 +108,7 @@ void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBloc
     case Mode::Monomorphic: {
         if (newCodeBlock && oldCodeBlock == m_codeBlock) {
             // Upgrading Monomorphic DataIC with newCodeBlock.
-            ArityCheckMode arityCheck = oldCodeBlock->jitCode()->addressForCall(ArityCheckNotRequired) == m_monomorphicCallDestination ? ArityCheckNotRequired : MustCheckArity;
+            ArityCheckMode arityCheck = oldCodeBlock->jitCode()->addressForCall(ArityCheckMode::ArityCheckNotRequired) == m_monomorphicCallDestination ? ArityCheckMode::ArityCheckNotRequired : ArityCheckMode::MustCheckArity;
             auto target = newCodeBlock->jitCode()->addressForCall(arityCheck);
             m_codeBlock = newCodeBlock;
             m_monomorphicCallDestination = target;
@@ -131,7 +135,7 @@ void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBloc
 
 void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee, CodeBlock* codeBlock, CodePtr<JSEntryPtrTag> codePtr)
 {
-    RELEASE_ASSERT(!(bitwise_cast<uintptr_t>(callee) & polymorphicCalleeMask));
+    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(callee) & polymorphicCalleeMask));
     m_callee.set(vm, owner, callee);
     m_codeBlock = codeBlock;
     m_monomorphicCallDestination = codePtr;
@@ -147,7 +151,7 @@ void CallLinkInfo::clearCallee()
 
 JSObject* CallLinkInfo::callee()
 {
-    RELEASE_ASSERT(!(bitwise_cast<uintptr_t>(m_callee.get()) & polymorphicCalleeMask));
+    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(m_callee.get()) & polymorphicCalleeMask));
     return m_callee.get();
 }
 
@@ -207,7 +211,7 @@ void CallLinkInfo::visitWeak(VM& vm)
 
     if (haveLastSeenCallee() && !vm.heap.isMarked(lastSeenCallee())) {
         if (lastSeenCallee()->type() == JSFunctionType)
-            handleSpecificCallee(jsCast<JSFunction*>(lastSeenCallee()));
+            handleSpecificCallee(uncheckedDowncast<JSFunction>(lastSeenCallee()));
         else
             m_clearedByGC = true;
         m_lastSeenCallee.clear();
@@ -238,13 +242,13 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
     m_codeOrigin = codeOrigin;
     m_callType = callType;
     m_mode = static_cast<unsigned>(Mode::Init);
-    if (UNLIKELY(!Options::useLLIntICs()))
+    if (!Options::useLLIntICs()) [[unlikely]]
         setVirtualCall(vm);
 }
 
 std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner)
 {
-    auto* codeBlock = jsDynamicCast<CodeBlock*>(owner);
+    auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
     if (!codeBlock)
         return { };
     CodeOrigin codeOrigin = this->codeOrigin();
@@ -267,7 +271,7 @@ void CallLinkInfo::reset(VM&)
 
 void CallLinkInfo::revertCall(VM& vm)
 {
-    if (UNLIKELY(!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly))
+    if (!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly) [[unlikely]]
         setVirtualCall(vm);
     else
         reset(vm);
@@ -277,7 +281,7 @@ void CallLinkInfo::setVirtualCall(VM& vm)
 {
     reset(vm);
     m_callee.clear();
-    *bitwise_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
+    *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
     m_codeBlock = nullptr; // PolymorphicCallStubRoutine will set CodeBlock inside it.
     m_monomorphicCallDestination = vm.getCTIVirtualCall(callMode()).code().template retagged<JSEntryPtrTag>();
 
@@ -291,9 +295,9 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
     if (codeBlock)
         return codeBlock->globalObject();
 #if ENABLE(WEBASSEMBLY)
-    auto* module = jsDynamicCast<JSWebAssemblyModule*>(owner);
+    auto* module = dynamicDowncast<JSWebAssemblyModule>(owner);
     if (module)
-        return module->globalObject();
+        return module->realm();
 #endif
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -302,10 +306,10 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
 void CallLinkInfo::setStub(Ref<PolymorphicCallStubRoutine>&& newStub)
 {
     clearStub();
-    m_stub = WTFMove(newStub);
+    m_stub = WTF::move(newStub);
 
     m_callee.clear();
-    *bitwise_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
+    *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
     m_codeBlock = nullptr; // PolymorphicCallStubRoutine will set CodeBlock inside it.
     m_monomorphicCallDestination = m_stub->code().code().retagged<JSEntryPtrTag>();
 
@@ -370,7 +374,7 @@ void CallLinkInfo::emitDataICFastPath(CCallHelpers& jit)
 
 void CallLinkInfo::emitTailCallDataICFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)
 {
-    emitFastPathImpl(nullptr, jit, true, WTFMove(prepareForTailCall));
+    emitFastPathImpl(nullptr, jit, true, WTF::move(prepareForTailCall));
 }
 
 void CallLinkInfo::emitFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callLinkInfo)
@@ -384,9 +388,9 @@ void CallLinkInfo::emitFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callL
 void CallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, CompileTimeCallLinkInfo callLinkInfo, ScopedLambda<void()>&& prepareForTailCall)
 {
     if (std::holds_alternative<OptimizingCallLinkInfo*>(callLinkInfo))
-        return std::get<OptimizingCallLinkInfo*>(callLinkInfo)->emitTailCallFastPath(jit, WTFMove(prepareForTailCall));
+        return std::get<OptimizingCallLinkInfo*>(callLinkInfo)->emitTailCallFastPath(jit, WTF::move(prepareForTailCall));
 
-    return CallLinkInfo::emitTailCallDataICFastPath(jit, WTFMove(prepareForTailCall));
+    return CallLinkInfo::emitTailCallDataICFastPath(jit, WTF::move(prepareForTailCall));
 }
 
 void OptimizingCallLinkInfo::emitFastPath(CCallHelpers& jit)
@@ -398,7 +402,7 @@ void OptimizingCallLinkInfo::emitFastPath(CCallHelpers& jit)
 void OptimizingCallLinkInfo::emitTailCallFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)
 {
     RELEASE_ASSERT(isTailCall());
-    emitFastPathImpl(this, jit, isTailCall(), WTFMove(prepareForTailCall));
+    emitFastPathImpl(this, jit, isTailCall(), WTF::move(prepareForTailCall));
 }
 
 #if ENABLE(DFG_JIT)
@@ -429,7 +433,7 @@ void DirectCallLinkInfo::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeB
 
     if (!!m_target) {
         if (m_codeBlock && newCodeBlock && oldCodeBlock == m_codeBlock) {
-            ArityCheckMode arityCheck = oldCodeBlock->jitCode()->addressForCall(ArityCheckNotRequired) == m_target ? ArityCheckNotRequired : MustCheckArity;
+            ArityCheckMode arityCheck = oldCodeBlock->jitCode()->addressForCall(ArityCheckMode::ArityCheckNotRequired) == m_target ? ArityCheckMode::ArityCheckNotRequired : ArityCheckMode::MustCheckArity;
             auto target = newCodeBlock->jitCode()->addressForCall(arityCheck);
             setCallTarget(newCodeBlock, CodeLocationLabel { target });
             newCodeBlock->linkIncomingCall(nullptr, this); // This is just relinking. So owner and caller frame can be nullptr.
@@ -553,7 +557,7 @@ CodeBlock* DirectCallLinkInfo::retrieveCodeBlock(FunctionExecutable* functionExe
     if (!codeBlock)
         return nullptr;
 
-    CodeBlock* ownerCodeBlock = jsDynamicCast<CodeBlock*>(owner());
+    CodeBlock* ownerCodeBlock = dynamicDowncast<CodeBlock>(owner());
     if (!ownerCodeBlock)
         return nullptr;
 
@@ -566,7 +570,7 @@ CodeBlock* DirectCallLinkInfo::retrieveCodeBlock(FunctionExecutable* functionExe
 CodePtr<JSEntryPtrTag> DirectCallLinkInfo::retrieveCodePtr(const ConcurrentJSLocker& locker, CodeBlock* codeBlock)
 {
     unsigned argumentStackSlots = maxArgumentCountIncludingThis();
-    ArityCheckMode arityCheckMode = (argumentStackSlots < static_cast<size_t>(codeBlock->numParameters())) ? MustCheckArity : ArityCheckNotRequired;
+    ArityCheckMode arityCheckMode = (argumentStackSlots < static_cast<size_t>(codeBlock->numParameters())) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
     return codeBlock->addressForCallConcurrently(locker, arityCheckMode);
 }
 
@@ -575,7 +579,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
     if (m_executable->isHostFunction()) {
         CodeSpecializationKind kind = specializationKind();
         CodePtr<JSEntryPtrTag> codePtr;
-        if (kind == CodeForCall)
+        if (kind == CodeSpecializationKind::CodeForCall)
             codePtr = m_executable->generatedJITCodeWithArityCheckForCall();
         else
             codePtr = m_executable->generatedJITCodeWithArityCheckForConstruct();
@@ -586,7 +590,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
         return;
     }
 
-    FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(m_executable);
+    FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(m_executable);
     if (!functionExecutable) {
         initialize();
         return;
@@ -610,7 +614,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
 void DirectCallLinkInfo::validateSpeculativeRepatchOnMainThread(VM&)
 {
     constexpr bool verbose = false;
-    FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(m_executable);
+    FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(m_executable);
     if (!functionExecutable)
         return;
 

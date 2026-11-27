@@ -45,8 +45,9 @@ class SharedBufferReference;
 
 namespace WebKit {
 class GPUConnectionToWebProcess;
+struct SharedPreferencesForWebProcess;
 
-class RemoteImageDecoderAVFProxy : private IPC::MessageReceiver {
+class RemoteImageDecoderAVFProxy : public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteImageDecoderAVFProxy);
 public:
     explicit RemoteImageDecoderAVFProxy(GPUConnectionToWebProcess&);
@@ -54,22 +55,27 @@ public:
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
-    bool allowsExitUnderMemoryPressure() const;
+    bool NODELETE allowsExitUnderMemoryPressure() const;
+
+    void ref() const final;
+    void deref() const final;
+
+    std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
 private:
     void createDecoder(const IPC::SharedBufferReference&, const String& mimeType, CompletionHandler<void(std::optional<WebCore::ImageDecoderIdentifier>&&)>&&);
     void deleteDecoder(WebCore::ImageDecoderIdentifier);
     void setExpectedContentSize(WebCore::ImageDecoderIdentifier, long long expectedContentSize);
-    void setData(WebCore::ImageDecoderIdentifier, const IPC::SharedBufferReference&, bool allDataReceived, CompletionHandler<void(size_t frameCount, const WebCore::IntSize& size, bool hasTrack, std::optional<Vector<WebCore::ImageDecoder::FrameInfo>>&&)>&&);
-    void createFrameImageAtIndex(WebCore::ImageDecoderIdentifier, size_t index, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
-    void clearFrameBufferCache(WebCore::ImageDecoderIdentifier, size_t index);
+    void setData(WebCore::ImageDecoderIdentifier, const IPC::SharedBufferReference&, bool allDataReceived, CompletionHandler<void(uint64_t frameCount, const WebCore::IntSize& size, bool hasTrack, std::optional<Vector<WebCore::ImageDecoder::FrameInfo>>&&)>&&);
+    void createFrameImageAtIndex(WebCore::ImageDecoderIdentifier, uint64_t index, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+    void clearFrameBufferCache(WebCore::ImageDecoderIdentifier, uint64_t index);
 
     void encodedDataStatusChanged(WebCore::ImageDecoderIdentifier);
 
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_connectionToWebProcess;
-    HashMap<WebCore::ImageDecoderIdentifier, RefPtr<WebCore::ImageDecoderAVFObjC>> m_imageDecoders;
+    HashMap<WebCore::ImageDecoderIdentifier, Ref<WebCore::ImageDecoderAVFObjC>> m_imageDecoders;
     WebCore::ProcessIdentity m_resourceOwner;
 };
 

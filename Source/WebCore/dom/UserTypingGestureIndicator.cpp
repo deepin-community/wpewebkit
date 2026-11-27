@@ -26,8 +26,10 @@
 #include "config.h"
 #include "UserTypingGestureIndicator.h"
 
+#include "Document.h"
 #include "Element.h"
 #include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -38,7 +40,7 @@ bool UserTypingGestureIndicator::processingUserTypingGesture()
     return s_processingUserTypingGesture;
 }
 
-static RefPtr<Node>& focusedNode()
+static RefPtr<Node>& NODELETE focusedNode()
 {
     static NeverDestroyed<RefPtr<Node>> node;
     return node;

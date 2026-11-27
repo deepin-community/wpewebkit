@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2020 Apple Inc. All rights reserved.
+* Copyright (C) 2020-2025 Apple Inc. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions
@@ -34,15 +34,18 @@
 #include "RemoteMediaPlayerProxyMessages.h"
 #include "VideoTrackPrivateRemoteConfiguration.h"
 #include <wtf/CrossThreadCopier.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VideoTrackPrivateRemote);
 
 VideoTrackPrivateRemote::VideoTrackPrivateRemote(GPUProcessConnection& gpuProcessConnection, WebCore::MediaPlayerIdentifier playerIdentifier, VideoTrackPrivateRemoteConfiguration&& configuration)
     : m_gpuProcessConnection(gpuProcessConnection)
     , m_id(configuration.trackId)
     , m_playerIdentifier(playerIdentifier)
 {
-    updateConfiguration(WTFMove(configuration));
+    updateConfiguration(WTF::move(configuration));
 }
 
 void VideoTrackPrivateRemote::setSelected(bool selected)
@@ -71,7 +74,7 @@ void VideoTrackPrivateRemote::updateConfiguration(VideoTrackPrivateRemoteConfigu
         m_label = configuration.label;
         if (changed && hasClients()) {
             notifyClients([label = crossThreadCopy(m_label)](auto& client) {
-                client.labelChanged(AtomString { label });
+                client.labelChanged(label);
             });
         }
     }
@@ -81,7 +84,7 @@ void VideoTrackPrivateRemote::updateConfiguration(VideoTrackPrivateRemoteConfigu
         m_language = configuration.language;
         if (changed && hasClients()) {
             notifyClients([language = crossThreadCopy(m_language)](auto& client) {
-                client.languageChanged(AtomString { language });
+                client.languageChanged(language);
             });
         }
     }
@@ -89,7 +92,7 @@ void VideoTrackPrivateRemote::updateConfiguration(VideoTrackPrivateRemoteConfigu
     m_trackIndex = configuration.trackIndex;
     m_startTimeVariance = configuration.startTimeVariance;
     m_kind = configuration.kind;
-    setConfiguration(WTFMove(configuration.trackConfiguration));
+    setConfiguration(WTF::move(configuration.trackConfiguration));
     VideoTrackPrivate::setSelected(configuration.selected);
 }
 

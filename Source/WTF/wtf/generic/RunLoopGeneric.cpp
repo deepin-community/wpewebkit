@@ -30,24 +30,20 @@
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WTF {
 
 static constexpr bool report = false;
 
-class RunLoop::TimerBase::ScheduledTask : public ThreadSafeRefCounted<ScheduledTask>, public RedBlackTree<ScheduledTask, MonotonicTime>::Node {
-    WTF_MAKE_FAST_ALLOCATED;
+class RunLoop::TimerBase::ScheduledTask final : public ThreadSafeRefCounted<ScheduledTask>, public RedBlackTree<ScheduledTask, MonotonicTime>::ThreadSafeNode {
+    WTF_MAKE_TZONE_ALLOCATED(ScheduledTask);
     WTF_MAKE_NONCOPYABLE(ScheduledTask);
-
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ScheduledTask);
 public:
     static Ref<ScheduledTask> create(RunLoop::TimerBase& timer)
     {
         return adoptRef(*new ScheduledTask(timer));
-    }
-
-    ScheduledTask(RunLoop::TimerBase& timer)
-        : m_timer(timer)
-    {
     }
 
     void fired()
@@ -112,6 +108,11 @@ public:
     }
 
 private:
+    ScheduledTask(RunLoop::TimerBase& timer)
+        : m_timer(timer)
+    {
+    }
+
     RunLoop::TimerBase& m_timer;
     MonotonicTime m_scheduledTimePoint;
     Seconds m_fireInterval;
@@ -120,9 +121,9 @@ private:
     bool m_isScheduled { };
 };
 
-RunLoop::RunLoop()
-{
-}
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RunLoop::TimerBase::ScheduledTask);
+
+RunLoop::RunLoop() = default;
 
 RunLoop::~RunLoop()
 {
@@ -174,13 +175,13 @@ inline bool RunLoop::populateTasks(RunMode runMode, Status& statusOfThisLoop, De
 
 void RunLoop::runImpl(RunMode runMode)
 {
-    ASSERT(this == &RunLoop::current());
+    ASSERT(this == &RunLoop::currentSingleton());
 
     if constexpr (report) {
         static LazyNeverDestroyed<Timer> reporter;
         static std::once_flag onceKey;
         std::call_once(onceKey, [&] {
-            reporter.construct(*this, [this] {
+            reporter.construct(*this, "RunLoop::runImpl::Reporter"_s, [this] {
                 unsigned count = 0;
                 unsigned active = 0;
                 for (auto task = m_schedules.first(); task; task = task->successor()) {
@@ -233,12 +234,12 @@ void RunLoop::runImpl(RunMode runMode)
 
 void RunLoop::run()
 {
-    RunLoop::current().runImpl(RunMode::Drain);
+    RunLoop::currentSingleton().runImpl(RunMode::Drain);
 }
 
 void RunLoop::setWakeUpCallback(WTF::Function<void()>&& function)
 {
-    RunLoop::current().m_wakeUpCallback = WTFMove(function);
+    RunLoop::currentSingleton().m_wakeUpCallback = WTF::move(function);
 }
 
 // RunLoop operations are thread-safe. These operations can be called from outside of the RunLoop's thread.
@@ -275,7 +276,7 @@ void RunLoop::wakeUp()
 
 RunLoop::CycleResult RunLoop::cycle(RunLoopMode)
 {
-    RunLoop::current().runImpl(RunMode::Iterate);
+    RunLoop::currentSingleton().runImpl(RunMode::Iterate);
     return CycleResult::Continue;
 }
 
@@ -297,14 +298,22 @@ void RunLoop::unscheduleWithLock(TimerBase::ScheduledTask& task)
 
 // Since RunLoop does not own the registered TimerBase,
 // TimerBase and its owner should manage these lifetime.
-RunLoop::TimerBase::TimerBase(RunLoop& runLoop)
-    : m_runLoop(runLoop)
+RunLoop::TimerBase::TimerBase(Ref<RunLoop>&& runLoop, ASCIILiteral description)
+    : m_runLoop(WTF::move(runLoop))
+    , m_description(description)
     , m_scheduledTask(ScheduledTask::create(*this))
 {
 }
 
 RunLoop::TimerBase::~TimerBase()
 {
+    // An active timer must be stopped/destroyed on its run loop's thread: fired() runs the timer's
+    // callback on that thread without holding m_loopLock, and the TimerBase is not ref-counted, so
+    // tearing it down from another thread races with the in-flight callback and risks a use-after-free.
+    // (Starting a timer cross-thread is safe and supported -- that is how dispatch()/dispatchAfter()
+    // schedule work onto another run loop.)
+    if (m_scheduledTask->isActive())
+        releaseAssertIsCurrent(m_runLoop);
     Locker locker { m_runLoop->m_loopLock };
     stopWithLock();
 }
@@ -327,6 +336,8 @@ void RunLoop::TimerBase::stopWithLock()
 void RunLoop::TimerBase::stop()
 {
     Locker locker { m_runLoop->m_loopLock };
+    if (m_scheduledTask->isActive())
+        releaseAssertIsCurrent(m_runLoop);
     stopWithLock();
 }
 

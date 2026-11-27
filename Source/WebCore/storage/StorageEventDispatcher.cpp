@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,13 +35,15 @@
 #include "PageGroup.h"
 #include "SecurityOrigin.h"
 #include "SecurityOriginData.h"
+#include "Storage.h"
 #include "StorageEvent.h"
 #include "StorageType.h"
 
 namespace WebCore {
 
+// https://html.spec.whatwg.org/multipage/webstorage.html#concept-storage-broadcast
 template<StorageType storageType>
-static void dispatchStorageEvents(const String& key, const String& oldValue, const String& newValue, const SecurityOrigin& securityOrigin, const String& url, const Function<bool(Storage&)>& isSourceStorage, const Function<bool(Page&)>& isRelevantPage)
+static void dispatchStorageEvents(const String& key, const String& oldValue, const String& newValue, const SecurityOrigin& securityOrigin, const String& url, NOESCAPE const Function<bool(Storage&)>& isSourceStorage, NOESCAPE const Function<bool(Page&)>& isRelevantPage)
 {
     Vector<Ref<LocalDOMWindow>> windows;
     LocalDOMWindow::forEachWindowInterestedInStorageEvents([&](auto& window) {
@@ -49,11 +51,11 @@ static void dispatchStorageEvents(const String& key, const String& oldValue, con
         if (!storage)
             return;
         // Send events only to our page.
-        if (auto* page = window.page(); !page || !isRelevantPage(*page))
+        if (RefPtr page = window.page(); !page || !isRelevantPage(*page))
             return;
         if (isSourceStorage(*storage))
             return;
-        if (!securityOrigin.equal(window.securityOrigin()))
+        if (!securityOrigin.equal(*window.securityOrigin()))
             return;
         windows.append(window);
     });
@@ -61,12 +63,12 @@ static void dispatchStorageEvents(const String& key, const String& oldValue, con
     for (auto& window : windows) {
         RefPtr document = window->document();
         auto result = isLocalStorage(storageType) ? window->localStorage() : window->sessionStorage();
-        if (!result.hasException()) // https://html.spec.whatwg.org/multipage/webstorage.html#the-storage-event:event-storage
-            document->queueTaskToDispatchEventOnWindow(TaskSource::DOMManipulation, StorageEvent::create(eventNames().storageEvent, key, oldValue, newValue, url, result.releaseReturnValue()));
+        if (!result.hasException())
+            document->queueTaskToDispatchEventOnWindow(window, TaskSource::DOMManipulation, StorageEvent::create(eventNames().storageEvent, key, oldValue, newValue, url, protect(result.releaseReturnValue())));
     }
 }
 
-void StorageEventDispatcher::dispatchSessionStorageEvents(const String& key, const String& oldValue, const String& newValue, Page& page, const SecurityOrigin& securityOrigin, const String& url, const Function<bool(Storage&)>& isSourceStorage)
+void StorageEventDispatcher::dispatchSessionStorageEvents(const String& key, const String& oldValue, const String& newValue, Page& page, const SecurityOrigin& securityOrigin, const String& url, NOESCAPE const Function<bool(Storage&)>& isSourceStorage)
 {
     InspectorInstrumentation::didDispatchDOMStorageEvent(page, key, oldValue, newValue, StorageType::Session, securityOrigin);
     dispatchStorageEvents<StorageType::Session>(key, oldValue, newValue, securityOrigin, url, isSourceStorage, [&](auto& windowPage) {
@@ -74,7 +76,7 @@ void StorageEventDispatcher::dispatchSessionStorageEvents(const String& key, con
     });
 }
 
-void StorageEventDispatcher::dispatchLocalStorageEvents(const String& key, const String& oldValue, const String& newValue, PageGroup* pageGroup, const SecurityOrigin& securityOrigin, const String& url, const Function<bool(Storage&)>& isSourceStorage)
+void StorageEventDispatcher::dispatchLocalStorageEvents(const String& key, const String& oldValue, const String& newValue, PageGroup* pageGroup, const SecurityOrigin& securityOrigin, const String& url, NOESCAPE const Function<bool(Storage&)>& isSourceStorage)
 {
     if (!pageGroup) {
         Page::forEachPage([&](Page& page) {
@@ -85,7 +87,7 @@ void StorageEventDispatcher::dispatchLocalStorageEvents(const String& key, const
     }
 
     auto& pagesInGroup = pageGroup->pages();
-    for (auto& page : pagesInGroup)
+    for (Ref page : pagesInGroup)
         InspectorInstrumentation::didDispatchDOMStorageEvent(page, key, oldValue, newValue, StorageType::Local, securityOrigin);
     dispatchStorageEvents<StorageType::Local>(key, oldValue, newValue, securityOrigin, url, isSourceStorage, [&](auto& page) {
         return pagesInGroup.contains(page);

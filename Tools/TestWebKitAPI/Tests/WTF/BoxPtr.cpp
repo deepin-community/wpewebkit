@@ -50,11 +50,23 @@ void boxPtrLoggerDeleter(BoxPtrLogger* logger)
     delete logger;
 }
 
+class BoxPtrClassTest {
+public:
+    void method() { ++value; }
+    int value { 1 };
+};
+
+void boxPtrClassTestDeleter(BoxPtrClassTest* theObject)
+{
+    delete theObject;
+}
+
 };
 
 namespace WTF {
 
 WTF_DEFINE_BOXPTR_DELETER(TestWebKitAPI::BoxPtrLogger, TestWebKitAPI::boxPtrLoggerDeleter);
+WTF_DEFINE_BOXPTR_DELETER(TestWebKitAPI::BoxPtrClassTest, TestWebKitAPI::boxPtrClassTestDeleter);
 
 }
 
@@ -98,7 +110,7 @@ TEST(WTF_BoxPtr, Basic)
     {
         BoxPtrLogger* a = BoxPtrLogger::create("a");
         BoxPtr<BoxPtrLogger> p1 = adoptInBoxPtr(a);
-        BoxPtr<BoxPtrLogger> p2 = WTFMove(p1);
+        BoxPtr<BoxPtrLogger> p2 = WTF::move(p1);
         EXPECT_EQ(false, static_cast<bool>(p1));
         EXPECT_EQ(a, p2->get());
     }
@@ -107,7 +119,7 @@ TEST(WTF_BoxPtr, Basic)
     {
         BoxPtrLogger* a = BoxPtrLogger::create("a");
         BoxPtr<BoxPtrLogger> p1 = adoptInBoxPtr(a);
-        BoxPtr<BoxPtrLogger> p2(WTFMove(p1));
+        BoxPtr<BoxPtrLogger> p2(WTF::move(p1));
         EXPECT_EQ(false, static_cast<bool>(p1));
         EXPECT_EQ(a, p2->get());
     }
@@ -121,6 +133,14 @@ TEST(WTF_BoxPtr, Basic)
         EXPECT_EQ(false, static_cast<bool>(ptr));
     }
     EXPECT_STREQ("create(a) delete(a) ", takeLogStr().c_str());
+}
+
+TEST(WTF_BoxPtr, NoCrash)
+{
+    BoxPtr<BoxPtrClassTest> ptr;
+    EXPECT_EQ(false, static_cast<bool>(ptr));
+    EXPECT_EQ(false, ptr.isValid());
+    EXPECT_EQ(nullptr, ptr.get());
 }
 
 TEST(WTF_BoxPtr, Assignment)
@@ -148,7 +168,7 @@ TEST(WTF_BoxPtr, Assignment)
         EXPECT_EQ(a, p1->get());
         EXPECT_EQ(b, p2->get());
         log() << "| ";
-        p1 = WTFMove(p2);
+        p1 = WTF::move(p2);
         EXPECT_EQ(b, p1->get());
         EXPECT_EQ(false, static_cast<bool>(p2));
         log() << "| ";
@@ -173,7 +193,7 @@ TEST(WTF_BoxPtr, Assignment)
         BoxPtr<BoxPtrLogger> ptr = adoptInBoxPtr(a);
         EXPECT_EQ(a, ptr->get());
         IGNORE_WARNINGS_BEGIN("self-move")
-        ptr = WTFMove(ptr);
+        ptr = WTF::move(ptr);
         IGNORE_WARNINGS_END
         EXPECT_EQ(a, ptr->get());
     }

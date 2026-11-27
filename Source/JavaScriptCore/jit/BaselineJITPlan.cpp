@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "BaselineJITPlan.h"
+#include "LOLJIT.h"
 
 #include "JITSafepoint.h"
 
@@ -40,6 +41,12 @@ BaselineJITPlan::BaselineJITPlan(CodeBlock* codeBlock)
 
 auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> CompilationPath
 {
+    {
+        ConcurrentJSLocker locker(m_codeBlock->valueProfileLock());
+        m_codeBlock->updateAllNonLazyValueProfilePredictions(locker);
+        m_codeBlock->updateAllLazyValueProfilePredictions(locker);
+    }
+
     // BaselineJITPlan can keep underlying CodeBlock alive while running.
     // So we do not need to suspend this compilation thread while running GC.
     Safepoint::Result result;
@@ -47,9 +54,19 @@ auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> Compil
         Safepoint safepoint(*this, result);
         safepoint.begin(false);
 
-        JIT jit(*m_vm, *this, m_codeBlock);
-        auto jitCode = jit.compileAndLinkWithoutFinalizing(effort);
-        m_jitCode = WTFMove(jitCode);
+        if (Options::useLOLJIT()) {
+#if USE(JSVALUE64)
+            LOL::LOLJIT jit(*m_vm, *this, m_codeBlock);
+            auto jitCode = jit.compileAndLinkWithoutFinalizing(effort);
+            m_jitCode = WTF::move(jitCode);
+#else
+            RELEASE_ASSERT_NOT_REACHED();
+#endif
+        } else {
+            JIT jit(*m_vm, *this, m_codeBlock);
+            auto jitCode = jit.compileAndLinkWithoutFinalizing(effort);
+            m_jitCode = WTF::move(jitCode);
+        }
     }
     if (result.didGetCancelled())
         return CancelPath;
@@ -91,13 +108,13 @@ CompilationResult BaselineJITPlan::finalize()
 {
     CompilationResult result = JIT::finalizeOnMainThread(m_codeBlock, *this, m_jitCode);
     switch (result) {
-    case CompilationFailed:
+    case CompilationResult::CompilationFailed:
         CODEBLOCK_LOG_EVENT(m_codeBlock, "delayJITCompile", ("compilation failed"));
         dataLogLnIf(Options::verboseOSR(), "    JIT compilation failed.");
         m_codeBlock->dontJITAnytimeSoon();
         m_codeBlock->m_didFailJITCompilation = true;
         break;
-    case CompilationSuccessful:
+    case CompilationResult::CompilationSuccessful:
         WTF::crossModifyingCodeFence();
         dataLogLnIf(Options::verboseOSR(), "    JIT compilation successful.");
         m_codeBlock->ownerExecutable()->installCode(m_codeBlock);

@@ -30,13 +30,13 @@
 #include "Document.h"
 #include "Element.h"
 #include "FrameSelection.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "Node.h"
 
 namespace WebCore {
 
 TextInsertionBaseCommand::TextInsertionBaseCommand(Ref<Document>&& document, EditAction editingAction)
-    : CompositeEditCommand(WTFMove(document), editingAction)
+    : CompositeEditCommand(WTF::move(document), editingAction)
 {
 }
 
@@ -64,7 +64,7 @@ String dispatchBeforeTextInsertedEvent(const String& text, const VisibleSelectio
         if (startNode->rootEditableElement()) {
             // Send BeforeTextInsertedEvent. The event handler will update text if necessary.
             Ref event = BeforeTextInsertedEvent::create(text);
-            RefPtr { startNode->rootEditableElement() }->dispatchEvent(event);
+            protect(startNode->rootEditableElement())->dispatchEvent(event);
             newText = event->text();
         }
     }

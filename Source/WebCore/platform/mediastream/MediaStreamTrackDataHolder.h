@@ -26,23 +26,17 @@
 
 #if ENABLE(MEDIA_STREAM)
 
-#include "CaptureDevice.h"
-#include "MediaStreamTrackHintValue.h"
-#include "RealtimeMediaSource.h"
+#include <WebCore/CaptureDevice.h>
+#include <WebCore/MediaStreamTrackHintValue.h>
+#include <WebCore/RealtimeMediaSource.h>
 #include <wtf/FastMalloc.h>
 
 namespace WebCore {
 
 class PreventSourceFromEndingObserverWrapper;
 
-struct MediaStreamTrackDataHolder {
-    WTF_MAKE_STRUCT_FAST_ALLOCATED;
-
-    WEBCORE_EXPORT MediaStreamTrackDataHolder(String&& trackId, String&& label, RealtimeMediaSource::Type, CaptureDevice::DeviceType, bool isEnabled, bool isEnded, MediaStreamTrackHintValue, bool isProducingData, bool isMuted, bool isInterrupted, RealtimeMediaSourceSettings, RealtimeMediaSourceCapabilities, Ref<RealtimeMediaSource>&&);
-    WEBCORE_EXPORT ~MediaStreamTrackDataHolder();
-
-    MediaStreamTrackDataHolder(const MediaStreamTrackDataHolder &) = delete;
-    MediaStreamTrackDataHolder &operator=(const MediaStreamTrackDataHolder &) = delete;
+struct MediaStreamTrackData {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MediaStreamTrackData);
 
     String trackId;
     String label;
@@ -56,9 +50,30 @@ struct MediaStreamTrackDataHolder {
     bool isInterrupted { false };
     RealtimeMediaSourceSettings settings;
     RealtimeMediaSourceCapabilities capabilities;
-    Ref<RealtimeMediaSource> source;
+    size_t settingsCapabilitiesUpdateCount { 0 };
 
-    Ref<PreventSourceFromEndingObserverWrapper> preventSourceFromEndingObserverWrapper;
+    enum class ShouldUpdateId : bool { No, Yes };
+    MediaStreamTrackData isolatedCopy(ShouldUpdateId) const;
+};
+
+class MediaStreamTrackDataHolder {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MediaStreamTrackDataHolder);
+public:
+    WEBCORE_EXPORT MediaStreamTrackDataHolder(MediaStreamTrackData&&, Ref<RealtimeMediaSource>&&);
+    WEBCORE_EXPORT ~MediaStreamTrackDataHolder();
+
+    MediaStreamTrackDataHolder(const MediaStreamTrackDataHolder&) = delete;
+    MediaStreamTrackDataHolder& operator=(const MediaStreamTrackDataHolder&) = delete;
+
+    WEBCORE_EXPORT std::unique_ptr<MediaStreamTrackDataHolder> copy() const;
+
+    MediaStreamTrackData& data() { return m_data; }
+    Ref<RealtimeMediaSource>& source() { return m_source; }
+
+private:
+    MediaStreamTrackData m_data;
+    Ref<RealtimeMediaSource> m_source;
+    const Ref<PreventSourceFromEndingObserverWrapper> m_preventSourceFromEndingObserverWrapper;
 };
 
 } // namespace WebCore

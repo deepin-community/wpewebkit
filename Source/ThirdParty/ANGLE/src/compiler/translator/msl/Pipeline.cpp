@@ -112,7 +112,7 @@ bool Pipeline::uses(const TVariable &var) const
                 case TQualifier::EvqSampleMaskIn:
                 case TQualifier::EvqSampleMask:
                     return var.symbolType() == SymbolType::BuiltIn;
-                case TQualifier::EvqUniform:
+                case TQualifier::EvqNumSamples:
                     return var.name() == "gl_NumSamples";
                 default:
                     return false;
@@ -134,6 +134,7 @@ bool Pipeline::uses(const TVariable &var) const
                 case TQualifier::EvqPointCoord:
                 case TQualifier::EvqFrontFacing:
                 case TQualifier::EvqSampleID:
+                case TQualifier::EvqBaryCoordInternal:
                     return true;
                 case TQualifier::EvqSampleMaskIn:
                     return var.symbolType() == SymbolType::AngleInternal;

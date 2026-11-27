@@ -74,7 +74,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWeakSet, (JSGlobalObject* globalObject, CallFr
     JSValue adderFunction = weakSet->JSObject::get(globalObject, vm.propertyNames->add);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto adderFunctionCallData = JSC::getCallData(adderFunction);
+    auto adderFunctionCallData = JSC::getCallDataInline(adderFunction);
     if (adderFunctionCallData.type == CallData::Type::None)
         return throwVMTypeError(globalObject, scope, "'add' property of a WeakSet should be callable."_s);
 
@@ -83,8 +83,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWeakSet, (JSGlobalObject* globalObject, CallFr
     scope.release();
     forEachInIterable(globalObject, iterable, [&](VM&, JSGlobalObject* globalObject, JSValue nextValue) {
         if (canPerformFastAdd) {
-            if (UNLIKELY(!canBeHeldWeakly(nextValue))) {
-                throwTypeError(asObject(adderFunction)->globalObject(), scope, WeakSetInvalidValueError);
+            if (!canBeHeldWeakly(nextValue)) [[unlikely]] {
+                throwTypeError(asObject(adderFunction)->realm(), scope, WeakSetInvalidValueError);
                 return;
             }
             weakSet->add(vm, nextValue.asCell());

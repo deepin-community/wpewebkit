@@ -25,16 +25,18 @@
 
 #pragma once
 
+#include <wtf/Platform.h>
+
 #if ENABLE(JIT)
 
-#include "CallData.h"
-#include "ImplementationVisibility.h"
-#include "Intrinsic.h"
-#include "MacroAssemblerCodeRef.h"
-#include "SlowPathFunction.h"
-#include "ThunkGenerator.h"
-#include "Weak.h"
-#include "WeakHandleOwner.h"
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
+#include <JavaScriptCore/Intrinsic.h>
+#include <JavaScriptCore/MacroAssemblerCodeRef.h>
+#include <JavaScriptCore/SlowPathFunction.h>
+#include <JavaScriptCore/ThunkGenerator.h>
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakHandleOwner.h>
 #include <tuple>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -54,7 +56,6 @@ class NativeExecutable;
 // List up super common stubs so that we initialize them eagerly.
 #define JSC_FOR_EACH_COMMON_THUNK(macro) \
     macro(HandleException, handleExceptionGenerator) \
-    macro(HandleExceptionWithCallFrameRollback, handleExceptionWithCallFrameRollbackGenerator) \
     macro(CheckException, checkExceptionGenerator) \
     macro(NativeCall, nativeCallGenerator) \
     macro(NativeConstruct, nativeConstructGenerator) \
@@ -64,6 +65,8 @@ class NativeExecutable;
     macro(InternalFunctionConstruct, internalFunctionConstructGenerator) \
     macro(ThrowExceptionFromCall, throwExceptionFromCallGenerator) \
     macro(ThrowExceptionFromCallSlowPath, throwExceptionFromCallSlowPathGenerator) \
+    macro(ThrowStackOverflowAtPrologue, throwStackOverflowAtPrologueGenerator) \
+    macro(ThrowOutOfMemoryError, throwOutOfMemoryErrorGenerator) \
     macro(VirtualThunkForRegularCall, virtualThunkForRegularCall) \
     macro(VirtualThunkForTailCall, virtualThunkForTailCall) \
     macro(VirtualThunkForConstruct, virtualThunkForConstruct) \
@@ -78,6 +81,7 @@ class NativeExecutable;
     macro(GetByIdCustomAccessorHandler, getByIdCustomAccessorHandler) \
     macro(GetByIdCustomValueHandler, getByIdCustomValueHandler) \
     macro(GetByIdGetterHandler, getByIdGetterHandler) \
+    macro(GetByIdMegamorphicGetterHandler, getByIdMegamorphicGetterHandler) \
     macro(GetByIdProxyObjectLoadHandler, getByIdProxyObjectLoadHandler) \
     macro(GetByIdModuleNamespaceLoadHandler, getByIdModuleNamespaceLoadHandler) \
     macro(PutByIdReplaceHandler, putByIdReplaceHandler) \
@@ -138,23 +142,47 @@ class NativeExecutable;
     macro(DeleteByValWithSymbolDeleteMissHandler, deleteByValWithSymbolDeleteMissHandler) \
     macro(CheckPrivateBrandHandler, checkPrivateBrandHandler) \
     macro(SetPrivateBrandHandler, setPrivateBrandHandler) \
-
-#if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
-#define JSC_FOR_EACH_YARR_JIT_BACKREFERENCES_THUNK(macro) \
-    macro(AreCanonicallyEquivalent, Yarr::areCanonicallyEquivalentThunkGenerator)
-#else
-#define JSC_FOR_EACH_YARR_JIT_BACKREFERENCES_THUNK(macro)
-#endif
+    macro(GetByValWithUndefinedKeyLoadOwnPropertyHandler, getByValWithUndefinedKeyLoadOwnPropertyHandler) \
+    macro(GetByValWithUndefinedKeyLoadPrototypePropertyHandler, getByValWithUndefinedKeyLoadPrototypePropertyHandler) \
+    macro(GetByValWithUndefinedKeyMissHandler, getByValWithUndefinedKeyMissHandler) \
+    macro(GetByValWithNullKeyLoadOwnPropertyHandler, getByValWithNullKeyLoadOwnPropertyHandler) \
+    macro(GetByValWithNullKeyLoadPrototypePropertyHandler, getByValWithNullKeyLoadPrototypePropertyHandler) \
+    macro(GetByValWithNullKeyMissHandler, getByValWithNullKeyMissHandler) \
+    macro(GetByValWithTrueKeyLoadOwnPropertyHandler, getByValWithTrueKeyLoadOwnPropertyHandler) \
+    macro(GetByValWithTrueKeyLoadPrototypePropertyHandler, getByValWithTrueKeyLoadPrototypePropertyHandler) \
+    macro(GetByValWithTrueKeyMissHandler, getByValWithTrueKeyMissHandler) \
+    macro(GetByValWithFalseKeyLoadOwnPropertyHandler, getByValWithFalseKeyLoadOwnPropertyHandler) \
+    macro(GetByValWithFalseKeyLoadPrototypePropertyHandler, getByValWithFalseKeyLoadPrototypePropertyHandler) \
+    macro(GetByValWithFalseKeyMissHandler, getByValWithFalseKeyMissHandler) \
+    macro(PutByValWithUndefinedKeyReplaceHandler, putByValWithUndefinedKeyReplaceHandler) \
+    macro(PutByValWithUndefinedKeyTransitionNonAllocatingHandler, putByValWithUndefinedKeyTransitionNonAllocatingHandler) \
+    macro(PutByValWithUndefinedKeyTransitionNewlyAllocatingHandler, putByValWithUndefinedKeyTransitionNewlyAllocatingHandler) \
+    macro(PutByValWithUndefinedKeyTransitionReallocatingHandler, putByValWithUndefinedKeyTransitionReallocatingHandler) \
+    macro(PutByValWithUndefinedKeyTransitionReallocatingOutOfLineHandler, putByValWithUndefinedKeyTransitionReallocatingOutOfLineHandler) \
+    macro(PutByValWithNullKeyReplaceHandler, putByValWithNullKeyReplaceHandler) \
+    macro(PutByValWithNullKeyTransitionNonAllocatingHandler, putByValWithNullKeyTransitionNonAllocatingHandler) \
+    macro(PutByValWithNullKeyTransitionNewlyAllocatingHandler, putByValWithNullKeyTransitionNewlyAllocatingHandler) \
+    macro(PutByValWithNullKeyTransitionReallocatingHandler, putByValWithNullKeyTransitionReallocatingHandler) \
+    macro(PutByValWithNullKeyTransitionReallocatingOutOfLineHandler, putByValWithNullKeyTransitionReallocatingOutOfLineHandler) \
+    macro(PutByValWithTrueKeyReplaceHandler, putByValWithTrueKeyReplaceHandler) \
+    macro(PutByValWithTrueKeyTransitionNonAllocatingHandler, putByValWithTrueKeyTransitionNonAllocatingHandler) \
+    macro(PutByValWithTrueKeyTransitionNewlyAllocatingHandler, putByValWithTrueKeyTransitionNewlyAllocatingHandler) \
+    macro(PutByValWithTrueKeyTransitionReallocatingHandler, putByValWithTrueKeyTransitionReallocatingHandler) \
+    macro(PutByValWithTrueKeyTransitionReallocatingOutOfLineHandler, putByValWithTrueKeyTransitionReallocatingOutOfLineHandler) \
+    macro(PutByValWithFalseKeyReplaceHandler, putByValWithFalseKeyReplaceHandler) \
+    macro(PutByValWithFalseKeyTransitionNonAllocatingHandler, putByValWithFalseKeyTransitionNonAllocatingHandler) \
+    macro(PutByValWithFalseKeyTransitionNewlyAllocatingHandler, putByValWithFalseKeyTransitionNewlyAllocatingHandler) \
+    macro(PutByValWithFalseKeyTransitionReallocatingHandler, putByValWithFalseKeyTransitionReallocatingHandler) \
+    macro(PutByValWithFalseKeyTransitionReallocatingOutOfLineHandler, putByValWithFalseKeyTransitionReallocatingOutOfLineHandler) \
 
 enum class CommonJITThunkID : uint8_t {
 #define JSC_DEFINE_COMMON_JIT_THUNK_ID(name, func) name,
 JSC_FOR_EACH_COMMON_THUNK(JSC_DEFINE_COMMON_JIT_THUNK_ID)
-JSC_FOR_EACH_YARR_JIT_BACKREFERENCES_THUNK(JSC_DEFINE_COMMON_JIT_THUNK_ID)
 #undef JSC_DEFINE_COMMON_JIT_THUNK_ID
 };
 
 #define JSC_COUNT_COMMON_JIT_THUNK_ID(name, func) + 1
-static constexpr unsigned numberOfCommonThunkIDs = 0 JSC_FOR_EACH_COMMON_THUNK(JSC_COUNT_COMMON_JIT_THUNK_ID) JSC_FOR_EACH_YARR_JIT_BACKREFERENCES_THUNK(JSC_COUNT_COMMON_JIT_THUNK_ID);
+static constexpr unsigned numberOfCommonThunkIDs = 0 JSC_FOR_EACH_COMMON_THUNK(JSC_COUNT_COMMON_JIT_THUNK_ID);
 #undef JSC_COUNT_COMMON_JIT_THUNK_ID
 
 class JITThunks final : private WeakHandleOwner {
@@ -176,9 +204,9 @@ public:
     MacroAssemblerCodeRef<JITThunkPtrTag> ctiStub(VM&, ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> ctiSlowPathFunctionStub(VM&, SlowPathFunction);
 
-    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility, const String& name);
-    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ThunkGenerator, ImplementationVisibility, Intrinsic, const DOMJIT::Signature*, const String& name);
-    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, ThunkGenerator, ImplementationVisibility, Intrinsic, const String& name);
+    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility, unsigned length, const String& name);
+    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ThunkGenerator, ImplementationVisibility, Intrinsic, const DOMJIT::Signature*, unsigned length, const String& name);
+    NativeExecutable* hostFunctionStub(VM&, TaggedNativeFunction, ThunkGenerator, ImplementationVisibility, Intrinsic, unsigned length, const String& name);
 
     void initialize(VM&);
 
@@ -192,31 +220,32 @@ private:
         PackedRefPtr<ExecutableMemoryHandle> handle;
         bool needsCrossModifyingCodeFence;
     };
-    using CTIStubMap = HashMap<ThunkGenerator, Entry>;
+    using CTIStubMap = UncheckedKeyHashMap<ThunkGenerator, Entry>;
 
-    using HostFunctionKey = std::tuple<TaggedNativeFunction, TaggedNativeFunction, ImplementationVisibility, String>;
+    using HostFunctionKey = std::tuple<TaggedNativeFunction, TaggedNativeFunction, ImplementationVisibility, unsigned, String>;
 
     struct WeakNativeExecutableHash {
-        static inline unsigned hash(const Weak<NativeExecutable>&);
+        static inline unsigned NODELETE hash(const Weak<NativeExecutable>&);
         static inline unsigned hash(const NativeExecutable*);
         static unsigned hash(const HostFunctionKey& key)
         {
-            return hash(std::get<0>(key), std::get<1>(key), std::get<2>(key), std::get<3>(key));
+            return hash(std::get<0>(key), std::get<1>(key), std::get<2>(key), std::get<3>(key), std::get<4>(key));
         }
 
-        static inline bool equal(const Weak<NativeExecutable>&, const Weak<NativeExecutable>&);
+        static inline bool NODELETE equal(const Weak<NativeExecutable>&, const Weak<NativeExecutable>&);
         static inline bool equal(const Weak<NativeExecutable>&, const HostFunctionKey&);
         static inline bool equal(const Weak<NativeExecutable>&, const NativeExecutable*);
         static inline bool equal(const NativeExecutable&, const NativeExecutable&);
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
 
     private:
-        static unsigned hash(TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, const String& name)
+        static unsigned hash(TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, unsigned length, const String& name)
         {
             Hasher hasher;
             WTF::add(hasher, function);
             WTF::add(hasher, constructor);
             WTF::add(hasher, implementationVisibility);
+            WTF::add(hasher, length);
             if (!name.isNull())
                 WTF::add(hasher, name);
             return hasher.hash();
@@ -225,7 +254,7 @@ private:
     struct HostKeySearcher;
     struct NativeExecutableTranslator;
 
-    using WeakNativeExecutableSet = HashSet<Weak<NativeExecutable>, WeakNativeExecutableHash>;
+    using WeakNativeExecutableSet = UncheckedKeyHashSet<Weak<NativeExecutable>, WeakNativeExecutableHash>;
 
     MacroAssemblerCodeRef<JITThunkPtrTag> m_commonThunks[numberOfCommonThunkIDs] { };
     CTIStubMap m_ctiStubMap;

@@ -4,7 +4,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2,1 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,6 +21,7 @@
 #include "CryptoKeyOKP.h"
 
 #include "CryptoKeyPair.h"
+#include "ExceptionOr.h"
 #include "GCryptRFC7748.h"
 #include "GCryptRFC8032.h"
 #include "GCryptUtilities.h"
@@ -31,16 +32,16 @@
 
 namespace WebCore {
 
-bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
+bool CryptoKeyOKP::supportsNamedCurve()
 {
-    return namedCurve == NamedCurve::Ed25519 || namedCurve == NamedCurve::X25519;
+    return true;
 }
 
 namespace CryptoKeyOKPImpl {
 
 static bool supportedAlgorithmIdentifier(CryptoAlgorithmIdentifier keyIdentifier, const Vector<uint8_t>& identifier)
 {
-    auto* data = identifier.data();
+    auto* data = identifier.span().data();
     auto size = identifier.size();
 
     switch (keyIdentifier) {
@@ -87,11 +88,11 @@ static std::optional<std::pair<Vector<uint8_t>, Vector<uint8_t>>> gcryptGenerate
         return std::nullopt;
     }
 
-    auto q = mpiData(qMpi);
-    auto d = mpiData(dMpi);
-    if (UNLIKELY(!q || !d))
+    auto q = mpiZeroPrefixedData(qMpi, 32);
+    auto d = mpiZeroPrefixedData(dMpi, 32);
+    if (!q || !d) [[unlikely]]
         return std::nullopt;
-    return std::make_pair(WTFMove(*q), WTFMove(*d));
+    return std::make_pair(WTF::move(*q), WTF::move(*d));
 }
 
 static std::optional<std::pair<Vector<uint8_t>, Vector<uint8_t>>> gcryptGenerateX25519Keys()
@@ -99,21 +100,21 @@ static std::optional<std::pair<Vector<uint8_t>, Vector<uint8_t>>> gcryptGenerate
     // private key is just 32 random bytes
     PAL::GCrypt::Handle<gcry_mpi_t> mpi(gcry_mpi_new(256));
     gcry_mpi_randomize(mpi, 256, GCRY_STRONG_RANDOM);
-    auto q = mpiData(mpi);
-    if (UNLIKELY(!q))
+    auto d = mpiZeroPrefixedData(mpi, 32);
+    if (!d) [[unlikely]]
         return std::nullopt;
 
     // public key being X25519(a, 9), as defined in [RFC7748], section 6.1.
-    auto d = GCrypt::RFC7748::X25519(*q, GCrypt::RFC7748::c_X25519BasePointU);
-    if (UNLIKELY(!d))
+    auto q = GCrypt::RFC7748::X25519(*d, GCrypt::RFC7748::c_X25519BasePointU);
+    if (!q) [[unlikely]]
         return std::nullopt;
 
-    return std::make_pair(WTFMove(*q), WTFMove(*d));
+    return std::make_pair(WTF::move(*q), WTF::move(*d));
 }
 
 std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!isPlatformSupportedCurve(namedCurve))
+    if (!supportsNamedCurve())
         return std::nullopt;
 
     std::optional<std::pair<Vector<uint8_t>, Vector<uint8_t>>> keyPair;
@@ -138,16 +139,16 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
         return std::nullopt;
 
     bool isPublicKeyExtractable = true;
-    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTFMove(publicKeyData), isPublicKeyExtractable, usages);
+    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(publicKeyData), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
-    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, WTFMove(privateKeyData), extractable, usages);
+    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(privateKeyData), extractable, usages);
     ASSERT(privateKey);
-    return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
+    return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
 }
 
 bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier, NamedCurve namedCurve, const Vector<uint8_t>& privateKey, const Vector<uint8_t>& publicKey)
 {
-    if (!isPlatformSupportedCurve(namedCurve))
+    if (!supportsNamedCurve())
         return false;
 
     switch (namedCurve) {
@@ -175,7 +176,7 @@ bool CryptoKeyOKP::platformCheckPairedKeys(CryptoAlgorithmIdentifier, NamedCurve
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!isPlatformSupportedCurve(curve))
+    if (!supportsNamedCurve())
         return nullptr;
 
     // Decode the `SubjectPublicKeyInfo` structure using the provided key data.
@@ -205,14 +206,17 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
         if (parameters)
             return nullptr;
 
+        if (subjectPublicKey->size() != 32)
+            return nullptr;
+
         // Construct the `public-key` expression to be used for generating the MPI structure.
         gcry_error_t error = GPG_ERR_NO_ERROR;
         switch (curve) {
         case CryptoKeyOKP::NamedCurve::Ed25519:
-            error = gcry_sexp_build(&platformKey, nullptr, "(public-key(ecc(curve Ed25519)(q %b)))", subjectPublicKey->size(), subjectPublicKey->data());
+            error = gcry_sexp_build(&platformKey, nullptr, "(public-key(ecc(curve Ed25519)(q %b)))", subjectPublicKey->size(), subjectPublicKey->span().data());
             break;
         case CryptoKeyOKP::NamedCurve::X25519:
-            error = gcry_sexp_build(&platformKey, nullptr, "(public-key(ecc(curve Curve25519)(q %b)))", subjectPublicKey->size(), subjectPublicKey->data());
+            error = gcry_sexp_build(&platformKey, nullptr, "(public-key(ecc(curve Curve25519)(q %b)))", subjectPublicKey->size(), subjectPublicKey->span().data());
             break;
         default:
             ASSERT_NOT_REACHED();
@@ -232,7 +236,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
         return nullptr;
     }
 
-    auto rawKey = mpiData(mpi);
+    auto rawKey = mpiZeroPrefixedData(mpi, 32);
     if (!rawKey)
         return nullptr;
 
@@ -273,7 +277,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 
         // Write out the public key data under `subjectPublicKey`. Because this is a
         // bit string parameter, the data size has to be multiplied by 8.
-        if (!PAL::TASN1::writeElement(spki, "subjectPublicKey", m_data.data(), m_data.size() * 8))
+        if (!PAL::TASN1::writeElement(spki, "subjectPublicKey", m_data.span().data(), m_data.size() * 8))
             return Exception { ExceptionCode::OperationError };
     }
 
@@ -282,7 +286,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
     if (!result)
         return Exception { ExceptionCode::OperationError };
 
-    return WTFMove(result.value());
+    return WTF::move(result.value());
 }
 
 // Per https://www.ietf.org/rfc/rfc5280.txt
@@ -296,7 +300,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (!isPlatformSupportedCurve(curve))
+    if (!supportsNamedCurve())
         return nullptr;
 
     // Decode the `PrivateKeyInfo` structure using the provided key data.
@@ -310,7 +314,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
         if (!version)
             return nullptr;
 
-        if (!CryptoConstants::matches(version->data(), version->size(), CryptoConstants::s_asn1Version0))
+        if (!CryptoConstants::matches(version->span().data(), version->size(), CryptoConstants::s_asn1Version0))
             return nullptr;
     }
 
@@ -355,10 +359,10 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
         gcry_error_t error = GPG_ERR_NO_ERROR;
         switch (curve) {
         case CryptoKeyOKP::NamedCurve::Ed25519:
-            error = gcry_sexp_build(&platformKey, nullptr, "(private-key(ecc(curve Ed25519)(flags eddsa)(d %b)))", privateKey->size(), privateKey->data());
+            error = gcry_sexp_build(&platformKey, nullptr, "(private-key(ecc(curve Ed25519)(flags eddsa)(d %b)))", privateKey->size(), privateKey->span().data());
             break;
         case CryptoKeyOKP::NamedCurve::X25519:
-            error = gcry_sexp_build(&platformKey, nullptr, "(private-key(ecc(curve Curve25519)(d %b)))", privateKey->size(), privateKey->data());
+            error = gcry_sexp_build(&platformKey, nullptr, "(private-key(ecc(curve Curve25519)(d %b)))", privateKey->size(), privateKey->span().data());
             break;
         default:
             ASSERT_NOT_REACHED();
@@ -395,7 +399,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
             return nullptr;
         }
 
-        auto rawKey = mpiData(mpi);
+        auto rawKey = mpiZeroPrefixedData(mpi, 32);
         if (!rawKey)
             return nullptr;
 
@@ -415,7 +419,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
             return Exception { ExceptionCode::OperationError };
 
         // Write out the data under `privateKey`.
-        if (!PAL::TASN1::writeElement(ecPrivateKey, "", m_data.data(), m_data.size()))
+        if (!PAL::TASN1::writeElement(ecPrivateKey, "", m_data.span().data(), m_data.size()))
             return Exception { ExceptionCode::OperationError };
     }
 
@@ -440,7 +444,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
         // Write out the `CurvePrivateKey` data under `privateKey`.
         {
             auto data = PAL::TASN1::encodedData(ecPrivateKey, "");
-            if (!data || !PAL::TASN1::writeElement(pkcs8, "privateKey", data->data(), data->size()))
+            if (!data || !PAL::TASN1::writeElement(pkcs8, "privateKey", data->span().data(), data->size()))
                 return Exception { ExceptionCode::OperationError };
         }
 
@@ -454,7 +458,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
     if (!result)
         return Exception { ExceptionCode::OperationError };
 
-    return WTFMove(result.value());
+    return WTF::move(result.value());
 }
 
 String CryptoKeyOKP::generateJwkD() const
@@ -481,7 +485,7 @@ String CryptoKeyOKP::generateJwkX() const
 
     // We get an sexp of the private-key so that we could later extract the public-key associated to it.
     PAL::GCrypt::Handle<gcry_sexp_t> privKey;
-    gcry_error_t error = gcry_sexp_build(&privKey, nullptr, "(private-key(ecc(curve Ed25519)(flags eddsa)(d %b)))", m_data.size(), m_data.data());
+    gcry_error_t error = gcry_sexp_build(&privKey, nullptr, "(private-key(ecc(curve Ed25519)(flags eddsa)(d %b)))", m_data.size(), m_data.span().data());
     if (error != GPG_ERR_NO_ERROR) {
         PAL::GCrypt::logError(error);
         return { };
@@ -498,7 +502,7 @@ String CryptoKeyOKP::generateJwkX() const
     // Return an EdDSA style compressed point. This is only supported for Twisted Edwards curves.
     PAL::GCrypt::Handle<gcry_mpi_t> qMPI(gcry_mpi_ec_get_mpi("q@eddsa", context, 0));
     if (qMPI) {
-        auto q = mpiData(qMPI);
+        auto q = mpiZeroPrefixedData(qMPI, 32);
         if (q && q->size() == 32)
             return base64URLEncodeToString(*q);
     }

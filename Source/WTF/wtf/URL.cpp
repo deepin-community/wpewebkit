@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Research In Motion Limited. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,18 +27,16 @@
 #include "config.h"
 #include <wtf/URL.h>
 
-#include "URLParser.h"
 #include <stdio.h>
 #include <unicode/uidna.h>
-#include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/URLParser.h>
 #include <wtf/UUID.h>
-#include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHash.h>
@@ -70,10 +68,10 @@ URL::URL(const URL& base, const String& relative, const URLTextEncoding* encodin
 
 URL::URL(String&& absoluteURL, const URLTextEncoding* encoding)
 {
-    *this = URLParser(WTFMove(absoluteURL), URL(), encoding).result();
+    *this = URLParser(WTF::move(absoluteURL), URL(), encoding).result();
 }
 
-static bool shouldTrimFromURL(UChar character)
+static bool NODELETE shouldTrimFromURL(char16_t character)
 {
     // Ignore leading/trailing whitespace and control characters.
     return character <= ' ';
@@ -88,12 +86,12 @@ URL URL::isolatedCopy() const &
 
 URL URL::isolatedCopy() &&
 {
-    URL result { WTFMove(*this) };
-    result.m_string = WTFMove(result.m_string).isolatedCopy();
+    URL result { WTF::move(*this) };
+    result.m_string = WTF::move(result.m_string).isolatedCopy();
     return result;
 }
 
-StringView URL::lastPathComponent() const
+StringView URL::lastPathComponent() const LIFETIME_BOUND
 {
     if (!hasPath())
         return { };
@@ -139,6 +137,13 @@ bool URL::hasFetchScheme() const
         || protocolIsFile();
 }
 
+bool URL::protocolIsSecure() const
+{
+    // Note: FTPS is not considered secure for WebKit purposes.
+    return protocolIs("https"_s)
+        || protocolIs("wss"_s);
+}
+
 unsigned URL::pathStart() const
 {
     unsigned start = m_hostEnd + m_portLength;
@@ -149,7 +154,7 @@ unsigned URL::pathStart() const
     return start;
 }
 
-StringView URL::protocol() const
+StringView URL::protocol() const LIFETIME_BOUND
 {
     if (!m_isValid)
         return { };
@@ -157,7 +162,7 @@ StringView URL::protocol() const
     return StringView(m_string).left(m_schemeEnd);
 }
 
-StringView URL::host() const
+StringView URL::host() const LIFETIME_BOUND
 {
     if (!m_isValid)
         return { };
@@ -189,7 +194,7 @@ String URL::protocolHostAndPort() const
     );
 }
 
-static std::optional<LChar> decodeEscapeSequence(StringView input, unsigned index, unsigned length)
+static std::optional<Latin1Character> NODELETE decodeEscapeSequence(StringView input, unsigned index, unsigned length)
 {
     if (index + 3 > length || input[index] != '%')
         return std::nullopt;
@@ -209,7 +214,7 @@ static String decodeEscapeSequencesFromParsedURL(StringView input)
         return input.toString();
 
     // FIXME: This 100 is arbitrary. Should make a histogram of how this function is actually used to choose a better value.
-    Vector<LChar, 100> percentDecoded;
+    Vector<Latin1Character, 100> percentDecoded;
     percentDecoded.reserveInitialCapacity(length);
     for (unsigned i = 0; i < length; ) {
         if (auto decodedCharacter = decodeEscapeSequence(input, i, length)) {
@@ -236,12 +241,12 @@ String URL::password() const
     return decodeEscapeSequencesFromParsedURL(encodedPassword());
 }
 
-StringView URL::encodedUser() const
+StringView URL::encodedUser() const LIFETIME_BOUND
 {
     return StringView(m_string).substring(m_userStart, m_userEnd - m_userStart);
 }
 
-StringView URL::encodedPassword() const
+StringView URL::encodedPassword() const LIFETIME_BOUND
 {
     if (m_passwordEnd == m_userEnd)
         return { };
@@ -249,7 +254,7 @@ StringView URL::encodedPassword() const
     return StringView(m_string).substring(m_userEnd + 1, m_passwordEnd - m_userEnd - 1);
 }
 
-StringView URL::fragmentIdentifier() const
+StringView URL::fragmentIdentifier() const LIFETIME_BOUND
 {
     if (!hasFragmentIdentifier())
         return { };
@@ -303,7 +308,7 @@ String URL::fileSystemPath() const
 
 #if !ASSERT_ENABLED
 
-static inline void assertProtocolIsGood(StringView)
+static inline void NODELETE assertProtocolIsGood(StringView)
 {
 }
 
@@ -327,13 +332,13 @@ static void assertProtocolIsGood(StringView protocol)
 static Lock defaultPortForProtocolMapForTestingLock;
 
 using DefaultPortForProtocolMapForTesting = HashMap<String, uint16_t>;
-static DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
+static DefaultPortForProtocolMapForTesting*& NODELETE defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     static DefaultPortForProtocolMapForTesting* defaultPortForProtocolMap;
     return defaultPortForProtocolMap;
 }
 
-static DefaultPortForProtocolMapForTesting& ensureDefaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
+static DefaultPortForProtocolMapForTesting& NODELETE ensureDefaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMap = defaultPortForProtocolMapForTesting();
     if (!defaultPortForProtocolMap)
@@ -374,7 +379,7 @@ bool isDefaultPortForProtocol(uint16_t port, StringView protocol)
 
 bool URL::protocolIsJavaScript() const
 {
-    return WTF::protocolIsJavaScript(string());
+    return protocolIs("javascript"_s);
 }
 
 bool URL::protocolIs(StringView protocol) const
@@ -395,7 +400,7 @@ bool URL::protocolIs(StringView protocol) const
     return true;
 }
 
-StringView URL::query() const
+StringView URL::query() const LIFETIME_BOUND
 {
     if (m_queryEnd == m_pathEnd)
         return { };
@@ -403,17 +408,17 @@ StringView URL::query() const
     return StringView(m_string).substring(m_pathEnd + 1, m_queryEnd - (m_pathEnd + 1));
 }
 
-StringView URL::path() const
+StringView URL::path() const LIFETIME_BOUND
 {
     if (!m_isValid)
         return { };
 
-    return StringView(m_string).substring(pathStart(), m_pathEnd - pathStart());
+    unsigned pathStart = this->pathStart();
+    return StringView(m_string).substring(pathStart, m_pathEnd - pathStart);
 }
 
 bool URL::setProtocol(StringView newProtocol)
 {
-    // Firefox and IE remove everything after the first ':'.
     auto newProtocolPrefix = newProtocol.left(newProtocol.find(':'));
     auto newProtocolCanonicalized = URLParser::maybeCanonicalizeScheme(newProtocolPrefix);
     if (!newProtocolCanonicalized)
@@ -424,8 +429,7 @@ bool URL::setProtocol(StringView newProtocol)
         return true;
     }
 
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=229427
-    if (URLParser::isSpecialScheme(this->protocol()) && !URLParser::isSpecialScheme(*newProtocolCanonicalized))
+    if (URLParser::isSpecialScheme(this->protocol()) != URLParser::isSpecialScheme(*newProtocolCanonicalized))
         return true;
 
     if ((m_passwordEnd != m_userStart || port()) && *newProtocolCanonicalized == "file"_s)
@@ -441,7 +445,7 @@ bool URL::setProtocol(StringView newProtocol)
 // Appends the punycoded hostname identified by the given string and length to
 // the output buffer. The result will not be null terminated.
 // Return value of false means error in encoding.
-static bool appendEncodedHostname(Vector<UChar, 512>& buffer, StringView string)
+static bool appendEncodedHostname(Vector<char16_t, 512>& buffer, StringView string)
 {
     // hostnameBuffer needs to be big enough to hold an IDN-encoded name.
     // For host names bigger than this, we won't do IDN encoding, which is almost certainly OK.
@@ -450,14 +454,15 @@ static bool appendEncodedHostname(Vector<UChar, 512>& buffer, StringView string)
         return true;
     }
 
-    UChar hostnameBuffer[URLParser::hostnameBufferLength];
+    std::array<char16_t, URLParser::hostnameBufferLength> hostnameBuffer;
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    int32_t numCharactersConverted = uidna_nameToASCII(&URLParser::internationalDomainNameTranscoder(),
-        string.upconvertedCharacters(), string.length(), hostnameBuffer, URLParser::hostnameBufferLength, &processingDetails, &error);
+    // struct UIDNA is forward declared in WTF/icu/unicode/uidna.h.
+    SUPPRESS_FORWARD_DECL_ARG int32_t numCharactersConverted = uidna_nameToASCII(&URLParser::internationalDomainNameTranscoder(),
+        string.upconvertedCharacters(), string.length(), hostnameBuffer.data(), hostnameBuffer.size(), &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~URLParser::allowedNameToASCIIErrors) && numCharactersConverted) {
-        buffer.append(std::span(hostnameBuffer, numCharactersConverted));
+        buffer.append(std::span { hostnameBuffer }.first(numCharactersConverted));
         return true;
     }
     return false;
@@ -477,32 +482,35 @@ unsigned URL::credentialsEnd() const
     return end;
 }
 
-static bool forwardSlashHashOrQuestionMark(UChar c)
+static bool NODELETE forwardSlashHashOrQuestionMark(char16_t c)
 {
     return c == '/'
         || c == '#'
         || c == '?';
 }
 
-static bool slashHashOrQuestionMark(UChar c)
+static bool NODELETE slashHashOrQuestionMark(char16_t c)
 {
     return forwardSlashHashOrQuestionMark(c) || c == '\\';
 }
 
-void URL::setHost(StringView newHost)
+bool URL::setHost(StringView newHost)
 {
-    if (!m_isValid)
-        return;
-
-    if (newHost.contains(':') && !newHost.startsWith('['))
-        return;
+    if (!m_isValid || hasOpaquePath())
+        return false;
 
     if (auto index = newHost.find(hasSpecialScheme() ? slashHashOrQuestionMark : forwardSlashHashOrQuestionMark); index != notFound)
         newHost = newHost.left(index);
 
-    Vector<UChar, 512> encodedHostName;
+    if (newHost.contains('@'))
+        return false;
+
+    if (newHost.contains(':') && !newHost.startsWith('['))
+        return false;
+
+    Vector<char16_t, 512> encodedHostName;
     if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, newHost))
-        return;
+        return false;
 
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
     parse(makeString(
@@ -511,6 +519,8 @@ void URL::setHost(StringView newHost)
         hasSpecialScheme() ? StringView(encodedHostName.span()) : newHost,
         StringView(m_string).substring(m_hostEnd)
     ));
+
+    return m_isValid;
 }
 
 void URL::setPort(std::optional<uint16_t> port)
@@ -531,7 +541,7 @@ void URL::setPort(std::optional<uint16_t> port)
     ));
 }
 
-static unsigned countASCIIDigits(StringView string)
+static unsigned NODELETE countASCIIDigits(StringView string)
 {
     unsigned length = string.length();
     for (unsigned count = 0; count < length; ++count) {
@@ -543,7 +553,7 @@ static unsigned countASCIIDigits(StringView string)
 
 void URL::setHostAndPort(StringView hostAndPort)
 {
-    if (!m_isValid)
+    if (!m_isValid || hasOpaquePath())
         return;
 
     if (auto index = hostAndPort.find(hasSpecialScheme() ? slashHashOrQuestionMark : forwardSlashHashOrQuestionMark); index != notFound)
@@ -561,6 +571,8 @@ void URL::setHostAndPort(StringView hostAndPort)
 
     auto portString = hostAndPort.substring(colonIndex + 1);
     auto hostName = hostAndPort.left(colonIndex);
+    if (hostName.contains('@'))
+        return;
     // Multiple colons are acceptable only in case of IPv6.
     if (hostName.contains(':') && ipv6Separator == notFound)
         return;
@@ -574,7 +586,7 @@ void URL::setHostAndPort(StringView hostAndPort)
     if (!parseInteger<uint16_t>(portString))
         portString = { };
 
-    Vector<UChar, 512> encodedHostName;
+    Vector<char16_t, 512> encodedHostName;
     if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, hostName))
         return;
 
@@ -596,16 +608,18 @@ void URL::removeHostAndPort()
 }
 
 template<typename StringType>
-static String percentEncodeCharacters(const StringType& input, bool(*shouldEncode)(UChar))
+static String percentEncodeCharacters(const StringType& input, bool(*shouldEncode)(char16_t))
 {
     auto encode = [shouldEncode] (const StringType& input) {
         auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
-            StringBuilder builder;
+            StringBuilder builder(OverflowPolicy::RecordOverflow);
             for (char c : span) {
                 if (shouldEncode(c))
                     builder.append('%', upperNibbleToASCIIHexDigit(c), lowerNibbleToASCIIHexDigit(c));
                 else
                     builder.append(c);
+                if (builder.hasOverflowed())
+                    return { };
             }
             return builder.toString();
         });
@@ -614,7 +628,7 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
     };
 
     for (size_t i = 0; i < input.length(); ++i) {
-        if (UNLIKELY(shouldEncode(input[i])))
+        if (shouldEncode(input[i])) [[unlikely]]
             return encode(input);
     }
     if constexpr (std::is_same_v<StringType, StringView>)
@@ -625,12 +639,12 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
 
 void URL::parse(String&& string)
 {
-    *this = URLParser(WTFMove(string)).result();
+    *this = URLParser(WTF::move(string)).result();
 }
 
 void URL::parseAllowingC0AtEnd(String&& string)
 {
-    *this = URLParser(WTFMove(string), { }, URLTextEncodingSentinelAllowingC0AtEnd).result();
+    *this = URLParser(WTF::move(string), { }, URLTextEncodingSentinelAllowingC0AtEnd).result();
 }
 
 void URL::remove(unsigned start, unsigned length)
@@ -641,7 +655,7 @@ void URL::remove(unsigned start, unsigned length)
     ASSERT(length <= m_string.length() - start);
 
     auto stringAfterRemoval = makeStringByRemoving(std::exchange(m_string, { }), start, length);
-    parse(WTFMove(stringAfterRemoval));
+    parse(WTF::move(stringAfterRemoval));
 }
 
 void URL::setUser(StringView newUser)
@@ -704,22 +718,12 @@ void URL::setFragmentIdentifier(StringView identifier)
     parseAllowingC0AtEnd(makeString(StringView(m_string).left(m_queryEnd), '#', identifier));
 }
 
-void URL::maybeTrimTrailingSpacesFromOpaquePath()
-{
-    if (!m_isValid || !hasOpaquePath() || hasFragmentIdentifier() || hasQuery())
-        return;
-
-    parse(makeString(StringView(m_string).left(m_pathEnd)));
-}
-
 void URL::removeFragmentIdentifier()
 {
     if (!m_isValid)
         return;
 
     m_string = m_string.left(m_queryEnd);
-
-    maybeTrimTrailingSpacesFromOpaquePath();
 }
 
 void URL::removeQueryAndFragmentIdentifier()
@@ -729,8 +733,6 @@ void URL::removeQueryAndFragmentIdentifier()
 
     m_string = m_string.left(m_pathEnd);
     m_queryEnd = m_pathEnd;
-
-    maybeTrimTrailingSpacesFromOpaquePath();
 }
 
 void URL::setQuery(StringView newQuery)
@@ -747,14 +749,11 @@ void URL::setQuery(StringView newQuery)
         newQuery,
         StringView(m_string).substring(m_queryEnd)
     ));
-
-    if (newQuery.isNull())
-        maybeTrimTrailingSpacesFromOpaquePath();
 }
 
 static String escapePathWithoutCopying(StringView path)
 {
-    auto questionMarkOrNumberSignOrNonASCII = [] (UChar character) {
+    auto questionMarkOrNumberSignOrNonASCII = [] (char16_t character) {
         return character == '?' || character == '#' || !isASCII(character);
     };
     return percentEncodeCharacters(path, questionMarkOrNumberSignOrNonASCII);
@@ -767,14 +766,14 @@ void URL::setPath(StringView path)
 
     parseAllowingC0AtEnd(makeString(
         StringView(m_string).left(pathStart()),
-        path.startsWith('/') || (path.startsWith('\\') && (hasSpecialScheme() || protocolIsFile())) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
+        path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
         !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
         escapePathWithoutCopying(path),
         StringView(m_string).substring(m_pathEnd)
     ));
 }
 
-StringView URL::viewWithoutQueryOrFragmentIdentifier() const
+StringView URL::viewWithoutQueryOrFragmentIdentifier() const LIFETIME_BOUND
 {
     if (!m_isValid)
         return m_string;
@@ -782,7 +781,7 @@ StringView URL::viewWithoutQueryOrFragmentIdentifier() const
     return StringView(m_string).left(pathEnd());
 }
 
-StringView URL::viewWithoutFragmentIdentifier() const
+StringView URL::viewWithoutFragmentIdentifier() const LIFETIME_BOUND
 {
     if (!m_isValid)
         return m_string;
@@ -811,17 +810,17 @@ bool protocolHostAndPortAreEqual(const URL& a, const URL& b)
     unsigned hostStartA = a.hostStart();
     unsigned hostLengthA = a.m_hostEnd - hostStartA;
     unsigned hostStartB = b.hostStart();
-    unsigned hostLengthB = b.m_hostEnd - b.hostStart();
+    unsigned hostLengthB = b.m_hostEnd - hostStartB;
     if (hostLengthA != hostLengthB)
         return false;
 
-    // Check the scheme
+    // Check the scheme.
     for (unsigned i = 0; i < a.m_schemeEnd; ++i) {
         if (toASCIILower(a.string()[i]) != toASCIILower(b.string()[i]))
             return false;
     }
 
-    // And the host
+    // And the host.
     for (unsigned i = 0; i < hostLengthA; ++i) {
         if (toASCIILower(a.string()[hostStartA + i]) != toASCIILower(b.string()[hostStartB + i]))
             return false;
@@ -864,10 +863,10 @@ String percentEncodeFragmentDirectiveSpecialCharacters(const String& input)
     return percentEncodeCharacters(input, URLParser::isSpecialCharacterForFragmentDirective);
 }
 
-static bool protocolIsInternal(StringView string, ASCIILiteral protocolLiteral)
+static bool NODELETE protocolIsInternal(StringView string, ASCIILiteral protocol)
 {
-    assertProtocolIsGood(protocolLiteral);
-    auto* protocol = protocolLiteral.characters();
+    assertProtocolIsGood(protocol);
+    size_t protocolIndex = 0;
     bool isLeading = true;
     for (auto codeUnit : string.codeUnits()) {
         if (isLeading) {
@@ -881,9 +880,10 @@ static bool protocolIsInternal(StringView string, ASCIILiteral protocolLiteral)
                 continue;
         }
 
-        char expectedCharacter = *protocol++;
-        if (!expectedCharacter)
+
+        if (protocolIndex == protocol.length())
             return codeUnit == ':';
+        char expectedCharacter = protocol[protocolIndex++];
         if (!isASCIIAlphaCaselessEqual(codeUnit, expectedCharacter))
             return false;
     }
@@ -899,7 +899,7 @@ bool protocolIs(StringView string, ASCIILiteral protocol)
 
 void URL::print() const
 {
-    printf("%s\n", m_string.utf8().data());
+    SAFE_PRINTF("%s\n", m_string.utf8());
 }
 
 #endif
@@ -956,9 +956,9 @@ String URL::strippedForUseAsReport() const
     return makeString(StringView(m_string).left(m_userStart), StringView(m_string).substring(end, m_pathEnd - end));
 }
 
-bool protocolIsJavaScript(StringView string)
+bool isValidJavaScriptURL(StringView string)
 {
-    return protocolIsInternal(string, "javascript"_s);
+    return URL(string.toStringWithoutCopying()).protocolIsJavaScript();
 }
 
 bool protocolIsInHTTPFamily(StringView url)
@@ -975,24 +975,16 @@ bool protocolIsInHTTPFamily(StringView url)
 
 
 static StaticStringImpl aboutBlankString { "about:blank" };
-const URL& aboutBlankURL()
+SUPPRESS_NODELETE const URL& aboutBlankURL()
 {
-    static LazyNeverDestroyed<URL> staticBlankURL;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        staticBlankURL.construct(&aboutBlankString);
-    });
+    static NeverDestroyed<URL> staticBlankURL { &aboutBlankString };
     return staticBlankURL;
 }
 
 static StaticStringImpl aboutSrcDocString { "about:srcdoc" };
-const URL& aboutSrcDocURL()
+SUPPRESS_NODELETE const URL& aboutSrcDocURL()
 {
-    static LazyNeverDestroyed<URL> staticSrcDocURL;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        staticSrcDocURL.construct(&aboutSrcDocString);
-    });
+    static NeverDestroyed<URL> staticSrcDocURL { &aboutSrcDocString };
     return staticSrcDocURL;
 }
 
@@ -1004,72 +996,73 @@ bool portAllowed(const URL& url)
     if (!port)
         return true;
 
-    // This blocked port list matches the port blocking that Mozilla implements.
-    // See http://www.mozilla.org/projects/netlib/PortBanning.html for more information.
-    static const uint16_t blockedPortList[] = {
-        1,    // tcpmux
-        7,    // echo
-        9,    // discard
-        11,   // systat
-        13,   // daytime
-        15,   // netstat
-        17,   // qotd
-        19,   // chargen
-        20,   // FTP-data
-        21,   // FTP-control
-        22,   // SSH
-        23,   // telnet
-        25,   // SMTP
-        37,   // time
-        42,   // name
-        43,   // nicname
-        53,   // domain
-        69,   // TFTP
-        77,   // priv-rjs
-        79,   // finger
-        87,   // ttylink
-        95,   // supdup
-        101,  // hostriame
-        102,  // iso-tsap
-        103,  // gppitnp
-        104,  // acr-nema
-        109,  // POP2
-        110,  // POP3
-        111,  // sunrpc
-        113,  // auth
-        115,  // SFTP
-        117,  // uucp-path
-        119,  // nntp
-        123,  // NTP
-        135,  // loc-srv / epmap
-        137,  // NetBIOS
-        139,  // netbios
-        143,  // IMAP2
-        161,  // SNMP
-        179,  // BGP
-        389,  // LDAP
-        427,  // SLP (Also used by Apple Filing Protocol)
-        465,  // SMTP+SSL
-        512,  // print / exec
-        513,  // login
-        514,  // shell
-        515,  // printer
-        526,  // tempo
-        530,  // courier
-        531,  // Chat
-        532,  // netnews
-        540,  // UUCP
-        548,  // afpovertcp [Apple addition]
-        554,  // rtsp
-        556,  // remotefs
-        563,  // NNTP+SSL
-        587,  // ESMTP
-        601,  // syslog-conn
-        636,  // LDAP+SSL
-        989,  // ftps-data
-        990,  // ftps
-        993,  // IMAP+SSL
-        995,  // POP3+SSL
+    // This blocked port list is defined by the Fetch spec, with the addition of port 0.
+    // See https://fetch.spec.whatwg.org/#port-blocking for more information.
+    static constexpr auto blockedPortList = WTF::toArray<uint16_t>({
+        0, // reserved
+        1, // tcpmux
+        7, // echo
+        9, // discard
+        11, // systat
+        13, // daytime
+        15, // netstat
+        17, // qotd
+        19, // chargen
+        20, // FTP-data
+        21, // FTP-control
+        22, // SSH
+        23, // telnet
+        25, // SMTP
+        37, // time
+        42, // name
+        43, // nicname
+        53, // domain
+        69, // TFTP
+        77, // priv-rjs
+        79, // finger
+        87, // ttylink
+        95, // supdup
+        101, // hostriame
+        102, // iso-tsap
+        103, // gppitnp
+        104, // acr-nema
+        109, // POP2
+        110, // POP3
+        111, // sunrpc
+        113, // auth
+        115, // SFTP
+        117, // uucp-path
+        119, // nntp
+        123, // NTP
+        135, // loc-srv / epmap
+        137, // NetBIOS
+        139, // netbios
+        143, // IMAP2
+        161, // SNMP
+        179, // BGP
+        389, // LDAP
+        427, // SLP (Also used by Apple Filing Protocol)
+        465, // SMTP+SSL
+        512, // print / exec
+        513, // login
+        514, // shell
+        515, // printer
+        526, // tempo
+        530, // courier
+        531, // Chat
+        532, // netnews
+        540, // UUCP
+        548, // afpovertcp [Apple addition]
+        554, // rtsp
+        556, // remotefs
+        563, // NNTP+SSL
+        587, // ESMTP
+        601, // syslog-conn
+        636, // LDAP+SSL
+        989, // ftps-data
+        990, // ftps
+        993, // IMAP+SSL
+        995, // POP3+SSL
         1719, // H323 (RAS)
         1720, // H323 (Q931)
         1723, // H323 (H245)
@@ -1089,7 +1082,7 @@ bool portAllowed(const URL& url)
         6679, // Alternate IRC SSL [Apple addition]
         6697, // IRC+SSL [Apple addition]
         10080, // amanda
-    };
+    });
 
     // If the port is not in the blocked port list, allow it.
     ASSERT(std::is_sorted(std::begin(blockedPortList), std::end(blockedPortList)));
@@ -1149,7 +1142,7 @@ URL URL::fileURLWithFileSystemPath(StringView path)
     ));
 }
 
-StringView URL::queryWithLeadingQuestionMark() const
+StringView URL::queryWithLeadingQuestionMark() const LIFETIME_BOUND
 {
     if (m_queryEnd <= m_pathEnd)
         return { };
@@ -1157,7 +1150,7 @@ StringView URL::queryWithLeadingQuestionMark() const
     return StringView(m_string).substring(m_pathEnd, m_queryEnd - m_pathEnd);
 }
 
-StringView URL::fragmentIdentifierWithLeadingNumberSign() const
+StringView URL::fragmentIdentifierWithLeadingNumberSign() const LIFETIME_BOUND
 {
     if (!m_isValid || m_string.length() <= m_queryEnd)
         return { };
@@ -1175,15 +1168,7 @@ bool URL::isAboutSrcDoc() const
     return protocolIsAbout() && path() == "srcdoc"_s;
 }
 
-TextStream& operator<<(TextStream& ts, const URL& url)
-{
-    ts << url.string();
-    return ts;
-}
-
-#if !PLATFORM(COCOA) && !USE(SOUP)
-
-static bool isIPv4Address(StringView string)
+static bool NODELETE isIPv4Address(StringView string)
 {
     auto count = 0;
 
@@ -1215,7 +1200,7 @@ static bool isIPv4Address(StringView string)
     return (count == 4);
 }
 
-static bool isIPv6Address(StringView string)
+bool URL::isIPv6Address(StringView string)
 {
     enum SkipState { None, WillSkip, Skipping, Skipped, Final };
     auto skipState = None;
@@ -1267,6 +1252,8 @@ static bool isIPv6Address(StringView string)
     return (count == 8 && skipState == None) || skipState == Skipped || skipState == Final;
 }
 
+#if !PLATFORM(COCOA) && !USE(SOUP)
+
 bool URL::hostIsIPAddress(StringView host)
 {
     return host.contains(':') ? isIPv6Address(host) : isIPv4Address(host);
@@ -1291,7 +1278,7 @@ Vector<KeyValuePair<String, String>> differingQueryParameters(const URL& firstUR
         return firstQueryParameters;
     
     auto compare = [] (const KeyValuePair<String, String>& a, const KeyValuePair<String, String>& b) {
-        if (int result = codePointCompare(a.key, b.key))
+        if (auto result = codePointCompare(a.key, b.key); is_neq(result))
             return result;
         return codePointCompare(a.value, b.value);
         
@@ -1300,19 +1287,19 @@ Vector<KeyValuePair<String, String>> differingQueryParameters(const URL& firstUR
         return compare(a, b) < 0;
     };
     
-    std::sort(firstQueryParameters.begin(), firstQueryParameters.end(), comparesLessThan);
-    std::sort(secondQueryParameters.begin(), secondQueryParameters.end(), comparesLessThan);
+    std::ranges::sort(firstQueryParameters, comparesLessThan);
+    std::ranges::sort(secondQueryParameters, comparesLessThan);
     size_t totalFirstQueryParameters = firstQueryParameters.size();
     size_t totalSecondQueryParameters = secondQueryParameters.size();
     size_t indexInFirstQueryParameters = 0;
     size_t indexInSecondQueryParameters = 0;
     Vector<KeyValuePair<String, String>> differingQueryParameters;
     while (indexInFirstQueryParameters < totalFirstQueryParameters && indexInSecondQueryParameters < totalSecondQueryParameters) {
-        int comparison = compare(firstQueryParameters[indexInFirstQueryParameters], secondQueryParameters[indexInSecondQueryParameters]);
-        if (comparison < 0) {
+        auto comparison = compare(firstQueryParameters[indexInFirstQueryParameters], secondQueryParameters[indexInSecondQueryParameters]);
+        if (is_lt(comparison)) {
             differingQueryParameters.append(firstQueryParameters[indexInFirstQueryParameters]);
             indexInFirstQueryParameters++;
-        } else if (comparison > 0) {
+        } else if (is_gt(comparison)) {
             differingQueryParameters.append(secondQueryParameters[indexInSecondQueryParameters]);
             indexInSecondQueryParameters++;
         } else {
@@ -1334,7 +1321,7 @@ Vector<KeyValuePair<String, String>> differingQueryParameters(const URL& firstUR
     return differingQueryParameters;
 }
 
-static StringView substringIgnoringQueryAndFragments(const URL& url)
+static StringView NODELETE substringIgnoringQueryAndFragments(const URL& url LIFETIME_BOUND)
 {
     if (!url.isValid())
         return StringView(url.string());
@@ -1352,12 +1339,12 @@ Vector<String> removeQueryParameters(URL& url, const HashSet<String>& keysToRemo
     if (keysToRemove.isEmpty())
         return { };
 
-    return removeQueryParameters(url, [&](auto& parameter) {
-        return keysToRemove.contains(parameter);
+    return removeQueryParameters(url, [&](auto& key, auto&) {
+        return keysToRemove.contains(key);
     });
 }
 
-Vector<String> removeQueryParameters(URL& url, Function<bool(const String&)>&& shouldRemove) 
+Vector<String> removeQueryParameters(URL& url, NOESCAPE const Function<bool(const String&, const String&)>& shouldRemove)
 {
     if (!url.hasQuery())
         return { };
@@ -1373,7 +1360,7 @@ Vector<String> removeQueryParameters(URL& url, Function<bool(const String&)>&& s
         if (key.isEmpty())
             continue;
 
-        if (shouldRemove(key)) {
+        if (shouldRemove(key, nameAndValue->value)) {
             removedParameters.append(key);
             continue;
         }

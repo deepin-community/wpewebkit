@@ -35,6 +35,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/Identified.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
@@ -42,13 +43,9 @@ namespace WebKit {
 class WebSharedWorker;
 }
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::WebSharedWorker> : std::true_type { };
-}
-
 namespace WebCore {
 class RegistrableDomain;
+class Site;
 }
 
 namespace WebKit {
@@ -56,19 +53,21 @@ namespace WebKit {
 class WebSharedWorkerServer;
 class WebSharedWorkerServerToContextConnection;
 
-class WebSharedWorker : public CanMakeWeakPtr<WebSharedWorker>, public Identified<WebCore::SharedWorkerIdentifier> {
+class WebSharedWorker : public RefCountedAndCanMakeWeakPtr<WebSharedWorker>, public Identified<WebCore::SharedWorkerIdentifier> {
     WTF_MAKE_TZONE_ALLOCATED(WebSharedWorker);
 public:
-    WebSharedWorker(WebSharedWorkerServer&, const WebCore::SharedWorkerKey&, const WebCore::WorkerOptions&);
+    static Ref<WebSharedWorker> create(WebSharedWorkerServer&, const WebCore::SharedWorkerKey&, const WebCore::WorkerOptions&);
+
     ~WebSharedWorker();
 
-    static WebSharedWorker* fromIdentifier(WebCore::SharedWorkerIdentifier);
+    static WebSharedWorker* NODELETE fromIdentifier(WebCore::SharedWorkerIdentifier);
 
-    const WebCore::SharedWorkerKey& key() const { return m_key; }
-    const WebCore::WorkerOptions& workerOptions() const { return m_workerOptions; }
-    const WebCore::ClientOrigin& origin() const { return m_key.origin; }
-    const URL& url() const { return m_key.url; }
+    const WebCore::SharedWorkerKey& key() const LIFETIME_BOUND { return m_key; }
+    const WebCore::WorkerOptions& workerOptions() const LIFETIME_BOUND { return m_workerOptions; }
+    const WebCore::ClientOrigin& origin() const LIFETIME_BOUND { return m_key.origin; }
+    const URL& url() const LIFETIME_BOUND { return m_key.url; }
     WebCore::RegistrableDomain topRegistrableDomain() const;
+    WebCore::Site topSite() const;
     WebSharedWorkerServerToContextConnection* contextConnection() const;
 
     void addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&);
@@ -76,18 +75,18 @@ public:
     void suspend(WebCore::SharedWorkerObjectIdentifier);
     void resume(WebCore::SharedWorkerObjectIdentifier);
     unsigned sharedWorkerObjectsCount() const { return m_sharedWorkerObjects.size(); }
-    void forEachSharedWorkerObject(const Function<void(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&)>&) const;
-    std::optional<WebCore::ProcessIdentifier> firstSharedWorkerObjectProcess() const;
+    void forEachSharedWorkerObject(NOESCAPE const Function<void(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&)>&) const;
+    std::optional<WebCore::ProcessIdentifier> NODELETE firstSharedWorkerObjectProcess() const;
 
     void didCreateContextConnection(WebSharedWorkerServerToContextConnection&);
 
     bool isRunning() const { return m_isRunning; }
     void markAsRunning() { m_isRunning = true; }
 
-    const WebCore::WorkerInitializationData& initializationData() const { return m_initializationData; }
-    void setInitializationData(WebCore::WorkerInitializationData&& initializationData) { m_initializationData = WTFMove(initializationData); }
+    const WebCore::WorkerInitializationData& initializationData() const LIFETIME_BOUND { return m_initializationData; }
+    void setInitializationData(WebCore::WorkerInitializationData&& initializationData) { m_initializationData = WTF::move(initializationData); }
 
-    const WebCore::WorkerFetchResult& fetchResult() const { return m_fetchResult; }
+    const WebCore::WorkerFetchResult& fetchResult() const LIFETIME_BOUND { return m_fetchResult; }
     void setFetchResult(WebCore::WorkerFetchResult&&);
     bool didFinishFetching() const { return !!m_fetchResult.script; }
 
@@ -95,7 +94,7 @@ public:
 
     struct SharedWorkerObjectState {
         bool isSuspended { false };
-        WebCore::TransferredMessagePort port;
+        std::optional<WebCore::TransferredMessagePort> port;
     };
 
     struct Object {
@@ -104,6 +103,8 @@ public:
     };
 
 private:
+    WebSharedWorker(WebSharedWorkerServer&, const WebCore::SharedWorkerKey&, const WebCore::WorkerOptions&);
+
     WebSharedWorker(WebSharedWorker&&) = delete;
     WebSharedWorker& operator=(WebSharedWorker&&) = delete;
     WebSharedWorker(const WebSharedWorker&) = delete;
@@ -112,7 +113,7 @@ private:
     void suspendIfNeeded();
     void resumeIfNeeded();
 
-    WebSharedWorkerServer& m_server;
+    WeakPtr<WebSharedWorkerServer> m_server;
     WebCore::SharedWorkerKey m_key;
     WebCore::WorkerOptions m_workerOptions;
     ListHashSet<Object> m_sharedWorkerObjects;
