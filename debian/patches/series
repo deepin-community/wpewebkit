@@ -2,3 +2,4 @@ fix-ftbfs-riscv64.patch
 fix-ftbfs-x32.patch
 fix-ftbfs-sh4.patch
 no-must-tail.patch
+fix-ftbfs-clang-constraint-redeclaration.patch

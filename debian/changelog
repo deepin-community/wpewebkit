@@ -1,3 +1,18 @@
+wpewebkit (2.54.3-1deepin1) unstable; urgency=medium
+
+  * Fix FTBFS with clang 17.
+  * debian/patches:
+    - Add fix-ftbfs-clang-constraint-redeclaration.patch: forward declare
+      CSS::PrimitiveNumericOrKeyword before CSS::PrimitiveNumeric so that the
+      constrained friend declaration refers to an already declared template.
+      clang 17 rejects the out-of-line definition with "type constraint differs
+      in template redeclaration" when PrimitiveNumeric has already been
+      instantiated before that definition is seen, which is what happens in
+      unified builds (mirrors the existing forward declaration on the
+      WebCore::Style side).
+
+ -- lichenggang <lichenggang@uniontech.com>  Fri, 27 Nov 2026 18:09:45 +0800
+
 wpewebkit (2.54.3-1) unstable; urgency=medium
 
   * New upstream release.

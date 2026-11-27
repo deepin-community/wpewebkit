@@ -1,0 +1,37 @@
+Description: Fix FTBFS with clang 17 ("type constraint differs in template redeclaration")
+ clang 17 (the compiler shipped by deepin) rejects the out-of-line definition of
+ CSS::PrimitiveNumericOrKeyword when the enclosing class template PrimitiveNumeric
+ has already been instantiated before that definition is seen, which is what happens
+ in unified builds:
+ .
+   CSSPrimitiveNumericOrKeyword.h:34:10: error: type constraint differs in template redeclaration
+   CSSPrimitiveNumeric.h:155:14: note: previous template declaration is here
+ .
+ Forward declare CSS::PrimitiveNumericOrKeyword before PrimitiveNumeric, so the
+ constrained friend declaration refers to an already declared template. This mirrors
+ what WebCore::Style::PrimitiveNumeric already does for its own constrained friend
+ declaration (StylePrimitiveNumeric.h), and it does not change any behaviour.
+Origin: vendor, https://github.com/deepin-community/wpewebkit/pull/9
+Forwarded: not-needed
+Last-Update: 2026-11-27
+Author: lichenggang <lichenggang@uniontech.com>
+---
+diff --git a/Source/WebCore/css/values/primitives/CSSPrimitiveNumeric.h b/Source/WebCore/css/values/primitives/CSSPrimitiveNumeric.h
+index 1cad6114..6ca4166d 100644
+--- a/Source/WebCore/css/values/primitives/CSSPrimitiveNumeric.h
++++ b/Source/WebCore/css/values/primitives/CSSPrimitiveNumeric.h
+@@ -43,6 +43,14 @@ namespace CSS {
+ // the CSS value gets resolved to. Unresolved CSS primitive numeric types always use a `double` as
+ // its internal representation.
+ 
++// NOTE: This forward declaration is needed so that the constrained friend declaration of
++// `PrimitiveNumericOrKeyword` inside `PrimitiveNumeric` below refers to an already declared
++// template. Without it, clang (at least clang 17, which is what ships with some distros) rejects
++// the definition of `PrimitiveNumericOrKeyword` with "type constraint differs in template
++// redeclaration" whenever `PrimitiveNumeric` has already been instantiated before that definition
++// is seen, which is what happens in unified builds.
++template<Numeric, SpecificKeyword...> struct PrimitiveNumericOrKeyword;
++
+ template<NumericRaw RawType> struct PrimitiveNumeric {
+     using Raw = RawType;
+     using Calc = UnevaluatedCalc<Raw>;
